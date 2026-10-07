@@ -321,6 +321,34 @@ describe("createAgentLifecycleEmitter", () => {
       );
     });
   });
+
+  it("delivers to a server on a port a closed server used", async () => {
+    // A socket pooled for the closed server would fail with "socket hang up".
+    const emit = (url: string): Promise<void> =>
+      createAgentLifecycleEmitter(
+        baseSession,
+        {
+          hooks: { webhooks: [{ enabled: true, url: url, secret: "secret" }] },
+        },
+        loopbackTransport(),
+      ).emit("agent.started", {});
+    let port = 0;
+    await withWebhookServer(async (url, deliveries) => {
+      port = Number(new URL(url("/")).port);
+      await emit(url("/first"));
+      expect(deliveries).toHaveLength(1);
+    });
+
+    await withWebhookServer(
+      async (url, deliveries) => {
+        await emit(url("/second"));
+        expect(deliveries.map((delivery) => delivery.path)).toEqual([
+          "/second",
+        ]);
+      },
+      { port: port },
+    );
+  });
 });
 
 describe("toLifecycleValue", () => {
@@ -359,7 +387,7 @@ describe("toLifecycleValue", () => {
 
 async function withWebhookServer(
   run: (url: (path: string) => string, deliveries: Delivery[]) => Promise<void>,
-  options: { location?: string; status?: number } = {},
+  options: { location?: string; status?: number; port?: number } = {},
 ): Promise<void> {
   const deliveries: Delivery[] = [];
   await withLoopbackTlsServer(
@@ -383,5 +411,6 @@ async function withWebhookServer(
     },
     (origin): Promise<void> =>
       run((path): string => `${origin}${path}`, deliveries),
+    options.port,
   );
 }

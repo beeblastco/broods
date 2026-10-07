@@ -57,12 +57,15 @@ export function loopbackTransport(): PinnedFetchTransport {
 export async function withLoopbackTlsServer(
   listener: RequestListener,
   run: (origin: string) => Promise<void>,
+  port: number = 0,
 ): Promise<void> {
   const server: Server = createServer(
     { cert: TLS_CERT, key: TLS_KEY },
     listener,
   );
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) =>
+    server.listen(port, "127.0.0.1", resolve),
+  );
   const address = server.address();
   if (address === null || typeof address !== "object") {
     throw new Error("test server has no port");

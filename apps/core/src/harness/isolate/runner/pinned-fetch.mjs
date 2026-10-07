@@ -160,6 +160,10 @@ function requestPinned(parsed, pinned, init, state) {
         path: `${parsed.pathname}${parsed.search}`,
         headers: headers,
         servername: parsed.hostname,
+        // Under Bun a pooled socket the server already closed fails the call
+        // with "socket hang up", so each request opens its own. An injected
+        // connection is unpooled already, and an agent would bypass it.
+        agent: state.createConnection ? undefined : false,
         signal: state.signal,
         createConnection: state.createConnection,
         ca: state.ca,
