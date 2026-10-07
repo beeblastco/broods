@@ -10,7 +10,11 @@ import {
   type Storage,
 } from "../src/shared/storage.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
-import { setMcpForTests } from "../src/harness/mcp/client.ts";
+import {
+  callMcpTool,
+  mcpConnection,
+  setMcpForTests,
+} from "../src/harness/mcp/client.ts";
 import type { CronRecord } from "../src/shared/domain/cron.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
@@ -1259,6 +1263,39 @@ describe("connected MCP servers", () => {
       tools.search__query as unknown as ChannelTestTool
     ).execute({ q: "invoices" }, {} as never);
     expect(result).toEqual({ hits: 3 });
+  });
+
+  it("hands an image result to the model as image data, not as text", async () => {
+    setMcpForTests({
+      callTool: async function () {
+        return {
+          content: [
+            { type: "text" as const, text: "Viewport of example.com" },
+            {
+              type: "image" as const,
+              data: "iVBORw0KGgo=",
+              mimeType: "image/png",
+            },
+          ],
+          structuredContent: { width: 1280 },
+        };
+      },
+    });
+
+    const result = await callMcpTool(
+      mcpConnection(mcpRecord(), undefined),
+      "screenshot",
+      {},
+    );
+
+    expect(result).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "Viewport of example.com" },
+        { type: "image-data", data: "iVBORw0KGgo=", mediaType: "image/png" },
+        { type: "text", text: '{"width":1280}' },
+      ],
+    });
   });
 
   it("filters by the row's allowedTools and skips disabled rows", async () => {
