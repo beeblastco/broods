@@ -42,11 +42,11 @@ export async function customSandbox(context: VerifyContext): Promise<void> {
     },
   });
   assertStep(
-    "a custom sandbox keeps its endpoint and headers",
+    "a custom sandbox keeps its endpoint and headers, values masked",
     sandbox.config.provider === "custom" &&
       sandbox.config.options?.endpoint === "https://sandbox.example.com" &&
       JSON.stringify(sandbox.config.options?.headers) ===
-        JSON.stringify({ "x-team": "ops" }),
+        JSON.stringify({ "x-team": "********" }),
     JSON.stringify(sandbox),
   );
 

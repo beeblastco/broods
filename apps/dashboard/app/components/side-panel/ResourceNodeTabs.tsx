@@ -7,7 +7,7 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
-import { workspaceIsolation } from "@broods/convex/model/workspaceIsolation";
+import { isWorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
 import {
   ExpandBlock,
   ToggleRow,
@@ -118,7 +118,11 @@ export function SandboxResourceDetailsTab({
     typeof config.provider === "string" ? config.provider : "lambda";
   const snapshot =
     typeof config.snapshot === "string" ? config.snapshot : undefined;
-  const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
+  const hasSnapshots = provider === "sandbox" || provider === "lambda";
+  const snapshots = useQuery(
+    api.sandbox.snapshots.listForActiveOrg,
+    hasSnapshots ? {} : "skip",
+  );
   // The account's ready snapshots for this provider, pinned by provider image id.
   // A pin set in code that is not in the list still shows, so the select is honest.
   const snapshotOptions = [
@@ -212,7 +216,7 @@ export function SandboxResourceDetailsTab({
             ]}
           />
         )}
-        {(provider === "sandbox" || provider === "lambda") && (
+        {hasSnapshots && (
           <SelectField
             label="Snapshot"
             disabled={managedByCode}
@@ -303,7 +307,9 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
-  const isolation = workspaceIsolation(config.isolation);
+  const isolation = isWorkspaceIsolation(config.isolation)
+    ? config.isolation
+    : undefined;
   const storage: Record<string, unknown> = isPlainObject(config.storage)
     ? config.storage
     : { provider: "s3" };

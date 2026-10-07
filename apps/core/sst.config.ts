@@ -1108,6 +1108,8 @@ export default $config({
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
       toolRunnerFunctionName: mcpRunnerFn.name,
+      // deploy.yaml deploys the Cloudflare MCP runtime Worker under this name.
+      cloudflareMcpWorkerName: resourceName("mcp", stage, region),
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,

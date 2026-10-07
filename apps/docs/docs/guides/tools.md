@@ -61,6 +61,9 @@ Rules:
 - `name` is 1 to 32 lowercase letters, digits or hyphens, starts with a letter, and is unique per stage.
 - The URL must be public. Private, loopback, link-local and metadata addresses are refused, and so are redirects. For a server on `localhost` or your network, run it on your computer with the [machine sandbox](sandboxes/machine.md).
 - Credential headers such as `Authorization` or `X-Api-Key` must name an environment variable inside a plain string, `"Bearer ${SEARCH_TOKEN}"`. Inline secrets are rejected. A template literal around `env()` sends `[object Object]`.
+- Reads show a header's value only while it is `${NAME}` refs. Any other value reads back as `********`, since a sync stores refs resolved. Sending `********` back keeps the stored value.
+- Every agent that connects the server gets its headers and `oauth`, and an agent's own value wins. Header names compare case-insensitively. `broods dev` pushes the named variables from `.env.local`, and a sync is refused while one has no value on the stage.
+- Removing `headers` or `allowedTools` from `defineMcp` removes them from the server on the next sync.
 - Tool lists are cached for the time the server's listing allows. Server-pushed list changes are not supported.
 - Every request carries `X-Broods-Agent-Id` (the calling agent) and, when the requester is known, `X-Broods-Principal` (base64url JSON of the delegation chain: who asked, then each agent that delegated, the caller last; ids and kinds only, no display names). A server can authorize per agent on them. Hosted servers read the same headers off the `Request` they are handed. Both names are reserved: a configured header of either name, in any case, is dropped. Tool lists are shared across agents, so authorize in the call, not by hiding tools from the list.
 
@@ -82,16 +85,8 @@ export const gmail = defineMcp({
 
 export const assistant = defineAgent({
   name: "assistant",
-  mcp: {
-    [gmail.name]: {
-      enabled: true,
-      // repeat the secrets so they resolve into the agent's encrypted config
-      oauth: {
-        clientSecret: env("GMAIL_CLIENT_SECRET"),
-        refreshToken: env("GMAIL_REFRESH_TOKEN"),
-      },
-    },
-  },
+  // the CLI copies the server's oauth here, where the secrets resolve
+  mcp: { [gmail.name]: { enabled: true } },
 });
 ```
 
@@ -119,10 +114,13 @@ Install `@modelcontextprotocol/server` in your project. The CLI bundles the file
 
 - The factory must build a new server on every call. Calls from one model step run at the same time, and a shared instance breaks.
 - Bundles are capped at 50 MB. The calls from one model step to one server run as a batch, and the batch shares a 30 second deadline and 16 MB of output.
-- Hosted servers run outside the Broods core, one child process per bundle. Accounts can share a warm runner environment today, so keep secrets out of module-level state. The first call after an idle period is a cold start.
+- Hosted servers run outside the Broods core: in a Workers isolate per bundle, or one Lambda child process per bundle. Accounts can share a warm runner environment today, so keep secrets out of module-level state. The first call after an idle period is a cold start.
 - Module-level state, such as a memoized client, survives between calls of the same bundle.
+- By default (`runtime: "auto"`) Broods runs a server on [Cloudflare Dynamic Workers](cloudflare-mcp.md) when its bundle can run there, and on AWS Lambda otherwise. Set `runtime: "lambda"` to always run it on Lambda.
 
 See the runnable [`mcp-connect` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect).
+
+For a worked hosted server, see [Cloudflare Browser Run](cloudflare-browser.md).
 
 ### Run a server on your computer
 

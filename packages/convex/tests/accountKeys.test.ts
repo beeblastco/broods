@@ -11,7 +11,7 @@ import {
   requireAccountIdForProject,
 } from "../model/accountKeys";
 import { clientErrorData } from "../model/clientError";
-import { AccountCipher, blobKeyId, kekIdOf } from "../model/envelope";
+import { AccountCipher, kekIdOf } from "../model/envelope";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -173,20 +173,22 @@ test("rotateAccountKey rewrites every blob of the account and retires the old ke
     return {
       keys: keys,
       currentKeyId: cipher.keyId,
-      agentKeyId: blobKeyId({ ciphertext: agent.encryptedConfig! }),
+      agentNeedsRewrite: cipher.needsRewrite({
+        ciphertext: agent.encryptedConfig!,
+      }),
       agentConfig: await cipher.decrypt("agents:encryptedConfig", {
         ciphertext: agent.encryptedConfig!,
         iv: agent.encryptionIv!,
         tag: agent.encryptionTag!,
       }),
-      variableKeyId: blobKeyId(variable),
+      variableNeedsRewrite: cipher.needsRewrite(variable),
       variableValue: await cipher.decrypt(
         "environmentVariables:ciphertext",
         variable,
       ),
       variableDigest: variable.valueDigest,
       expectedDigest: await cipher.digest("stage-value"),
-      accountVarKeyId: blobKeyId(accountVar),
+      accountVarNeedsRewrite: cipher.needsRewrite(accountVar),
       accountVarValue: await cipher.decrypt(
         "accountEnvVars:ciphertext",
         accountVar,
@@ -201,12 +203,12 @@ test("rotateAccountKey rewrites every blob of the account and retires the old ke
   expect(old!.retiredAt).toBeDefined();
   expect(current!.retiredAt).toBeUndefined();
   expect(after.currentKeyId).toBe(current!.keyId);
-  expect(after.agentKeyId).toBe(current!.keyId);
+  expect(after.agentNeedsRewrite).toBe(false);
   expect(after.agentConfig).toEqual({ model: { provider: "deepseek" } });
-  expect(after.variableKeyId).toBe(current!.keyId);
+  expect(after.variableNeedsRewrite).toBe(false);
   expect(after.variableValue).toEqual({ value: "stage-value" });
   expect(after.variableDigest).toBe(after.expectedDigest);
-  expect(after.accountVarKeyId).toBe(current!.keyId);
+  expect(after.accountVarNeedsRewrite).toBe(false);
   expect(after.accountVarValue).toEqual({ value: "acct-value" });
   // Another tenant's rows are not touched.
   expect(after.bystanderBlob).toBe(before.bystanderBlob);
