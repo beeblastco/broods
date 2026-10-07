@@ -7,6 +7,7 @@ on:
       - dev
     paths:
       - "apps/core/**"
+      - "apps/cloudflare-sandbox/src/limits.ts"
       - "packages/convex/**"
       - "package.json"
       - "bun.lock"
