@@ -114,7 +114,7 @@ describe("account key cache", () => {
       ),
     ).toEqual([VALUE, VALUE, VALUE]);
     expect(loads).toBe(2);
-    await expect(
+    expect(
       decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", stale),
     ).rejects.toThrow("does not decrypt");
   });
@@ -147,7 +147,7 @@ describe("account key cache", () => {
       VALUE,
     );
 
-    await expect(
+    expect(
       decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", blob),
     ).rejects.toThrow("does not decrypt");
   });

@@ -19,8 +19,8 @@ import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
 const ENABLED = process.env.MICROVM_HARNESS_TEST === "1";
-const originalMutation = runtime.mutate;
-const originalQuery = runtime.query;
+const originalMutation = runtime.mutate.bind(runtime);
+const originalQuery = runtime.query.bind(runtime);
 const reservations = new Map<string, string>();
 const mutationMock = mock(
   async (name: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -98,7 +98,7 @@ describe.skipIf(!ENABLED)(
 
       try {
         session = await sandbox.createSession({ identity: identity });
-        await expect(
+        expect(
           session.run({
             command:
               "printf 'hello-microvm:%s' \"$BROODS_LIVE_DEFAULT\" && printf 'to-stderr' >&2",
@@ -114,13 +114,13 @@ describe.skipIf(!ENABLED)(
           path: path,
           content: "live-file-content",
         });
-        await expect(session.readTextFile({ path: path })).resolves.toBe(
+        expect(session.readTextFile({ path: path })).resolves.toBe(
           "live-file-content",
         );
 
         await session.stop();
         session = await sandbox.resumeSession!({ sessionId: session.id });
-        await expect(
+        expect(
           session.run({ command: "printf 'resumed' && exit 7" }),
         ).resolves.toEqual({ exitCode: 7, stdout: "resumed", stderr: "" });
       } finally {

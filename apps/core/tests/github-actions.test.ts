@@ -12,6 +12,7 @@ import { generateKeyPairSync } from "node:crypto";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import type { GitHubSource } from "../src/shared/github-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
+import { requestUrl } from "./helpers/http.ts";
 
 // Only the mocked GitHub API sees tokens signed by this per-process key.
 const TEST_PRIVATE_KEY = generateKeyPairSync("rsa", {
@@ -156,7 +157,7 @@ describe("github outbound actions", () => {
       }),
     );
 
-    expect(actions.stream).toBeDefined();
+    expect(typeof actions.stream).toBe("function");
     const messageId = await actions.stream!(
       (async function* () {
         yield "hello";
@@ -187,11 +188,11 @@ function createFetchMock(
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const response = responses.shift();
     if (!response) {
-      throw new Error(`Unexpected fetch: ${String(input)}`);
+      throw new Error(`Unexpected fetch: ${requestUrl(input)}`);
     }
 
     calls.push({
-      url: String(input),
+      url: requestUrl(input),
       method: init?.method ?? "GET",
       headers: normalizeHeaders(init?.headers),
       jsonBody:

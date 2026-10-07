@@ -19,7 +19,7 @@ const readS3BytesMock = mock(
   async (_bucket: string, _key: string) => new Uint8Array([1, 2, 3]),
 );
 
-mock.module("../src/shared/s3.ts", () => ({
+await mock.module("../src/shared/s3.ts", () => ({
   headS3Object: headS3ObjectMock,
   readS3Bytes: readS3BytesMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).

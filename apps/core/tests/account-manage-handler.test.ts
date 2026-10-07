@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { S3Client } from "@aws-sdk/client-s3";
 import { handler } from "../src/accounts/handler.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
@@ -13,9 +13,8 @@ const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
 const originalSkillsBucketName = process.env.SKILLS_BUCKET_NAME;
 const originalToolBundlesBucketName = process.env.TOOL_BUNDLES_BUCKET_NAME;
-const originalRuntimeMutate = runtime.mutate;
-const originalRuntimeQuery = runtime.query;
-const originalS3Send = S3Client.prototype.send;
+const originalRuntimeMutate = runtime.mutate.bind(runtime);
+const originalRuntimeQuery = runtime.query.bind(runtime);
 
 afterEach(() => {
   if (originalAdminSecret === undefined) {
@@ -36,7 +35,7 @@ afterEach(() => {
   else process.env.TOOL_BUNDLES_BUCKET_NAME = originalToolBundlesBucketName;
   runtime.mutate = originalRuntimeMutate;
   runtime.query = originalRuntimeQuery;
-  S3Client.prototype.send = originalS3Send;
+  mock.restore();
   setStorageForTests(null);
   resetStorageForTests();
 });
@@ -612,10 +611,10 @@ function createFakeStorage(overrides: Record<string, unknown>) {
 function stubAccountDeletionDependencies(): void {
   process.env.SKILLS_BUCKET_NAME = "test-skills";
   process.env.TOOL_BUNDLES_BUCKET_NAME = "test-tool-bundles";
-  S3Client.prototype.send = mock(async () => ({
+  spyOn(S3Client.prototype, "send").mockResolvedValue({
     Contents: [],
     IsTruncated: false,
-  })) as never;
+  } as never);
   runtime.query = mock(async (name) => {
     expect(name).toBe("listAccountSandboxReservations");
 

@@ -140,7 +140,7 @@ async function invokeHandler(
       });
     });
   } finally {
-    server?.stop(true);
+    await server?.stop(true);
     await rm(dir, { recursive: true, force: true });
   }
 }

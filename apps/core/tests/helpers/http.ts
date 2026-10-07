@@ -44,6 +44,32 @@ export function coreRequest(
   };
 }
 
+/** Read the text field from multipart data captured by a fetch mock. */
+export function formDataText(formData: FormData, key: string): string {
+  const value = formData.get(key);
+  if (typeof value !== "string") {
+    throw new TypeError(`Expected multipart field ${key} to contain text`);
+  }
+
+  return value;
+}
+
+/** Read a serialized request body captured by a fetch mock. */
+export function requestBodyText(body: RequestInit["body"] | undefined): string {
+  if (typeof body !== "string") {
+    throw new TypeError("Expected request body to contain text");
+  }
+
+  return body;
+}
+
+/** Normalize every input accepted by fetch to its URL string. */
+export function requestUrl(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+
+  return input instanceof URL ? input.href : input.url;
+}
+
 export function testContext(): RequestContext {
   return {
     requestId: "request-id",

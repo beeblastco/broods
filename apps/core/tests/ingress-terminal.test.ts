@@ -9,8 +9,8 @@ type TerminalSession = Pick<
 
 const { ownerCheckForStream, settleFailedIngressAndDrain } =
   await import("../src/harness/handler.ts");
-const originalMutate = runtime.mutate;
-const originalQuery = runtime.query;
+const originalMutate = runtime.mutate.bind(runtime);
+const originalQuery = runtime.query.bind(runtime);
 
 describe("terminal ingress draining", () => {
   it("keeps the lease transferred when queued work is dispatched", async () => {
