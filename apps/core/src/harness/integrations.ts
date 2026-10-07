@@ -2205,15 +2205,14 @@ async function parseDirectPayload(
   const rawIdempotencyKey = record.idempotencyKey;
   if (
     rawIdempotencyKey !== undefined &&
-    typeof rawIdempotencyKey !== "string" &&
-    typeof rawIdempotencyKey !== "number"
+    typeof rawIdempotencyKey !== "string"
   ) {
-    throw new Error("idempotencyKey must be a string or number");
+    throw new Error("idempotencyKey must be a string");
   }
   const idempotencyKey =
     rawIdempotencyKey === undefined
       ? rawEventId
-      : normalizeDirectIdentifier("idempotencyKey", String(rawIdempotencyKey));
+      : normalizeDirectIdentifier("idempotencyKey", rawIdempotencyKey);
 
   return {
     accountId: account.accountId,

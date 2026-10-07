@@ -148,11 +148,11 @@ function stringifyMessageContent(content: ModelMessage["content"]): string {
 
 // Summarizes every block. The whole history goes first; only when the summary
 // model refuses it for length are the older and newer halves summarized apart
-// and their two summaries merged, so no whole message is dropped. A single
-// message too long on its own keeps as much of its beginning as the model
-// accepts. A refused merge fails the
-// compaction and leaves the stored history as it was. Per-call data rides the
-// user message so the static system prompt stays cacheable.
+// and merged, labelled so the merge keeps their order. No whole message is
+// dropped: a single message too long on its own keeps as much of its beginning
+// as the model accepts, and a refused merge fails the compaction and leaves the
+// stored history as it was. Per-call data rides the user message so the static
+// system prompt stays cacheable.
 async function summarizeBlocks(
   blocks: string[],
   requestSummary: (blocks: string[]) => Promise<string>,
@@ -172,8 +172,8 @@ async function summarizeBlocks(
     const middle = Math.ceil(blocks.length / 2);
 
     return requestSummary([
-      await summarizeBlocks(blocks.slice(0, middle), requestSummary),
-      await summarizeBlocks(blocks.slice(middle), requestSummary),
+      `Older part:\n${await summarizeBlocks(blocks.slice(0, middle), requestSummary)}`,
+      `Newer part:\n${await summarizeBlocks(blocks.slice(middle), requestSummary)}`,
     ]);
   }
 }
