@@ -780,7 +780,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     reservedEndpoints.delete(key);
     mountCredentialRefreshes.delete(key);
     if (!microvmId) return;
-    await this.#terminate(microvmId);
+    // Like the other providers, a VM that may still be running keeps its row, so
+    // a later release can find and retry it.
+    if (!(await this.#terminate(microvmId))) {
+      throw new Error(`failed to terminate MicroVM ${microvmId}`);
+    }
     await deleteSandboxInstance(
       PROVIDER,
       key,

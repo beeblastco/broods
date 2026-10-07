@@ -3445,6 +3445,26 @@ describe("conditional release", () => {
       expect(deleteSandboxInstanceMock.mock.calls[1]?.[3]).toBe("sbx-current");
     });
   }
+
+  it("lambda release keeps the row of a VM whose terminate failed", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    microvmSendMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("Rate exceeded"), {
+        name: "ThrottlingException",
+      });
+    });
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    await expect(
+      executor.release({ namespace: NS, expectedExternalId: "sbx-old" }),
+    ).rejects.toThrow("failed to terminate MicroVM sbx-old");
+    expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("workspaceNamespacePrefix", () => {
