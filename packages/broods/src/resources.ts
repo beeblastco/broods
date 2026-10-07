@@ -906,11 +906,33 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
  * Code-first workspace config. Says `partitioned` where storage says
  * `isolation`. "conversation" permits a per-conversation split that a
  * channel's `partition` performs; "agent" splits the workspace per attached
- * agent on its own, with no partition needed.
+ * agent on its own, with no partition needed. R2 keys take `env("NAME")`.
  */
-export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
+export type WorkspaceDefinitionConfig = Omit<
+  WorkspaceConfig,
+  "isolation" | "storage"
+> & {
+  storage?: WorkspaceStorageDefinition;
   /** How to split this workspace: per conversation or per agent. */
   partitioned?: WorkspaceIsolation;
+};
+
+type WorkspaceStorageAuthConfig = NonNullable<
+  WorkspaceConfig["storage"]["auth"]
+>;
+type WorkspaceR2Auth = Extract<WorkspaceStorageAuthConfig, { type: "r2" }>;
+
+/** Workspace storage as authored: only the R2 keys take `env()`. */
+export type WorkspaceStorageDefinition = Omit<
+  WorkspaceConfig["storage"],
+  "auth"
+> & {
+  auth?:
+    | Exclude<WorkspaceStorageAuthConfig, { type: "r2" }>
+    | (Omit<WorkspaceR2Auth, "accessKeyId" | "secretAccessKey"> & {
+        accessKeyId: string | EnvRef;
+        secretAccessKey: string | EnvRef;
+      });
 };
 
 export type WorkspaceResource<Name extends string = string> =

@@ -26,6 +26,7 @@ import {
   TerminateMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
 import { createHmac } from "node:crypto";
+import { z } from "zod";
 import {
   recordSandboxBurst,
   removeSandboxInstance,
@@ -77,8 +78,10 @@ import type {
   SandboxJobLogs,
   SandboxJobRequest,
   SandboxJobStatus,
+  SandboxGuestPost,
   SandboxReleaseRequest,
   SandboxReservationRef,
+  SandboxReservedPost,
   SandboxRunPrincipal,
   SandboxRunRequest,
   SandboxRunResult,
@@ -182,10 +185,44 @@ const reservedEndpoints = new Map<
 export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
 
+// /exec retries any fetch error but its own timeout, and the proxy's 502/503: a
+// refused or reset connection is the VM still restoring its snapshot, while a
+// timeout means the command ran past its budget and a retry would run it twice.
+const EXEC_RETRY: GuestRetry = {
+  fetchError: (err: unknown): boolean =>
+    !(err instanceof DOMException && err.name === "TimeoutError"),
+  warmingStatus: true,
+};
+// A guest route, probed ready first, retries only a connection that never
+// opened: a reset, drop or 502/503 can land after the guest took the request,
+// and an MCP tool must not run twice.
+const GUEST_ROUTE_RETRY: GuestRetry = {
+  fetchError: (err: unknown): boolean =>
+    err instanceof Error && "code" in err && err.code === "ConnectionRefused",
+  warmingStatus: false,
+};
+
+// The most one guest answer may hold: room for an MCP result carrying images up
+// to MAX_IMAGE_BYTES as base64, far past any /exec output limit.
+const GUEST_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
+
+// The VM's burst totals, as the image reports them on guest routes.
+const burstTotals = z.object({
+  vcpu_seconds: z.number(),
+  gb_seconds: z.number(),
+});
+
 // One POST to the guest: retry while the VM warms, or its answer.
 type Warming<T> =
   | { retry: true; status: number | string }
   | { retry: false; response: T };
+
+// When a guest POST is sent again: on which fetch errors, and whether the
+// proxy's 502/503 count as the VM still warming.
+interface GuestRetry {
+  fetchError: (err: unknown) => boolean;
+  warmingStatus: boolean;
+}
 
 export interface MicrovmHarnessReservation {
   readonly microvmId: string;
@@ -336,38 +373,81 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   // One JSON POST to a route the sandbox image serves beside /exec, for the MCP
-  // relay's /mcp. Like run(), it tries this pod's cached endpoint first and
-  // reserves only when that VM is gone. The reservation is shared: bash and other
-  // conversations use the same VM, so a failed first setup must not release it.
-  async postReserved(request: {
-    reservationKey: string;
-    path: string;
-    body: unknown;
-    timeoutMs: number;
-    abortSignal?: AbortSignal;
-  }): Promise<unknown> {
+  // relay's /mcp. Like run(), it tries this pod's cached endpoint first, and
+  // otherwise reaches the VM the way bash does on the same target: the workspace
+  // mount and the lifecycle in bash's directory. As for bash, a failed lifecycle
+  // keeps the shared VM and a failed mount on the create that made it releases it.
+  async postReserved(request: SandboxReservedPost): Promise<unknown> {
+    if (!this.#persistent(request)) {
+      throw new Error(
+        "a guest route needs a persistent lambda (MicroVM) sandbox reservation",
+      );
+    }
+    // Readiness is probed apart from the call: once the VM answers, the call is
+    // sent once, since a 502/503 then may be a lost answer to a call that ran.
+    // The image reports the VM's burst totals in a header on guest routes.
+    const post = async (
+      target: { microvmId: string; endpoint: string },
+      budgetMs: number,
+    ): Promise<unknown> => {
+      const readyBy = Date.now() + budgetMs;
+      await this.#whileWarming(target.microvmId, budgetMs, () =>
+        this.#ready(target, readyBy, request.abortSignal),
+      );
+
+      // The send shares the probe's budget: what the probe left, at least one try.
+      return this.#whileWarming(
+        target.microvmId,
+        Math.max(0, readyBy - Date.now()),
+        () =>
+          this.#post(
+            target,
+            request,
+            GUEST_ROUTE_RETRY,
+            (text, headers): unknown => {
+              this.#reportBurst(target.microvmId, burstHeader(headers));
+
+              return JSON.parse(text);
+            },
+          ),
+      );
+    };
+    const reach: SandboxRunRequest = {
+      ...this.#harnessRequest(sandboxReservationKey(request) ?? ""),
+      reservationKey: request.reservationKey,
+      namespace: request.namespace,
+      workspaceRoot: request.workspaceRoot,
+    };
     const cached = this.#cachedTarget(request);
     if (cached) {
+      // MCP-only use keeps the workspace mount's credentials fresh, like bash.
+      await this.#refreshMountCredentials(
+        reach,
+        cached.microvmId,
+        cached.endpoint,
+      );
       try {
-        return await this.#whileWarming(
+        // The lifecycle's onResume runs for a cached MCP call as for cached bash.
+        await this.#runLifecycle(
           cached.microvmId,
+          cached.endpoint,
+          this.#workDir(this.#workspaceKey(reach)),
           CACHED_WARMUP_BUDGET_MS,
-          () => this.#postGuest(cached, request),
         );
+
+        return await post(cached, CACHED_WARMUP_BUDGET_MS);
       } catch (error) {
         if (!(error instanceof MicrovmNotReadyError)) throw error;
-        reservedEndpoints.delete(request.reservationKey);
+        reservedEndpoints.delete(sandboxReservationKey(request) ?? "");
       }
     }
-    const reserved = await this.acquireHarnessReservation({
-      reservationKey: request.reservationKey,
-      abortSignal: request.abortSignal,
-      shared: true,
-    });
+    const acquired = await this.#acquire(reach);
+    const workDir = this.#workDir(this.#workspaceKey(reach));
+    await this.#prepareWorkspaceMount(reach, acquired, workDir);
+    await this.#runLifecycle(acquired.microvmId, acquired.endpoint, workDir);
+    request.abortSignal?.throwIfAborted();
 
-    return this.#whileWarming(reserved.microvmId, WARMUP_BUDGET_MS, () =>
-      this.#postGuest(reserved, request),
-    );
+    return post(acquired, WARMUP_BUDGET_MS);
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -609,6 +689,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { imageIdentifier: pinned };
   }
 
+  // The image name this sandbox boots, compared against a cached or reserved VM's.
+  #imageName(): string {
+    return microvmImageName(this.#image().imageIdentifier);
+  }
+
   #persistent(request: SandboxReservationRef): boolean {
     return this.#config.persistent === true && !!sandboxReservationKey(request);
   }
@@ -683,7 +768,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const cached = key ? reservedEndpoints.get(key) : undefined;
     if (!cached || cached.expiresAt <= Date.now()) return null;
     // A changed image goes through #acquire, whose reconnect replaces the VM.
-    if (cached.image !== microvmImageName(this.#image().imageIdentifier)) {
+    if (cached.image !== this.#imageName()) {
       return null;
     }
 
@@ -817,7 +902,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const entry = { microvmId: target.microvmId, endpoint: target.endpoint };
     reservedEndpoints.set(key, {
       ...entry,
-      image: microvmImageName(this.#image().imageIdentifier),
+      image: this.#imageName(),
       expiresAt: now + RESERVED_ENDPOINT_TTL_MS,
     });
 
@@ -837,16 +922,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     );
     // A sandbox whose image changed must not keep reaching the VM the old image
     // booted: stop it, before any resume, and the caller creates one from the new
-    // image. GetMicrovm always reports the image, so a missing one is a mismatch.
+    // image. A VM that reports no image is left alone, since stopping a healthy
+    // VM on a partial answer costs more than one call on the old image.
     if (
       !isTerminalMicrovmState(info.state) &&
-      (!info.imageArn ||
-        microvmImageName(info.imageArn) !==
-          microvmImageName(this.#image().imageIdentifier))
+      info.imageArn &&
+      microvmImageName(info.imageArn) !== this.#imageName()
     ) {
       await this.#terminate(microvmId);
       throw new MicrovmGoneError(
-        `MicroVM ${microvmId} runs ${info.imageArn ?? "an unknown image"}, not the sandbox's image`,
+        `MicroVM ${microvmId} runs ${info.imageArn}, not the sandbox's image`,
       );
     }
     if (info.state === "SUSPENDED" || info.state === "SUSPENDING") {
@@ -1131,10 +1216,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     payload: SandboxExecRequest,
     budgetMs = WARMUP_BUDGET_MS,
   ): Promise<SandboxExecResponse> {
-    const token = await this.#authToken(microvmId);
-    const url = `https://${endpoint.replace(/^https?:\/\//, "")}/exec`;
     const response = await this.#whileWarming(microvmId, budgetMs, () =>
-      this.#postExec(url, token, payload),
+      this.#post(
+        { microvmId: microvmId, endpoint: endpoint },
+        { path: "/exec", body: payload, timeoutMs: payload.timeout_ms },
+        EXEC_RETRY,
+        (text): SandboxExecResponse => parseExecResponse(text, "MicroVM exec"),
+      ),
     );
     this.#reportBurst(microvmId, response.burst);
 
@@ -1200,60 +1288,17 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  async #postExec(
-    url: string,
-    token: string,
-    payload: SandboxExecRequest,
-  ): Promise<Warming<SandboxExecResponse>> {
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-aws-proxy-auth": token,
-          "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(payload.timeout_ms + EXEC_GRACE_MS),
-      });
-    } catch (err) {
-      // A timeout means the command ran past its budget; a retry would run it twice.
-      if (err instanceof DOMException && err.name === "TimeoutError") throw err;
-      // Connection refused/reset while the VM is still restoring its snapshot.
-      return {
-        retry: true,
-        status: err instanceof Error ? err.message : "fetch error",
-      };
-    }
-    // 502/503 from the proxy mean "warming". A 504 means the proxy gave up on a
-    // guest that may be running the command, so it is fatal like any other non-2xx;
-    // the image itself answers request-level errors with HTTP 200 + an ok:false body.
-    if (res.status === 502 || res.status === 503) {
-      return { retry: true, status: res.status };
-    }
-    const text = await res.text();
-    if (!res.ok) {
-      throw new Error(
-        `MicroVM exec failed (${res.status}): ${text || res.statusText}`,
-      );
-    }
-
-    return { retry: false, response: parseExecResponse(text, "MicroVM exec") };
-  }
-
-  // postReserved's single attempt. Only a refused connection or the proxy's
-  // 502/503 retry: past that the guest may have run the request. The image
-  // reports the VM's burst totals in an `x-sandbox-burst` header here.
-  async #postGuest(
+  // One JSON POST to a guest route through the VM proxy, parsed by `parse`.
+  // `retry` says which fetch errors, and whether the proxy's 502/503, mean the
+  // guest cannot have taken the request. A 504 means the proxy gave up on a
+  // guest that may be running it, so it is fatal like any other non-2xx.
+  async #post<T>(
     target: { microvmId: string; endpoint: string },
-    request: {
-      path: string;
-      body: unknown;
-      timeoutMs: number;
-      abortSignal?: AbortSignal;
-    },
-  ): Promise<Warming<unknown>> {
+    request: SandboxGuestPost,
+    retry: GuestRetry,
+    parse: (text: string, headers: Headers) => T,
+  ): Promise<Warming<T>> {
+    const token = await this.#authToken(target.microvmId);
     const deadline = AbortSignal.timeout(request.timeoutMs + EXEC_GRACE_MS);
     let res: Response;
     try {
@@ -1263,9 +1308,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            [MICROVM_SHELL_AUTH_HEADER]: await this.#authToken(
-              target.microvmId,
-            ),
+            [MICROVM_SHELL_AUTH_HEADER]: token,
             "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
           },
           body: JSON.stringify(request.body),
@@ -1275,25 +1318,62 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         },
       );
     } catch (err) {
-      // A reset or drop can land after the guest took the request, so only a
-      // connection that never opened is safe to send again.
-      if (!(err instanceof Error && "code" in err)) throw err;
-      if (err.code !== "ConnectionRefused") throw err;
+      if (!retry.fetchError(err)) throw err;
 
-      return { retry: true, status: err.message };
+      return {
+        retry: true,
+        status: err instanceof Error ? err.message : "fetch error",
+      };
     }
-    if (res.status === 502 || res.status === 503) {
+    if (retry.warmingStatus && (res.status === 502 || res.status === 503)) {
       return { retry: true, status: res.status };
     }
-    const text = await res.text();
+    const text = await boundedText(res, request.path);
     if (!res.ok) {
       throw new Error(
         `MicroVM ${request.path} failed (${res.status}): ${text || res.statusText}`,
       );
     }
-    this.#reportBurst(target.microvmId, burstHeader(res.headers));
 
-    return { retry: false, response: JSON.parse(text) };
+    return { retry: false, response: parse(text, res.headers) };
+  }
+
+  // One GET of the guest's /healthz, given up at `readyBy`. Any answer but 2xx,
+  // or a failed fetch that is not the caller's abort, means the VM is not
+  // serving yet. It runs nothing.
+  async #ready(
+    target: { microvmId: string; endpoint: string },
+    readyBy: number,
+    abortSignal?: AbortSignal,
+  ): Promise<Warming<void>> {
+    const token = await this.#authToken(target.microvmId);
+    const deadline = AbortSignal.timeout(Math.max(1, readyBy - Date.now()));
+    try {
+      const res = await fetch(
+        `https://${target.endpoint.replace(/^https?:\/\//, "")}/healthz`,
+        {
+          headers: {
+            [MICROVM_SHELL_AUTH_HEADER]: token,
+            "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
+          },
+          signal: abortSignal
+            ? AbortSignal.any([deadline, abortSignal])
+            : deadline,
+        },
+      );
+      await res.body?.cancel();
+
+      return res.ok
+        ? { retry: false, response: undefined }
+        : { retry: true, status: res.status };
+    } catch (err) {
+      abortSignal?.throwIfAborted();
+
+      return {
+        retry: true,
+        status: err instanceof Error ? err.message : "fetch error",
+      };
+    }
   }
 
   async #authToken(
@@ -1580,6 +1660,35 @@ export async function microvmShellConnection(
   };
 }
 
+// A guest's answer as text, refused once it passes GUEST_RESPONSE_MAX_BYTES so
+// a runaway answer never sits whole in core's memory.
+async function boundedText(res: Response, path: string): Promise<string> {
+  const tooLarge = (): Error =>
+    new Error(
+      `MicroVM ${path} answered more than ${GUEST_RESPONSE_MAX_BYTES} bytes`,
+    );
+  if (Number(res.headers.get("content-length")) > GUEST_RESPONSE_MAX_BYTES) {
+    await res.body?.cancel();
+    throw tooLarge();
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > GUEST_RESPONSE_MAX_BYTES) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1679,23 +1788,18 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
   return `${scope}:${name}-${variant}`;
 }
 
-// The burst totals a non-exec route sends in its `x-sandbox-burst` header.
+// The burst totals a guest route sends in its `x-sandbox-burst` header. A
+// missing or malformed header bills nothing rather than failing the call.
 function burstHeader(headers: Headers): SandboxExecResponse["burst"] {
   const header = headers.get("x-sandbox-burst");
   if (!header) return undefined;
-  const totals: unknown = JSON.parse(header);
-  if (
-    typeof totals !== "object" ||
-    totals === null ||
-    !("vcpu_seconds" in totals) ||
-    !("gb_seconds" in totals) ||
-    typeof totals.vcpu_seconds !== "number" ||
-    typeof totals.gb_seconds !== "number"
-  ) {
+  try {
+    const totals = burstTotals.safeParse(JSON.parse(header));
+
+    return totals.success ? totals.data : undefined;
+  } catch {
     return undefined;
   }
-
-  return { vcpu_seconds: totals.vcpu_seconds, gb_seconds: totals.gb_seconds };
 }
 
 function microvmLocalNamespace(namespace: string): string {

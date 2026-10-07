@@ -128,13 +128,23 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-/** The exec timeout a run on `config` gets: its own, within the provider's limits. */
-export function sandboxTimeoutSeconds(config: SandboxExecutorConfig): number {
+/**
+ * The exec timeout a run on `config` gets: its own, within the provider's
+ * limits. One with none gets `defaultSeconds` (bash's default unless a caller,
+ * like the MCP relay, names its own), never past the provider's maximum.
+ */
+export function sandboxTimeoutSeconds(
+  config: SandboxExecutorConfig,
+  defaultSeconds?: number,
+): number {
   const limits = workspaceSandboxLimits(config.provider);
 
   return boundedInteger(
     config.timeout,
-    limits.defaultTimeoutSeconds,
+    Math.min(
+      defaultSeconds ?? limits.defaultTimeoutSeconds,
+      limits.maxTimeoutSeconds,
+    ),
     limits.maxTimeoutSeconds,
   );
 }
@@ -664,19 +674,23 @@ export async function workspaceMediaUrl(
 // multipart upload and nothing else, so the media link the other channels are
 // handed is worthless to them and the object has to be read here. Reading S3
 // directly rather than fetching our own /media route keeps it to one hop and
-// off the 25 MB the public route caps at.
+// off the 25 MB the public route caps at. `maxBytes` refuses a larger file
+// before reading it, as browse does for a screenshot.
 export async function workspaceMediaBytes(
   ws: ResolvedWorkspace,
   rel: string,
+  maxBytes?: number,
 ): Promise<Uint8Array> {
   const target = await resolveS3ReadTarget(
     workspaceReadContext(ws.config.storage, ws.namespace),
   );
-  const key = `${target.prefix}${rel}`;
 
-  return target.access
-    ? await readS3Bytes(target.bucket, key, target.access)
-    : await readS3Bytes(target.bucket, key);
+  return await readS3Bytes(
+    target.bucket,
+    `${target.prefix}${rel}`,
+    target.access,
+    maxBytes,
+  );
 }
 
 // Bash tool result text: stdout then stderr, with a trailing `[exit code N]`

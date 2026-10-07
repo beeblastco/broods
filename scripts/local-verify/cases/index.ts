@@ -3,16 +3,19 @@ import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
+import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { manifestSync } from "./manifest-sync.ts";
+import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
+import { r2Workspace } from "./r2-workspace.ts";
 import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
@@ -34,12 +37,15 @@ export const verifyCases: readonly VerifyCase[] = [
   ownBucketSandbox,
   sandboxImage,
   browserSandbox,
+  mcpCommand,
   customSandbox,
+  cloudflareSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,
   manifestSync,
   mcpHeaderEnv,
+  r2Workspace,
   workToolWebhooks,
   webhookHandshake,
   connections,

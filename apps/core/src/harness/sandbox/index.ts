@@ -5,6 +5,7 @@
  * type fails the build when the two drift.
  */
 
+import { CloudflareSandboxExecutor } from "./cloudflare-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
 import { HttpSandboxExecutor } from "./http-executor.ts";
@@ -29,6 +30,8 @@ type SandboxExecutorFactory = (
 ) => SandboxExecutor;
 
 const EXECUTORS: Record<SandboxProvider, SandboxExecutorFactory> = {
+  cloudflare: (config): SandboxExecutor =>
+    new CloudflareSandboxExecutor(config),
   custom: (config): SandboxExecutor => new HttpSandboxExecutor(config),
   daytona: (config): SandboxExecutor => new DaytonaSandboxExecutor(config),
   e2b: (config): SandboxExecutor => new E2BSandboxExecutor(config),
@@ -71,6 +74,14 @@ export function createSandboxExecutor(
       await assertSandboxBudget(accountId);
 
       return resume(request);
+    };
+  }
+  const postReserved = executor.postReserved?.bind(executor);
+  if (postReserved) {
+    executor.postReserved = async (request): Promise<unknown> => {
+      await assertSandboxBudget(accountId);
+
+      return postReserved(request);
     };
   }
   const prewarm = executor.prewarm?.bind(executor);

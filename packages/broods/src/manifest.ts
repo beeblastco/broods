@@ -260,7 +260,13 @@ export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
   for (const resource of manifest.resources) {
-    collectEnvRefNamesFromValue(resource.config, names, false);
+    // A workspace's R2 keys may be `${NAME}` refs, which its rules refuse
+    // anywhere else in it.
+    collectEnvRefNamesFromValue(
+      resource.config,
+      names,
+      resource.kind === "workspace",
+    );
     // `${NAME}` refs count where the sync resolves them: agent mcp entries,
     // which carry each server's headers and oauth, and the server's own headers.
     const config = resource.config as { headers?: unknown; mcp?: unknown };

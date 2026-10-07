@@ -1306,7 +1306,7 @@ paths:
       tags:
         - Environment Variables
       summary: Delete an account environment variable
-      description: Re-resolves source-backed agents; a now-missing placeholder remains literal in stored runtime config.
+      description: Re-resolves source-backed agents; a now-missing placeholder remains literal in stored runtime config. Refused while an R2 workspace's keys reference the variable.
       security:
         - BearerAuth: []
       parameters:
@@ -1322,6 +1322,12 @@ paths:
                 properties:
                   deleted:
                     type: boolean
+        "409":
+          description: An R2 workspace's `accessKeyId` or `secretAccessKey` still references the variable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/agents:
     post:
@@ -1686,6 +1692,7 @@ paths:
                             e2b,
                             daytona,
                             vercel,
+                            cloudflare,
                             machine,
                             custom,
                           ],
@@ -1735,7 +1742,8 @@ paths:
                     fallbackProvider:
                       {
                         type: string,
-                        enum: [sandbox, lambda, e2b, daytona, vercel],
+                        enum:
+                          [sandbox, lambda, e2b, daytona, vercel, cloudflare],
                         description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine or custom. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:
@@ -2029,8 +2037,9 @@ paths:
       summary: Mint a live terminal ticket
       description: >
         Mints a short-lived sealed ticket for an interactive PTY session on a persistent
-        sandbox reservation (self-hosted workdir `sandbox` and AWS MicroVM `lambda`
-        providers). A suspended instance is resumed first. The opaque `token` is passed
+        sandbox reservation (self-hosted workdir `sandbox`, AWS MicroVM `lambda` and
+        `cloudflare` providers). A suspended instance is resumed first; a stopped
+        Cloudflare Container answers 409 until a command starts it again. The opaque `token` is passed
         to the public gateway's terminal WebSocket at `websocketPath` as the
         `broods.token.<token>` subprotocol, which bridges the browser to the sandbox's
         in-guest TTY; the provider credential never reaches the client. A ticket opens
@@ -2075,7 +2084,7 @@ paths:
         "404": { description: No reserved instance for this reservation key }
         "409":
           {
-            description: "Provider does not support a live terminal, or the MicroVM was launched without shell ingress",
+            description: "Provider does not support a live terminal, the MicroVM was launched without shell ingress, or the Cloudflare Container is not running",
           }
 
   /v1/workspaces:
@@ -2101,12 +2110,12 @@ paths:
                   properties:
                     storage:
                       type: object
-                      description: Omit `bucket` for the managed bucket. A workspace that names its own `bucket` brings its own credentials, so `prefix` and `auth.type` `assumeRole` are then required. The request is rejected when `bucket` is a platform bucket, when `auth.roleArn` belongs to the platform AWS account, or when `endpoint` is not a public https URL.
+                      description: Omit `bucket` for the managed bucket. A workspace that names its own `bucket` brings its own credentials, so `prefix` and `auth.type` `assumeRole` (AWS) or `r2` (Cloudflare R2) are then required. The request is rejected when `bucket` is a platform bucket, when `auth.roleArn` belongs to the platform AWS account, or when `endpoint` is not a public https URL.
                       properties:
                         provider: { type: string, enum: [s3] }
                         bucket:
                           type: string
-                          description: A bucket you own. Requires `prefix` and `auth.type` `assumeRole`.
+                          description: A bucket you own. Requires `prefix` and `auth.type` `assumeRole` or `r2`.
                         region: { type: string }
                         endpoint:
                           type: string
@@ -2129,6 +2138,21 @@ paths:
                                 type: { type: string, enum: [assumeRole] }
                                 roleArn: { type: string }
                                 externalId: { type: string }
+                            - type: object
+                              required: [type, accessKeyId, secretAccessKey]
+                              description: "A Cloudflare R2 API token's S3 keys, each one `${NAME}` env reference, never a value. Requires `bucket`, `prefix` and `endpoint` set to `https://<account id>.r2.cloudflarestorage.com`; `region` must be omitted or `auto`. Each run gets one-hour R2 temporary credentials scoped to `bucket/prefix`."
+                              properties:
+                                type: { type: string, enum: [r2] }
+                                accessKeyId:
+                                  {
+                                    type: string,
+                                    example: "${R2_ACCESS_KEY_ID}",
+                                  }
+                                secretAccessKey:
+                                  {
+                                    type: string,
+                                    example: "${R2_SECRET_ACCESS_KEY}",
+                                  }
                     isolation:
                       type: string
                       enum: [conversation, agent]
@@ -2165,6 +2189,19 @@ paths:
                         type: assumeRole
                         roleArn: arn:aws:iam::111122223333:role/broods-mount
                         externalId: shared-secret
+              r2Bucket:
+                value:
+                  name: r2-files
+                  config:
+                    storage:
+                      provider: s3
+                      bucket: agent-files
+                      prefix: broods/
+                      endpoint: https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com
+                      auth:
+                        type: r2
+                        accessKeyId: "${R2_ACCESS_KEY_ID}"
+                        secretAccessKey: "${R2_SECRET_ACCESS_KEY}"
       responses:
         "201": { description: Workspace created }
         "400":
@@ -5671,7 +5708,7 @@ components:
           type: array
           items:
             type: string
-          description: As on create.
+          description: As on create. A PATCH that leaves it out keeps the stored command.
         bundle:
           type: string
           description: As on create. Replaces the hosted module.

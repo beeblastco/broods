@@ -15,6 +15,7 @@ import {
   listWorkspaceFiles,
   renameWorkspacePath,
   uploadWorkspaceFile,
+  withR2Credentials,
   type WorkspaceFileEntry,
   type WorkspaceFsRef,
 } from "../model/workspaceFs";
@@ -129,5 +130,5 @@ async function resolveWorkspace(
     );
   }
 
-  return workspace;
+  return await withR2Credentials(ctx, workspace);
 }
