@@ -15,7 +15,7 @@ function fetchStub(responses: Array<() => Response | Error>): {
   const urls: string[] = [];
   let call = 0;
   const impl = (async (input: RequestInfo | URL) => {
-    urls.push(String(input));
+    urls.push(input instanceof Request ? input.url : input.toString());
     const factory = responses[Math.min(call, responses.length - 1)];
     call += 1;
     const next = factory ? factory() : new Error("no response configured");

@@ -74,7 +74,7 @@ test("init skips the agent skill when no agent marker exists", async () => {
 
   expect(await runInit(cwd)).toBe(0);
 
-  await expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
+  expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
 });
 
 test("init leaves an existing skill install alone", async () => {
@@ -102,6 +102,6 @@ test("init refuses to write the skill through a symlink", async () => {
 
   expect(await runInit(cwd)).toBe(0);
 
-  await expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
-  await expect(stat(join(outside, "clobbered"))).rejects.toThrow();
+  expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
+  expect(stat(join(outside, "clobbered"))).rejects.toThrow();
 });

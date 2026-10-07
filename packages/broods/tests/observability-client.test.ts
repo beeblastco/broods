@@ -119,7 +119,7 @@ test("reports each reconnect and gives up after a minute down", async () => {
     await Bun.sleep(550);
     FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
 
-    await expect(result).rejects.toThrow(
+    expect(result).rejects.toThrow(
       "Gave up reconnecting to the live logs after 60 s. Last error: Observability WebSocket closed: gateway down",
     );
     expect(attempts).toHaveLength(1);
@@ -238,8 +238,8 @@ test("does not include the credential in connection errors", async () => {
     error: "Unauthorized",
   });
 
-  await expect(result).rejects.toThrow("Unauthorized");
-  await expect(result).rejects.not.toThrow("do-not-leak");
+  expect(result).rejects.toThrow("Unauthorized");
+  expect(result).rejects.not.toThrow("do-not-leak");
 });
 
 // Lets awaited credentials and queued socket events run while timers are fake.

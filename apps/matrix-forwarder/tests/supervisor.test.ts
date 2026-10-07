@@ -159,7 +159,7 @@ describe("reconcile", () => {
     globalThis.fetch = (async (
       input: string | URL | Request,
     ): Promise<Response> => {
-      posted.push(String(input));
+      posted.push(input instanceof Request ? input.url : input.toString());
 
       return new Response("", { status: 200 });
     }) as typeof fetch;
