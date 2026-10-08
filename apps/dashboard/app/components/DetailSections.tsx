@@ -1,6 +1,9 @@
+"use client";
+
 import { CopyButton, CopyRow } from "@/app/components/CopyButton";
-import { JsonView, type JsonValue } from "@/app/components/JsonView";
+import { JsonView } from "@/app/components/JsonView";
 import { cn } from "@/app/lib/utils";
+import type { JSONValue } from "convex/values";
 import { ChevronRight } from "lucide-react";
 import { useMemo } from "react";
 
@@ -77,15 +80,15 @@ export function DetailPayload({
       <div className="relative mx-2 mb-2">
         {json === undefined ? (
           // wrap-anywhere, unlike wrap-break-word, also lowers the min-content width.
-          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere py-1 pl-1 pr-8 text-xs leading-relaxed text-foreground/90">
+          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere py-1 pl-1 pr-11 text-xs leading-relaxed text-foreground/90">
             {value}
           </pre>
         ) : (
-          <div className="max-h-[50vh] overflow-auto rounded-md border border-border bg-code-background py-2 pl-1 pr-8 text-xs leading-relaxed">
+          <div className="max-h-[50vh] overflow-auto rounded-md border border-border bg-code-background py-2 pl-1 pr-11 text-xs leading-relaxed">
             <JsonView value={json} />
           </div>
         )}
-        <div className="absolute right-1 top-1">
+        <div className="absolute right-4 top-1">
           <CopyButton value={value} label={label.toLowerCase()} />
         </div>
       </div>
@@ -112,11 +115,11 @@ function SectionSummary({
 }
 
 /** The payload as JSON when it is an object or array, otherwise undefined. */
-function parseJson(text: string): JsonValue | undefined {
+function parseJson(text: string): JSONValue | undefined {
   const trimmed = text.trimStart();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
   try {
-    const parsed: JsonValue = JSON.parse(trimmed);
+    const parsed: JSONValue = JSON.parse(trimmed);
     return parsed;
   } catch {
     return undefined;

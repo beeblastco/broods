@@ -1,28 +1,26 @@
 "use client";
 
 import { cn } from "@/app/lib/utils";
+import type { JSONValue } from "convex/values";
 import { ChevronRight } from "lucide-react";
-import { useState } from "react";
-
-export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+import { memo, useState } from "react";
 
 /**
  * Read-only JSON tree for payload panes. Every object and array folds, and a
  * string with line breaks reads as a text block instead of escaped `\n`.
+ * Memoized: a live run re-renders the pane on every stream message.
  */
-export function JsonView({ value }: { value: JsonValue }): React.JSX.Element {
+export const JsonView = memo(function JsonView({
+  value,
+}: {
+  value: JSONValue;
+}): React.JSX.Element {
   return (
     <div className="font-mono text-code-foreground wrap-anywhere">
       <JsonNode value={value} last />
     </div>
   );
-}
+});
 
 /** One key and value; objects and arrays carry the fold toggle in the gutter. */
 function JsonNode({
@@ -31,7 +29,7 @@ function JsonNode({
   last,
 }: {
   name?: string;
-  value: JsonValue;
+  value: JSONValue;
   last: boolean;
 }): React.JSX.Element {
   const [open, setOpen] = useState(true);
@@ -54,8 +52,8 @@ function JsonNode({
   }
 
   const isArray = Array.isArray(value);
-  const entries: Array<[string, JsonValue]> = isArray
-    ? value.map((item, index): [string, JsonValue] => [String(index), item])
+  const entries: Array<[string, JSONValue]> = isArray
+    ? value.map((item, index): [string, JSONValue] => [String(index), item])
     : Object.entries(value);
   const [start, end] = isArray ? ["[", "]"] : ["{", "}"];
   if (entries.length === 0) {
@@ -76,7 +74,7 @@ function JsonNode({
         aria-expanded={open}
         aria-label={open ? "Fold" : "Unfold"}
         onClick={() => setOpen(!open)}
-        className="absolute left-0 top-1 cursor-pointer text-muted-foreground hover:text-code-foreground"
+        className="absolute left-0 top-1 cursor-pointer text-code-foreground/50 hover:text-code-foreground"
       >
         <ChevronRight
           className={cn("size-3 transition-transform", open && "rotate-90")}
@@ -104,7 +102,7 @@ function JsonNode({
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="cursor-pointer px-1 text-muted-foreground hover:text-code-foreground"
+            className="cursor-pointer px-1 text-code-foreground/50 hover:text-code-foreground"
           >
             {`… ${entries.length} ${isArray ? "items" : "keys"}`}
           </button>
