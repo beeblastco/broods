@@ -7,6 +7,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { readyStageDeployment } from "./agent/deployments";
 import { authKit } from "./auth";
 import {
   deleteAgentRow,
@@ -88,6 +89,10 @@ export const create = mutation({
         stageId,
         now,
       );
+    } else {
+      // Only an empty stage gets its key here: a clone's agents carry bot
+      // tokens, and a deployment would connect them beside the source's.
+      await readyStageDeployment(ctx, authUser, projectId, stageId);
     }
 
     await ctx.db.patch(projectId, { updatedAt: now });
@@ -150,6 +155,9 @@ export const ensureDefault = mutation({
         });
         changed = true;
       }
+    }
+    if (!development) {
+      await readyStageDeployment(ctx, authUser, projectId, developmentId);
     }
     if (changed) await ctx.db.patch(projectId, { updatedAt: now });
 

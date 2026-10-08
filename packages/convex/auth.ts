@@ -13,6 +13,11 @@ export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   },
 );
 
+/** The signed-in WorkOS user `authKit.getAuthUser` returns, once checked non-null. */
+export type AuthUser = NonNullable<
+  Awaited<ReturnType<typeof authKit.getAuthUser>>
+>;
+
 export const { authKitAction } = authKit.actions({
   authentication: async (_ctx, _action, response) => response.allow(),
   userRegistration: async (_ctx, _action, response) => response.allow(),
