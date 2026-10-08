@@ -5,16 +5,39 @@
  * onto its instance rows; edit them on the config, from the canvas or the CLI.
  */
 
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableFooter,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+  type HeadSort,
+} from "@/app/components/DataTable";
+import { EmptyState } from "@/app/components/EmptyState";
+import { SearchInput } from "@/app/components/SearchInput";
+import { StatusWord } from "@/app/components/StatusDot";
+import { Toolbar } from "@/app/components/Toolbar";
+import { parseQuery } from "@/app/lib/queryTokens";
+import { sortRows, type SortKey, type SortState } from "@/app/lib/tableState";
 import type { Doc } from "@broods/convex/_generated/dataModel";
+import { useMemo, useState } from "react";
 import {
   egressBadge,
   formatProvider,
-  instanceStatusDot,
+  INSTANCE_TONE,
   permissionModeBadge,
 } from "./sandboxFormat";
 
+// The `field:value` tokens the search box understands.
+const POLICY_QUERY_FIELDS = ["provider", "status"] as const;
+
+type Instance = Doc<"sandboxInstances">;
+type Column = "name" | "status" | "provider" | "policy";
+
 interface Props {
-  instances: Array<Doc<"sandboxInstances">>;
+  instances: Instance[];
   dimension: "security" | "networking";
 }
 
@@ -34,57 +57,122 @@ export function SandboxPolicyTable({
   dimension,
 }: Props): React.JSX.Element {
   const copy = COPY[dimension];
+  const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<SortState<Column>>({
+    column: "name",
+    dir: "asc",
+  });
+  const sortFor = (column: Column): HeadSort => ({
+    dir: sort.column === column ? sort.dir : null,
+    onSort: (dir) => setSort({ column: column, dir: dir }),
+  });
+  const query = useMemo(
+    () => parseQuery(filter, POLICY_QUERY_FIELDS),
+    [filter],
+  );
+  const shown = useMemo(() => {
+    const matching = instances.filter((instance) => {
+      const fieldsPass = query.fields.every(({ field, value }) =>
+        field === "provider"
+          ? formatProvider(instance.provider).toLowerCase().startsWith(value)
+          : instance.status.startsWith(value),
+      );
+      if (!fieldsPass) return false;
+      if (!query.text) return true;
+
+      return `${instance.name} ${instance.externalId}`
+        .toLowerCase()
+        .includes(query.text);
+    });
+
+    return sortRows(
+      matching,
+      (instance) => sortKey(sort.column, instance, dimension),
+      sort.dir,
+    );
+  }, [instances, query, sort, dimension]);
 
   if (instances.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
-        <p className="text-sm text-foreground">No running sandbox instances.</p>
-        <p className="mt-1 text-xs text-muted-foreground">{copy.note}</p>
-      </div>
+      <EmptyState title="No running sandbox instances." detail={copy.note} />
     );
   }
 
   return (
-    <>
-      <div className="overflow-x-auto rounded-lg border border-border bg-card">
-        <table className="w-full min-w-160 text-sm">
-          <thead className="bg-muted/40 text-xs text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <Toolbar className="border-b-0 px-0">
+        <SearchInput
+          value={filter}
+          onChange={setFilter}
+          fields={POLICY_QUERY_FIELDS}
+          placeholder="Search instances"
+        />
+      </Toolbar>
+      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-card">
+        <DataTable>
+          <DataTableHeader>
             <tr>
-              <th className="px-4 py-2 text-left font-medium">Name</th>
-              <th className="px-4 py-2 text-left font-medium">Provider</th>
-              <th className="px-4 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-left font-medium">{copy.column}</th>
+              <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={sortFor("status")}>Status</DataTableHead>
+              <DataTableHead sort={sortFor("provider")}>Provider</DataTableHead>
+              <DataTableHead sort={sortFor("policy")}>
+                {copy.column}
+              </DataTableHead>
             </tr>
-          </thead>
-          <tbody>
-            {instances.map((instance) => (
-              <tr key={instance._id} className="border-t border-border">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-foreground">
-                    {instance.name}
-                  </div>
-                  <div className="font-mono text-xs text-muted-foreground">
-                    {instance.externalId}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-xs">
+          </DataTableHeader>
+          <DataTableBody>
+            {shown.map((instance) => (
+              <DataTableRow key={instance._id}>
+                <DataTableCell className="max-w-64 truncate font-medium">
+                  {instance.name}
+                </DataTableCell>
+                <DataTableCell>
+                  <StatusWord tone={INSTANCE_TONE[instance.status]}>
+                    {instance.status}
+                  </StatusWord>
+                </DataTableCell>
+                <DataTableCell muted>
                   {formatProvider(instance.provider)}
-                </td>
-                <td className="px-4 py-2.5">
-                  {instanceStatusDot(instance.status)}
-                </td>
-                <td className="px-4 py-2.5">
+                </DataTableCell>
+                <DataTableCell>
                   {dimension === "security"
                     ? permissionModeBadge(instance.permissionMode)
                     : egressBadge(instance.egress)}
-                </td>
-              </tr>
+                </DataTableCell>
+              </DataTableRow>
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
+        {shown.length === 0 && (
+          <EmptyState title="No instances match the current filters." />
+        )}
+        <DataTableFooter>
+          {shown.length === instances.length
+            ? `${instances.length} instances`
+            : `${shown.length} of ${instances.length} instances`}
+        </DataTableFooter>
       </div>
-
       <p className="mt-2 text-xs text-muted-foreground">{copy.note}</p>
-    </>
+    </div>
   );
+}
+
+/** What a column sorts an instance by; the policy column reads the dimension's field. */
+function sortKey(
+  column: Column,
+  instance: Instance,
+  dimension: Props["dimension"],
+): SortKey {
+  switch (column) {
+    case "name":
+      return instance.name;
+    case "status":
+      return instance.status;
+    case "provider":
+      return formatProvider(instance.provider);
+    case "policy":
+      return dimension === "security"
+        ? (instance.permissionMode ?? null)
+        : (instance.egress ?? null);
+  }
 }

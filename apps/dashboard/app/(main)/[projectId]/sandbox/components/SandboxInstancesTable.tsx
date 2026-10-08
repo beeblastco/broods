@@ -1,13 +1,22 @@
 "use client";
 
-import { DetailSplit } from "@/app/components/DetailSplit";
-import { Button } from "@/app/components/ui/button";
-import { useNow } from "@/app/hooks/useNow";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
-  machineState,
-  type MachineConnection,
-} from "@/app/lib/machineConnection";
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+  type HeadFilter,
+  type HeadSort,
+} from "@/app/components/DataTable";
+import { DetailSplit } from "@/app/components/DetailSplit";
+import { EmptyState } from "@/app/components/EmptyState";
+import { LoadMore } from "@/app/components/LoadMore";
+import { SearchInput } from "@/app/components/SearchInput";
+import { StatusWord } from "@/app/components/StatusDot";
+import { FilterButton, Toolbar } from "@/app/components/Toolbar";
+import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -16,26 +25,31 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
-import { Input } from "@/app/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/app/components/ui/select";
 import { Switch } from "@/app/components/ui/switch";
+import { Who } from "@/app/components/Who";
+import { useNow } from "@/app/hooks/useNow";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { useRemembered } from "@/app/hooks/useRemembered";
+import { toErrorMessage } from "@/app/lib/errors";
+import {
+  MACHINE_STATE_LABEL,
+  MACHINE_TONE,
+  machineState,
+  type MachineConnection,
+} from "@/app/lib/machineConnection";
+import { parseQuery } from "@/app/lib/queryTokens";
+import {
+  clearField,
+  sortRows,
+  toggleToken,
+  tokenValues,
+  type SortDir,
+  type SortKey,
+  type SortState,
+} from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  RefreshCw,
-  Search,
-  X,
-} from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -44,44 +58,59 @@ import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   dashboardHref,
   formatProvider,
-  instanceStatusDot,
-  machineStatusDot,
+  INSTANCE_TONE,
   relativeTime,
   SpecsValue,
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
-import { toErrorMessage } from "@/app/lib/errors";
+
+// The `field:value` tokens the search box understands.
+const QUERY_FIELDS = ["provider", "status", "agent"] as const;
+
+// Rows shown before the footer offers more; the live query holds them all.
+const PAGE_SIZE = 50;
+
+// Eight columns of short text; below this the detail panel would wrap them.
+const TABLE_MIN_WIDTH = 760;
+
+type Instance = Doc<"sandboxInstances">;
+type QueryField = (typeof QUERY_FIELDS)[number];
+type Column =
+  | "name"
+  | "status"
+  | "provider"
+  | "size"
+  | "agent"
+  | "lastUsed"
+  | "created"
+  | "running";
+
+/** One row of the table: a connected computer, or a cloud instance. */
+type TableRow =
+  | { kind: "machine"; machine: MachineConnection }
+  | { kind: "instance"; instance: Instance };
 
 interface Props {
-  instances: Array<Doc<"sandboxInstances">>;
+  instances: Instance[];
   /** The stage's computers that connected through `broods machine`. */
   machines: MachineConnection[];
+  /** The project's agents, so an instance's agent reads as a name. */
+  agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
   /** Stage-scoped observability WS inputs, handed to the panel's Logs tab. */
   observability: SandboxObservabilityScope | null;
 }
 
-/** One row of the table: a connected computer, or a cloud instance. */
-type TableRow =
-  | { kind: "machine"; machine: MachineConnection }
-  | { kind: "instance"; instance: Doc<"sandboxInstances"> };
-
-/** Status filter values; "all" disables the status predicate. */
-const STATUS_FILTERS: Array<{ value: string; label: string }> = [
-  { value: "all", label: "All statuses" },
-  { value: "running", label: "Running" },
-  { value: "suspending", label: "Suspending" },
-  { value: "suspended", label: "Suspended" },
-  { value: "terminating", label: "Terminating" },
-  { value: "error", label: "Error" },
-];
-
-const PAGE_SIZE = 8;
-
+/**
+ * The stage's sandboxes and computers as one list: a search box with sort
+ * and filter on every header, one column per fact, a running switch, and a
+ * detail panel for the selected row.
+ */
 export function SandboxInstancesTable({
   instances,
   machines,
+  agents,
   projectId,
   observability,
 }: Props): React.JSX.Element {
@@ -89,7 +118,6 @@ export function SandboxInstancesTable({
   const suspend = useAction(api.sandbox.public.suspendSandbox);
   const resume = useAction(api.sandbox.public.resumeSandbox);
   const refresh = useAction(api.sandbox.public.refreshSandbox);
-  const searchParams = useSearchParams();
   const now = useNow();
 
   // Only the id is held, so the open panel follows the live row instead of a
@@ -103,87 +131,105 @@ export function SandboxInstancesTable({
   const selectedMachine = machines.find(
     (machine) => machine._id === selectedMachineId,
   );
-  const [confirming, setConfirming] = useState<Doc<"sandboxInstances"> | null>(
-    null,
-  );
+  const [confirming, setConfirming] = useState<Instance | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const [page, setPage] = useState(0);
+  const [filter, setFilter] = useRemembered("sandbox.filter", "");
+  const [sort, setSort] = useRemembered<SortState<Column>>("sandbox.sort", {
+    column: "lastUsed",
+    dir: "desc",
+  });
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const refreshedPages = useRef(new Set<string>());
 
-  // Filter by name/externalId/provider substring + status, then paginate. The
-  // live query returns the whole (small) list, so filtering client-side is fine.
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
+  const agentNameById = useMemo(
+    () => new Map(agents.map((agent) => [agent._id as string, agent.name])),
+    [agents],
+  );
+  const query = useMemo(() => parseQuery(filter, QUERY_FIELDS), [filter]);
 
-    return instances.filter((instance) => {
-      if (status !== "all" && instance.status !== status) return false;
-      if (!needle) return true;
-
-      return (
-        instance.name.toLowerCase().includes(needle) ||
-        instance.externalId.toLowerCase().includes(needle) ||
-        instance.provider.toLowerCase().includes(needle) ||
-        (instance.conversationKey?.toLowerCase().includes(needle) ?? false) ||
-        (instance.lastUsedTraceId?.toLowerCase().includes(needle) ?? false)
-      );
-    });
-  }, [instances, search, status]);
-
-  // A computer has no lifecycle status, so any status filter hides it.
-  const filteredMachines = useMemo(() => {
-    if (status !== "all") return [];
-    const needle = search.trim().toLowerCase();
-
-    return machines.filter(
-      (machine) =>
-        machine.name.toLowerCase().includes(needle) ||
-        (machine.hostname?.toLowerCase().includes(needle) ?? false),
-    );
-  }, [machines, search, status]);
-
-  // Computers sort above the instances and paginate with them, so the count
-  // under the table matches what is on screen.
-  const rows = useMemo(
-    (): TableRow[] => [
-      ...filteredMachines.map((machine): TableRow => ({
+  // Computers and instances filter and sort as one list, so the count under
+  // the table matches what is on screen.
+  const rows = useMemo((): TableRow[] => {
+    const all: TableRow[] = [
+      ...machines.map((machine): TableRow => ({
         kind: "machine",
         machine: machine,
       })),
-      ...filtered.map((instance): TableRow => ({
+      ...instances.map((instance): TableRow => ({
         kind: "instance",
         instance: instance,
       })),
-    ],
-    [filtered, filteredMachines],
-  );
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageRows = useMemo(
-    () => rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [rows, safePage],
-  );
-  // Only instances have a lifecycle, so the refresh controls work off these.
-  const pageInstances = useMemo(
+    ];
+    const matching = all.filter((row) => {
+      const fieldsPass = query.fields.every(({ field, value }) =>
+        matchesField(field, value, row, agentNameById, now),
+      );
+      if (!fieldsPass) return false;
+      if (!query.text) return true;
+
+      return searchText(row).includes(query.text);
+    });
+
+    return sortRows(
+      matching,
+      (row) => sortKey(sort.column, row, agentNameById, now),
+      sort.dir,
+    );
+  }, [machines, instances, query, sort, agentNameById, now]);
+  const visible = rows.slice(0, visibleCount);
+  const visibleInstances = useMemo(
     () =>
-      pageRows.flatMap((row) =>
-        row.kind === "instance" ? [row.instance] : [],
-      ),
-    [pageRows],
+      visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
+    [visible],
   );
-  const hasFilters = search.trim() !== "" || status !== "all";
-  const refreshKey = pageInstances
+  const refreshKey = visibleInstances
     .filter(controllable)
     .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
     .join("|");
 
+  const sortFor = (column: Column): HeadSort => ({
+    dir: sort.column === column ? sort.dir : null,
+    onSort: (dir: SortDir) => setSort({ column: column, dir: dir }),
+  });
+  const filterFor = (field: QueryField, values: string[]): HeadFilter => ({
+    field: field,
+    values: values.map((value) => ({ value: value, label: value })),
+    active: tokenValues(filter, field),
+    onToggle: (value) => setFilter(toggleToken(filter, field, value)),
+    onClear: () => setFilter(clearField(filter, field)),
+  });
+  const filters = {
+    provider: filterFor("provider", [
+      ...new Set([
+        ...(machines.length > 0 ? [formatProvider("machine")] : []),
+        ...instances.map((instance) => formatProvider(instance.provider)),
+      ]),
+    ]),
+    status: filterFor("status", [
+      ...new Set([
+        ...machines.map((machine) =>
+          MACHINE_STATE_LABEL[machineState(machine, now)].toLowerCase(),
+        ),
+        ...instances.map((instance) => instance.status),
+      ]),
+    ]),
+    agent: filterFor("agent", [
+      ...new Set(
+        instances.flatMap((instance) =>
+          instance.agentId
+            ? [agentName(agentNameById, instance.agentId).toLowerCase()]
+            : [],
+        ),
+      ),
+    ]),
+  };
+
   // Resuming is cheap and reversible, so it runs straight from the toggle; suspending
   // discards the instance's live state and goes through `confirming` first.
   async function toggle(
-    instance: Doc<"sandboxInstances">,
+    instance: Instance,
     nextRunning: boolean,
   ): Promise<void> {
     if (!controllable(instance)) return;
@@ -204,7 +250,7 @@ export function SandboxInstancesTable({
   }
 
   const refreshVisible = useCallback(async (): Promise<void> => {
-    const targets = pageInstances.filter(controllable);
+    const targets = visibleInstances.filter(controllable);
     if (targets.length === 0) return;
     setRefreshing(true);
     setError(null);
@@ -222,7 +268,7 @@ export function SandboxInstancesTable({
     } finally {
       setRefreshing(false);
     }
-  }, [pageInstances, refresh]);
+  }, [visibleInstances, refresh]);
 
   useEffect(() => {
     if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
@@ -230,107 +276,46 @@ export function SandboxInstancesTable({
     void refreshVisible();
   }, [refreshKey, refreshVisible]);
 
-  /** Resets pagination whenever a filter changes so results stay visible. */
-  function setSearchAndReset(value: string): void {
-    setSearch(value);
-    setPage(0);
-  }
-
-  function setStatusAndReset(value: string): void {
-    setStatus(value);
-    setPage(0);
-  }
-
   if (instances.length === 0 && machines.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
-        <p className="text-sm text-foreground">No running sandbox instances.</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Run an agent against a sandbox and it appears here live. Per-call
-          instances last the length of the call, reserved ones until suspended.
-          A computer running <code>broods machine</code> shows up here too.
-        </p>
-      </div>
+      <EmptyState
+        title="No running sandbox instances."
+        detail="Run an agent against a sandbox and it appears here. A computer running broods machine shows up here too."
+      />
     );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-50 flex-1">
-          <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="text"
-            value={search}
-            onChange={(event) => setSearchAndReset(event.target.value)}
-            placeholder="Search name, id, provider…"
-            aria-label="Search instances"
-            className="h-8 pl-8 text-xs"
-          />
-        </div>
-
-        <Select
-          items={STATUS_FILTERS}
-          value={status}
-          onValueChange={(value) => {
-            if (value !== null) {
-              setStatusAndReset(value);
-            }
-          }}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="Filter by status"
-            className="w-36 cursor-pointer text-xs"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUS_FILTERS.map((option) => (
-              <SelectItem
-                key={option.value}
-                value={option.value}
-                className="cursor-pointer text-xs"
-              >
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
+      <Toolbar className="border-b-0 px-0">
+        <SearchInput
+          value={filter}
+          onChange={setFilter}
+          fields={QUERY_FIELDS}
+          placeholder="Search sandboxes"
+        />
+        <FilterButton
+          columns={[
+            { label: "Provider", filter: filters.provider },
+            { label: "Status", filter: filters.status },
+            { label: "Agent", filter: filters.agent },
+          ]}
+        />
         <Button
           type="button"
           variant="outline"
           size="sm"
+          tone="muted"
           onClick={refreshVisible}
-          disabled={refreshing || !pageInstances.some(controllable)}
+          disabled={refreshing || !visibleInstances.some(controllable)}
           className="cursor-pointer"
         >
-          <RefreshCw className="size-3.5" />
-          {refreshing ? "Refreshing…" : "Refresh visible"}
+          {refreshing ? "Refreshing…" : "Refresh"}
         </Button>
-
-        {hasFilters && (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            onClick={() => {
-              setSearch("");
-              setStatus("all");
-              setPage(0);
-            }}
-            aria-label="Clear filters"
-            title="Clear filters"
-            tone="muted"
-            className="cursor-pointer"
-          >
-            <X className="size-3.5" />
-          </Button>
-        )}
-      </div>
+      </Toolbar>
 
       <DetailSplit
+        tableMinWidth={TABLE_MIN_WIDTH}
         detail={
           selected ? (
             <SandboxInstancePanel
@@ -353,200 +338,87 @@ export function SandboxInstancesTable({
           )
         }
       >
-        <table className="w-full text-sm whitespace-nowrap">
-          <thead className="bg-muted/40 text-xs text-muted-foreground">
+        <DataTable>
+          <DataTableHeader>
             <tr>
-              <th className="px-4 py-2 text-left font-medium">Name</th>
-              <th className="px-4 py-2 text-left font-medium">Provider</th>
-              <th className="px-4 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-left font-medium">Size</th>
-              <th className="px-4 py-2 text-left font-medium">Image</th>
-              <th className="px-4 py-2 text-left font-medium">Trace</th>
-              <th className="px-4 py-2 text-left font-medium">Created</th>
-              <th className="px-4 py-2 text-left font-medium">Last used</th>
-              <th className="px-4 py-2 text-right font-medium">Running</th>
+              <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={sortFor("status")} filter={filters.status}>
+                Status
+              </DataTableHead>
+              <DataTableHead
+                sort={sortFor("provider")}
+                filter={filters.provider}
+              >
+                Provider
+              </DataTableHead>
+              <DataTableHead sort={sortFor("size")}>Size</DataTableHead>
+              <DataTableHead sort={sortFor("agent")} filter={filters.agent}>
+                Agent
+              </DataTableHead>
+              <DataTableHead
+                sort={{ ...sortFor("lastUsed"), words: TIME_WORDS }}
+              >
+                Last used
+              </DataTableHead>
+              <DataTableHead
+                sort={{ ...sortFor("created"), words: TIME_WORDS }}
+              >
+                Created
+              </DataTableHead>
+              <DataTableHead align="right" sort={sortFor("running")}>
+                Running
+              </DataTableHead>
             </tr>
-          </thead>
-          <tbody>
-            {pageRows.map((row) => {
-              if (row.kind === "machine") {
-                return (
-                  <MachineRow
-                    key={row.machine._id}
-                    machine={row.machine}
-                    now={now}
-                    onSelect={() => {
-                      setSelectedId(null);
-                      setSelectedMachineId(row.machine._id);
-                    }}
-                  />
-                );
-              }
-              const instance = row.instance;
-              const running = instance.status === "running";
-              const toggleable =
-                controllable(instance) &&
-                (instance.status === "running" ||
-                  instance.status === "suspended") &&
-                pendingId !== instance._id;
-
-              return (
-                <tr
-                  key={instance._id}
-                  className="cursor-pointer border-t border-border hover:bg-muted/30"
-                  onClick={() => {
-                    setSelectedMachineId(null);
-                    setSelectedId(instance._id);
+          </DataTableHeader>
+          <DataTableBody>
+            {visible.map((row) =>
+              row.kind === "machine" ? (
+                <MachineRow
+                  key={row.machine._id}
+                  machine={row.machine}
+                  now={now}
+                  selected={selectedMachineId === row.machine._id}
+                  onSelect={() => {
+                    setSelectedId(null);
+                    setSelectedMachineId(row.machine._id);
                   }}
-                >
-                  <td className="px-4 py-2.5">
-                    <div className="font-medium text-foreground">
-                      {instance.name}
-                    </div>
-                    <div className="font-mono text-xs text-muted-foreground">
-                      {instance.externalId}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs">
-                    {instance.ephemeral
-                      ? `${formatProvider(instance.provider)} · per-call`
-                      : formatProvider(instance.provider)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {instanceStatusDot(instance.status)}
-                    {instance.errorMessage && (
-                      <div
-                        className="mt-1 max-w-xs truncate text-xs text-destructive"
-                        title={instance.errorMessage}
-                      >
-                        {instance.errorMessage}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    <SpecsValue
-                      specs={instance.specs}
-                      verified={instance.specsVerified === true}
-                      provider={instance.provider}
-                    />
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                    {instance.snapshotId ?? "—"}
-                  </td>
-                  <td
-                    className="px-4 py-2.5"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {instance.lastUsedTraceId || instance.createdByTraceId ? (
-                      <Button
-                        nativeButton={false}
-                        render={
-                          <Link
-                            href={dashboardHref(
-                              projectId,
-                              searchParams.get("stage"),
-                              {
-                                tab: "tracing",
-                                trace:
-                                  instance.lastUsedTraceId ??
-                                  instance.createdByTraceId!,
-                              },
-                            )}
-                            draggable={false}
-                          />
-                        }
-                        variant="outline"
-                        size="xs"
-                        className="cursor-pointer"
-                      >
-                        <ExternalLink className="size-3" />
-                        Trace
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.createdAt, now)}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.lastUsedAt, now)}
-                  </td>
-                  <td
-                    className="px-4 py-2.5 text-right"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Switch
-                      checked={running}
-                      disabled={!toggleable || !canWrite}
-                      className="cursor-pointer"
-                      onCheckedChange={(next) =>
-                        next ? toggle(instance, true) : setConfirming(instance)
-                      }
-                      aria-label={running ? "Suspend" : "Resume"}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-            {pageRows.length === 0 && (
-              <tr>
-                <td
-                  colSpan={9}
-                  className="px-4 py-10 text-center text-xs text-muted-foreground"
-                >
-                  Nothing matches the current filters.
-                </td>
-              </tr>
+                />
+              ) : (
+                <InstanceRow
+                  key={row.instance._id}
+                  instance={row.instance}
+                  agentNameById={agentNameById}
+                  projectId={projectId}
+                  now={now}
+                  selected={selectedId === row.instance._id}
+                  canToggle={canWrite && pendingId !== row.instance._id}
+                  onSelect={() => {
+                    setSelectedMachineId(null);
+                    setSelectedId(row.instance._id);
+                  }}
+                  onToggle={(next) =>
+                    next
+                      ? toggle(row.instance, true)
+                      : setConfirming(row.instance)
+                  }
+                />
+              ),
             )}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
+        {rows.length === 0 && (
+          <EmptyState title="Nothing matches the current filters." />
+        )}
+        <LoadMore
+          shown={visible.length}
+          total={rows.length}
+          pageSize={PAGE_SIZE}
+          remaining={rows.length - visible.length}
+          onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
+        />
       </DetailSplit>
 
-      {rows.length > PAGE_SIZE && (
-        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            {safePage * PAGE_SIZE + 1}-
-            {Math.min((safePage + 1) * PAGE_SIZE, rows.length)} of {rows.length}
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              onClick={() => setPage(safePage - 1)}
-              disabled={safePage === 0}
-              aria-label="Previous page"
-              className="cursor-pointer"
-            >
-              <ChevronLeft className="size-3.5" />
-            </Button>
-            <span>
-              {safePage + 1} / {pageCount}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              onClick={() => setPage(safePage + 1)}
-              disabled={safePage >= pageCount - 1}
-              aria-label="Next page"
-              className="cursor-pointer"
-            >
-              <ChevronRight className="size-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-
-      {instances.length > 0 && !instances.some(controllable) && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          Per-call instances, and instances reserved before the registry linked
-          their config, can be viewed but not controlled here.
-        </p>
-      )}
 
       <Dialog
         open={confirming !== null}
@@ -558,17 +430,16 @@ export function SandboxInstancesTable({
           <DialogHeader>
             <DialogTitle>Suspend {confirming?.name}?</DialogTitle>
             <DialogDescription>
-              Suspending frees the sandbox&apos;s compute. Running processes are
-              stopped and any in-flight agent turn or background job on this
-              instance is dropped, and it comes back reset. Files on the
-              workspace disk are kept, and you can resume once it has fully
-              suspended.
+              Suspending frees the sandbox&apos;s compute. Running processes
+              stop, anything in flight on it is dropped, and it comes back
+              reset. Files on the workspace disk are kept.
             </DialogDescription>
           </DialogHeader>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <DialogFooter>
             <Button
               variant="ghost"
+              size="sm"
               className="cursor-pointer"
               disabled={pendingId !== null}
               onClick={() => setConfirming(null)}
@@ -577,6 +448,7 @@ export function SandboxInstancesTable({
             </Button>
             <Button
               variant="destructive"
+              size="sm"
               className="cursor-pointer"
               disabled={pendingId !== null}
               onClick={() => confirming && toggle(confirming, false)}
@@ -590,54 +462,241 @@ export function SandboxInstancesTable({
   );
 }
 
-/** Lifecycle actions apply only to reserved, non-ephemeral instances. */
-function controllable(
-  instance: Doc<"sandboxInstances">,
-): instance is Doc<"sandboxInstances"> & {
-  sandboxConfigId: Id<"sandboxConfigs">;
-} {
-  return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
+// Sort words for the two time columns.
+const TIME_WORDS: [string, string] = ["Oldest first", "Newest first"];
+
+/** A cloud instance: its facts, a trace link on hover, and the running switch. */
+function InstanceRow({
+  instance,
+  agentNameById,
+  projectId,
+  now,
+  selected,
+  canToggle,
+  onSelect,
+  onToggle,
+}: {
+  instance: Instance;
+  agentNameById: Map<string, string>;
+  projectId: Id<"projects">;
+  now: number;
+  selected: boolean;
+  canToggle: boolean;
+  onSelect: () => void;
+  onToggle: (next: boolean) => void;
+}): React.JSX.Element {
+  const searchParams = useSearchParams();
+  const running = instance.status === "running";
+  const toggleable =
+    canToggle &&
+    controllable(instance) &&
+    (instance.status === "running" || instance.status === "suspended");
+  const traceId = instance.lastUsedTraceId ?? instance.createdByTraceId;
+
+  return (
+    <DataTableRow selected={selected} onClick={onSelect} className="group/row">
+      <DataTableCell className="max-w-56 truncate font-medium">
+        {instance.name}
+      </DataTableCell>
+      <DataTableCell>
+        <StatusWord tone={INSTANCE_TONE[instance.status]}>
+          {instance.status}
+        </StatusWord>
+        {instance.errorMessage && (
+          <div
+            className="max-w-56 truncate text-2xs text-muted-foreground"
+            title={instance.errorMessage}
+          >
+            {instance.errorMessage}
+          </div>
+        )}
+      </DataTableCell>
+      <DataTableCell>
+        {formatProvider(instance.provider)}
+        {instance.ephemeral && (
+          <span className="text-muted-foreground"> per call</span>
+        )}
+      </DataTableCell>
+      <DataTableCell muted>
+        <SpecsValue
+          specs={instance.specs}
+          verified={instance.specsVerified === true}
+          provider={instance.provider}
+        />
+      </DataTableCell>
+      <DataTableCell>
+        {instance.agentId ? (
+          <Who
+            actor={{
+              kind: "agent",
+              name: agentName(agentNameById, instance.agentId),
+              agentId: instance.agentId as Id<"agents">,
+            }}
+            projectId={projectId}
+          />
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </DataTableCell>
+      <DataTableCell muted>
+        <span className="inline-flex items-center gap-2">
+          {relativeTime(instance.lastUsedAt, now)}
+          {traceId && (
+            <span className="opacity-0 group-hover/row:opacity-100">
+              <Link
+                href={dashboardHref(projectId, searchParams.get("stage"), {
+                  tab: "tracing",
+                  trace: traceId,
+                })}
+                onClick={(event) => event.stopPropagation()}
+                className="cursor-pointer text-foreground underline-offset-3 hover:underline"
+              >
+                Trace
+              </Link>
+            </span>
+          )}
+        </span>
+      </DataTableCell>
+      <DataTableCell muted>
+        {relativeTime(instance.createdAt, now)}
+      </DataTableCell>
+      <DataTableCell align="right" onClick={(event) => event.stopPropagation()}>
+        <Switch
+          checked={running}
+          disabled={!toggleable}
+          className="cursor-pointer"
+          onCheckedChange={onToggle}
+          aria-label={running ? "Suspend" : "Resume"}
+        />
+      </DataTableCell>
+    </DataTableRow>
+  );
 }
 
-/** A computer has no image, trace or lifecycle switch to show; its size is what its daemon reports. */
+/** A computer: its reported size and when it was seen; it has no agent, trace or switch. */
 function MachineRow({
   machine,
   now,
+  selected,
   onSelect,
 }: {
   machine: MachineConnection;
   now: number;
+  selected: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
+  const state = machineState(machine, now);
+
   return (
-    <tr
-      className="cursor-pointer border-t border-border hover:bg-muted/30"
-      onClick={onSelect}
-    >
-      <td className="px-4 py-2.5">
-        <div className="font-medium text-foreground">{machine.name}</div>
-        <div className="font-mono text-xs text-muted-foreground">
-          {machine.hostname ?? "—"}
-        </div>
-      </td>
-      <td className="px-4 py-2.5 text-xs">{formatProvider("machine")}</td>
-      <td className="px-4 py-2.5">
-        {machineStatusDot(machineState(machine, now))}
-      </td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+    <DataTableRow selected={selected} onClick={onSelect}>
+      <DataTableCell className="max-w-56 truncate font-medium">
+        {machine.name}
+      </DataTableCell>
+      <DataTableCell>
+        <StatusWord tone={MACHINE_TONE[state]}>
+          {MACHINE_STATE_LABEL[state].toLowerCase()}
+        </StatusWord>
+      </DataTableCell>
+      <DataTableCell>{formatProvider("machine")}</DataTableCell>
+      <DataTableCell muted>
         <SpecsValue specs={machine.specs} verified provider="machine" />
-      </td>
-      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">
-        {relativeTime(machine.connectedAt, now)}
-      </td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+      </DataTableCell>
+      <DataTableCell muted>—</DataTableCell>
+      <DataTableCell muted>
         {relativeTime(machine.lastSeenAt, now)}
-      </td>
-      <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+      </DataTableCell>
+      <DataTableCell muted>
+        {relativeTime(machine.connectedAt, now)}
+      </DataTableCell>
+      <DataTableCell align="right" muted>
         —
-      </td>
-    </tr>
+      </DataTableCell>
+    </DataTableRow>
   );
+}
+
+/** Lifecycle actions apply only to reserved, non-ephemeral instances. */
+function controllable(
+  instance: Instance,
+): instance is Instance & { sandboxConfigId: Id<"sandboxConfigs"> } {
+  return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
+}
+
+/** The free text a row answers to: name, ids, conversation and trace. */
+function searchText(row: TableRow): string {
+  if (row.kind === "machine") {
+    return `${row.machine.name} ${row.machine.hostname ?? ""}`.toLowerCase();
+  }
+  const instance = row.instance;
+
+  return `${instance.name} ${instance.externalId} ${instance.conversationKey ?? ""} ${instance.lastUsedTraceId ?? ""}`.toLowerCase();
+}
+
+/** Whether a `field:value` token matches the row. A computer has no agent. */
+function matchesField(
+  field: QueryField,
+  value: string,
+  row: TableRow,
+  names: Map<string, string>,
+  now: number,
+): boolean {
+  if (field === "provider") return providerOf(row).toLowerCase() === value;
+  if (field === "status") return statusOf(row, now).toLowerCase() === value;
+  if (row.kind === "machine" || !row.instance.agentId) return false;
+
+  return agentName(names, row.instance.agentId).toLowerCase() === value;
+}
+
+/** What a column sorts a row by. */
+function sortKey(
+  column: Column,
+  row: TableRow,
+  names: Map<string, string>,
+  now: number,
+): SortKey {
+  switch (column) {
+    case "name":
+      return row.kind === "machine" ? row.machine.name : row.instance.name;
+    case "status":
+      return statusOf(row, now);
+    case "provider":
+      return providerOf(row);
+    case "size":
+      return row.kind === "machine"
+        ? (row.machine.specs?.memoryMb ?? null)
+        : row.instance.specs.memoryMb;
+    case "agent":
+      return row.kind === "instance" && row.instance.agentId
+        ? agentName(names, row.instance.agentId)
+        : null;
+    case "lastUsed":
+      return row.kind === "machine"
+        ? row.machine.lastSeenAt
+        : row.instance.lastUsedAt;
+    case "created":
+      return row.kind === "machine"
+        ? row.machine.connectedAt
+        : row.instance.createdAt;
+    case "running":
+      return row.kind === "instance" && row.instance.status === "running"
+        ? 1
+        : 0;
+  }
+}
+
+function providerOf(row: TableRow): string {
+  return row.kind === "machine"
+    ? formatProvider("machine")
+    : formatProvider(row.instance.provider);
+}
+
+function statusOf(row: TableRow, now: number): string {
+  return row.kind === "machine"
+    ? MACHINE_STATE_LABEL[machineState(row.machine, now)]
+    : row.instance.status;
+}
+
+/** The name of the agent an instance ran; a deleted agent reads as unknown. */
+function agentName(names: Map<string, string>, agentId: string): string {
+  return names.get(agentId) ?? "(unknown)";
 }
