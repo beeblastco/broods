@@ -8,10 +8,17 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
-import { requireDashboardPermission } from "../model/access";
+import {
+  activePolicies,
+  dashboardPermissions,
+  memberAccess,
+  requireDashboardPermission,
+} from "../model/access";
 import { actorsOf, actorValidator } from "../model/actor";
+import { ClientError } from "../model/clientError";
 import {
   getOrgMembership,
+  orgRoleMeets,
   requireOrgMember,
   userByAuthId,
 } from "../model/ownership/org";
@@ -137,7 +144,7 @@ export const add = mutation({
     const callerMembership = await requireOrgMember(ctx, orgId, caller._id);
     await requireDashboardPermission(ctx, orgId, caller, "members:write");
     assertCanTouchOwnerRole(callerMembership, role);
-    if (args.roleId) await ownedRole(ctx, orgId, args.roleId);
+    await assertWithinReach(ctx, orgId, caller, role, args.roleId);
 
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
@@ -214,6 +221,8 @@ export const updateRole = mutation({
     );
     assertCanTouchOwnerRole(callerMembership, membership.role);
     assertCanTouchOwnerRole(callerMembership, role);
+    await assertWithinReach(ctx, membership.orgId, caller, role, args.roleId);
+    await assertWithinReach(ctx, membership.orgId, caller, membership.role);
 
     const targetUser = await ctx.db.get(membership.userId);
     const org = await ctx.db.get(membership.orgId);
@@ -226,7 +235,6 @@ export const updateRole = mutation({
       throw new Error("Cannot change the role of the org owner");
     }
 
-    if (args.roleId) await ownedRole(ctx, membership.orgId, args.roleId);
     await ctx.db.patch(membershipId, { role: role, roleId: args.roleId });
 
     return null;
@@ -268,6 +276,7 @@ export const remove = mutation({
       "members:write",
     );
     assertCanTouchOwnerRole(callerMembership, membership.role);
+    await assertWithinReach(ctx, membership.orgId, caller, membership.role);
 
     const targetUser = await ctx.db.get(membership.userId);
     const org = await ctx.db.get(membership.orgId);
@@ -285,18 +294,39 @@ export const remove = mutation({
  * Owner memberships can delete the org, so only an owner may grant one, or
  * change or remove one. Without this an admin could promote themselves.
  */
-/** The custom role when the org owns it. */
-async function ownedRole(
+/**
+ * A caller grants and touches no more than they hold: the admin tier only
+ * from the admin tier, a custom role only when every permission it grants
+ * is one the caller has. Otherwise `members:write` would be a way up.
+ */
+async function assertWithinReach(
   ctx: Parameters<typeof getOrgMembership>[0],
   orgId: Id<"orgs">,
-  roleId: Id<"orgRoles">,
-): Promise<Doc<"orgRoles">> {
+  caller: Doc<"users">,
+  tier: Doc<"orgMembers">["role"],
+  roleId?: Id<"orgRoles">,
+): Promise<void> {
+  const access = await memberAccess(ctx, orgId, caller);
+  if (!access || !orgRoleMeets(access.tier, tier)) {
+    throw new ClientError(
+      `Only an ${tier} can grant or change the ${tier} tier`,
+    );
+  }
+  if (!roleId) return;
   const role = await ctx.db.get(roleId);
   if (!role || role.orgId !== orgId) {
-    throw new Error("Role not found");
+    throw new ClientError("Role not found");
   }
-
-  return role;
+  const held = dashboardPermissions(access);
+  const beyond = dashboardPermissions({
+    tier: "member",
+    policies: await activePolicies(ctx, role.policyIds),
+  }).filter((permission) => !held.includes(permission));
+  if (beyond.length > 0) {
+    throw new ClientError(
+      `That role grants ${beyond.join(", ")}, which you do not hold`,
+    );
+  }
 }
 
 function assertCanTouchOwnerRole(

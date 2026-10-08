@@ -3,8 +3,8 @@
  * dashboard permission by tier. A member holds none until a custom role
  * grants some: the role's policies are the same documents core's OPA
  * evaluates for agents, read here with the same order (a deny wins, then an
- * allow, then nothing). A rule scoped to a project or a stage counts only
- * there, and only an enforce-mode policy counts at all.
+ * allow, then nothing). A policy or a rule scoped to a project or a stage
+ * counts only there, and only an enforce-mode policy counts at all.
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
@@ -26,10 +26,15 @@ export interface DashboardScope {
   stageId?: Id<"stages">;
 }
 
-/** A member's tier in the org and the policy documents their role grants. */
+/** A policy as the evaluator reads it: its document, and the project or stage the row belongs to. */
+export interface ScopedPolicy extends DashboardScope {
+  document: PolicyDocument;
+}
+
+/** A member's tier in the org and the policies their role grants. */
 export interface MemberAccess {
   tier: OrgRole;
-  policies: PolicyDocument[];
+  policies: ScopedPolicy[];
 }
 
 /** The permissions a tier holds before any role: admins everything, members nothing gated. */
@@ -39,14 +44,16 @@ export function tierPermissions(tier: OrgRole): DashboardPolicyAction[] {
 
 /** Whether the enforce-mode policies allow one action in one scope: a matching deny wins, else a matching allow. */
 export function policiesAllow(
-  policies: readonly PolicyDocument[],
+  policies: readonly ScopedPolicy[],
   action: string,
   scope: DashboardScope = {},
 ): boolean {
   let allowed = false;
   for (const policy of policies) {
-    if (policy.mode !== "enforce") continue;
-    for (const rule of policy.rules) {
+    if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {
+      continue;
+    }
+    for (const rule of policy.document.rules) {
       if (!rule.actions.includes(action) || !ruleApplies(rule, scope)) continue;
       if (rule.effect === "deny") return false;
       allowed = true;
@@ -84,7 +91,7 @@ export async function memberAccess(
 
   return {
     tier: membership.role,
-    policies: role ? await activePolicyDocuments(ctx, role.policyIds) : [],
+    policies: role ? await activePolicies(ctx, role.policyIds) : [],
   };
 }
 
@@ -113,17 +120,21 @@ export async function requireDashboardPermission(
   }
 }
 
-/** The documents of the policies that still exist and are active. */
-export async function activePolicyDocuments(
+/** The policies that still exist and are active, with the scope their row carries. */
+export async function activePolicies(
   ctx: Ctx,
   policyIds: readonly Id<"agentPolicies">[],
-): Promise<PolicyDocument[]> {
+): Promise<ScopedPolicy[]> {
   const policies = await Promise.all(policyIds.map((id) => ctx.db.get(id)));
 
   return policies
     .filter((policy) => policy !== null)
     .filter((policy) => policy.status === "active")
-    .map((policy) => policy.document);
+    .map((policy) => ({
+      document: policy.document,
+      projectId: policy.projectId,
+      stageId: policy.stageId,
+    }));
 }
 
 function policiesAllowOrTier(
@@ -134,6 +145,14 @@ function policiesAllowOrTier(
   return (
     tierPermissions(access.tier).includes(action) ||
     policiesAllow(access.policies, action, scope)
+  );
+}
+
+/** A policy row made for one project or stage applies only there. */
+function scopeHolds(policy: DashboardScope, scope: DashboardScope): boolean {
+  return (
+    (!policy.projectId || policy.projectId === scope.projectId) &&
+    (!policy.stageId || policy.stageId === scope.stageId)
   );
 }
 

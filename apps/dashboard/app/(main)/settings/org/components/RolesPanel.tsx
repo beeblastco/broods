@@ -221,7 +221,8 @@ function RoleDetail({
   const remove = useMutation(api.access.removeRole);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const { pending, error, run } = useSubmit();
+  const [deletePending, setDeletePending] = useState(false);
+  const { error, run } = useSubmit();
   const attached = policies.filter((policy) =>
     role.policyIds.includes(policy._id),
   );
@@ -238,8 +239,13 @@ function RoleDetail({
 
   async function confirmDelete(): Promise<void> {
     if (!custom) return;
-    const done = await run(() => remove({ roleId: custom._id }));
-    if (done) onClose();
+    setDeletePending(true);
+    try {
+      await remove({ roleId: custom._id });
+      onClose();
+    } finally {
+      setDeletePending(false);
+    }
   }
 
   return (
@@ -413,7 +419,7 @@ function RoleDetail({
           resourceType="role"
           critical={false}
           onConfirm={confirmDelete}
-          isDeleting={pending}
+          isDeleting={deletePending}
         />
       )}
     </DetailPanel>

@@ -4,7 +4,7 @@
  * change the same string; sorting is one column and a direction.
  */
 
-import { parseQuery } from "./queryTokens";
+import { chipFor, parseQuery, splitTokens } from "./queryTokens";
 
 export type SortDir = "asc" | "desc";
 
@@ -22,21 +22,19 @@ export function toggleToken(
   field: string,
   value: string,
 ): string {
-  const token = `${field}:${value}`;
-  const words = query.split(" ");
+  const token = chipFor(field, value);
+  const words = splitTokens(query);
   const kept = words.filter((word) => word.toLowerCase() !== token);
-  if (kept.length !== words.length) return kept.join(" ").trim();
+  if (kept.length !== words.length) return kept.join(" ");
 
   return `${query.trim()} ${token} `.trimStart();
 }
 
 /** Removes every `field:` token from the query. */
 export function clearField(query: string, field: string): string {
-  return query
-    .split(" ")
+  return splitTokens(query)
     .filter((word) => !word.toLowerCase().startsWith(`${field}:`))
-    .join(" ")
-    .trim();
+    .join(" ");
 }
 
 /** The lowercased values the query names for `field`. */

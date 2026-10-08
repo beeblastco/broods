@@ -18,7 +18,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import {
-  activePolicyDocuments,
+  activePolicies,
   dashboardPermissions,
   memberAccess,
   requireDashboardPermission,
@@ -385,10 +385,15 @@ export const addRule = mutation({
       });
     }
     if (args.condition) {
+      const { operator } = args.condition;
       conditions.push({
         attribute: args.condition.attribute.trim(),
-        operator: args.condition.operator,
-        value: args.condition.value.trim(),
+        operator: operator,
+        // `in` and `notIn` compare against a list, typed comma-separated.
+        value:
+          operator === "in" || operator === "notIn"
+            ? args.condition.value.split(",").map((entry) => entry.trim())
+            : args.condition.value.trim(),
       });
     }
     const rule: PolicyRule = {
@@ -514,7 +519,7 @@ export const listRoles = query({
     ];
     const custom = await Promise.all(
       roles.map(async (role): Promise<RoleRow> => {
-        const policies = await activePolicyDocuments(ctx, role.policyIds);
+        const policies = await activePolicies(ctx, role.policyIds);
 
         return {
           kind: "custom",

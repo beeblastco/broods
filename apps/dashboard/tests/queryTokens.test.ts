@@ -49,6 +49,17 @@ describe("splitQueryChips", () => {
     });
   });
 
+  test("a quoted value is one chip", () => {
+    expect(splitQueryChips('level:"not yet" source:gw tail', FIELDS)).toEqual({
+      chips: ['level:"not yet"', "source:gw"],
+      text: "tail",
+    });
+    expect(parseQuery('Level:"Not Yet" x', FIELDS)).toEqual({
+      fields: [{ field: "level", value: "not yet" }],
+      text: "x",
+    });
+  });
+
   test("chips round-trip through the joined query", () => {
     const { chips, text } = splitQueryChips("level:error tail", FIELDS);
     expect(`${chips.join(" ")} ${text}`).toBe("level:error tail");

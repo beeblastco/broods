@@ -229,13 +229,19 @@ function MemberDetail({
   const updateRole = useMutation(api.org.members.updateRole);
   const remove = useMutation(api.org.members.remove);
   const [removing, setRemoving] = useState(false);
-  const { pending, error, run } = useSubmit();
+  const [removePending, setRemovePending] = useState(false);
+  const { error, run } = useSubmit();
   const editable = canChange && !member.isOwner;
   const items = roleItems(customRoles);
 
   async function confirmRemove(): Promise<void> {
-    const done = await run(() => remove({ membershipId: member.membershipId }));
-    if (done) onClose();
+    setRemovePending(true);
+    try {
+      await remove({ membershipId: member.membershipId });
+      onClose();
+    } finally {
+      setRemovePending(false);
+    }
   }
 
   return (
@@ -331,7 +337,7 @@ function MemberDetail({
           resourceType="member"
           critical={false}
           onConfirm={confirmRemove}
-          isDeleting={pending}
+          isDeleting={removePending}
         />
       )}
     </DetailPanel>

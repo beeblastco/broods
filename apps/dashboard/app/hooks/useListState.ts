@@ -78,8 +78,11 @@ export function useListState<Row, Column extends string, Field extends string>(
       return !parsed.text || text(row).toLowerCase().includes(parsed.text);
     });
 
-    return sortRows(matching, sortKey[sort.column], sort.dir);
-  }, [rows, parsed, sort, sortKey, matches, text]);
+    // A remembered column the list no longer has falls back to the default.
+    const key = sortKey[sort.column] ?? sortKey[spec.initialSort.column];
+
+    return sortRows(matching, key, sort.dir);
+  }, [rows, parsed, sort, sortKey, matches, text, spec.initialSort.column]);
 
   return {
     query: query,

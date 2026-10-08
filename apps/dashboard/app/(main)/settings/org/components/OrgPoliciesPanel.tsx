@@ -230,12 +230,18 @@ function PolicyDetail({
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const { pending, error, run } = useSubmit();
+  const [deletePending, setDeletePending] = useState(false);
+  const { error, run } = useSubmit();
   const editable = canChange && policy.managedBy !== "cli";
 
   async function confirmDelete(): Promise<void> {
-    const done = await run(() => removePolicy({ policyId: policy._id }));
-    if (done) onClose();
+    setDeletePending(true);
+    try {
+      await removePolicy({ policyId: policy._id });
+      onClose();
+    } finally {
+      setDeletePending(false);
+    }
   }
 
   return (
@@ -369,7 +375,7 @@ function PolicyDetail({
           resourceType="policy"
           critical={false}
           onConfirm={confirmDelete}
-          isDeleting={pending}
+          isDeleting={deletePending}
         />
       )}
     </DetailPanel>

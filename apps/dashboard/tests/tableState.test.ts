@@ -19,6 +19,14 @@ describe("toggleToken", () => {
       "timeout",
     );
   });
+
+  test("quotes a value with spaces and reads it back as one chip", () => {
+    const query = toggleToken("", "status", "not connected yet");
+    expect(query).toBe('status:"not connected yet" ');
+    expect(tokenValues(query, "status")).toEqual(["not connected yet"]);
+    expect(toggleToken(query, "status", "not connected yet")).toBe("");
+    expect(clearField(`${query}agent:ops`, "status")).toBe("agent:ops");
+  });
 });
 
 describe("clearField and tokenValues", () => {
