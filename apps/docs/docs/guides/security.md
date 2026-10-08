@@ -6,6 +6,8 @@ Who can see and change what, which credential to use where, and how your data is
 
 Access follows organization membership. A member reads, an admin or owner writes. Removing or demoting someone takes effect on their next request, and their `broods login` stops working.
 
+A custom role, made under Organization settings, Roles, sits on the member tier and adds what its policies allow: seeing or changing keys, changing members, changing access. A policy or a rule scoped to a project or a stage counts only there, and only an enforce-mode policy counts. A member grants no more than they hold: `members:write` cannot hand out the admin tier or a role with a permission the caller lacks, and `access:write` can still attach any policy to any role, including one's own, so give it as you would admin. Policies and permissions are the organization's, under the tabs beside it, so one policy can serve a role, an agent or a key. Roles and policies are read with the same deny-wins order OPA uses for agents at run time.
+
 | Operation                                                                    | Member | Admin, owner |
 | ---------------------------------------------------------------------------- | ------ | ------------ |
 | Read agents, stages, canvas, files, logs, traces, usage                      | yes    | yes          |
@@ -50,9 +52,9 @@ The runtime key is the one key meant to sit in a frontend, so it is limited:
 - `continue` with it only reopens conversations the direct API started, never a channel conversation.
 - It cannot open logs, traces or the machine socket.
 
-The account key is shown once when your organization's API account is provisioned. Rotate it under Org Settings, API Access. Rotation breaks everything holding the old one.
+The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access. Rotation breaks everything holding the old one.
 
-A project key is created per stage under Project Settings, Deploy, and shown once. See [Deploying from CI](deploying.md#deploying-from-ci).
+A project key is an API key created for one stage under Project settings, Keys, and shown once. See [Deploying from CI](deploying.md#deploying-from-ci).
 
 ## Roles
 
@@ -79,7 +81,7 @@ const scoped = new BroodsAccountClient({ sessionToken: session.token }); // can 
 
 - Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `audit`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills`, `tools` and `workspaces`.
 - `resources.resourceIds` limits a rule to specific ids, `"*"` for all. A deny beats an allow, and no matching allow means `403`.
-- `projectId` and `stageId` pin a role to one stage.
+- `projectId` and `stageId` pin a role to one stage. A pinned session reaches only agents, crons, channels, MCP servers, policies, sandboxes and workspaces on that stage. Lists, creates, and account-wide resources such as the account, audit, env, hooks and skills answer `403`. A write that points one of its resources at another stage's, such as a production sandbox on a development agent or a cron moved to a production agent, answers `400`.
 - Sessions last 1 hour by default, 12 at most. Only a hash is stored, and the token is shown once.
 - The account key, a CLI login, or a runtime key can assume a role. A runtime key may only assume roles pinned to its own stage.
 - Sessions cannot mint sessions, rotate the account key, or manage roles.

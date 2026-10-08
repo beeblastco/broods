@@ -30,6 +30,9 @@ export interface HeadSort {
   words?: [string, string];
 }
 
+/** The sort words for a time column, in place of A to Z. */
+export const TIME_WORDS: [string, string] = ["Oldest first", "Newest first"];
+
 /** The filter half of a header menu: the column's values and the ones in effect. */
 export interface HeadFilter {
   field: string;
@@ -239,22 +242,35 @@ export function DataTableSub({
   );
 }
 
-/** The line under a list: "4 jobs, 3 active". Pages write the words. */
+/**
+ * The line under a list: "4 jobs", or "2 of 4 jobs" while a filter hides
+ * some. `children` sits at the right: a Load more button, or a note like
+ * ", 3 active" when it is text.
+ */
 export function DataTableFooter({
+  shown,
+  total,
+  noun,
   children,
-  className,
 }: {
-  children: ReactNode;
-  className?: string;
+  shown?: number;
+  total: number;
+  /** The rows' plural name, or the singular when `total` is one. */
+  noun: string;
+  children?: ReactNode;
 }): React.JSX.Element {
+  const count =
+    shown !== undefined && shown !== total
+      ? `${shown.toLocaleString()} of ${total.toLocaleString()}`
+      : total.toLocaleString();
+
   return (
-    <div
-      className={cn(
-        "shrink-0 border-t border-border px-3 py-1.5 text-2xs text-muted-foreground tabular-nums",
-        className,
-      )}
-    >
-      {children}
+    <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-1.5 text-2xs text-muted-foreground tabular-nums">
+      <span>
+        {count} {noun}
+        {typeof children === "string" && children}
+      </span>
+      {typeof children !== "string" && children}
     </div>
   );
 }

@@ -13,16 +13,14 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadSort,
 } from "@/app/components/DataTable";
 import { EmptyState } from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
 import { StatusWord } from "@/app/components/StatusDot";
 import { Toolbar } from "@/app/components/Toolbar";
-import { parseQuery } from "@/app/lib/queryTokens";
-import { sortRows, type SortKey, type SortState } from "@/app/lib/tableState";
+import { useListState } from "@/app/hooks/useListState";
+import type { SortKey } from "@/app/lib/tableState";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { useMemo, useState } from "react";
 import {
   egressBadge,
   formatProvider,
@@ -31,14 +29,16 @@ import {
 } from "./sandboxFormat";
 
 // The `field:value` tokens the search box understands.
-const POLICY_QUERY_FIELDS = ["provider", "status"] as const;
+const QUERY_FIELDS = ["provider", "status"] as const;
 
 type Instance = Doc<"sandboxInstances">;
+type Field = (typeof QUERY_FIELDS)[number];
 type Column = "name" | "status" | "provider" | "policy";
+type Dimension = "security" | "networking";
 
 interface Props {
   instances: Instance[];
-  dimension: "security" | "networking";
+  dimension: Dimension;
 }
 
 const COPY = {
@@ -52,45 +52,38 @@ const COPY = {
   },
 } as const;
 
+// What a column sorts an instance by; the policy column reads the dimension's field.
+const SORT_KEY: Record<
+  Dimension,
+  Record<Column, (instance: Instance) => SortKey>
+> = {
+  security: {
+    name: (instance) => instance.name,
+    status: (instance) => instance.status,
+    provider: (instance) => formatProvider(instance.provider),
+    policy: (instance) => instance.permissionMode ?? null,
+  },
+  networking: {
+    name: (instance) => instance.name,
+    status: (instance) => instance.status,
+    provider: (instance) => formatProvider(instance.provider),
+    policy: (instance) => instance.egress ?? null,
+  },
+};
+
 export function SandboxPolicyTable({
   instances,
   dimension,
 }: Props): React.JSX.Element {
   const copy = COPY[dimension];
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<SortState<Column>>({
-    column: "name",
-    dir: "asc",
+  const list = useListState({
+    rows: instances,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "name", dir: "asc" },
+    sortKey: SORT_KEY[dimension],
+    matches: matchesField,
+    text: searchText,
   });
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
-  });
-  const query = useMemo(
-    () => parseQuery(filter, POLICY_QUERY_FIELDS),
-    [filter],
-  );
-  const shown = useMemo(() => {
-    const matching = instances.filter((instance) => {
-      const fieldsPass = query.fields.every(({ field, value }) =>
-        field === "provider"
-          ? formatProvider(instance.provider).toLowerCase().startsWith(value)
-          : instance.status.startsWith(value),
-      );
-      if (!fieldsPass) return false;
-      if (!query.text) return true;
-
-      return `${instance.name} ${instance.externalId}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(
-      matching,
-      (instance) => sortKey(sort.column, instance, dimension),
-      sort.dir,
-    );
-  }, [instances, query, sort, dimension]);
 
   if (instances.length === 0) {
     return (
@@ -102,9 +95,9 @@ export function SandboxPolicyTable({
     <div className="flex min-h-0 flex-1 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
-          fields={POLICY_QUERY_FIELDS}
+          value={list.query}
+          onChange={list.setQuery}
+          fields={QUERY_FIELDS}
           placeholder="Search instances"
         />
       </Toolbar>
@@ -112,16 +105,20 @@ export function SandboxPolicyTable({
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
-              <DataTableHead sort={sortFor("status")}>Status</DataTableHead>
-              <DataTableHead sort={sortFor("provider")}>Provider</DataTableHead>
-              <DataTableHead sort={sortFor("policy")}>
+              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={list.sortFor("status")}>
+                Status
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("provider")}>
+                Provider
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("policy")}>
                 {copy.column}
               </DataTableHead>
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((instance) => (
+            {list.shown.map((instance) => (
               <DataTableRow key={instance._id}>
                 <DataTableCell className="max-w-64 truncate font-medium">
                   {instance.name}
@@ -143,36 +140,30 @@ export function SandboxPolicyTable({
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState title="No instances match the current filters." />
         )}
-        <DataTableFooter>
-          {shown.length === instances.length
-            ? `${instances.length} instances`
-            : `${shown.length} of ${instances.length} instances`}
-        </DataTableFooter>
+        <DataTableFooter
+          shown={list.shown.length}
+          total={instances.length}
+          noun="instances"
+        />
       </div>
       <p className="mt-2 text-xs text-muted-foreground">{copy.note}</p>
     </div>
   );
 }
 
-/** What a column sorts an instance by; the policy column reads the dimension's field. */
-function sortKey(
-  column: Column,
+function matchesField(
   instance: Instance,
-  dimension: Props["dimension"],
-): SortKey {
-  switch (column) {
-    case "name":
-      return instance.name;
-    case "status":
-      return instance.status;
-    case "provider":
-      return formatProvider(instance.provider);
-    case "policy":
-      return dimension === "security"
-        ? (instance.permissionMode ?? null)
-        : (instance.egress ?? null);
-  }
+  field: Field,
+  value: string,
+): boolean {
+  return field === "provider"
+    ? formatProvider(instance.provider).toLowerCase().startsWith(value)
+    : instance.status.startsWith(value);
+}
+
+function searchText(instance: Instance): string {
+  return `${instance.name} ${instance.externalId}`;
 }

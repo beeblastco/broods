@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
+import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 
@@ -183,6 +184,8 @@ export const agentDeploymentsFields = {
   createdAt: v.optional(v.number()),
   /** Display name of the user who minted or rotated the current key. */
   createdBy: v.optional(v.string()),
+  /** The member who minted or rotated it from the dashboard, for the key list. */
+  createdByUserId: v.optional(v.id("users")),
   /** Last runtime request the key authenticated, written by core at most every few minutes. */
   lastUsedAt: v.optional(v.number()),
   updatedAt: v.number(),
@@ -199,12 +202,15 @@ export const deployKeysFields = {
   projectId: v.id("projects"),
   stageId: v.id("stages"),
   name: v.string(),
+  description: v.optional(v.string()),
   /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
   keyHash: v.string(),
   /** Masked display label (prefix + last four), safe to list without revealing the secret. */
   keyHint: v.string(),
   status: v.union(v.literal("active"), v.literal("revoked")),
   lastUsedAt: v.optional(v.number()),
+  /** The member who made it; a key made over the API has none. */
+  createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -344,12 +350,14 @@ export const agentPoliciesFields = {
   stageId: v.optional(v.id("stages")),
   name: v.string(),
   description: v.optional(v.string()),
-  document: v.any(),
+  document: policyDocumentValidator,
   status: v.union(v.literal("active"), v.literal("deleted")),
   /** Ownership marker; see `agentConfigsFields.managedBy`. */
   managedBy: v.optional(
     v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
   ),
+  /** The member who made it in the dashboard. */
+  createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
   deletedAt: v.optional(v.number()),
@@ -370,7 +378,7 @@ export const accountRolesFields = {
   name: v.string(),
   status: v.union(v.literal("active"), v.literal("disabled")),
   /** PolicyDocument (version 1) over the API action namespace. */
-  policy: v.any(),
+  policy: policyDocumentValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -413,6 +421,8 @@ export const channelRecordsFields = {
   managedBy: v.optional(
     v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
   ),
+  /** The member who made it in the dashboard. */
+  createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
   deletedAt: v.optional(v.number()),
@@ -437,7 +447,37 @@ export const orgMembersFields = {
   orgId: v.id("orgs"),
   userId: v.id("users"),
   role: v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
+  /** A custom role on top of the member tier; its policies grant dashboard permissions. */
+  roleId: v.optional(v.id("orgRoles")),
+  /** The member who added them. */
+  invitedBy: v.optional(v.id("users")),
   createdAt: v.number(),
+};
+
+/** An org-defined permission name beside the built-in actions, e.g. a tool an agent may call. */
+export const permissionsFields = {
+  accountId: v.id("accounts"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  /** What the name is about: tool, agent, stage, key, custom. */
+  resource: v.string(),
+  createdBy: v.optional(v.id("users")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+};
+
+/**
+ * A named set of policies people get. A member holding one keeps the member
+ * tier and gains what the policies allow (model/access.ts).
+ */
+export const orgRolesFields = {
+  orgId: v.id("orgs"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  policyIds: v.array(v.id("agentPolicies")),
+  createdBy: v.optional(v.id("users")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** Tenant root for broods. One row per dashboard org. The doc id IS the accountId. */
@@ -446,6 +486,11 @@ export const accountsFields = {
   username: v.string(),
   description: v.optional(v.string()),
   secretHash: v.string(),
+  /** Masked label of the account key (prefix + last four), safe to list. */
+  secretHint: v.optional(v.string()),
+  /** When and by whom the account key was last minted or rotated from the dashboard. */
+  secretRotatedAt: v.optional(v.number()),
+  secretRotatedBy: v.optional(v.id("users")),
   status: v.union(v.literal("active"), v.literal("disabled")),
   /** Days an audit ledger row is kept before pruning; 90 when unset. */
   auditRetentionDays: v.optional(v.number()),
@@ -1500,6 +1545,11 @@ export default defineSchema({
   orgMembers: defineTable(orgMembersFields)
     .index("by_userId", ["userId"])
     .index("by_orgId_and_userId", ["orgId", "userId"]),
+  permissions: defineTable(permissionsFields).index("by_accountId_and_name", [
+    "accountId",
+    "name",
+  ]),
+  orgRoles: defineTable(orgRolesFields).index("by_orgId", ["orgId"]),
   accounts: defineTable(accountsFields)
     .index("by_orgId", ["orgId"])
     .index("by_secretHash", ["secretHash"]),

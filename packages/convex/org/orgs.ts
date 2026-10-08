@@ -5,7 +5,12 @@
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { internalMutation, mutation, query } from "../_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "../_generated/server";
 import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
@@ -15,6 +20,7 @@ import {
   getOrgMembership,
   orgRoleMeets,
   requireOrgMember,
+  userByAuthId,
   type OrgRole,
 } from "../model/ownership/org";
 import { orgsFields } from "../schema";
@@ -50,7 +56,7 @@ export const orgBootstrapValidator = v.object({
 
 export type OrgBootstrap = Infer<typeof orgBootstrapValidator>;
 
-interface ActiveAccount {
+export interface ActiveAccount {
   account: Doc<"accounts">;
   role: OrgRole;
   user: Doc<"users">;
@@ -240,7 +246,7 @@ export const getActiveAccount = query({
     status: "active" | "disabled";
     role: OrgRole;
   } | null> => {
-    const active = await activeAccountForCaller(ctx, requiredRole);
+    const active = await getActiveCaller(ctx, requiredRole);
     if (!active) return null;
 
     return {
@@ -251,31 +257,34 @@ export const getActiveAccount = query({
   },
 });
 
-/** Returns one org by id when the caller has admin-level membership. */
+/** The user id behind an auth id, for actions that record who acted. */
+export const userIdByAuthId = internalQuery({
+  args: { authId: v.string() },
+  returns: v.union(v.id("users"), v.null()),
+  handler: async (ctx, args): Promise<Id<"users"> | null> => {
+    const user = await userByAuthId(ctx, args.authId);
+
+    return user ? user._id : null;
+  },
+});
+
+/** One org by id when the caller is an admin or owner there; null otherwise. */
 export const getByIdForAdmin = query({
   args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {
-    const { orgId } = args;
-
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       return null;
     }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
+    const user = await userByAuthId(ctx, authUser.id);
     if (!user) {
       return null;
     }
+    await requireOrgMember(ctx, args.orgId, user._id, "admin");
 
-    await requireOrgMember(ctx, orgId, user._id, "admin");
-    const org = await ctx.db.get(orgId);
-
-    return org ?? null;
+    return await ctx.db.get(args.orgId);
   },
 });
 
@@ -440,17 +449,22 @@ export async function getActiveAccountForUser(
   ctx: QueryCtx,
   requiredRole?: OrgRole,
 ): Promise<Doc<"accounts"> | null> {
-  const active = await activeAccountForCaller(ctx, requiredRole);
+  const active = await getActiveCaller(ctx, requiredRole);
 
   return active ? active.account : null;
 }
 
-/** The caller's account and user row together, for writes that record who made them. */
+/** The caller's account, role and user row together; null when none resolves or the role is short. */
 export async function getActiveCaller(
   ctx: QueryCtx,
   requiredRole?: OrgRole,
 ): Promise<ActiveAccount | null> {
-  return await activeAccountForCaller(ctx, requiredRole);
+  const authUser = await authKit.getAuthUser(ctx);
+  if (!authUser) return null;
+  const active = await resolveActiveAccount(ctx, authUser.id);
+  if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
+
+  return active;
 }
 
 /**
@@ -462,10 +476,7 @@ export async function getOrCreateActiveOrg(
   ctx: MutationCtx,
   authId: string,
 ): Promise<OrgBootstrap> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
+  const user = await userByAuthId(ctx, authId);
   if (!user) {
     throw new ClientError(
       "Your account is still being set up. Try again in a moment.",
@@ -496,10 +507,7 @@ export async function resolveActiveAccount(
   ctx: QueryCtx,
   authId: string,
 ): Promise<ActiveAccount | null> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
+  const user = await userByAuthId(ctx, authId);
   if (!user) return null;
 
   const org = await getActiveOrgForUser(ctx, user._id);
@@ -516,18 +524,6 @@ export async function resolveActiveAccount(
   if (!account) return null;
 
   return { account: account, role: role, user: user };
-}
-
-async function activeAccountForCaller(
-  ctx: QueryCtx,
-  requiredRole?: OrgRole,
-): Promise<ActiveAccount | null> {
-  const authUser = await authKit.getAuthUser(ctx);
-  if (!authUser) return null;
-  const active = await resolveActiveAccount(ctx, authUser.id);
-  if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
-
-  return active;
 }
 
 /** Inserts an org the user owns, with an owner membership, and makes it their active org. */

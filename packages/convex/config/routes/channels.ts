@@ -11,9 +11,13 @@ import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import {
   normalizeCreateChannelRecordInput,
   normalizeUpdateChannelRecordInput,
+  type ChannelRecordConfig,
 } from "../../model/channelRules";
+import type { StageScopedRef } from "../../model/projectScope";
+import type { RolePrincipal } from "../../model/apiAuthorization";
 import { toPublicChannelRecordResponse } from "../../model/responses";
 import {
+  assertRefsInPin,
   json,
   jsonError,
   methodNotAllowed,
@@ -26,7 +30,8 @@ export async function handleChannelRecordRoute(
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
-  channelId?: string,
+  channelId: string | undefined,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   if (!channelId) {
     if (req.method === "GET") {
@@ -99,6 +104,12 @@ export async function handleChannelRecordRoute(
     );
     if (!existing) return jsonError(404, "Channel not found");
     const patch = normalizeUpdateChannelRecordInput(await req.json());
+    await assertRefsInPin(
+      ctx,
+      accountId,
+      role,
+      channelConfigRefs(patch.config),
+    );
     await ctx.runMutation(internal.channel.records.update, {
       accountId: accountId,
       channelRecordId: channelId,
@@ -158,4 +169,24 @@ export async function handleChannelRecordRoute(
   }
 
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
+}
+
+/** The stage-scoped resources a channel record config names. */
+function channelConfigRefs(
+  config: ChannelRecordConfig | undefined,
+): StageScopedRef[] {
+  return [
+    ...(config?.agentBindings ?? []).map((binding) => ({
+      type: "agents" as const,
+      id: binding.agentId,
+    })),
+    ...(config?.workspaces ?? []).map((workspace) => ({
+      type: "workspaces" as const,
+      id: workspace.workspaceId,
+    })),
+    ...(config?.policies ?? []).map((id) => ({
+      type: "policies" as const,
+      id: id,
+    })),
+  ];
 }

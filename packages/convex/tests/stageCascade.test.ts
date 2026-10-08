@@ -175,7 +175,7 @@ async function seedFullStage(t: T): Promise<{
       projectId: projectId,
       stageId: stageId,
       name: "guardrails",
-      document: {},
+      document: { version: 1 as const, rules: [] },
       status: "active" as const,
       createdAt: now,
       updatedAt: now,

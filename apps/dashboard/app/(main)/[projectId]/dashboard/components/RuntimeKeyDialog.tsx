@@ -3,83 +3,33 @@
 import { CopyButton } from "@/app/components/CopyButton";
 import { Button } from "@/app/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/app/components/ui/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
-import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/app/components/ui/field";
 import { Input } from "@/app/components/ui/input";
-import { Separator } from "@/app/components/ui/separator";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/app/components/ui/tabs";
 import { useNow } from "@/app/hooks/useNow";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
+import { navHref } from "@/app/lib/navigation";
 import type { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
-import { Eye, EyeOff, KeyRound, RefreshCw } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { type ReactNode, useState } from "react";
 import { relativeTime } from "../../sandbox/components/sandboxFormat";
 
-const DESCRIPTION =
-  "One key for runs, streaming and observability on this stage.";
+const DESCRIPTION = "Runs and observes this stage. Rotate it when it leaks.";
 
-// npm like the onboarding dialog, but local: the SDK import needs a project dependency.
-const INSTALL_SNIPPET = "npm install broods";
+const DOCS_URL = "https://docs.broods.app/reference/sdk";
 
-const SSE_SNIPPET = [
-  `import { BroodsClient } from "broods";`,
-  `import { api } from "./broods/_generated/api";`,
-  ``,
-  `// Reads BROODS_API_KEY from your .env automatically.`,
-  `const client = new BroodsClient();`,
-  ``,
-  `// Default transport: server-sent events over plain HTTP.`,
-  `for await (const chunk of client.stream(api.agents.myAgent, {`,
-  `  input: "Hello from the SDK!",`,
-  `})) {`,
-  `  if (chunk.type === "text-delta") process.stdout.write(chunk.text);`,
-  `}`,
-].join("\n");
-
-const WS_SNIPPET = [
-  `import { BroodsWebSocketClient } from "broods";`,
-  `import { api } from "./broods/_generated/api";`,
-  ``,
-  `// Reads BROODS_API_KEY from your .env automatically.`,
-  `const client = new BroodsWebSocketClient();`,
-  ``,
-  `// Opt-in transport: a full-duplex WebSocket connection.`,
-  `for await (const message of client.stream({`,
-  `  agent: api.agents.myAgent,`,
-  `  input: "Hello from the SDK!",`,
-  `})) {`,
-  `  if (message.type === "text-delta") process.stdout.write(message.text);`,
-  `}`,
-].join("\n");
-
-// VSCode Dark+ token palette, applied by a tiny tokenizer below so the snippets
-// read like an editor without pulling in a full highlighter dependency.
+// VSCode Dark+ token palette, applied by a tiny tokenizer below so the snippet
+// reads like an editor without pulling in a full highlighter dependency.
 const COLOR = {
   comment: "text-code-comment",
   string: "text-code-string",
@@ -110,17 +60,15 @@ interface DialogProps {
   justCreated?: boolean;
 }
 
-interface FieldsProps {
-  apiKey: string;
-  meta?: RuntimeKeyMeta;
-  onRotate?: () => Promise<void>;
-}
-
 interface ViewProps {
   apiKey: string;
   /** The reveal query's result; its metadata shows only while it describes `apiKey`. */
   revealed?: RevealedKey | null;
   onRotate?: () => Promise<void>;
+  /** The project and stage the key belongs to, for the Deployment section. */
+  projectId?: Id<"projects">;
+  projectSlug?: string;
+  stageSlug?: string;
 }
 
 /** Opened by the dashboard page right after it mints the stage's first key. */
@@ -134,120 +82,293 @@ export function RuntimeKeyDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="size-4 text-foreground" />
+          <DialogTitle>
             {justCreated ? "Your runtime key is ready" : "Runtime key"}
           </DialogTitle>
           <DialogDescription>{DESCRIPTION}</DialogDescription>
         </DialogHeader>
-
-        <RuntimeKeyFields key={apiKey} apiKey={apiKey} />
+        <KeyRow key={apiKey} apiKey={apiKey} />
+        <ConnectSnippet key={apiKey} apiKey={apiKey} />
       </DialogContent>
     </Dialog>
   );
 }
 
-/** The dashboard's "Runtime key" tab: gateway URL, runtime key and a quickstart in one card. */
+/**
+ * The dashboard's "Runtime key" tab in the Convex settings shape: a title and
+ * one sentence on the left, the control on the right, one rule between
+ * sections, no card, no numbered steps, no tabs.
+ */
 export function RuntimeKeyView({
   apiKey,
   revealed,
   onRotate,
+  projectId,
+  projectSlug,
+  stageSlug,
 }: ViewProps): React.JSX.Element {
   // A just-rotated key shows no metadata until the reveal query catches up.
   const meta = revealed?.apiKey === apiKey ? revealed : undefined;
+  const endpoint = resolveCoreEndpoint();
+  const gatewayUrl = endpoint.ok ? endpoint.httpBaseUrl : null;
+  const searchParams = useSearchParams();
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Runtime</CardTitle>
-        <CardDescription>{DESCRIPTION}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <RuntimeKeyFields
-          key={apiKey}
-          apiKey={apiKey}
-          meta={meta}
-          onRotate={onRotate}
-        />
-      </CardContent>
-    </Card>
-  );
-}
+    <div className="divide-y divide-border">
+      <SettingsRow title="Deployment" description="Where this stage answers.">
+        <ValueRow label="Gateway URL">
+          {gatewayUrl ? (
+            <>
+              <Input
+                readOnly
+                value={gatewayUrl}
+                className="font-mono text-xs"
+              />
+              <CopyButton value={gatewayUrl} label="gateway URL" />
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {endpoint.ok ? null : endpoint.message}
+            </p>
+          )}
+        </ValueRow>
+        {projectSlug && stageSlug && (
+          <ValueRow label="Stage">
+            <Input
+              readOnly
+              value={`${projectSlug} / ${stageSlug}`}
+              className="font-mono text-xs"
+            />
+          </ValueRow>
+        )}
+      </SettingsRow>
 
-/** `copyText` overrides what the button copies, so a masked display can still yield the real secret. */
-function CodeBlock({
-  code,
-  lang,
-  copyText,
-}: {
-  code: string;
-  lang: "ts" | "bash";
-  copyText?: string;
-}): React.JSX.Element {
-  return (
-    <div className="relative">
-      <pre className="overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
-        <code>{highlight(code, lang)}</code>
-      </pre>
-      <div className="absolute right-2 top-2">
-        <CopyButton value={copyText ?? code} label="snippet" />
-      </div>
+      <SettingsRow title="Runtime key" description={DESCRIPTION}>
+        <KeyRow key={apiKey} apiKey={apiKey} onRotate={onRotate} />
+        <p className="text-2xs text-muted-foreground">
+          <KeyMetaLine meta={meta} />
+          {projectId && (
+            <>
+              {" · "}
+              <Link
+                href={`${navHref(projectId, "/settings", searchParams.get("stage"))}${searchParams.get("stage") ? "&" : "?"}tab=keys`}
+                className="cursor-pointer text-foreground underline-offset-3 hover:underline"
+              >
+                all keys for this project
+              </Link>
+            </>
+          )}
+        </p>
+      </SettingsRow>
+
+      <SettingsRow title="Connect" description="Three lines to a first run.">
+        <ConnectSnippet key={apiKey} apiKey={apiKey} gatewayUrl={gatewayUrl} />
+      </SettingsRow>
     </div>
   );
 }
 
-function curlSnippet(gatewayUrl: string): string {
-  return [
+/** One settings section: words on the left, the control on the right. */
+function SettingsRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}): React.JSX.Element {
+  return (
+    <section className="grid gap-3 py-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
+      <div>
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      </div>
+      <div className="grid min-w-0 gap-3">{children}</div>
+    </section>
+  );
+}
+
+/** A labeled value with its controls beside it. */
+function ValueRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-1">
+      <span className="text-2xs text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 items-center gap-1">{children}</div>
+    </div>
+  );
+}
+
+/** The masked key with reveal, copy and, on the tab, rotate. */
+function KeyRow({
+  apiKey,
+  onRotate,
+}: {
+  apiKey: string;
+  onRotate?: () => Promise<void>;
+}): React.JSX.Element {
+  const [showKey, setShowKey] = useState(false);
+  const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
+
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <Input
+        readOnly
+        value={showKey ? apiKey : maskedKey}
+        className="font-mono text-xs"
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        tone="muted"
+        className="cursor-pointer"
+        aria-label={showKey ? "Hide key" : "Reveal key"}
+        onClick={() => setShowKey((v) => !v)}
+      >
+        {showKey ? <EyeOff /> : <Eye />}
+      </Button>
+      <CopyButton value={apiKey} label="runtime key" />
+      {onRotate && <RotateButton onRotate={onRotate} />}
+    </div>
+  );
+}
+
+/** The three lines that reach a first run, and where to read on. */
+function ConnectSnippet({
+  apiKey,
+  gatewayUrl,
+}: {
+  apiKey: string;
+  gatewayUrl?: string | null;
+}): React.JSX.Element {
+  const [showKey, setShowKey] = useState(false);
+  const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
+  const baseUrl = gatewayUrl ? `  BROODS_BASE_URL="${gatewayUrl}"` : "";
+  const lines = (key: string): string =>
+    [
+      `npm install broods`,
+      `BROODS_API_KEY="${key}"${baseUrl}`,
+      `await new BroodsClient().run(api.agents.myAgent, { input: "Hello" })`,
+    ].join("\n");
+
+  return (
+    <div className="grid gap-2">
+      <div className="relative">
+        <pre className="overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
+          <code>{highlight(lines(showKey ? apiKey : maskedKey))}</code>
+        </pre>
+        <div className="absolute top-2 right-2 flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            tone="muted"
+            className="cursor-pointer"
+            aria-label={
+              showKey ? "Hide key in snippet" : "Reveal key in snippet"
+            }
+            onClick={() => setShowKey((v) => !v)}
+          >
+            {showKey ? <EyeOff /> : <Eye />}
+          </Button>
+          <CopyButton value={lines(apiKey)} label="snippet" />
+        </div>
+      </div>
+      <p className="text-2xs text-muted-foreground">
+        <a
+          href={DOCS_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="cursor-pointer text-foreground underline-offset-3 hover:underline"
+        >
+          Docs
+        </a>
+        {" · "}
+        <a
+          href={`${DOCS_URL}#websocket`}
+          target="_blank"
+          rel="noreferrer"
+          className="cursor-pointer text-foreground underline-offset-3 hover:underline"
+        >
+          WebSocket
+        </a>
+        {gatewayUrl && (
+          <>
+            {" · "}
+            <CurlLink gatewayUrl={gatewayUrl} />
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/** Copies a cURL request for the stage; the plain HTTP route for anyone without the SDK. */
+function CurlLink({ gatewayUrl }: { gatewayUrl: string }): React.JSX.Element {
+  const snippet = [
     `curl -N ${gatewayUrl}/v1/runs \\`,
     `  -H "Authorization: Bearer $BROODS_API_KEY" \\`,
     `  -H "Content-Type: application/json" \\`,
-    `  -d '{`,
-    `    "agentId": "your-agent-id",`,
-    `    "eventId": "unique-id",`,
-    `    "conversationKey": "conversation-identifier",`,
-    `    "events": [{ "role": "user", "content": [{ "type": "text", "text": "Hello from cURL!" }] }]`,
-    `  }'`,
+    `  -d '{ "agentId": "your-agent-id", "eventId": "unique-id", "conversationKey": "conversation-identifier", "events": [{ "role": "user", "content": [{ "type": "text", "text": "Hello" }] }] }'`,
   ].join("\n");
+
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      cURL
+      <CopyButton value={snippet} label="cURL request" />
+    </span>
+  );
 }
 
-function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
-  const re = lang === "bash" ? BASH_RE : TS_RE;
-  re.lastIndex = 0;
+function highlight(code: string): ReactNode[] {
   const out: ReactNode[] = [];
-  let last = 0;
   let key = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(code)) !== null) {
-    if (m.index > last) out.push(code.slice(last, m.index));
-    const cls =
-      lang === "bash"
-        ? m[1]
-          ? COLOR.comment
-          : m[2]
-            ? COLOR.string
-            : COLOR.variable
-        : m[1]
-          ? COLOR.comment
-          : m[2]
-            ? COLOR.string
-            : m[3]
-              ? COLOR.keyword
-              : m[4]
-                ? COLOR.func
-                : COLOR.number;
-    out.push(
-      <span key={key++} className={cls}>
-        {m[0]}
-      </span>,
-    );
-    last = m.index + m[0].length;
-  }
-  if (last < code.length) out.push(code.slice(last));
+  code.split("\n").forEach((line, index) => {
+    if (index > 0) out.push("\n");
+    const re =
+      line.startsWith("npm") || line.startsWith("BROODS") ? BASH_RE : TS_RE;
+    re.lastIndex = 0;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      if (m.index > last) out.push(line.slice(last, m.index));
+      const cls =
+        re === BASH_RE
+          ? m[1]
+            ? COLOR.comment
+            : m[2]
+              ? COLOR.string
+              : COLOR.variable
+          : m[1]
+            ? COLOR.comment
+            : m[2]
+              ? COLOR.string
+              : m[3]
+                ? COLOR.keyword
+                : m[4]
+                  ? COLOR.func
+                  : COLOR.number;
+      out.push(
+        <span key={key++} className={cls}>
+          {m[0]}
+        </span>,
+      );
+      last = m.index + m[0].length;
+    }
+    if (last < line.length) out.push(line.slice(last));
+  });
 
   return out;
 }
 
-// "Created Sep 2 by Ada · last used 4m ago", dropping each part the row does not know.
+// "Created Sep 2 by Ada, last used 4m ago", dropping each part the row does not know.
 function KeyMetaLine({ meta }: { meta?: RuntimeKeyMeta }): React.JSX.Element {
   const now = useNow();
   const created = meta?.createdAt
@@ -258,11 +379,14 @@ function KeyMetaLine({ meta }: { meta?: RuntimeKeyMeta }): React.JSX.Element {
   const lastUsed = meta?.lastUsedAt
     ? `last used ${relativeTime(meta.lastUsedAt, now)}`
     : null;
-  const parts = [created, lastUsed].filter(
-    (part): part is string => part !== null,
-  );
 
-  return <FieldDescription>{parts.join(" · ")}</FieldDescription>;
+  return (
+    <>
+      {[created, lastUsed]
+        .filter((part): part is string => part !== null)
+        .join(", ")}
+    </>
+  );
 }
 
 function RotateButton({
@@ -289,175 +413,41 @@ function RotateButton({
 
   if (confirming) {
     return (
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="text-xs text-muted-foreground">
-          Invalidate the current key?
-        </span>
+      <span className="flex shrink-0 items-center gap-1">
         <Button
           variant="destructive"
-          size="xs"
+          size="sm"
           className="cursor-pointer"
           disabled={rotating}
           onClick={run}
         >
-          {rotating ? "Rotating" : "Rotate"}
+          {rotating ? "Rotating" : "Rotate now"}
         </Button>
         <Button
           variant="ghost"
-          size="xs"
+          size="sm"
           className="cursor-pointer"
           disabled={rotating}
           onClick={() => setConfirming(false)}
         >
           Cancel
         </Button>
-      </div>
+      </span>
     );
   }
 
   return (
-    <div className="flex shrink-0 flex-col items-end">
+    <span className="flex shrink-0 items-center gap-1">
       <Button
         variant="outline"
-        size="xs"
+        size="sm"
         tone="muted"
         className="cursor-pointer"
         onClick={() => setConfirming(true)}
       >
-        <RefreshCw />
         Rotate
       </Button>
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
-    </div>
-  );
-}
-
-// The fields and quickstart shared by the tab's card and the just-minted dialog.
-function RuntimeKeyFields({
-  apiKey,
-  meta,
-  onRotate,
-}: FieldsProps): React.JSX.Element {
-  const [showKey, setShowKey] = useState(false);
-  const endpoint = resolveCoreEndpoint();
-  const gatewayUrl = endpoint.ok ? endpoint.httpBaseUrl : null;
-  const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
-  // The .env block mirrors the reveal toggle so the secret is never shown by
-  // default, but Copy always yields the real lines.
-  const baseUrlLine = gatewayUrl ? `\nBROODS_BASE_URL="${gatewayUrl}"` : "";
-  const envDisplay = `BROODS_API_KEY="${showKey ? apiKey : maskedKey}"${baseUrlLine}`;
-  const envReal = `BROODS_API_KEY="${apiKey}"${baseUrlLine}`;
-
-  // Each label sits in a fixed-width wrapper: a horizontal Field grows a
-  // label that is its direct child.
-  return (
-    <FieldGroup>
-      <Field orientation="horizontal">
-        <div className="w-28 shrink-0">
-          <FieldLabel>Gateway URL</FieldLabel>
-        </div>
-        {gatewayUrl ? (
-          <div className="flex min-w-0 flex-1 items-center gap-1">
-            <Input readOnly value={gatewayUrl} className="font-mono text-xs" />
-            <CopyButton value={gatewayUrl} label="gateway URL" />
-          </div>
-        ) : (
-          <FieldDescription>
-            {endpoint.ok ? null : endpoint.message}
-          </FieldDescription>
-        )}
-      </Field>
-      <Field orientation="horizontal" className="items-start">
-        <div className="w-28 shrink-0">
-          <FieldLabel>Runtime key</FieldLabel>
-        </div>
-        <FieldContent>
-          <div className="flex items-center gap-1">
-            <Input
-              readOnly
-              value={showKey ? apiKey : maskedKey}
-              className="font-mono text-xs"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              tone="muted"
-              className="cursor-pointer"
-              aria-label={showKey ? "Hide key" : "Reveal key"}
-              onClick={() => setShowKey((v) => !v)}
-            >
-              {showKey ? <EyeOff /> : <Eye />}
-            </Button>
-            <CopyButton value={apiKey} label="runtime key" />
-          </div>
-          <div className="flex items-start justify-between">
-            <KeyMetaLine meta={meta} />
-            {onRotate ? <RotateButton onRotate={onRotate} /> : null}
-          </div>
-        </FieldContent>
-      </Field>
-
-      <Separator />
-
-      <div className="grid gap-4">
-        <h3 className="text-sm font-semibold">Quickstart</h3>
-        <ol className="grid gap-4">
-          <Step n={1} title="Install">
-            <CodeBlock code={INSTALL_SNIPPET} lang="bash" />
-          </Step>
-          <Step n={2} title="Add to .env">
-            <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
-          </Step>
-          <Step n={3} title="Run an agent">
-            <Tabs defaultValue="sdk">
-              <TabsList>
-                <TabsTrigger value="sdk" className="cursor-pointer">
-                  SDK
-                </TabsTrigger>
-                <TabsTrigger value="ws" className="cursor-pointer">
-                  WebSocket
-                </TabsTrigger>
-                {gatewayUrl ? (
-                  <TabsTrigger value="curl" className="cursor-pointer">
-                    cURL
-                  </TabsTrigger>
-                ) : null}
-              </TabsList>
-              <TabsContent value="sdk">
-                <CodeBlock code={SSE_SNIPPET} lang="ts" />
-              </TabsContent>
-              <TabsContent value="ws">
-                <CodeBlock code={WS_SNIPPET} lang="ts" />
-              </TabsContent>
-              {gatewayUrl ? (
-                <TabsContent value="curl">
-                  <CodeBlock code={curlSnippet(gatewayUrl)} lang="bash" />
-                </TabsContent>
-              ) : null}
-            </Tabs>
-          </Step>
-        </ol>
-      </div>
-    </FieldGroup>
-  );
-}
-
-function Step({
-  n,
-  title,
-  children,
-}: {
-  n: number;
-  title: string;
-  children: ReactNode;
-}): React.JSX.Element {
-  return (
-    <li className="grid gap-2">
-      <p className="text-sm font-medium">
-        <span className="text-muted-foreground tabular-nums">{n}</span> {title}
-      </p>
-      {children}
-    </li>
+    </span>
   );
 }

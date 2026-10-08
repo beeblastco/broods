@@ -4,6 +4,8 @@
  * change the same string; sorting is one column and a direction.
  */
 
+import { chipFor, parseQuery, splitTokens } from "./queryTokens";
+
 export type SortDir = "asc" | "desc";
 
 export interface SortState<C extends string> {
@@ -20,32 +22,26 @@ export function toggleToken(
   field: string,
   value: string,
 ): string {
-  const token = `${field}:${value}`;
-  const words = query.split(" ");
+  const token = chipFor(field, value);
+  const words = splitTokens(query);
   const kept = words.filter((word) => word.toLowerCase() !== token);
-  if (kept.length !== words.length) return kept.join(" ").trim();
+  if (kept.length !== words.length) {
+    return kept.length === 0 ? "" : `${kept.join(" ")} `;
+  }
 
-  return `${query.trim()} ${token} `.trimStart();
+  return `${token} ${query.trimStart()}`;
 }
 
 /** Removes every `field:` token from the query. */
 export function clearField(query: string, field: string): string {
-  return query
-    .split(" ")
+  return splitTokens(query)
     .filter((word) => !word.toLowerCase().startsWith(`${field}:`))
-    .join(" ")
-    .trim();
+    .join(" ");
 }
 
 /** The lowercased values the query names for `field`. */
 export function tokenValues(query: string, field: string): string[] {
-  const prefix = `${field}:`;
-
-  return query
-    .toLowerCase()
-    .split(" ")
-    .filter((word) => word.startsWith(prefix) && word.length > prefix.length)
-    .map((word) => word.slice(prefix.length));
+  return parseQuery(query, [field]).fields.map((token) => token.value);
 }
 
 /**

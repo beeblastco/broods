@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as access from "../access.js";
 import type * as account_accounts from "../account/accounts.js";
 import type * as account_budget from "../account/budget.js";
 import type * as account_connections from "../account/connections.js";
@@ -24,6 +25,7 @@ import type * as agent_crons from "../agent/crons.js";
 import type * as agent_cronsPublic from "../agent/cronsPublic.js";
 import type * as agent_deployments from "../agent/deployments.js";
 import type * as agent_policies from "../agent/policies.js";
+import type * as apiKeys from "../apiKeys.js";
 import type * as audit_ledger from "../audit/ledger.js";
 import type * as audit_sinks from "../audit/sinks.js";
 import type * as auth from "../auth.js";
@@ -66,10 +68,13 @@ import type * as http from "../http.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as logs from "../logs.js";
 import type * as mcp from "../mcp.js";
+import type * as model_access from "../model/access.js";
+import type * as model_accountDoc from "../model/accountDoc.js";
 import type * as model_accountHooks from "../model/accountHooks.js";
 import type * as model_accountKeys from "../model/accountKeys.js";
 import type * as model_accountSecrets from "../model/accountSecrets.js";
 import type * as model_activeAccount from "../model/activeAccount.js";
+import type * as model_actor from "../model/actor.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRules from "../model/agentRules.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
@@ -111,6 +116,7 @@ import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_ownership_stage from "../model/ownership/stage.js";
 import type * as model_planLimits from "../model/planLimits.js";
+import type * as model_policyDocument from "../model/policyDocument.js";
 import type * as model_policyReferences from "../model/policyReferences.js";
 import type * as model_policyRules from "../model/policyRules.js";
 import type * as model_pricing from "../model/pricing.js";
@@ -168,6 +174,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  access: typeof access;
   "account/accounts": typeof account_accounts;
   "account/budget": typeof account_budget;
   "account/connections": typeof account_connections;
@@ -184,6 +191,7 @@ declare const fullApi: ApiFromModules<{
   "agent/cronsPublic": typeof agent_cronsPublic;
   "agent/deployments": typeof agent_deployments;
   "agent/policies": typeof agent_policies;
+  apiKeys: typeof apiKeys;
   "audit/ledger": typeof audit_ledger;
   "audit/sinks": typeof audit_sinks;
   auth: typeof auth;
@@ -226,10 +234,13 @@ declare const fullApi: ApiFromModules<{
   "lib/slug": typeof lib_slug;
   logs: typeof logs;
   mcp: typeof mcp;
+  "model/access": typeof model_access;
+  "model/accountDoc": typeof model_accountDoc;
   "model/accountHooks": typeof model_accountHooks;
   "model/accountKeys": typeof model_accountKeys;
   "model/accountSecrets": typeof model_accountSecrets;
   "model/activeAccount": typeof model_activeAccount;
+  "model/actor": typeof model_actor;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRules": typeof model_agentRules;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
@@ -271,6 +282,7 @@ declare const fullApi: ApiFromModules<{
   "model/ownership/project": typeof model_ownership_project;
   "model/ownership/stage": typeof model_ownership_stage;
   "model/planLimits": typeof model_planLimits;
+  "model/policyDocument": typeof model_policyDocument;
   "model/policyReferences": typeof model_policyReferences;
   "model/policyRules": typeof model_policyRules;
   "model/pricing": typeof model_pricing;

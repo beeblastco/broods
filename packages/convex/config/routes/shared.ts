@@ -16,6 +16,7 @@ import {
   sha256Hex,
 } from "../../model/accountSecrets";
 import type { RolePrincipal } from "../../model/apiAuthorization";
+import type { StageScopedRef } from "../../model/projectScope";
 import type { AuditActor, AuditResource } from "../../model/auditEvents";
 import { RUN_TOKEN_PREFIX } from "../../model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
@@ -582,4 +583,29 @@ function parsePageLimit(raw: string): number | null {
   const limit = Number(raw);
 
   return limit >= 1 && limit <= MAX_PAGE_SIZE ? limit : null;
+}
+
+/**
+ * Refuse a stage-pinned role's write that names a resource on another stage,
+ * so a pinned session cannot wire its own resources to another stage's.
+ */
+export async function assertRefsInPin(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  role: RolePrincipal | undefined,
+  refs: StageScopedRef[],
+): Promise<void> {
+  if (!role?.projectId || !role.stageId || refs.length === 0) return;
+  const outside = await ctx.runQuery(internal.account.roles.refsOutsidePin, {
+    accountId: accountId,
+    pin: { projectId: role.projectId, stageId: role.stageId },
+    refs: refs,
+  });
+  if (outside.length > 0) {
+    throw new ClientError(
+      `Role is pinned to one stage; these are outside it: ${outside
+        .map((ref) => `${ref.type} ${ref.id}`)
+        .join(", ")}`,
+    );
+  }
 }

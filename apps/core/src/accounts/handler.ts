@@ -56,6 +56,7 @@ import {
 } from "../shared/domain/accounts.ts";
 import type {
   SandboxConfig,
+  SandboxConfigRecord,
   SandboxProvider,
 } from "../shared/domain/sandbox-config.ts";
 import { requireSecretsEnv } from "../shared/env.ts";
@@ -292,8 +293,9 @@ async function handleMcpServiceRoute(
 }
 
 /**
- * Auth gate for the sandbox lifecycle verbs: a role session must be allowed
- * `sandboxes:write` by its own policy.
+ * Auth gate for the sandbox lifecycle verbs: loads the sandbox config, then a
+ * role session must be allowed `sandboxes:write` on it by its own policy,
+ * which also holds a stage-pinned role to the record's stage.
  */
 async function handleSandboxLifecycleRoute(
   auth: AuthContext,
@@ -302,45 +304,12 @@ async function handleSandboxLifecycleRoute(
   action: SandboxLifecycleAction,
   request: CoreRequest,
 ): Promise<Response> {
-  if (auth.kind === "role") {
-    const denial = roleDenial(rolePrincipal(auth.role), method, {
-      type: "sandboxes",
-      id: decodeURIComponent(rawSandboxId),
-    });
-    if (denial) return errorResponse(403, denial);
-
-    return await handleSandboxLifecycle(
-      method,
-      auth.account.accountId,
-      rawSandboxId,
-      action,
-      request,
-    );
-  }
   // Driven by the dashboard via the sandboxPublic Convex actions, which
   // authenticate with the shared service token.
-  const account = requireAccountAuth(auth, { allowServiceToken: true });
-
-  return await handleSandboxLifecycle(
-    method,
-    account.accountId,
-    rawSandboxId,
-    action,
-    request,
-  );
-}
-
-/**
- * Loads the sandbox config, checks reservation ownership and budget, then
- * dispatches the lifecycle action to its handler below.
- */
-async function handleSandboxLifecycle(
-  method: string,
-  accountId: string,
-  rawSandboxId: string,
-  action: SandboxLifecycleAction,
-  request: CoreRequest,
-): Promise<Response> {
+  const accountId =
+    auth.kind === "role"
+      ? auth.account.accountId
+      : requireAccountAuth(auth, { allowServiceToken: true }).accountId;
   if (method !== "POST") {
     return methodNotAllowed(["POST"]);
   }
@@ -349,9 +318,36 @@ async function handleSandboxLifecycle(
     accountId,
     sandboxId,
   );
+  // A role is judged before a missing record answers 404, so the status never
+  // tells it which ids exist where it may not act.
+  const denial =
+    auth.kind === "role"
+      ? roleDenial(rolePrincipal(auth.role), method, {
+          type: "sandboxes",
+          id: sandboxId,
+          projectId: record?.projectId,
+          stageId: record?.stageId,
+        })
+      : null;
+  if (denial) return errorResponse(403, denial);
   if (!record) {
     return errorResponse(404, "Sandbox not found");
   }
+
+  return await handleSandboxLifecycle(accountId, record, action, request);
+}
+
+/**
+ * Checks reservation ownership and budget for a loaded sandbox config, then
+ * dispatches the lifecycle action to its handler below.
+ */
+async function handleSandboxLifecycle(
+  accountId: string,
+  record: SandboxConfigRecord,
+  action: SandboxLifecycleAction,
+  request: CoreRequest,
+): Promise<Response> {
+  const sandboxId = record.sandboxId;
   // Terminate boots nothing, so it still tears down a sandbox an old config made.
   if (action !== "terminate") {
     const refusal = retiredImageOptionsRefusal(

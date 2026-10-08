@@ -9,15 +9,22 @@
  */
 
 import { httpAction, type ActionCtx } from "../_generated/server";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import {
   roleDenial,
   rolePrincipal,
+  type ApiPrincipal,
   type ApiResource,
+  type RolePrincipal,
 } from "../model/apiAuthorization";
 import type { AuditActor } from "../model/auditEvents";
 import { CLIENT_ERROR_STATUS, clientErrorData } from "../model/clientError";
 import { POLICY_STILL_REFERENCED } from "../model/policyReferences";
+import {
+  STAGE_SCOPED_RESOURCE_TYPES,
+  type StageScopedResourceType,
+} from "../model/projectScope";
 import { resolveRequestId, withRequestId } from "../model/requestId";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
 import {
@@ -134,7 +141,10 @@ async function handleConfigRequest(
       return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);
     }
 
+    // Carried to the routes whose writes must not point at another stage.
+    let role: RolePrincipal | undefined;
     if (accountAuth.kind === "role") {
+      role = accountAuth.role;
       const principal = rolePrincipal(accountAuth.role);
       readsPolicyReferences =
         roleDenial(principal, "GET", { type: "agents" }) === null &&
@@ -142,12 +152,24 @@ async function handleConfigRequest(
       const denial = roleDenial(
         principal,
         req.method,
-        apiResourceForRoute(route),
+        await withStageScope(
+          ctx,
+          account._id,
+          principal,
+          apiResourceForRoute(route),
+        ),
       );
       if (denial) return jsonError(403, denial);
     }
 
-    return await dispatchResourceRoute(ctx, req, account._id, actor, route);
+    return await dispatchResourceRoute(
+      ctx,
+      req,
+      account._id,
+      actor,
+      route,
+      role,
+    );
   } catch (err) {
     const clientError = clientErrorData(err);
     if (clientError) {
@@ -216,12 +238,45 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
   }
 }
 
+/**
+ * Attach the addressed resource's stage when the role is pinned to one, so
+ * `authorize()` can hold the request to the pin. Collections and
+ * account-scoped resources stay unscoped, which a pinned role is refused.
+ */
+async function withStageScope(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  principal: ApiPrincipal,
+  resource: ApiResource,
+): Promise<ApiResource> {
+  if (principal.projectId === undefined && principal.stageId === undefined) {
+    return resource;
+  }
+  if (resource.id === undefined || !isStageScoped(resource.type)) {
+    return resource;
+  }
+  const scope = await ctx.runQuery(internal.account.roles.resourceScope, {
+    accountId: accountId,
+    type: resource.type,
+    id: resource.id,
+  });
+
+  return scope ? { ...resource, ...scope } : resource;
+}
+
+function isStageScoped(
+  type: ApiResource["type"],
+): type is StageScopedResourceType {
+  return (STAGE_SCOPED_RESOURCE_TYPES as readonly string[]).includes(type);
+}
+
 async function dispatchResourceRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
   route: ResourceRoute,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   switch (route.kind) {
     case "skills":
@@ -262,6 +317,7 @@ async function dispatchResourceRoute(
         actor,
         route.cronId,
         route.runs,
+        role,
       );
     case "workspaces":
       return await handleWorkspaceConfigRoute(
@@ -294,6 +350,7 @@ async function dispatchResourceRoute(
         accountId,
         actor,
         route.channelId,
+        role,
       );
     case "agents":
       return await handleAgentConfigRoute(
@@ -302,6 +359,7 @@ async function dispatchResourceRoute(
         accountId,
         actor,
         route.agentId,
+        role,
       );
     case "agentChannelDirectory":
       return await handleAgentChannelDirectoryRoute(

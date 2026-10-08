@@ -9,7 +9,9 @@ const SECRET = "service-secret";
 const TICKET = {
   accountId: "acct_1",
   endpointId: "stage-abcd1234",
+  projectId: "proj_shop",
   projectSlug: "shop",
+  stageId: "stage_dev",
   stageSlug: "development",
   expiresAt: Date.now() + 60_000,
 };
@@ -20,6 +22,17 @@ describe("stage session tickets", () => {
 
     expect(token.startsWith(STAGE_SESSION_TICKET_PREFIX)).toBe(true);
     expect(await openStageSessionTicket(token, SECRET)).toEqual(TICKET);
+  });
+
+  test("round-trips sandboxWrite", async () => {
+    const writer = { ...TICKET, sandboxWrite: true as const };
+
+    expect(
+      await openStageSessionTicket(
+        await sealStageSessionTicket(writer, SECRET),
+        SECRET,
+      ),
+    ).toEqual(writer);
   });
 
   test("rejects a ticket signed with another secret", async () => {
