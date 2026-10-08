@@ -42,12 +42,15 @@ export function tierPermissions(tier: OrgRole): DashboardPolicyAction[] {
   return tier === "member" ? [] : [...DASHBOARD_POLICY_ACTIONS];
 }
 
-/** Whether the enforce-mode policies allow one action in one scope: a matching deny wins, else a matching allow. */
+/** Whether the enforce-mode policies allow one action in one scope: a matching deny wins, else a matching allow. `keys:write` also reads, so a writer sees the list. */
 export function policiesAllow(
   policies: readonly ScopedPolicy[],
   action: string,
   scope: DashboardScope = {},
 ): boolean {
+  if (action === "keys:read" && policiesAllow(policies, "keys:write", scope)) {
+    return true;
+  }
   let allowed = false;
   for (const policy of policies) {
     if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {

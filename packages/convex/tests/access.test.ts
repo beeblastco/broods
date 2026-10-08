@@ -42,6 +42,20 @@ test("policies grant and refuse in the same order core's OPA uses, where they ar
   expect(policiesAllow([grant], "keys:read")).toBe(true);
   expect(policiesAllow([grant, refuse], "keys:read")).toBe(false);
   expect(policiesAllow([grant], "keys:write")).toBe(false);
+  const write = {
+    document: {
+      ...allow,
+      rules: [{ id: "w", effect: "allow" as const, actions: ["keys:write"] }],
+    },
+  };
+  const refuseWrite = {
+    document: {
+      ...deny,
+      rules: [{ id: "x", effect: "deny" as const, actions: ["keys:write"] }],
+    },
+  };
+  expect(policiesAllow([write], "keys:read")).toBe(true);
+  expect(policiesAllow([write, refuseWrite], "keys:read")).toBe(false);
   expect(
     policiesAllow([{ document: { ...allow, mode: "audit" } }], "keys:read"),
   ).toBe(false);
