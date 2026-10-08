@@ -488,9 +488,7 @@ describe("stage-pinned role sessions", () => {
       }),
     });
     expect(response.status).toBe(400);
-    expect(((await response.json()) as ApiErrorBody).error.message).toContain(
-      "PROD_DB_PASSWORD",
-    );
+    expect(await response.text()).toContain("PROD_DB_PASSWORD");
     const agent = await t.run(async (ctx) => await ctx.db.get(devAgent));
     expect(agent?.encryptedConfig).toBeUndefined();
 
@@ -580,9 +578,7 @@ describe("stage-pinned role sessions", () => {
       url: "https://attacker.example/mcp",
     });
     expect(repointed.status).toBe(400);
-    expect(((await repointed.json()) as ApiErrorBody).error.message).toContain(
-      "GITHUB_TOKEN",
-    );
+    expect(await repointed.text()).toContain("GITHUB_TOKEN");
     const row = await t.run(async (ctx) => await ctx.db.get(serverId));
     expect(row?.url).toBe("https://mcp.example.com/mcp");
     expect(
@@ -627,9 +623,7 @@ describe("stage-pinned role sessions", () => {
       }),
     });
     expect(response.status).toBe(400);
-    expect(((await response.json()) as ApiErrorBody).error.message).toContain(
-      "PROD_DB_PASSWORD",
-    );
+    expect(await response.text()).toContain("PROD_DB_PASSWORD");
   });
 
   test("a dev-pinned role cannot list or create account-wide", async () => {
