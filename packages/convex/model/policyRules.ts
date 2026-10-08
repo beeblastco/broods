@@ -51,6 +51,19 @@ export const API_POLICY_ACTIONS = [
   "workspaces:write",
 ] as const;
 
+/**
+ * Dashboard permissions: what a member may see and do in the app beyond
+ * their tier. Owners and admins hold them all; a custom role grants them
+ * to members through its policies (model/access.ts).
+ */
+export const DASHBOARD_POLICY_ACTIONS = [
+  "keys:read",
+  "keys:write",
+  "members:write",
+  "access:write",
+  "billing:read",
+] as const;
+
 const RESOURCE_SELECTOR_KEYS = [
   "toolNames",
   "mcpIds",
@@ -66,7 +79,17 @@ export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
 
 export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
 
-export type PolicyAction = AgentPolicyAction | ApiPolicyAction;
+export type DashboardPolicyAction = (typeof DASHBOARD_POLICY_ACTIONS)[number];
+
+/**
+ * A rule's action: a built-in one, or a custom permission the org named
+ * (`tool.stripe.refund`). The open string keeps the built-ins suggested.
+ */
+export type PolicyAction =
+  | AgentPolicyAction
+  | ApiPolicyAction
+  | DashboardPolicyAction
+  | (string & {});
 
 export interface PolicyCondition {
   attribute: string;
@@ -144,7 +167,7 @@ export function normalizeCreatePolicyInput(value: unknown): {
  */
 export function normalizePolicyDocument(
   value: unknown,
-  allowedActions: readonly PolicyAction[] = AGENT_POLICY_ACTIONS,
+  allowedActions: readonly string[] = AGENT_POLICY_ACTIONS,
 ): PolicyDocument {
   if (!isPlainObject(value))
     throw new ClientError("policy document must be an object");
@@ -300,7 +323,7 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
 function normalizePolicyRule(
   value: unknown,
   index: number,
-  allowedActions: readonly PolicyAction[],
+  allowedActions: readonly string[],
 ): PolicyRule {
   if (!isPlainObject(value))
     throw new ClientError(`policy rules[${index}] must be an object`);

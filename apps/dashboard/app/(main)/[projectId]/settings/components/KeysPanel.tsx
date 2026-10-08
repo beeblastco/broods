@@ -20,7 +20,11 @@ import {
   type HeadSort,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
-import { EmptyState, NoPermission } from "@/app/components/EmptyState";
+import {
+  EmptyState,
+  LockedValue,
+  NoPermission,
+} from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
 import { Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
@@ -43,6 +47,7 @@ import {
 } from "@/app/components/ui/select";
 import { Who, type Actor } from "@/app/components/Who";
 import { useNow } from "@/app/hooks/useNow";
+import { usePermissions } from "@/app/hooks/usePermissions";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
@@ -98,6 +103,7 @@ interface Props {
 }
 
 export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
+  const { can } = usePermissions();
   const keys = useQuery(api.apiKeys.listForProject, { projectId: projectId });
   const stages = useQuery(api.stage.list, { projectId: projectId });
 
@@ -110,12 +116,17 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
 
   return (
     <div className="grid gap-6">
-      <RuntimeKeysTable projectId={projectId} keys={keys.runtime} />
+      <RuntimeKeysTable
+        projectId={projectId}
+        keys={keys.runtime}
+        canWrite={can("keys:write")}
+      />
       <ApiKeysTable
         projectId={projectId}
         keys={keys.api}
         stages={stages}
         defaultStageId={stageId}
+        canWrite={can("keys:write")}
       />
     </div>
   );
@@ -125,9 +136,11 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
 function RuntimeKeysTable({
   projectId,
   keys,
+  canWrite,
 }: {
   projectId: Id<"projects">;
   keys: RuntimeKey[];
+  canWrite: boolean;
 }): React.JSX.Element {
   const now = useNow();
   const rotate = useMutation(api.agent.deployments.rotate);
@@ -213,15 +226,21 @@ function RuntimeKeysTable({
                   <Who actor={rotatedBy(key)} />
                 </DataTableCell>
                 <DataTableCell align="right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    tone="muted"
-                    className="cursor-pointer"
-                    onClick={() => setRotating(key)}
-                  >
-                    Rotate
-                  </Button>
+                  {canWrite ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      tone="muted"
+                      className="cursor-pointer"
+                      onClick={() => setRotating(key)}
+                    >
+                      Rotate
+                    </Button>
+                  ) : (
+                    <LockedValue reason="No permission to rotate keys">
+                      Rotate
+                    </LockedValue>
+                  )}
                 </DataTableCell>
               </DataTableRow>
             ))}
@@ -285,11 +304,13 @@ function ApiKeysTable({
   keys,
   stages,
   defaultStageId,
+  canWrite,
 }: {
   projectId: Id<"projects">;
   keys: ApiKey[];
   stages: Doc<"stages">[];
   defaultStageId: Id<"stages"> | null;
+  canWrite: boolean;
 }): React.JSX.Element {
   const now = useNow();
   const remove = useMutation(api.deployKeys.remove);
@@ -357,6 +378,8 @@ function ApiKeysTable({
           <Button
             size="sm"
             className="cursor-pointer"
+            disabled={!canWrite}
+            title={canWrite ? undefined : "No permission to create keys"}
             onClick={() => setCreating(true)}
           >
             <Plus className="size-4" />
@@ -423,15 +446,17 @@ function ApiKeysTable({
                   )}
                 </DataTableCell>
                 <DataTableCell align="right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    tone="muted-destructive"
-                    className="cursor-pointer"
-                    onClick={() => setDeleting(key)}
-                  >
-                    Revoke
-                  </Button>
+                  {canWrite && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      tone="muted-destructive"
+                      className="cursor-pointer"
+                      onClick={() => setDeleting(key)}
+                    >
+                      Revoke
+                    </Button>
+                  )}
                 </DataTableCell>
               </DataTableRow>
             ))}

@@ -19,6 +19,12 @@ const memberRow = v.object({
   membershipId: v.id("orgMembers"),
   userId: v.id("users"),
   role: roleValidator,
+  roleId: v.optional(v.id("orgRoles")),
+  /** The custom role's name, when the member holds one. */
+  roleName: v.optional(v.string()),
+  invitedBy: v.optional(
+    v.object({ name: v.string(), avatarUrl: v.optional(v.string()) }),
+  ),
   createdAt: v.number(),
   email: v.string(),
   name: v.string(),
@@ -62,11 +68,18 @@ export const list = query({
     const rows = await Promise.all(
       memberships.map(async (m) => {
         const u = await ctx.db.get(m.userId);
+        const customRole = m.roleId ? await ctx.db.get(m.roleId) : null;
+        const inviter = m.invitedBy ? await ctx.db.get(m.invitedBy) : null;
 
         return {
           membershipId: m._id,
           userId: m.userId,
           role: m.role,
+          roleId: customRole?._id,
+          roleName: customRole?.name,
+          invitedBy: inviter
+            ? { name: inviter.name, avatarUrl: inviter.avatarUrl }
+            : undefined,
           createdAt: m.createdAt,
           email: u?.email ?? "(unknown)",
           name: u?.name ?? "(unknown)",
@@ -144,6 +157,7 @@ export const add = mutation({
       orgId: orgId,
       userId: target._id,
       role: role ?? "member",
+      invitedBy: caller._id,
       createdAt: Date.now(),
     });
 
@@ -156,10 +170,13 @@ export const updateRole = mutation({
   args: {
     membershipId: v.id("orgMembers"),
     role: roleValidator,
+    /** A custom role on the member tier; null or absent clears it. */
+    roleId: v.optional(v.union(v.id("orgRoles"), v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { membershipId, role } = args;
+    const customRoleId = args.roleId ?? undefined;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -200,7 +217,16 @@ export const updateRole = mutation({
       throw new Error("Cannot change the role of the org owner");
     }
 
-    await ctx.db.patch(membershipId, { role: role });
+    if (customRoleId) {
+      const customRole = await ctx.db.get(customRoleId);
+      if (!customRole || customRole.orgId !== membership.orgId) {
+        throw new Error("Role not found");
+      }
+    }
+    await ctx.db.patch(membershipId, {
+      role: customRoleId ? "member" : role,
+      roleId: customRoleId,
+    });
 
     return null;
   },

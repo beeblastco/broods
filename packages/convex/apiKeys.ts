@@ -11,6 +11,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
+import { hasDashboardPermission } from "./model/access";
 import { getProjectForRole } from "./model/ownership/project";
 import { getActiveCaller } from "./org/orgs";
 import { listStagesForProject } from "./stage";
@@ -67,8 +68,15 @@ export const listForOrg = query({
   args: {},
   returns: v.union(v.array(orgKeyValidator), v.null()),
   handler: async (ctx): Promise<OrgKey[] | null> => {
-    const caller = await getActiveCaller(ctx, "admin");
+    const caller = await getActiveCaller(ctx);
     if (!caller) return null;
+    const orgId = ctx.db.normalizeId("orgs", caller.account.orgId);
+    if (
+      !orgId ||
+      !(await hasDashboardPermission(ctx, orgId, caller.user, "keys:read"))
+    ) {
+      return null;
+    }
     const account = caller.account;
 
     return [
@@ -91,13 +99,18 @@ export const listForProject = query({
   handler: async (ctx, args): Promise<ProjectKeys | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) return null;
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      args.projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, authUser.id, args.projectId);
     if (!project) return null;
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+      .unique();
+    if (
+      !user ||
+      !(await hasDashboardPermission(ctx, project.orgId, user, "keys:read"))
+    ) {
+      return null;
+    }
     const stages = await listStagesForProject(ctx, authUser.id, args.projectId);
 
     const runtime: ProjectKeys["runtime"] = [];

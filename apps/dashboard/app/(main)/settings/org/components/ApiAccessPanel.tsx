@@ -7,7 +7,7 @@
  * lock.
  */
 
-import { CopyButton } from "@/app/components/CopyButton";
+import { CopyButton, CopyRow } from "@/app/components/CopyButton";
 import {
   DataTable,
   DataTableBody,
@@ -29,6 +29,7 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Who } from "@/app/components/Who";
+import { usePermissions } from "@/app/hooks/usePermissions";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
@@ -42,6 +43,8 @@ interface Props {
 }
 
 export function ApiAccessPanel({ org }: Props): React.JSX.Element {
+  const { can } = usePermissions();
+  const canWrite = can("keys:write");
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const keys = useQuery(api.apiKeys.listForOrg, {});
   const provision = useAction(api.org.lifecycle.provision);
@@ -87,25 +90,25 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
         {account && (
           <dl className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-xs">
             <dt className="text-muted-foreground">Account ID</dt>
-            <dd className="flex min-w-0 items-center gap-1">
-              <Input
-                readOnly
+            <dd className="min-w-0">
+              <CopyRow
                 value={account.accountId}
-                className="font-mono text-xs"
-              />
-              <CopyButton value={account.accountId} label="account ID" />
+                className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+              >
+                <span className="flex-1 truncate">{account.accountId}</span>
+              </CopyRow>
             </dd>
             <dt className="text-muted-foreground">Base URL</dt>
-            <dd className="flex min-w-0 items-center gap-1">
+            <dd className="min-w-0">
               {endpoint.ok ? (
-                <>
-                  <Input
-                    readOnly
-                    value={endpoint.httpBaseUrl}
-                    className="font-mono text-xs"
-                  />
-                  <CopyButton value={endpoint.httpBaseUrl} label="base URL" />
-                </>
+                <CopyRow
+                  value={endpoint.httpBaseUrl}
+                  className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+                >
+                  <span className="flex-1 truncate">
+                    {endpoint.httpBaseUrl}
+                  </span>
+                </CopyRow>
               ) : (
                 <span className="text-warning">{endpoint.message}</span>
               )}
@@ -152,16 +155,18 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
                     />
                   </DataTableCell>
                   <DataTableCell align="right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      tone="muted"
-                      className="cursor-pointer"
-                      disabled={pending}
-                      onClick={() => setRotateOpen(true)}
-                    >
-                      Rotate
-                    </Button>
+                    {canWrite && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        tone="muted"
+                        className="cursor-pointer"
+                        disabled={pending}
+                        onClick={() => setRotateOpen(true)}
+                      >
+                        Rotate
+                      </Button>
+                    )}
                   </DataTableCell>
                 </DataTableRow>
               ))}
@@ -172,14 +177,16 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             title="This organization has no API account yet."
             detail="Provisioning creates the backend tenant and issues a one-time account key."
             action={
-              <Button
-                size="sm"
-                className="cursor-pointer"
-                disabled={pending}
-                onClick={() => run(() => provision({ orgId: org._id }))}
-              >
-                {pending ? "Provisioning…" : "Provision account"}
-              </Button>
+              canWrite && (
+                <Button
+                  size="sm"
+                  className="cursor-pointer"
+                  disabled={pending}
+                  onClick={() => run(() => provision({ orgId: org._id }))}
+                >
+                  {pending ? "Provisioning…" : "Provision account"}
+                </Button>
+              )
             }
           />
         )}
