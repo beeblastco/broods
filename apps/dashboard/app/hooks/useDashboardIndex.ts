@@ -9,6 +9,7 @@
  */
 import { NAV_ITEMS, navHref } from "@/app/lib/navigation";
 import type { SearchItem } from "@/app/lib/paletteSearch";
+import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
@@ -17,16 +18,17 @@ import { useMemo } from "react";
 
 export function useDashboardIndex(
   projectId: Id<"projects"> | null,
-  stageId: Id<"stages"> | null,
 ): readonly SearchItem[] {
   const pathname = usePathname();
+  const { stageId, stageArgs } = useStage();
   const projectArgs = projectId ? { projectId: projectId } : "skip";
-  const stageArgs =
-    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip";
 
   const canvas = useQuery(api.canvas.getByProject, stageArgs);
   const crons = useQuery(api.agent.crons.listForProject, projectArgs);
-  const envVars = useQuery(api.environmentVariables.list, stageArgs);
+  const envVars = useQuery(
+    api.environmentVariables.list,
+    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  );
   const projects = useQuery(api.project.list, {});
   const stages = useQuery(api.stage.list, projectArgs);
 
