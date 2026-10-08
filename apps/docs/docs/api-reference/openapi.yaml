@@ -1721,7 +1721,7 @@ paths:
                       {
                         type: string,
                         enum: [tiny, xsmall, small, medium, large],
-                        description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (MicroVM bakes size into the image; daytona/e2b/vercel size themselves). Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
+                        description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (daytona/e2b/vercel size themselves); ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk. Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
                       }
                     image:
                       {

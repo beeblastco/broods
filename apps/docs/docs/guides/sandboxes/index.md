@@ -114,7 +114,7 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `medium` | 2    | 4 GB   | 16 GB | paid          |
 | `large`  | 4    | 8 GB   | 32 GB | paid          |
 
-Only the `sandbox` provider applies the size to the machine it creates, and it rounds `tiny` up to 0.5 vCPU. On `lambda` the image fixes the machine, so the size is display-only. `daytona`, `e2b` and `vercel` size machines through their own options, and there the size only sets what the dashboard shows. `cloudflare` picks the nearest Cloudflare instance type. Every provider accepts every size name.
+Only the `sandbox` provider applies the size to the machine it creates, and it rounds `tiny` up to 0.5 vCPU. On `lambda` every machine is the same, a 2 GB baseline that bursts to 4 vCPU and 8 GB on an 8 GB disk, and the dashboard shows that fixed machine whatever size you set. `daytona`, `e2b` and `vercel` size machines through their own options, and there the size only sets what the dashboard shows. `cloudflare` picks the nearest Cloudflare instance type. Every provider accepts every size name.
 
 ## Images
 
