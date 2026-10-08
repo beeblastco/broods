@@ -15,6 +15,9 @@ import {
   sandboxMcpTarget,
   type SandboxMcpTarget,
 } from "../harness/mcp/sandbox.ts";
+import { getSandboxReservationRecord } from "../harness/sandbox/instance-store.ts";
+import { sandboxReservationKey } from "../harness/sandbox/utils.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
 import type { McpRecord } from "../shared/domain/mcp.ts";
 import {
   errorResponse,
@@ -27,8 +30,16 @@ import { getStorage } from "../shared/storage.ts";
 import { resolveAgentRuntime } from "../shared/workspaces.ts";
 
 const RPC_TIMEOUT_MS = 30_000;
-// The agent id the explorer reserves a lambda sandbox's VM under.
+// The agent id the explorer reserves a lambda sandbox's VM under when no agent
+// of the stage runs on that sandbox.
 const MCP_EXPLORER_AGENT_ID = "mcp-explorer";
+
+/** An agent's VM for a sandbox-hosted row, and when its reservation was claimed. */
+interface AgentSandboxCandidate {
+  agent: AgentRecord;
+  target: SandboxMcpTarget;
+  claimedAt: number | undefined;
+}
 
 /** An unsaved row to verify: the minimal record fields a connection needs. */
 interface McpProbe {
@@ -100,22 +111,87 @@ export async function handleMcpServiceRpc(
 }
 
 /**
- * Where the explorer reaches a row on a lambda sandbox of the row's stage,
- * resolved the way an agent run resolves it. The explorer runs as no agent, so
- * it reserves a VM of its own on that sandbox (or the sandbox's pinned one).
- * Undefined for any other row.
+ * The VM `agent` reaches `record` on and whether its reservation is live.
+ * Undefined when the agent's config no longer resolves: its own runs fail on
+ * that, and the explorer moves on to the next agent.
+ */
+async function agentSandboxCandidate(
+  accountId: string,
+  record: McpRecord,
+  agent: AgentRecord,
+): Promise<AgentSandboxCandidate | undefined> {
+  const runtime = await resolveAgentRuntime(agent.config, {
+    accountId: accountId,
+    agentId: agent.agentId,
+  }).catch((): undefined => undefined);
+  const target = runtime && sandboxMcpTarget(record, runtime);
+  const key = target && sandboxReservationKey(target.reservation);
+  if (!target || !key) return undefined;
+  const reservation = await getSandboxReservationRecord(
+    target.config.provider,
+    key,
+  );
+
+  return {
+    agent: agent,
+    target: target,
+    claimedAt: reservation?.claimedAt,
+  };
+}
+
+/**
+ * Where the explorer reaches a row on a lambda sandbox of the row's stage: an
+ * agent's VM, resolved the way that agent's run resolves it, so the explorer
+ * never boots a second VM beside the agent's. In order: the stage's agent on
+ * that sandbox whose reservation is live (most recently claimed first), else
+ * the first agent by id that uses this server, so its next run lands on the VM
+ * the explorer started, else a VM of the explorer's own. Undefined for any
+ * other row.
  */
 async function explorerSandboxTarget(
   accountId: string,
   record: McpRecord,
 ): Promise<SandboxMcpTarget | undefined> {
   if (record.transport !== "machine") return undefined;
-  const sandboxes = await getStorage().sandboxConfigs.list(accountId);
+  const storage = getStorage();
+  const [sandboxes, agents] = await Promise.all([
+    storage.sandboxConfigs.list(accountId),
+    storage.agents.listForStage(accountId, record.projectId, record.stageId),
+  ]);
   const host = sandboxes.find(
     (sandbox) =>
       sandbox.name === record.sandbox && sandbox.stageId === record.stageId,
   );
   if (host?.config.provider !== "lambda") return undefined;
+  const candidates = (
+    await Promise.all(
+      agents
+        .filter(
+          (agent): boolean =>
+            agent.config.sandboxes?.includes(host.sandboxId) === true,
+        )
+        .toSorted((left, right): number =>
+          left.agentId.localeCompare(right.agentId),
+        )
+        .map((agent): Promise<AgentSandboxCandidate | undefined> =>
+          agentSandboxCandidate(accountId, record, agent),
+        ),
+    )
+  ).filter(
+    (candidate): candidate is AgentSandboxCandidate => candidate !== undefined,
+  );
+  const [live] = candidates
+    .filter((candidate): boolean => candidate.claimedAt !== undefined)
+    .toSorted(
+      (left, right): number => (right.claimedAt ?? 0) - (left.claimedAt ?? 0),
+    );
+  const user = candidates.find((candidate): boolean => {
+    const entry = candidate.agent.config.mcp?.[record.serverId];
+
+    return entry !== undefined && entry.enabled !== false;
+  });
+  const chosen = live ?? user;
+  if (chosen) return chosen.target;
   const runtime = await resolveAgentRuntime(
     { sandboxes: [host.sandboxId] },
     { accountId: accountId, agentId: MCP_EXPLORER_AGENT_ID },
