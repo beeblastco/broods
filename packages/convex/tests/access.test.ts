@@ -296,3 +296,145 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
     t.mutation(api.access.removeRole, { roleId: roleId }),
   ).rejects.toThrow(/holds this role/);
 });
+
+test("access:write may not reach past its ceiling by switching a policy to enforce or dropping a deny", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const memberId = await t.run(async (ctx): Promise<Id<"orgMembers">> => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free",
+      createdAt: now,
+    });
+    const ownerId = await ctx.db.insert("users", {
+      authId: "auth_owner",
+      email: "owner@example.com",
+      name: "Owner",
+      plan: "free",
+      activeOrgId: orgId,
+    });
+    const memberUserId = await ctx.db.insert("users", {
+      authId: "auth_member",
+      email: "ada@example.com",
+      name: "Ada",
+      plan: "free",
+      activeOrgId: orgId,
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: ownerId,
+      role: "owner",
+      createdAt: now,
+    });
+    await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "beeblast",
+      secretHash: "hash-beeblast",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: memberUserId,
+      role: "member",
+      createdAt: now,
+    });
+  });
+
+  currentAuthId = "auth_owner";
+  const accessPolicy = await t.mutation(api.access.createPolicy, {
+    name: "Access",
+    mode: "enforce",
+  });
+  await t.mutation(api.access.addRule, {
+    policyId: accessPolicy,
+    permission: "access:write",
+    scope: {},
+  });
+  const roleId = await t.mutation(api.access.createRole, {
+    name: "Access admin",
+    policyIds: [accessPolicy],
+  });
+  await t.mutation(api.org.members.updateRole, {
+    membershipId: memberId,
+    role: "member",
+    roleId: roleId,
+  });
+
+  // An audit policy grants nothing, so its keys:write rule and the role
+  // holding it pass; turning it on is where the ceiling must hold.
+  currentAuthId = "auth_member";
+  const audit = await t.mutation(api.access.createPolicy, {
+    name: "Sleeper",
+    mode: "audit",
+  });
+  await t.mutation(api.access.addRule, {
+    policyId: audit,
+    permission: "keys:write",
+    scope: {},
+  });
+  await t.mutation(api.access.updateRole, {
+    roleId: roleId,
+    policyIds: [accessPolicy, audit],
+  });
+  await expect(
+    t.mutation(api.access.updatePolicy, { policyId: audit, mode: "enforce" }),
+  ).rejects.toThrow(/keys:write, which you do not hold/);
+  expect(await t.query(api.access.viewerPermissions, {})).toEqual([
+    "access:write",
+  ]);
+
+  // A deny masking an allow in the same policy passes; dropping it may not.
+  const masked = await t.mutation(api.access.createPolicy, {
+    name: "Masked",
+    mode: "enforce",
+  });
+  const denyId = await t.mutation(api.access.addRule, {
+    policyId: masked,
+    permission: "keys:write",
+    effect: "deny",
+    scope: {},
+  });
+  await t.mutation(api.access.addRule, {
+    policyId: masked,
+    permission: "keys:write",
+    scope: {},
+  });
+  await t.mutation(api.access.updateRole, {
+    roleId: roleId,
+    policyIds: [accessPolicy, masked],
+  });
+  await expect(
+    t.mutation(api.access.removeRule, { policyId: masked, ruleId: denyId }),
+  ).rejects.toThrow(/keys:write, which you do not hold/);
+  expect(await t.query(api.access.viewerPermissions, {})).toEqual([
+    "access:write",
+  ]);
+
+  // Narrowing stays open: a rename, dropping an allow, back to audit.
+  await t.mutation(api.access.updatePolicy, {
+    policyId: audit,
+    name: "Renamed",
+    mode: "audit",
+  });
+  const allowId = (await t.query(api.access.listPolicies, {}))
+    .find((policy) => policy._id === masked)
+    ?.rules.find((rule) => rule.effect === "allow")?.id;
+  expect(allowId).toBeDefined();
+  await t.mutation(api.access.removeRule, {
+    policyId: masked,
+    ruleId: allowId ?? "",
+  });
+
+  // The owner holds everything, so the same switch is theirs to make.
+  currentAuthId = "auth_owner";
+  await t.mutation(api.access.updatePolicy, {
+    policyId: audit,
+    mode: "enforce",
+  });
+  await t.mutation(api.access.removeRule, { policyId: masked, ruleId: denyId });
+});
