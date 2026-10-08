@@ -125,7 +125,7 @@ export async function handleAgentConfigRoute(
   role: RolePrincipal | undefined,
 ): Promise<Response> {
   if (!agentId)
-    return await handleAgentCollectionRoute(ctx, req, accountId, actor);
+    return await handleAgentCollectionRoute(ctx, req, accountId, actor, role);
 
   if (req.method === "GET") {
     const record: Doc<"agents"> | null = await ctx.runQuery(
@@ -231,6 +231,7 @@ async function handleAgentCollectionRoute(
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   if (req.method === "GET") {
     const cipher = await accountCipherForAction(ctx, accountId, "read");
@@ -268,6 +269,7 @@ async function handleAgentCollectionRoute(
         { code: "agent_name_exists", param: "name" },
       );
     }
+    assertRoleMayReadEnv(role, undefined, input.config);
     // Before encryption: canonicalization must land in the persisted config.
     canonicalizeAgentSkillPaths(accountId, input.config);
     const config = await prepareAccountAgentConfig(

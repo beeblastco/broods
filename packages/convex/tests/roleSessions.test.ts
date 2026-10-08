@@ -493,6 +493,68 @@ describe("stage-pinned role sessions", () => {
     );
     const agent = await t.run(async (ctx) => await ctx.db.get(devAgent));
     expect(agent?.encryptedConfig).toBeUndefined();
+
+    // A name the config already carries stays where it was put, but the role
+    // may not move it into a section it changes.
+    const set = await t.fetch(`/v1/agents/${devAgent}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${ACCOUNT_SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        config: { systemPrompt: "use ${PROD_DB_PASSWORD}" },
+      }),
+    });
+    expect(set.status).toBe(200);
+    const patch = (body: unknown): Promise<Response> =>
+      t.fetch(`/v1/agents/${devAgent}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    expect((await patch({ description: "kept" })).status).toBe(200);
+    expect(
+      (await patch({ config: { systemPrompt: "say ${PROD_DB_PASSWORD}" } }))
+        .status,
+    ).toBe(400);
+  });
+
+  test("an unpinned role cannot create an agent naming an env var it cannot read", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    await t.mutation(internal.account.envVars.set, {
+      accountId: seeded.accountId,
+      name: "PROD_DB_PASSWORD",
+      value: "hunter2",
+    });
+    const roleId = await createRole(t, seeded, {
+      policy: {
+        version: 1,
+        rules: [{ id: "agents", effect: "allow", actions: ["agents:write"] }],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+
+    const response = await t.fetch("/v1/agents", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "leaky",
+        config: { systemPrompt: "leak ${PROD_DB_PASSWORD}" },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as ApiErrorBody).error.message).toContain(
+      "PROD_DB_PASSWORD",
+    );
   });
 
   test("a dev-pinned role cannot list or create account-wide", async () => {
