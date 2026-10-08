@@ -449,20 +449,21 @@ export function TracingPanel({
   } = useObservabilityView(TRACE_VIEW);
   // A filter change drops `trace` from the URL: a link carrying a run the new
   // filters hide would reopen with them cleared. The pick on screen stays.
-  const narrowSearch = useCallback(
-    (next: string): void => {
-      setFilter(next);
-      void setFocusTraceId(null);
-    },
-    [setFilter, setFocusTraceId],
-  );
+  // Search changes per key, so only the first one writes.
+  const dropTrace = (): void => {
+    if (focusTraceId !== null) void setFocusTraceId(null);
+  };
+  const narrowSearch = (next: string): void => {
+    setFilter(next);
+    dropTrace();
+  };
   const narrowRange = (next: RangePreset): void => {
     setRange(next);
-    void setFocusTraceId(null);
+    dropTrace();
   };
   const narrowWindow = (next: TimeWindow | null): void => {
     setTimeWindow(next);
-    void setFocusTraceId(null);
+    dropTrace();
   };
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const now = useNow();

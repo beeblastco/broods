@@ -17,10 +17,7 @@ import {
   type RangePreset,
   type TimeWindow,
 } from "@/app/lib/queryTokens";
-import { useEffect, useMemo, useState } from "react";
-
-// How long typing pauses before the panel filters and the URL updates.
-const SEARCH_PAUSE_MS = 300;
+import { useMemo, useState } from "react";
 
 /** The one point per entry the strip needs. */
 export interface VolumePoint {
@@ -83,26 +80,6 @@ export function ObservabilityToolbar({
   refreshTitle,
   isError,
 }: Props): React.JSX.Element {
-  // The box's own text, so a keystroke re-renders the toolbar, not the panel
-  // and its buffer: the panel gets the text once typing pauses. A search the
-  // parent sets (a trace link clearing it) replaces the text; the echo of one
-  // this box sent does not, so a key typed meanwhile is kept.
-  const [draft, setDraft] = useState(search);
-  const [sent, setSent] = useState(search);
-  const [seen, setSeen] = useState(search);
-  if (search !== seen) {
-    setSeen(search);
-    if (search !== sent) setDraft(search);
-  }
-  useEffect(() => {
-    if (draft === search) return;
-    const timer = setTimeout(() => {
-      setSent(draft);
-      onSearchChange(draft);
-    }, SEARCH_PAUSE_MS);
-
-    return () => clearTimeout(timer);
-  }, [draft, search, onSearchChange]);
   // The clock the strip ends at. It freezes while a selection is on the strip,
   // so the selection does not slide off the left edge as time passes.
   // The clock the strip was frozen at, bound to the window picked on it: a
@@ -140,8 +117,8 @@ export function ObservabilityToolbar({
     <>
       <Toolbar>
         <SearchInput
-          value={draft}
-          onChange={setDraft}
+          value={search}
+          onChange={onSearchChange}
           fields={searchFields}
           placeholder={searchPlaceholder}
         />

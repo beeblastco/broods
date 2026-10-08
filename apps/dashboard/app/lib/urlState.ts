@@ -8,7 +8,13 @@
  * is Tracing fetching a `trace` it does not hold, with the stage's own key.
  */
 import type { Id, TableNames } from "@broods/convex/_generated/dataModel";
-import { createParser, debounce, parseAsStringLiteral } from "nuqs";
+import {
+  createParser,
+  debounce,
+  parseAsArrayOf,
+  parseAsStringLiteral,
+  type SingleParserBuilder,
+} from "nuqs";
 import { isTraceId } from "../../../../packages/broods/src/observability-contracts";
 import { RANGE_PRESETS, type TimeWindow } from "./queryTokens";
 import type { SortDir, SortState } from "./tableState";
@@ -22,29 +28,24 @@ export const CONVEX_ID_SHAPE = /^[0-9a-hjkmnp-tv-z]{31,37}$/;
 const EPOCH_MS = /^\d{1,15}$/;
 // A printable name with no control characters, as role names and model keys are.
 const NAME = /^[^\p{Cc}]{1,200}$/u;
-const MODEL_KEY = /^[^\p{Cc},]{1,200}$/u;
 const SORT_DIRS: readonly SortDir[] = ["asc", "desc"];
 
 const RANGE_IDS = RANGE_PRESETS.map((preset) => preset.id);
 
-// Free search text, capped on read and write so every link the UI makes reads back.
-const searchText = createParser({
+/**
+ * Free search text, capped on read and write so every link the UI makes reads
+ * back. The URL write waits for a typing pause: each write re-renders every
+ * search-param reader. No default, so a list can tell an explicit `?q=` from
+ * an absent one.
+ */
+export const parseAsSearch = createParser({
   parse: (value: string): string | null =>
     value.length <= MAX_QUERY_LENGTH ? value : null,
   serialize: (value: string): string => value.slice(0, MAX_QUERY_LENGTH),
-});
+}).withOptions({ limitUrlUpdates: debounce(300) });
 
-/**
- * A list's search. Lists filter on every key, so the URL write waits for a
- * pause: each write re-renders every search-param reader. No default, so a
- * list can tell an explicit `?q=` from an absent one.
- */
-export const parseAsSearch = searchText.withOptions({
-  limitUrlUpdates: debounce(300),
-});
-
-/** The Logs and Tracing search; their toolbar already waits for a pause. Empty when absent. */
-export const parseAsQuery = searchText.withDefault("");
+/** The Logs and Tracing search, empty when absent. */
+export const parseAsQuery = parseAsSearch.withDefault("");
 
 /** A finite, non-negative integer timestamp in ms. */
 export const parseAsEpochMs = createParser({
@@ -69,17 +70,8 @@ export const parseAsName = createParser({
   serialize: (value: string): string => value,
 });
 
-/** The usage panel's model filter: `provider::model` keys, comma separated. */
-export const parseAsModelKeys = createParser({
-  parse: (value: string): string[] | null => {
-    const keys = value.split(",");
-
-    return keys.every((key) => MODEL_KEY.test(key)) ? keys : null;
-  },
-  serialize: (value: string[]): string => value.join(","),
-  eq: (a: string[], b: string[]): boolean =>
-    a.length === b.length && a.every((key, index) => key === b[index]),
-});
+/** The usage panel's model filter: `provider::model` keys, comma separated; `models=` is none. */
+export const parseAsModelKeys = parseAsArrayOf(parseAsName);
 
 /** The logs panel's search, range and strip window. The 30 day backfill fits the widest preset. */
 export const LOG_VIEW = {
@@ -96,9 +88,7 @@ export const TRACE_VIEW = {
 };
 
 /** A Convex document id of table `T`; the row it names still has to be in an authorized query's result. */
-export function parseAsId<T extends TableNames>(): ReturnType<
-  typeof createParser<Id<T>>
-> {
+export function parseAsId<T extends TableNames>(): SingleParserBuilder<Id<T>> {
   return createParser({
     parse: (value: string): Id<T> | null =>
       isConvexId<T>(value) ? value : null,
@@ -109,7 +99,7 @@ export function parseAsId<T extends TableNames>(): ReturnType<
 /** A list's `column.dir` sort, where the column must be a key of the list's `sortKey`. */
 export function parseAsSort<C extends string>(
   columns: Readonly<Record<C, unknown>>,
-): ReturnType<typeof createParser<SortState<C>>> {
+): SingleParserBuilder<SortState<C>> {
   const isColumn = (name: string): name is C => Object.hasOwn(columns, name);
 
   return createParser({
