@@ -66,23 +66,23 @@ flowchart TD
 
 ## Configuration
 
-| Field                  | Default                | What it does                                                                                                      |
-| ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `provider`             | `lambda`               | Compute backend, from the table above                                                                             |
-| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`              |
-| `size`                 | provider default       | Compute footprint on `sandbox` and `cloudflare`, ignored elsewhere, see [Sizes](#sizes)                           |
-| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)       |
-| `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                   |
-| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
-| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
-| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary       |
-| `timeout`              | 30                     | Seconds per call. Maximum 600                                                                                     |
-| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                              |
-| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                       |
-| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey` |
-| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                           |
-| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                              |
-| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                   |
+| Field                  | Default                | What it does                                                                                                                            |
+| ---------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | `lambda`               | Compute backend, from the table above                                                                                                   |
+| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`                                    |
+| `size`                 | provider default       | Sizes `sandbox` and `cloudflare`. Ignored on `lambda`, `daytona`, `e2b`, `vercel`. Rejected on `machine`, `custom`. See [Sizes](#sizes) |
+| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)                             |
+| `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                                         |
+| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                                                |
+| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                                               |
+| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary                             |
+| `timeout`              | 30                     | Seconds per call. Maximum 600                                                                                                           |
+| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                                                    |
+| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                                             |
+| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey`                       |
+| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                                                 |
+| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                                                    |
+| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                                         |
 
 `envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, the background-job slots and the run identity `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID`, `BROODS_BASE_URL`. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
 

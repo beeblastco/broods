@@ -140,14 +140,16 @@ const helloFrame = z.object({
   instance: z.string().optional(),
   // Take the record over from another daemon.
   force: z.boolean().optional(),
-  // The computer's own CPU count, memory and disk, shown as its size.
+  // The computer's own CPU count, memory and disk, shown as its size. Display
+  // only, so a malformed one reads as absent instead of refusing the daemon.
   specs: z
     .object({
       vcpu: z.number().positive(),
       memoryMb: z.number().positive(),
       storageGb: z.number().positive().optional(),
     })
-    .optional(),
+    .optional()
+    .catch(undefined),
 });
 
 const mcpCallFrame = z.object({

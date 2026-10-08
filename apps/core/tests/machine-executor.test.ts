@@ -490,6 +490,23 @@ test("approval follows the computer a call names, not the agent's own", () => {
   expect(approval("nope")).toBe("user-approval");
 });
 
+test("a hello with a malformed size still connects, with no size", () => {
+  expect(
+    parseDaemonFrame(
+      '{"type":"hello","sandbox":"my-mac","specs":{"vcpu":-1,"memoryMb":"8 GB"}}',
+    ),
+  ).toEqual({ type: "hello", sandbox: "my-mac", specs: undefined });
+  expect(
+    parseDaemonFrame(
+      '{"type":"hello","sandbox":"my-mac","specs":{"vcpu":8,"memoryMb":16384}}',
+    ),
+  ).toEqual({
+    type: "hello",
+    sandbox: "my-mac",
+    specs: { vcpu: 8, memoryMb: 16384 },
+  });
+});
+
 test("each side's parser drops a frame whose fields do not match its type", () => {
   expect(parseCoreFrame('{"type":"exec","id":"1","code":"yes"}')).toBeNull();
   expect(
