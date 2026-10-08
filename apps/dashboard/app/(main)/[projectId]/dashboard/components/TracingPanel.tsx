@@ -30,7 +30,7 @@ import { isEditableTarget } from "@/app/lib/shortcuts";
 import { parseAsTraceId, TRACE_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useQueryState } from "nuqs";
+import { debounce, useQueryState } from "nuqs";
 import {
   useCallback,
   useDeferredValue,
@@ -626,6 +626,20 @@ export function TracingPanel({
     setFocusTraceId,
   ]);
 
+  // A click or j/k pick: select the task and put its trace in the URL. The
+  // focus effect is told it already ran, so it does not scan and scroll again,
+  // and a held j/k writes the URL once it settles.
+  const pickTask = useCallback(
+    (group: SpanGroup): void => {
+      setSelectedTaskKey(spanKey(group.root));
+      focusedRef.current = `${group.root.traceId}:${refocusNonce}`;
+      void setFocusTraceId(group.root.traceId, {
+        limitUrlUpdates: debounce(200),
+      });
+    },
+    [refocusNonce, setFocusTraceId],
+  );
+
   // j and k walk the task list. `/` is the toolbar's own table.filter binding.
   // Not in SHORTCUTS: `k` there is the canvas's Add skill, and a key is claimed
   // once.
@@ -650,8 +664,7 @@ export function TracingPanel({
       event.preventDefault();
       // Stepping past the last listed task pages the next one in.
       if (nextIndex >= visibleCount) setVisibleCount(nextIndex + 1);
-      setSelectedTaskKey(spanKey(next.root));
-      void setFocusTraceId(next.root.traceId);
+      pickTask(next);
       requestAnimationFrame(() =>
         document
           .getElementById(`task-${next.root.traceId}`)
@@ -661,7 +674,7 @@ export function TracingPanel({
     window.addEventListener("keydown", onKeyDown);
 
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [groups, selectedGroup, visibleCount, setFocusTraceId]);
+  }, [groups, selectedGroup, visibleCount, pickTask]);
 
   const toggle = (key: string): void => {
     setExpanded((current) => {
@@ -818,10 +831,7 @@ export function TracingPanel({
                 key={spanKey(group.root)}
                 group={group}
                 isSelected={group === selectedGroup}
-                onSelect={() => {
-                  setSelectedTaskKey(spanKey(group.root));
-                  void setFocusTraceId(group.root.traceId);
-                }}
+                onSelect={() => pickTask(group)}
               />
             ))}
             {groups.length === 0 && (

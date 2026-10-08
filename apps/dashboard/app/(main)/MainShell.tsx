@@ -15,6 +15,7 @@ import {
   readOnboardingSecret,
   subscribeOnboardingSecret,
 } from "@/app/lib/onboardingSecret";
+import { CONVEX_ID_SHAPE } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
@@ -23,9 +24,6 @@ import { notFound, useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 const SYNC_RETRY_MS = 5_000;
-
-// A Convex id is 31 to 37 characters of lowercase Crockford base32 (no i, l, o, u).
-const CONVEX_ID_SHAPE = /^[0-9a-hjkmnp-tv-z]{31,37}$/;
 
 // Shown once, on the first login of an account's life. It has no business
 // riding along in the layout chunk every other session loads. `loading` is

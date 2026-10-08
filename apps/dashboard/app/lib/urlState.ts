@@ -15,8 +15,8 @@ import type { SortDir, SortState } from "./tableState";
 /** Longest search text a URL may carry. */
 export const MAX_QUERY_LENGTH = 500;
 
-// Convex ids are lowercase base32; the length range leaves room for format changes.
-const CONVEX_ID = /^[0-9a-z]{16,64}$/;
+/** A Convex id: 31 to 37 characters of lowercase Crockford base32 (no i, l, o, u). */
+export const CONVEX_ID_SHAPE = /^[0-9a-hjkmnp-tv-z]{31,37}$/;
 // Epoch ms: digits only, so no sign, exponent or fraction gets through.
 const EPOCH_MS = /^\d{1,15}$/;
 // A printable name with no control characters, as role names and model keys are.
@@ -26,21 +26,24 @@ const SORT_DIRS: readonly SortDir[] = ["asc", "desc"];
 
 const RANGE_IDS = RANGE_PRESETS.map((preset) => preset.id);
 
-/**
- * Free search text, capped so a link cannot hand the filters a huge string.
- * No default, so a list can tell an explicit `?q=` from an absent one.
- */
-export const parseAsSearch = createParser({
+// Free search text, capped on read and write so every link the UI makes reads back.
+const searchText = createParser({
   parse: (value: string): string | null =>
     value.length <= MAX_QUERY_LENGTH ? value : null,
-  // Capped on write too, so every link the UI makes reads back.
   serialize: (value: string): string => value.slice(0, MAX_QUERY_LENGTH),
-})
-  // Typing writes once it pauses: each URL write re-renders every search-param reader.
-  .withOptions({ limitUrlUpdates: debounce(300) });
+});
 
-/** The search box of a view that has no remembered fallback; empty when absent. */
-export const parseAsQuery = parseAsSearch.withDefault("");
+/**
+ * A list's search. Lists filter on every key, so the URL write waits for a
+ * pause: each write re-renders every search-param reader. No default, so a
+ * list can tell an explicit `?q=` from an absent one.
+ */
+export const parseAsSearch = searchText.withOptions({
+  limitUrlUpdates: debounce(300),
+});
+
+/** The Logs and Tracing search; their toolbar already waits for a pause. Empty when absent. */
+export const parseAsQuery = searchText.withDefault("");
 
 /** A finite, non-negative integer timestamp in ms. */
 export const parseAsEpochMs = createParser({
@@ -97,7 +100,7 @@ export function parseAsId<T extends TableNames>(): ReturnType<
 > {
   return createParser({
     parse: (value: string): Id<T> | null =>
-      CONVEX_ID.test(value) ? (value as Id<T>) : null,
+      CONVEX_ID_SHAPE.test(value) ? (value as Id<T>) : null,
     serialize: (value: Id<T>): string => value,
   });
 }
@@ -138,8 +141,9 @@ export function windowParams(window: TimeWindow | null): {
 } {
   if (window === null) return { from: null, to: null };
 
+  // parseAsEpochMs rounds on write.
   return {
-    from: Math.round(window.from),
-    to: Number.isFinite(window.to) ? Math.round(window.to) : null,
+    from: window.from,
+    to: Number.isFinite(window.to) ? window.to : null,
   };
 }

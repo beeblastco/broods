@@ -79,10 +79,9 @@ export default function HomePage(): React.JSX.Element {
           if (value !== null) next.set(key, value);
         }
         if (home.stageId) next.set("stage", home.stageId);
-        const tab = params.get("tab");
         const query = next.toString();
         router.replace(
-          `/${home.projectId}${tab ? "/dashboard" : ""}${query ? `?${query}` : ""}`,
+          `/${home.projectId}${next.has("tab") ? "/dashboard" : ""}${query ? `?${query}` : ""}`,
         );
       } catch (err) {
         console.error("Failed to open workspace:", err);

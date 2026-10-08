@@ -62,9 +62,10 @@ describe("URL params read as absent when they fail their check", () => {
     expect(parseAsTraceId.parse(`${TRACE}0`)).toBeNull();
 
     const cronId = parseAsId<"crons">();
-    expect(cronId.parse("jd7f3k2m9q8w1e4r5t6y7u8i9o0p1a2s")).toBe(
-      "jd7f3k2m9q8w1e4r5t6y7u8i9o0p1a2s",
+    expect(cronId.parse("jd7f3k2m9q8w1e4r5t6y7v8h9n0p1a2s")).toBe(
+      "jd7f3k2m9q8w1e4r5t6y7v8h9n0p1a2s",
     );
+    expect(cronId.parse("jd7f3k2m9q8w1e4r5t6y7u8i9o0p1a2s")).toBeNull();
     expect(cronId.parse("../../etc/passwd")).toBeNull();
     expect(cronId.parse("JD7F3K2M9Q8W1E4R5T6Y")).toBeNull();
     expect(cronId.parse("short")).toBeNull();
@@ -110,10 +111,11 @@ describe("timeWindow", () => {
   });
 
   test("round-trips through its params in whole ms", () => {
-    expect(windowParams({ from: 10.4, to: 20.6 })).toEqual({
-      from: 10,
-      to: 21,
-    });
+    const { from, to } = windowParams({ from: 10.4, to: 20.6 });
+    expect([from, to].map((ms) => parseAsEpochMs.serialize(ms ?? 0))).toEqual([
+      "10",
+      "21",
+    ]);
     expect(windowParams({ from: 10, to: Number.POSITIVE_INFINITY })).toEqual({
       from: 10,
       to: null,
