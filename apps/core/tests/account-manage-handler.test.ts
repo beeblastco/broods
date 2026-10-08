@@ -8,6 +8,11 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import { ClientError } from "@broods/convex/model/clientError";
+import * as sandboxIndex from "../src/harness/sandbox/index.ts";
+import * as sandboxAudit from "../src/shared/convex/sandbox-audit-events.ts";
+import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
+import * as sandboxSnapshots from "../src/shared/convex/sandbox-snapshots.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
@@ -440,6 +445,68 @@ describe("account management HTTP handler", () => {
       expect(await responseJson(response)).toMatchObject({
         error: { message: "reservationKey is required" },
       });
+    }
+  });
+
+  it("answers a snapshot name another provider holds with its own 409 and message", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(
+      createFakeStorage({
+        sandboxConfigs: {
+          getById: async function () {
+            return {
+              accountId: "acct_test",
+              sandboxId: "sbx_1",
+              config: { provider: "daytona" },
+            };
+          },
+        },
+      }),
+    );
+    const spies = [
+      spyOn(
+        sandboxInstances,
+        "sandboxInstanceIsControllable",
+      ).mockResolvedValue(true),
+      spyOn(sandboxAudit, "recordSandboxAuditEvent").mockResolvedValue(
+        undefined,
+      ),
+      spyOn(sandboxIndex, "createSandboxExecutor").mockReturnValue({
+        run: async () => {
+          throw new Error("not called");
+        },
+        snapshot: async () => ({ snapshotId: "broods-daytona-1" }),
+      }),
+      spyOn(sandboxSnapshots, "upsertSandboxSnapshot").mockRejectedValue(
+        new ClientError(
+          'snapshot name "base" is already a lambda snapshot; pick another name',
+          "conflict",
+        ),
+      ),
+    ];
+
+    try {
+      const response = await handler(
+        createEvent(
+          "POST",
+          "/v1/sandboxes/sbx_1/snapshot",
+          {
+            authorization: "Bearer service-secret",
+            "x-account-id": "acct_test",
+          },
+          { reservationKey: "res_1", name: "base" },
+        ),
+      );
+
+      expect(response.status).toBe(409);
+      expect(await responseJson(response)).toMatchObject({
+        error: {
+          message:
+            'snapshot name "base" is already a lambda snapshot; pick another name',
+        },
+      });
+    } finally {
+      for (const spy of spies) spy.mockRestore();
     }
   });
 
