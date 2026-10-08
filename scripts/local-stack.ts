@@ -39,6 +39,11 @@ import type { Doc } from "../packages/convex/_generated/dataModel.ts";
 
 import { renderFileConfig } from "../apps/edge/src/traefik.ts";
 import { createAccountSecret } from "../packages/convex/model/accountSecrets.ts";
+import {
+  SELF_HOST_ALGORITHM,
+  SELF_HOST_KEY_ID,
+  publicJwk,
+} from "../packages/convex/model/selfHostAuth.ts";
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
@@ -250,9 +255,7 @@ async function up(
     await down(true);
   }
   const state = loadOrCreateState();
-  const dashboardUrl = withDashboard
-    ? `http://localhost:${ports(state).dashboard}`
-    : undefined;
+  const dashboard = withDashboard ? dashboardUrl(state) : undefined;
   // Traefik needs nothing from the other steps, so a first pull of its image
   // runs alongside them.
   const traefikImage = pullImage(TRAEFIK_IMAGE);
@@ -329,11 +332,11 @@ async function up(
     ]);
   });
 
-  if (dashboardUrl) {
+  if (dashboard) {
     await measureStep(perf, "dashboard", async () => {
-      await startDashboard(state, dashboardUrl);
+      await startDashboard(state);
       saveState(state);
-      await waitForHttp(`${dashboardUrl}/healthz`, "dashboard");
+      await waitForHttp(`${dashboard}/healthz`, "dashboard");
     });
   }
 
@@ -342,13 +345,11 @@ async function up(
   printPerfBreakdown(perf, totalMs);
   console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
   console.log(`  edge      ${edgeUrl}`);
-  if (dashboardUrl) {
-    console.log(`  dashboard ${dashboardUrl}`);
-    console.log(`  e2e       E2E_BASE_URL=${dashboardUrl}`);
+  if (dashboard) {
+    console.log(`  dashboard ${dashboard}`);
+    console.log(`  e2e       E2E_BASE_URL=${dashboard}`);
   }
-  console.log(
-    `  admin     read secrets.adminAccount in ${join(instanceDir(state.instanceId), "state.json")}`,
-  );
+  console.log("  admin key bun run local:status -- --key");
   console.log(`  logs      ${join(instanceDir(state.instanceId), "logs")}`);
   console.log(
     `  perf      ${join(instanceDir(state.instanceId), "perf.jsonl")}`,
@@ -478,13 +479,15 @@ function configureDeploymentEnv(
 // BROODS_ACCOUNT_MANAGE_URL points at core on the host (the backend runs
 // inside docker).
 function deploymentEnvEntries(state: InstanceState): Record<string, string> {
-  const { d: _d, ...publicJwk } = JSON.parse(state.secrets.sessionSigningKey);
+  const signingKey: { d?: string } = JSON.parse(
+    state.secrets.sessionSigningKey,
+  );
 
   return {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
     BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
-    BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk] }),
+    BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk(signingKey)] }),
     SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     STAGE_TICKET_SECRET: state.secrets.stageTicket,
   };
@@ -604,7 +607,9 @@ function ensureConvexContainer(state: InstanceState): void {
     "bash",
     CONVEX_IMAGE,
     "-c",
-    `sed -e 's/--port 3210/--port ${convexApi}/' -e 's/--site-proxy-port 3211/--site-proxy-port ${convexSite}/' run_backend.sh > /tmp/run_backend.sh && exec bash /tmp/run_backend.sh`,
+    // A new image whose script no longer says `--port 3210` fails here, not
+    // as a backend quietly bound to the wrong port.
+    `sed -e 's/--port 3210/--port ${convexApi}/' -e 's/--site-proxy-port 3211/--site-proxy-port ${convexSite}/' run_backend.sh > /tmp/run_backend.sh && grep -q -- '--port ${convexApi} ' /tmp/run_backend.sh && grep -q -- '--site-proxy-port ${convexSite} ' /tmp/run_backend.sh && exec bash /tmp/run_backend.sh || { echo 'run_backend.sh no longer binds --port 3210; update the rewrite in scripts/local-stack.ts' >&2; exit 1; }`,
   ]);
 }
 
@@ -797,11 +802,9 @@ function startCore(state: InstanceState): void {
 }
 
 // Mirrors apps/dashboard "dev", run by node as that script is. The stack's URLs
-// and its redirect URI override .env.local; next loads the rest of that file.
-async function startDashboard(
-  state: InstanceState,
-  url: string,
-): Promise<void> {
+// override .env.local; next loads the rest of that file.
+async function startDashboard(state: InstanceState): Promise<void> {
+  const url = dashboardUrl(state);
   if (isProcessAlive(state.pids.dashboard)) {
     console.log("dashboard already running");
 
@@ -819,7 +822,7 @@ async function startDashboard(
       join(dashboardDir, "node_modules", ".bin", "next"),
       "dev",
       "--port",
-      new URL(url).port,
+      String(ports(state).dashboard),
     ],
     command: "node",
     cwd: dashboardDir,
@@ -831,7 +834,6 @@ async function startDashboard(
       BROODS_SESSION_SIGNING_KEY: state.secrets.sessionSigningKey,
       NEXT_PUBLIC_BROODS_BASE_URL: edgeUrl,
       NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
-      NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${url}/auth/callback`,
       WORKOS_API_KEY: "",
       WORKOS_CLIENT_ID: "",
       WORKOS_COOKIE_PASSWORD: "",
@@ -1178,6 +1180,10 @@ function allocatePortBase(): number {
   throw new Error("no free port block under ~/.broods-local");
 }
 
+function dashboardUrl(state: InstanceState): string {
+  return `http://localhost:${ports(state).dashboard}`;
+}
+
 function currentInstanceId(): string {
   const digest = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
   const basename = repoRoot.split("/").filter(Boolean).pop() ?? "broods";
@@ -1203,8 +1209,9 @@ function loadOrCreateState(): InstanceState {
     );
   }
   if (existing && !existing.secrets.sessionSigningKey) {
-    existing.secrets.sessionSigningKey = newSessionSigningKey();
-    saveState(existing);
+    throw new Error(
+      "this stack predates the self-hosted sign-in; run `bun run local:up -- --fresh` to recreate it",
+    );
   }
   if (existing) return existing;
 
@@ -1234,8 +1241,8 @@ function newSessionSigningKey(): string {
 
   return JSON.stringify({
     ...privateKey.export({ format: "jwk" }),
-    alg: "ES256",
-    kid: "broods-self-host",
+    alg: SELF_HOST_ALGORITHM,
+    kid: SELF_HOST_KEY_ID,
     use: "sig",
   });
 }

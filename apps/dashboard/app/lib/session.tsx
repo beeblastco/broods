@@ -16,11 +16,17 @@ export interface SessionUser {
   profilePictureUrl: string | null;
 }
 
-/** What the app reads about the signed-in user, from WorkOS or a self-hosted stack's admin key. */
+/**
+ * The signed-in user, from WorkOS or a self-hosted stack's admin key. Shaped
+ * so `ConvexProviderWithAuth` takes `useSession` as its `useAuth` directly.
+ */
 interface Session {
   /** A token Convex accepts, or null when signed out. */
-  getAccessToken: (forceRefresh: boolean) => Promise<string | null>;
-  loading: boolean;
+  fetchAccessToken: (options: {
+    forceRefreshToken: boolean;
+  }) => Promise<string | null>;
+  isAuthenticated: boolean;
+  isLoading: boolean;
   signOut: () => void;
   user: SessionUser | null;
 }
@@ -31,7 +37,10 @@ export type InitialSession =
       initialAuth: ComponentProps<typeof AuthKitProvider>["initialAuth"];
       kind: "workos";
     }
-  | { kind: "selfHost"; user: SessionUser | null };
+  | {
+      kind: "selfHost";
+      session: { token: string; user: SessionUser } | null;
+    };
 
 const SessionContext = createContext<Session | null>(null);
 
@@ -44,7 +53,9 @@ export function SessionProvider({
   initial: InitialSession;
 }): React.JSX.Element {
   if (initial.kind === "selfHost") {
-    return <SelfHostSession user={initial.user}>{children}</SelfHostSession>;
+    return (
+      <SelfHostSession session={initial.session}>{children}</SelfHostSession>
+    );
   }
 
   return (
@@ -61,35 +72,32 @@ export function useSession(): Session {
   return session;
 }
 
-// The session cookie is httpOnly, so the client asks /auth/session for it.
+// The layout hands over the token it verified, so Convex authenticates with
+// no round trip. It lives as long as the cookie, so a forced refresh means the
+// session is over: null signs the app out.
 function SelfHostSession({
   children,
-  user,
+  session,
 }: {
   children: ReactNode;
-  user: SessionUser | null;
+  session: { token: string; user: SessionUser } | null;
 }): React.JSX.Element {
-  const getAccessToken = useCallback(async (): Promise<string | null> => {
-    const response = await fetch("/auth/session", { cache: "no-store" });
-    if (!response.ok) return null;
-    const { token }: { token: string | null } = await response.json();
-
-    return token;
-  }, []);
-  const session = useMemo(
+  const value = useMemo(
     (): Session => ({
-      getAccessToken: getAccessToken,
-      loading: false,
+      fetchAccessToken: async ({
+        forceRefreshToken,
+      }): Promise<string | null> =>
+        forceRefreshToken ? null : (session?.token ?? null),
+      isAuthenticated: session !== null,
+      isLoading: false,
       signOut: (): void => void signOutSelfHost(),
-      user: user,
+      user: session?.user ?? null,
     }),
-    [getAccessToken, user],
+    [session],
   );
 
   return (
-    <SessionContext.Provider value={session}>
-      {children}
-    </SessionContext.Provider>
+    <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
   );
 }
 
@@ -106,24 +114,37 @@ function WorkOSSession({
 }): React.JSX.Element {
   const { loading, signOut, user } = useAuthKit();
   const { getAccessToken, refresh } = useAccessToken();
-  const getToken = useCallback(
-    async (forceRefresh: boolean): Promise<string | null> =>
-      (forceRefresh ? await refresh() : await getAccessToken()) ?? null,
-    [getAccessToken, refresh],
+  const fetchAccessToken = useCallback(
+    async ({
+      forceRefreshToken,
+    }: {
+      forceRefreshToken: boolean;
+    }): Promise<string | null> => {
+      if (!user) return null;
+      try {
+        return (
+          (forceRefreshToken ? await refresh() : await getAccessToken()) ?? null
+        );
+      } catch (error) {
+        console.error("Failed to get access token:", error);
+
+        return null;
+      }
+    },
+    [getAccessToken, refresh, user],
   );
-  const session = useMemo(
+  const value = useMemo(
     (): Session => ({
-      getAccessToken: getToken,
-      loading: loading ?? false,
+      fetchAccessToken: fetchAccessToken,
+      isAuthenticated: !!user,
+      isLoading: loading ?? false,
       signOut: (): void => void signOut(),
       user: user,
     }),
-    [getToken, loading, signOut, user],
+    [fetchAccessToken, loading, signOut, user],
   );
 
   return (
-    <SessionContext.Provider value={session}>
-      {children}
-    </SessionContext.Provider>
+    <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
   );
 }

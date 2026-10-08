@@ -2,8 +2,7 @@
 
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import { ThemeProvider } from "next-themes";
-import type { ComponentProps, ReactNode } from "react";
-import { useCallback } from "react";
+import type { ReactNode } from "react";
 import {
   SessionProvider,
   useSession,
@@ -20,10 +19,6 @@ const convex = new ConvexReactClient(
   },
 );
 
-type ConvexAuthAdapter = ReturnType<
-  NonNullable<ComponentProps<typeof ConvexProviderWithAuth>["useAuth"]>
->;
-
 /**
  * Wraps the app with theme, session, and Convex providers. `initialSession`
  * is the session the root layout resolved on the server; with it the app
@@ -39,40 +34,10 @@ export function ConvexClientProvider({
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <SessionProvider initial={initialSession}>
-        <ConvexProviderWithAuth client={convex} useAuth={useAuthAdapter}>
+        <ConvexProviderWithAuth client={convex} useAuth={useSession}>
           {children}
         </ConvexProviderWithAuth>
       </SessionProvider>
     </ThemeProvider>
   );
-}
-
-/** Adapts the session to the shape required by ConvexProviderWithAuth. */
-function useAuthAdapter(): ConvexAuthAdapter {
-  const { getAccessToken, loading, user } = useSession();
-
-  const fetchAccessToken = useCallback(
-    async ({
-      forceRefreshToken,
-    }: { forceRefreshToken?: boolean } = {}): Promise<string | null> => {
-      if (!user) {
-        return null;
-      }
-
-      try {
-        return await getAccessToken(forceRefreshToken ?? false);
-      } catch (error) {
-        console.error("Failed to get access token:", error);
-
-        return null;
-      }
-    },
-    [user, getAccessToken],
-  );
-
-  return {
-    isLoading: loading,
-    isAuthenticated: !!user,
-    fetchAccessToken: fetchAccessToken,
-  };
 }

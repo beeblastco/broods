@@ -202,7 +202,7 @@ The gateway is stateless. Scale it with replicas.
 
 ### dashboard
 
-The build-time values are `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_BROODS_BASE_URL`, the public gateway, and `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, whose origin is the dashboard's own (`https://dashboard.example.com/auth/callback`). The runtime values are `ADMIN_ACCOUNT_SECRET`, the key the admin signs in with, `BROODS_SESSION_SIGNING_KEY`, a private ES256 JWK that signs the session, and `CONVEX_SITE_URL`, since a self-hosted Convex has no derivable `.convex.site` host. Make the key pair once:
+The build-time values are `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_BROODS_BASE_URL`, the public gateway. The runtime values are `ADMIN_ACCOUNT_SECRET`, the key the admin signs in with, `BROODS_SESSION_SIGNING_KEY`, a private ES256 JWK that signs the session, and `CONVEX_SITE_URL`, since a self-hosted Convex has no derivable `.convex.site` host. Make the key pair once:
 
 ```bash
 bun -e 'const { privateKey } = require("node:crypto").generateKeyPairSync("ec", { namedCurve: "P-256" }); const jwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "broods-self-host", use: "sig" }; const { d, ...pub } = jwk; console.log("BROODS_SESSION_SIGNING_KEY=" + JSON.stringify(jwk)); console.log("BROODS_SESSION_JWKS=" + JSON.stringify({ keys: [pub] }))'

@@ -8,8 +8,9 @@ import {
 import { redirectUri } from "@/app/lib/authConfig";
 import {
   SESSION_COOKIE,
+  keyPageUrl,
   selfHosted,
-  sessionUser,
+  verifySessionToken,
 } from "@/app/lib/selfHostSession";
 
 const UNAUTHENTICATED_PATHS = [
@@ -50,13 +51,11 @@ export default function proxy(
 async function selfHostProxy(request: NextRequest): Promise<NextResponse> {
   const { pathname, search } = request.nextUrl;
   if (UNAUTHENTICATED_PATHS.includes(pathname)) return NextResponse.next();
-  if (await sessionUser(request.cookies.get(SESSION_COOKIE)?.value)) {
+  if (await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value)) {
     return NextResponse.next();
   }
-  const keyPage = new URL("/auth/key", request.nextUrl);
-  keyPage.searchParams.set("returnTo", pathname + search);
 
-  return NextResponse.redirect(keyPage);
+  return NextResponse.redirect(keyPageUrl(request.nextUrl, pathname + search));
 }
 
 /**

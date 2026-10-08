@@ -5,48 +5,43 @@
  * against that inline key set so nothing is fetched.
  */
 
-import { SELF_HOST_AUDIENCE, SELF_HOST_ISSUER } from "./model/selfHostAuth";
+import {
+  SELF_HOST_ALGORITHM,
+  SELF_HOST_AUDIENCE,
+  SELF_HOST_ISSUER,
+  selfHostJwks,
+} from "./model/selfHostAuth";
 
-const selfHostJwks = process.env.BROODS_SESSION_JWKS;
+const jwks = selfHostJwks();
 
-// The CLI refuses a deploy whose auth config reads an unset variable, so a
-// self-hosted deploy must never touch WORKOS_CLIENT_ID.
+// The CLI refuses a deploy whose auth config reads an unset variable, so the
+// self-hosted branch never reads WORKOS_CLIENT_ID.
 const authConfig = {
-  providers: selfHostJwks
+  providers: jwks
     ? [
         {
           type: "customJwt" as const,
           issuer: SELF_HOST_ISSUER,
-          algorithm: "ES256" as const,
-          jwks: `data:text/plain;charset=utf-8;base64,${btoa(selfHostJwks)}`,
+          algorithm: SELF_HOST_ALGORITHM,
+          jwks: `data:text/plain;charset=utf-8;base64,${btoa(jwks)}`,
           applicationID: SELF_HOST_AUDIENCE,
         },
       ]
-    : workosProviders(process.env.WORKOS_CLIENT_ID),
+    : [
+        {
+          type: "customJwt" as const,
+          issuer: "https://api.workos.com/",
+          algorithm: "RS256" as const,
+          jwks: `https://api.workos.com/sso/jwks/${process.env.WORKOS_CLIENT_ID}`,
+          applicationID: process.env.WORKOS_CLIENT_ID,
+        },
+        {
+          type: "customJwt" as const,
+          issuer: `https://api.workos.com/user_management/${process.env.WORKOS_CLIENT_ID}`,
+          algorithm: "RS256" as const,
+          jwks: `https://api.workos.com/sso/jwks/${process.env.WORKOS_CLIENT_ID}`,
+        },
+      ],
 };
 
 export default authConfig;
-
-function workosProviders(clientId: string | undefined): {
-  algorithm: "RS256";
-  applicationID?: string;
-  issuer: string;
-  jwks: string;
-  type: "customJwt";
-}[] {
-  return [
-    {
-      type: "customJwt",
-      issuer: "https://api.workos.com/",
-      algorithm: "RS256",
-      jwks: `https://api.workos.com/sso/jwks/${clientId}`,
-      applicationID: clientId,
-    },
-    {
-      type: "customJwt",
-      issuer: `https://api.workos.com/user_management/${clientId}`,
-      algorithm: "RS256",
-      jwks: `https://api.workos.com/sso/jwks/${clientId}`,
-    },
-  ];
-}

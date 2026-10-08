@@ -2,7 +2,7 @@ import { getSignInUrl } from "@workos-inc/authkit-nextjs";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { parseReturnTo, redirectUri } from "@/app/lib/authConfig";
-import { selfHosted } from "@/app/lib/selfHostSession";
+import { keyPageUrl, selfHosted } from "@/app/lib/selfHostSession";
 
 /**
  * @returns Redirect to WorkOS AuthKit sign-in with the PKCE verifier cookie
@@ -14,10 +14,7 @@ export async function GET(
   const returnTo =
     parseReturnTo(request.nextUrl.searchParams.get("returnTo")) ?? "/";
   if (selfHosted) {
-    const keyPage = new URL("/auth/key", request.nextUrl);
-    keyPage.searchParams.set("returnTo", returnTo);
-
-    return NextResponse.redirect(keyPage);
+    return NextResponse.redirect(keyPageUrl(request.nextUrl, returnTo));
   }
   const authorizationUrl = await getSignInUrl({
     returnTo: returnTo,
