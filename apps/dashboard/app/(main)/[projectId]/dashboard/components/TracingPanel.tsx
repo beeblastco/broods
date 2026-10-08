@@ -498,10 +498,13 @@ export function TracingPanel({
 
   // The task on the right. With no pick, or a pick the filters hid, the first
   // listed task stands in.
-  const selectedGroup =
-    visibleGroups.find((group) => spanKey(group.root) === selectedTaskKey) ??
-    visibleGroups[0] ??
-    null;
+  const selectedGroup = useMemo(
+    () =>
+      visibleGroups.find((group) => spanKey(group.root) === selectedTaskKey) ??
+      visibleGroups[0] ??
+      null,
+    [visibleGroups, selectedTaskKey],
+  );
   // The span open in the side panel, resolved against the selected task so
   // it tracks live updates and closes when its task leaves the view.
   const selectedSpan =
