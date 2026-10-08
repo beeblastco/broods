@@ -347,6 +347,52 @@ describe("stage-pinned role sessions", () => {
     expect(write.status).toBe(200);
   });
 
+  test("a dev-pinned role cannot point its cron at a production agent", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const devAgent = await insertAgent(t, seeded, seeded.stageId, "dev-agent");
+    const prodAgent = await insertAgent(
+      t,
+      seeded,
+      seeded.otherStageId,
+      "prod-agent",
+    );
+    const cronId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("crons", {
+          accountId: seeded.accountId,
+          name: "nightly",
+          agentId: devAgent,
+          events: [],
+          scheduleExpression: "rate(1 day)",
+          status: "paused" as const,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+    );
+    const roleId = await createRole(t, seeded, {
+      scoped: true,
+      policy: {
+        version: 1,
+        rules: [{ id: "crons", effect: "allow", actions: ["crons:write"] }],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+
+    const response = await t.fetch(`/v1/crons/${cronId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ agentId: prodAgent }),
+    });
+    expect(response.status).toBe(400);
+    const cron = await t.run(async (ctx) => await ctx.db.get(cronId));
+    expect(cron?.agentId).toBe(devAgent);
+  });
+
   test("a dev-pinned role cannot list or create account-wide", async () => {
     const t = roleTest();
     const seeded = await seed(t);

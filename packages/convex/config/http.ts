@@ -16,6 +16,7 @@ import {
   rolePrincipal,
   type ApiPrincipal,
   type ApiResource,
+  type RolePrincipal,
 } from "../model/apiAuthorization";
 import type { AuditActor } from "../model/auditEvents";
 import { CLIENT_ERROR_STATUS, clientErrorData } from "../model/clientError";
@@ -140,7 +141,10 @@ async function handleConfigRequest(
       return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);
     }
 
+    // Carried to the routes whose writes must not point at another stage.
+    let role: RolePrincipal | undefined;
     if (accountAuth.kind === "role") {
+      role = accountAuth.role;
       const principal = rolePrincipal(accountAuth.role);
       readsPolicyReferences =
         roleDenial(principal, "GET", { type: "agents" }) === null &&
@@ -158,7 +162,14 @@ async function handleConfigRequest(
       if (denial) return jsonError(403, denial);
     }
 
-    return await dispatchResourceRoute(ctx, req, account._id, actor, route);
+    return await dispatchResourceRoute(
+      ctx,
+      req,
+      account._id,
+      actor,
+      route,
+      role,
+    );
   } catch (err) {
     const clientError = clientErrorData(err);
     if (clientError) {
@@ -265,6 +276,7 @@ async function dispatchResourceRoute(
   accountId: Id<"accounts">,
   actor: AuditActor,
   route: ResourceRoute,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   switch (route.kind) {
     case "skills":
@@ -305,6 +317,7 @@ async function dispatchResourceRoute(
         actor,
         route.cronId,
         route.runs,
+        role,
       );
     case "workspaces":
       return await handleWorkspaceConfigRoute(

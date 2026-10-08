@@ -515,6 +515,8 @@ describe("account management HTTP handler", () => {
       createFakeStorage({
         sandboxConfigs: {
           getById: async function (_accountId: string, sandboxId: string) {
+            if (sandboxId === "sbx_missing") return null;
+
             return {
               accountId: "acct_test",
               sandboxId: sandboxId,
@@ -553,6 +555,14 @@ describe("account management HTTP handler", () => {
     expect(await responseJson(prod)).toMatchObject({
       error: { message: expect.stringContaining("pinned") },
     });
+
+    // A missing id answers like another stage's, so ids cannot be probed.
+    const missing = await handler(
+      createEvent("POST", "/v1/sandboxes/sbx_missing/suspend", headers, {
+        reservationKey: "res_1",
+      }),
+    );
+    expect(missing.status).toBe(403);
 
     // Past the role gate, the dev sandbox reaches the body checks.
     const dev = await handler(

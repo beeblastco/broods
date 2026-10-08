@@ -318,17 +318,20 @@ async function handleSandboxLifecycleRoute(
     accountId,
     sandboxId,
   );
+  // A role is judged before a missing record answers 404, so the status never
+  // tells it which ids exist where it may not act.
+  const denial =
+    auth.kind === "role"
+      ? roleDenial(rolePrincipal(auth.role), method, {
+          type: "sandboxes",
+          id: sandboxId,
+          projectId: record?.projectId,
+          stageId: record?.stageId,
+        })
+      : null;
+  if (denial) return errorResponse(403, denial);
   if (!record) {
     return errorResponse(404, "Sandbox not found");
-  }
-  if (auth.kind === "role") {
-    const denial = roleDenial(rolePrincipal(auth.role), method, {
-      type: "sandboxes",
-      id: sandboxId,
-      projectId: record.projectId,
-      stageId: record.stageId,
-    });
-    if (denial) return errorResponse(403, denial);
   }
 
   return await handleSandboxLifecycle(accountId, record, action, request);
