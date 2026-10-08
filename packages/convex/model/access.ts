@@ -10,7 +10,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
-import { getOrgMembership, type OrgRole } from "./ownership/org";
+import { getOrgMembership, orgIdOf, type OrgRole } from "./ownership/org";
 import {
   DASHBOARD_POLICY_ACTIONS,
   type DashboardPolicyAction,
@@ -123,7 +123,8 @@ export async function requireDashboardPermission(
 /**
  * A caller hands out no permission they lack, in any scope the policies name:
  * what the policies would grant a member is compared with what the caller
- * holds, org-wide and in each project and stage a policy or rule points at.
+ * holds, org-wide and in each project and stage a policy or rule points at,
+ * the caller's own included.
  * Otherwise `access:write` or `members:write` would be a way up. `before` is
  * what the policies granted until now, so an edit answers only for what it adds.
  */
@@ -136,7 +137,14 @@ export async function assertGrantsWithinReach(
 ): Promise<void> {
   const access = await memberAccess(ctx, orgId, caller);
   if (!access) throw new ClientError("No permission for this", "unauthorized");
-  for (const scope of await scopesNamed(ctx, policies)) {
+  // The scopes `before` and the caller's own policies name count too: a deny
+  // scoped to one project is where the caller lacks what an org-wide grant
+  // or a dropped deny would hand over.
+  for (const scope of await scopesNamed(ctx, [
+    ...policies,
+    ...before,
+    ...access.policies,
+  ])) {
     const held = [
       ...dashboardPermissions(access, scope),
       ...dashboardPermissions({ tier: "member", policies: before }, scope),
@@ -151,6 +159,22 @@ export async function assertGrantsWithinReach(
       );
     }
   }
+}
+
+/** The first org role that holds the policy, or null when none does. */
+export async function roleHoldingPolicy(
+  ctx: Ctx,
+  policy: Doc<"agentPolicies">,
+): Promise<Doc<"orgRoles"> | null> {
+  const account = await ctx.db.get(policy.accountId);
+  const orgId = account ? orgIdOf(ctx, account) : null;
+  if (!orgId) return null;
+  const roles = await ctx.db
+    .query("orgRoles")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .collect();
+
+  return roles.find((role) => role.policyIds.includes(policy._id)) ?? null;
 }
 
 /** The policies that still exist and are active, with the scope their row carries. */

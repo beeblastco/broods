@@ -23,6 +23,7 @@ import {
   dashboardPermissions,
   memberAccess,
   requireDashboardPermission,
+  roleHoldingPolicy,
   tierPermissions,
   type ScopedPolicy,
 } from "./model/access";
@@ -341,9 +342,9 @@ export const updatePolicy = mutation({
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
     const document =
       args.mode !== undefined ? { ...policy.document, mode: args.mode } : null;
-    // An audit policy grants nothing, so its rules passed the ceiling for free;
-    // switching it to enforce is where they would start to count.
-    if (document?.mode === "enforce" && policy.document.mode !== "enforce") {
+    // An audit policy grants and denies nothing: switching to enforce lets its
+    // allows count, and switching to audit drops its denies.
+    if (document && document.mode !== policy.document.mode) {
       await assertPolicyWithinReach(ctx, caller, policy, document);
     }
     await ctx.db.patch(policy._id, {
@@ -468,9 +469,7 @@ export const removePolicy = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
-    const orgId = orgIdOf(ctx, caller.account);
-    const roles = orgId ? await orgRoles(ctx, orgId) : [];
-    const holder = roles.find((role) => role.policyIds.includes(policy._id));
+    const holder = await roleHoldingPolicy(ctx, policy);
     if (holder) {
       throw new ClientError(
         `The role "${holder.name}" holds this policy; detach it first`,
@@ -621,6 +620,7 @@ export const updateRole = mutation({
         role.orgId,
         caller.user,
         await activePolicies(ctx, args.policyIds),
+        await activePolicies(ctx, role.policyIds),
       );
     }
     await ctx.db.patch(role._id, {

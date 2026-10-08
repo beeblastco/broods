@@ -2825,6 +2825,11 @@ paths:
     patch:
       tags: [Policies]
       summary: Update agent policy
+      description: >-
+        A policy an organization role holds keeps its document and status:
+        changing either answers 409, so change it in the dashboard. Setting
+        `status: "deleted"` answers 409 while an agent or a channel record
+        still lists the policy, as DELETE does.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: policyId, in: path, required: true, schema: { type: string } }
@@ -2840,6 +2845,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentPolicy"
+        "409":
+          description: Held by an organization role, or still referenced when deleting
     delete:
       tags: [Policies]
       summary: Delete agent policy
