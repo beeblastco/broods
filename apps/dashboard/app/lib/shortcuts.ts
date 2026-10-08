@@ -10,6 +10,8 @@ export interface Shortcut {
   /** Accepted key combinations. The first is the one the overlay prints. */
   combos: readonly string[];
   id: string;
+  /** Extra words the command palette matches this binding's row on. */
+  keywords?: readonly string[];
   label: string;
   scope: ShortcutScope;
 }
@@ -55,7 +57,13 @@ export const SHORTCUTS = [
     scope: "global",
   },
 
-  { combos: ["a"], id: "canvas.addAgent", label: "Add agent", scope: "canvas" },
+  {
+    combos: ["a"],
+    id: "canvas.addAgent",
+    keywords: ["config"],
+    label: "Add agent",
+    scope: "canvas",
+  },
   {
     combos: ["s"],
     id: "canvas.addSandbox",

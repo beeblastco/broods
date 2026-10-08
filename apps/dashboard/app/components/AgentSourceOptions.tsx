@@ -4,11 +4,32 @@
 import { Button } from "@/app/components/ui/button";
 import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
 
+// Only "create" has a flow today; the rest show as coming soon until they do.
 const SOURCE_OPTIONS = [
-  { key: "github", label: "From GitHub", icon: GitBranch },
-  { key: "template", label: "From templates", icon: LayoutTemplate },
-  { key: "import", label: "Import config file .json, .yaml", icon: FileDown },
-  { key: "create", label: "Create new config file", icon: FilePlus },
+  {
+    key: "github",
+    label: "From GitHub",
+    hint: "Coming soon",
+    icon: GitBranch,
+  },
+  {
+    key: "template",
+    label: "From templates",
+    hint: "Coming soon",
+    icon: LayoutTemplate,
+  },
+  {
+    key: "import",
+    label: "Import config",
+    hint: "Coming soon",
+    icon: FileDown,
+  },
+  {
+    key: "create",
+    label: "New config",
+    hint: "Write one in the editor",
+    icon: FilePlus,
+  },
 ] as const;
 
 export function AgentSourceOptions({
@@ -18,16 +39,22 @@ export function AgentSourceOptions({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col">
-      {SOURCE_OPTIONS.map(({ key, label, icon: Icon }) => (
+      {SOURCE_OPTIONS.map(({ key, label, hint, icon: Icon }) => (
         <Button
           key={key}
           variant="ghost"
           tone="muted"
+          disabled={key !== "create"}
           onClick={key === "create" ? onCreateNew : undefined}
-          className="h-10 justify-start"
+          className="h-auto justify-start"
         >
-          <Icon className="size-4 shrink-0 text-muted-foreground" />
-          {label}
+          <Icon className="size-4 shrink-0 self-start text-muted-foreground" />
+          <span className="flex flex-col items-start">
+            {label}
+            <span className="text-2xs font-normal text-muted-foreground">
+              {hint}
+            </span>
+          </span>
         </Button>
       ))}
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
 /** Three-step first-login onboarding dialog: welcome, one-time account key, first CLI project. */
+import { CopyButton } from "@/app/components/CopyButton";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -11,7 +12,7 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
-import { ArrowUpRight, Check, Copy, Eye, EyeOff } from "lucide-react";
+import { ArrowUpRight, Eye, EyeOff } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 // The starter agent reads env("OPENAI_API_KEY"); `broods dev` pushes it from
@@ -37,7 +38,6 @@ interface Props {
 export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
   const [step, setStep] = useState(0);
   const [revealed, setRevealed] = useState(false);
-  const { copied, copy } = useCopy();
   const masked = "•".repeat(Math.min(secret.length, 44));
 
   const titles = [
@@ -103,19 +103,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                     <Eye className="size-3.5" />
                   )}
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 shrink-0 cursor-pointer"
-                  onClick={() => copy(secret)}
-                >
-                  {copied ? (
-                    <Check className="size-3.5 mr-1" />
-                  ) : (
-                    <Copy className="size-3.5 mr-1" />
-                  )}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
+                <CopyButton value={secret} label="key" />
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 This key authenticates the API, so you can create agents, crons,
@@ -184,8 +172,6 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
 
 /** A shell command block, one prompt per line, with a corner control that copies them all. */
 function CommandBlock({ commands }: { commands: string[] }): React.JSX.Element {
-  const { copied, copy } = useCopy();
-
   return (
     // min-w-0: as a grid item this would otherwise grow to the command's
     // intrinsic width and push the whole card past its edge.
@@ -198,18 +184,9 @@ function CommandBlock({ commands }: { commands: string[] }): React.JSX.Element {
           </div>
         ))}
       </pre>
-      <button
-        type="button"
-        title="Copy commands"
-        onClick={() => copy(commands.join("\n"))}
-        className="absolute right-1.5 top-1.5 flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      >
-        {copied ? (
-          <Check className="size-3.5" />
-        ) : (
-          <Copy className="size-3.5" />
-        )}
-      </button>
+      <div className="absolute right-1.5 top-1.5">
+        <CopyButton value={commands.join("\n")} label="commands" />
+      </div>
     </div>
   );
 }
@@ -271,21 +248,4 @@ function Mono({ children }: { children: ReactNode }): React.JSX.Element {
       {children}
     </code>
   );
-}
-
-/** Clipboard copy with a transient confirmation shown only after the write actually succeeds. */
-function useCopy(): { copied: boolean; copy: (text: string) => Promise<void> } {
-  const [copied, setCopied] = useState(false);
-
-  async function copy(text: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return { copied: copied, copy: copy };
 }

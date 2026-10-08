@@ -21,7 +21,7 @@ export function ObservabilityKeyPrompt({
         <KeyRound className="size-5 text-muted-foreground" />
       </div>
       <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium">Generate a viewing key</p>
+        <p className="text-sm font-medium">Generate a runtime key</p>
         <p className="max-w-sm text-xs text-muted-foreground">
           Logs and traces stream with this stage&apos;s runtime key. Generate
           one to view them.
