@@ -554,9 +554,14 @@ function ensureConvexContainer(state: InstanceState): void {
   const name = containerName(state.instanceId);
   const { convexApi, convexSite } = ports(state);
   const containerState = dockerContainerState(name);
+  // The configured bindings, which a stopped container keeps; `docker port`
+  // lists only a running one's.
   if (
     containerState &&
-    docker(["port", name, `${convexApi}/tcp`], { allowFailure: true }) === ""
+    !docker(
+      ["inspect", "--format", "{{json .HostConfig.PortBindings}}", name],
+      { allowFailure: true },
+    ).includes(`"${convexApi}/tcp"`)
   ) {
     throw new Error(
       "this stack predates Node action callbacks; run `bun run local:up -- --fresh` to recreate it",
