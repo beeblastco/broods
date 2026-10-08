@@ -36,6 +36,32 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `machine`    | Your own computer            | no              | no                    | no                      | `allow-all` only               |
 | `custom`     | Your own server over HTTP    | no              | no                    | no                      | `allow-all` only               |
 
+Pick by where the code should run, then by whether files must outlive a call:
+
+```mermaid
+flowchart TD
+  A([Agent needs to run code]) --> B{Where should it run?}
+  B -->|Broods cloud, the default| L["lambda<br/>AWS Lambda MicroVM"]
+  B -->|Self-hosted Broods| S["sandbox<br/>Firecracker VM"]
+  B -->|A vendor you already use| V{Which vendor?}
+  V --> D[daytona]
+  V --> E[e2b]
+  V --> VC[vercel]
+  V --> CF[cloudflare]
+  B -->|Your laptop or screen| M["machine<br/>broods machine"]
+  B -->|Your own server| C["custom<br/>POST /exec"]
+  L --> W{Files must survive?}
+  S --> W
+  D --> W
+  W -->|yes| WS["attach a workspace<br/>mounted on every run"]
+  W -->|no| NB[bash only, scratch disk]
+  E -.->|no workspace| NB
+  VC -.->|no workspace| NB
+  CF -.->|no workspace| NB
+  M -.->|no workspace| NB
+  C -.->|no workspace| NB
+```
+
 `lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and `cloudflare` has [Cloudflare Containers](cloudflare.md). The `machine` provider has its own page, [Your computer](machine.md), and so does `custom`, [Your own server](custom.md).
 
 ## Configuration
@@ -123,6 +149,25 @@ Set `snapshot` to boot a prebuilt image instead of the provider default. Bake he
 - `sandbox` boots the named image. The dashboard's Snapshot action on a running instance captures it into an image you can pin later.
 - `lambda` selects a MicroVM image by ARN, in the same AWS account and region as the default image. The Snapshot action on a running instance saves every file changed since that machine started as a new image. It shows as building for a few minutes, then active. Workspace files stay in the workspace, and deleted files are not carried over.
 - `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
+
+On `lambda`, a snapshot starts from a running instance and comes back as the image the next machine boots:
+
+```mermaid
+flowchart LR
+  subgraph Pick["1. Pick an image"]
+    D0["default<br/>bash, python3, node, uv, rg"]
+    O["image: obscura<br/>adds browse"]
+    BR["image: browser<br/>adds chromium"]
+  end
+  D0 --> RUN[2. Running instance]
+  O --> RUN
+  BR --> RUN
+  RUN -->|agent installs, edits files| RUN
+  RUN -->|3. Dashboard Snapshot| BLD["building<br/>a few minutes"]
+  BLD --> ACT[active snapshot]
+  ACT -->|"4. Snapshot select,<br/>or snapshot: ARN"| PIN["boots the snapshot,<br/>keeps the image variant"]
+  PIN --> RUN
+```
 
 The dashboard Snapshots view shows which image each running instance booted from. On a `sandbox` or `lambda` sandbox node, the Snapshot select pins one of the account's active snapshots for that provider.
 
