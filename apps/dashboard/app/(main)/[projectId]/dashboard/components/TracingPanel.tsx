@@ -754,6 +754,7 @@ export function TracingPanel({
           selectedSpan &&
           selectedGroup && (
             <DetailPanel
+              key={selectedKey}
               title={spanLabel(selectedSpan)}
               meta={
                 <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
@@ -773,7 +774,7 @@ export function TracingPanel({
               }
               onClose={() => setSelectedKey(null)}
             >
-              <SpanDetails key={selectedKey} span={selectedSpan} />
+              <SpanDetails span={selectedSpan} />
             </DetailPanel>
           )
         }

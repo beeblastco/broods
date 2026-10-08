@@ -49,7 +49,7 @@ export function DetailFields({
   );
 }
 
-/** Collapsible payload: the header row over the value, pre-wrapped. `open` sets only the initial state. */
+/** Collapsible payload: the header row over the value, pre-wrapped. Starts expanded when `open`. */
 export function DetailPayload({
   label,
   open,
