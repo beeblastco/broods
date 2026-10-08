@@ -1,7 +1,9 @@
 /**
- * Storage with `my-mac` and `other-mac` machine records and a `cloud-box` lambda
- * record, and a core server that serves only the daemon socket. `other-mac` is
- * `bypass` so a test can tell two machines' approval apart.
+ * Storage with account-level `my-mac` and `other-mac` machine records, a
+ * `stage-mac` in each of two stages, a production-only `prod-mac`, and a
+ * `cloud-box` lambda record, and a core server that serves only the daemon
+ * socket. `other-mac` is `bypass` so a test can tell two machines' approval
+ * apart.
  */
 
 import {
@@ -32,6 +34,9 @@ export const MACHINE_EMBEDDABLE_KEY = `bsk_${crypto.randomUUID()}`;
 export const MACHINE_READ_ONLY_ROLE_TOKEN = `bsts_${crypto.randomUUID()}`;
 export const MACHINE_SANDBOX_ID = "sbx_machine";
 export const OTHER_MACHINE_SANDBOX_ID = "sbx_machine_other";
+/** `stage-mac` exists in both stages of project `proj`; these are its ids. */
+export const DEV_STAGE_SANDBOX_ID = "sbx_stage_dev";
+export const PROD_STAGE_SANDBOX_ID = "sbx_stage_prod";
 
 /** One connection status write core sent to storage. */
 export type MachineConnectionWrite =
@@ -106,6 +111,49 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
       config: {
         provider: "machine",
         permissionMode: "bypass",
+        network: { mode: "allow-all" },
+      },
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    },
+    // Listed production first, so an unscoped name match would pick it.
+    {
+      accountId: MACHINE_ACCOUNT_ID,
+      sandboxId: PROD_STAGE_SANDBOX_ID,
+      projectId: "proj",
+      stageId: "stage_prod",
+      name: "stage-mac",
+      config: {
+        provider: "machine",
+        permissionMode: "ask",
+        network: { mode: "allow-all" },
+      },
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    },
+    {
+      accountId: MACHINE_ACCOUNT_ID,
+      sandboxId: DEV_STAGE_SANDBOX_ID,
+      projectId: "proj",
+      stageId: "stage_dev",
+      name: "stage-mac",
+      config: {
+        provider: "machine",
+        permissionMode: "ask",
+        network: { mode: "allow-all" },
+      },
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    },
+    {
+      accountId: MACHINE_ACCOUNT_ID,
+      projectId: "proj",
+      stageId: "stage_prod",
+      sandboxId: "sbx_prod_only",
+      name: "prod-mac",
+      config: {
+        provider: "machine",
+        permissionMode: "ask",
         network: { mode: "allow-all" },
       },
       createdAt: account.createdAt,

@@ -124,18 +124,23 @@ export async function requireDashboardPermission(
  * A caller hands out no permission they lack, in any scope the policies name:
  * what the policies would grant a member is compared with what the caller
  * holds, org-wide and in each project and stage a policy or rule points at.
- * Otherwise `access:write` or `members:write` would be a way up.
+ * Otherwise `access:write` or `members:write` would be a way up. `before` is
+ * what the policies granted until now, so an edit answers only for what it adds.
  */
 export async function assertGrantsWithinReach(
   ctx: Ctx,
   orgId: Id<"orgs">,
   caller: Doc<"users">,
   policies: readonly ScopedPolicy[],
+  before: readonly ScopedPolicy[] = [],
 ): Promise<void> {
   const access = await memberAccess(ctx, orgId, caller);
   if (!access) throw new ClientError("No permission for this", "unauthorized");
-  for (const scope of scopesNamed(ctx, policies)) {
-    const held = dashboardPermissions(access, scope);
+  for (const scope of await scopesNamed(ctx, policies)) {
+    const held = [
+      ...dashboardPermissions(access, scope),
+      ...dashboardPermissions({ tier: "member", policies: before }, scope),
+    ];
     const beyond = dashboardPermissions(
       { tier: "member", policies: policies },
       scope,
@@ -176,18 +181,26 @@ function policiesAllowOrTier(
   );
 }
 
-/** The org, plus every project and stage the policies or their rules name, each once. */
-function scopesNamed(
+/**
+ * The org, plus every project and stage the policies or their rules name, each
+ * once. A stage carries its project, as the stage's own checks evaluate it.
+ */
+async function scopesNamed(
   ctx: Ctx,
   policies: readonly ScopedPolicy[],
-): DashboardScope[] {
+): Promise<DashboardScope[]> {
   const scopes = new Map<string, DashboardScope>([["", {}]]);
   for (const policy of policies) {
     for (const rule of policy.document.rules) {
+      const stageId =
+        policy.stageId ?? idCondition(ctx, rule, "stage.id", "stages");
+      const stage = stageId ? await ctx.db.get(stageId) : null;
       const scope: DashboardScope = {
         projectId:
-          policy.projectId ?? idCondition(ctx, rule, "project.id", "projects"),
-        stageId: policy.stageId ?? idCondition(ctx, rule, "stage.id", "stages"),
+          policy.projectId ??
+          idCondition(ctx, rule, "project.id", "projects") ??
+          stage?.projectId,
+        stageId: stageId,
       };
       scopes.set(`${scope.projectId ?? ""}:${scope.stageId ?? ""}`, scope);
     }

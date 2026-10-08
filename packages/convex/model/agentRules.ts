@@ -42,6 +42,8 @@ export type AgentConfig = Record<string, unknown> & {
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
   sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
+  /** Keyed by MCP server row id; normalizeMcpConfig checks the shape. */
+  mcp?: Record<string, unknown>;
   session?: Record<string, unknown>;
   hooks?: Record<string, unknown>;
   channels?: Record<string, unknown>;

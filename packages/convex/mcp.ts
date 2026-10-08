@@ -26,7 +26,7 @@ import {
 import { REDACTED_SECRET_VALUE } from "./model/configValues";
 import { normalizeMcpInput, type McpInput } from "./model/mcp";
 import { stripUndefined } from "./model/objects";
-import { getOwnedStage } from "./model/ownership/stage";
+import { getOwnedStage, getProjectStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { serviceEnv, serviceHeaders } from "./model/serviceBridge";
 
@@ -151,7 +151,8 @@ export const getByNode = query({
 export const listByStage = query({
   args: {
     projectId: v.id("projects"),
-    stageId: v.id("stages"),
+    // Absent reads the project's default stage, as canvas.getByProject does.
+    stageId: v.optional(v.id("stages")),
   },
   returns: v.array(
     v.object({
@@ -175,15 +176,13 @@ export const listByStage = query({
 
     // Same soft misses as getByNode, so a deleted project or stage empties the
     // canvas instead of crashing it.
-    const project = await getProjectForRole(ctx, user.id, projectId);
-    if (!project) return [];
-    const stage = await getOwnedStage(ctx, user.id, stageId);
-    if (!stage || stage.projectId !== projectId) return [];
+    const stage = await getProjectStage(ctx, user.id, projectId, stageId);
+    if (!stage) return [];
 
     const servers = await ctx.db
       .query("mcp")
       .withIndex("by_stageId_and_status_and_name", (q) =>
-        q.eq("stageId", stageId).eq("status", "active"),
+        q.eq("stageId", stage._id).eq("status", "active"),
       )
       .collect();
 

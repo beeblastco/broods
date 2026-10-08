@@ -15,7 +15,7 @@ info:
 
     Every core and config-plane response carries `X-Request-Id`. Every non-2xx body from core and the config plane is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and core and config-plane 429s also carry the IETF `RateLimit-*` fields. The edge may also limit requests per client address, and answers its own 429 as plain text with only `Retry-After`.
 
-    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket, never the runtime key.
+    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket.
 
     The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
@@ -2863,8 +2863,11 @@ paths:
       description: >-
         Create a scoped API role. The policy uses the API action namespace
         (`agents:read`, `crons:write`, ...). Provide `projectId` and `stageId`
-        together; they bind which runtime keys may assume the role. Role
-        management accepts only the account key, never a session token.
+        together; they bind which runtime keys may assume the role and hold
+        its sessions to that stage: a pinned session reaches only resources
+        on its stage, and collections and account-wide resources answer
+        `403`. Role management accepts only the account key, never a session
+        token.
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true

@@ -9,6 +9,7 @@
  */
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { defaultStage } from "@broods/convex/model/defaultStage";
 import { useQuery } from "convex/react";
 import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
@@ -28,10 +29,11 @@ export function useStage(): {
   ) as Doc<"stages">[] | undefined;
 
   const stageParam = searchParams.get("stage");
-  const stageId = stages?.length
-    ? (stages.find((stage) => stage._id === stageParam) ?? defaultStage(stages))
-        ._id
-    : null;
+  const stageId =
+    (
+      stages?.find((stage) => stage._id === stageParam) ??
+      defaultStage(stages ?? [])
+    )?._id ?? null;
 
   const setStageId = useCallback(
     (id: Id<"stages"> | null) => {
@@ -55,14 +57,4 @@ export function useStage(): {
   );
 
   return { stageId: stageId, setStageId: setStageId };
-}
-
-/** The Development default, else any Development stage, else the default, else the first. */
-function defaultStage(stages: Doc<"stages">[]): Doc<"stages"> {
-  return (
-    stages.find((stage) => stage.kind === "development" && stage.isDefault) ??
-    stages.find((stage) => stage.kind === "development") ??
-    stages.find((stage) => stage.isDefault) ??
-    stages[0]
-  );
 }

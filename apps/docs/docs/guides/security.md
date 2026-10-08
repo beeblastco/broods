@@ -81,7 +81,7 @@ const scoped = new BroodsAccountClient({ sessionToken: session.token }); // can 
 
 - Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `audit`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills`, `tools` and `workspaces`.
 - `resources.resourceIds` limits a rule to specific ids, `"*"` for all. A deny beats an allow, and no matching allow means `403`.
-- `projectId` and `stageId` pin a role to one stage.
+- `projectId` and `stageId` pin a role to one stage. A pinned session reaches only agents, crons, channels, MCP servers, policies, sandboxes and workspaces on that stage. Lists, creates, and account-wide resources such as the account, audit, env, hooks and skills answer `403`. A write that points one of its resources at another stage's, such as a production sandbox on a development agent or a cron moved to a production agent, answers `400`.
 - Sessions last 1 hour by default, 12 at most. Only a hash is stored, and the token is shown once.
 - The account key, a CLI login, or a runtime key can assume a role. A runtime key may only assume roles pinned to its own stage.
 - Sessions cannot mint sessions, rotate the account key, or manage roles.

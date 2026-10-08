@@ -8,6 +8,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
+import type { RolePrincipal } from "../../model/apiAuthorization";
 import { toCronResponse, toCronRunResponse } from "../../model/responses";
 import {
   json,
@@ -28,6 +29,7 @@ export async function handleCronRoute(
   actor: AuditActor,
   cronId: string | undefined,
   runs: boolean,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   if (runs && cronId)
     return await handleCronRunsRoute(ctx, req, accountId, cronId);
@@ -47,7 +49,7 @@ export async function handleCronRoute(
       : jsonError(404, "Cron job not found");
   }
   if (req.method === "PATCH") {
-    return await patchCronRoute(ctx, req, accountId, actor, cronId);
+    return await patchCronRoute(ctx, req, accountId, actor, cronId, role);
   }
   if (req.method === "DELETE") {
     const existing = await ctx
@@ -166,11 +168,16 @@ async function patchCronRoute(
   accountId: Id<"accounts">,
   actor: AuditActor,
   cronId: string,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   const cron = await ctx.runMutation(internal.agent.crons.update, {
     accountId: accountId,
     cronId: cronId,
     patch: await req.json(),
+    // A stage-pinned role may only move the job onto an agent of its stage.
+    ...(role?.projectId && role.stageId
+      ? { pin: { projectId: role.projectId, stageId: role.stageId } }
+      : {}),
   });
   if (cron) {
     const cronRecord = isPlainObject(cron) ? cron : {};

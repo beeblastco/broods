@@ -103,6 +103,7 @@ import type * as model_connectionSignIn from "../model/connectionSignIn.js";
 import type * as model_connections from "../model/connections.js";
 import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_cronSchedules from "../model/cronSchedules.js";
+import type * as model_defaultStage from "../model/defaultStage.js";
 import type * as model_envRefs from "../model/envRefs.js";
 import type * as model_envelope from "../model/envelope.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
@@ -270,6 +271,7 @@ declare const fullApi: ApiFromModules<{
   "model/connections": typeof model_connections;
   "model/cronRules": typeof model_cronRules;
   "model/cronSchedules": typeof model_cronSchedules;
+  "model/defaultStage": typeof model_defaultStage;
   "model/envRefs": typeof model_envRefs;
   "model/envelope": typeof model_envelope;
   "model/environmentValues": typeof model_environmentValues;
