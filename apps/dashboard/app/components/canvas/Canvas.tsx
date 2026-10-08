@@ -140,6 +140,7 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
@@ -251,21 +252,41 @@ let firstCanvasReported = false;
 
 type FlowPosition = { x: number; y: number };
 
+/** The stage-scoped queries `Canvas` runs for `CanvasInner`; undefined while loading. */
+type StageData = {
+  canvasLayout: FunctionReturnType<typeof api.canvas.getByProject> | undefined;
+  mcpServers: FunctionReturnType<typeof api.mcp.listByStage> | undefined;
+  machineConnections:
+    | FunctionReturnType<typeof api.sandbox.machines.listForActiveOrg>
+    | undefined;
+};
+
 export function Canvas({
   projectId,
 }: {
   projectId: Id<"projects">;
 }): React.JSX.Element {
-  const { stageId } = useStage();
+  const { stageId, stageArgs } = useStage();
+  const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
+  const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
+  const machineConnections = useQuery(
+    api.sandbox.machines.listForActiveOrg,
+    stageArgs,
+  );
 
   // Remount per stage: a stage switch with a debounced save pending would
   // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
-  // sync) and the next edit would persist it into the new stage.
+  // sync) and the next edit would persist it into the new stage. The queries
+  // live out here so that remount keeps their subscriptions, and their data
+  // waits for the stage, which saves need, so no edit lands before it.
   return (
     <ReactFlowProvider>
       <CanvasInner
         key={`${projectId}:${stageId ?? "loading"}`}
         projectId={projectId}
+        canvasLayout={stageId ? canvasLayout : undefined}
+        mcpServers={stageId ? mcpServers : undefined}
+        machineConnections={stageId ? machineConnections : undefined}
       />
     </ReactFlowProvider>
   );
@@ -443,22 +464,16 @@ function findNearestAgentNode(
 
 function CanvasInner({
   projectId,
+  canvasLayout,
+  mcpServers,
+  machineConnections,
 }: {
   projectId: Id<"projects">;
-}): React.JSX.Element {
-  const { stageId } = useStage();
-  const stageArgs = stageId
-    ? { projectId: projectId, stageId: stageId }
-    : ("skip" as const);
-  const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
-  const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
+} & StageData): React.JSX.Element {
+  const { stageId, stageArgs } = useStage();
   const mcpServersByNode = useMemo(
     () => serversByNode(mcpServers ?? []),
     [mcpServers],
-  );
-  const machineConnections = useQuery(
-    api.sandbox.machines.listForActiveOrg,
-    stageArgs,
   );
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -590,11 +605,16 @@ function CanvasInner({
   ).withOptimisticUpdate((localStore, args) => {
     // Keep the cached layout in sync with the pending write so the post-save
     // snapshot matches what's on screen (local React state is already optimistic).
+    // A bare project URL reads the layout without a stageId, so that entry too.
+    const layout = { nodes: args.nodes, edges: args.edges };
     localStore.setQuery(
       api.canvas.getByProject,
       { projectId: args.projectId, stageId: args.stageId },
-      { nodes: args.nodes, edges: args.edges },
+      layout,
     );
+    if (stageArgs !== "skip" && !stageArgs.stageId) {
+      localStore.setQuery(api.canvas.getByProject, stageArgs, layout);
+    }
   });
   const updateRuntimeRefs = useMutation(api.agent.config.updateRuntimeRefs);
   const updateSubagentRefs = useMutation(api.agent.config.updateSubagentRefs);

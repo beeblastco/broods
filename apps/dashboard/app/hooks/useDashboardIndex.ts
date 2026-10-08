@@ -9,6 +9,7 @@
  */
 import { NAV_ITEMS, navHref } from "@/app/lib/navigation";
 import type { SearchItem } from "@/app/lib/paletteSearch";
+import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
@@ -24,7 +25,9 @@ export function useDashboardIndex(
   const stageArgs =
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip";
 
-  const canvas = useQuery(api.canvas.getByProject, stageArgs);
+  // The canvas's own arguments, so this shares its subscription.
+  const { stageArgs: canvasArgs } = useStage();
+  const canvas = useQuery(api.canvas.getByProject, canvasArgs);
   const crons = useQuery(api.agent.crons.listForProject, projectArgs);
   const envVars = useQuery(api.environmentVariables.list, stageArgs);
   const projects = useQuery(api.project.list, {});
