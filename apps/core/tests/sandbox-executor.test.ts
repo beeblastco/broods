@@ -38,12 +38,17 @@ const e2bRunMock = mock(
   },
 );
 const e2bKillMock = mock(async (_sandboxId: string) => {});
+// The size each fake provider reports for its sandbox.
+const E2B_INFO = { cpuCount: 2, memoryMB: 2048 };
+const DAYTONA_SIZE = { cpu: 2, memory: 4, disk: 10 };
+const VERCEL_SIZE = { vcpus: 2, memory: 4096 };
 const e2bConnectMock = mock(async (sandboxId: string) => ({
   sandboxId: sandboxId,
   commands: {
     run: e2bRunMock,
   },
   kill: e2bKillMock,
+  getInfo: async () => E2B_INFO,
 }));
 const e2bCreateSnapshotMock = mock(
   async (_sandboxId: string, _options?: Record<string, unknown>) => ({
@@ -57,6 +62,7 @@ const e2bCreateMock = mock(async (_options: Record<string, unknown>) => ({
     run: e2bRunMock,
   },
   kill: e2bKillMock,
+  getInfo: async () => E2B_INFO,
 }));
 
 const daytonaExecuteCommandMock = mock(
@@ -80,6 +86,7 @@ let daytonaState = "started";
 let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   id: "daytona-sandbox",
+  ...DAYTONA_SIZE,
   process: {
     executeCommand: daytonaExecuteCommandMock,
   },
@@ -99,6 +106,7 @@ const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
 function vercelSandbox(name = "vercel-sandbox") {
   return {
     name: name,
+    ...VERCEL_SIZE,
     runCommand: vercelRunCommandMock,
     stop: vercelStopMock,
     delete: vercelDeleteMock,
@@ -172,6 +180,14 @@ const recordSandboxBurstMock = mock(
     _externalId: string,
     _totals: { vcpuSeconds: number; gbSeconds: number },
   ) => true,
+);
+const setSandboxInstanceSpecsMock = mock(
+  async (
+    _accountId: string,
+    _reservationKey: string,
+    _externalId: string,
+    _specs: unknown,
+  ): Promise<void> => {},
 );
 const upsertSandboxInstanceMock = mock(
   async (..._args: Parameters<typeof upsertSandboxInstance>): Promise<void> => {
@@ -363,6 +379,7 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 }));
 
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  setSandboxInstanceSpecs: setSandboxInstanceSpecsMock,
   recordSandboxBurst: recordSandboxBurstMock,
   removeSandboxInstance: removeSandboxInstanceMock,
   upsertSandboxInstance: upsertSandboxInstanceMock,
@@ -399,6 +416,7 @@ await mock.module("@aws-sdk/client-sts", () => ({
 }));
 
 beforeEach(() => {
+  setSandboxInstanceSpecsMock.mockClear();
   process.env.AWS_ACCESS_KEY_ID = "test-access-key";
   process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
   process.env.AWS_SESSION_TOKEN = "test-session-token";
@@ -725,6 +743,8 @@ describe("createSandboxExecutor", () => {
     expect(upsertSandboxInstanceMock.mock.calls[0]?.[5]).toEqual({
       ephemeral: true,
       logStream: expect.stringMatching(logStreamPattern("account-1", "-", "-")),
+      // A MicroVM's size is the one Broods knows, so the row is verified.
+      specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
     });
     expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 
@@ -737,10 +757,17 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  for (const [provider, sandboxId] of [
-    ["daytona", "daytona-sandbox"],
-    ["e2b", "e2b-sandbox"],
-    ["vercel", "ephemeral"],
+  // e2b's size needs a read, so its row is written without one and the size
+  // is patched in once the read answers.
+  for (const [provider, sandboxId, specs, patched] of [
+    [
+      "daytona",
+      "daytona-sandbox",
+      { vcpu: 2, memoryMb: 4096, storageGb: 10 },
+      false,
+    ],
+    ["e2b", "e2b-sandbox", { vcpu: 2, memoryMb: 2048 }, true],
+    ["vercel", "ephemeral", { vcpu: 2, memoryMb: 4096 }, false],
   ] as const) {
     it(`meters an ephemeral ${provider} sandbox on platform keys with a row for the call`, async () => {
       const {
@@ -760,7 +787,7 @@ describe("createSandboxExecutor", () => {
         provider: provider,
         controlPlane: controlPlane,
       }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
-      await Bun.sleep(0);
+      await Bun.sleep(5);
 
       expect(upsertSandboxInstanceMock.mock.calls).toEqual([
         [
@@ -769,9 +796,13 @@ describe("createSandboxExecutor", () => {
           sandboxId,
           sandboxId,
           undefined,
-          { ephemeral: true },
+          // The row carries the size the provider reported, not the config's.
+          { ephemeral: true, specs: patched ? undefined : specs },
         ],
       ]);
+      expect(setSandboxInstanceSpecsMock.mock.calls).toEqual(
+        patched ? [["account-1", sandboxId, sandboxId, specs]] : [],
+      );
       expect(removeSandboxInstanceMock.mock.calls).toEqual([
         ["account-1", sandboxId, sandboxId],
       ]);

@@ -12,6 +12,7 @@ import { logError } from "../log.ts";
 import type {
   SandboxControlPlane,
   SandboxRunMetadata,
+  SandboxSpecs,
 } from "../sandbox-sizes.ts";
 import { getConvexClient } from "./client.ts";
 
@@ -36,6 +37,10 @@ export type SandboxInstanceStatus =
  * row's last-used trace instead of adding a row per tool call.
  * `logStream` is the provider-side guest log stream the dashboard tails. Only the
  * call that launched the VM knows it; reconnects leave the stored value alone.
+ * `specs` is the machine's real size, which the executor passes only when it
+ * knows it: reported by the provider, or set by Broods itself. Without it the
+ * row bills the size derived from the config but is not marked verified, so
+ * that guess is never shown as the machine's size.
  */
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
@@ -43,7 +48,7 @@ export async function upsertSandboxInstance(
   reservationKey: string,
   externalId: string,
   metadata?: SandboxRunMetadata,
-  options?: { ephemeral?: boolean; logStream?: string },
+  options?: { ephemeral?: boolean; logStream?: string; specs?: SandboxSpecs },
 ): Promise<void> {
   if (!controlPlane) return;
   const meta: SandboxRunMetadata = metadata ?? {};
@@ -59,7 +64,8 @@ export async function upsertSandboxInstance(
       reservationKey: reservationKey,
       externalId: externalId,
       name: controlPlane.name,
-      specs: controlPlane.specs,
+      specs: options?.specs ?? controlPlane.specs,
+      specsVerified: options?.specs !== undefined ? true : undefined,
       sandboxConfigId: controlPlane.sandboxConfigId as any,
       snapshotId: controlPlane.snapshotId,
       egress: controlPlane.egress,
@@ -79,6 +85,31 @@ export async function upsertSandboxInstance(
     });
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Records a machine's real size on its existing row once the provider reports it
+ * after the row was written (an e2b size read). Never creates a row, so a late
+ * report cannot bring back a removed one; a mirror failure is only logged.
+ */
+export async function setSandboxInstanceSpecs(
+  accountId: string,
+  reservationKey: string,
+  externalId: string,
+  specs: SandboxSpecs,
+): Promise<void> {
+  try {
+    await getConvexClient().mutation(internal.sandbox.instances.setSpecs, {
+      accountId: accountId,
+      reservationKey: reservationKey,
+      externalId: externalId,
+      specs: specs,
+    });
+  } catch (err) {
+    logError("Sandbox instance size mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
     });
   }

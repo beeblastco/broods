@@ -410,6 +410,7 @@ async function claimSandbox(
       hostname: hello.hostname,
       mcp: hello.mcp ?? [],
       platform: hello.platform,
+      specs: hello.specs,
     }),
   );
   heartbeat ??= setInterval(sendHeartbeats, HEARTBEAT_MS);

@@ -73,6 +73,7 @@ export const box = defineSandbox({
 - The Snapshot action captures a reserved sandbox's filesystem as a new Daytona snapshot, see [Images](index.md#images).
 - `network.mode` maps to Daytona's `networkBlockAll`. `restricted` applies the CIDR allowlist only; domain lists are ignored with a warning.
 - Idle and lifetime map to Daytona's `autoStopInterval` and `autoDeleteInterval`.
+- `size` does nothing here. The dashboard shows the vCPU, memory and disk Daytona reports for the sandbox.
 - TypeScript files are not transpiled. Run compiled JavaScript, and call `python3` explicitly.
 - `options.s3Endpoint` must be a public `https` URL.
 
@@ -97,6 +98,7 @@ export const box = defineSandbox({
 - `network.mode` must be `allow-all`, set explicitly. E2B cannot enforce egress limits, so `deny-all`, the default, and `restricted` are rejected.
 - Workspaces are not supported. Attaching one fails.
 - `onCreate` and `onResume` are rejected. Put setup in the template.
+- The template sets the machine size, and `size` does nothing. The dashboard shows the vCPU and memory E2B reports, and `?` for disk, which E2B does not report.
 - Set your E2B key in `options.apiKey`. A self-hosted deployment can set a fallback for every account, see [Self-hosting](../../internals/self-hosting.md).
 - `snapshot` names the E2B template or snapshot to boot. The Snapshot action captures a reserved sandbox as an E2B snapshot, pausing it while it captures.
 - Persistent mode pauses on idle and keeps files, installs and processes.
@@ -132,6 +134,7 @@ export const box = defineSandbox({
 
 - The Snapshot action captures a reserved sandbox as a Vercel snapshot that does not expire. Vercel stops the sandbox to capture it, and its next call resumes it.
 - All three network modes are enforced natively.
+- `size` does nothing here. The dashboard shows the vCPU and memory once Vercel reports them, and `?` for disk, which Vercel does not report.
 - Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.
 - `onResume` fires only when a stopped sandbox resumes. The idle timeout counts from start, and `maxLifetimeSeconds` is not enforced.
 

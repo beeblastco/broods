@@ -9,10 +9,14 @@
 
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
+import {
+  setSandboxInstanceSpecs,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
+import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
@@ -40,6 +44,9 @@ import {
   truncateText,
 } from "./utils.ts";
 
+// How long a size read may take before the size is left unknown.
+const SPECS_READ_TIMEOUT_MS = 3_000;
+
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
 
@@ -58,6 +65,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           "e2b",
           sandbox.sandboxId,
           request.metadata,
+          () => e2bSpecs(sandbox),
         );
 
     try {
@@ -197,6 +205,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
+        // No size: the row keeps the one E2B reported when this sandbox was made.
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "e2b",
@@ -236,6 +245,21 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           created.sandboxId,
           request.metadata,
         );
+        // The size is read once, now, off the acquire path, and patched onto
+        // the row; reconnects send none and the row keeps it.
+        const accountId = this.#config.controlPlane?.accountId;
+        if (accountId) {
+          void e2bSpecs(created).then((specs): void => {
+            if (specs) {
+              void setSandboxInstanceSpecs(
+                accountId,
+                ns,
+                created.sandboxId,
+                specs,
+              );
+            }
+          });
+        }
 
         return created;
       }
@@ -326,4 +350,18 @@ async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
   const { Sandbox } = await import("e2b");
 
   return Sandbox;
+}
+
+// The vCPUs and memory E2B gave the sandbox. E2B reports no disk size. A slow or
+// failed read leaves the size unknown rather than holding up or failing the call.
+async function e2bSpecs(sandbox: Sandbox): Promise<SandboxSpecs | undefined> {
+  try {
+    const info = await sandbox.getInfo({
+      requestTimeoutMs: SPECS_READ_TIMEOUT_MS,
+    });
+
+    return { vcpu: info.cpuCount, memoryMb: info.memoryMB };
+  } catch {
+    return undefined;
+  }
 }
