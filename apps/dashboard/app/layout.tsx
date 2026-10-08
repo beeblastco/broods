@@ -22,7 +22,8 @@ export default async function RootLayout({
   // The Convex socket opens only once the JS runs; resolving its host while
   // the HTML streams takes the DNS lookup off a cold load. Not preconnect:
   // browsers open a WebSocket on its own connection, not a pooled one.
-  prefetchDNS(process.env.NEXT_PUBLIC_CONVEX_URL as string);
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  if (convexUrl) prefetchDNS(convexUrl);
 
   return (
     <html lang="en" suppressHydrationWarning>

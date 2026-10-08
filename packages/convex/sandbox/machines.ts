@@ -13,9 +13,8 @@ import {
   query,
   type MutationCtx,
 } from "../_generated/server";
-import { authKit } from "../auth";
 import { getProjectStage } from "../model/ownership/stage";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveCaller } from "../org/orgs";
 import { machineConnectionsFields } from "../schema";
 
 const connectionRef = {
@@ -92,17 +91,12 @@ export const listForActiveOrg = query({
   },
   returns: v.array(namedConnection),
   handler: async (ctx, args): Promise<NamedConnection[]> => {
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const account = await getActiveAccountForUser(ctx);
-    if (!account) return [];
+    const caller = await getActiveCaller(ctx);
+    if (!caller) return [];
+    const { account, user } = caller;
     const stage = await getProjectStage(
       ctx,
-      user.id,
+      user.authId,
       args.projectId,
       args.stageId,
     );

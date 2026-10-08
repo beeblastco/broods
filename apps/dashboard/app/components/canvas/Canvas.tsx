@@ -277,15 +277,16 @@ export function Canvas({
   // Remount per stage: a stage switch with a debounced save pending would
   // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
   // sync) and the next edit would persist it into the new stage. The queries
-  // live out here so that remount keeps their subscriptions.
+  // live out here so that remount keeps their subscriptions, and their data
+  // waits for the stage, which saves need, so no edit lands before it.
   return (
     <ReactFlowProvider>
       <CanvasInner
         key={`${projectId}:${stageId ?? "loading"}`}
         projectId={projectId}
-        canvasLayout={canvasLayout}
-        mcpServers={mcpServers}
-        machineConnections={machineConnections}
+        canvasLayout={stageId ? canvasLayout : undefined}
+        mcpServers={stageId ? mcpServers : undefined}
+        machineConnections={stageId ? machineConnections : undefined}
       />
     </ReactFlowProvider>
   );
@@ -469,7 +470,7 @@ function CanvasInner({
 }: {
   projectId: Id<"projects">;
 } & StageData): React.JSX.Element {
-  const { stageId } = useStage();
+  const { stageId, stageArgs } = useStage();
   const mcpServersByNode = useMemo(
     () => serversByNode(mcpServers ?? []),
     [mcpServers],
@@ -604,11 +605,16 @@ function CanvasInner({
   ).withOptimisticUpdate((localStore, args) => {
     // Keep the cached layout in sync with the pending write so the post-save
     // snapshot matches what's on screen (local React state is already optimistic).
+    // A bare project URL reads the layout without a stageId, so that entry too.
+    const layout = { nodes: args.nodes, edges: args.edges };
     localStore.setQuery(
       api.canvas.getByProject,
       { projectId: args.projectId, stageId: args.stageId },
-      { nodes: args.nodes, edges: args.edges },
+      layout,
     );
+    if (stageArgs !== "skip" && !stageArgs.stageId) {
+      localStore.setQuery(api.canvas.getByProject, stageArgs, layout);
+    }
   });
   const updateRuntimeRefs = useMutation(api.agent.config.updateRuntimeRefs);
   const updateSubagentRefs = useMutation(api.agent.config.updateSubagentRefs);
