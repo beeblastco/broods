@@ -17,7 +17,7 @@ import {
   type RangePreset,
   type TimeWindow,
 } from "@/app/lib/queryTokens";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 /** The one point per entry the strip needs. */
 export interface VolumePoint {
@@ -82,10 +82,18 @@ export function ObservabilityToolbar({
   refreshTitle,
   isError,
 }: Props): React.JSX.Element {
+  // The clock the strip ends at. It freezes while a selection is on the strip,
+  // so the selection does not slide off the left edge as time passes.
+  const [frozenNow, setFrozenNow] = useState<number | null>(null);
+  const stripNow = frozenNow ?? now;
   const rangeWindow = useMemo(
-    () => ({ from: now - rangeMs(range), to: now }),
-    [now, range],
+    () => ({ from: stripNow - rangeMs(range), to: stripNow }),
+    [stripNow, range],
   );
+  const selectWindow = (selection: TimeWindow | null): void => {
+    setFrozenNow(selection === null ? null : stripNow);
+    onWindowChange(selection);
+  };
   const bins = useMemo(
     () => volumeBins(points, rangeWindow),
     [points, rangeWindow],
@@ -105,7 +113,7 @@ export function ObservabilityToolbar({
           value={range}
           onChange={(next) => {
             onRangeChange(next);
-            onWindowChange(null);
+            selectWindow(null);
           }}
           ariaLabel="Time range"
         />
@@ -121,7 +129,7 @@ export function ObservabilityToolbar({
         bins={bins}
         window={rangeWindow}
         selection={window}
-        onSelect={onWindowChange}
+        onSelect={selectWindow}
       />
     </>
   );

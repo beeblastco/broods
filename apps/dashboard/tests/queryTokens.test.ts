@@ -27,6 +27,13 @@ describe("splitQueryChips", () => {
     });
   });
 
+  test("extra spaces between chips are whitespace, not text", () => {
+    expect(splitQueryChips("level:error  source:gw tail", FIELDS)).toEqual({
+      chips: ["level:error", "source:gw"],
+      text: "tail",
+    });
+  });
+
   test("a token still being typed, or after free text, is not a chip", () => {
     expect(splitQueryChips("level:err", FIELDS)).toEqual({
       chips: [],
@@ -49,9 +56,10 @@ describe("splitQueryChips", () => {
 });
 
 describe("volumeBins", () => {
-  test("counts points into equal bins with their severity", () => {
+  test("counts points into equal bins with their severity; newer ones join the last", () => {
     const bins = volumeBins(
       [
+        { ts: -1, severity: "error" },
         { ts: 0, severity: "none" },
         { ts: 5, severity: "error" },
         { ts: 9, severity: "warn" },
@@ -63,20 +71,20 @@ describe("volumeBins", () => {
     );
     expect(bins).toEqual([
       { start: 0, total: 1, error: 0, warn: 0 },
-      { start: 5, total: 3, error: 1, warn: 1 },
+      { start: 5, total: 4, error: 1, warn: 1 },
     ]);
   });
 });
 
 describe("effectiveWindow", () => {
-  test("is the selection, else the preset ending now", () => {
+  test("is the selection, else the preset with an open end", () => {
     expect(effectiveWindow({ from: 1, to: 2 }, "1h", 100)).toEqual({
       from: 1,
       to: 2,
     });
     expect(effectiveWindow(null, "1h", 3_600_000 * 2)).toEqual({
       from: 3_600_000,
-      to: 3_600_000 * 2,
+      to: Number.POSITIVE_INFINITY,
     });
   });
 });

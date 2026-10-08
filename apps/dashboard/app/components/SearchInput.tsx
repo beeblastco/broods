@@ -4,7 +4,7 @@ import { useShortcut } from "@/app/components/ShortcutProvider";
 import { splitQueryChips } from "@/app/lib/queryTokens";
 import { cn } from "@/app/lib/utils";
 import { Search, X } from "lucide-react";
-import { useRef } from "react";
+import { useId, useRef } from "react";
 
 interface Props {
   /** The whole query, chips included; the panels parse this one string. */
@@ -29,6 +29,9 @@ export function SearchInput({
   className,
 }: Props): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
+  // The label names the field by id: without it a chip's remove button, a
+  // labelable element too, would be what a click on the box activates.
+  const inputId = useId();
   const { chips, text } = splitQueryChips(value, fields);
 
   useShortcut("table.filter", () => input.current?.focus());
@@ -58,8 +61,9 @@ export function SearchInput({
 
   return (
     <label
+      htmlFor={inputId}
       className={cn(
-        "flex h-8 min-w-50 flex-1 cursor-text items-center gap-1 rounded-md border border-input bg-transparent px-2 text-xs dark:bg-input/30",
+        "flex h-8 min-w-50 flex-1 cursor-text items-center gap-1 overflow-x-auto rounded-md border border-input bg-transparent px-2 text-xs dark:bg-input/30",
         "focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50",
         className,
       )}
@@ -83,6 +87,7 @@ export function SearchInput({
       ))}
       <input
         ref={input}
+        id={inputId}
         type="text"
         value={text}
         onChange={(event) => emit(chips, event.target.value)}
