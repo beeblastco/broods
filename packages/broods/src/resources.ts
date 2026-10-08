@@ -1287,6 +1287,14 @@ export function defineGmailChannel<const Name extends string>(
   input: ResourceInput<Name, GmailChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, mailbox, ...rules } = input;
+  // The adapter answers for its connection's mailbox, so another one would
+  // never match and the channel would hear nothing.
+  const own = input.connection.config.mailbox;
+  if (typeof own === "string" && own.toLowerCase() !== mailbox.toLowerCase()) {
+    throw new Error(
+      `Channel "${name}" mailbox "${mailbox}" is not its connection's mailbox "${own}"`,
+    );
+  }
 
   return defineChannelResource(
     name,

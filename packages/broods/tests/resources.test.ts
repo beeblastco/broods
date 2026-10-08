@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
-import { defineSandbox, env } from "../src/resources.ts";
+import {
+  defineGmailChannel,
+  defineGmailConnection,
+  defineSandbox,
+  env,
+} from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
 // Resolve the SDK entrypoint relative to this test file so generated fixtures
@@ -2746,3 +2751,32 @@ export const support = defineAgent({
 
   return cwd;
 }
+
+test("defineGmailChannel refuses a mailbox its connection does not read", () => {
+  const gmail = defineGmailConnection({
+    clientId: "client",
+    clientSecret: env("GMAIL_CLIENT_SECRET"),
+    refreshToken: env("GMAIL_REFRESH_TOKEN"),
+    mailbox: "Agent@example.com",
+    serviceAccountEmail: "push@project.iam.gserviceaccount.com",
+    subscription: "projects/p/subscriptions/gmail",
+    topicName: "projects/p/topics/gmail",
+  });
+
+  expect(
+    defineGmailChannel({
+      name: "inbox",
+      connection: gmail,
+      mailbox: "agent@example.com",
+    }).name,
+  ).toBe("inbox");
+  expect(() =>
+    defineGmailChannel({
+      name: "other",
+      connection: gmail,
+      mailbox: "other@example.com",
+    }),
+  ).toThrow(
+    'Channel "other" mailbox "other@example.com" is not its connection\'s mailbox',
+  );
+});

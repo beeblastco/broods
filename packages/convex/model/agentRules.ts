@@ -1111,7 +1111,7 @@ function normalizeGmailConfig(
     "serviceAccountEmail",
     "subscription",
     "topicName",
-  ].filter((key) => config[key] === undefined);
+  ].filter((key) => typeof config[key] !== "string" || config[key] === "");
   if (
     typeof config.refreshToken === "string" &&
     missing.length > 0 &&

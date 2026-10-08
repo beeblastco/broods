@@ -103,7 +103,7 @@ What does not:
 
 - No attachments in either direction. The agent is told how many arrived.
 - No typing indicator, reactions or chat commands.
-- Mail that waits more than a day for its push is not read. One push reads at most 20 new messages; a larger burst logs a warning and the rest are left unread.
+- A push reads mail from ten minutes before Gmail published it. One Pub/Sub redelivers more than a day late reads only the last day. One push reads at most 20 new messages; a larger burst logs a warning and the rest are left unread.
 - One mailbox holds one watch, on one topic. Stages that share a mailbox share that topic, with one push subscription per stage's webhook URL. A mailbox removed from every agent keeps publishing until its watch lapses, within seven days.
 
 Email is untrusted input: anyone who can reach the mailbox can write to the agent. Keep `allowedUserIds` narrow, and leave `autoSend` off unless replies need no review.
