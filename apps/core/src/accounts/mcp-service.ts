@@ -15,7 +15,7 @@ import {
   sandboxMcpTarget,
   type SandboxMcpTarget,
 } from "../harness/mcp/sandbox.ts";
-import { getLiveSandboxReservation } from "../harness/sandbox/instance-store.ts";
+import { getSandboxReservationRecord } from "../harness/sandbox/instance-store.ts";
 import { sandboxReservationKey } from "../harness/sandbox/utils.ts";
 import { agentOwnWorkspace } from "../harness/tools/filesystem-utils.ts";
 import { isToolEnabled } from "../harness/tools/index.ts";
@@ -34,15 +34,13 @@ import { resolveAgentRuntime } from "../shared/workspaces.ts";
 
 const RPC_TIMEOUT_MS = 30_000;
 // The agent id the explorer reserves a lambda sandbox's VM under when no agent
-// of the stage runs on that sandbox.
+// of the stage uses the server on that sandbox.
 const MCP_EXPLORER_AGENT_ID = "mcp-explorer";
 
-/** An agent's VM for a sandbox-hosted row, as the explorer ranks it. */
+/** The VM an agent that uses a sandbox-hosted row reaches it on. */
 interface AgentSandboxCandidate {
   target: SandboxMcpTarget;
-  /** The agent's `config.mcp` enables this server. */
-  usesServer: boolean;
-  /** When the reservation was claimed; undefined when none is inside its idle deadline. */
+  /** When its reservation was claimed; undefined unless it is inside its idle deadline. */
   liveSince: number | undefined;
 }
 
@@ -116,12 +114,13 @@ export async function handleMcpServiceRpc(
 }
 
 /**
- * The VM `agent` reaches `record` on, whether the agent uses that server, and
- * when its reservation was claimed if it is live. Resolves only what reaches
- * `host`: the host, and the workspaces that can mount it when it is the agent's
- * first sandbox. Undefined when that no longer resolves (the agent's own runs
- * fail on it), or when the VM is a conversation-isolated workspace's: each
- * conversation reserves its own there, and the explorer has no conversation.
+ * The VM `agent` reaches `record` on, and when its reservation was claimed if
+ * it is live: inside its idle deadline, which is unix seconds like the
+ * sweeper's clock. Resolves only what reaches `host`: the host, and the
+ * workspaces that can mount it when it is the agent's first sandbox. Undefined
+ * when that no longer resolves (the agent's own runs fail on it), or when the
+ * VM is a conversation-isolated workspace's: each conversation reserves its
+ * own there, and the explorer has no conversation.
  */
 async function agentSandboxCandidate(
   accountId: string,
@@ -149,26 +148,28 @@ async function agentSandboxCandidate(
   const target = sandboxMcpTarget(record, runtime);
   const key = target && sandboxReservationKey(target.reservation);
   if (!target || !key) return undefined;
-  const reservation = await getLiveSandboxReservation(
+  const reservation = await getSandboxReservationRecord(
     target.config.provider,
     key,
   );
+  const live =
+    reservation !== null &&
+    reservation.expiresAt >= Math.floor(Date.now() / 1000);
 
   return {
     target: target,
-    usesServer: isToolEnabled(agent.config.mcp?.[record.serverId]),
-    liveSince: reservation?.claimedAt,
+    liveSince: live ? reservation.claimedAt : undefined,
   };
 }
 
 /**
- * Where the explorer reaches a row on a lambda sandbox of the row's stage: an
- * agent's VM, resolved the way that agent's run resolves it, so the explorer
- * never boots a second VM beside the agent's. In order: a live VM of an agent
- * that uses this server, then any other agent's live VM (newest claim first in
- * each), else the first agent by id that uses this server, so its next run
- * lands on the VM the explorer started, else a VM of the explorer's own.
- * Undefined for any other row.
+ * Where the explorer reaches a row on a lambda sandbox of the row's stage: the
+ * VM of an agent that uses this server there, resolved the way that agent's
+ * run resolves it, so the explorer never boots a second VM beside the agent's.
+ * In order: the live VM with the oldest claim (so repeated calls stay on one
+ * VM), else the first such agent by id, so its next run lands on the VM the
+ * explorer started, else a VM of the explorer's own. Agents that do not use
+ * the server are never candidates. Undefined for any other row.
  */
 async function explorerSandboxTarget(
   accountId: string,
@@ -192,7 +193,8 @@ async function explorerSandboxTarget(
       agents
         .filter(
           (agent): boolean =>
-            agent.config.sandboxes?.includes(host.sandboxId) === true,
+            agent.config.sandboxes?.includes(host.sandboxId) === true &&
+            isToolEnabled(agent.config.mcp?.[record.serverId]),
         )
         .toSorted((left, right): number =>
           left.agentId.localeCompare(right.agentId),
@@ -204,18 +206,11 @@ async function explorerSandboxTarget(
   ).filter(
     (candidate): candidate is AgentSandboxCandidate => candidate !== undefined,
   );
-  // Tier 0: live and runs this server (no new slot); 1: live; 2: uses it. The
-  // sort is stable over the id order, so tier 2 keeps the first agent by id.
-  const tier = (candidate: AgentSandboxCandidate): number =>
-    (candidate.liveSince === undefined ? 2 : 0) +
-    (candidate.usesServer ? 0 : 1);
-  const [chosen] = candidates
-    .filter((candidate): boolean => tier(candidate) <= 2)
-    .toSorted(
-      (left, right): number =>
-        tier(left) - tier(right) ||
-        (right.liveSince ?? 0) - (left.liveSince ?? 0),
-    );
+  // Live first, oldest claim first; the stable sort keeps the id order after.
+  const [chosen] = candidates.toSorted(
+    (left, right): number =>
+      (left.liveSince ?? Infinity) - (right.liveSince ?? Infinity),
+  );
   if (chosen) return chosen.target;
   const runtime = await resolveAgentRuntime(
     { sandboxes: [host.sandboxId] },

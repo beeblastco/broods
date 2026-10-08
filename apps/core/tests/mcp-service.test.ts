@@ -59,11 +59,14 @@ const CHATS_WORKSPACE: WorkspaceConfigRecord = {
 /** The stores a test stubs, each with only the methods the code under test calls. */
 type StorageStubs = { [Store in keyof Storage]?: Partial<Storage[Store]> };
 
-/** A stage agent and, when its VM on the `web` sandbox is live, its claim time. */
+/**
+ * A stage agent and its reservation row on the `web` sandbox, if any:
+ * `expiresIn` is seconds from now, so a negative one is past its idle deadline.
+ */
 interface StageAgent {
   agentId: string;
   config: AgentConfig;
-  liveSince?: number;
+  reservation?: { claimedAt: number; expiresIn: number };
 }
 
 function rpcRequest(body: unknown): CoreRequest {
@@ -111,9 +114,9 @@ async function explorerReservation(
     },
   };
   setStorageForTests(stubs as Storage);
-  // Other core test files replace instance-store with mock.module for the whole
-  // process, so the liveness read is stubbed here rather than below it.
-  spyOn(instanceStore, "getLiveSandboxReservation").mockImplementation(
+  // The reservation row as Convex stores it, `expiresAt` in unix seconds, so
+  // the explorer's own idle rule decides what is live.
+  spyOn(instanceStore, "getSandboxReservationRecord").mockImplementation(
     async (_provider, reservationKey) => {
       const owner = agents.find(
         (agent): boolean =>
@@ -121,9 +124,14 @@ async function explorerReservation(
           agentSandboxReservationKey("acct_test", agent.agentId, "sb_web"),
       );
 
-      return owner?.liveSince === undefined
-        ? null
-        : { externalId: `vm_${owner.agentId}`, claimedAt: owner.liveSince };
+      return owner?.reservation
+        ? {
+            externalId: `vm_${owner.agentId}`,
+            claimedAt: owner.reservation.claimedAt,
+            expiresAt:
+              Math.floor(Date.now() / 1000) + owner.reservation.expiresIn,
+          }
+        : null;
     },
   );
   const reached: SandboxMcpTarget[] = [];
@@ -194,47 +202,52 @@ describe("mcp-service rpc", () => {
     expect(body.tools.map((tool) => tool.name)).toEqual(["query"]);
   });
 
-  it("prefers the live VM of an agent that uses the server over a newer one", async () => {
+  it("runs on the live VM with the oldest claim among agents that use the server", async () => {
     const reservation = await explorerReservation([
       {
         agentId: "agent_a",
         config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
-        liveSince: 100,
+        reservation: { claimedAt: 200, expiresIn: 600 },
       },
       {
         agentId: "agent_b",
-        config: { sandboxes: ["sb_web"] },
-        liveSince: 200,
-      },
-    ]);
-
-    expect(reservation).toEqual(agentReservation("agent_a"));
-  });
-
-  it("falls back to the newest other live VM", async () => {
-    const reservation = await explorerReservation([
-      {
-        agentId: "agent_a",
         config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
-      },
-      {
-        agentId: "agent_b",
-        config: { sandboxes: ["sb_web"] },
-        liveSince: 100,
+        reservation: { claimedAt: 100, expiresIn: 600 },
       },
       {
         agentId: "agent_c",
         config: { sandboxes: ["sb_web"] },
-        liveSince: 200,
+        reservation: { claimedAt: 50, expiresIn: 600 },
       },
     ]);
 
-    expect(reservation).toEqual(agentReservation("agent_c"));
+    expect(reservation).toEqual(agentReservation("agent_b"));
   });
 
-  it("starts the VM of the agent that uses the server when no agent VM is live", async () => {
+  it("counts a reservation live only inside its idle deadline, in unix seconds", async () => {
     const reservation = await explorerReservation([
-      { agentId: "agent_a", config: { sandboxes: ["sb_web"] } },
+      {
+        agentId: "agent_a",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+        reservation: { claimedAt: 100, expiresIn: -60 },
+      },
+      {
+        agentId: "agent_b",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+        reservation: { claimedAt: 200, expiresIn: 60 },
+      },
+    ]);
+
+    expect(reservation).toEqual(agentReservation("agent_b"));
+  });
+
+  it("starts the VM of the first agent that uses the server when none is live", async () => {
+    const reservation = await explorerReservation([
+      {
+        agentId: "agent_a",
+        config: { sandboxes: ["sb_web"] },
+        reservation: { claimedAt: 100, expiresIn: 600 },
+      },
       {
         agentId: "agent_b",
         config: { sandboxes: ["sb_web"], mcp: { mcp_1: { enabled: false } } },
@@ -252,9 +265,14 @@ describe("mcp-service rpc", () => {
     expect(reservation).toEqual(agentReservation("agent_c"));
   });
 
-  it("reserves a VM of its own when no agent of the stage runs on the sandbox", async () => {
+  it("reserves a VM of its own when no agent uses the server on the sandbox", async () => {
     const reservation = await explorerReservation([
       { agentId: "agent_a", config: { mcp: { mcp_1: {} } } },
+      {
+        agentId: "agent_b",
+        config: { sandboxes: ["sb_web"] },
+        reservation: { claimedAt: 100, expiresIn: 600 },
+      },
     ]);
 
     expect(reservation).toEqual(agentReservation("mcp-explorer"));

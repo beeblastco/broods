@@ -262,10 +262,10 @@ const agents: Storage["agents"] = {
     );
   },
   listForStage: async function (accountId, projectId, stageId) {
-    const docs = (await getConvexClient().query(
+    const docs: ConvexAgentDoc[] = await getConvexClient().query(
       internal.agent.agents.listForStage,
       { accountId: accountId, projectId: projectId, stageId: stageId },
-    )) as ConvexAgentDoc[];
+    );
 
     return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
       (record) => record !== null,

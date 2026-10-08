@@ -102,7 +102,6 @@ const getSandboxReleaseTargetMock = mock(
 await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
   getSandboxReleaseTarget: getSandboxReleaseTargetMock,
-  getLiveSandboxReservation: mock(async () => null),
   getSandboxReservationRecord: mock(async () => null),
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: mock(async () => {}),
