@@ -9,7 +9,9 @@ const SECRET = "service-secret";
 const TICKET = {
   accountId: "acct_1",
   endpointId: "stage-abcd1234",
+  projectId: "proj_shop",
   projectSlug: "shop",
+  stageId: "stage_dev",
   stageSlug: "development",
   expiresAt: Date.now() + 60_000,
 };
@@ -20,6 +22,29 @@ describe("stage session tickets", () => {
 
     expect(token.startsWith(STAGE_SESSION_TICKET_PREFIX)).toBe(true);
     expect(await openStageSessionTicket(token, SECRET)).toEqual(TICKET);
+  });
+
+  test("keeps sandboxWrite only when it is true", async () => {
+    const writer = { ...TICKET, sandboxWrite: true as const };
+
+    expect(
+      await openStageSessionTicket(
+        await sealStageSessionTicket(writer, SECRET),
+        SECRET,
+      ),
+    ).toEqual(writer);
+    // A ticket minted before the stage ids were sealed in is refused, so it
+    // can never claim a machine without a stage to scope the claim to.
+    const { stageId: _stageId, ...unscoped } = TICKET;
+    expect(
+      await openStageSessionTicket(
+        await sealStageSessionTicket(
+          unscoped as unknown as typeof TICKET,
+          SECRET,
+        ),
+        SECRET,
+      ),
+    ).toBeNull();
   });
 
   test("rejects a ticket signed with another secret", async () => {

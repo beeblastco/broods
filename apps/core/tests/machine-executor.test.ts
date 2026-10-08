@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
 import type { ToolExecuteFunction } from "ai";
 import {
   callMcpTool,
@@ -35,6 +36,7 @@ import {
 import type { ResolvedAgentSandbox } from "../src/shared/workspaces.ts";
 import {
   closeOf,
+  DEV_STAGE_SANDBOX_ID,
   MACHINE_ACCOUNT_ID,
   MACHINE_READ_ONLY_ROLE_TOKEN,
   MACHINE_ACCOUNT_SECRET,
@@ -44,6 +46,7 @@ import {
   machineMcpRecord,
   machineStorage,
   otherMachineExecutorConfig,
+  PROD_STAGE_SANDBOX_ID,
   startMachineCore,
   waitFor,
   type MachineConnectionWrite,
@@ -55,6 +58,8 @@ const sockets: WebSocket[] = [];
 /** What a fake daemon says in its hello, and how it answers. */
 interface FakeDaemon {
   force?: boolean;
+  /** The bearer it connects with; the account key when unset. */
+  token?: string;
   hostname?: string;
   instance?: string;
   mcp?: string[];
@@ -210,6 +215,76 @@ test("the embeddable runtime key cannot claim a machine", async () => {
     );
 
   expect((await closeOf(socket)).code).toBe(4401);
+});
+
+describe("a stage ticket", () => {
+  let previousSecret: string | undefined;
+
+  beforeEach(() => {
+    previousSecret = process.env.STAGE_TICKET_SECRET;
+    process.env.STAGE_TICKET_SECRET = "stage-secret";
+  });
+
+  afterEach(() => {
+    if (previousSecret === undefined) delete process.env.STAGE_TICKET_SECRET;
+    else process.env.STAGE_TICKET_SECRET = previousSecret;
+  });
+
+  const ticket = (stageId: string, sandboxWrite: boolean): Promise<string> =>
+    sealStageSessionTicket(
+      {
+        accountId: MACHINE_ACCOUNT_ID,
+        endpointId: "endpoint",
+        projectId: "proj",
+        projectSlug: "demo",
+        stageId: stageId,
+        stageSlug: stageId === "stage_dev" ? "development" : "production",
+        ...(sandboxWrite ? { sandboxWrite: true as const } : {}),
+        expiresAt: Date.now() + 60_000,
+      },
+      "stage-secret",
+    );
+
+  test("minted in the dashboard by any member cannot claim a machine", async () => {
+    const socket = openSocket(core(), await ticket("stage_prod", false));
+    socket.onopen = (): void =>
+      socket.send(
+        JSON.stringify({ type: "hello", sandbox: "prod-mac", force: true }),
+      );
+
+    expect((await closeOf(socket)).code).toBe(MACHINE_CLOSE.unauthorized.code);
+  });
+
+  test("from broods login claims its own stage's record, never another stage's", async () => {
+    const server = core();
+    const devTicket = await ticket("stage_dev", true);
+    const dev = await connectDaemon(server, "stage-mac", () => {}, {
+      token: devTicket,
+    });
+
+    expect(dev.ready.sandboxId).toBe(DEV_STAGE_SANDBOX_ID);
+
+    const other = openSocket(server, devTicket);
+    other.onopen = (): void =>
+      other.send(
+        JSON.stringify({ type: "hello", sandbox: "prod-mac", force: true }),
+      );
+    expect((await closeOf(other)).code).toBe(MACHINE_CLOSE.unknownSandbox.code);
+
+    const prod = await connectDaemon(server, "stage-mac", () => {}, {
+      token: await ticket("stage_prod", true),
+      instance: "prod-daemon",
+    });
+    expect(prod.ready.sandboxId).toBe(PROD_STAGE_SANDBOX_ID);
+  });
+
+  test("from broods login still claims an account-level record", async () => {
+    const daemon = await connectDaemon(core(), "my-mac", () => {}, {
+      token: await ticket("stage_dev", true),
+    });
+
+    expect(daemon.ready.sandboxId).toBe(MACHINE_SANDBOX_ID);
+  });
 });
 
 test("a bad bearer still upgrades, and its first frame is refused with 4401", async () => {
@@ -578,7 +653,7 @@ function connectDaemon(
   daemon: FakeDaemon = {},
 ): Promise<{ ready: MachineReadyFrame; socket: WebSocket }> {
   return new Promise((resolve, reject): void => {
-    const socket = openSocket(server);
+    const socket = openSocket(server, daemon.token);
     let ready = false;
     socket.onopen = (): void =>
       socket.send(

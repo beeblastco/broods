@@ -47,7 +47,7 @@ export type AuthContext =
       projectSlug: string;
       stageSlug: string;
       // Set for a member-minted bdts_ ticket, unset for the embeddable key.
-      stageTicket?: true;
+      stageTicket?: StageTicketScope;
     }
   | {
       // Short-lived assume-role session minted by the config plane. What it
@@ -63,6 +63,14 @@ export type AuthContext =
       account: AccountRecord;
       agentId: string;
     };
+
+/** What a member's bdts_ ticket carries beyond the slugs every stage key has. */
+export interface StageTicketScope {
+  projectId: string;
+  stageId: string;
+  /** The minter may write the stage's sandboxes, so may claim a machine. */
+  sandboxWrite: boolean;
+}
 
 /**
  * Whether a runtime key's lastUsedAt write is due, recording `now` when it
@@ -261,7 +269,11 @@ async function resolveStageSessionAuth(
     endpointId: ticket.endpointId,
     projectSlug: ticket.projectSlug,
     stageSlug: ticket.stageSlug,
-    stageTicket: true,
+    stageTicket: {
+      projectId: ticket.projectId,
+      stageId: ticket.stageId,
+      sandboxWrite: ticket.sandboxWrite === true,
+    },
   };
 }
 
