@@ -47,7 +47,7 @@
   "overrides": {
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
-    "postcss": "8.5.26",
+    "postcss": "^8.5.26",
     "serialize-javascript": "7.1.1",
     "stripe": "22.5.0",
     "tar": "7.5.22",

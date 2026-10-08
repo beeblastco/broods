@@ -50,7 +50,7 @@ jobs:
       - name: Install dependencies
         # Skip the postinstall (`sst install`): building the docs needs neither the
         # SST providers nor project env vars.
-        run: bun install --ignore-scripts --frozen-lockfile
+        run: bun install --ignore-scripts --no-save
 
       - name: Build Docusaurus
         run: bun run docs:build
