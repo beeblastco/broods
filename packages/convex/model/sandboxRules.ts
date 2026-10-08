@@ -10,6 +10,7 @@ import { normalizeHeaders } from "./mcp";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
   SANDBOX_PROVIDERS,
+  SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
   type SandboxProvider,
 } from "./sandboxProviders";
@@ -18,6 +19,7 @@ import { ClientError } from "./clientError";
 
 export {
   SANDBOX_PROVIDERS,
+  SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
   type SandboxProvider,
 } from "./sandboxProviders";
@@ -50,7 +52,6 @@ export const DEFAULT_TIMEOUT_SECONDS = 30;
 export const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 export const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
-export const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
@@ -64,6 +65,14 @@ const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
   "workspaceRoot",
 ]);
+// Provider options that used to pick the boot image. `config.snapshot` does now.
+const RETIRED_IMAGE_OPTIONS: Partial<
+  Record<SandboxProvider, readonly string[]>
+> = {
+  daytona: ["snapshot"],
+  e2b: ["template", "templateId"],
+  vercel: ["image", "runtime"],
+};
 
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
 
@@ -101,6 +110,8 @@ export interface SandboxConfig {
   // A platform image variant by name (lambda only): "browser" has Chromium,
   // "obscura" has the Obscura headless browser. With `snapshot`, the variant it was built from.
   image?: SandboxImage;
+  // What the sandbox boots from, in its provider's own format. See
+  // SNAPSHOT_SANDBOX_PROVIDERS.
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -110,7 +121,6 @@ export interface SandboxConfig {
   onCreate?: string[];
   onResume?: string[];
   timeout?: number;
-  memoryLimit?: number;
   outputLimitBytes?: number;
   envVars?: Record<string, undefined | string>;
   // Provider knobs; `docker: boolean` is the sandbox provider's only typed one.
@@ -119,7 +129,6 @@ export interface SandboxConfig {
 
 export interface WorkspaceSandboxLimits {
   maxTimeoutSeconds: number;
-  maxMemoryLimitMb?: number;
   maxOutputLimitBytes: number;
 }
 
@@ -131,26 +140,17 @@ export interface WorkspaceSandboxLimits {
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {
-  const isLambda = provider === "lambda";
-
   return {
-    maxTimeoutSeconds: isLambda
-      ? positiveIntegerEnv(
-          "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
-          LAMBDA_MAX_TIMEOUT_SECONDS,
-        )
-      : positiveIntegerEnv(
-          "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
-          PERSISTENT_MAX_TIMEOUT_SECONDS,
-        ),
-    ...(isLambda
-      ? {
-          maxMemoryLimitMb: positiveIntegerEnv(
-            "WORKSPACE_SANDBOX_LAMBDA_MAX_MEMORY_LIMIT_MB",
-            LAMBDA_MAX_MEMORY_LIMIT_MB,
+    maxTimeoutSeconds:
+      provider === "lambda"
+        ? positiveIntegerEnv(
+            "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
+            LAMBDA_MAX_TIMEOUT_SECONDS,
+          )
+        : positiveIntegerEnv(
+            "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
+            PERSISTENT_MAX_TIMEOUT_SECONDS,
           ),
-        }
-      : {}),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,
@@ -200,6 +200,14 @@ export function normalizeSandboxConfig(
   assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
   assertOptionalBoolean(config.persistent, "config.persistent");
   const snapshot = optionalString(config.snapshot, "config.snapshot");
+  if (
+    config.snapshot !== undefined &&
+    !SNAPSHOT_SANDBOX_PROVIDERS.has(provider)
+  ) {
+    throw new ClientError(
+      `config.snapshot does not apply to the ${provider} provider`,
+    );
+  }
   const image = assertOptionalEnum(
     config.image,
     "config.image",
@@ -268,6 +276,26 @@ export function normalizeCreateSandboxConfigInput(value: unknown): {
     ...(description ? { description: description } : {}),
     config: config,
   };
+}
+
+/**
+ * Refuses the provider options `config.snapshot` replaced. Config validation,
+ * core's run loader and its sandbox lifecycle handler call it, so a config
+ * stored before the cutover fails loudly instead of booting the provider default.
+ * @param provider the sandbox compute backend
+ * @param options the config's provider options
+ */
+export function assertNoRetiredImageOptions(
+  provider: SandboxProvider,
+  options: Record<string, unknown>,
+): void {
+  for (const key of RETIRED_IMAGE_OPTIONS[provider] ?? []) {
+    if (key in options) {
+      throw new ClientError(
+        `config.options.${key} was removed; set config.snapshot to pick what a ${provider} sandbox boots from`,
+      );
+    }
+  }
 }
 
 /**
@@ -360,7 +388,7 @@ function assertEnvVarsAndOptions(
     throw new ClientError("config.options must be an object");
   }
   if (config.options !== undefined) {
-    validateProviderOptions(provider, config.options);
+    validateProviderOptions(provider, config.options, config.snapshot);
   }
   if (provider === "custom") {
     assertCustomOptions(config.options ?? {}, stored?.options?.headers);
@@ -459,11 +487,6 @@ function assertResourceLimits(
     limits.maxTimeoutSeconds,
   );
   assertOptionalPositiveInteger(
-    config.memoryLimit,
-    "config.memoryLimit",
-    limits.maxMemoryLimitMb,
-  );
-  assertOptionalPositiveInteger(
     config.outputLimitBytes,
     "config.outputLimitBytes",
     limits.maxOutputLimitBytes,
@@ -487,13 +510,13 @@ function assertRuntimes(value: unknown): void {
   }
 }
 
-// A stateless provider is never sized, snapshotted or reserved by Broods.
+// A stateless provider is never sized or reserved by Broods.
 function assertStatelessProviderFields(
   config: Record<string, unknown>,
   provider: SandboxProvider,
 ): void {
   if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
-  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+  for (const field of ["persistent", "size"]) {
     if (config[field] !== undefined) {
       throw new ClientError(
         `config.${field} does not apply to the ${provider} provider`,
@@ -529,9 +552,6 @@ function buildNormalizedConfig(
       : {}),
     ...(config.timeout !== undefined
       ? { timeout: config.timeout as number }
-      : {}),
-    ...(config.memoryLimit !== undefined
-      ? { memoryLimit: config.memoryLimit as number }
       : {}),
     ...(config.outputLimitBytes !== undefined
       ? { outputLimitBytes: config.outputLimitBytes as number }
@@ -663,7 +683,7 @@ function normalizePersistentFields(
     );
   }
   if (provider === "cloudflare") {
-    for (const field of ["onCreate", "onResume", "snapshot"]) {
+    for (const field of ["onCreate", "onResume"]) {
       if (config[field] !== undefined)
         throw new ClientError(
           `config.${field} is not supported by the cloudflare provider; the bridge Worker's image sets the machine`,
@@ -727,6 +747,7 @@ function requireString(value: unknown, name: string): string {
 function validateProviderOptions(
   provider: SandboxProvider,
   options: unknown,
+  snapshot: unknown,
 ): void {
   if (!isPlainObject(options)) {
     return;
@@ -759,17 +780,16 @@ function validateProviderOptions(
       "config.options.s3Endpoint",
     );
   }
-  if (provider === "vercel") {
-    if ("image" in options && typeof options.image !== "string") {
-      throw new ClientError("config.options.image must be a string");
-    }
-    if ("runtime" in options && typeof options.runtime !== "string") {
-      throw new ClientError("config.options.runtime must be a string");
-    }
-    if ("image" in options && "runtime" in options) {
-      throw new ClientError(
-        "config.options.image and config.options.runtime cannot both be set",
-      );
-    }
+  assertNoRetiredImageOptions(provider, options);
+  // Daytona builds `options.image` into a fresh snapshot on create, so a
+  // sandbox names one or the other.
+  if (
+    provider === "daytona" &&
+    optionalString(options.image, "config.options.image") !== undefined &&
+    snapshot !== undefined
+  ) {
+    throw new ClientError(
+      "config.snapshot and config.options.image cannot both be set: Daytona boots a snapshot or builds one from an image",
+    );
   }
 }

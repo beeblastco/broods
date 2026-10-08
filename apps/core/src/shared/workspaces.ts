@@ -11,7 +11,10 @@
  * isolated folder is its own VM and its own S3 prefix.
  */
 
-import { STATELESS_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxRules";
+import {
+  assertNoRetiredImageOptions,
+  STATELESS_SANDBOX_PROVIDERS,
+} from "@broods/convex/model/sandboxRules";
 import type {
   ChannelPartition,
   AgentConfig,
@@ -258,6 +261,12 @@ export async function resolveAgentRuntime(
         if (!record) {
           throw new Error(`Referenced sandbox not found: ${sandboxId}`);
         }
+        // Validation runs on write only, so a config stored before `snapshot`
+        // replaced these options would otherwise boot the provider default.
+        assertNoRetiredImageOptions(
+          record.config.provider,
+          record.config.options ?? {},
+        );
 
         return {
           record: record,
@@ -517,7 +526,6 @@ function sandboxControlPlane(
       provider: record.config.provider,
       size: record.config.size,
       options: record.config.options,
-      memoryLimit: record.config.memoryLimit,
     }),
     ...(record.config.snapshot ? { snapshotId: record.config.snapshot } : {}),
     ...(record.config.network ? { egress: record.config.network.mode } : {}),

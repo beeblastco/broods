@@ -190,6 +190,7 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 // reach for has to be here. The sandbox index pulls the microvm executor in too, and
 // a missing name is a SyntaxError at import time, not an undefined at call time.
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
   upsertSandboxInstance: upsertSandboxInstanceMock,
   setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),

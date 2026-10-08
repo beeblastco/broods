@@ -36,28 +36,53 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `machine`    | Your own computer            | no              | no                    | no                      | `allow-all` only               |
 | `custom`     | Your own server over HTTP    | no              | no                    | no                      | `allow-all` only               |
 
+Pick by where the code should run, then by whether files must outlive a call:
+
+```mermaid
+flowchart TD
+  A([Agent needs to run code]) --> B{Where should it run?}
+  B -->|Broods cloud, the default| L["lambda<br/>AWS Lambda MicroVM"]
+  B -->|Self-hosted Broods| S["sandbox<br/>Firecracker VM"]
+  B -->|A vendor you already use| V{Which vendor?}
+  V --> D[daytona]
+  V --> E[e2b]
+  V --> VC[vercel]
+  V --> CF[cloudflare]
+  B -->|Your laptop or screen| M["machine<br/>broods machine"]
+  B -->|Your own server| C["custom<br/>POST /exec"]
+  L --> W{Files must survive?}
+  S --> W
+  D --> W
+  W -->|yes| WS["attach a workspace<br/>mounted on every run"]
+  W -->|no| NB[bash only, scratch disk]
+  E -.->|no workspace| NB
+  VC -.->|no workspace| NB
+  CF -.->|no workspace| NB
+  M -.->|no workspace| NB
+  C -.->|no workspace| NB
+```
+
 `lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and `cloudflare` has [Cloudflare Containers](cloudflare.md). The `machine` provider has its own page, [Your computer](machine.md), and so does `custom`, [Your own server](custom.md).
 
 ## Configuration
 
-| Field                  | Default                | What it does                                                                                                      |
-| ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `provider`             | `lambda`               | Compute backend, from the table above                                                                             |
-| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`              |
-| `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
-| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)       |
-| `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
-| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
-| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
-| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary       |
-| `timeout`              | 30                     | Seconds per call. Maximum 600                                                                                     |
-| `memoryLimit`          | none                   | MB. Validated, maximum 8192 on `lambda`, but executors do not resize to it                                        |
-| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                              |
-| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                       |
-| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey` |
-| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                           |
-| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                              |
-| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                   |
+| Field                  | Default                | What it does                                                                                                                            |
+| ---------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | `lambda`               | Compute backend, from the table above                                                                                                   |
+| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`                                    |
+| `size`                 | provider default       | Sizes `sandbox` and `cloudflare`. Ignored on `lambda`, `daytona`, `e2b`, `vercel`. Rejected on `machine`, `custom`. See [Sizes](#sizes) |
+| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)                             |
+| `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                                         |
+| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                                                |
+| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                                               |
+| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary                             |
+| `timeout`              | 30                     | Seconds per call. Maximum 600                                                                                                           |
+| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                                                    |
+| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                                             |
+| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey`                       |
+| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                                                 |
+| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                                                    |
+| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                                         |
 
 `envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, the background-job slots and the run identity `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID`, `BROODS_BASE_URL`. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
 
@@ -114,17 +139,62 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `medium` | 2    | 4 GB   | 16 GB | paid          |
 | `large`  | 4    | 8 GB   | 32 GB | paid          |
 
-Only the `sandbox` provider applies the size to the machine it creates, and it rounds `tiny` up to 0.5 vCPU. On `lambda` every machine is the same, a 2 GB baseline that bursts to 4 vCPU and 8 GB on an 8 GB disk, and the dashboard shows that fixed machine whatever size you set. `daytona`, `e2b` and `vercel` size machines through their own options, and there the size only sets what the dashboard shows. `cloudflare` picks the nearest Cloudflare instance type. Every provider accepts every size name.
+`size` sizes the machine on `sandbox` and `cloudflare` only. Every other provider sizes its machines its own way. The dashboard shows a size only when it is known to be true: the provider reported it, or Broods set it itself. Anything else shows as `?`, never a guess; hover it to see why.
+
+| Provider     | What `size` does                                                                             | Size the dashboard shows                                                      |
+| ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `sandbox`    | Creates the VM at that size, `tiny` rounded up to 0.5 vCPU                                   | The resources the VM was created with                                         |
+| `cloudflare` | Starts the nearest instance type: `tiny` and `xsmall` `standard-1`, then `standard-2` to `4` | That instance type: 0.5 vCPU, 4 GB, 8 GB up to 4 vCPU, 12 GB, 20 GB           |
+| `lambda`     | Nothing                                                                                      | 4 vCPU, 8 GB, 8 GB disk: the MicroVM's ceiling, every MicroVM the same        |
+| `daytona`    | Nothing, the snapshot and Daytona's defaults size it                                         | vCPU, memory and disk Daytona reports                                         |
+| `e2b`        | Nothing, the template sizes it                                                               | vCPU and memory E2B reports. Disk is `?`, E2B does not report it              |
+| `vercel`     | Nothing, Vercel sizes it                                                                     | vCPU and memory Vercel reports. Disk is `?`, Vercel does not report it        |
+| `machine`    | Rejected                                                                                     | CPUs, memory and home disk of your computer, as `broods machine` reports them |
+| `custom`     | Rejected                                                                                     | No instance row: Broods cannot see your server's hardware                     |
+
+When a sandbox's size is not known, the whole size shows as `?`. Daytona reports on every use, so its `?` clears the next time the sandbox runs, as does a `lambda` or `cloudflare` sandbox recorded before Broods verified sizes. Vercel's clears once Vercel reports a size. Broods reads an `e2b` size, and workdir fixes a `sandbox` size, only when the sandbox is created, so an older or unread one stays `?` until it is recreated.
+
+On the managed service, sandbox time on platform credentials counts at the machine's size when Broods knows it, and at the size derived from the config when it shows `?`, except on `lambda`: a MicroVM counts at its 1 vCPU / 2 GB baseline, plus the vCPU and memory it bursts above that while in use, see [Persistent sandboxes](persistent.md). A `machine` sandbox, and one on your own provider credentials, does not count.
 
 ## Images
 
-Set `snapshot` to boot a prebuilt image instead of the provider default. Bake heavy toolchains into an image once rather than installing them on every cold start.
+Set `snapshot` to boot a prebuilt image instead of the provider default. Bake heavy toolchains into an image once rather than installing them on every cold start. It is the one field for this on every provider, and each provider reads it in its own format.
 
-- `sandbox` boots the named image. The dashboard's Snapshot action on a running instance captures it into an image you can pin later.
-- `lambda` selects a MicroVM image by ARN, in the same AWS account and region as the default image. The Snapshot action on a running instance saves every file changed since that machine started as a new image. It shows as building for a few minutes, then active. Workspace files stay in the workspace, and deleted files are not carried over.
-- `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
+| Provider     | `snapshot` names                                                      | The Snapshot action saves                                                                             |
+| ------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `sandbox`    | a workdir image                                                       | the running instance                                                                                  |
+| `lambda`     | a MicroVM image ARN, in the default image's AWS account and region    | every file changed since the machine started, built as a new image in a few minutes                   |
+| `daytona`    | a Daytona snapshot                                                    | the sandbox filesystem, as a Daytona snapshot                                                         |
+| `e2b`        | an E2B template or snapshot                                           | the sandbox, as an E2B snapshot. E2B pauses it while it captures                                      |
+| `vercel`     | a Vercel image, such as `vercel/sandbox/python:3.14`, or a `snap_` id | the sandbox, as a Vercel snapshot that does not expire. Vercel stops it, and its next call resumes it |
+| `cloudflare` | rejected. The bridge Worker's image sets the machine                  | not available                                                                                         |
 
-The dashboard Snapshots view shows which image each running instance booted from. On a `sandbox` or `lambda` sandbox node, the Snapshot select pins one of the account's active snapshots for that provider.
+The Snapshot action runs on a running instance of a persistent sandbox and saves it under a name you pick. Any sandbox of the same provider in the account can then pin it, with the Snapshot select on its node or `snapshot` in code. On `lambda`, workspace files stay in the workspace, and deleted files are not carried over.
+
+A snapshot boots only on the provider that made it. A MicroVM image, a workdir image, a Daytona snapshot, an E2B template and a Vercel snapshot are different formats held by different clouds, and none of them imports another, so there is no snapshot that moves between providers. Put setup you need everywhere in `onCreate`, or bake it into each provider's image. Daytona, E2B and Vercel keep snapshots in the provider account behind the sandbox's credentials, so only a sandbox using the same credentials can boot one. Broods does not delete them, so remove ones you no longer need in the provider console.
+
+On `daytona`, `options.image` builds the sandbox from a Docker image when it is created, instead of booting a snapshot. Set one or the other.
+
+On `lambda`, a snapshot starts from a running instance and comes back as the image the next machine boots:
+
+```mermaid
+flowchart LR
+  subgraph Pick["1. Pick an image"]
+    D0["default<br/>bash, python3, node, uv, rg"]
+    O["image: obscura<br/>adds obscura"]
+    BR["image: browser<br/>adds chromium"]
+  end
+  D0 --> RUN[2. Running instance]
+  O --> RUN
+  BR --> RUN
+  RUN -->|agent installs, edits files| RUN
+  RUN -->|3. Dashboard Snapshot| BLD["building<br/>a few minutes"]
+  BLD --> ACT[active snapshot]
+  ACT -->|"4. Snapshot select,<br/>or snapshot: ARN"| PIN["boots the snapshot,<br/>keeps the image variant"]
+  PIN --> RUN
+```
+
+The dashboard Snapshots view shows which image each running instance booted from.
 
 On `lambda`, `image` picks a platform image with a browser by name. With `snapshot` set too, the machine boots the snapshot and `image` names the variant it was built from, so a snapshot of an Obscura sandbox keeps `browse` working. The dashboard sets it when you pick the snapshot. `image` cannot be combined with `fallbackProvider`.
 

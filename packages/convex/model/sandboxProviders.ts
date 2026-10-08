@@ -22,3 +22,11 @@ export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
 // or can be a fallback, since what reaches them lives outside the config.
 export const STATELESS_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["machine", "custom"]);
+
+// Providers whose `snapshot` names what a sandbox boots from, in the provider's
+// own format: sandbox a workdir image, lambda a MicroVM image ARN, daytona a
+// Daytona snapshot, e2b an E2B template or snapshot, vercel a Vercel image or a
+// `snap_` snapshot id. Their executors implement `snapshot()`, which the
+// Snapshot action captures with. A snapshot boots only on the provider that made it.
+export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
+  new Set<SandboxProvider>(["sandbox", "lambda", "daytona", "e2b", "vercel"]);

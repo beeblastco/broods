@@ -1721,7 +1721,7 @@ paths:
                       {
                         type: string,
                         enum: [tiny, xsmall, small, medium, large],
-                        description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (daytona/e2b/vercel size themselves); ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk. Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
+                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Rejected on machine and custom. Defaults to the provider's own default when unset. tiny and xsmall are the free-tier size names; usage counts at the machine a name starts, so on cloudflare both start a 0.5 vCPU / 4 GB instance.",
                       }
                     image:
                       {
@@ -1732,7 +1732,7 @@ paths:
                     snapshot:
                       {
                         type: string,
-                        description: "Prebuilt image/snapshot to launch from: a workdir image id/name, or on lambda a platform MicroVM image ARN in the same AWS account and region as the default image (any other ARN fails the run). Unset boots the provider's default base image. Consumed by the self-hosted backends (sandbox/lambda); advisory on daytona/e2b/vercel, which pick images via their own options. The launched-from id is mirrored onto the dashboard instance row.",
+                        description: "What the sandbox boots from, in its provider's own format (see the Sandboxes guide, Images). On lambda, a MicroVM image ARN in the same AWS account and region as the default image; any other ARN fails the run. Rejected on cloudflare, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row.",
                       }
                     persistent:
                       {
@@ -1776,18 +1776,13 @@ paths:
                         type: integer,
                         description: "per-call seconds (max 600 for every provider)",
                       }
-                    memoryLimit:
-                      {
-                        type: integer,
-                        description: "MB; bounded for lambda MicroVM (max 8192), operator-sized for other providers",
-                      }
                     outputLimitBytes: { type: integer }
                     envVars:
                       { type: object, additionalProperties: { type: string } }
                     options:
                       {
                         type: object,
-                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers).",
+                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers). The image is picked by `snapshot`, so daytona `snapshot`, e2b `template` and `templateId`, and vercel `image` and `runtime` are rejected here.",
                       }
             examples:
               lambda:
@@ -2004,7 +1999,7 @@ paths:
     post:
       tags: [Sandboxes]
       summary: Snapshot sandbox instance
-      description: Creates a reusable image from a persistent sandbox reservation when the provider supports snapshots. The self-hosted workdir `sandbox` provider captures the instance and answers `active`. The AWS MicroVM `lambda` provider builds a new image from the files the VM changed since it started and answers `building`; the snapshot turns `active` or `build_failed` once the build lands, usually within minutes.
+      description: Creates a reusable image from a persistent sandbox reservation, saved under `name`, that any sandbox config of the same provider can pin with `snapshot`. The self-hosted workdir `sandbox` provider captures the instance and answers `active`. Daytona, E2B and Vercel capture the sandbox as their own snapshot and answer `active`; E2B pauses the sandbox while it captures, and Vercel stops it, so its next call resumes it. The AWS MicroVM `lambda` provider builds a new image from the files the VM changed since it started and answers `building`; the snapshot turns `active` or `build_failed` once the build lands, usually within minutes. Cloudflare, machine and custom sandboxes answer 409.
       security: [{ BearerAuth: [] }]
       parameters:
         - {
@@ -2029,7 +2024,10 @@ paths:
           {
             description: Reservation does not belong to this account or sandbox config,
           }
-        "409": { description: Provider does not support snapshot }
+        "409":
+          {
+            description: "Provider does not support snapshot, or the name is already another provider's snapshot",
+          }
 
   /v1/sandboxes/{sandboxId}/terminal:
     post:

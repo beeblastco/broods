@@ -2,6 +2,7 @@
 
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import {
   MACHINE_LABEL,
   MACHINE_STATE_LABEL,
@@ -26,6 +27,32 @@ const PROVIDER_LABEL: Record<string, string> = {
   machine: MACHINE_LABEL,
   sandbox: "workdir",
 };
+
+// Why a machine's disk is not shown, by provider; the "?" in its place says it.
+const UNKNOWN_DISK: Record<string, string> = {
+  e2b: "E2B does not report a sandbox's disk size.",
+  machine: "Your own computer: its OS did not report the size of its disk.",
+  vercel: "Vercel does not report a sandbox's disk size.",
+};
+
+// Why a machine shows no size at all, by provider. Daytona reports on every
+// use, Vercel when its session carries one; e2b is read and workdir fixed only
+// when the sandbox is created.
+const UNKNOWN_SIZE: Record<string, string> = {
+  daytona:
+    "Daytona sizes this sandbox itself and has not reported its size yet. It shows the next time this sandbox is used.",
+  e2b: "The E2B template sizes this sandbox, and Broods reads that size only when the sandbox is created. This one predates that or the read failed, so it stays unknown until the sandbox is recreated.",
+  machine:
+    "Your own computer: its broods CLI predates hardware reporting. Update broods and restart `broods machine` to see it.",
+  sandbox:
+    "Workdir fixes the size when it creates the VM, and this one was created before Broods recorded it. It stays unknown until the sandbox is recreated.",
+  vercel:
+    "Vercel sizes this sandbox itself and has not reported its size. It shows once Vercel reports it.",
+};
+
+// Why a lambda or cloudflare size is unknown: the row predates verified sizes.
+const UNVERIFIED_SIZE =
+  "Recorded before Broods checked sandbox sizes. The real size shows the next time this sandbox is used.";
 
 const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
   pending: "running",
@@ -99,16 +126,6 @@ export function formatProvider(provider: string): string {
   return PROVIDER_LABEL[provider] ?? provider;
 }
 
-/** Footprint string, e.g. "1 vCPU · 2 GB · 8 GB". */
-export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
-  const memory =
-    specs.memoryMb >= 1024
-      ? `${specs.memoryMb / 1024} GB`
-      : `${specs.memoryMb} MB`;
-
-  return `${specs.vcpu} vCPU · ${memory} · ${specs.storageGb} GB`;
-}
-
 export function instanceStatusDot(
   status: Doc<"sandboxInstances">["status"],
 ): React.JSX.Element {
@@ -170,4 +187,59 @@ export function snapshotStatusDot(
   status: Doc<"sandboxSnapshots">["status"],
 ): React.JSX.Element {
   return <StatusDot tone={SNAPSHOT_TONE[status]} label={status} />;
+}
+
+/**
+ * Footprint, e.g. "1 vCPU · 2 GB · 8 GB", shown only when `verified` says it is
+ * the machine's real size. Anything unknown is a "?" whose tooltip says why.
+ * Sizes the table rows and the instance and computer panels.
+ */
+export function SpecsValue({
+  specs,
+  verified,
+  provider,
+}: {
+  specs: Doc<"sandboxInstances">["specs"] | undefined;
+  verified: boolean;
+  provider: string;
+}): React.JSX.Element {
+  if (!specs || !verified) {
+    return <UnknownSize reason={UNKNOWN_SIZE[provider] ?? UNVERIFIED_SIZE} />;
+  }
+  const memory =
+    specs.memoryMb >= 1024
+      ? `${Math.round((specs.memoryMb / 1024) * 10) / 10} GB`
+      : `${specs.memoryMb} MB`;
+
+  return (
+    <span>
+      {specs.vcpu} vCPU · {memory} ·{" "}
+      {specs.storageGb === undefined ? (
+        <UnknownSize
+          reason={
+            UNKNOWN_DISK[provider] ??
+            "The provider does not report its disk size."
+          }
+        />
+      ) : (
+        `${specs.storageGb} GB`
+      )}
+    </span>
+  );
+}
+
+// A "?" for a size Broods cannot know; hover or focus it to read why. The click
+// stays here so it does not also open the row it sits in.
+function UnknownSize({ reason }: { reason: string }): React.JSX.Element {
+  return (
+    <IconTooltip label={reason}>
+      <button
+        type="button"
+        className="cursor-help"
+        onClick={(event) => event.stopPropagation()}
+      >
+        ?
+      </button>
+    </IconTooltip>
+  );
 }

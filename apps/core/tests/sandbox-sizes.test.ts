@@ -1,9 +1,44 @@
 import { describe, expect, it } from "bun:test";
+import { configuredSandboxSpecs } from "../src/harness/sandbox/utils.ts";
 import {
   resolveSandboxSpecs,
   workdirSizeResources,
   SANDBOX_SIZES,
 } from "../src/shared/sandbox-sizes.ts";
+
+describe("configuredSandboxSpecs", () => {
+  const controlPlane = {
+    accountId: "acct_1",
+    name: "box",
+    specs: SANDBOX_SIZES.xsmall,
+  };
+
+  it("states the size only where Broods sets it", () => {
+    for (const provider of ["sandbox", "lambda", "cloudflare"] as const) {
+      expect(
+        configuredSandboxSpecs({
+          provider: provider,
+          controlPlane: controlPlane,
+        }),
+      ).toEqual(SANDBOX_SIZES.xsmall);
+    }
+    // These size machines themselves or run on hardware Broods cannot see.
+    for (const provider of [
+      "daytona",
+      "e2b",
+      "vercel",
+      "machine",
+      "custom",
+    ] as const) {
+      expect(
+        configuredSandboxSpecs({
+          provider: provider,
+          controlPlane: controlPlane,
+        }),
+      ).toBeUndefined();
+    }
+  });
+});
 
 describe("resolveSandboxSpecs", () => {
   it("returns the catalog specs for a pinned size", () => {
@@ -18,12 +53,7 @@ describe("resolveSandboxSpecs", () => {
     });
   });
 
-  it("falls back to memoryLimit then to the xsmall default", () => {
-    expect(resolveSandboxSpecs({ memoryLimit: 3000 })).toEqual({
-      vcpu: SANDBOX_SIZES.xsmall.vcpu,
-      memoryMb: 3000,
-      storageGb: SANDBOX_SIZES.xsmall.storageGb,
-    });
+  it("falls back to the xsmall default", () => {
     expect(resolveSandboxSpecs({})).toEqual(SANDBOX_SIZES.xsmall);
   });
 
@@ -35,9 +65,19 @@ describe("resolveSandboxSpecs", () => {
         provider: "lambda",
         size: "tiny",
         options: { cpu: 1 },
-        memoryLimit: 1024,
       }),
     ).toEqual(real);
+  });
+
+  it("reports the Cloudflare instance type a size starts", () => {
+    expect(resolveSandboxSpecs({ provider: "cloudflare" })).toEqual({
+      vcpu: 0.5,
+      memoryMb: 4096,
+      storageGb: 8,
+    });
+    expect(
+      resolveSandboxSpecs({ provider: "cloudflare", size: "large" }),
+    ).toEqual({ vcpu: 4, memoryMb: 12288, storageGb: 20 });
   });
 
   it("bills a workdir sandbox the resources its VM is created with", () => {
@@ -46,8 +86,7 @@ describe("resolveSandboxSpecs", () => {
       resolveSandboxSpecs({
         provider: "sandbox",
         size: "large",
-        options: { cpu: 1 },
-        memoryLimit: 3000,
+        options: { cpu: 1, memoryMb: 3000 },
       }),
     ).toEqual({ vcpu: 1, memoryMb: 3000, storageGb: 32 });
     expect(resolveSandboxSpecs({ provider: "sandbox", size: "tiny" })).toEqual({

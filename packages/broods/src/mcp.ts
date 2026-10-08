@@ -519,7 +519,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     "snapshot-sandbox",
     {
       description:
-        "Snapshot a sandbox reservation into a reusable image (sandbox or lambda provider; lambda builds for a few minutes).",
+        "Snapshot a sandbox reservation into an image its provider's sandboxes can pin with `snapshot` (sandbox, lambda, daytona, e2b or vercel; lambda builds for a few minutes).",
       inputSchema: {
         sandboxId: z.string().min(1),
         reservationKey: z.string().min(1),

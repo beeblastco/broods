@@ -288,6 +288,7 @@ export const upsert = internalMutation({
     externalId: v.string(),
     name: v.string(),
     specs: sandboxInstancesFields.specs,
+    specsVerified: sandboxInstancesFields.specsVerified,
     sandboxConfigId: v.optional(v.id("sandboxConfigs")),
     snapshotId: v.optional(v.string()),
     egress: sandboxInstancesFields.egress,
@@ -343,6 +344,7 @@ export const upsert = internalMutation({
           : {}),
         // A new machine's burst totals start again at zero.
         ...(replaced ? { burstBilled: undefined } : {}),
+        ...keptVerifiedSize(existing, args.specsVerified, replaced),
       };
       await ctx.db.patch(existing._id, patch);
       const action = replaced
@@ -375,6 +377,47 @@ export const upsert = internalMutation({
     await ctx.db.insert("sandboxInstances", { ...row, meteredUntil: now });
     await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
     await recordRuntimeAction(ctx, row, "reserve");
+
+    return null;
+  },
+});
+
+/**
+ * Records the real size of a machine whose row already exists, once its provider
+ * reports it after the row was written (an e2b size read). Bills the time so far
+ * at the old size first. No-op when the row is gone, belongs to another account,
+ * or has since been repointed at another machine, so a late report can never
+ * bring a removed row back.
+ */
+export const setSpecs = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    reservationKey: v.string(),
+    externalId: v.string(),
+    specs: sandboxInstancesFields.specs,
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    if (
+      !instance ||
+      instance.accountId !== args.accountId ||
+      instance.externalId !== args.externalId
+    ) {
+      return null;
+    }
+    const now = Date.now();
+    await accrue(ctx, instance, now);
+    await ctx.db.patch(instance._id, {
+      specs: args.specs,
+      specsVerified: true,
+      meteredUntil: now,
+    });
 
     return null;
   },
@@ -478,6 +521,18 @@ async function accrue(
   return accrual.meteredUntil;
 }
 
+// A write that knows no size (a workdir or e2b reconnect) keeps the size this
+// same machine already has verified; a new machine starts unverified.
+function keptVerifiedSize(
+  existing: Doc<"sandboxInstances">,
+  specsVerified: boolean | undefined,
+  replaced: boolean,
+): Partial<Pick<Doc<"sandboxInstances">, "specs" | "specsVerified">> {
+  return !replaced && existing.specsVerified && !specsVerified
+    ? { specs: existing.specs, specsVerified: true }
+    : {};
+}
+
 /**
  * The refreshed registry columns `upsert` writes on both the patch and the
  * insert path: identity/size plus every optional column the caller supplied.
@@ -487,6 +542,7 @@ function upsertRefreshFields(
     Partial<
       Pick<
         Doc<"sandboxInstances">,
+        | "specsVerified"
         | "projectId"
         | "stageId"
         | "sandboxConfigId"
@@ -513,6 +569,7 @@ function upsertRefreshFields(
   Partial<
     Pick<
       Doc<"sandboxInstances">,
+      | "specsVerified"
       | "projectId"
       | "stageId"
       | "sandboxConfigId"
@@ -536,6 +593,7 @@ function upsertRefreshFields(
     externalId: args.externalId,
     name: args.name,
     specs: args.specs,
+    specsVerified: args.specsVerified,
     status: "running" as const,
     // A reconnect only mirrors once the provider handed back a usable sandbox,
     // so the reason goes with the status: `undefined` unsets it on patch and is
