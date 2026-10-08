@@ -8,6 +8,7 @@ import {
   parseAsModelKeys,
   parseAsName,
   parseAsQuery,
+  parseAsSearch,
   parseAsSort,
   parseAsTraceId,
   timeWindow,
@@ -34,6 +35,8 @@ describe("URL params read as absent when they fail their check", () => {
       MAX_QUERY_LENGTH,
     );
     expect(parseAsQuery.parse("a".repeat(MAX_QUERY_LENGTH + 1))).toBeNull();
+    // An explicit `?q=` is a value, so a list link can clear a remembered search.
+    expect(parseAsSearch.parse("")).toBe("");
   });
 
   test("timestamps are plain safe integers", () => {
@@ -75,9 +78,10 @@ describe("URL params read as absent when they fail their check", () => {
       parseAsModelKeys.parse("anthropic::claude-sonnet-4,openai::gpt-5"),
     ).toEqual(["anthropic::claude-sonnet-4", "openai::gpt-5"]);
     expect(parseAsModelKeys.parse("a,,b")).toBeNull();
+    // Any selection the usage panel can write reads back, however many models.
     expect(
-      parseAsModelKeys.parse(Array.from({ length: 51 }, () => "m").join(",")),
-    ).toBeNull();
+      parseAsModelKeys.parse(Array.from({ length: 60 }, () => "m").join(",")),
+    ).toHaveLength(60);
   });
 
   test("sort takes only a column the list has and a direction", () => {

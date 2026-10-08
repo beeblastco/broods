@@ -23,6 +23,8 @@ import {
   parseQuery,
   rangeMs,
   type Query,
+  type RangePreset,
+  type TimeWindow,
 } from "@/app/lib/queryTokens";
 import { isEditableTarget } from "@/app/lib/shortcuts";
 import { parseAsTraceId, TRACE_VIEW } from "@/app/lib/urlState";
@@ -444,6 +446,23 @@ export function TracingPanel({
     window: timeWindow,
     setWindow: setTimeWindow,
   } = useObservabilityView(TRACE_VIEW);
+  // A filter change drops `trace` from the URL: a link carrying a run the new
+  // filters hide would reopen with them cleared. The pick on screen stays.
+  const narrowSearch = useCallback(
+    (next: string): void => {
+      setFilter(next);
+      void setFocusTraceId(null);
+    },
+    [setFilter, setFocusTraceId],
+  );
+  const narrowRange = (next: RangePreset): void => {
+    setRange(next);
+    void setFocusTraceId(null);
+  };
+  const narrowWindow = (next: TimeWindow | null): void => {
+    setTimeWindow(next);
+    void setFocusTraceId(null);
+  };
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const now = useNow();
   const [continueAttempts, setContinueAttempts] = useState<
@@ -723,13 +742,13 @@ export function TracingPanel({
     <div className="flex h-full min-h-0 flex-col">
       <ObservabilityToolbar
         search={filter}
-        onSearchChange={setFilter}
+        onSearchChange={narrowSearch}
         searchPlaceholder="Search tasks · status: channel: agent: tool: error: trace: conv:"
         searchFields={TASK_QUERY_FIELDS}
         range={range}
-        onRangeChange={setRange}
+        onRangeChange={narrowRange}
         window={timeWindow}
-        onWindowChange={setTimeWindow}
+        onWindowChange={narrowWindow}
         points={points}
         now={now}
         onRefresh={refresh}

@@ -8,7 +8,7 @@ import {
   type SortKey,
   type SortState,
 } from "@/app/lib/tableState";
-import { parseAsQuery, parseAsSort } from "@/app/lib/urlState";
+import { parseAsSearch, parseAsSort } from "@/app/lib/urlState";
 import { useQueryStates } from "nuqs";
 import { useMemo } from "react";
 import { useRemembered } from "./useRemembered";
@@ -77,13 +77,14 @@ export function useListState<Row, Column extends string, Field extends string>(
   // Only a column the list sorts by parses. sortKey is a module constant, so this holds.
   const parsers = useMemo(
     () => ({
-      q: parseAsQuery,
+      q: parseAsSearch,
       sort: parseAsSort(Object.keys(sortKey) as Column[]),
     }),
     [sortKey],
   );
   const [linked, setLinked] = useQueryStates(parsers);
-  const query = url && linked.q ? linked.q : remembered;
+  // A link's `q`, even an empty one, wins over this viewer's remembered search.
+  const query = url && linked.q !== null ? linked.q : remembered;
   const sort = (url && linked.sort) || rememberedSort;
   const setQuery = (next: string): void => {
     rememberQuery(next);

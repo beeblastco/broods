@@ -15,9 +15,6 @@ import type { SortDir, SortState } from "./tableState";
 /** Longest search text a URL may carry. */
 export const MAX_QUERY_LENGTH = 500;
 
-/** Most models a usage link may pick. */
-const MAX_MODEL_KEYS = 50;
-
 // Convex ids are lowercase base32; the length range leaves room for format changes.
 const CONVEX_ID = /^[0-9a-z]{16,64}$/;
 // Epoch ms: digits only, so no sign, exponent or fraction gets through.
@@ -29,15 +26,20 @@ const SORT_DIRS: readonly SortDir[] = ["asc", "desc"];
 
 const RANGE_IDS = RANGE_PRESETS.map((preset) => preset.id);
 
-/** Free search text, capped so a link cannot hand the filters a huge string. */
-export const parseAsQuery = createParser({
+/**
+ * Free search text, capped so a link cannot hand the filters a huge string.
+ * No default, so a list can tell an explicit `?q=` from an absent one.
+ */
+export const parseAsSearch = createParser({
   parse: (value: string): string | null =>
     value.length <= MAX_QUERY_LENGTH ? value : null,
   serialize: (value: string): string => value,
 })
-  .withDefault("")
   // Typing writes once it pauses: each URL write re-renders every search-param reader.
   .withOptions({ limitUrlUpdates: debounce(300) });
+
+/** The search box of a view that has no remembered fallback; empty when absent. */
+export const parseAsQuery = parseAsSearch.withDefault("");
 
 /** A finite, non-negative integer timestamp in ms. */
 export const parseAsEpochMs = createParser({
@@ -62,14 +64,12 @@ export const parseAsName = createParser({
   serialize: (value: string): string => value,
 });
 
-/** The usage panel's model filter: up to 50 `provider::model` keys, comma separated. */
+/** The usage panel's model filter: `provider::model` keys, comma separated. */
 export const parseAsModelKeys = createParser({
   parse: (value: string): string[] | null => {
     const keys = value.split(",");
-    const valid =
-      keys.length <= MAX_MODEL_KEYS && keys.every((key) => MODEL_KEY.test(key));
 
-    return valid ? keys : null;
+    return keys.every((key) => MODEL_KEY.test(key)) ? keys : null;
   },
   serialize: (value: string[]): string => value.join(","),
   eq: (a: string[], b: string[]): boolean =>
