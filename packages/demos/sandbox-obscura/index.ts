@@ -9,6 +9,7 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 const calls: string[] = [];
+const modes = new Set<string>();
 const failed: string[] = [];
 
 for await (const chunk of client.stream(api.agents.browser, {
@@ -23,6 +24,7 @@ for await (const chunk of client.stream(api.agents.browser, {
       break;
     case "tool-call":
       calls.push(chunk.toolName);
+      if (chunk.toolName === "browse") modes.add(browseMode(chunk.input));
       process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
       break;
     case "tool-result":
@@ -42,11 +44,17 @@ for await (const chunk of client.stream(api.agents.browser, {
   }
 }
 
-const browseCalls = calls.filter((name): boolean => name === "browse");
-if (browseCalls.length < 2 || failed.length > 0) {
+if (!modes.has("markdown") || !modes.has("links") || failed.length > 0) {
   console.error(
-    `smoke test failed: tools called ${calls.join(", ") || "none"}; errors ${failed.join(", ") || "none"}`,
+    `smoke test failed: tools called ${calls.join(", ") || "none"}; browse modes ${[...modes].join(", ") || "none"}; errors ${failed.join(", ") || "none"}`,
   );
   process.exit(1);
 }
 console.log("smoke test passed: browse answered in markdown and links mode");
+
+// The mode a browse call asked for; browse defaults to markdown when it names none.
+function browseMode(input: unknown): string {
+  return typeof input === "object" && input !== null && "mode" in input
+    ? String(input.mode)
+    : "markdown";
+}
