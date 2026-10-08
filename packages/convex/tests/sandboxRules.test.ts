@@ -373,7 +373,6 @@ describe("sandbox config defaults & validation", () => {
       persistent: true,
       size: "small",
       snapshot: "img",
-      memoryLimit: 512,
     })) {
       expect(() =>
         normalizeSandboxConfig({
@@ -426,37 +425,22 @@ describe("sandbox config defaults & validation", () => {
 });
 
 describe("sandbox config provider-aware limits", () => {
-  it("bounds lambda (MicroVM) timeout at 600s and memory at the 8192MB max size", () => {
+  it("bounds lambda (MicroVM) timeout at 600s", () => {
     expect(
       normalizeSandboxConfig({ provider: "lambda", timeout: 600 }).timeout,
     ).toBe(600);
     expect(() =>
       normalizeSandboxConfig({ provider: "lambda", timeout: 601 }),
     ).toThrow("config.timeout must be an integer from 1 to 600");
-    expect(
-      normalizeSandboxConfig({ provider: "lambda", memoryLimit: 8192 })
-        .memoryLimit,
-    ).toBe(8192);
-    expect(() =>
-      normalizeSandboxConfig({ provider: "lambda", memoryLimit: 8193 }),
-    ).toThrow("config.memoryLimit must be an integer from 1 to 8192");
   });
 
-  it("gives persistent providers a 600s ceiling and unbounded memory", () => {
+  it("gives persistent providers a 600s ceiling", () => {
     expect(
       normalizeSandboxConfig({ provider: "daytona", timeout: 600 }).timeout,
     ).toBe(600);
     expect(() =>
       normalizeSandboxConfig({ provider: "daytona", timeout: 601 }),
     ).toThrow("config.timeout must be an integer from 1 to 600");
-    // Persistent providers are operator-sized: memory is validated but not capped.
-    expect(
-      normalizeSandboxConfig({ provider: "sandbox", memoryLimit: 8192 })
-        .memoryLimit,
-    ).toBe(8192);
-    expect(() =>
-      normalizeSandboxConfig({ provider: "sandbox", memoryLimit: 0 }),
-    ).toThrow("config.memoryLimit must be a positive integer");
   });
 });
 
