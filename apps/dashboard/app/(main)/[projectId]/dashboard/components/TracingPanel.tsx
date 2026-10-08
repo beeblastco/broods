@@ -58,7 +58,7 @@ interface ContinueAttempt {
 
 // One collapsible payload section, with the count line on its header.
 interface PayloadSection extends DetailRow {
-  open: boolean;
+  open?: boolean;
   summary: string;
 }
 
@@ -114,7 +114,7 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
   countLabel?: string;
   key: string;
   label: string;
-  open?: true;
+  open?: boolean;
 }> = [
   {
     key: "model.system",
@@ -932,15 +932,8 @@ function numericAttribute(
 // the span reports one, or stands in when there is no count at all.
 function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
   return PAYLOAD_SECTIONS.flatMap(
-    ({
-      charsKey,
-      countKey,
-      countLabel,
-      key,
-      label,
-      open,
-    }): PayloadSection[] => {
-      const value = displayAttribute(span.attributes?.[key]);
+    ({ charsKey, countKey, countLabel, ...section }): PayloadSection[] => {
+      const value = displayAttribute(span.attributes?.[section.key]);
       if (!value) return [];
       const count = countKey ? numericAttribute(span, countKey) : undefined;
       const reportedChars = charsKey
@@ -955,15 +948,7 @@ function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
         ...(chars === undefined ? [] : [`${chars.toLocaleString()} chars`]),
       ].join(" · ");
 
-      return [
-        {
-          key: key,
-          label: label,
-          open: open === true,
-          summary: summary,
-          value: value,
-        },
-      ];
+      return [{ ...section, summary: summary, value: value }];
     },
   );
 }
