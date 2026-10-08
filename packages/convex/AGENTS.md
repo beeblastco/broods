@@ -12,6 +12,8 @@ Convex skills sit in `.claude/skills/`; grab `convex-migration-helper` for any b
 
 WorkOS AuthKit do SSO with Google OAuth. `users` table sync from WorkOS webhooks in `auth.ts`.
 
+self-hosted (`BROODS_SESSION_JWKS` set): `auth.config.ts` trust only the dashboard's admin-key session (`model/selfHostAuth.ts`), never WorkOS, and `user.ensureSynced` seed the admin into the AuthKit component's users table, so `authKit.getAuthUser` work the same. never read `process.env.WORKOS_*` on that path: the deploy refuse an auth config that read an unset variable.
+
 every authenticated public function use `authKit.getAuthUser(ctx)`. public API that need a user must carry this block, comment included:
 
 ```typescript
