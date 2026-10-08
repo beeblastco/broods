@@ -29,6 +29,9 @@ describe("channelScopeKeyFromConversation", () => {
     expect(
       channelScopeKeyFromConversation("pancake:page-1:conversation-1"),
     ).toBe("pancake:page-1");
+    expect(
+      channelScopeKeyFromConversation("gmail:agent@example.com:thread-1"),
+    ).toBe("gmail:agent@example.com");
     expect(channelScopeKeyFromConversation("gh:owner/repo:issue:123")).toBe(
       "gh:owner/repo",
     );

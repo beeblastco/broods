@@ -9,6 +9,7 @@ import type {
   HookAgentConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentGmailChannelConfig,
   AgentGoogleChatChannelConfig,
   AgentInstagramChannelConfig,
   AgentLinearChannelConfig,
@@ -28,6 +29,7 @@ import type {
   WorkspaceConfig,
   WorkspaceIsolation,
   TelegramSource,
+  GmailSource,
   GoogleChatSource,
   GitHubSource,
   LinearSource,
@@ -241,6 +243,7 @@ export type ChannelType =
   | "telegram"
   | "gchat"
   | "github"
+  | "gmail"
   | "linear"
   | "slack"
   | "discord"
@@ -317,6 +320,31 @@ export type GoogleChatConnectionInput = EnvRefString<
       | "workspaceAddOnServiceAccountEmail"
     >,
     "credentials"
+  >
+> &
+  ConnectionIdentityInput;
+
+export type GmailConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentGmailChannelConfig,
+      | "audience"
+      | "autoSend"
+      | "clientId"
+      | "clientSecret"
+      | "mailbox"
+      | "refreshToken"
+      | "serviceAccountEmail"
+      | "subscription"
+      | "topicName"
+    >,
+    | "clientId"
+    | "clientSecret"
+    | "mailbox"
+    | "refreshToken"
+    | "serviceAccountEmail"
+    | "subscription"
+    | "topicName"
   >
 > &
   ConnectionIdentityInput;
@@ -485,6 +513,10 @@ export type GoogleChatConnectionDefinition = ConnectionDefinition<
   "gchat",
   GoogleChatConnectionInput
 >;
+export type GmailConnectionDefinition = ConnectionDefinition<
+  "gmail",
+  GmailConnectionInput
+>;
 export type GitHubConnectionDefinition = ConnectionDefinition<
   "github",
   GitHubConnectionInput
@@ -537,6 +569,7 @@ export type AnyConnectionDefinition =
   | TelegramConnectionDefinition
   | GoogleChatConnectionDefinition
   | GitHubConnectionDefinition
+  | GmailConnectionDefinition
   | LinearConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
@@ -614,6 +647,12 @@ export type GoogleChatChannelInput = ChannelRulesInput & {
   connection: GoogleChatConnectionDefinition;
   /** Google Chat space name, e.g. "spaces/AAAAxxxx". */
   spaceName: string;
+};
+
+export type GmailChannelInput = ChannelRulesInput & {
+  connection: GmailConnectionDefinition;
+  /** The mailbox address, e.g. "agent@example.com". */
+  mailbox: string;
 };
 
 export type GitHubChannelInput = ChannelRulesInput & {
@@ -738,6 +777,7 @@ type Handler<Event, Result> = (
 export type TelegramMessageSource = TelegramSource;
 export type GoogleChatMessageSource = GoogleChatSource;
 export type GitHubMessageSource = GitHubSource;
+export type GmailMessageSource = GmailSource;
 export type LinearMessageSource = LinearSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
@@ -758,6 +798,7 @@ export type ChannelMessageReceived =
   | { channel: "telegram"; text: string; source: TelegramMessageSource }
   | { channel: "gchat"; text: string; source: GoogleChatMessageSource }
   | { channel: "github"; text: string; source: GitHubMessageSource }
+  | { channel: "gmail"; text: string; source: GmailMessageSource }
   | { channel: "linear"; text: string; source: LinearMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
@@ -1140,6 +1181,12 @@ export function defineGitHubConnection(
   return defineConnection("github", config);
 }
 
+export function defineGmailConnection(
+  config: GmailConnectionInput,
+): GmailConnectionDefinition {
+  return defineConnection("gmail", config);
+}
+
 export function defineGoogleChatConnection(
   config: GoogleChatConnectionInput,
 ): GoogleChatConnectionDefinition {
@@ -1234,6 +1281,20 @@ export function defineGitHubChannel<const Name extends string>(
   }
 
   return defineChannelResource(name, description, repo, owner, rules);
+}
+
+export function defineGmailChannel<const Name extends string>(
+  input: ResourceInput<Name, GmailChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, mailbox, ...rules } = input;
+
+  return defineChannelResource(
+    name,
+    description,
+    mailbox.toLowerCase(),
+    undefined,
+    rules,
+  );
 }
 
 export function defineGoogleChatChannel<const Name extends string>(

@@ -790,6 +790,22 @@ describe("agent rules", () => {
         },
       }),
     ).toThrow("config.channels.gchat.endpointUrl must use https");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          gmail: { id: "gmail", refreshToken: "r", mailbox: "a@b.co" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.gmail needs serviceAccountEmail, subscription, topicName to receive mail",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { gmail: { id: "gmail", topicName: "gmail-topic" } },
+      }),
+    ).toThrow(
+      "config.channels.gmail.topicName must be projects/{project}/topics/{name}",
+    );
   });
 
   it("validates harness configs", () => {

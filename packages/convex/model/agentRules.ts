@@ -1049,6 +1049,7 @@ function normalizeChannelsConfig(
   normalizeTelegramConfig(channels.telegram);
   normalizeGoogleChatConfig(channels.gchat, options);
   normalizeGitHubConfig(channels.github);
+  normalizeGmailConfig(channels.gmail, options);
   normalizeLinearConfig(channels.linear, options);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
@@ -1060,6 +1061,66 @@ function normalizeChannelsConfig(
   normalizeInstagramConfig(channels.instagram, options);
   normalizeMessengerConfig(channels.messenger, options);
   normalizeWhatsAppConfig(channels.whatsapp);
+}
+
+/**
+ * A Gmail mailbox runs only with its watch topic and the push subscription that
+ * verifies deliveries. A patch may carry the grant alone, so the merged config
+ * checks the set.
+ */
+function normalizeGmailConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.gmail must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.gmail");
+  for (const key of [
+    "audience",
+    "clientId",
+    "clientSecret",
+    "mailbox",
+    "refreshToken",
+    "serviceAccountEmail",
+    "subscription",
+    "topicName",
+  ]) {
+    assertOptionalString(config[key], `config.channels.gmail.${key}`);
+  }
+  assertOptionalBoolean(config.autoSend, "config.channels.gmail.autoSend");
+  if (
+    typeof config.subscription === "string" &&
+    !/^projects\/[^/]+\/subscriptions\/[^/]+$/.test(config.subscription)
+  ) {
+    throw new ClientError(
+      "config.channels.gmail.subscription must be projects/{project}/subscriptions/{name}",
+    );
+  }
+  if (
+    typeof config.topicName === "string" &&
+    !/^projects\/[^/]+\/topics\/[^/]+$/.test(config.topicName)
+  ) {
+    throw new ClientError(
+      "config.channels.gmail.topicName must be projects/{project}/topics/{name}",
+    );
+  }
+  const missing = [
+    "mailbox",
+    "serviceAccountEmail",
+    "subscription",
+    "topicName",
+  ].filter((key) => config[key] === undefined);
+  if (
+    typeof config.refreshToken === "string" &&
+    missing.length > 0 &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      `config.channels.gmail needs ${missing.join(", ")} to receive mail`,
+    );
+  }
 }
 
 function normalizeTelegramConfig(value: unknown): void {

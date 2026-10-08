@@ -356,3 +356,36 @@ describe("listConnections", () => {
     expect(await listConnections(tt, "discord")).toEqual([]);
   });
 });
+
+describe("gmail watch targets", () => {
+  const gmail = {
+    clientId: "client",
+    clientSecret: "secret",
+    mailbox: "agent@example.com",
+    refreshToken: "refresh",
+    topicName: "projects/p/topics/gmail",
+  };
+
+  test("a deployed mailbox answers with what renewing its watch needs", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", { channels: { gmail: gmail } });
+    await seedDeployment(tt, scope, "endpoint-1");
+    await tt.mutation(internal.channel.connections.reconcile, {});
+
+    expect(await tt.query(internal.channel.gmail.targets, {})).toEqual([gmail]);
+    // Forwarders never ask for gmail, but a refresh token is no bot token.
+    expect(await listConnections(tt, "discord")).toEqual([]);
+  });
+
+  test("a mailbox without a watch topic has nothing to renew", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const { topicName: _topicName, ...withoutTopic } = gmail;
+    await seedAgent(tt, scope, "tracy", { channels: { gmail: withoutTopic } });
+    await seedDeployment(tt, scope, "endpoint-1");
+    await tt.mutation(internal.channel.connections.reconcile, {});
+
+    expect(await tt.query(internal.channel.gmail.targets, {})).toEqual([]);
+  });
+});

@@ -101,6 +101,7 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "channels/whatsapp", label: "WhatsApp" },
         { type: "doc", id: "channels/teams", label: "Microsoft Teams" },
         { type: "doc", id: "channels/gchat", label: "Google Chat" },
+        { type: "doc", id: "channels/gmail", label: "Gmail" },
         { type: "doc", id: "channels/twilio", label: "Twilio SMS" },
       ],
     },

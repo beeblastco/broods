@@ -398,7 +398,7 @@ export const channelRecordsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
-  /** Adapter name: slack, discord, matrix, telegram, github, linear, pancake, zalo, gchat, teams, twilio, whatsapp, instagram, messenger. */
+  /** Adapter name: slack, discord, matrix, telegram, github, linear, pancake, zalo, gchat, gmail, teams, twilio, whatsapp, instagram, messenger. */
   platform: v.string(),
   /** Provider id of the place, e.g. a Slack channel id or an owner/repo. */
   externalId: v.string(),

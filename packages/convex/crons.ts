@@ -99,4 +99,12 @@ crons.interval(
   {},
 );
 
+// A Gmail watch lapses after seven days; renewing daily leaves room for misses.
+crons.interval(
+  "renew gmail watches",
+  { hours: 24 },
+  internal.channel.gmail.renewAll,
+  {},
+);
+
 export default crons;

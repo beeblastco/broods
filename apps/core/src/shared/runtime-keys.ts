@@ -31,6 +31,7 @@ export const ACCOUNT_NAMESPACE_PREFIX = "acct:";
 export const CHANNEL_THREAD_SEPARATOR = "|";
 export const GCHAT_INTEGRATION_PREFIX = "gchat:";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
+export const GMAIL_INTEGRATION_PREFIX = "gmail:";
 export const LINEAR_INTEGRATION_PREFIX = "linear:";
 export const SLACK_INTEGRATION_PREFIX = "slack:";
 export const SLACK_COMMAND_INTEGRATION_PREFIX = "slack-command:";
@@ -51,6 +52,7 @@ const RESERVED_EVENT_ID_PREFIXES = [
   DIRECT_API_EVENT_ID_PREFIX,
   GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
+  GMAIL_INTEGRATION_PREFIX,
   LINEAR_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
   SLACK_COMMAND_INTEGRATION_PREFIX,
@@ -73,6 +75,7 @@ const RESERVED_CONVERSATION_PREFIXES = [
   DIRECT_API_CONVERSATION_PREFIX,
   GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
+  GMAIL_INTEGRATION_PREFIX,
   LINEAR_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
   TEAMS_INTEGRATION_PREFIX,
@@ -90,6 +93,7 @@ const RESERVED_CONVERSATION_PREFIXES = [
 const CHANNEL_CONVERSATION_PREFIXES = [
   GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
+  GMAIL_INTEGRATION_PREFIX,
   LINEAR_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
   TEAMS_INTEGRATION_PREFIX,
@@ -151,7 +155,11 @@ export function channelScopeKeyFromConversation(
 
     return parts.length >= 3 ? parts.slice(0, 3).join(":") : unscopedKey;
   }
-  if (unscopedKey.startsWith(PANCAKE_INTEGRATION_PREFIX)) {
+  // A Gmail thread is `gmail:{mailbox}:{threadId}` in its mailbox.
+  if (
+    unscopedKey.startsWith(PANCAKE_INTEGRATION_PREFIX) ||
+    unscopedKey.startsWith(GMAIL_INTEGRATION_PREFIX)
+  ) {
     const parts = unscopedKey.split(":");
 
     return parts.length >= 3 ? parts.slice(0, 2).join(":") : unscopedKey;

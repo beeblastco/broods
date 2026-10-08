@@ -33,6 +33,7 @@ import type * as aws_storageMeter from "../aws/storageMeter.js";
 import type * as aws_workspaceFiles from "../aws/workspaceFiles.js";
 import type * as canvas from "../canvas.js";
 import type * as channel_connections from "../channel/connections.js";
+import type * as channel_gmail from "../channel/gmail.js";
 import type * as channel_records from "../channel/records.js";
 import type * as cli_auth from "../cli/auth.js";
 import type * as cli_http from "../cli/http.js";
@@ -193,6 +194,7 @@ declare const fullApi: ApiFromModules<{
   "aws/workspaceFiles": typeof aws_workspaceFiles;
   canvas: typeof canvas;
   "channel/connections": typeof channel_connections;
+  "channel/gmail": typeof channel_gmail;
   "channel/records": typeof channel_records;
   "cli/auth": typeof cli_auth;
   "cli/http": typeof cli_http;

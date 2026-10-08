@@ -62,6 +62,7 @@ import {
   createGoogleChatChannel,
   parseServiceAccountKey,
 } from "../shared/gchat-channel.ts";
+import { createGmailChannel } from "../shared/gmail-channel.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
 import { createInstagramChannel } from "../shared/instagram-channel.ts";
 import type { QuestionAnswer } from "../../../../packages/broods/src/websocket-contracts.ts";
@@ -1944,6 +1945,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const googleChatChannel = createGoogleChatChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
+  const gmailChannel = createGmailChannelFromConfig(config);
   const linearChannel = createLinearChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
@@ -1961,6 +1963,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       telegramChannel,
       googleChatChannel,
       githubChannel,
+      gmailChannel,
       linearChannel,
       slackChannel,
       discordChannel,
@@ -2754,6 +2757,40 @@ function createGoogleChatChannelFromConfig(
     userName: channel.userName,
     workspaceAddOnServiceAccountEmail:
       channel.workspaceAddOnServiceAccountEmail,
+  });
+}
+
+function createGmailChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.gmail;
+  if (
+    !channel?.clientId ||
+    !channel.clientSecret ||
+    !channel.refreshToken ||
+    !channel.mailbox ||
+    !channel.serviceAccountEmail ||
+    !channel.subscription
+  ) {
+    return null;
+  }
+
+  return createGmailChannel({
+    allowedChannelIds: reachSet(
+      channel.allowedChannelIds?.map((id): string => id.toLowerCase()),
+    ),
+    allowedUserIds: reachSet(
+      channel.allowedUserIds?.map((id): string => id.toLowerCase()),
+    ),
+    audience: channel.audience,
+    autoSend: channel.autoSend === true,
+    clientId: channel.clientId,
+    clientSecret: channel.clientSecret,
+    mailbox: channel.mailbox,
+    publicBaseUrl: getHarnessPublicUrl(),
+    refreshToken: channel.refreshToken,
+    serviceAccountEmail: channel.serviceAccountEmail,
+    subscription: channel.subscription,
   });
 }
 
