@@ -60,7 +60,7 @@ export function UsageChartStandIn(): React.JSX.Element {
       <div className="w-full max-w-3xl rounded-lg border border-border bg-card p-3">
         <UsageChart
           kind="area"
-          height={250}
+          height={400}
           series={TOKEN_SERIES}
           rows={rows}
           bucketStarts={bucketStarts}
