@@ -23,13 +23,12 @@ import {
   parseQuery,
   rangeMs,
   type Query,
-  type RangePreset,
-  type TimeWindow,
 } from "@/app/lib/queryTokens";
 import { isEditableTarget } from "@/app/lib/shortcuts";
+import { parseAsTraceId, TRACE_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQueryState } from "nuqs";
 import {
   useCallback,
   useDeferredValue,
@@ -46,6 +45,7 @@ import {
 } from "./ObservabilityToolbar";
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
+import { useObservabilityView } from "@/app/hooks/useObservabilityView";
 import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
@@ -427,19 +427,23 @@ export function TracingPanel({
   stageSlug,
   apiKey,
 }: Props): React.JSX.Element {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const focusTraceId = searchParams.get("trace");
-  // A link from elsewhere (a cron run's Traces) seeds the search box once.
-  const seedQuery = searchParams.get("q");
+  // The selected task's trace, so a link opens on it (a log's View trace,
+  // an agent's link). Written on every pick, dropped only when it is missing.
+  const [focusTraceId, setFocusTraceId] = useQueryState(
+    "trace",
+    parseAsTraceId,
+  );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
-  const [filter, setFilter] = useState(seedQuery ?? "");
-  // The backfill reaches 7 days back, so that preset shows all of it.
-  const [range, setRange] = useState<RangePreset>("7d");
-  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
+  const {
+    query: filter,
+    setQuery: setFilter,
+    range,
+    setRange,
+    window: timeWindow,
+    setWindow: setTimeWindow,
+  } = useObservabilityView(TRACE_VIEW);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const now = useNow();
   const [continueAttempts, setContinueAttempts] = useState<
@@ -517,9 +521,9 @@ export function TracingPanel({
     setVisibleCount(PAGE_SIZE);
   }
 
-  // Arriving from a log's "View trace": select that task, page it into the
-  // list, scroll its row into view, then drop the param so a later pick is not
-  // re-fought.
+  // A new `?trace=` (a log's "View trace", a link, a pick): select that task,
+  // page it into the list and scroll its row into view, once per trace, so a
+  // later filter edit is not re-fought.
   const focusedRef = useRef<string | null>(null);
   // The focus key a one-trace Tempo fetch was already sent for, so a miss
   // ends in a notice instead of another fetch.
@@ -534,18 +538,6 @@ export function TracingPanel({
   // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
   // below would otherwise swallow a repeat click on the same "↳ from parent" link).
   const [refocusNonce, setRefocusNonce] = useState(0);
-  const dropFocusParam = useCallback(() => {
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("trace");
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }, [searchParams, pathname, router]);
-  // The seed is in the box now; drop the param so a later edit is not re-seeded.
-  useEffect(() => {
-    if (seedQuery === null) return;
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("q");
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }, [seedQuery, searchParams, pathname, router]);
   useEffect(() => {
     if (!focusTraceId) return;
     const focusKey = `${focusTraceId}:${refocusNonce}`;
@@ -582,7 +574,7 @@ export function TracingPanel({
       }
       focusedRef.current = focusKey;
       setMissingTrace(focusTraceId);
-      dropFocusParam();
+      void setFocusTraceId(null);
 
       return;
     }
@@ -600,7 +592,6 @@ export function TracingPanel({
     if (!target) return;
     focusedRef.current = focusKey;
     target.scrollIntoView({ block: "nearest" });
-    dropFocusParam();
   }, [
     focusTraceId,
     refocusNonce,
@@ -609,8 +600,11 @@ export function TracingPanel({
     visibleCount,
     history,
     fetchTrace,
-    dropFocusParam,
     now,
+    setFilter,
+    setRange,
+    setTimeWindow,
+    setFocusTraceId,
   ]);
 
   // j and k walk the task list. `/` is the toolbar's own table.filter binding.
@@ -638,6 +632,7 @@ export function TracingPanel({
       // Stepping past the last listed task pages the next one in.
       if (nextIndex >= visibleCount) setVisibleCount(nextIndex + 1);
       setSelectedTaskKey(spanKey(next.root));
+      void setFocusTraceId(next.root.traceId);
       requestAnimationFrame(() =>
         document
           .getElementById(`task-${next.root.traceId}`)
@@ -647,7 +642,7 @@ export function TracingPanel({
     window.addEventListener("keydown", onKeyDown);
 
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [groups, selectedGroup, visibleCount]);
+  }, [groups, selectedGroup, visibleCount, setFocusTraceId]);
 
   const toggle = (key: string): void => {
     setExpanded((current) => {
@@ -668,11 +663,9 @@ export function TracingPanel({
   const focusTrace = useCallback(
     (traceId: string) => {
       setRefocusNonce((nonce) => nonce + 1);
-      const next = new URLSearchParams(searchParams.toString());
-      next.set("trace", traceId);
-      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+      void setFocusTraceId(traceId);
     },
-    [searchParams, pathname, router],
+    [setFocusTraceId],
   );
 
   // Re-enters the failed task's conversation with `continue: true` on the
@@ -806,7 +799,10 @@ export function TracingPanel({
                 key={spanKey(group.root)}
                 group={group}
                 isSelected={group === selectedGroup}
-                onSelect={() => setSelectedTaskKey(spanKey(group.root))}
+                onSelect={() => {
+                  setSelectedTaskKey(spanKey(group.root));
+                  void setFocusTraceId(group.root.traceId);
+                }}
               />
             ))}
             {groups.length === 0 && (

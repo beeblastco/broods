@@ -57,12 +57,13 @@ export default function HomePage(): React.JSX.Element {
           return;
         }
 
-        const next = new URLSearchParams();
+        // The rest of the link is the view to open (tab, trace, search...);
+        // the page it lands on parses each param and drops what it rejects.
+        const next = new URLSearchParams(params);
+        next.delete("project");
+        next.delete("stage");
         if (home.stageId) next.set("stage", home.stageId);
         const tab = params.get("tab");
-        const trace = params.get("trace");
-        if (tab) next.set("tab", tab);
-        if (trace) next.set("trace", trace);
         const query = next.toString();
         router.replace(
           `/${home.projectId}${tab ? "/dashboard" : ""}${query ? `?${query}` : ""}`,

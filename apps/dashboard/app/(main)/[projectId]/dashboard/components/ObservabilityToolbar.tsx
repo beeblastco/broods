@@ -17,7 +17,10 @@ import {
   type RangePreset,
   type TimeWindow,
 } from "@/app/lib/queryTokens";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+// How long typing pauses before the panel filters and the URL updates.
+const SEARCH_PAUSE_MS = 300;
 
 /** The one point per entry the strip needs. */
 export interface VolumePoint {
@@ -80,21 +83,51 @@ export function ObservabilityToolbar({
   refreshTitle,
   isError,
 }: Props): React.JSX.Element {
+  // The box's own text, so a keystroke re-renders the toolbar, not the panel
+  // and its buffer: the panel gets the text once typing pauses. A search the
+  // parent sets (a trace link clearing it) replaces the text; the echo of one
+  // this box sent does not, so a key typed meanwhile is kept.
+  const [draft, setDraft] = useState(search);
+  const [sent, setSent] = useState(search);
+  const [seen, setSeen] = useState(search);
+  if (search !== seen) {
+    setSeen(search);
+    if (search !== sent) setDraft(search);
+  }
+  useEffect(() => {
+    if (draft === search) return;
+    const timer = setTimeout(() => {
+      setSent(draft);
+      onSearchChange(draft);
+    }, SEARCH_PAUSE_MS);
+
+    return () => clearTimeout(timer);
+  }, [draft, search, onSearchChange]);
   // The clock the strip ends at. It freezes while a selection is on the strip,
   // so the selection does not slide off the left edge as time passes.
   // The clock the strip was frozen at, bound to the window picked on it: a
   // window the parent sets or clears (a trace link) thaws it on its own.
+  // Compared by value, since the parent rebuilds the window from the URL.
   const [frozen, setFrozen] = useState<{
     window: TimeWindow;
     now: number;
   } | null>(null);
   const stripNow =
-    frozen !== null && frozen.window === window ? frozen.now : now;
+    frozen !== null &&
+    frozen.window.from === window?.from &&
+    frozen.window.to === window.to
+      ? frozen.now
+      : now;
   const rangeWindow = useMemo(
     () => ({ from: stripNow - rangeMs(range), to: stripNow }),
     [stripNow, range],
   );
-  const selectWindow = (selection: TimeWindow | null): void => {
+  // Whole ms, the precision the URL keeps, so the frozen window matches it.
+  const selectWindow = (drag: TimeWindow | null): void => {
+    const selection =
+      drag === null
+        ? null
+        : { from: Math.round(drag.from), to: Math.round(drag.to) };
     setFrozen(selection === null ? null : { window: selection, now: stripNow });
     onWindowChange(selection);
   };
@@ -107,8 +140,8 @@ export function ObservabilityToolbar({
     <>
       <Toolbar>
         <SearchInput
-          value={search}
-          onChange={onSearchChange}
+          value={draft}
+          onChange={setDraft}
           fields={searchFields}
           placeholder={searchPlaceholder}
         />
