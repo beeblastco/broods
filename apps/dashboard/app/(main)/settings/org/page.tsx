@@ -9,6 +9,18 @@ import { ApiAccessPanel } from "./components/ApiAccessPanel";
 import { MembersPanel } from "./components/MembersPanel";
 import { OrgDangerPanel } from "./components/OrgDangerPanel";
 import { OrgGeneralPanel } from "./components/OrgGeneralPanel";
+import { OrgPoliciesPanel } from "./components/OrgPoliciesPanel";
+import { PermissionsPanel } from "./components/PermissionsPanel";
+import { RolesPanel } from "./components/RolesPanel";
+
+// The list tabs carry a table and a side panel, so they take the full width.
+const WIDE_TABS = new Set<string>([
+  "members",
+  "roles",
+  "policies",
+  "permissions",
+  "api-access",
+]);
 
 export default function OrgSettingsPage(): React.JSX.Element {
   const org = useQuery(api.org.orgs.getActive, {});
@@ -24,6 +36,12 @@ export default function OrgSettingsPage(): React.JSX.Element {
         return <ApiAccessPanel org={org} />;
       case "members":
         return <MembersPanel org={org} />;
+      case "roles":
+        return <RolesPanel />;
+      case "policies":
+        return <OrgPoliciesPanel />;
+      case "permissions":
+        return <PermissionsPanel />;
       case "danger":
         return <OrgDangerPanel org={org} />;
       default:
@@ -37,7 +55,7 @@ export default function OrgSettingsPage(): React.JSX.Element {
       <div
         className={cn(
           "mx-auto w-full px-6 pt-6 pb-12",
-          tab.id === "api-access" ? "max-w-6xl" : "max-w-2xl",
+          WIDE_TABS.has(tab.id) ? "flex min-h-0 flex-1 flex-col" : "max-w-2xl",
         )}
       >
         {org === undefined ? (

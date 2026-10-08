@@ -53,7 +53,6 @@ export default function SandboxPage(): React.JSX.Element {
     instances === undefined ||
     machines === undefined ||
     snapshots === undefined ||
-    agents === undefined ||
     account === undefined;
 
   return (
@@ -78,12 +77,12 @@ export default function SandboxPage(): React.JSX.Element {
           <SandboxInstancesTable
             instances={instances}
             machines={machines}
-            agents={agents}
+            agents={agents ?? []}
             projectId={projectId}
             observability={observability}
           />
         ) : view === "snapshots" ? (
-          <SandboxSnapshotsTable snapshots={snapshots} />
+          <SandboxSnapshotsTable projectId={projectId} snapshots={snapshots} />
         ) : view === "security" ? (
           <SandboxPolicyTable instances={instances} dimension="security" />
         ) : (

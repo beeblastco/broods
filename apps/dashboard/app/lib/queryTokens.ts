@@ -39,6 +39,7 @@ export interface TimeWindow {
 /**
  * Splits the search box into `field:value` tokens and free words. An unknown
  * field is a free word; a known field with no value yet is dropped while typing.
+ * A value with spaces travels in quotes: `status:"not connected yet"`.
  */
 export function parseQuery<F extends string>(
   input: string,
@@ -46,11 +47,10 @@ export function parseQuery<F extends string>(
 ): Query<F> {
   const parsed: Query<F> = { fields: [], text: "" };
   const words: string[] = [];
-  for (const token of input.trim().toLowerCase().split(/\s+/)) {
-    if (!token) continue;
+  for (const token of splitTokens(input.toLowerCase())) {
     const field = tokenField(token, fields);
     if (field !== null) {
-      const value = token.slice(field.length + 1);
+      const value = unquote(token.slice(field.length + 1));
       if (value) parsed.fields.push({ field: field, value: value });
       continue;
     }
@@ -59,6 +59,21 @@ export function parseQuery<F extends string>(
   parsed.text = words.join(" ");
 
   return parsed;
+}
+
+/** The words of the box, a quoted value kept whole with its quotes. */
+export function splitTokens(input: string): string[] {
+  return input.match(/[^\s"]*"[^"]*"?[^\s"]*|[^\s"]+/g) ?? [];
+}
+
+/** The chip for a field and value, quoted when the value has spaces. */
+export function chipFor(field: string, value: string): string {
+  return /\s/.test(value) ? `${field}:"${value}"` : `${field}:${value}`;
+}
+
+/** The value without the quotes a chip carries. */
+export function unquote(value: string): string {
+  return value.startsWith('"') ? value.slice(1).replace(/"$/, "") : value;
 }
 
 /**
@@ -91,24 +106,20 @@ export function splitQueryChips(
   fields: readonly string[],
 ): { chips: string[]; text: string } {
   const chips: string[] = [];
-  const rest: string[] = [];
-  const parts = input.split(" ");
-  const last = parts.length - 1;
-  parts.forEach((part, index) => {
-    // Extra spaces between chips are whitespace, not text that ends chipping.
-    if (part === "" && rest.length === 0 && index < last) return;
+  const tokens = splitTokens(input);
+  const finished = /\s$/.test(input);
+  let rest = input;
+  for (const [index, token] of tokens.entries()) {
     const isChip =
-      index < last &&
-      tokenField(part.toLowerCase(), fields) !== null &&
-      part.indexOf(":") < part.length - 1;
-    if (isChip && rest.length === 0) {
-      chips.push(part);
-    } else {
-      rest.push(part);
-    }
-  });
+      (index < tokens.length - 1 || finished) &&
+      tokenField(token.toLowerCase(), fields) !== null &&
+      unquote(token.slice(token.indexOf(":") + 1)) !== "";
+    if (!isChip) break;
+    chips.push(token);
+    rest = rest.slice(rest.indexOf(token) + token.length).replace(/^\s+/, "");
+  }
 
-  return { chips: chips, text: rest.join(" ") };
+  return { chips: chips, text: rest };
 }
 
 /**

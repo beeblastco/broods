@@ -13,25 +13,25 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadSort,
+  TIME_WORDS,
 } from "@/app/components/DataTable";
 import { EmptyState } from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
 import { StatusWord } from "@/app/components/StatusDot";
 import { Toolbar } from "@/app/components/Toolbar";
+import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
-import { useRemembered } from "@/app/hooks/useRemembered";
-import { parseQuery } from "@/app/lib/queryTokens";
-import { sortRows, type SortKey, type SortState } from "@/app/lib/tableState";
-import type { Doc } from "@broods/convex/_generated/dataModel";
-import { useMemo, useState } from "react";
+import type { SortKey } from "@/app/lib/tableState";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { useState } from "react";
 import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
 import { formatProvider, relativeTime, SNAPSHOT_TONE } from "./sandboxFormat";
 
 // The `field:value` tokens the search box understands.
-const SNAPSHOT_QUERY_FIELDS = ["provider", "status"] as const;
+const QUERY_FIELDS = ["provider", "status"] as const;
 
 type Snapshot = Doc<"sandboxSnapshots">;
+type Field = (typeof QUERY_FIELDS)[number];
 type Column =
   | "name"
   | "status"
@@ -53,43 +53,25 @@ const SORT_KEY: Record<Column, (snapshot: Snapshot) => SortKey> = {
 };
 
 interface Props {
+  projectId: Id<"projects">;
   snapshots: Snapshot[];
 }
 
-export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
+export function SandboxSnapshotsTable({
+  projectId,
+  snapshots,
+}: Props): React.JSX.Element {
   const now = useNow();
-  const [filter, setFilter] = useRemembered("snapshots.filter", "");
-  const [sort, setSort] = useRemembered<SortState<Column>>("snapshots.sort", {
-    column: "created",
-    dir: "desc",
-  });
   const [selected, setSelected] = useState<Snapshot | null>(null);
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
+  const list = useListState({
+    rows: snapshots,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "created", dir: "desc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
+    remember: `snapshots:${projectId}`,
   });
-
-  const query = useMemo(
-    () => parseQuery(filter, SNAPSHOT_QUERY_FIELDS),
-    [filter],
-  );
-  const shown = useMemo(() => {
-    const matching = snapshots.filter((snapshot) => {
-      const fieldsPass = query.fields.every(({ field, value }) =>
-        field === "provider"
-          ? formatProvider(snapshot.provider).toLowerCase().startsWith(value)
-          : snapshot.status.startsWith(value),
-      );
-      if (!fieldsPass) return false;
-      if (!query.text) return true;
-
-      return `${snapshot.name} ${snapshot.externalImageId} ${snapshot.baseImage}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(matching, SORT_KEY[sort.column], sort.dir);
-  }, [snapshots, query, sort]);
 
   if (snapshots.length === 0) {
     return (
@@ -104,9 +86,9 @@ export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
     <div className="flex min-h-0 flex-1 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
-          fields={SNAPSHOT_QUERY_FIELDS}
+          value={list.query}
+          onChange={list.setQuery}
+          fields={QUERY_FIELDS}
           placeholder="Search snapshots"
         />
       </Toolbar>
@@ -114,23 +96,29 @@ export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
-              <DataTableHead sort={sortFor("status")}>Status</DataTableHead>
-              <DataTableHead sort={sortFor("provider")}>Provider</DataTableHead>
-              <DataTableHead sort={sortFor("baseImage")}>
+              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={list.sortFor("status")}>
+                Status
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("provider")}>
+                Provider
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("baseImage")}>
                 Base image
               </DataTableHead>
-              <DataTableHead align="right" sort={sortFor("pulled")}>
+              <DataTableHead align="right" sort={list.sortFor("pulled")}>
                 Pulled
               </DataTableHead>
-              <DataTableHead sort={sortFor("created")}>Created</DataTableHead>
-              <DataTableHead sort={sortFor("lastUsed")}>
+              <DataTableHead sort={list.sortFor("created", TIME_WORDS)}>
+                Created
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
                 Last used
               </DataTableHead>
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((snapshot) => (
+            {list.shown.map((snapshot) => (
               <DataTableRow
                 key={snapshot._id}
                 selected={selected?._id === snapshot._id}
@@ -161,14 +149,14 @@ export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState title="No snapshots match the current filters." />
         )}
-        <DataTableFooter>
-          {shown.length === snapshots.length
-            ? `${snapshots.length} snapshots`
-            : `${shown.length} of ${snapshots.length} snapshots`}
-        </DataTableFooter>
+        <DataTableFooter
+          shown={list.shown.length}
+          total={snapshots.length}
+          noun="snapshots"
+        />
       </div>
 
       {selected && (
@@ -180,4 +168,18 @@ export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
       )}
     </div>
   );
+}
+
+function matchesField(
+  snapshot: Snapshot,
+  field: Field,
+  value: string,
+): boolean {
+  return field === "provider"
+    ? formatProvider(snapshot.provider).toLowerCase().startsWith(value)
+    : snapshot.status.startsWith(value);
+}
+
+function searchText(snapshot: Snapshot): string {
+  return `${snapshot.name} ${snapshot.externalImageId} ${snapshot.baseImage}`;
 }
