@@ -1,6 +1,7 @@
 "use client";
 
 /** The account row at the sidebar's foot, and the menu it opens upward. */
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import {
   Avatar,
   AvatarFallback,
@@ -50,7 +51,7 @@ export function UserMenu(): React.JSX.Element | null {
   const params = useParams<{ projectId?: string }>();
   const currentUser = useQuery(
     api.user.getCurrent,
-    isAuthenticated ? {} : "skip",
+    useSignedIn() ? {} : "skip",
   );
   // Warm the account/org routes the moment the menu opens so the first click
   // paints instantly instead of stalling on a cold chunk + data fetch.

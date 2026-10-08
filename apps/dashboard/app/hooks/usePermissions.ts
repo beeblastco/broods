@@ -6,18 +6,19 @@
  * use it.
  */
 
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { DashboardPolicyAction } from "@broods/convex/model/policyRules";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 
 export function usePermissions(projectId?: Id<"projects">): {
   can: (action: DashboardPolicyAction) => boolean;
 } {
-  const { isLoading, isAuthenticated } = useConvexAuth();
+  const signedIn = useSignedIn();
   const held = useQuery(
     api.access.viewerPermissions,
-    !isLoading && isAuthenticated ? { projectId: projectId } : "skip",
+    signedIn ? { projectId: projectId } : "skip",
   );
 
   return { can: (action) => held?.includes(action) ?? false };
