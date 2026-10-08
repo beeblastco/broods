@@ -189,7 +189,6 @@ export function MonitoringPanel({
         onWindowChange={setTimeWindow}
         points={points}
         now={now}
-        shown={filtered.length}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
         refreshTitle={error ?? "Refresh logs"}
@@ -270,6 +269,8 @@ export function MonitoringPanel({
           </tbody>
         </table>
         <LoadMore
+          shown={filtered.length}
+          total={points.length}
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}

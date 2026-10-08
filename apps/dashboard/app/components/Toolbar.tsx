@@ -1,14 +1,29 @@
 "use client";
 
+import { FilterItems, type HeadFilter } from "@/app/components/DataTable";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
 import { cn } from "@/app/lib/utils";
-import { RefreshCw } from "lucide-react";
+import { ChevronDown } from "lucide-react";
+
+/** One column the Filter button offers: its label and the same filter its header has. */
+export interface FilterColumn {
+  label: string;
+  filter: HeadFilter;
+}
 
 /**
  * The bar above every list. Slots read left to right: search, facets, range,
- * count and refresh, then the page's one primary action. Pages compose the
- * slots they need and keep the order.
+ * then Filter, Refresh and the page's one primary action. Pages compose the
+ * slots they need and keep the order; the count sits under the table.
  */
 export function Toolbar({
   children,
@@ -29,20 +44,43 @@ export function Toolbar({
   );
 }
 
-/** "128 / 2,310": rows shown of rows held. Sits right before the refresh button. */
-export function ToolbarCount({
-  shown,
-  total,
+/**
+ * The toolbar's way into the header menus: pick a column, then a value. It
+ * writes the same `field:value` chips the headers and typing do.
+ */
+export function FilterButton({
+  columns,
 }: {
-  shown: number;
-  total: number;
+  columns: FilterColumn[];
 }): React.JSX.Element {
+  const active = columns.some((column) => column.filter.active.length > 0);
+
   return (
-    <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">
-      {shown === total
-        ? total.toLocaleString()
-        : `${shown.toLocaleString()} / ${total.toLocaleString()}`}
-    </span>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            size="sm"
+            tone={active ? "default" : "muted"}
+            className="cursor-pointer"
+          />
+        }
+      >
+        Filter
+        <ChevronDown className="size-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {columns.map((column) => (
+          <DropdownMenuSub key={column.filter.field}>
+            <DropdownMenuSubTrigger>{column.label}</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <FilterItems filter={column.filter} label={column.label} />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -64,15 +102,14 @@ export function RefreshButton({
     <Button
       type="button"
       variant="outline"
-      size="icon-sm"
+      size="sm"
       onClick={onRefresh}
       disabled={disabled}
-      aria-label="Refresh"
       title={title}
       tone={isError ? "destructive" : "muted"}
       className="cursor-pointer"
     >
-      <RefreshCw className="size-3.5" />
+      Refresh
     </Button>
   );
 }
