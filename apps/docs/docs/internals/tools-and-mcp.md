@@ -76,6 +76,31 @@ Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agen
 - A `sandbox` row routes calls over the machine socket to the `broods machine --mcp` daemon on the user's computer. When the named sandbox is a persistent `lambda` one, `src/harness/mcp/sandbox.ts` instead reserves its MicroVM and POSTs each JSON-RPC request with the row's `command` to the image's `/mcp` on port 8080, which spawns the stdio server once and keeps it for the VM's lifetime. It reserves on the key `bash` uses (the workspace namespace when a workspace mounts the agent's first sandbox) and reuses this pod's cached endpoint for up to 3 minutes. Before each request it polls the guest's `GET /healthz` until the VM serves, then sends the request once: it is resent only when the connection never opened, because a 502 or 503 after that may be a lost answer to a tool that already ran. The body carries the sandbox's env vars without the `BROODS_*` run identity, and the image restarts the server when they change. A call gets the sandbox's `timeout`, or 120 s capped by the operator's maximum. The guest's answer is refused past 16 MB. Its listings use the remote listing cache, keyed on the row's `updatedAt` and a digest of the sandbox's image, snapshot, `onCreate`, `onResume` and env vars, so every conversation shares them and a sandbox edit refetches. `sandboxMcpTarget` resolves the row for agent runs and for the dashboard explorer alike. The explorer runs the row on an agent's VM of that sandbox when it can, and on a VM of its own (`mcp-explorer`) otherwise; `explorerSandboxTarget` in `src/accounts/mcp-service.ts` holds the order.
 - An image in a tool result reaches the model only when its bytes are base64 that sniffs as PNG, JPEG, GIF or WebP, with a whole header naming at most 8000 pixels a side, and only while the result stays within 8 images and 6 MB together (`withImageLimits` in `tools/utils.ts`). Any other image becomes a text note saying why. `browse` applies the same limit and refuses a screenshot over 6 MB, or one S3 gives no size for, before reading it.
 
+One call to a server on a persistent `lambda` sandbox:
+
+```mermaid
+sequenceDiagram
+  participant M as model
+  participant SB as mcp/sandbox.ts
+  participant E as microvm-executor
+  participant VM as guest image, port 8080
+  participant S as stdio server
+
+  M->>SB: server__tool call
+  SB->>E: postReserved /mcp on the key bash uses
+  E->>E: cached endpoint, else acquire, then onCreate if new and onResume
+  E->>VM: poll GET /healthz until it serves
+  E->>VM: POST /mcp once, with command, env and message
+  alt first call, or env changed
+    VM->>S: spawn command, MCP handshake
+  end
+  VM->>S: JSON-RPC request
+  S-->>VM: result
+  VM-->>E: JSON-RPC reply, burst header
+  E-->>SB: JSON-RPC reply
+  SB-->>M: result, or a tool error
+```
+
 ### Hosted servers
 
 A hosted row with `transport: "hosted"` stores a bundle under the `account-mcp/` prefix of the tool-bundles bucket. `MAX_MCP_BUNDLE_BYTES` caps it at 50 MB, checked by the CLI and again in `packages/convex/aws/bundles.ts`. The CLI bundles the module that calls `defineMcp({ handler })` and imports the build before upload, failing the deploy if the handler is missing or not fetch-style. Bundles over 10 MB, set by `INLINE_MCP_BUNDLE_BYTES`, go through a storage upload URL from `POST /v1/mcp/uploads` instead of the request body.
