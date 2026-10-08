@@ -52,8 +52,9 @@ flowchart LR
   K3 --> RES
   K2 --> RES
   RES --> OC["onCreate once,<br/>onResume on later calls"]
-  OC --> R2[run, or start a background job]
-  R2 --> AS["async_status: status, logs, stop<br/>result delivered to the turn's origin"]
+  OC --> R2[run the command]
+  OC -->|with a workspace| BG[start a background job]
+  BG --> AS["async_status: status, logs, stop<br/>result delivered to the turn's origin"]
 ```
 
 ## Idle and lifetime
@@ -67,7 +68,8 @@ stateDiagram-v2
   Idle --> Running: next call, onResume
   Idle --> Suspended: idleTimeoutSeconds, default 900
   Suspended --> Running: next call or dashboard terminal
-  Running --> Recreated: lambda 8 h cap or maxLifetimeSeconds
+  Running --> Recreated: lambda 8 h cap
+  Idle --> Recreated: next call past maxLifetimeSeconds
   Recreated --> Running: fresh disk, workspace kept
   Suspended --> Released: unused 7 days, or Terminate
   Running --> Released: Terminate in the dashboard

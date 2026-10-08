@@ -113,7 +113,7 @@ The image serves hooks on port 9000 under `/aws/lambda-microvms/runtime/v1/<hook
 | `/suspend`            | before snapshot | `sync(2)`                                          |
 | `/terminate`          | teardown        | unmount and final `sync`                           |
 
-For a workspace run, core resolves the mount with `resolveS3Mount()` and puts `{ workspace: { namespace, root, mount: { bucket, prefix, region, endpoint, env } } }` in the `runHookPayload`. `env` holds one-hour STS credentials scoped to the prefix. The harness's own credentials never enter the VM. A persistent VM outlives that hour, so core pushes fresh credentials to `/workspace/credentials` in the guest every 30 minutes, where mountpoint-s3 re-reads them. After launch core checks the mount for up to 30 s, the `/run` hook's own budget. Stateless runs skip the mount and work in `/tmp`.
+For a workspace run, core resolves the mount with `resolveS3Mount()` and puts `{ workspace: { namespace, root, mount: { bucket, prefix, region, endpoint, env } } }` in the `runHookPayload`. `env` holds one-hour STS credentials scoped to the prefix. The harness's own credentials never enter the VM. A persistent VM outlives that hour, so on a later call to it core pushes fresh credentials to `/workspace/credentials` in the guest, at most every 30 minutes, where mountpoint-s3 re-reads them. Nothing refreshes an idle VM, so its credentials can lapse until the next call. After launch core checks the mount for up to 30 s, the `/run` hook's own budget. Stateless runs skip the mount and work in `/tmp`.
 
 ```mermaid
 sequenceDiagram
@@ -129,7 +129,7 @@ sequenceDiagram
   VM->>S3: mount-s3 the prefix under the workspace root
   E->>VM: check the mount, up to 30 s
   Note over E,VM: a failed check releases the reservation
-  loop on a later acquire, at most every 30 min
+  loop on a later call, at most every 30 min, never while idle
     E->>STS: fresh scoped credentials
     E->>VM: POST /workspace/credentials
   end

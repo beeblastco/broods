@@ -88,7 +88,7 @@ sequenceDiagram
 
   M->>SB: server__tool call
   SB->>E: postReserved /mcp on the key bash uses
-  E->>E: cached endpoint, else acquire, then onResume
+  E->>E: cached endpoint, else acquire, then onCreate if new and onResume
   E->>VM: poll GET /healthz until it serves
   E->>VM: POST /mcp once, with command, env and message
   alt first call, or env changed
@@ -97,7 +97,8 @@ sequenceDiagram
   VM->>S: JSON-RPC request
   S-->>VM: result
   VM-->>E: JSON-RPC reply, burst header
-  E-->>M: result, or a tool error
+  E-->>SB: JSON-RPC reply
+  SB-->>M: result, or a tool error
 ```
 
 ### Hosted servers
