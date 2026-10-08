@@ -12,6 +12,6 @@ Docusaurus site at docs.broods.app. two sidebars in `sidebar.ts`, two audiences.
 ## Gotchas
 
 - new page = add it to `sidebar.ts` too. `onBrokenLinks: "throw"`, so a dead relative link fails the build.
-- build locally with a hoisted install, like `deploy-docs.yaml`: `bun install --ignore-scripts --no-save --linker hoisted`, then `bun run docs:build`. the default isolated linker installs two `@docusaurus/theme-common` copies and every mermaid page dies with `ReactContextError` during SSG.
+- the isolated linker gives a package one copy per distinct peer set. two versions of `@types/react` or `postcss` in `bun.lock` split `@docusaurus/core` and `@docusaurus/theme-common` into two copies, and every mermaid page dies with `ReactContextError` during SSG. root `overrides` pin both to one version; after a bump, `ls node_modules/.bun | grep theme-common` must show one entry.
 - `{param}` inside a mermaid label breaks MDX. write `:param`.
 - style: no em dashes, sentence case headings, plain words. check facts against the code, not the old page.

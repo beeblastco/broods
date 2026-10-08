@@ -411,10 +411,8 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Install dependencies
-        # Hoisted like deploy-docs.yaml, so the Docusaurus theme packages share
-        # one React context.
         if: steps.changed.outputs.docs == 'true'
-        run: bun install --ignore-scripts --frozen-lockfile --linker hoisted
+        run: bun install --ignore-scripts --frozen-lockfile
 
       - name: Build docs
         if: steps.changed.outputs.docs == 'true'
