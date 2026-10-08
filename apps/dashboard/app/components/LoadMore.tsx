@@ -17,8 +17,8 @@ export function LoadMore({
 }: {
   shown: number;
   total: number;
-  /** The rows' plural name: "lines", "tasks". */
-  noun: string;
+  /** The rows' name, singular and plural: `["line", "lines"]`. */
+  noun: [string, string];
   pageSize: number;
   remaining: number;
   onLoad: () => void;

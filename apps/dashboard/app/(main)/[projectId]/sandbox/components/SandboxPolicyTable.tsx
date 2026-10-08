@@ -146,7 +146,7 @@ export function SandboxPolicyTable({
         <DataTableFooter
           shown={list.shown.length}
           total={instances.length}
-          noun="instances"
+          noun={["instance", "instances"]}
         />
       </div>
       <p className="mt-2 text-xs text-muted-foreground">{copy.note}</p>

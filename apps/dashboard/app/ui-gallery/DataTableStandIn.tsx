@@ -127,7 +127,7 @@ export function DataTableStandIn(): React.JSX.Element {
       <DataTableFooter
         shown={list.shown.length}
         total={ROWS.length}
-        noun="jobs"
+        noun={["job", "jobs"]}
       >
         <span data-table-query>{list.query}</span>
       </DataTableFooter>

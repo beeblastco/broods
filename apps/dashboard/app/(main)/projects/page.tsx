@@ -1,23 +1,22 @@
 "use client";
 
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { Folder, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
 export default function ProjectsPage(): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const { isLoading, isAuthenticated } = useConvexAuth();
-  const projects = useQuery(
-    api.project.list,
-    !isLoading && isAuthenticated ? {} : "skip",
-  ) as Doc<"projects">[] | undefined;
+  const projects = useQuery(api.project.list, useSignedIn() ? {} : "skip") as
+    | Doc<"projects">[]
+    | undefined;
   const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
 

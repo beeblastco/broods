@@ -9,13 +9,14 @@ import { ShortcutOverlay } from "@/app/components/ShortcutOverlay";
 import { ShortcutProvider } from "@/app/components/ShortcutProvider";
 import { SidebarInset, SidebarProvider } from "@/app/components/ui/sidebar";
 import { TooltipProvider } from "@/app/components/ui/tooltip";
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import {
   clearOnboardingSecret,
   readOnboardingSecret,
   subscribeOnboardingSecret,
 } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
-import { useAuth } from "@workos-inc/authkit-nextjs/components";
+import { useSession } from "@/app/lib/session";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { notFound, useParams, useRouter } from "next/navigation";
@@ -53,14 +54,12 @@ export function MainShell({
   const { projectId } = useParams<{ projectId?: string }>();
   if (projectId !== undefined && !CONVEX_ID_SHAPE.test(projectId)) notFound();
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const { user } = useSession();
   const router = useRouter();
   const ensureSynced = useAction(api.user.ensureSynced);
   const syncProfile = useMutation(api.user.syncProfile);
-  const currentUser = useQuery(
-    api.user.getCurrent,
-    isAuthenticated ? {} : "skip",
-  );
+  const signedIn = useSignedIn();
+  const currentUser = useQuery(api.user.getCurrent, signedIn ? {} : "skip");
   const profileSynced = useRef(false);
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
   const [syncRetry, setSyncRetry] = useState(0);
@@ -116,19 +115,16 @@ export function MainShell({
   // The reporter is the first child of both fragments, one tree position, so
   // it survives the auth flip instead of registering every observer twice.
   // Mounted before the gates: LCP usually lands while this is still loading.
-  if (isLoading) {
-    return (
+  // Not held for Convex to confirm the token, which costs a round trip; see useSignedIn.
+  if (!signedIn) {
+    return isLoading ? (
       <>
         <PerfReporter />
         <div className="flex h-screen w-screen items-center justify-center bg-background">
           <p className="text-sm text-muted-foreground">Loading...</p>
         </div>
       </>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return null;
+    ) : null;
   }
 
   return (

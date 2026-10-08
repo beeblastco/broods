@@ -16,7 +16,7 @@ import type { PlanTier } from "@/app/lib/pricing";
 import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
-import { useAuth } from "@workos-inc/authkit-nextjs/components";
+import { useSession } from "@/app/lib/session";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -26,7 +26,7 @@ const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
 
 export function AccountPanel(): React.JSX.Element {
   const { theme, setTheme } = useTheme();
-  const { user: authUser } = useAuth();
+  const { user: authUser } = useSession();
 
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);

@@ -1,5 +1,6 @@
 "use client";
 
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -23,13 +24,7 @@ import { Label } from "@/app/components/ui/label";
 import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import {
-  useAction,
-  useConvex,
-  useConvexAuth,
-  useMutation,
-  useQuery,
-} from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -39,8 +34,7 @@ export function OrgSwitcher(): React.JSX.Element {
   const router = useRouter();
   const convex = useConvex();
   const params = useParams<{ projectId?: string }>();
-  const { isLoading, isAuthenticated } = useConvexAuth();
-  const orgQueryArgs = !isLoading && isAuthenticated ? {} : "skip";
+  const orgQueryArgs = useSignedIn() ? {} : "skip";
   const orgs = useQuery(api.org.orgs.list, orgQueryArgs);
   const active = useQuery(api.org.orgs.getActive, orgQueryArgs);
   const setActive = useMutation(api.org.orgs.setActive);
