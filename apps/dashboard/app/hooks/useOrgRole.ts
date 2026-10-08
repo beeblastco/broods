@@ -3,8 +3,9 @@
  * from members; every mutation checks the role again server-side.
  */
 
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { api } from "@broods/convex/_generated/api";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 
 type ActiveAccount = NonNullable<
@@ -18,10 +19,10 @@ export interface OrgRoleState {
 }
 
 export function useOrgRole(): OrgRoleState {
-  const { isLoading, isAuthenticated } = useConvexAuth();
+  const signedIn = useSignedIn();
   const active = useQuery(
     api.org.orgs.getActiveAccount,
-    !isLoading && isAuthenticated ? {} : "skip",
+    signedIn ? {} : "skip",
   );
   const role = active?.role ?? null;
 
