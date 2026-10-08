@@ -31,6 +31,28 @@ export function CanvasNotice({
   );
 }
 
+/**
+ * A quiet status in the notice strip, like "Saved". Use it for news that is
+ * not a problem; problems use {@link CanvasNotice}.
+ */
+export function CanvasPill({
+  children,
+  slot,
+}: {
+  children: React.ReactNode;
+  slot: string;
+}): React.JSX.Element {
+  return (
+    <div
+      aria-live="polite"
+      data-slot={slot}
+      className="pointer-events-auto flex items-center gap-2 rounded-lg border border-border bg-card/80 px-2 py-1 text-xs text-muted-foreground backdrop-blur-md"
+    >
+      {children}
+    </div>
+  );
+}
+
 /** What a notice ends with while the thing it is about is still held. */
 export function CanvasNoticeHint(): React.JSX.Element {
   return <span className="shrink-0 opacity-80">Release to cancel</span>;
