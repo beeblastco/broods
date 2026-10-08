@@ -10,9 +10,9 @@
  * skips `convex deploy` while packages/convex is unchanged.
  *
  * `up --dashboard` also serves the dashboard on this stack. It signs in with the
- * WorkOS app in apps/dashboard/.env.local, which local Convex then trusts, and
- * listens on the port of that file's redirect URI, since WorkOS only redirects
- * to registered ones.
+ * WorkOS app in apps/dashboard/.env.local, which local Convex then trusts, on a
+ * port in the instance's block. That app must allow the redirect URI
+ * http://localhost:*\/auth/callback.
  *
  * `verify` drives the cases in scripts/local-verify/cases through the edge.
  * `up --perf` answers the model in process and traces core's Convex calls, and
@@ -71,6 +71,8 @@ interface InstancePorts {
   convexApi: number;
   convexSite: number;
   core: number;
+  /** `next dev`, when `up --dashboard` serves it. */
+  dashboard: number;
   /** The public port: Traefik, in front of everything else. */
   edge: number;
   /** The WebSocket gateway process, behind Traefik. */
@@ -204,7 +206,9 @@ async function status(): Promise<void> {
   console.log(
     `gateway   ${processState(state.pids.gateway)} (:${ports(state).gateway})`,
   );
-  console.log(`dashboard ${processState(state.pids.dashboard)}`);
+  console.log(
+    `dashboard ${processState(state.pids.dashboard)} (:${ports(state).dashboard})`,
+  );
 
   const health = await probeHttp(
     `http://127.0.0.1:${ports(state).edge}/healthz`,
@@ -235,13 +239,18 @@ async function up(
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
   const dashboardEnv = loadDashboardEnv();
-  const dashboardUrl = withDashboard
-    ? dashboardOrigin(dashboardEnv)
-    : undefined;
+  if (withDashboard && !dashboardEnv.WORKOS_CLIENT_ID) {
+    throw new Error(
+      "--dashboard needs a WorkOS app in apps/dashboard/.env.local (see .env.example)",
+    );
+  }
   if (fresh) {
     await down(true);
   }
   const state = loadOrCreateState();
+  const dashboardUrl = withDashboard
+    ? `http://localhost:${ports(state).dashboard}`
+    : undefined;
   // Traefik needs nothing from the other steps, so a first pull of its image
   // runs alongside them.
   const traefikImage = pullImage(TRAEFIK_IMAGE);
@@ -331,7 +340,10 @@ async function up(
   printPerfBreakdown(perf, totalMs);
   console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
   console.log(`  edge      ${edgeUrl}`);
-  if (dashboardUrl) console.log(`  dashboard ${dashboardUrl}`);
+  if (dashboardUrl) {
+    console.log(`  dashboard ${dashboardUrl}`);
+    console.log(`  e2e       E2E_BASE_URL=${dashboardUrl}`);
+  }
   console.log(
     `  admin     read secrets.adminAccount in ${join(instanceDir(state.instanceId), "state.json")}`,
   );
@@ -766,7 +778,7 @@ function startCore(state: InstanceState): void {
 }
 
 // Mirrors apps/dashboard "dev", run by node as that script is. The stack's URLs
-// override .env.local; next loads the rest of that file itself.
+// and its redirect URI override .env.local; next loads the rest of that file.
 async function startDashboard(
   state: InstanceState,
   url: string,
@@ -778,11 +790,12 @@ async function startDashboard(
   }
   if ((await probeHttp(`${url}/healthz`)) !== null) {
     throw new Error(
-      `${url} is already serving; stop that server, the WorkOS redirect URI pins the dashboard to this port`,
+      `${url} is already serving another app; stop it and run up again`,
     );
   }
 
   const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
+  const redirectUri = `${url}/auth/callback`;
   state.pids.dashboard = spawnDetached({
     args: [
       join(dashboardDir, "node_modules", ".bin", "next"),
@@ -796,6 +809,8 @@ async function startDashboard(
       BROODS_BASE_URL: edgeUrl,
       NEXT_PUBLIC_BROODS_BASE_URL: edgeUrl,
       NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
+      NEXT_PUBLIC_WORKOS_REDIRECT_URI: redirectUri,
+      WORKOS_REDIRECT_URI: redirectUri,
     },
     instanceId: state.instanceId,
     logName: "dashboard",
@@ -1139,18 +1154,6 @@ function allocatePortBase(): number {
   throw new Error("no free port block under ~/.broods-local");
 }
 
-// Where the dashboard listens: the origin of its WorkOS redirect URI.
-function dashboardOrigin(dashboardEnv: NodeJS.Dict<string>): string {
-  const redirect = dashboardEnv.WORKOS_REDIRECT_URI;
-  if (!dashboardEnv.WORKOS_CLIENT_ID || !redirect) {
-    throw new Error(
-      "--dashboard needs a WorkOS app in apps/dashboard/.env.local (WORKOS_CLIENT_ID, WORKOS_REDIRECT_URI; see .env.example)",
-    );
-  }
-
-  return new URL(redirect).origin;
-}
-
 function currentInstanceId(): string {
   const digest = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
   const basename = repoRoot.split("/").filter(Boolean).pop() ?? "broods";
@@ -1217,6 +1220,7 @@ function ports(state: InstanceState): InstancePorts {
     convexApi: base + 2,
     convexSite: base + 3,
     core: base + 1,
+    dashboard: base + 5,
     edge: base,
     gateway: base + 4,
   };
