@@ -11,12 +11,17 @@ export function getSandboxExternalId(
     reservationKey: reservationKey,
   });
 }
-// The reserved sandbox and when it was claimed, in one read, for the executors
-// that enforce `lifecycle.maxLifetimeSeconds` themselves. Null when unreserved.
+// The reserved sandbox, when it was claimed and its idle deadline, in one read,
+// for the executors that enforce `lifecycle.maxLifetimeSeconds` themselves and
+// the MCP explorer. Null when unreserved.
 export function getSandboxReservationRecord(
   provider: SandboxProvider,
   reservationKey: string,
-): Promise<{ externalId: string; claimedAt: number } | null> {
+): Promise<{
+  externalId: string;
+  claimedAt: number;
+  expiresAt: number;
+} | null> {
   return runtime.query("getSandboxReservationRecord", {
     provider: provider,
     reservationKey: reservationKey,

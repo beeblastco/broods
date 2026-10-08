@@ -34,11 +34,13 @@ const RPC_TIMEOUT_MS = 30_000;
 // of the stage runs on that sandbox.
 const MCP_EXPLORER_AGENT_ID = "mcp-explorer";
 
-/** An agent's VM for a sandbox-hosted row, and when its reservation was claimed. */
+/** An agent's VM for a sandbox-hosted row, as the explorer ranks it. */
 interface AgentSandboxCandidate {
-  agent: AgentRecord;
   target: SandboxMcpTarget;
-  claimedAt: number | undefined;
+  /** The agent's `config.mcp` enables this server. */
+  usesServer: boolean;
+  /** When the reservation was claimed; undefined when none is inside its idle deadline. */
+  liveSince: number | undefined;
 }
 
 /** An unsaved row to verify: the minimal record fields a connection needs. */
@@ -111,9 +113,11 @@ export async function handleMcpServiceRpc(
 }
 
 /**
- * The VM `agent` reaches `record` on and whether its reservation is live.
- * Undefined when the agent's config no longer resolves: its own runs fail on
- * that, and the explorer moves on to the next agent.
+ * The VM `agent` reaches `record` on, whether the agent uses that server, and
+ * when its reservation was claimed while it is still inside its idle deadline.
+ * Undefined when the agent's config no longer resolves (its own runs fail on
+ * that), or when the VM is a conversation-isolated workspace's: each
+ * conversation reserves its own there, and the explorer has no conversation.
  */
 async function agentSandboxCandidate(
   accountId: string,
@@ -127,26 +131,36 @@ async function agentSandboxCandidate(
   const target = runtime && sandboxMcpTarget(record, runtime);
   const key = target && sandboxReservationKey(target.reservation);
   if (!target || !key) return undefined;
+  const perConversation = runtime.workspaces.some(
+    (workspace): boolean =>
+      workspace.config.isolation === "conversation" &&
+      workspace.namespace === target.reservation.namespace,
+  );
+  if (perConversation) return undefined;
   const reservation = await getSandboxReservationRecord(
     target.config.provider,
     key,
   );
+  const entry = agent.config.mcp?.[record.serverId];
 
   return {
-    agent: agent,
     target: target,
-    claimedAt: reservation?.claimedAt,
+    usesServer: entry !== undefined && entry.enabled !== false,
+    liveSince:
+      reservation && reservation.expiresAt > Date.now()
+        ? reservation.claimedAt
+        : undefined,
   };
 }
 
 /**
  * Where the explorer reaches a row on a lambda sandbox of the row's stage: an
  * agent's VM, resolved the way that agent's run resolves it, so the explorer
- * never boots a second VM beside the agent's. In order: the stage's agent on
- * that sandbox whose reservation is live (most recently claimed first), else
- * the first agent by id that uses this server, so its next run lands on the VM
- * the explorer started, else a VM of the explorer's own. Undefined for any
- * other row.
+ * never boots a second VM beside the agent's. In order: a live VM of an agent
+ * that uses this server, then any other agent's live VM (newest claim first in
+ * each), else the first agent by id that uses this server, so its next run
+ * lands on the VM the explorer started, else a VM of the explorer's own.
+ * Undefined for any other row.
  */
 async function explorerSandboxTarget(
   accountId: string,
@@ -154,15 +168,17 @@ async function explorerSandboxTarget(
 ): Promise<SandboxMcpTarget | undefined> {
   if (record.transport !== "machine") return undefined;
   const storage = getStorage();
-  const [sandboxes, agents] = await Promise.all([
-    storage.sandboxConfigs.list(accountId),
-    storage.agents.listForStage(accountId, record.projectId, record.stageId),
-  ]);
+  const sandboxes = await storage.sandboxConfigs.list(accountId);
   const host = sandboxes.find(
     (sandbox) =>
       sandbox.name === record.sandbox && sandbox.stageId === record.stageId,
   );
   if (host?.config.provider !== "lambda") return undefined;
+  const agents = await storage.agents.listForStage(
+    accountId,
+    record.projectId,
+    record.stageId,
+  );
   const candidates = (
     await Promise.all(
       agents
@@ -180,16 +196,16 @@ async function explorerSandboxTarget(
   ).filter(
     (candidate): candidate is AgentSandboxCandidate => candidate !== undefined,
   );
+  // A live VM already runs the agent's own servers; one that runs this server
+  // never needs a new slot for it, so it goes first.
   const [live] = candidates
-    .filter((candidate): boolean => candidate.claimedAt !== undefined)
+    .filter((candidate): boolean => candidate.liveSince !== undefined)
     .toSorted(
-      (left, right): number => (right.claimedAt ?? 0) - (left.claimedAt ?? 0),
+      (left, right): number =>
+        Number(right.usesServer) - Number(left.usesServer) ||
+        (right.liveSince ?? 0) - (left.liveSince ?? 0),
     );
-  const user = candidates.find((candidate): boolean => {
-    const entry = candidate.agent.config.mcp?.[record.serverId];
-
-    return entry !== undefined && entry.enabled !== false;
-  });
+  const user = candidates.find((candidate): boolean => candidate.usesServer);
   const chosen = live ?? user;
   if (chosen) return chosen.target;
   const runtime = await resolveAgentRuntime(
