@@ -61,13 +61,19 @@ export function parseQuery<F extends string>(
   return parsed;
 }
 
-/** The window a list filters by: the drag-picked one, else the whole preset up to now. */
+/**
+ * The window a list filters by: the drag-picked one, else everything since
+ * the preset's start. The open end is unbounded so a line that streams in
+ * between clock ticks is never held back by a stale "now".
+ */
 export function effectiveWindow(
   selection: TimeWindow | null,
   preset: RangePreset,
   now: number,
 ): TimeWindow {
-  return selection ?? { from: now - rangeMs(preset), to: now };
+  return (
+    selection ?? { from: now - rangeMs(preset), to: Number.POSITIVE_INFINITY }
+  );
 }
 
 /** The ms the preset reaches back from now. */
@@ -89,6 +95,8 @@ export function splitQueryChips(
   const parts = input.split(" ");
   const last = parts.length - 1;
   parts.forEach((part, index) => {
+    // Extra spaces between chips are whitespace, not text that ends chipping.
+    if (part === "" && rest.length === 0 && index < last) return;
     const isChip =
       index < last &&
       tokenField(part.toLowerCase(), fields) !== null &&
@@ -104,8 +112,10 @@ export function splitQueryChips(
 }
 
 /**
- * Counts timestamps into equal bins across the window, newest bin last.
- * `severity` says which count a timestamp joins besides the total.
+ * Counts timestamps into equal bins across the window, newest bin last. A
+ * point newer than the window's end joins the last bin, so a line that
+ * streamed in after the window was cut still shows. `severity` says which
+ * count a timestamp joins besides the total.
  */
 export function volumeBins(
   points: Array<{ ts: number; severity: "error" | "warn" | "none" }>,
@@ -121,7 +131,7 @@ export function volumeBins(
     warn: 0,
   }));
   for (const point of points) {
-    if (point.ts < window.from || point.ts > window.to) continue;
+    if (point.ts < window.from) continue;
     const bin =
       bins[Math.min(count - 1, Math.floor((point.ts - window.from) / binMs))];
     bin.total += 1;

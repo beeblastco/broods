@@ -21,6 +21,7 @@ import { formatDateTime, formatTime } from "@/app/lib/formatTime";
 import {
   effectiveWindow,
   parseQuery,
+  rangeMs,
   type Query,
   type RangePreset,
   type TimeWindow,
@@ -550,10 +551,18 @@ export function TracingPanel({
       // The trace is in the buffer but a filter is hiding it: clear the filters
       // so it lists, then let the effect re-run and select it. Only a trace
       // absent from the whole buffer is a candidate for a Tempo fetch.
-      if (allGroups.some((group) => hasTrace(group, focusTraceId))) {
+      const hidden = allGroups.find((group) => hasTrace(group, focusTraceId));
+      if (hidden) {
         setFilter("");
         setRange("30d");
-        setTimeWindow(null);
+        // A trace fetched by id can predate the widest preset: open a window
+        // from its start, else the preset alone lists it.
+        const start = hidden.root.startTimeMs;
+        setTimeWindow(
+          start < now - rangeMs("30d")
+            ? { from: start - 1, to: Number.POSITIVE_INFINITY }
+            : null,
+        );
 
         return;
       }
@@ -597,6 +606,7 @@ export function TracingPanel({
     history,
     fetchTrace,
     dropFocusParam,
+    now,
   ]);
 
   // j and k walk the task list. `/` is the toolbar's own table.filter binding.

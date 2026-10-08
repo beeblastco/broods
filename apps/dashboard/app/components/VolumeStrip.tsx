@@ -62,9 +62,13 @@ export function VolumeStrip({
     onSelect(to - from < span / bins.length ? null : { from: from, to: to });
   };
 
+  // A selection may be open-ended or reach past the strip; draw its visible part.
   const shown = drag
     ? { from: Math.min(drag.from, drag.to), to: Math.max(drag.from, drag.to) }
-    : selection;
+    : selection && {
+        from: Math.max(selection.from, window.from),
+        to: Math.min(selection.to, window.to),
+      };
   // Clock times alone read the same at both ends of a multi-day window.
   const formatEdge = span >= DAY_MS ? formatDateTime : formatTime;
   const labelled = shown ?? window;
