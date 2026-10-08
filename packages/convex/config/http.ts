@@ -290,7 +290,14 @@ async function dispatchResourceRoute(
     case "hooks":
       return await handleHookRoute(ctx, req, accountId, actor, route.hookId);
     case "mcp":
-      return await handleMcpRoute(ctx, req, accountId, actor, route.serverId);
+      return await handleMcpRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        role,
+        route.serverId,
+      );
     case "mcpBundleUpload":
       return await handleMcpUploadsRoute(ctx, req, accountId);
     case "workspaceFiles":

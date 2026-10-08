@@ -15,7 +15,8 @@ import { authKit } from "../auth";
 import { accountIdForProject } from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
-import { isPlainObject } from "../model/objects";
+import { isPlainObject, stableJson } from "../model/objects";
+import { roleHoldingPolicy } from "../model/access";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
 import { normalizePolicyDocument } from "../model/policyRules";
 import { agentPoliciesFields, paginationCursorFields } from "../schema";
@@ -352,6 +353,22 @@ export const updateInternal = internalMutation({
       args.document !== undefined
         ? normalizePolicyDocument(args.document)
         : undefined;
+    // An org role's policies sit under the dashboard's access:write ceiling,
+    // which an API key has no member to weigh. Fields sent back unchanged pass.
+    if (
+      (document !== undefined &&
+        stableJson(document) !== stableJson(policy.document)) ||
+      (args.status !== undefined && args.status !== policy.status)
+    ) {
+      const holder = await roleHoldingPolicy(ctx, policy);
+      if (holder) {
+        throw new ClientError(
+          `The role "${holder.name}" holds this policy; change it in the dashboard`,
+          "conflict",
+        );
+      }
+    }
+    if (args.status === "deleted") await assertPolicyUnreferenced(ctx, policy);
     await ctx.db.patch(normalized, {
       ...(args.name !== undefined ? { name: args.name } : {}),
       ...(args.description !== undefined

@@ -2570,6 +2570,11 @@ paths:
     patch:
       tags: [MCP servers]
       summary: Update external MCP server
+      description: >-
+        A role session that changes the server's `url`, `transport`,
+        `sandbox`, `command`, bundle, `runtime` or `oauth` answers 400 when
+        an agent's `config.mcp` entry for it names an account env var the
+        session may not read with `env:read`.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: serverId, in: path, required: true, schema: { type: string } }
@@ -2585,6 +2590,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Mcp"
+        "400":
+          description: Invalid body, or a role repoints a server its agents send env vars the role may not read
         "409":
           { description: A server with this name already exists in the stage }
     delete:
@@ -2825,6 +2832,11 @@ paths:
     patch:
       tags: [Policies]
       summary: Update agent policy
+      description: >-
+        A policy an organization role holds keeps its document and status:
+        changing either answers 409, so change it in the dashboard. Setting
+        `status: "deleted"` answers 409 while an agent or a channel record
+        still lists the policy, as DELETE does.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: policyId, in: path, required: true, schema: { type: string } }
@@ -2840,12 +2852,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentPolicy"
+        "409":
+          description: Held by an organization role, or still referenced when deleting
     delete:
       tags: [Policies]
       summary: Delete agent policy
       description: >-
         Refused with 409 while an agent or a channel record still lists the
-        policy in `policies`. Detach it first. The check reads the agent's saved
+        policy in `policies`, or an organization role holds it. Detach it
+        first. The check reads the agent's saved
         config, so deleting a policy a deployed agent still lists makes that
         agent refuse every action until it is redeployed.
       security: [{ BearerAuth: [] }]
@@ -2854,7 +2869,8 @@ paths:
       responses:
         "200": { description: Deleted }
         "404": { description: Not found }
-        "409": { description: Still referenced by an agent or channel record }
+        "409":
+          { description: Still referenced by an agent, channel record or role }
 
   /v1/roles:
     post:

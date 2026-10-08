@@ -135,6 +135,34 @@ export const getById = internalQuery({
   },
 });
 
+/**
+ * What each agent on the server's stage sets for it under `config.mcp`, read
+ * from the `agentConfigs` mirror, which keeps `${NAME}` refs unresolved.
+ */
+export const agentEntries = internalQuery({
+  args: { accountId: v.id("accounts"), serverId: v.id("mcp") },
+  returns: v.array(v.any()),
+  handler: async (ctx, args): Promise<unknown[]> => {
+    const server = await ctx.db.get(args.serverId);
+    if (!server || server.accountId !== args.accountId) return [];
+    const agents = await ctx.db
+      .query("agentConfigs")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", server.projectId).eq("stageId", server.stageId),
+      )
+      .collect();
+
+    // `extraConfig` is a `v.any()` column, so only the one key read is named.
+    return agents
+      .map(
+        (agent) =>
+          (agent.extraConfig as { mcp?: Record<string, unknown> } | undefined)
+            ?.mcp?.[server._id],
+      )
+      .filter((entry) => entry !== undefined);
+  },
+});
+
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(mcpDoc),

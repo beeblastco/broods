@@ -13,13 +13,27 @@ import { normalizeMcpInput } from "../../model/mcp";
 import { storeMcpBundle } from "../../model/bundles";
 import { uploadQuotaResponse } from "../../model/uploads";
 import type { ProjectStageScope } from "../../model/projectScope";
+import type { RolePrincipal } from "../../model/apiAuthorization";
+import { stableJson } from "../../model/objects";
 import {
+  assertRoleMayReadEnv,
   json,
   jsonError,
   methodNotAllowed,
   collectionPage,
   writeAudit,
 } from "./shared";
+
+/** The fields that decide where a row's agents send their resolved headers and oauth. */
+const MCP_DESTINATION_FIELDS = [
+  "transport",
+  "url",
+  "sandbox",
+  "command",
+  "sha256",
+  "runtime",
+  "oauth",
+] as const;
 
 type McpScope =
   | ({ ok: true } & ProjectStageScope)
@@ -30,6 +44,7 @@ export async function handleMcpRoute(
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
+  role: RolePrincipal | undefined,
   serverId?: string,
 ): Promise<Response> {
   if (!serverId)
@@ -46,7 +61,7 @@ export async function handleMcpRoute(
       : jsonError(404, "MCP server not found");
   }
   if (req.method === "PATCH") {
-    return await patchMcpRoute(ctx, req, accountId, actor, serverId);
+    return await patchMcpRoute(ctx, req, accountId, actor, role, serverId);
   }
   if (req.method === "DELETE") {
     const existing = await ctx.runQuery(internal.account.mcp.getById, {
@@ -178,6 +193,7 @@ async function patchMcpRoute(
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
+  role: RolePrincipal | undefined,
   serverId: string,
 ): Promise<Response> {
   const existing = await ctx.runQuery(internal.account.mcp.getById, {
@@ -188,6 +204,23 @@ async function patchMcpRoute(
   const input = await normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
+  // Agents resolve `${NAME}` in their `config.mcp.<id>` headers and oauth and
+  // send the values wherever this row points, so a role that repoints it must
+  // be able to read every name those agents carry for it.
+  if (
+    role &&
+    MCP_DESTINATION_FIELDS.some(
+      (field) =>
+        input[field] !== undefined &&
+        stableJson(input[field]) !== stableJson(existing[field]),
+    )
+  ) {
+    const entries = await ctx.runQuery(internal.account.mcp.agentEntries, {
+      accountId: accountId,
+      serverId: existing._id,
+    });
+    assertRoleMayReadEnv(role, undefined, { mcp: entries });
+  }
   const storedBundle = await storeMcpBundle(ctx, accountId, input, existing);
   await ctx.runMutation(internal.account.mcp.update, {
     accountId: accountId,
