@@ -2852,7 +2852,8 @@ paths:
       summary: Delete agent policy
       description: >-
         Refused with 409 while an agent or a channel record still lists the
-        policy in `policies`. Detach it first. The check reads the agent's saved
+        policy in `policies`, or an organization role holds it. Detach it
+        first. The check reads the agent's saved
         config, so deleting a policy a deployed agent still lists makes that
         agent refuse every action until it is redeployed.
       security: [{ BearerAuth: [] }]
@@ -2861,7 +2862,8 @@ paths:
       responses:
         "200": { description: Deleted }
         "404": { description: Not found }
-        "409": { description: Still referenced by an agent or channel record }
+        "409":
+          { description: Still referenced by an agent, channel record or role }
 
   /v1/roles:
     post:

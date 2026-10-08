@@ -706,6 +706,11 @@ test("access:write and members:write may not drop a deny by switching it to audi
     body: JSON.stringify({ status: "deleted" }),
   });
   expect(patched.status).toBe(409);
+  const deleted = await t.fetch(`/v1/policies/${prodDeny.policyId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${ACCOUNT_SECRET}` },
+  });
+  expect(deleted.status).toBe(409);
 
   const stored = await t.run(
     async (ctx) => await ctx.db.get(prodDeny.policyId),
