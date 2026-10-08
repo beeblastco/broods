@@ -335,7 +335,10 @@ export function CronDialog({
 }
 
 /** The first user text message, which is the part the dialog lets you edit. */
-function eventsToText(events: Doc<"crons">["events"] | undefined): string {
+/** The user text of the stored events: the prompt the job sends each fire. */
+export function eventsToText(
+  events: Doc<"crons">["events"] | undefined,
+): string {
   if (!Array.isArray(events)) return "";
   for (const message of events) {
     if (message?.role !== "user") continue;

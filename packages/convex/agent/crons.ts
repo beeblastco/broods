@@ -41,6 +41,8 @@ import { ClientError } from "../model/clientError";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CRON_RUN_PAGE_WINDOW = 1000;
+// Runs the scheduler's detail panel lists for one job.
+const DASHBOARD_RUN_LIMIT = 20;
 const PRUNE_BATCH_SIZE = 100;
 
 const cronDoc = v.object({
@@ -313,6 +315,44 @@ export const listForProject = query({
     const crons = await cronsInProject(ctx, args.projectId, accountId);
 
     return crons.map(({ lastRunId: _lastRunId, ...cron }) => cron);
+  },
+});
+
+/**
+ * The newest runs of one cron job for the dashboard's scheduler panel, without
+ * the model result each row carries. A cron outside the project, or a project
+ * the viewer has no role in, reads as no runs.
+ * @param projectId the project the cron's agent belongs to
+ * @param cronId the cron job
+ */
+export const listRunsForProject = query({
+  args: { projectId: v.id("projects"), cronId: v.id("crons") },
+  returns: v.array(cronRunDoc.omit("result")),
+  handler: async (ctx, args): Promise<Omit<Doc<"cronRuns">, "result">[]> => {
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+    const project = await getProjectForRole(ctx, user.id, args.projectId);
+    if (!project) return [];
+    const accountId = await accountIdForProject(ctx, args.projectId);
+    if (!accountId) return [];
+    const cron = await getOwned(ctx, accountId, args.cronId);
+    if (!cron) return [];
+    const inProject = (
+      await cronsInProject(ctx, args.projectId, accountId)
+    ).some((candidate) => candidate._id === cron._id);
+    if (!inProject) return [];
+
+    const runs = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+        q.eq("accountId", accountId).eq("cronId", cron._id),
+      )
+      .order("desc")
+      .take(DASHBOARD_RUN_LIMIT);
+
+    return runs.map(({ result: _result, ...run }) => run);
   },
 });
 

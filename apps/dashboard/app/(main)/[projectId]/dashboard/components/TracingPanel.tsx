@@ -426,10 +426,12 @@ export function TracingPanel({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const focusTraceId = searchParams.get("trace");
+  // A link from elsewhere (a cron run's Traces) seeds the search box once.
+  const seedQuery = searchParams.get("q");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(seedQuery ?? "");
   // The backfill reaches 7 days back, so that preset shows all of it.
   const [range, setRange] = useState<RangePreset>("7d");
   const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
@@ -532,6 +534,13 @@ export function TracingPanel({
     next.delete("trace");
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   }, [searchParams, pathname, router]);
+  // The seed is in the box now; drop the param so a later edit is not re-seeded.
+  useEffect(() => {
+    if (seedQuery === null) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("q");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  }, [seedQuery, searchParams, pathname, router]);
   useEffect(() => {
     if (!focusTraceId) return;
     const focusKey = `${focusTraceId}:${refocusNonce}`;

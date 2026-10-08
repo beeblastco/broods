@@ -1,207 +1,467 @@
 "use client";
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
-import { Badge } from "@/app/components/ui/badge";
+import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
+import { EmptyState } from "@/app/components/EmptyState";
+import { SearchInput } from "@/app/components/SearchInput";
+import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
+import { Toolbar, ToolbarCount } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
+import { Switch } from "@/app/components/ui/switch";
+import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
-import { api } from "@broods/convex/_generated/api";
-import type { Doc } from "@broods/convex/_generated/dataModel";
-import { useMutation } from "convex/react";
-import { Pencil, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { CronDialog } from "./CronDialog";
+import {
+  describeSchedule,
+  nextRunAt,
+  untilLabel,
+} from "@/app/lib/cronSchedule";
 import { toErrorMessage } from "@/app/lib/errors";
+import { formatDateTime } from "@/app/lib/formatTime";
+import { parseQuery } from "@/app/lib/queryTokens";
+import { cn } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import type { FunctionReturnType } from "convex/server";
+import { useMutation, useQuery } from "convex/react";
+import { ExternalLink, Plus } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useMemo, useState } from "react";
+import {
+  dashboardHref,
+  DetailField,
+  relativeTime,
+} from "../../sandbox/components/sandboxFormat";
+import { CronDialog, eventsToText } from "./CronDialog";
+
+// The `field:value` tokens the search box understands.
+const CRON_QUERY_FIELDS = ["agent", "status"] as const;
+
+// Six columns of short text; below this the detail panel would wrap them.
+const CRON_TABLE_MIN_WIDTH = 640;
+
+type Cron = FunctionReturnType<typeof api.agent.crons.listForProject>[number];
+type CronRun = FunctionReturnType<
+  typeof api.agent.crons.listRunsForProject
+>[number];
+type RunStatus = NonNullable<Cron["lastStatus"]>;
+
+// The last run as a word and a dot; never run reads as nothing.
+const RUN_WORD: Record<RunStatus, string> = {
+  started: "running",
+  completed: "ok",
+  failed: "failed",
+};
+
+const RUN_TONE: Record<RunStatus, StatusTone> = {
+  started: "running",
+  completed: "ok",
+  failed: "error",
+};
+
+// What a `status:` token may name: the job's own state, or its last run's.
+const STATUS_WORDS: Record<string, (cron: Cron) => boolean> = {
+  active: (cron) => cron.status === "active",
+  paused: (cron) => cron.status === "paused",
+  running: (cron) => cron.lastStatus === "started",
+  ok: (cron) => cron.lastStatus === "completed",
+  failed: (cron) => cron.lastStatus === "failed",
+};
 
 interface Props {
-  crons: Array<Doc<"crons">>;
+  projectId: Id<"projects">;
+  crons: Cron[];
   agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
+  /** Opens the create dialog; absent when the viewer cannot create. */
+  onCreate?: () => void;
 }
 
-export function CronsTable({ crons, agents }: Props): React.JSX.Element {
+/**
+ * The scheduler: a search bar, the jobs with their next and last run and an
+ * active switch, and a detail panel for the selected job with its prompt and
+ * recent runs.
+ */
+export function CronsTable({
+  projectId,
+  crons,
+  agents,
+  onCreate,
+}: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const remove = useMutation(api.agent.cronsPublic.remove);
-
-  const [editing, setEditing] = useState<Doc<"crons"> | null>(null);
-  const [deleting, setDeleting] = useState<Doc<"crons"> | null>(null);
-  const [pending, setPending] = useState(false);
+  const update = useMutation(api.agent.cronsPublic.update);
+  const now = useNow();
+  const [filter, setFilter] = useState("");
+  const [selectedId, setSelectedId] = useState<Id<"crons"> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const agentNameById = new Map(agents.map((a) => [a._id, a.name]));
+  const agentNameById = useMemo(
+    () => new Map(agents.map((agent) => [agent._id, agent.name])),
+    [agents],
+  );
 
-  async function handleDelete(): Promise<void> {
-    if (!deleting) return;
-    setPending(true);
+  const query = useMemo(() => parseQuery(filter, CRON_QUERY_FIELDS), [filter]);
+  const shown = useMemo(
+    () =>
+      crons.filter((cron) => {
+        const fieldsPass = query.fields.every(({ field, value }) =>
+          field === "agent"
+            ? agentName(agentNameById, cron).toLowerCase().startsWith(value)
+            : (STATUS_WORDS[value]?.(cron) ?? false),
+        );
+        if (!fieldsPass) return false;
+        if (!query.text) return true;
+
+        return `${cron.name} ${cron.description ?? ""}`
+          .toLowerCase()
+          .includes(query.text);
+      }),
+    [crons, query, agentNameById],
+  );
+  const selected = crons.find((cron) => cron._id === selectedId) ?? null;
+
+  const setActive = async (cron: Cron, active: boolean): Promise<void> => {
     setError(null);
     try {
-      await remove({ cronId: deleting._id });
-      setDeleting(null);
+      await update({
+        cronId: cron._id,
+        status: active ? "active" : "paused",
+      });
     } catch (err) {
       setError(toErrorMessage(err));
+    }
+  };
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <Toolbar className="border-b-0 px-0">
+        <SearchInput
+          value={filter}
+          onChange={setFilter}
+          fields={CRON_QUERY_FIELDS}
+          placeholder="Search jobs · agent: status:"
+        />
+        <ToolbarCount shown={shown.length} total={crons.length} />
+        {onCreate && (
+          <Button size="sm" className="cursor-pointer" onClick={onCreate}>
+            <Plus className="size-4" />
+            New cron job
+          </Button>
+        )}
+      </Toolbar>
+      {error && <p className="pb-2 text-xs text-destructive">{error}</p>}
+
+      <DetailSplit
+        tableMinWidth={CRON_TABLE_MIN_WIDTH}
+        detail={
+          selected && (
+            <CronPanel
+              projectId={projectId}
+              cron={selected}
+              agents={agents}
+              agentName={agentName(agentNameById, selected)}
+              now={now}
+              onClose={() => setSelectedId(null)}
+            />
+          )
+        }
+      >
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 text-muted-foreground">
+            <tr className="text-left whitespace-nowrap">
+              <th className="px-3 py-2 font-medium">Name</th>
+              <th className="px-3 py-2 font-medium">Agent</th>
+              <th className="px-3 py-2 font-medium">Schedule</th>
+              <th className="px-3 py-2 font-medium">Next run</th>
+              <th className="px-3 py-2 font-medium">Last run</th>
+              <th className="px-3 py-2 text-right font-medium">Active</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((cron) => {
+              const next = nextRunAt(cron, now);
+
+              return (
+                <tr
+                  key={cron._id}
+                  onClick={() => setSelectedId(cron._id)}
+                  className={cn(
+                    "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
+                    selectedId === cron._id && "bg-accent/30",
+                  )}
+                >
+                  <td className="max-w-64 px-3 py-2">
+                    <div className="truncate font-medium text-foreground">
+                      {cron.name}
+                    </div>
+                    {cron.description && (
+                      <div className="truncate text-muted-foreground">
+                        {cron.description}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                    {agentName(agentNameById, cron)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <div>
+                      {describeSchedule(cron.scheduleExpression, cron.timezone)}
+                    </div>
+                    <div className="font-mono text-2xs text-muted-foreground">
+                      {cron.scheduleExpression}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {next === null ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      <>
+                        <div>{untilLabel(next, now)}</div>
+                        <div className="text-2xs text-muted-foreground">
+                          {formatDateTime(next)}
+                        </div>
+                      </>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {cron.lastStatus ? (
+                      <>
+                        <span className="inline-flex items-center gap-1.5">
+                          <StatusDot tone={RUN_TONE[cron.lastStatus]} />
+                          {RUN_WORD[cron.lastStatus]}
+                        </span>
+                        <div className="text-2xs text-muted-foreground">
+                          {relativeTime(cron.lastInvokedAt, now)}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">never</span>
+                    )}
+                  </td>
+                  <td
+                    className="px-3 py-2 text-right"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <Switch
+                      checked={cron.status === "active"}
+                      disabled={!canWrite}
+                      aria-label={`${cron.name} active`}
+                      onCheckedChange={(checked) => setActive(cron, checked)}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {shown.length === 0 && (
+          <EmptyState title="No jobs match the current filters." />
+        )}
+      </DetailSplit>
+    </div>
+  );
+}
+
+/** The selected job: its fields, prompt and newest runs, with edit and delete. */
+function CronPanel({
+  projectId,
+  cron,
+  agents,
+  agentName,
+  now,
+  onClose,
+}: {
+  projectId: Id<"projects">;
+  cron: Cron;
+  agents: Props["agents"];
+  agentName: string;
+  now: number;
+  onClose: () => void;
+}): React.JSX.Element {
+  const { canWrite } = useOrgRole();
+  const remove = useMutation(api.agent.cronsPublic.remove);
+  const runs = useQuery(api.agent.crons.listRunsForProject, {
+    projectId: projectId,
+    cronId: cron._id,
+  });
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [pending, setPending] = useState(false);
+  const next = nextRunAt(cron, now);
+
+  async function handleDelete(): Promise<void> {
+    setPending(true);
+    try {
+      await remove({ cronId: cron._id });
+      onClose();
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <>
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/40 text-xs text-muted-foreground">
-            <tr>
-              <th className="px-4 py-2 text-left font-medium">Name</th>
-              <th className="px-4 py-2 text-left font-medium">Agent</th>
-              <th className="px-4 py-2 text-left font-medium">Schedule</th>
-              <th className="px-4 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-left font-medium">Last run</th>
-              <th className="px-4 py-2 text-right font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {crons.map((job) => (
-              <tr key={job._id} className="border-t border-border">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-foreground">{job.name}</div>
-                  {job.description && (
-                    <div className="text-xs text-muted-foreground">
-                      {job.description}
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-xs">
-                  {agentNameById.get(job.agentId) ?? (
-                    <span className="text-muted-foreground">(unknown)</span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5">
-                  <code className="font-mono text-xs">
-                    {job.scheduleExpression}
-                  </code>
-                  {job.timezone && (
-                    <div className="text-xs text-muted-foreground">
-                      {job.timezone}
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={
-                        job.status === "active" ? "default" : "secondary"
-                      }
-                      className="text-xs"
-                    >
-                      {job.status}
-                    </Badge>
-                    {statusBadge(job.lastStatus)}
-                  </div>
-                  {job.lastError && (
-                    <div
-                      title={job.lastError}
-                      className="mt-1 max-w-xs truncate text-xs text-destructive"
-                    >
-                      {job.lastError}
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {relativeTime(job.lastInvokedAt)}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  {canWrite && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Edit ${job.name}`}
-                        tone="muted"
-                        className="cursor-pointer"
-                        onClick={() => setEditing(job)}
-                      >
-                        <Pencil className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Delete ${job.name}`}
-                        tone="muted-destructive"
-                        className="cursor-pointer"
-                        onClick={() => {
-                          setError(null);
-                          setDeleting(job);
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <DetailPanel
+      title={cron.name}
+      meta={
+        canWrite && (
+          <div className="mt-1 flex gap-1">
+            <Button
+              variant="outline"
+              size="xs"
+              className="cursor-pointer"
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              tone="muted-destructive"
+              className="cursor-pointer"
+              onClick={() => setDeleting(true)}
+            >
+              Delete
+            </Button>
+          </div>
+        )
+      }
+      onClose={onClose}
+    >
+      <div className="rounded-md border border-border px-3">
+        <DetailField
+          label="Status"
+          value={
+            <span className="inline-flex items-center gap-1.5">
+              <StatusDot tone={cron.status === "active" ? "ok" : "ended"} />
+              {cron.status === "active" ? "Active" : "Paused"}
+            </span>
+          }
+        />
+        <DetailField label="Agent" value={agentName} />
+        <DetailField
+          label="Schedule"
+          value={describeSchedule(cron.scheduleExpression, cron.timezone)}
+        />
+        <DetailField
+          label="Expression"
+          value={<span className="font-mono">{cron.scheduleExpression}</span>}
+        />
+        {cron.timezone && (
+          <DetailField label="Timezone" value={cron.timezone} />
+        )}
+        <DetailField
+          label="Next run"
+          value={
+            next === null
+              ? "—"
+              : `${formatDateTime(next)} (${untilLabel(next, now)})`
+          }
+        />
+        {cron.conversationKey && (
+          <DetailField
+            label="Conversation"
+            value={<span className="font-mono">{cron.conversationKey}</span>}
+          />
+        )}
       </div>
+
+      <h4 className="mt-4 mb-1 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+        Prompt
+      </h4>
+      <p className="text-xs whitespace-pre-wrap text-foreground">
+        {eventsToText(cron.events) || "—"}
+      </p>
+
+      <h4 className="mt-4 mb-1 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+        Runs
+      </h4>
+      {runs === undefined ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : runs.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No runs yet.</p>
+      ) : (
+        <ul className="divide-y divide-border/40">
+          {runs.map((run) => (
+            <RunRow key={run._id} projectId={projectId} run={run} />
+          ))}
+        </ul>
+      )}
 
       {editing && (
         <CronDialog
           mode="edit"
-          cron={editing}
+          cron={cron}
           agents={agents}
-          onClose={() => setEditing(null)}
+          onClose={() => setEditing(false)}
         />
       )}
-
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-
       {deleting && (
         <DeleteConfirmDialog
-          open={deleting !== null}
-          onOpenChange={(open) => {
-            if (!open) setDeleting(null);
-          }}
-          resourceName={deleting.name}
+          open
+          onOpenChange={(open) => !open && setDeleting(false)}
+          resourceName={cron.name}
           resourceType="cron job"
           critical={false}
           onConfirm={handleDelete}
           isDeleting={pending}
         />
       )}
-    </>
+    </DetailPanel>
   );
 }
 
-function relativeTime(ts: number | undefined): string {
-  if (!ts) return "—";
-  const diff = Date.now() - ts;
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-
-  return `${days}d ago`;
-}
-
-function statusBadge(status: Doc<"crons">["lastStatus"]): React.JSX.Element {
-  if (!status)
-    return (
-      <Badge variant="secondary" className="text-xs">
-        never run
-      </Badge>
-    );
-  if (status === "completed")
-    return <Badge className="text-xs">completed</Badge>;
-  if (status === "started")
-    return (
-      <Badge variant="secondary" className="text-xs">
-        running
-      </Badge>
-    );
+/** One run: when, how long, why it failed, and a link to its traces. */
+function RunRow({
+  projectId,
+  run,
+}: {
+  projectId: Id<"projects">;
+  run: CronRun;
+}): React.JSX.Element {
+  const searchParams = useSearchParams();
+  const duration =
+    run.completedAt === undefined
+      ? null
+      : `${Math.max(1, Math.round((run.completedAt - run.startedAt) / 1000))}s`;
 
   return (
-    <Badge variant="destructive" className="text-xs">
-      failed
-    </Badge>
+    <li className="flex items-start gap-2 py-1.5 text-xs">
+      <StatusDot tone={RUN_TONE[run.status]} className="mt-1.5" />
+      <div className="min-w-0 flex-1">
+        <div>
+          {formatDateTime(run.startedAt)}
+          {duration && (
+            <span className="text-muted-foreground"> · {duration}</span>
+          )}
+        </div>
+        {run.error && (
+          <div className="truncate text-destructive" title={run.error}>
+            {run.error}
+          </div>
+        )}
+      </div>
+      <Button
+        nativeButton={false}
+        render={
+          <Link
+            href={dashboardHref(projectId, searchParams.get("stage"), {
+              tab: "tracing",
+              q: `conv:${run.conversationKey}`,
+            })}
+          />
+        }
+        variant="ghost"
+        size="xs"
+        tone="muted"
+        className="cursor-pointer"
+      >
+        Traces
+        <ExternalLink className="size-3" />
+      </Button>
+    </li>
   );
+}
+
+/** The name of the agent a job runs; a deleted agent reads as unknown. */
+function agentName(names: Map<Id<"agents">, string>, cron: Cron): string {
+  return names.get(cron.agentId) ?? "(unknown)";
 }
