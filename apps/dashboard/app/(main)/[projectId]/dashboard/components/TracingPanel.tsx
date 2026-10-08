@@ -107,8 +107,8 @@ const WAIT_BAR: Partial<Record<SpanStatus, string>> = {
 // Collapsible payload sections. Each row shows the count that describes it, so
 // Details never repeats those counts. The per-tool `tool.output` on each child
 // span is the authoritative "what the model saw", so the step-level
-// model.tool_results is left out as a confusing dupe. `open` sections start
-// expanded: what went into and came out of each model step and tool call.
+// model.tool_results is left out as a confusing dupe. What the span produced
+// comes first, then what went into the model. `open` sections start expanded.
 const PAYLOAD_SECTIONS: ReadonlyArray<{
   charsKey?: string;
   countKey?: string;
@@ -117,6 +117,20 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
   label: string;
   open?: boolean;
 }> = [
+  { key: "model.reasoning", label: "Reasoning" },
+  { key: "model.response", label: "Response", open: true },
+  { key: "model.tool_calls", label: "Tool calls" },
+  { key: "tool.input", label: "Tool input", open: true },
+  { key: "tool.output", label: "Tool output", open: true },
+  // What a run waiting on the person asked them, on its wait row.
+  { key: "task.questions", label: "Questions" },
+  {
+    key: "model.input",
+    label: "Model input",
+    countKey: "agent.message_count",
+    countLabel: "messages",
+    open: true,
+  },
   {
     key: "model.system",
     label: "System prompt",
@@ -132,20 +146,6 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
     countKey: "agent.tool_count",
     countLabel: "tools",
   },
-  {
-    key: "model.input",
-    label: "Model input",
-    countKey: "agent.message_count",
-    countLabel: "messages",
-    open: true,
-  },
-  { key: "model.reasoning", label: "Reasoning" },
-  { key: "model.response", label: "Response", open: true },
-  { key: "model.tool_calls", label: "Tool calls" },
-  { key: "tool.input", label: "Tool input", open: true },
-  { key: "tool.output", label: "Tool output", open: true },
-  // What a run waiting on the person asked them, on its wait row.
-  { key: "task.questions", label: "Questions" },
 ];
 
 // Context prepare loads, each timed on its own. They overlap, so they do not

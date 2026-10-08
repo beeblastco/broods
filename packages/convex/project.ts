@@ -10,7 +10,8 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { authKit } from "./auth";
+import { readyStageDeployment } from "./agent/deployments";
+import { authKit, type AuthUser } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
 import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
@@ -172,7 +173,7 @@ export const create = mutation({
       updatedAt: now,
     });
 
-    await ctx.db.insert("stages", {
+    const stageId = await ctx.db.insert("stages", {
       authId: authUser.id,
       projectId: projectId,
       name: "Development",
@@ -180,6 +181,7 @@ export const create = mutation({
       isDefault: true,
       updatedAt: now,
     });
+    await readyStageDeployment(ctx, authUser, projectId, stageId);
 
     return projectId;
   },
@@ -244,7 +246,7 @@ export const openHome = mutation({
 
     return {
       ...org,
-      projectId: await defaultProjectId(ctx, user.id, org.orgId, projects),
+      projectId: await defaultProjectId(ctx, user, org.orgId, projects),
       stageId: null,
     };
   },
@@ -369,12 +371,13 @@ async function deepLinkTarget(
 
 /**
  * The newest project. An org that never had one gets a random project with a
- * Development stage on an admin's first visit and is marked onboarded; after
- * that, an org with no projects opens the project gallery (null).
+ * Development stage and its runtime key on an admin's first visit and is
+ * marked onboarded; after that, an org with no projects opens the project
+ * gallery (null).
  */
 async function defaultProjectId(
   ctx: MutationCtx,
-  authId: string,
+  user: AuthUser,
   orgId: Id<"orgs">,
   projects: Doc<"projects">[],
 ): Promise<Id<"projects"> | null> {
@@ -391,26 +394,27 @@ async function defaultProjectId(
   }
   if (org?.onboardedAt) return null;
   // A member never creates the first project; an admin will.
-  if (!(await callerCanWriteOrg(ctx, authId, orgId))) return null;
+  if (!(await callerCanWriteOrg(ctx, user.id, orgId))) return null;
 
   const now = Date.now();
   const name = randomProjectName();
   const projectId = await ctx.db.insert("projects", {
-    authId: authId,
+    authId: user.id,
     orgId: orgId,
     name: name,
     description: undefined,
     slug: await uniqueProjectSlug(ctx, orgId, name),
     updatedAt: now,
   });
-  await ctx.db.insert("stages", {
-    authId: authId,
+  const stageId = await ctx.db.insert("stages", {
+    authId: user.id,
     projectId: projectId,
     name: "Development",
     kind: "development",
     isDefault: true,
     updatedAt: now,
   });
+  await readyStageDeployment(ctx, user, projectId, stageId);
   await ctx.db.patch(orgId, { onboardedAt: now });
 
   return projectId;
@@ -461,9 +465,7 @@ function randomProjectName(): string {
   return `${adj}-${noun}`;
 }
 
-async function requireAuth(
-  ctx: Ctx,
-): Promise<NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>> {
+async function requireAuth(ctx: Ctx): Promise<AuthUser> {
   const authUser = await authKit.getAuthUser(ctx);
   if (!authUser) throw new Error("User not found or not authenticated");
 
