@@ -99,6 +99,14 @@ describe("gmail channel adapter", () => {
         "Forged",
         "mx.google.com; spf=fail; dmarc=fail (p=NONE) header.from=example.com",
       ),
+      // A verdict a sender wrote under a host that only starts like Gmail's.
+      mail(
+        "m4",
+        "t4",
+        "Alice <alice@example.com>",
+        "Spoofed verdict",
+        "mx.google.com.evil.example; dmarc=pass (p=NONE) header.from=example.com",
+      ),
       // Passes, but for a domain that only starts like hers.
       mail(
         "m3",

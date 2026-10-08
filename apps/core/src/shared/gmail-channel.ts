@@ -313,7 +313,7 @@ function isAuthenticatedSender(email: GmailEmail, sender: string): boolean {
   const verdict = email.email.headers.find(
     (header) =>
       header.key === "authentication-results" &&
-      header.value.trimStart().startsWith(GMAIL_AUTHSERV_ID),
+      header.value.trim().split(/[\s;]/, 1)[0] === GMAIL_AUTHSERV_ID,
   )?.value;
   if (!verdict) return false;
   const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
