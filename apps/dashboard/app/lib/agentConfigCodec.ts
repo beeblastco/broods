@@ -96,12 +96,8 @@ export function readAgentBranch<T extends Record<string, unknown>>(
  * Policy ids attached to an agent. Attachment is a flat list: whether a policy
  * blocks or only records rides on the policy document, not on the agent.
  */
-export function readAgentPolicies(
-  agentConfig: FlatAgentConfig | null | undefined,
-): string[] {
-  if (!agentConfig) return [];
-  const nested = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
-  const policies = nested.policies;
+export function readAgentPolicies(extraConfig: unknown): string[] {
+  const policies = isPlainObject(extraConfig) ? extraConfig.policies : null;
 
   return Array.isArray(policies)
     ? policies.filter((entry): entry is string => typeof entry === "string")

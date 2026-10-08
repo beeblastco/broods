@@ -14,8 +14,6 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadFilter,
-  type HeadSort,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { EmptyState } from "@/app/components/EmptyState";
@@ -39,89 +37,56 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { Who } from "@/app/components/Who";
+import { PLATFORM, Who } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
-import { toErrorMessage } from "@/app/lib/errors";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
-import { parseQuery } from "@/app/lib/queryTokens";
-import {
-  clearField,
-  sortRows,
-  toggleToken,
-  tokenValues,
-  type SortKey,
-  type SortState,
-} from "@/app/lib/tableState";
+import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 type Permission = FunctionReturnType<typeof api.access.listPermissions>[number];
+type Custom = Extract<Permission, { kind: "custom" }>;
 type Column = "name" | "description" | "resource" | "kind" | "createdAt";
+type Field = (typeof QUERY_FIELDS)[number];
 
 const QUERY_FIELDS = ["resource", "kind"] as const;
 
 const RESOURCES = ["tool", "agent", "stage", "key", "custom"] as const;
+
+const NO_ROWS: Permission[] = [];
 
 const SORT_KEY: Record<Column, (row: Permission) => SortKey> = {
   name: (row) => row.name,
   description: (row) => row.description,
   resource: (row) => row.resource,
   kind: (row) => row.kind,
-  createdAt: (row) => row.createdAt ?? null,
+  createdAt: (row) => (row.kind === "custom" ? row.createdAt : null),
 };
 
 export function PermissionsPanel(): React.JSX.Element {
   const { can } = usePermissions();
   const canChange = can("access:write");
   const permissions = useQuery(api.access.listPermissions, {});
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<SortState<Column>>({
-    column: "name",
-    dir: "asc",
-  });
   const [creating, setCreating] = useState(false);
-  const [removing, setRemoving] = useState<Permission | null>(null);
-
-  const query = useMemo(() => parseQuery(filter, QUERY_FIELDS), [filter]);
-  const shown = useMemo(() => {
-    const matching = (permissions ?? []).filter((row) => {
-      const fieldsPass = query.fields.every(({ field, value }) =>
-        field === "resource"
-          ? row.resource.toLowerCase() === value
-          : row.kind === value,
-      );
-      if (!fieldsPass) return false;
-      if (!query.text) return true;
-
-      return `${row.name} ${row.description}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(matching, SORT_KEY[sort.column], sort.dir);
-  }, [permissions, query, sort]);
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
-  });
-  const filterFor = (
-    field: (typeof QUERY_FIELDS)[number],
-    values: string[],
-  ): HeadFilter => ({
-    field: field,
-    values: values.map((value) => ({ value: value, label: value })),
-    active: tokenValues(filter, field),
-    onToggle: (value) => setFilter(toggleToken(filter, field, value)),
-    onClear: () => setFilter(clearField(filter, field)),
+  const [removing, setRemoving] = useState<Custom | null>(null);
+  const list = useListState({
+    rows: permissions ?? NO_ROWS,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "name", dir: "asc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
   });
   const filters = {
-    resource: filterFor("resource", [
+    resource: list.filterFor("resource", [
       ...new Set((permissions ?? []).map((row) => row.resource)),
     ]),
-    kind: filterFor("kind", ["built-in", "custom"]),
+    kind: list.filterFor("kind", ["built-in", "custom"]),
   };
 
   if (permissions === undefined) {
@@ -133,8 +98,8 @@ export function PermissionsPanel(): React.JSX.Element {
     <div className="flex h-full min-h-0 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
+          value={list.query}
+          onChange={list.setQuery}
           fields={QUERY_FIELDS}
           placeholder="Search permissions"
         />
@@ -159,20 +124,22 @@ export function PermissionsPanel(): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Permission</DataTableHead>
-              <DataTableHead sort={sortFor("description")}>
+              <DataTableHead sort={list.sortFor("name")}>
+                Permission
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
               <DataTableHead
-                sort={sortFor("resource")}
+                sort={list.sortFor("resource")}
                 filter={filters.resource}
               >
                 Resource
               </DataTableHead>
-              <DataTableHead sort={sortFor("kind")} filter={filters.kind}>
+              <DataTableHead sort={list.sortFor("kind")} filter={filters.kind}>
                 Kind
               </DataTableHead>
-              <DataTableHead sort={sortFor("createdAt")}>
+              <DataTableHead sort={list.sortFor("createdAt")}>
                 Created at
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>
@@ -180,7 +147,7 @@ export function PermissionsPanel(): React.JSX.Element {
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((row) => (
+            {list.shown.map((row) => (
               <DataTableRow key={row.name}>
                 <DataTableCell className="font-mono">{row.name}</DataTableCell>
                 <DataTableCell muted className="max-w-72 truncate">
@@ -189,15 +156,11 @@ export function PermissionsPanel(): React.JSX.Element {
                 <DataTableCell>{row.resource}</DataTableCell>
                 <DataTableCell muted>{row.kind}</DataTableCell>
                 <DataTableCell muted>
-                  {row.createdAt ? formatDate(row.createdAt) : "—"}
+                  {row.kind === "custom" ? formatDate(row.createdAt) : "—"}
                 </DataTableCell>
                 <DataTableCell>
                   <Who
-                    actor={
-                      row.createdBy
-                        ? { kind: "person", ...row.createdBy }
-                        : { kind: "platform" }
-                    }
+                    actor={(row.kind === "custom" && row.createdBy) || PLATFORM}
                   />
                 </DataTableCell>
                 <DataTableCell align="right">
@@ -217,18 +180,21 @@ export function PermissionsPanel(): React.JSX.Element {
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState title="No permissions match the current filters." />
         )}
-        <DataTableFooter>
-          {permissions.length} permissions, {customCount} custom
+        <DataTableFooter
+          shown={list.shown.length}
+          total={permissions.length}
+          noun="permissions"
+        >
+          {`, ${customCount} custom`}
         </DataTableFooter>
       </div>
       {creating && <NewPermissionDialog onClose={() => setCreating(false)} />}
-      {removing && removing._id && (
-        <RemovePermission
-          id={removing._id}
-          name={removing.name}
+      {removing && (
+        <RemovePermissionDialog
+          permission={removing}
           onClose={() => setRemoving(null)}
         />
       )}
@@ -245,24 +211,17 @@ function NewPermissionDialog({
   const [name, setName] = useState("");
   const [resource, setResource] = useState<string>("tool");
   const [description, setDescription] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
 
   async function submit(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      await create({
+    const done = await run(() =>
+      create({
         name: name.trim(),
         resource: resource,
         description: description.trim() || undefined,
-      });
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+      }),
+    );
+    if (done) onClose();
   }
 
   return (
@@ -356,44 +315,46 @@ function NewPermissionDialog({
   );
 }
 
-function RemovePermission({
-  id,
-  name,
+/** The typed-confirm delete; the mutation's rejection shows under its input. */
+function RemovePermissionDialog({
+  permission,
   onClose,
 }: {
-  id: NonNullable<Permission["_id"]>;
-  name: string;
+  permission: Custom;
   onClose: () => void;
 }): React.JSX.Element {
   const remove = useMutation(api.access.removePermission);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function confirm(): Promise<void> {
     setPending(true);
-    setError(null);
     try {
-      await remove({ permissionId: id });
+      await remove({ permissionId: permission._id });
       onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <>
-      <DeleteConfirmDialog
-        open
-        onOpenChange={(open) => !open && onClose()}
-        resourceName={name}
-        resourceType="permission"
-        critical={false}
-        onConfirm={confirm}
-        isDeleting={pending}
-      />
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </>
+    <DeleteConfirmDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      resourceName={permission.name}
+      resourceType="permission"
+      critical={false}
+      onConfirm={confirm}
+      isDeleting={pending}
+    />
   );
+}
+
+function matchesField(row: Permission, field: Field, value: string): boolean {
+  return field === "resource"
+    ? row.resource.toLowerCase() === value
+    : row.kind === value;
+}
+
+function searchText(row: Permission): string {
+  return `${row.name} ${row.description}`;
 }

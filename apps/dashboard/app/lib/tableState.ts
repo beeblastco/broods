@@ -4,6 +4,8 @@
  * change the same string; sorting is one column and a direction.
  */
 
+import { parseQuery } from "./queryTokens";
+
 export type SortDir = "asc" | "desc";
 
 export interface SortState<C extends string> {
@@ -39,13 +41,7 @@ export function clearField(query: string, field: string): string {
 
 /** The lowercased values the query names for `field`. */
 export function tokenValues(query: string, field: string): string[] {
-  const prefix = `${field}:`;
-
-  return query
-    .toLowerCase()
-    .split(" ")
-    .filter((word) => word.startsWith(prefix) && word.length > prefix.length)
-    .map((word) => word.slice(prefix.length));
+  return parseQuery(query, [field]).fields.map((token) => token.value);
 }
 
 /**

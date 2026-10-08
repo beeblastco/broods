@@ -3,27 +3,26 @@
  * API access, and a project's runtime keys (one per stage, minted with it)
  * and API keys (made by people, for deploys and integrations) on Project ›
  * Settings › Keys. One read model over the three stores so every list reads
- * the same: who made the key, when, and when it last authenticated. Admins
- * only; a member gets null and the page shows a lock.
+ * the same: who made the key, when, and when it last authenticated. Needs
+ * `keys:read` where the key lives; otherwise null and the page shows a lock.
  */
 
 import { v, type Infer } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { hasDashboardPermission } from "./model/access";
+import {
+  hasDashboardPermission,
+  memberAccess,
+  policiesAllow,
+  tierPermissions,
+} from "./model/access";
+import { actorOf, actorsOf, actorValidator } from "./model/actor";
+import { orgIdOf, userByAuthId } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { getActiveCaller } from "./org/orgs";
-import { listStagesForProject } from "./stage";
-
-/** Who made or rotated a key, resolved to a name and avatar for the list. */
-const actorValidator = v.object({
-  name: v.string(),
-  avatarUrl: v.optional(v.string()),
-});
 
 const orgKeyValidator = v.object({
-  kind: v.literal("account"),
   name: v.string(),
   description: v.string(),
   keyHint: v.optional(v.string()),
@@ -37,10 +36,8 @@ const runtimeKeyValidator = v.object({
   keyHint: v.string(),
   lastUsedAt: v.optional(v.number()),
   rotatedAt: v.optional(v.number()),
-  /** The member who minted or rotated it; absent when the CLI did. */
+  /** The member who minted or rotated it, or the CLI's name for them. */
   rotatedBy: v.optional(actorValidator),
-  /** The CLI's display name for the minter, when no member row is known. */
-  rotatedByName: v.optional(v.string()),
 });
 
 const apiKeyValidator = v.object({
@@ -60,17 +57,17 @@ const projectKeysValidator = v.object({
   api: v.array(apiKeyValidator),
 });
 
-export type OrgKey = Infer<typeof orgKeyValidator>;
-export type ProjectKeys = Infer<typeof projectKeysValidator>;
+type OrgKey = Infer<typeof orgKeyValidator>;
+type ProjectKeys = Infer<typeof projectKeysValidator>;
 
-/** The org's own keys. Today that is the account key; null for a member. */
+/** The org's own keys. Today that is the account key; null without `keys:read`. */
 export const listForOrg = query({
   args: {},
   returns: v.union(v.array(orgKeyValidator), v.null()),
   handler: async (ctx): Promise<OrgKey[] | null> => {
     const caller = await getActiveCaller(ctx);
     if (!caller) return null;
-    const orgId = ctx.db.normalizeId("orgs", caller.account.orgId);
+    const orgId = orgIdOf(ctx, caller.account);
     if (
       !orgId ||
       !(await hasDashboardPermission(ctx, orgId, caller.user, "keys:read"))
@@ -81,7 +78,6 @@ export const listForOrg = query({
 
     return [
       {
-        kind: "account",
         name: "Account key",
         description: "The account API: projects, stages, members",
         keyHint: account.secretHint,
@@ -92,39 +88,49 @@ export const listForOrg = query({
   },
 });
 
-/** A project's runtime keys per stage and its API keys; null for a member. */
+/** A project's runtime keys per stage and its API keys, each stage the viewer may read; null without `keys:read` anywhere in it. */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.union(projectKeysValidator, v.null()),
   handler: async (ctx, args): Promise<ProjectKeys | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) return null;
-    const project = await getProjectForRole(ctx, authUser.id, args.projectId);
-    if (!project) return null;
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (
-      !user ||
-      !(await hasDashboardPermission(ctx, project.orgId, user, "keys:read"))
-    ) {
-      return null;
-    }
-    const stages = await listStagesForProject(ctx, authUser.id, args.projectId);
+    const [project, user] = await Promise.all([
+      getProjectForRole(ctx, authUser.id, args.projectId),
+      userByAuthId(ctx, authUser.id),
+    ]);
+    if (!project || !user) return null;
+    const access = await memberAccess(ctx, project.orgId, user);
+    if (!access) return null;
+    const stages = (
+      await ctx.db
+        .query("stages")
+        .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+        .collect()
+    ).filter(
+      (stage) =>
+        tierPermissions(access.tier).includes("keys:read") ||
+        policiesAllow(access.policies, "keys:read", {
+          projectId: args.projectId,
+          stageId: stage._id,
+        }),
+    );
+    if (stages.length === 0) return null;
+    const perStage = await Promise.all(
+      stages.map((stage) => stageKeys(ctx, stage)),
+    );
+    const people = await actorsOf(
+      ctx,
+      perStage.flatMap(({ deployment, keys }) => [
+        deployment?.createdByUserId,
+        ...keys.map((key) => key.createdBy),
+      ]),
+    );
 
     const runtime: ProjectKeys["runtime"] = [];
     const api: ProjectKeys["api"] = [];
-    for (const stage of stages) {
-      const deployment = await ctx.db
-        .query("agentDeployments")
-        .withIndex("by_projectId_and_stageId_and_status", (q) =>
-          q
-            .eq("projectId", args.projectId)
-            .eq("stageId", stage._id)
-            .eq("status", "active"),
-        )
-        .first();
+    for (const [index, stage] of stages.entries()) {
+      const { deployment, keys } = perStage[index];
       if (deployment) {
         runtime.push({
           stageId: stage._id,
@@ -132,18 +138,13 @@ export const listForProject = query({
           keyHint: deployment.keyHint,
           lastUsedAt: deployment.lastUsedAt,
           rotatedAt: deployment.createdAt,
-          rotatedBy: await actorOf(ctx, deployment.createdByUserId),
-          rotatedByName: deployment.createdBy,
+          rotatedBy:
+            (deployment.createdByUserId &&
+              people.get(deployment.createdByUserId)) ||
+            (deployment.createdBy ? { name: deployment.createdBy } : undefined),
         });
       }
-      const keys = await ctx.db
-        .query("deployKeys")
-        .withIndex("by_projectId_and_stageId", (q) =>
-          q.eq("projectId", args.projectId).eq("stageId", stage._id),
-        )
-        .collect();
       for (const key of keys) {
-        if (key.status !== "active") continue;
         api.push({
           _id: key._id,
           name: key.name,
@@ -153,7 +154,7 @@ export const listForProject = query({
           keyHint: key.keyHint,
           lastUsedAt: key.lastUsedAt,
           createdAt: key.createdAt,
-          createdBy: await actorOf(ctx, key.createdBy),
+          createdBy: key.createdBy ? people.get(key.createdBy) : undefined,
         });
       }
     }
@@ -162,13 +163,34 @@ export const listForProject = query({
   },
 });
 
-/** A user id as the name and avatar a list draws; undefined when unknown. */
-async function actorOf(
+/** One stage's active runtime deployment and active API keys. */
+async function stageKeys(
   ctx: QueryCtx,
-  userId: Id<"users"> | undefined,
-): Promise<Infer<typeof actorValidator> | undefined> {
-  if (!userId) return undefined;
-  const user: Doc<"users"> | null = await ctx.db.get(userId);
+  stage: Doc<"stages">,
+): Promise<{
+  deployment: Doc<"agentDeployments"> | null;
+  keys: Doc<"deployKeys">[];
+}> {
+  const [deployment, keys] = await Promise.all([
+    ctx.db
+      .query("agentDeployments")
+      .withIndex("by_projectId_and_stageId_and_status", (q) =>
+        q
+          .eq("projectId", stage.projectId)
+          .eq("stageId", stage._id)
+          .eq("status", "active"),
+      )
+      .first(),
+    ctx.db
+      .query("deployKeys")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", stage.projectId).eq("stageId", stage._id),
+      )
+      .collect(),
+  ]);
 
-  return user ? { name: user.name, avatarUrl: user.avatarUrl } : undefined;
+  return {
+    deployment: deployment,
+    keys: keys.filter((key) => key.status === "active"),
+  };
 }

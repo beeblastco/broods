@@ -8,25 +8,19 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadFilter,
 } from "@/app/components/DataTable";
 import { SearchInput } from "@/app/components/SearchInput";
 import { StatusWord } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Who } from "@/app/components/Who";
-import { parseQuery } from "@/app/lib/queryTokens";
-import {
-  clearField,
-  sortRows,
-  toggleToken,
-  tokenValues,
-  type SortState,
-} from "@/app/lib/tableState";
-import { useMemo, useState } from "react";
+import { useListState } from "@/app/hooks/useListState";
+import type { SortKey } from "@/app/lib/tableState";
 
 const FIELDS = ["agent", "status"] as const;
 
 type Column = "name" | "agent" | "status" | "at";
+type Field = (typeof FIELDS)[number];
+type Row = (typeof ROWS)[number];
 
 const ROWS = [
   { name: "Daily summary", agent: "support-bot", status: "ok", at: 3 },
@@ -35,51 +29,40 @@ const ROWS = [
   { name: "Health probe", agent: "ops", status: "running", at: 4 },
 ] as const;
 
+const SORT_KEY: Record<Column, (row: Row) => SortKey> = {
+  name: (row) => row.name,
+  agent: (row) => row.agent,
+  status: (row) => row.status,
+  at: (row) => row.at,
+};
+
 /**
  * A list on the kit with every header sortable and two of them filterable,
  * so a spec can open the header menu, pick a value and see the chip land in
  * the search box, and the Filter button reach the same menu.
  */
 export function DataTableStandIn(): React.JSX.Element {
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortState<Column>>({
-    column: "name",
-    dir: "asc",
+  const list = useListState({
+    rows: ROWS,
+    fields: FIELDS,
+    initialSort: { column: "name", dir: "asc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
   });
-  const parsed = useMemo(() => parseQuery(query, FIELDS), [query]);
-
-  const filterFor = (field: (typeof FIELDS)[number]): HeadFilter => ({
-    field: field,
-    values: [...new Set(ROWS.map((row) => row[field]))].map((value) => ({
-      value: value,
-      label: value,
-    })),
-    active: tokenValues(query, field),
-    onToggle: (value) => setQuery(toggleToken(query, field, value)),
-    onClear: () => setQuery(clearField(query, field)),
-  });
-  const sortFor = (
-    column: Column,
-  ): { dir: "asc" | "desc" | null; onSort: (dir: "asc" | "desc") => void } => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
-  });
-
-  const shown = sortRows(
-    ROWS.filter((row) =>
-      parsed.fields.every(({ field, value }) => row[field] === value),
-    ),
-    (row) => row[sort.column],
-    sort.dir,
-  );
-  const filters = { agent: filterFor("agent"), status: filterFor("status") };
+  const filters = {
+    agent: list.filterFor("agent", [...new Set(ROWS.map((row) => row.agent))]),
+    status: list.filterFor("status", [
+      ...new Set(ROWS.map((row) => row.status)),
+    ]),
+  };
 
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-border bg-card">
       <Toolbar>
         <SearchInput
-          value={query}
-          onChange={setQuery}
+          value={list.query}
+          onChange={list.setQuery}
           fields={FIELDS}
           placeholder="Search jobs"
         />
@@ -93,25 +76,25 @@ export function DataTableStandIn(): React.JSX.Element {
       <DataTable>
         <DataTableHeader>
           <tr>
-            <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
-            <DataTableHead sort={sortFor("agent")} filter={filters.agent}>
+            <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+            <DataTableHead sort={list.sortFor("agent")} filter={filters.agent}>
               Agent
             </DataTableHead>
-            <DataTableHead sort={sortFor("status")} filter={filters.status}>
+            <DataTableHead
+              sort={list.sortFor("status")}
+              filter={filters.status}
+            >
               Status
             </DataTableHead>
             <DataTableHead
-              sort={{
-                ...sortFor("at"),
-                words: ["Oldest first", "Newest first"],
-              }}
+              sort={list.sortFor("at", ["Oldest first", "Newest first"])}
             >
               Last run
             </DataTableHead>
           </tr>
         </DataTableHeader>
         <DataTableBody>
-          {shown.map((row) => (
+          {list.shown.map((row) => (
             <DataTableRow key={row.name}>
               <DataTableCell className="font-medium">{row.name}</DataTableCell>
               <DataTableCell>
@@ -141,10 +124,21 @@ export function DataTableStandIn(): React.JSX.Element {
           ))}
         </DataTableBody>
       </DataTable>
-      <DataTableFooter>
-        {shown.length} of {ROWS.length} jobs ·{" "}
-        <span data-table-query>{query}</span>
+      <DataTableFooter
+        shown={list.shown.length}
+        total={ROWS.length}
+        noun="jobs"
+      >
+        <span data-table-query>{list.query}</span>
       </DataTableFooter>
     </div>
   );
+}
+
+function matchesField(row: Row, field: Field, value: string): boolean {
+  return row[field] === value;
+}
+
+function searchText(row: Row): string {
+  return row.name;
 }

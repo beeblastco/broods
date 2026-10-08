@@ -270,7 +270,8 @@ export function MonitoringPanel({
         </table>
         <LoadMore
           shown={filtered.length}
-          total={points.length}
+          total={entries.length}
+          noun="lines"
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}

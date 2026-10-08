@@ -37,11 +37,12 @@ export function PoliciesTab({
   onUpdatePolicyConfig,
 }: Props): React.JSX.Element {
   const policies = useQuery(api.access.listPolicies, {});
+  const assigned = new Set(assignedPolicyIds);
   const attached = (policies ?? []).filter((policy) =>
-    assignedPolicyIds.includes(policy._id),
+    assigned.has(policy._id),
   );
   const attachable = (policies ?? []).filter(
-    (policy) => !assignedPolicyIds.includes(policy._id),
+    (policy) => !assigned.has(policy._id),
   );
 
   const write = (next: string[]): void => {
@@ -100,11 +101,7 @@ export function PoliciesTab({
               <DataTableRow key={policy._id}>
                 <DataTableCell>{policy.name}</DataTableCell>
                 <DataTableCell muted className="max-w-48 truncate font-mono">
-                  {[
-                    ...new Set(
-                      policy.rules.flatMap((rule) => rule.permissions),
-                    ),
-                  ].join(", ") || "—"}
+                  {policy.permissions.join(", ") || "—"}
                 </DataTableCell>
                 <DataTableCell muted>{policy.mode}</DataTableCell>
                 <DataTableCell align="right">

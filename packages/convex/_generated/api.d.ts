@@ -73,6 +73,7 @@ import type * as model_accountHooks from "../model/accountHooks.js";
 import type * as model_accountKeys from "../model/accountKeys.js";
 import type * as model_accountSecrets from "../model/accountSecrets.js";
 import type * as model_activeAccount from "../model/activeAccount.js";
+import type * as model_actor from "../model/actor.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRules from "../model/agentRules.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
@@ -236,6 +237,7 @@ declare const fullApi: ApiFromModules<{
   "model/accountKeys": typeof model_accountKeys;
   "model/accountSecrets": typeof model_accountSecrets;
   "model/activeAccount": typeof model_activeAccount;
+  "model/actor": typeof model_actor;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRules": typeof model_agentRules;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;

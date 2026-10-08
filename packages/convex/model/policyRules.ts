@@ -4,6 +4,7 @@
  * contract. The public projection lives in ./responses.ts.
  */
 
+import { v, type Infer } from "convex/values";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
 
@@ -61,7 +62,24 @@ export const DASHBOARD_POLICY_ACTIONS = [
   "keys:write",
   "members:write",
   "access:write",
-  "billing:read",
+] as const;
+
+/** What each dashboard permission opens, for the permission and role lists. */
+export const DASHBOARD_DESCRIPTIONS: Record<DashboardPolicyAction, string> = {
+  "keys:read": "See keys",
+  "keys:write": "Make, rotate and revoke keys",
+  "members:write": "Change members and their roles",
+  "access:write": "Change permissions, policies and roles",
+};
+
+/** The condition operators a rule may use, with the word the lists print. */
+export const POLICY_CONDITION_OPERATORS = [
+  { value: "equals", label: "=" },
+  { value: "notEquals", label: "≠" },
+  { value: "in", label: "in" },
+  { value: "notIn", label: "not in" },
+  { value: "prefix", label: "starts with" },
+  { value: "contains", label: "contains" },
 ] as const;
 
 const RESOURCE_SELECTOR_KEYS = [
@@ -91,52 +109,67 @@ export type PolicyAction =
   | DashboardPolicyAction
   | (string & {});
 
-export interface PolicyCondition {
-  attribute: string;
-  operator: PolicyConditionOperator;
-  value: string | number | boolean | string[] | number[] | boolean[];
-}
-
 export type PolicyConditionOperator =
-  | "equals"
-  | "notEquals"
-  | "in"
-  | "notIn"
-  | "prefix"
-  | "contains";
+  (typeof POLICY_CONDITION_OPERATORS)[number]["value"];
+
+const policyConditionValidator = v.object({
+  attribute: v.string(),
+  operator: v.union(
+    ...POLICY_CONDITION_OPERATORS.map((operator) => v.literal(operator.value)),
+  ),
+  value: v.union(
+    v.string(),
+    v.number(),
+    v.boolean(),
+    v.array(v.string()),
+    v.array(v.number()),
+    v.array(v.boolean()),
+  ),
+});
+
+/** Which things a rule's actions reach; `resourceIds` is for API-action rules, "*" matching every id. */
+const policyResourceSelectorValidator = v.object({
+  toolNames: v.optional(v.array(v.string())),
+  /** MCP registration ids, for scoping tool.call rules per server (#331). */
+  mcpIds: v.optional(v.array(v.string())),
+  workspaceIds: v.optional(v.array(v.string())),
+  workspaceNames: v.optional(v.array(v.string())),
+  filePaths: v.optional(v.array(v.string())),
+  subagentIds: v.optional(v.array(v.string())),
+  skillPaths: v.optional(v.array(v.string())),
+  resourceIds: v.optional(v.array(v.string())),
+});
+
+const policyRuleValidator = v.object({
+  id: v.string(),
+  effect: v.union(v.literal("allow"), v.literal("deny")),
+  actions: v.array(v.string()),
+  resources: v.optional(policyResourceSelectorValidator),
+  conditions: v.optional(v.array(policyConditionValidator)),
+});
 
 /**
- * Versioned policy document accepted by account-management CRUD.
+ * Versioned policy document accepted by account-management CRUD, as the
+ * `agentPolicies` and `accountRoles` tables store it. `mode` says how hard
+ * the policy bites where it is attached; omitted reads as `audit`.
  */
-export interface PolicyDocument {
-  version: 1;
-  /** How hard this policy bites where it is attached. Omitted reads as `audit`. */
-  mode?: "enforce" | "audit";
-  rules: PolicyRule[];
-}
+export const policyDocumentValidator = v.object({
+  version: v.literal(1),
+  mode: v.optional(v.union(v.literal("enforce"), v.literal("audit"))),
+  rules: v.array(policyRuleValidator),
+});
 
-export type PolicyEffect = "allow" | "deny";
+export type PolicyCondition = Infer<typeof policyConditionValidator>;
 
-export interface PolicyResourceSelector {
-  toolNames?: string[];
-  /** MCP registration ids, for scoping tool.call rules per server (#331). */
-  mcpIds?: string[];
-  workspaceIds?: string[];
-  workspaceNames?: string[];
-  filePaths?: string[];
-  subagentIds?: string[];
-  skillPaths?: string[];
-  /** Config-plane resource ids for API-action rules; "*" matches every id. */
-  resourceIds?: string[];
-}
+export type PolicyDocument = Infer<typeof policyDocumentValidator>;
 
-export interface PolicyRule {
-  id: string;
-  effect: PolicyEffect;
-  actions: PolicyAction[];
-  resources?: PolicyResourceSelector;
-  conditions?: PolicyCondition[];
-}
+export type PolicyEffect = PolicyRule["effect"];
+
+export type PolicyResourceSelector = Infer<
+  typeof policyResourceSelectorValidator
+>;
+
+export type PolicyRule = Infer<typeof policyRuleValidator>;
 
 /**
  * Validate a create-policy request body.
@@ -289,7 +322,7 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
     assertOptionalEnum(
       record.operator,
       `policy rules[${index}].conditions[${conditionIndex}].operator`,
-      ["equals", "notEquals", "in", "notIn", "prefix", "contains"],
+      POLICY_CONDITION_OPERATORS.map((operator) => operator.value),
     );
     if (record.operator === undefined) {
       throw new ClientError(
@@ -341,18 +374,23 @@ function normalizePolicyRule(
       `policy rules[${index}].actions must be a non-empty array`,
     );
   }
+  const actions: string[] = [];
   for (const action of rule.actions) {
     assertOptionalEnum(
       action,
       `policy rules[${index}].actions[]`,
       allowedActions,
     );
+    if (typeof action !== "string") {
+      throw new ClientError(`policy rules[${index}].actions[] must be strings`);
+    }
+    actions.push(action);
   }
 
   return {
     id: id,
     effect: rule.effect as PolicyEffect,
-    actions: rule.actions as PolicyAction[],
+    actions: actions,
     ...(rule.resources !== undefined
       ? { resources: normalizeResourceSelector(rule.resources, index) }
       : {}),

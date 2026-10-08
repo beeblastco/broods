@@ -15,7 +15,6 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadSort,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
@@ -42,27 +41,37 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Who } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
-import { toErrorMessage } from "@/app/lib/errors";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
-import { parseQuery } from "@/app/lib/queryTokens";
-import { sortRows, type SortKey, type SortState } from "@/app/lib/tableState";
+import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 type Member = FunctionReturnType<typeof api.org.members.list>[number];
+type Role = FunctionReturnType<typeof api.access.listRoles>[number];
+type CustomRole = Extract<Role, { kind: "custom" }>;
 type Tier = Member["role"];
 type Column = "name" | "email" | "role" | "joined" | "invitedBy";
+type Field = (typeof QUERY_FIELDS)[number];
+
+/** What the role Select holds: a tier, or a custom role's id. */
+type RolePick =
+  | { tier: "admin" | "member"; roleId?: undefined }
+  | { tier: "member"; roleId: Id<"orgRoles"> };
 
 // The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["role"] as const;
 
 // Six columns of short text; below this the panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
+
+const NO_ROWS: Member[] = [];
 
 const TIER_LABEL: Record<Tier, string> = {
   owner: "Owner",
@@ -87,38 +96,22 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   const canChange = can("members:write");
   const members = useQuery(api.org.members.list, { orgId: org._id });
   const roles = useQuery(api.access.listRoles, {});
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<SortState<Column>>({
-    column: "name",
-    dir: "asc",
-  });
   const [selectedId, setSelectedId] = useState<Id<"orgMembers"> | null>(null);
   const [inviting, setInviting] = useState(false);
-
-  const query = useMemo(() => parseQuery(filter, QUERY_FIELDS), [filter]);
-  const shown = useMemo(() => {
-    const matching = (members ?? []).filter((member) => {
-      const rolePass = query.fields.every(
-        ({ value }) => roleName(member).toLowerCase() === value,
-      );
-      if (!rolePass) return false;
-      if (!query.text) return true;
-
-      return `${member.name} ${member.email}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(matching, SORT_KEY[sort.column], sort.dir);
-  }, [members, query, sort]);
+  const list = useListState({
+    rows: members ?? NO_ROWS,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "name", dir: "asc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
+  });
   const selected = members?.find(
     (member) => member.membershipId === selectedId,
   );
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
-  });
-  const customRoles = (roles ?? []).filter((role) => role.kind === "custom");
+  const customRoles = (roles ?? []).filter(
+    (role): role is CustomRole => role.kind === "custom",
+  );
 
   if (members === undefined) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
@@ -128,8 +121,8 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
     <div className="flex h-full min-h-0 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
+          value={list.query}
+          onChange={list.setQuery}
           fields={QUERY_FIELDS}
           placeholder="Search members"
         />
@@ -160,31 +153,27 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Member</DataTableHead>
-              <DataTableHead sort={sortFor("email")}>Email</DataTableHead>
-              <DataTableHead sort={sortFor("role")}>Role</DataTableHead>
+              <DataTableHead sort={list.sortFor("name")}>Member</DataTableHead>
+              <DataTableHead sort={list.sortFor("email")}>Email</DataTableHead>
+              <DataTableHead sort={list.sortFor("role")}>Role</DataTableHead>
               <DataTableHead>Status</DataTableHead>
-              <DataTableHead sort={sortFor("joined")}>Joined</DataTableHead>
-              <DataTableHead sort={sortFor("invitedBy")}>
+              <DataTableHead sort={list.sortFor("joined")}>
+                Joined
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("invitedBy")}>
                 Invited by
               </DataTableHead>
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((member) => (
+            {list.shown.map((member) => (
               <DataTableRow
                 key={member.membershipId}
                 selected={selectedId === member.membershipId}
                 onClick={() => setSelectedId(member.membershipId)}
               >
                 <DataTableCell>
-                  <Who
-                    actor={{
-                      kind: "person",
-                      name: member.name,
-                      avatarUrl: member.avatarUrl,
-                    }}
-                  />
+                  <Who actor={member} />
                 </DataTableCell>
                 <DataTableCell muted>{member.email}</DataTableCell>
                 <DataTableCell>{roleName(member)}</DataTableCell>
@@ -196,7 +185,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
                 </DataTableCell>
                 <DataTableCell>
                   {member.invitedBy ? (
-                    <Who actor={{ kind: "person", ...member.invitedBy }} />
+                    <Who actor={member.invitedBy} />
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
@@ -205,14 +194,14 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState title="No members match the current filters." />
         )}
-        <DataTableFooter>
-          {shown.length === members.length
-            ? `${members.length} members`
-            : `${shown.length} of ${members.length} members`}
-        </DataTableFooter>
+        <DataTableFooter
+          shown={list.shown.length}
+          total={members.length}
+          noun="members"
+        />
       </DetailSplit>
       {inviting && (
         <InviteDialog
@@ -233,48 +222,20 @@ function MemberDetail({
   onClose,
 }: {
   member: Member;
-  customRoles: Array<{ _id?: Id<"orgRoles">; name: string }>;
+  customRoles: CustomRole[];
   canChange: boolean;
   onClose: () => void;
 }): React.JSX.Element {
   const updateRole = useMutation(api.org.members.updateRole);
   const remove = useMutation(api.org.members.remove);
   const [removing, setRemoving] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
   const editable = canChange && !member.isOwner;
-
-  async function setRole(value: string): Promise<void> {
-    setError(null);
-    try {
-      if (value === "admin" || value === "member") {
-        await updateRole({
-          membershipId: member.membershipId,
-          role: value,
-          roleId: null,
-        });
-      } else {
-        await updateRole({
-          membershipId: member.membershipId,
-          role: "member",
-          roleId: value as Id<"orgRoles">,
-        });
-      }
-    } catch (err) {
-      setError(toErrorMessage(err));
-    }
-  }
+  const items = roleItems(customRoles);
 
   async function confirmRemove(): Promise<void> {
-    setPending(true);
-    try {
-      await remove({ membershipId: member.membershipId });
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+    const done = await run(() => remove({ membershipId: member.membershipId }));
+    if (done) onClose();
   }
 
   return (
@@ -282,13 +243,7 @@ function MemberDetail({
       <dl className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-xs">
         <dt className="text-muted-foreground">Member</dt>
         <dd>
-          <Who
-            actor={{
-              kind: "person",
-              name: member.name,
-              avatarUrl: member.avatarUrl,
-            }}
-          />
+          <Who actor={member} />
         </dd>
         <dt className="text-muted-foreground">Email</dt>
         <dd className="truncate">{member.email}</dd>
@@ -296,17 +251,27 @@ function MemberDetail({
         <dd>
           {editable ? (
             <Select
-              items={roleItems(customRoles)}
-              value={(member.roleId ?? member.role) as string}
-              onValueChange={(value: string | null) =>
-                value !== null && void setRole(value)
-              }
+              items={items}
+              value={member.roleId ?? member.role}
+              onValueChange={(value: string | null) => {
+                const pick =
+                  value === null ? null : rolePick(value, customRoles);
+                if (pick) {
+                  void run(() =>
+                    updateRole({
+                      membershipId: member.membershipId,
+                      role: pick.tier,
+                      roleId: pick.roleId,
+                    }),
+                  );
+                }
+              }}
             >
               <SelectTrigger size="sm" className="w-44 cursor-pointer">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {roleItems(customRoles).map((item) => (
+                {items.map((item) => (
                   <SelectItem
                     key={item.value}
                     value={item.value}
@@ -338,7 +303,7 @@ function MemberDetail({
         <dt className="text-muted-foreground">Invited by</dt>
         <dd>
           {member.invitedBy ? (
-            <Who actor={{ kind: "person", ...member.invitedBy }} />
+            <Who actor={member.invitedBy} />
           ) : (
             <span className="text-muted-foreground">—</span>
           )}
@@ -380,40 +345,27 @@ function InviteDialog({
   onClose,
 }: {
   orgId: Id<"orgs">;
-  customRoles: Array<{ _id?: Id<"orgRoles">; name: string }>;
+  customRoles: CustomRole[];
   onClose: () => void;
 }): React.JSX.Element {
   const add = useMutation(api.org.members.add);
-  const updateRole = useMutation(api.org.members.updateRole);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
+  const items = roleItems(customRoles);
 
   async function submit(): Promise<void> {
-    if (!email.trim()) return;
-    setPending(true);
-    setError(null);
-    try {
-      const tier = role === "admin" ? "admin" : "member";
-      const membershipId = await add({
+    const pick = rolePick(role, customRoles);
+    if (!email.trim() || !pick) return;
+    const done = await run(() =>
+      add({
         orgId: orgId,
         email: email.trim(),
-        role: tier,
-      });
-      if (role !== "admin" && role !== "member") {
-        await updateRole({
-          membershipId: membershipId,
-          role: "member",
-          roleId: role as Id<"orgRoles">,
-        });
-      }
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+        role: pick.tier,
+        roleId: pick.roleId,
+      }),
+    );
+    if (done) onClose();
   }
 
   return (
@@ -443,7 +395,7 @@ function InviteDialog({
               Role
             </Label>
             <Select
-              items={roleItems(customRoles)}
+              items={items}
               value={role}
               onValueChange={(value) => value !== null && setRole(value)}
             >
@@ -451,7 +403,7 @@ function InviteDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {roleItems(customRoles).map((item) => (
+                {items.map((item) => (
                   <SelectItem
                     key={item.value}
                     value={item.value}
@@ -491,17 +443,31 @@ function InviteDialog({
 
 /** The roles a member may be given: the two tiers and every custom role. */
 function roleItems(
-  customRoles: Array<{ _id?: Id<"orgRoles">; name: string }>,
+  customRoles: CustomRole[],
 ): Array<{ value: string; label: string }> {
   return [
     { value: "member", label: TIER_LABEL.member },
     { value: "admin", label: TIER_LABEL.admin },
-    ...customRoles.flatMap((role) =>
-      role._id ? [{ value: role._id, label: role.name }] : [],
-    ),
+    ...customRoles.map((role) => ({ value: role._id, label: role.name })),
   ];
+}
+
+/** What a Select value means: a tier, or one of the org's custom roles. */
+function rolePick(value: string, customRoles: CustomRole[]): RolePick | null {
+  if (value === "admin" || value === "member") return { tier: value };
+  const custom = customRoles.find((role) => role._id === value);
+
+  return custom ? { tier: "member", roleId: custom._id } : null;
+}
+
+function matchesField(member: Member, _field: Field, value: string): boolean {
+  return roleName(member).toLowerCase() === value;
 }
 
 function roleName(member: Member): string {
   return member.roleName ?? TIER_LABEL[member.role];
+}
+
+function searchText(member: Member): string {
+  return `${member.name} ${member.email}`;
 }

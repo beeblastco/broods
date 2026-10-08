@@ -6,7 +6,7 @@ Who can see and change what, which credential to use where, and how your data is
 
 Access follows organization membership. A member reads, an admin or owner writes. Removing or demoting someone takes effect on their next request, and their `broods login` stops working.
 
-A custom role, made under Organization settings, Roles, sits on the member tier and adds what its policies allow: seeing or changing keys, changing members, changing access, seeing billing. Policies and permissions are the organization's, under the tabs beside it, so one policy can serve a role, an agent or a key. Roles and policies are read with the same deny-wins order OPA uses for agents at run time.
+A custom role, made under Organization settings, Roles, sits on the member tier and adds what its policies allow: seeing or changing keys, changing members, changing access. A rule scoped to a project or a stage counts only there, and only an enforce-mode policy counts. Policies and permissions are the organization's, under the tabs beside it, so one policy can serve a role, an agent or a key. Roles and policies are read with the same deny-wins order OPA uses for agents at run time.
 
 | Operation                                                                    | Member | Admin, owner |
 | ---------------------------------------------------------------------------- | ------ | ------------ |

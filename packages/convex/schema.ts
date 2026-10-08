@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
+import { policyDocumentValidator } from "./model/policyRules";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 
@@ -349,7 +350,7 @@ export const agentPoliciesFields = {
   stageId: v.optional(v.id("stages")),
   name: v.string(),
   description: v.optional(v.string()),
-  document: v.any(),
+  document: policyDocumentValidator,
   status: v.union(v.literal("active"), v.literal("deleted")),
   /** Ownership marker; see `agentConfigsFields.managedBy`. */
   managedBy: v.optional(
@@ -377,7 +378,7 @@ export const accountRolesFields = {
   name: v.string(),
   status: v.union(v.literal("active"), v.literal("disabled")),
   /** PolicyDocument (version 1) over the API action namespace. */
-  policy: v.any(),
+  policy: policyDocumentValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
 };

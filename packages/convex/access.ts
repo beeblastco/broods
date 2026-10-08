@@ -17,33 +17,30 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { authKit } from "./auth";
 import {
-  hasDashboardPermission,
-  viewerDashboardPermissions,
+  activePolicyDocuments,
+  dashboardPermissions,
+  memberAccess,
+  requireDashboardPermission,
+  tierPermissions,
 } from "./model/access";
 import { randomToken } from "./model/accountSecrets";
+import { actorsOf, actorValidator, type Actor } from "./model/actor";
 import { ClientError } from "./model/clientError";
+import { orgIdOf } from "./model/ownership/org";
 import { assertPolicyUnreferenced } from "./model/policyReferences";
 import {
   AGENT_POLICY_ACTIONS,
   API_POLICY_ACTIONS,
+  DASHBOARD_DESCRIPTIONS,
   DASHBOARD_POLICY_ACTIONS,
+  POLICY_CONDITION_OPERATORS,
   type DashboardPolicyAction,
   type PolicyCondition,
   type PolicyDocument,
   type PolicyRule,
 } from "./model/policyRules";
-import { getActiveCaller } from "./org/orgs";
-
-const OPERATOR_WORD: Record<PolicyCondition["operator"], string> = {
-  equals: "=",
-  notEquals: "≠",
-  in: "in",
-  notIn: "not in",
-  prefix: "starts with",
-  contains: "contains",
-};
+import { getActiveCaller, type ActiveAccount } from "./org/orgs";
 
 const AGENT_DESCRIPTIONS: Record<
   (typeof AGENT_POLICY_ACTIONS)[number],
@@ -58,51 +55,44 @@ const AGENT_DESCRIPTIONS: Record<
   "skill.load": "Load a skill",
 };
 
-const DASHBOARD_DESCRIPTIONS: Record<DashboardPolicyAction, string> = {
-  "keys:read": "See keys",
-  "keys:write": "Make, rotate and revoke keys",
-  "members:write": "Change members and their roles",
-  "access:write": "Change permissions, policies and roles",
-  "billing:read": "See billing",
-};
-
 /** The built-in permissions, one line each. */
-const BUILT_IN: Array<{ name: string; resource: string; description: string }> =
-  [
-    ...AGENT_POLICY_ACTIONS.map((name) => ({
-      name: name,
-      resource: "agent",
-      description: AGENT_DESCRIPTIONS[name],
-    })),
-    ...API_POLICY_ACTIONS.map((name) => ({
-      name: name,
-      resource: name.split(":")[0] ?? "api",
-      description: `${name.endsWith(":read") ? "Read" : "Change"} ${name.split(":")[0]} over the API`,
-    })),
-    ...DASHBOARD_POLICY_ACTIONS.map((name) => ({
-      name: name,
-      resource: "dashboard",
-      description: DASHBOARD_DESCRIPTIONS[name],
-    })),
-  ];
+const BUILT_IN: Array<{
+  kind: "built-in";
+  name: string;
+  resource: string;
+  description: string;
+}> = [
+  ...AGENT_POLICY_ACTIONS.map((name) => ({
+    kind: "built-in" as const,
+    name: name,
+    resource: "agent",
+    description: AGENT_DESCRIPTIONS[name],
+  })),
+  ...API_POLICY_ACTIONS.map((name) => ({
+    kind: "built-in" as const,
+    name: name,
+    resource: name.split(":")[0] ?? "api",
+    description: `${name.endsWith(":read") ? "Read" : "Change"} ${name.split(":")[0]} over the API`,
+  })),
+  ...DASHBOARD_POLICY_ACTIONS.map((name) => ({
+    kind: "built-in" as const,
+    name: name,
+    resource: "dashboard",
+    description: DASHBOARD_DESCRIPTIONS[name],
+  })),
+];
 
-const CONDITION_OPERATORS = [
-  "equals",
-  "notEquals",
-  "in",
-  "notIn",
-  "prefix",
-  "contains",
-] as const;
+const BUILT_IN_ROLE_NAMES = ["owner", "admin", "member"];
 
-const actorValidator = v.object({
-  name: v.string(),
-  avatarUrl: v.optional(v.string()),
-});
+const dashboardActionValidator = v.union(
+  ...DASHBOARD_POLICY_ACTIONS.map((action) => v.literal(action)),
+);
 
 const conditionValidator = v.object({
   attribute: v.string(),
-  operator: v.union(...CONDITION_OPERATORS.map((op) => v.literal(op))),
+  operator: v.union(
+    ...POLICY_CONDITION_OPERATORS.map((operator) => v.literal(operator.value)),
+  ),
   value: v.string(),
 });
 
@@ -112,15 +102,23 @@ const scopeValidator = v.object({
   stageId: v.optional(v.id("stages")),
 });
 
-const permissionRowValidator = v.object({
-  _id: v.optional(v.id("permissions")),
-  name: v.string(),
-  description: v.string(),
-  resource: v.string(),
-  kind: v.union(v.literal("built-in"), v.literal("custom")),
-  createdAt: v.optional(v.number()),
-  createdBy: v.optional(actorValidator),
-});
+const permissionRowValidator = v.union(
+  v.object({
+    kind: v.literal("built-in"),
+    name: v.string(),
+    description: v.string(),
+    resource: v.string(),
+  }),
+  v.object({
+    kind: v.literal("custom"),
+    _id: v.id("permissions"),
+    name: v.string(),
+    description: v.string(),
+    resource: v.string(),
+    createdAt: v.number(),
+    createdBy: v.optional(actorValidator),
+  }),
+);
 
 const ruleRowValidator = v.object({
   id: v.string(),
@@ -138,38 +136,51 @@ const policyRowValidator = v.object({
   scope: v.string(),
   managedBy: v.optional(v.string()),
   rules: v.array(ruleRowValidator),
+  /** The distinct permissions across the rules, for counts and summaries. */
+  permissions: v.array(v.string()),
   createdAt: v.number(),
   createdBy: v.optional(actorValidator),
 });
 
-const roleRowValidator = v.object({
-  _id: v.optional(v.id("orgRoles")),
+const roleFields = {
   name: v.string(),
   description: v.string(),
-  kind: v.union(v.literal("built-in"), v.literal("custom")),
   policyIds: v.array(v.id("agentPolicies")),
   members: v.array(actorValidator),
-  createdAt: v.optional(v.number()),
-  createdBy: v.optional(actorValidator),
-});
+  /** The dashboard permissions the role grants org-wide. */
+  permissions: v.array(dashboardActionValidator),
+};
 
-export type PermissionRow = Infer<typeof permissionRowValidator>;
-export type PolicyRow = Infer<typeof policyRowValidator>;
-export type RoleRow = Infer<typeof roleRowValidator>;
+const roleRowValidator = v.union(
+  v.object({ kind: v.literal("built-in"), ...roleFields }),
+  v.object({
+    kind: v.literal("custom"),
+    _id: v.id("orgRoles"),
+    createdAt: v.number(),
+    createdBy: v.optional(actorValidator),
+    ...roleFields,
+  }),
+);
+
+type PermissionRow = Infer<typeof permissionRowValidator>;
+type PolicyRow = Infer<typeof policyRowValidator>;
+type RoleRow = Infer<typeof roleRowValidator>;
 
 type Ctx = QueryCtx | MutationCtx;
 
-/** What the signed-in member may do in the active org's dashboard. */
+/** What the signed-in member may do in the active org's dashboard, org-wide or in one project. */
 export const viewerPermissions = query({
-  args: {},
-  returns: v.array(v.string()),
-  handler: async (ctx): Promise<DashboardPolicyAction[]> => {
+  args: { projectId: v.optional(v.id("projects")) },
+  returns: v.array(dashboardActionValidator),
+  handler: async (ctx, args): Promise<DashboardPolicyAction[]> => {
     const caller = await getActiveCaller(ctx);
     if (!caller) return [];
-    const orgId = ctx.db.normalizeId("orgs", caller.account.orgId);
+    const orgId = orgIdOf(ctx, caller.account);
     if (!orgId) return [];
+    const access = await memberAccess(ctx, orgId, caller.user);
+    if (!access) return [];
 
-    return await viewerDashboardPermissions(ctx, orgId, caller.user);
+    return dashboardPermissions(access, { projectId: args.projectId });
   },
 });
 
@@ -186,20 +197,22 @@ export const listPermissions = query({
         q.eq("accountId", caller.account._id),
       )
       .collect();
+    const creators = await actorsOf(
+      ctx,
+      custom.map((row) => row.createdBy),
+    );
 
     return [
-      ...BUILT_IN.map((entry) => ({ ...entry, kind: "built-in" as const })),
-      ...(await Promise.all(
-        custom.map(async (row) => ({
-          _id: row._id,
-          name: row.name,
-          description: row.description ?? "",
-          resource: row.resource,
-          kind: "custom" as const,
-          createdAt: row.createdAt,
-          createdBy: await actorOf(ctx, row.createdBy),
-        })),
-      )),
+      ...BUILT_IN,
+      ...custom.map((row): PermissionRow => ({
+        kind: "custom",
+        _id: row._id,
+        name: row.name,
+        description: row.description ?? "",
+        resource: row.resource,
+        createdAt: row.createdAt,
+        createdBy: row.createdBy ? creators.get(row.createdBy) : undefined,
+      })),
     ];
   },
 });
@@ -254,9 +267,7 @@ export const removePermission = mutation({
     }
     const policies = await accountPolicies(ctx, caller.account._id);
     const used = policies.find((policy) =>
-      (policy.document as PolicyDocument).rules.some((rule) =>
-        rule.actions.includes(row.name),
-      ),
+      policy.document.rules.some((rule) => rule.actions.includes(row.name)),
     );
     if (used) {
       throw new ClientError(
@@ -277,8 +288,13 @@ export const listPolicies = query({
     const caller = await getActiveCaller(ctx);
     if (!caller) return [];
     const policies = await accountPolicies(ctx, caller.account._id);
+    const names = await scopeNames(ctx, policies);
+    const creators = await actorsOf(
+      ctx,
+      policies.map((policy) => policy.createdBy),
+    );
 
-    return await Promise.all(policies.map((policy) => policyRow(ctx, policy)));
+    return policies.map((policy) => policyRow(policy, names, creators));
   },
 });
 
@@ -321,14 +337,13 @@ export const updatePolicy = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await ownedPolicy(ctx, caller.account._id, args.policyId);
-    const document = policy.document as PolicyDocument;
     await ctx.db.patch(policy._id, {
       ...(args.name !== undefined ? { name: args.name.trim() } : {}),
       ...(args.description !== undefined
         ? { description: args.description?.trim() || undefined }
         : {}),
       ...(args.mode !== undefined
-        ? { document: { ...document, mode: args.mode } }
+        ? { document: { ...policy.document, mode: args.mode } }
         : {}),
       updatedAt: Date.now(),
     });
@@ -382,9 +397,11 @@ export const addRule = mutation({
       actions: [args.permission],
       ...(conditions.length > 0 ? { conditions: conditions } : {}),
     };
-    const document = policy.document as PolicyDocument;
     await ctx.db.patch(policy._id, {
-      document: { ...document, rules: [...document.rules, rule] },
+      document: {
+        ...policy.document,
+        rules: [...policy.document.rules, rule],
+      },
       updatedAt: Date.now(),
     });
 
@@ -398,11 +415,10 @@ export const removeRule = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await ownedPolicy(ctx, caller.account._id, args.policyId);
-    const document = policy.document as PolicyDocument;
     await ctx.db.patch(policy._id, {
       document: {
-        ...document,
-        rules: document.rules.filter((rule) => rule.id !== args.ruleId),
+        ...policy.document,
+        rules: policy.document.rules.filter((rule) => rule.id !== args.ruleId),
       },
       updatedAt: Date.now(),
     });
@@ -443,7 +459,7 @@ export const removePolicy = mutation({
   },
 });
 
-/** Built-in roles first, then the org's custom ones, each with its members. */
+/** Built-in roles first, then the org's custom ones, each with its members and permissions. */
 export const listRoles = query({
   args: {},
   returns: v.array(roleRowValidator),
@@ -452,55 +468,69 @@ export const listRoles = query({
     if (!caller) return [];
     const orgId = orgIdOf(ctx, caller.account);
     if (!orgId) return [];
-    const memberships = await ctx.db
-      .query("orgMembers")
-      .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
-      .collect();
-    const membersOf = async (
+    const [memberships, roles] = await Promise.all([
+      ctx.db
+        .query("orgMembers")
+        .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
+        .collect(),
+      orgRoles(ctx, orgId),
+    ]);
+    const people = await actorsOf(ctx, [
+      ...memberships.map((membership) => membership.userId),
+      ...roles.map((role) => role.createdBy),
+    ]);
+    const membersOf = (
       pick: (membership: Doc<"orgMembers">) => boolean,
-    ): Promise<RoleRow["members"]> => {
-      const rows = await Promise.all(
-        memberships
-          .filter(pick)
-          .map((membership) => actorOf(ctx, membership.userId)),
-      );
-
-      return rows.filter((row): row is NonNullable<typeof row> => !!row);
-    };
+    ): Actor[] =>
+      memberships
+        .filter(pick)
+        .map((membership) => people.get(membership.userId))
+        .filter((actor): actor is Actor => actor !== undefined);
     const builtIn: RoleRow[] = [
       {
+        kind: "built-in",
         name: "Owner",
         description: "Everything, including deleting the organization",
-        kind: "built-in",
         policyIds: [],
-        members: await membersOf((m) => m.role === "owner"),
+        members: membersOf((m) => m.role === "owner"),
+        permissions: tierPermissions("owner"),
       },
       {
+        kind: "built-in",
         name: "Admin",
         description: "Everything but deleting the organization",
-        kind: "built-in",
         policyIds: [],
-        members: await membersOf((m) => m.role === "admin"),
+        members: membersOf((m) => m.role === "admin"),
+        permissions: tierPermissions("admin"),
       },
       {
+        kind: "built-in",
         name: "Member",
         description: "Reads everything, changes nothing",
-        kind: "built-in",
         policyIds: [],
-        members: await membersOf((m) => m.role === "member" && !m.roleId),
+        members: membersOf((m) => m.role === "member" && !m.roleId),
+        permissions: tierPermissions("member"),
       },
     ];
     const custom = await Promise.all(
-      (await orgRoles(ctx, orgId)).map(async (role): Promise<RoleRow> => ({
-        _id: role._id,
-        name: role.name,
-        description: role.description ?? "",
-        kind: "custom",
-        policyIds: role.policyIds,
-        members: await membersOf((m) => m.roleId === role._id),
-        createdAt: role.createdAt,
-        createdBy: await actorOf(ctx, role.createdBy),
-      })),
+      roles.map(async (role): Promise<RoleRow> => {
+        const policies = await activePolicyDocuments(ctx, role.policyIds);
+
+        return {
+          kind: "custom",
+          _id: role._id,
+          name: role.name,
+          description: role.description ?? "",
+          policyIds: role.policyIds,
+          members: membersOf((m) => m.roleId === role._id),
+          permissions: dashboardPermissions({
+            tier: "member",
+            policies: policies,
+          }),
+          createdAt: role.createdAt,
+          createdBy: role.createdBy ? people.get(role.createdBy) : undefined,
+        };
+      }),
     );
 
     return [...builtIn, ...custom];
@@ -520,7 +550,7 @@ export const createRole = mutation({
     if (!orgId) throw new ClientError("No organization");
     const name = args.name.trim();
     if (!name) throw new ClientError("A role needs a name");
-    if (["owner", "admin", "member"].includes(name.toLowerCase())) {
+    if (BUILT_IN_ROLE_NAMES.includes(name.toLowerCase())) {
       throw new ClientError(`${name} is a built-in role`);
     }
     await assertOwnedPolicies(ctx, caller.account._id, args.policyIds);
@@ -589,20 +619,13 @@ export const removeRole = mutation({
 });
 
 /** The caller, who must hold `access:write` in the active org. */
-async function requireAccessWriter(
-  ctx: MutationCtx,
-): Promise<NonNullable<Awaited<ReturnType<typeof getActiveCaller>>>> {
-  const authUser = await authKit.getAuthUser(ctx);
-  if (!authUser) throw new Error("User not found or not authenticated");
+async function requireAccessWriter(ctx: MutationCtx): Promise<ActiveAccount> {
   const caller = await getActiveCaller(ctx);
   const orgId = caller ? orgIdOf(ctx, caller.account) : null;
-  if (
-    !caller ||
-    !orgId ||
-    !(await hasDashboardPermission(ctx, orgId, caller.user, "access:write"))
-  ) {
-    throw new ClientError("No permission to change access", "unauthorized");
+  if (!caller || !orgId) {
+    throw new ClientError("No permission for this", "unauthorized");
   }
+  await requireDashboardPermission(ctx, orgId, caller.user, "access:write");
 
   return caller;
 }
@@ -637,7 +660,9 @@ async function assertOwnedPolicies(
   accountId: Id<"accounts">,
   policyIds: readonly Id<"agentPolicies">[],
 ): Promise<void> {
-  for (const policyId of policyIds) await ownedPolicy(ctx, accountId, policyId);
+  await Promise.all(
+    policyIds.map((policyId) => ownedPolicy(ctx, accountId, policyId)),
+  );
 }
 
 async function orgRoles(
@@ -679,52 +704,84 @@ async function permissionNames(
   ]);
 }
 
-/** A policy as the list draws it: its rules in words, its scope, who made it. */
-async function policyRow(
+/** The project and stage names the policies' scopes point at, each fetched once. */
+async function scopeNames(
   ctx: Ctx,
+  policies: readonly Doc<"agentPolicies">[],
+): Promise<Map<string, string>> {
+  const stageIds = new Set<Id<"stages">>();
+  const projectIds = new Set<Id<"projects">>();
+  for (const policy of policies) {
+    if (policy.stageId) stageIds.add(policy.stageId);
+    for (const rule of policy.document.rules) {
+      const stageId = ctx.db.normalizeId(
+        "stages",
+        conditionValue(rule, "stage.id") ?? "",
+      );
+      const projectId = ctx.db.normalizeId(
+        "projects",
+        conditionValue(rule, "project.id") ?? "",
+      );
+      if (stageId) stageIds.add(stageId);
+      if (projectId) projectIds.add(projectId);
+    }
+  }
+  const stages = (
+    await Promise.all([...stageIds].map((id) => ctx.db.get(id)))
+  ).filter((stage) => stage !== null);
+  for (const stage of stages) projectIds.add(stage.projectId);
+  const projects = (
+    await Promise.all([...projectIds].map((id) => ctx.db.get(id)))
+  ).filter((project) => project !== null);
+  const names = new Map<string, string>();
+  for (const project of projects) {
+    names.set(project._id, `project ${project.name}`);
+  }
+  for (const stage of stages) {
+    const project = projects.find((entry) => entry._id === stage.projectId);
+    names.set(
+      stage._id,
+      `stage ${project ? `${project.name} / ` : ""}${stage.name}`,
+    );
+  }
+
+  return names;
+}
+
+/** A policy as the list draws it: its rules in words, its scope, who made it. */
+function policyRow(
   policy: Doc<"agentPolicies">,
-): Promise<PolicyRow> {
-  const document = policy.document as PolicyDocument;
-  const stage = policy.stageId ? await ctx.db.get(policy.stageId) : null;
+  names: Map<string, string>,
+  creators: Map<Id<"users">, Actor>,
+): PolicyRow {
+  const rules = policy.document.rules;
 
   return {
     _id: policy._id,
     name: policy.name,
     description: policy.description,
-    mode: document.mode ?? "audit",
-    scope: stage ? `stage ${stage.name}` : "organization",
+    mode: policy.document.mode ?? "audit",
+    scope: (policy.stageId && names.get(policy.stageId)) || "organization",
     managedBy: policy.managedBy,
-    rules: await Promise.all(
-      document.rules.map(async (rule) => ({
-        id: rule.id,
-        effect: rule.effect,
-        permissions: rule.actions,
-        scope: await ruleScope(ctx, rule),
-        condition: ruleCondition(rule),
-      })),
-    ),
+    rules: rules.map((rule) => ({
+      id: rule.id,
+      effect: rule.effect,
+      permissions: rule.actions,
+      scope: ruleScope(rule, names),
+      condition: ruleCondition(rule),
+    })),
+    permissions: [...new Set(rules.flatMap((rule) => rule.actions))],
     createdAt: policy.createdAt,
-    createdBy: await actorOf(ctx, policy.createdBy),
+    createdBy: policy.createdBy ? creators.get(policy.createdBy) : undefined,
   };
 }
 
 /** "organization", "project demo-app" or "stage demo-app / production". */
-async function ruleScope(ctx: Ctx, rule: PolicyRule): Promise<string> {
-  const stageId = conditionValue(rule, "stage.id");
-  const projectId = conditionValue(rule, "project.id");
-  const stage = stageId
-    ? await ctx.db.get(ctx.db.normalizeId("stages", stageId)!)
-    : null;
-  if (stage) {
-    const project = await ctx.db.get(stage.projectId);
+function ruleScope(rule: PolicyRule, names: Map<string, string>): string {
+  const scoped =
+    conditionValue(rule, "stage.id") ?? conditionValue(rule, "project.id");
 
-    return `stage ${project ? `${project.name} / ` : ""}${stage.name}`;
-  }
-  const project = projectId
-    ? await ctx.db.get(ctx.db.normalizeId("projects", projectId)!)
-    : null;
-
-  return project ? `project ${project.name}` : "organization";
+  return (scoped && names.get(scoped)) || "organization";
 }
 
 /** The rule's conditions that are not its scope, in one line. */
@@ -739,7 +796,7 @@ function ruleCondition(rule: PolicyRule): string | undefined {
   return others
     .map(
       (condition) =>
-        `${condition.attribute} ${OPERATOR_WORD[condition.operator]} ${String(condition.value)}`,
+        `${condition.attribute} ${POLICY_CONDITION_OPERATORS.find((operator) => operator.value === condition.operator)?.label} ${String(condition.value)}`,
     )
     .join(", ");
 }
@@ -751,19 +808,4 @@ function conditionValue(rule: PolicyRule, attribute: string): string | null {
   );
 
   return match && typeof match.value === "string" ? match.value : null;
-}
-
-function orgIdOf(ctx: Ctx, account: Doc<"accounts">): Id<"orgs"> | null {
-  return ctx.db.normalizeId("orgs", account.orgId);
-}
-
-/** A user id as the name and avatar a list draws; undefined when unknown. */
-async function actorOf(
-  ctx: Ctx,
-  userId: Id<"users"> | undefined,
-): Promise<Infer<typeof actorValidator> | undefined> {
-  if (!userId) return undefined;
-  const user = await ctx.db.get(userId);
-
-  return user ? { name: user.name, avatarUrl: user.avatarUrl } : undefined;
 }

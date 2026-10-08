@@ -27,12 +27,15 @@ import {
   type AuditActor,
 } from "../model/auditEvents";
 import { accountDoc } from "../account/accounts";
+import { requireDashboardPermission } from "../model/access";
 import {
+  keyHint,
   randomToken,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
+import { userByAuthId } from "../model/ownership/org";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import {
@@ -107,13 +110,14 @@ export const ensureForStage = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
+    const member = await userByAuthId(ctx, authUser.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: projectId,
+      stageId: stageId,
+    });
     const context = await resolveStageContext(ctx, projectId, stageId);
     const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
@@ -123,7 +127,7 @@ export const ensureForStage = mutation({
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
       createdBy: deriveName(authUser),
-      createdByUserId: await userIdByAuthId(ctx, authUser.id),
+      createdByUserId: member._id,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
       accountId: context.account._id,
@@ -383,13 +387,14 @@ export const rotate = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
+    const member = await userByAuthId(ctx, authUser.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: projectId,
+      stageId: stageId,
+    });
     const context = await resolveStageContext(ctx, projectId, stageId);
     const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
@@ -399,7 +404,7 @@ export const rotate = mutation({
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
       createdBy: deriveName(authUser),
-      createdByUserId: await userIdByAuthId(ctx, authUser.id),
+      createdByUserId: member._id,
       rotate: true,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
@@ -571,24 +576,11 @@ async function runtimeKeyFields(
 
   return {
     apiKeyHash: await sha256Hex(rawApiKey),
-    keyHint: `${RUNTIME_KEY_PREFIX}…${rawApiKey.slice(-4)}`,
+    keyHint: keyHint(RUNTIME_KEY_PREFIX, rawApiKey),
     apiKeyCiphertext: blob.ciphertext,
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,
   };
-}
-
-/** The member row behind the signed-in user, so the key list can name them. */
-async function userIdByAuthId(
-  ctx: QueryCtx,
-  authId: string,
-): Promise<Id<"users"> | undefined> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-
-  return user?._id;
 }
 
 /** Stable opaque endpoint handle for a stage's runtime API. */

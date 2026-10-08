@@ -14,7 +14,6 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadSort,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
@@ -40,45 +39,56 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { Who } from "@/app/components/Who";
+import { PLATFORM, Who } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
-import { toErrorMessage } from "@/app/lib/errors";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
-import { parseQuery } from "@/app/lib/queryTokens";
-import { sortRows, type SortKey, type SortState } from "@/app/lib/tableState";
+import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import {
+  POLICY_CONDITION_OPERATORS,
+  type PolicyConditionOperator,
+} from "@broods/convex/model/policyRules";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 type Policy = FunctionReturnType<typeof api.access.listPolicies>[number];
 type Column = "name" | "description" | "permissions" | "scope" | "createdAt";
+type Field = (typeof QUERY_FIELDS)[number];
 type Mode = Policy["mode"];
+
+/** One choice in the scope Select: the org, a project, or a stage of the picked project. */
+interface ScopeItem {
+  value: string;
+  label: string;
+  projectId?: Id<"projects">;
+  stageId?: Id<"stages">;
+}
 
 const QUERY_FIELDS = ["scope", "mode"] as const;
 
 const TABLE_MIN_WIDTH = 640;
+
+const NO_ROWS: Policy[] = [];
+
+const ORGANIZATION: ScopeItem = {
+  value: "organization",
+  label: "Organization",
+};
 
 const MODES: Array<{ value: Mode; label: string }> = [
   { value: "audit", label: "Audit: record decisions, block nothing" },
   { value: "enforce", label: "Enforce: block what a rule denies" },
 ];
 
-const OPERATORS = [
-  { value: "equals", label: "=" },
-  { value: "notEquals", label: "≠" },
-  { value: "in", label: "in" },
-  { value: "notIn", label: "not in" },
-  { value: "prefix", label: "starts with" },
-  { value: "contains", label: "contains" },
-] as const;
-
 const SORT_KEY: Record<Column, (policy: Policy) => SortKey> = {
   name: (policy) => policy.name,
   description: (policy) => policy.description ?? null,
-  permissions: (policy) => permissionCount(policy),
+  permissions: (policy) => policy.permissions.length,
   scope: (policy) => policy.scope,
   createdAt: (policy) => policy.createdAt,
 };
@@ -87,39 +97,19 @@ export function OrgPoliciesPanel(): React.JSX.Element {
   const { can } = usePermissions();
   const canChange = can("access:write");
   const policies = useQuery(api.access.listPolicies, {});
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<SortState<Column>>({
-    column: "name",
-    dir: "asc",
-  });
   const [selectedId, setSelectedId] = useState<Id<"agentPolicies"> | null>(
     null,
   );
   const [creating, setCreating] = useState(false);
-
-  const query = useMemo(() => parseQuery(filter, QUERY_FIELDS), [filter]);
-  const shown = useMemo(() => {
-    const matching = (policies ?? []).filter((policy) => {
-      const fieldsPass = query.fields.every(({ field, value }) =>
-        field === "scope"
-          ? policy.scope.toLowerCase().startsWith(value)
-          : policy.mode === value,
-      );
-      if (!fieldsPass) return false;
-      if (!query.text) return true;
-
-      return `${policy.name} ${policy.description ?? ""}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(matching, SORT_KEY[sort.column], sort.dir);
-  }, [policies, query, sort]);
-  const selected = policies?.find((policy) => policy._id === selectedId);
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
+  const list = useListState({
+    rows: policies ?? NO_ROWS,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "name", dir: "asc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
   });
+  const selected = policies?.find((policy) => policy._id === selectedId);
 
   if (policies === undefined) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
@@ -129,8 +119,8 @@ export function OrgPoliciesPanel(): React.JSX.Element {
     <div className="flex h-full min-h-0 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
+          value={list.query}
+          onChange={list.setQuery}
           fields={QUERY_FIELDS}
           placeholder="Search policies"
         />
@@ -160,23 +150,23 @@ export function OrgPoliciesPanel(): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Policy</DataTableHead>
-              <DataTableHead sort={sortFor("description")}>
+              <DataTableHead sort={list.sortFor("name")}>Policy</DataTableHead>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead sort={sortFor("permissions")}>
+              <DataTableHead sort={list.sortFor("permissions")}>
                 Permissions
               </DataTableHead>
-              <DataTableHead sort={sortFor("scope")}>Scope</DataTableHead>
+              <DataTableHead sort={list.sortFor("scope")}>Scope</DataTableHead>
               <DataTableHead>Mode</DataTableHead>
-              <DataTableHead sort={sortFor("createdAt")}>
+              <DataTableHead sort={list.sortFor("createdAt")}>
                 Created at
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((policy) => (
+            {list.shown.map((policy) => (
               <DataTableRow
                 key={policy._id}
                 selected={selectedId === policy._id}
@@ -188,7 +178,7 @@ export function OrgPoliciesPanel(): React.JSX.Element {
                 <DataTableCell muted className="max-w-72 truncate">
                   {policy.description || "—"}
                 </DataTableCell>
-                <DataTableCell>{permissionCount(policy)}</DataTableCell>
+                <DataTableCell>{policy.permissions.length}</DataTableCell>
                 <DataTableCell muted>{policy.scope}</DataTableCell>
                 <DataTableCell>
                   <StatusWord tone={policy.mode === "enforce" ? "ok" : "ended"}>
@@ -199,19 +189,13 @@ export function OrgPoliciesPanel(): React.JSX.Element {
                   {formatDate(policy.createdAt)}
                 </DataTableCell>
                 <DataTableCell>
-                  <Who
-                    actor={
-                      policy.createdBy
-                        ? { kind: "person", ...policy.createdBy }
-                        : { kind: "platform" }
-                    }
-                  />
+                  <Who actor={policy.createdBy ?? PLATFORM} />
                 </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState
             title={
               policies.length === 0
@@ -220,11 +204,11 @@ export function OrgPoliciesPanel(): React.JSX.Element {
             }
           />
         )}
-        <DataTableFooter>
-          {shown.length === policies.length
-            ? `${policies.length} policies`
-            : `${shown.length} of ${policies.length} policies`}
-        </DataTableFooter>
+        <DataTableFooter
+          shown={list.shown.length}
+          total={policies.length}
+          noun="policies"
+        />
       </DetailSplit>
       {creating && <PolicyDialog onClose={() => setCreating(false)} />}
     </div>
@@ -246,30 +230,12 @@ function PolicyDetail({
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
   const editable = canChange && policy.managedBy !== "cli";
 
-  async function dropRule(ruleId: string): Promise<void> {
-    setError(null);
-    try {
-      await removeRule({ policyId: policy._id, ruleId: ruleId });
-    } catch (err) {
-      setError(toErrorMessage(err));
-    }
-  }
-
   async function confirmDelete(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      await removePolicy({ policyId: policy._id });
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+    const done = await run(() => removePolicy({ policyId: policy._id }));
+    if (done) onClose();
   }
 
   return (
@@ -317,13 +283,7 @@ function PolicyDetail({
         <dd>{formatDate(policy.createdAt)}</dd>
         <dt className="text-muted-foreground">Created by</dt>
         <dd>
-          <Who
-            actor={
-              policy.createdBy
-                ? { kind: "person", ...policy.createdBy }
-                : { kind: "platform" }
-            }
-          />
+          <Who actor={policy.createdBy ?? PLATFORM} />
         </dd>
       </dl>
       {policy.managedBy === "cli" && (
@@ -379,7 +339,11 @@ function PolicyDetail({
                       size="sm"
                       tone="muted"
                       className="cursor-pointer"
-                      onClick={() => dropRule(rule.id)}
+                      onClick={() =>
+                        run(() =>
+                          removeRule({ policyId: policy._id, ruleId: rule.id }),
+                        )
+                      }
                     >
                       Remove
                     </Button>
@@ -425,33 +389,24 @@ function PolicyDialog({
   const [name, setName] = useState(policy?.name ?? "");
   const [description, setDescription] = useState(policy?.description ?? "");
   const [mode, setMode] = useState<Mode>(policy?.mode ?? "audit");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
 
   async function submit(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      if (policy) {
-        await update({
-          policyId: policy._id,
-          name: name.trim(),
-          description: description.trim() || null,
-          mode: mode,
-        });
-      } else {
-        await create({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          mode: mode,
-        });
-      }
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+    const done = await run(() =>
+      policy
+        ? update({
+            policyId: policy._id,
+            name: name.trim(),
+            description: description.trim() || null,
+            mode: mode,
+          })
+        : create({
+            name: name.trim(),
+            description: description.trim() || undefined,
+            mode: mode,
+          }),
+    );
+    if (done) onClose();
   }
 
   return (
@@ -497,9 +452,10 @@ function PolicyDialog({
             <Select
               items={MODES}
               value={mode}
-              onValueChange={(value) =>
-                value !== null && setMode(value as Mode)
-              }
+              onValueChange={(value) => {
+                const picked = MODES.find((item) => item.value === value);
+                if (picked) setMode(picked.value);
+              }}
             >
               <SelectTrigger id="policy-mode" className="w-full cursor-pointer">
                 <SelectValue />
@@ -556,33 +512,28 @@ function AddRuleDialog({
   const projects = useQuery(api.project.list, {});
   const [permission, setPermission] = useState("");
   const [effect, setEffect] = useState<"allow" | "deny">("allow");
-  const [scope, setScope] = useState("organization");
+  const [scope, setScope] = useState<ScopeItem>(ORGANIZATION);
   const [attribute, setAttribute] = useState("");
-  const [operator, setOperator] =
-    useState<(typeof OPERATORS)[number]["value"]>("equals");
+  const [operator, setOperator] = useState<PolicyConditionOperator>("equals");
   const [value, setValue] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const projectId = scope.startsWith("project:")
-    ? (scope.slice(8) as Id<"projects">)
-    : null;
+  const { pending, error, run } = useSubmit();
   const stages = useQuery(
     api.stage.list,
-    projectId ? { projectId: projectId } : "skip",
+    scope.projectId ? { projectId: scope.projectId } : "skip",
   );
-  const stageId = scope.startsWith("stage:")
-    ? (scope.slice(6) as Id<"stages">)
-    : null;
 
-  const scopeItems = [
-    { value: "organization", label: "Organization" },
-    ...(projects ?? []).map((project) => ({
-      value: `project:${project._id}`,
+  const scopeItems: ScopeItem[] = [
+    ORGANIZATION,
+    ...(projects ?? []).map((project): ScopeItem => ({
+      value: project._id,
       label: `Project ${project.name}`,
+      projectId: project._id,
     })),
-    ...(stages ?? []).map((stage) => ({
-      value: `stage:${stage._id}`,
+    ...(stages ?? []).map((stage): ScopeItem => ({
+      value: stage._id,
       label: `Stage ${stage.name}`,
+      projectId: stage.projectId,
+      stageId: stage._id,
     })),
   ];
   const permissionItems = (permissions ?? []).map((row) => ({
@@ -591,18 +542,12 @@ function AddRuleDialog({
   }));
 
   async function submit(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      const stage = stageId ? stages?.find((s) => s._id === stageId) : null;
-      await addRule({
+    const done = await run(() =>
+      addRule({
         policyId: policyId,
         permission: permission,
         effect: effect,
-        scope: {
-          ...(projectId ? { projectId: projectId } : {}),
-          ...(stage ? { projectId: stage.projectId, stageId: stage._id } : {}),
-        },
+        scope: { projectId: scope.projectId, stageId: scope.stageId },
         ...(attribute.trim()
           ? {
               condition: {
@@ -612,13 +557,9 @@ function AddRuleDialog({
               },
             }
           : {}),
-      });
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+      }),
+    );
+    if (done) onClose();
   }
 
   return (
@@ -673,7 +614,7 @@ function AddRuleDialog({
                 ]}
                 value={effect}
                 onValueChange={(next) =>
-                  next !== null && setEffect(next as "allow" | "deny")
+                  (next === "allow" || next === "deny") && setEffect(next)
                 }
               >
                 <SelectTrigger
@@ -698,8 +639,11 @@ function AddRuleDialog({
               </Label>
               <Select
                 items={scopeItems}
-                value={scope}
-                onValueChange={(next) => next !== null && setScope(next)}
+                value={scope.value}
+                onValueChange={(next) => {
+                  const picked = scopeItems.find((item) => item.value === next);
+                  if (picked) setScope(picked);
+                }}
               >
                 <SelectTrigger
                   id="rule-scope"
@@ -734,12 +678,14 @@ function AddRuleDialog({
                 className="font-mono text-xs"
               />
               <Select
-                items={OPERATORS}
+                items={POLICY_CONDITION_OPERATORS}
                 value={operator}
-                onValueChange={(next) =>
-                  next !== null &&
-                  setOperator(next as (typeof OPERATORS)[number]["value"])
-                }
+                onValueChange={(next) => {
+                  const picked = POLICY_CONDITION_OPERATORS.find(
+                    (item) => item.value === next,
+                  );
+                  if (picked) setOperator(picked.value);
+                }}
               >
                 <SelectTrigger
                   aria-label="Condition operator"
@@ -748,7 +694,7 @@ function AddRuleDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {OPERATORS.map((item) => (
+                  {POLICY_CONDITION_OPERATORS.map((item) => (
                     <SelectItem
                       key={item.value}
                       value={item.value}
@@ -798,7 +744,12 @@ function AddRuleDialog({
   );
 }
 
-/** Distinct permissions across a policy's rules. */
-function permissionCount(policy: Policy): number {
-  return new Set(policy.rules.flatMap((rule) => rule.permissions)).size;
+function matchesField(policy: Policy, field: Field, value: string): boolean {
+  return field === "scope"
+    ? policy.scope.toLowerCase().startsWith(value)
+    : policy.mode === value;
+}
+
+function searchText(policy: Policy): string {
+  return `${policy.name} ${policy.description ?? ""}`;
 }

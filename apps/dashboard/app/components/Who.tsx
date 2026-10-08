@@ -21,9 +21,15 @@ import { useSearchParams } from "next/navigation";
 /** How many avatars a group shows before folding the rest into a count. */
 const GROUP_MAX = 3;
 
+/** A member as the backend names them; the shape every `createdBy` carries. */
+export interface Person {
+  name: string;
+  avatarUrl?: string | null;
+}
+
 /** Anyone a cell names: a person, an agent, or the platform itself. */
 export type Actor =
-  | { kind: "person"; name: string; avatarUrl?: string | null }
+  | Person
   | { kind: "agent"; name: string; agentId: Id<"agents"> }
   | { kind: "platform" };
 
@@ -47,7 +53,7 @@ export function Who({
   return (
     <span className="inline-flex items-center gap-1.5">
       <ActorAvatar actor={actor} />
-      {actor.kind === "agent" && projectId ? (
+      {"kind" in actor && actor.kind === "agent" && projectId ? (
         <Link
           href={`${navHref(projectId, "", stage)}${stage ? "&" : "?"}node=${actor.agentId}`}
           onClick={(event) => event.stopPropagation()}
@@ -74,7 +80,7 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
         aria-label={actors.map(actorName).join(", ")}
       >
         {shown.map((actor, index) => (
-          <ActorAvatar key={`${actorName(actor)}-${index}`} actor={actor} />
+          <ActorAvatar key={index} actor={actor} />
         ))}
         {rest > 0 && <AvatarGroupCount>+{rest}</AvatarGroupCount>}
       </TooltipTrigger>
@@ -85,14 +91,14 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
 
 /** The small avatar alone: a person's picture or initials, an agent's dither, the Broods mark. */
 export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
-  if (actor.kind === "agent") {
+  if ("kind" in actor && actor.kind === "agent") {
     return (
       <Avatar size="sm">
         <DitherAvatarSVG seed={actor.name} size={24} className="rounded-md" />
       </Avatar>
     );
   }
-  if (actor.kind === "platform") {
+  if ("kind" in actor) {
     return (
       <Avatar size="sm">
         <svg viewBox="0 0 64 64" aria-hidden="true" className="size-full">
@@ -118,7 +124,7 @@ export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
 }
 
 function actorName(actor: Actor): string {
-  return actor.kind === "platform" ? "Broods" : actor.name;
+  return "kind" in actor && actor.kind === "platform" ? "Broods" : actor.name;
 }
 
 function initials(name: string): string {

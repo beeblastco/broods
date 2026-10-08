@@ -14,7 +14,6 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadSort,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
@@ -39,43 +38,41 @@ import {
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Switch } from "@/app/components/ui/switch";
-import { Who, WhoGroup } from "@/app/components/Who";
+import { PLATFORM, Who, WhoGroup } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
-import { toErrorMessage } from "@/app/lib/errors";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
-import { parseQuery } from "@/app/lib/queryTokens";
-import { sortRows, type SortKey, type SortState } from "@/app/lib/tableState";
+import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { DASHBOARD_POLICY_ACTIONS } from "@broods/convex/model/policyRules";
+import {
+  DASHBOARD_DESCRIPTIONS,
+  DASHBOARD_POLICY_ACTIONS,
+} from "@broods/convex/model/policyRules";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 type Role = FunctionReturnType<typeof api.access.listRoles>[number];
+type CustomRole = Extract<Role, { kind: "custom" }>;
 type Policy = FunctionReturnType<typeof api.access.listPolicies>[number];
 type Column = "name" | "description" | "policies" | "members" | "createdAt";
+type Field = (typeof QUERY_FIELDS)[number];
 
 const QUERY_FIELDS = ["kind"] as const;
 
 const TABLE_MIN_WIDTH = 640;
 
-// What each dashboard permission opens, for the role panel's Pages table.
-const PAGE_OF: Record<(typeof DASHBOARD_POLICY_ACTIONS)[number], string> = {
-  "keys:read": "Keys, view",
-  "keys:write": "Keys, change",
-  "members:write": "Members, change",
-  "access:write": "Access, change",
-  "billing:read": "Billing, view",
-};
+const NO_ROWS: Role[] = [];
 
 const SORT_KEY: Record<Column, (role: Role) => SortKey> = {
   name: (role) => role.name,
   description: (role) => role.description,
   policies: (role) => role.policyIds.length,
   members: (role) => role.members.length,
-  createdAt: (role) => role.createdAt ?? null,
+  createdAt: (role) => (role.kind === "custom" ? role.createdAt : null),
 };
 
 export function RolesPanel(): React.JSX.Element {
@@ -83,33 +80,17 @@ export function RolesPanel(): React.JSX.Element {
   const canChange = can("access:write");
   const roles = useQuery(api.access.listRoles, {});
   const policies = useQuery(api.access.listPolicies, {});
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<SortState<Column>>({
-    column: "name",
-    dir: "asc",
-  });
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-
-  const query = useMemo(() => parseQuery(filter, QUERY_FIELDS), [filter]);
-  const shown = useMemo(() => {
-    const matching = (roles ?? []).filter((role) => {
-      const kindPass = query.fields.every(({ value }) => role.kind === value);
-      if (!kindPass) return false;
-      if (!query.text) return true;
-
-      return `${role.name} ${role.description}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(matching, SORT_KEY[sort.column], sort.dir);
-  }, [roles, query, sort]);
-  const selected = roles?.find((role) => role.name === selectedName);
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
+  const list = useListState({
+    rows: roles ?? NO_ROWS,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "name", dir: "asc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
   });
+  const selected = roles?.find((role) => role.name === selectedName);
 
   if (roles === undefined || policies === undefined) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
@@ -119,8 +100,8 @@ export function RolesPanel(): React.JSX.Element {
     <div className="flex h-full min-h-0 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
+          value={list.query}
+          onChange={list.setQuery}
           fields={QUERY_FIELDS}
           placeholder="Search roles"
         />
@@ -151,20 +132,24 @@ export function RolesPanel(): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Role</DataTableHead>
-              <DataTableHead sort={sortFor("description")}>
+              <DataTableHead sort={list.sortFor("name")}>Role</DataTableHead>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead sort={sortFor("policies")}>Policies</DataTableHead>
-              <DataTableHead sort={sortFor("members")}>Members</DataTableHead>
-              <DataTableHead sort={sortFor("createdAt")}>
+              <DataTableHead sort={list.sortFor("policies")}>
+                Policies
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("members")}>
+                Members
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("createdAt")}>
                 Created at
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((role) => (
+            {list.shown.map((role) => (
               <DataTableRow
                 key={role.name}
                 selected={selectedName === role.name}
@@ -187,23 +172,16 @@ export function RolesPanel(): React.JSX.Element {
                   {role.members.length === 0 ? (
                     <span className="text-muted-foreground">—</span>
                   ) : (
-                    <WhoGroup
-                      actors={role.members.map((member) => ({
-                        kind: "person",
-                        ...member,
-                      }))}
-                    />
+                    <WhoGroup actors={role.members} />
                   )}
                 </DataTableCell>
                 <DataTableCell muted>
-                  {role.createdAt ? formatDate(role.createdAt) : "—"}
+                  {role.kind === "custom" ? formatDate(role.createdAt) : "—"}
                 </DataTableCell>
                 <DataTableCell>
                   <Who
                     actor={
-                      role.createdBy
-                        ? { kind: "person", ...role.createdBy }
-                        : { kind: "platform" }
+                      (role.kind === "custom" && role.createdBy) || PLATFORM
                     }
                   />
                 </DataTableCell>
@@ -211,10 +189,14 @@ export function RolesPanel(): React.JSX.Element {
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState title="No roles match the current filters." />
         )}
-        <DataTableFooter>{roles.length} roles</DataTableFooter>
+        <DataTableFooter
+          shown={list.shown.length}
+          total={roles.length}
+          noun="roles"
+        />
       </DetailSplit>
       {creating && (
         <RoleDialog policies={policies} onClose={() => setCreating(false)} />
@@ -239,39 +221,25 @@ function RoleDetail({
   const remove = useMutation(api.access.removeRole);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
   const attached = policies.filter((policy) =>
     role.policyIds.includes(policy._id),
   );
   const attachable = policies.filter(
     (policy) => !role.policyIds.includes(policy._id),
   );
-  const custom = role.kind === "custom" && role._id !== undefined;
-  const editable = canChange && custom;
+  const custom = role.kind === "custom" ? role : null;
+  const editable = canChange && custom !== null;
 
-  async function setPolicies(policyIds: Id<"agentPolicies">[]): Promise<void> {
-    if (!role._id) return;
-    setError(null);
-    try {
-      await update({ roleId: role._id, policyIds: policyIds });
-    } catch (err) {
-      setError(toErrorMessage(err));
-    }
+  function setPolicies(policyIds: Id<"agentPolicies">[]): void {
+    if (custom)
+      void run(() => update({ roleId: custom._id, policyIds: policyIds }));
   }
 
   async function confirmDelete(): Promise<void> {
-    if (!role._id) return;
-    setPending(true);
-    setError(null);
-    try {
-      await remove({ roleId: role._id });
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+    if (!custom) return;
+    const done = await run(() => remove({ roleId: custom._id }));
+    if (done) onClose();
   }
 
   return (
@@ -313,33 +281,22 @@ function RoleDetail({
             <span className="text-muted-foreground">none</span>
           ) : (
             <span className="inline-flex items-center gap-2">
-              <WhoGroup
-                actors={role.members.map((member) => ({
-                  kind: "person",
-                  ...member,
-                }))}
-              />
+              <WhoGroup actors={role.members} />
               <span className="text-muted-foreground">
                 {role.members.map((member) => member.name).join(", ")}
               </span>
             </span>
           )}
         </dd>
-        {role.createdAt && (
+        {custom && (
           <>
             <dt className="text-muted-foreground">Created at</dt>
-            <dd>{formatDate(role.createdAt)}</dd>
+            <dd>{formatDate(custom.createdAt)}</dd>
           </>
         )}
         <dt className="text-muted-foreground">Created by</dt>
         <dd>
-          <Who
-            actor={
-              role.createdBy
-                ? { kind: "person", ...role.createdBy }
-                : { kind: "platform" }
-            }
-          />
+          <Who actor={custom?.createdBy ?? PLATFORM} />
         </dd>
       </dl>
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
@@ -392,7 +349,7 @@ function RoleDetail({
             {attached.map((policy) => (
               <DataTableRow key={policy._id}>
                 <DataTableCell>{policy.name}</DataTableCell>
-                <DataTableCell muted>{permissionCount(policy)}</DataTableCell>
+                <DataTableCell muted>{policy.permissions.length}</DataTableCell>
                 <DataTableCell muted>{policy.scope}</DataTableCell>
                 <DataTableCell align="right">
                   {editable && (
@@ -427,14 +384,11 @@ function RoleDetail({
         </DataTableHeader>
         <DataTableBody>
           {DASHBOARD_POLICY_ACTIONS.map((action) => {
-            const allowed =
-              role.kind === "built-in"
-                ? role.name !== "Member"
-                : policiesAllow(attached, action);
+            const allowed = role.permissions.includes(action);
 
             return (
               <DataTableRow key={action}>
-                <DataTableCell>{PAGE_OF[action]}</DataTableCell>
+                <DataTableCell>{DASHBOARD_DESCRIPTIONS[action]}</DataTableCell>
                 <DataTableCell muted={!allowed}>
                   {allowed ? "yes" : "no"}
                 </DataTableCell>
@@ -444,9 +398,9 @@ function RoleDetail({
         </DataTableBody>
       </DataTable>
 
-      {editing && (
+      {editing && custom && (
         <RoleDialog
-          role={role}
+          role={custom}
           policies={policies}
           onClose={() => setEditing(false)}
         />
@@ -472,7 +426,7 @@ function RoleDialog({
   policies,
   onClose,
 }: {
-  role?: Role;
+  role?: CustomRole;
   policies: Policy[];
   onClose: () => void;
 }): React.JSX.Element {
@@ -483,33 +437,24 @@ function RoleDialog({
   const [policyIds, setPolicyIds] = useState<Id<"agentPolicies">[]>(
     role?.policyIds ?? [],
   );
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
 
   async function submit(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      if (role?._id) {
-        await update({
-          roleId: role._id,
-          name: name.trim(),
-          description: description.trim() || null,
-          policyIds: policyIds,
-        });
-      } else {
-        await create({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          policyIds: policyIds,
-        });
-      }
-      onClose();
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+    const done = await run(() =>
+      role
+        ? update({
+            roleId: role._id,
+            name: name.trim(),
+            description: description.trim() || null,
+            policyIds: policyIds,
+          })
+        : create({
+            name: name.trim(),
+            description: description.trim() || undefined,
+            policyIds: policyIds,
+          }),
+    );
+    if (done) onClose();
   }
 
   return (
@@ -612,21 +557,10 @@ function RoleDialog({
   );
 }
 
-/** Distinct permissions across a policy's rules. */
-function permissionCount(policy: Policy): number {
-  return new Set(policy.rules.flatMap((rule) => rule.permissions)).size;
+function matchesField(role: Role, _field: Field, value: string): boolean {
+  return role.kind === value;
 }
 
-/** The same order the backend uses: a deny wins, then an allow, then nothing. */
-function policiesAllow(policies: Policy[], action: string): boolean {
-  let allowed = false;
-  for (const policy of policies) {
-    for (const rule of policy.rules) {
-      if (!rule.permissions.includes(action)) continue;
-      if (rule.effect === "deny") return false;
-      allowed = true;
-    }
-  }
-
-  return allowed;
+function searchText(role: Role): string {
+  return `${role.name} ${role.description}`;
 }

@@ -26,20 +26,27 @@ vi.mock(
   }),
 );
 
-test("policies grant and refuse in the same order core's OPA uses", (): void => {
+test("policies grant and refuse in the same order core's OPA uses, where they are scoped", (): void => {
   const allow = {
     version: 1 as const,
+    mode: "enforce" as const,
     rules: [{ id: "a", effect: "allow" as const, actions: ["keys:read"] }],
   };
   const deny = {
     version: 1 as const,
+    mode: "enforce" as const,
     rules: [{ id: "d", effect: "deny" as const, actions: ["keys:read"] }],
   };
   expect(policiesAllow([allow], "keys:read")).toBe(true);
   expect(policiesAllow([allow, deny], "keys:read")).toBe(false);
   expect(policiesAllow([allow], "keys:write")).toBe(false);
-  expect(dashboardPermissions("member", [allow])).toEqual(["keys:read"]);
-  expect(dashboardPermissions("admin", [])).toContain("access:write");
+  expect(policiesAllow([{ ...allow, mode: "audit" }], "keys:read")).toBe(false);
+  expect(dashboardPermissions({ tier: "member", policies: [allow] })).toEqual([
+    "keys:read",
+  ]);
+  expect(dashboardPermissions({ tier: "admin", policies: [] })).toContain(
+    "access:write",
+  );
 });
 
 test("a member with a custom role sees the keys its policy allows", async (): Promise<void> => {
@@ -129,12 +136,54 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
       resource: "tool",
     }),
   ).rejects.toThrow(/No permission/);
+  await expect(
+    t.mutation(api.org.members.add, {
+      orgId: seeded.orgId,
+      email: "owner@example.com",
+    }),
+  ).rejects.toThrow(/No permission/);
+
+  // A rule scoped to one project counts there and nowhere else.
+  const [projectA, projectB] = await t.run(
+    async (ctx): Promise<[Id<"projects">, Id<"projects">]> => [
+      await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: seeded.orgId,
+        name: "a",
+        slug: "a",
+        updatedAt: Date.now(),
+      }),
+      await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: seeded.orgId,
+        name: "b",
+        slug: "b",
+        updatedAt: Date.now(),
+      }),
+    ],
+  );
+  currentAuthId = "auth_owner";
+  await t.mutation(api.access.addRule, {
+    policyId: policyId,
+    permission: "keys:write",
+    scope: { projectId: projectA },
+  });
+  currentAuthId = "auth_member";
+  expect(await t.query(api.access.viewerPermissions, {})).toEqual([
+    "keys:read",
+  ]);
+  expect(
+    await t.query(api.access.viewerPermissions, { projectId: projectA }),
+  ).toEqual(["keys:read", "keys:write"]);
+  expect(
+    await t.query(api.access.viewerPermissions, { projectId: projectB }),
+  ).toEqual(["keys:read"]);
 
   currentAuthId = "auth_owner";
   const roles = await t.query(api.access.listRoles, {});
-  expect(roles.find((role) => role.name === "Engineer")?.members).toEqual([
-    { name: "Ada", avatarUrl: undefined },
-  ]);
+  const engineer = roles.find((role) => role.name === "Engineer");
+  expect(engineer?.members).toEqual([{ name: "Ada", avatarUrl: undefined }]);
+  expect(engineer?.permissions).toEqual(["keys:read"]);
   await expect(
     t.mutation(api.access.removeRole, { roleId: roleId }),
   ).rejects.toThrow(/holds this role/);

@@ -9,11 +9,14 @@ import { type Infer, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { requireDashboardPermission } from "./model/access";
 import {
+  keyHint,
   PROJECT_KEY_PREFIX,
   randomToken,
   sha256Hex,
 } from "./model/accountSecrets";
+import { userByAuthId } from "./model/ownership/org";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
@@ -48,13 +51,19 @@ export const create = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(ctx, user.id, projectId, "admin");
+    const project = await getProjectForRole(ctx, user.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     const stage = await getOwnedStage(ctx, user.id, stageId);
     if (!stage || stage.projectId !== projectId) {
       throw new Error("Stage not found.");
     }
+    const member = await userByAuthId(ctx, user.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: projectId,
+      stageId: stageId,
+    });
 
     // A project key resolves to the project's org account, so that account must
     // already be provisioned (Settings → API Access).
@@ -78,19 +87,18 @@ export const create = mutation({
       name: name.trim() || "API key",
       description: description?.trim() || undefined,
       keyHash: keyHash,
-      keyHint: deployKeyHint(token),
+      keyHint: keyHint(PROJECT_KEY_PREFIX, token),
       status: "active",
-      createdBy: (
-        await ctx.db
-          .query("users")
-          .withIndex("by_authId", (q) => q.eq("authId", user.id))
-          .unique()
-      )?._id,
+      createdBy: member._id,
       createdAt: now,
       updatedAt: now,
     });
 
-    return { _id: _id, token: token, keyHint: deployKeyHint(token) };
+    return {
+      _id: _id,
+      token: token,
+      keyHint: keyHint(PROJECT_KEY_PREFIX, token),
+    };
   },
 });
 
@@ -138,24 +146,20 @@ export const remove = mutation({
     const deployKey = await ctx.db.get(deployKeyId);
     if (!deployKey) throw new Error("Project key not found.");
 
-    const project = await getProjectForRole(
-      ctx,
-      user.id,
-      deployKey.projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, user.id, deployKey.projectId);
     if (!project) throw new Error("Project key not found.");
     const stage = await getOwnedStage(ctx, user.id, deployKey.stageId);
     if (!stage || stage.projectId !== deployKey.projectId)
       throw new Error("Project key not found.");
+    const member = await userByAuthId(ctx, user.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: deployKey.projectId,
+      stageId: deployKey.stageId,
+    });
 
     await ctx.db.delete(deployKeyId);
 
     return deployKeyId;
   },
 });
-
-/** Masked label for listing a key without revealing it: prefix + last four chars. */
-function deployKeyHint(token: string): string {
-  return `${PROJECT_KEY_PREFIX}…${token.slice(-4)}`;
-}

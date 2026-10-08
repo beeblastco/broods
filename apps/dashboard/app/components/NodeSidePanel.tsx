@@ -977,9 +977,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               className="flex flex-col overflow-y-auto"
             >
               <PoliciesTab
-                assignedPolicyIds={readAgentPolicies(
-                  agentConfig as unknown as FlatAgentConfig,
-                )}
+                assignedPolicyIds={readAgentPolicies(agentConfig?.extraConfig)}
                 onUpdatePolicyConfig={
                   canWrite ? handleUpdatePolicyConfig : undefined
                 }

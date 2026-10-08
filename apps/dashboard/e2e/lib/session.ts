@@ -19,9 +19,9 @@ try {
   // No local env file: the suites read whatever the shell provides.
 }
 
-// E2E_DEV_PORT moves the local server off 3000, so a worktree's suite does not
-// land on the main checkout's `next dev` and test the wrong tree.
-export const DEV_PORT = process.env.E2E_DEV_PORT ?? "3000";
+// PORT moves the local server off 3000 (next dev reads it too), so a worktree's
+// suite does not land on the main checkout's `next dev` and test the wrong tree.
+export const DEV_PORT = process.env.PORT ?? "3000";
 export const DEV_URL = `http://localhost:${DEV_PORT}`;
 export const BASE_URL = process.env.E2E_BASE_URL ?? DEV_URL;
 export const AUTH_DIR = join(__dirname, "..", ".auth");
