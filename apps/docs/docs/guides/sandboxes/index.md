@@ -156,7 +156,7 @@ On `lambda`, a snapshot starts from a running instance and comes back as the ima
 flowchart LR
   subgraph Pick["1. Pick an image"]
     D0["default<br/>bash, python3, node, uv, rg"]
-    O["image: obscura<br/>adds browse"]
+    O["image: obscura<br/>adds obscura"]
     BR["image: browser<br/>adds chromium"]
   end
   D0 --> RUN[2. Running instance]

@@ -53,7 +53,7 @@ flowchart LR
   K2 --> RES
   RES --> OC["onCreate once,<br/>onResume on later calls"]
   OC --> R2[run the command]
-  OC -->|with a workspace| BG[start a background job]
+  OC -->|bash background: true, with a workspace| BG[start a background job]
   BG --> AS["async_status: status, logs, stop<br/>result delivered to the turn's origin"]
 ```
 
