@@ -9,21 +9,20 @@
  * A warm `up` is idempotent: the containers restart in place and the script
  * skips `convex deploy` while packages/convex is unchanged.
  *
- * `up --dashboard` also serves the dashboard on this stack. It signs in with the
- * WorkOS app in apps/dashboard/.env.local, which local Convex then trusts, on a
- * port in the instance's block. That app must allow the redirect URI
- * http://localhost:*\/auth/callback.
+ * The stack is self-hosted: no WorkOS and nothing on the internet. `up
+ * --dashboard` also serves the dashboard on a port in the instance's block;
+ * the admin signs in with the admin secret, which `status --key` prints.
  *
  * `verify` drives the cases in scripts/local-verify/cases through the edge.
  * `up --perf` answers the model in process and traces core's Convex calls, and
  * `perf` then grades scripts/local-verify/perf.ts against its baseline.
  * Under GitHub Actions each command also writes its timings to the job summary.
  *
- * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--record]
+ * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--key|--record]
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -36,7 +35,6 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { parseEnv } from "node:util";
 import type { Doc } from "../packages/convex/_generated/dataModel.ts";
 
 import { renderFileConfig } from "../apps/edge/src/traefik.ts";
@@ -84,6 +82,8 @@ interface InstanceSecrets {
   adminAccount: string;
   mediaTicket: string;
   serviceAuth: string;
+  /** Private ES256 JWK the dashboard signs the admin's session with. */
+  sessionSigningKey: string;
   stageTicket: string;
   terminalTicket: string;
 }
@@ -132,7 +132,7 @@ switch (command) {
     await down(flags.has("--purge"));
     break;
   case "status":
-    await status();
+    await status(flags.has("--key"));
     break;
   case "verify":
     await verify();
@@ -142,7 +142,7 @@ switch (command) {
     break;
   default:
     console.error(
-      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--record]",
+      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--key|--record]",
     );
     process.exit(2);
 }
@@ -185,11 +185,19 @@ async function down(purge: boolean): Promise<void> {
   console.log(`stopped ${instanceId} (state kept for fast restart)`);
 }
 
-async function status(): Promise<void> {
+// `--key` prints only the admin secret, the dashboard's sign-in key, for a
+// script such as `E2E_ADMIN_KEY=$(... status --key)`.
+async function status(printKey: boolean): Promise<void> {
   const instanceId = currentInstanceId();
   const state = loadState(instanceId);
   if (!state) {
-    console.log(`no local stack for this worktree (${instanceId})`);
+    console.error(`no local stack for this worktree (${instanceId})`);
+    if (printKey) process.exit(1);
+
+    return;
+  }
+  if (printKey) {
+    console.log(state.secrets.adminAccount);
 
     return;
   }
@@ -238,12 +246,6 @@ async function up(
 ): Promise<void> {
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
-  const dashboardEnv = loadDashboardEnv();
-  if (withDashboard && !dashboardEnv.WORKOS_CLIENT_ID) {
-    throw new Error(
-      "--dashboard needs a WorkOS app in apps/dashboard/.env.local (see .env.example)",
-    );
-  }
   if (fresh) {
     await down(true);
   }
@@ -273,7 +275,7 @@ async function up(
     });
   }
 
-  const deploymentEnv = deploymentEnvEntries(state, dashboardEnv);
+  const deploymentEnv = deploymentEnvEntries(state);
   const deploymentEnvHash = createHash("sha256")
     .update(JSON.stringify(deploymentEnv))
     .digest("hex");
@@ -281,7 +283,7 @@ async function up(
     await measureStep(perf, "deployment env", () => {
       configureDeploymentEnv(state, deploymentEnv);
       state.deploymentEnvHash = deploymentEnvHash;
-      // auth.config.ts reads WORKOS_CLIENT_ID at deploy time.
+      // auth.config.ts reads BROODS_SESSION_JWKS at deploy time.
       state.convexSourceHash = undefined;
       saveState(state);
     });
@@ -471,23 +473,20 @@ function configureDeploymentEnv(
   }
 }
 
-// AuthKit validates WORKOS_* at import time, so dummies stand in when the
-// dashboard's .env.local has no WorkOS app. BROODS_ACCOUNT_MANAGE_URL points at
-// core on the host (the backend runs inside docker).
-function deploymentEnvEntries(
-  state: InstanceState,
-  dashboardEnv: NodeJS.Dict<string>,
-): Record<string, string> {
+// A self-hosted deployment: BROODS_SESSION_JWKS makes Convex trust the
+// dashboard's admin session instead of WorkOS, so no WORKOS_* is set.
+// BROODS_ACCOUNT_MANAGE_URL points at core on the host (the backend runs
+// inside docker).
+function deploymentEnvEntries(state: InstanceState): Record<string, string> {
+  const { d: _d, ...publicJwk } = JSON.parse(state.secrets.sessionSigningKey);
+
   return {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
     BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
+    BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk] }),
     SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     STAGE_TICKET_SECRET: state.secrets.stageTicket,
-    WORKOS_API_KEY: dashboardEnv.WORKOS_API_KEY || "sk_local_dummy",
-    WORKOS_CLIENT_ID: dashboardEnv.WORKOS_CLIENT_ID || "client_local_dummy",
-    WORKOS_WEBHOOK_SECRET:
-      dashboardEnv.WORKOS_WEBHOOK_SECRET || "whsec_local_dummy",
   };
 }
 
@@ -810,7 +809,6 @@ async function startDashboard(
   }
 
   const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
-  const redirectUri = `${url}/auth/callback`;
   state.pids.dashboard = spawnDetached({
     args: [
       join(dashboardDir, "node_modules", ".bin", "next"),
@@ -820,12 +818,18 @@ async function startDashboard(
     ],
     command: "node",
     cwd: dashboardDir,
+    // Empty WORKOS_* win over any in .env.local, so the stack proves it signs
+    // in without WorkOS.
     env: {
+      ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
       BROODS_BASE_URL: edgeUrl,
+      BROODS_SESSION_SIGNING_KEY: state.secrets.sessionSigningKey,
       NEXT_PUBLIC_BROODS_BASE_URL: edgeUrl,
       NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
-      NEXT_PUBLIC_WORKOS_REDIRECT_URI: redirectUri,
-      WORKOS_REDIRECT_URI: redirectUri,
+      NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${url}/auth/callback`,
+      WORKOS_API_KEY: "",
+      WORKOS_CLIENT_ID: "",
+      WORKOS_COOKIE_PASSWORD: "",
     },
     instanceId: state.instanceId,
     logName: "dashboard",
@@ -1193,6 +1197,10 @@ function loadOrCreateState(): InstanceState {
       "this stack predates the Traefik edge; run `bun run local:up -- --fresh` to recreate it",
     );
   }
+  if (existing && !existing.secrets.sessionSigningKey) {
+    existing.secrets.sessionSigningKey = newSessionSigningKey();
+    saveState(existing);
+  }
   if (existing) return existing;
 
   const state: InstanceState = {
@@ -1205,6 +1213,7 @@ function loadOrCreateState(): InstanceState {
       adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
       mediaTicket: randomBytes(24).toString("hex"),
       serviceAuth: randomBytes(24).toString("hex"),
+      sessionSigningKey: newSessionSigningKey(),
       stageTicket: randomBytes(24).toString("hex"),
       terminalTicket: randomBytes(24).toString("hex"),
     },
@@ -1214,11 +1223,16 @@ function loadOrCreateState(): InstanceState {
   return state;
 }
 
-// apps/dashboard/.env.local, or nothing when this checkout has none.
-function loadDashboardEnv(): NodeJS.Dict<string> {
-  const path = join(dashboardDir, ".env.local");
+// A P-256 key as a private JWK, the form BROODS_SESSION_SIGNING_KEY takes.
+function newSessionSigningKey(): string {
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 
-  return existsSync(path) ? parseEnv(readFileSync(path, "utf8")) : {};
+  return JSON.stringify({
+    ...privateKey.export({ format: "jwk" }),
+    alg: "ES256",
+    kid: "broods-self-host",
+    use: "sig",
+  });
 }
 
 function loadState(instanceId: string): InstanceState | null {

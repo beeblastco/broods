@@ -15,7 +15,7 @@ import {
   subscribeOnboardingSecret,
 } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
-import { useAuth } from "@workos-inc/authkit-nextjs/components";
+import { useSession } from "@/app/lib/session";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { notFound, useParams, useRouter } from "next/navigation";
@@ -53,7 +53,7 @@ export function MainShell({
   const { projectId } = useParams<{ projectId?: string }>();
   if (projectId !== undefined && !CONVEX_ID_SHAPE.test(projectId)) notFound();
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const { user } = useSession();
   const router = useRouter();
   const ensureSynced = useAction(api.user.ensureSynced);
   const syncProfile = useMutation(api.user.syncProfile);

@@ -8,6 +8,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { components, internal } from "./_generated/api";
 import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { SELF_HOST_ADMIN, SELF_HOST_ISSUER } from "./model/selfHostAuth";
 import { usersFields } from "./schema";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -43,9 +44,10 @@ export const ensureSynced = action({
       return null;
     }
 
-    const workosUser = await authKit.workos.userManagement.getUser(
-      identity.subject,
-    );
+    const workosUser =
+      identity.issuer === SELF_HOST_ISSUER
+        ? selfHostAdminUser()
+        : await authKit.workos.userManagement.getUser(identity.subject);
     await ctx.runMutation(components.workOSAuthKit.lib.onWebhookEvent, {
       // The component only reads the key for non-create events; the
       // validator still wants a string.
@@ -174,3 +176,27 @@ export const requestAccountDeletion = mutation({
     return { scheduledFor: scheduledFor };
   },
 });
+
+// The self-hosted admin, shaped like the WorkOS user `user.created` carries.
+function selfHostAdminUser(): Awaited<
+  ReturnType<typeof authKit.workos.userManagement.getUser>
+> {
+  const now = new Date().toISOString();
+
+  return {
+    object: "user",
+    id: SELF_HOST_ADMIN.subject,
+    email: SELF_HOST_ADMIN.email,
+    emailVerified: true,
+    profilePictureUrl: null,
+    name: SELF_HOST_ADMIN.firstName,
+    firstName: SELF_HOST_ADMIN.firstName,
+    lastName: null,
+    lastSignInAt: null,
+    locale: null,
+    createdAt: now,
+    updatedAt: now,
+    externalId: null,
+    metadata: {},
+  };
+}

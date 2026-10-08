@@ -8,9 +8,11 @@
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import { toErrorMessage } from "@/app/lib/errors";
+import { SESSION_COOKIE, selfHosted } from "@/app/lib/selfHostSession";
 import { api } from "@broods/convex/_generated/api";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import { ConvexHttpClient } from "convex/browser";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -21,7 +23,7 @@ export default async function CliAuthStartPage({
 }: {
   searchParams: Promise<SearchParams>;
 }): Promise<React.JSX.Element> {
-  const auth = await withAuth({ ensureSignedIn: true });
+  const accessToken = await signedInAccessToken();
   const params = await searchParams;
   const callback = firstParam(params.callback);
   const state = firstParam(params.state);
@@ -47,7 +49,7 @@ export default async function CliAuthStartPage({
   const target = new URL(callback);
   target.searchParams.set("state", state);
   try {
-    const code = await mintLoginCode(auth.accessToken, codeChallenge);
+    const code = await mintLoginCode(accessToken, codeChallenge);
     target.searchParams.set("code", code);
     // BROODS_BASE_URL advertises the unified public domain (the gateway,
     // which proxies /v1/account/* to Convex); without it we point the CLI at
@@ -82,6 +84,17 @@ function advertisedBaseUrl(): string {
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+// The proxy only lets a signed-in caller this far; a self-hosted session token
+// is the Convex token itself.
+async function signedInAccessToken(): Promise<string> {
+  if (!selfHosted)
+    return (await withAuth({ ensureSignedIn: true })).accessToken;
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) redirect("/auth/sign-in");
+
+  return token;
 }
 
 function isLocalCallback(value: string): boolean {

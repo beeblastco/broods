@@ -1,39 +1,24 @@
 import { getSignInUrl } from "@workos-inc/authkit-nextjs";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { redirectUri } from "@/app/lib/authConfig";
+import { parseReturnTo, redirectUri } from "@/app/lib/authConfig";
+import { selfHosted } from "@/app/lib/selfHostSession";
 
 /**
- * Accept only a same-origin path. Parsing against a fixed base catches every
- * open-redirect encoding ("//evil.com", "/\evil.com", tab/newline tricks) that
- * a prefix check misses. The URL parser normalizes backslashes to forward
- * slashes and strips tabs/newlines exactly like browsers do, so anything that
- * would escape the origin fails the origin check below.
- */
-function parseReturnTo(value: string | null): string | null {
-  if (!value?.startsWith("/")) {
-    return null;
-  }
-  try {
-    const url = new URL(value, "http://relative-base");
-    if (url.origin !== "http://relative-base") {
-      return null;
-    }
-
-    return url.pathname + url.search + url.hash;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * @returns Redirect to WorkOS AuthKit sign-in with the PKCE verifier cookie attached
+ * @returns Redirect to WorkOS AuthKit sign-in with the PKCE verifier cookie
+ * attached, or to the admin-key page on a self-hosted stack
  */
 export async function GET(
   request: NextRequest,
 ): Promise<NextResponse<unknown>> {
   const returnTo =
     parseReturnTo(request.nextUrl.searchParams.get("returnTo")) ?? "/";
+  if (selfHosted) {
+    const keyPage = new URL("/auth/key", request.nextUrl);
+    keyPage.searchParams.set("returnTo", returnTo);
+
+    return NextResponse.redirect(keyPage);
+  }
   const authorizationUrl = await getSignInUrl({
     returnTo: returnTo,
     redirectUri: redirectUri,

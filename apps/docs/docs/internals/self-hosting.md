@@ -33,7 +33,7 @@ flowchart LR
 | core                        | `apps/core/Dockerfile`                           | Container, port 3000, cluster-internal only                       |
 | Traefik                     | upstream, routes from `apps/edge`                | The only public door                                              |
 | gateway                     | `apps/gateway/Dockerfile`                        | Container, port 3000, WebSockets behind Traefik                   |
-| dashboard                   | `apps/dashboard/Dockerfile`                      | Container, port 3000, needs WorkOS                                |
+| dashboard                   | `apps/dashboard/Dockerfile`                      | Container, port 3000                                              |
 | discord-forwarder           | `apps/discord-forwarder/Dockerfile`              | Container, one replica. Only for Discord agents                   |
 | matrix-forwarder            | `apps/matrix-forwarder/Dockerfile`               | Container, one replica, persistent volume. Only for Matrix agents |
 | NATS with JetStream         | upstream                                         | Needed for WebSocket runs and live logs                           |
@@ -48,7 +48,7 @@ The managed service runs all of this on k3s. Its release files are in the infra 
 - An AWS account and credentials that can create S3, IAM, Lambda and CloudWatch resources.
 - A Kubernetes cluster, or any container host, for the five images.
 - A Convex deployment, on Convex Cloud or self-hosted.
-- A WorkOS AuthKit app if you run the dashboard. Without it there is no browser login, and so no `broods login`.
+- Nothing for sign-in. A self-hosted dashboard signs the admin in with `ADMIN_ACCOUNT_SECRET`, like the Convex self-hosted dashboard's admin key. No identity provider, and nothing on the internet.
 
 ## 1. Deploy the AWS data plane
 
@@ -97,24 +97,25 @@ Production stages keep their buckets on removal and protect them. Add every long
 
 Set the deployment env with `bunx convex env set NAME value` from `packages/convex`:
 
-| Variable                                                                   | Required  | Notes                                                                                                                                        |
-| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                         | yes       | Same value as core. Wraps each account's data key; comma-separated list                                                                      |
-| `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same value as core. Admin bearer for the account admin routes                                                                                |
-| `SERVICE_AUTH_SECRET`                                                      | yes       | Same value as core. Cron trigger and service calls                                                                                           |
-| `STAGE_TICKET_SECRET`                                                      | yes       | Same value as core. Signs `bdts_` tickets                                                                                                    |
-| `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, for example `http://core.<ns>.svc.cluster.local`. Never the public gateway: core refuses the service token there      |
-| `AWS_REGION`                                                               | yes       | The data plane region                                                                                                                        |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                                                                                 |
-| `CONVEX_AWS_ROLE_ARN`                                                      | yes       | `convexAwsRoleArn` output                                                                                                                    |
-| `CONVEX_AWS_EXTERNAL_ID`                                                   | no        | Default `broods-convex`                                                                                                                      |
-| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                                                                                |
-| `MICROVM_ARTIFACTS_BUCKET_NAME`                                            | no        | Also refuses that bucket as a workspace's own storage                                                                                        |
-| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core                                                   |
-| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | dashboard | WorkOS AuthKit: user sync and cleanup for dashboard logins                                                                                   |
-| `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs. Falls back to the origin of `NEXT_PUBLIC_WORKOS_REDIRECT_URI`                                         |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`        | no        | Billing. Leave unset without it                                                                                                              |
-| `STRIPE_PRO_PAYMENT_LINK`                                                  | no        | Stripe Payment Link that Upgrade opens, so Stripe owns the price and trial. Unset falls back to a Checkout Session for `STRIPE_PRO_PRICE_ID` |
+| Variable                                                                   | Required  | Notes                                                                                                                                              |
+| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                         | yes       | Same value as core. Wraps each account's data key; comma-separated list                                                                            |
+| `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same value as core. Admin bearer for the account admin routes                                                                                      |
+| `SERVICE_AUTH_SECRET`                                                      | yes       | Same value as core. Cron trigger and service calls                                                                                                 |
+| `STAGE_TICKET_SECRET`                                                      | yes       | Same value as core. Signs `bdts_` tickets                                                                                                          |
+| `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, for example `http://core.<ns>.svc.cluster.local`. Never the public gateway: core refuses the service token there            |
+| `AWS_REGION`                                                               | yes       | The data plane region                                                                                                                              |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                                                                                       |
+| `CONVEX_AWS_ROLE_ARN`                                                      | yes       | `convexAwsRoleArn` output                                                                                                                          |
+| `CONVEX_AWS_EXTERNAL_ID`                                                   | no        | Default `broods-convex`                                                                                                                            |
+| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                                                                                      |
+| `MICROVM_ARTIFACTS_BUCKET_NAME`                                            | no        | Also refuses that bucket as a workspace's own storage                                                                                              |
+| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core                                                         |
+| `BROODS_SESSION_JWKS`                                                      | dashboard | `{"keys":[...]}` holding the public half of `BROODS_SESSION_SIGNING_KEY`. Convex then trusts the dashboard's admin session and needs no `WORKOS_*` |
+| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | no        | The managed service's WorkOS AuthKit login. Leave unset when self-hosting                                                                          |
+| `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs. Falls back to the origin of `NEXT_PUBLIC_WORKOS_REDIRECT_URI`                                               |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`        | no        | Billing. Leave unset without it                                                                                                                    |
+| `STRIPE_PRO_PAYMENT_LINK`                                                  | no        | Stripe Payment Link that Upgrade opens, so Stripe owns the price and trial. Unset falls back to a Checkout Session for `STRIPE_PRO_PRICE_ID`       |
 
 Then deploy the functions:
 
@@ -201,7 +202,13 @@ The gateway is stateless. Scale it with replicas.
 
 ### dashboard
 
-The build-time values are `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI` and `NEXT_PUBLIC_BROODS_BASE_URL`, the public gateway. The runtime values are `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_REDIRECT_URI`, `WORKOS_COOKIE_PASSWORD`, and `CONVEX_SITE_URL` against a self-hosted Convex, which has no derivable `.convex.site` host. See `apps/dashboard/.env.example`.
+The build-time values are `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_BROODS_BASE_URL`, the public gateway, and `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, whose origin is the dashboard's own (`https://dashboard.example.com/auth/callback`). The runtime values are `ADMIN_ACCOUNT_SECRET`, the key the admin signs in with, `BROODS_SESSION_SIGNING_KEY`, a private ES256 JWK that signs the session, and `CONVEX_SITE_URL`, since a self-hosted Convex has no derivable `.convex.site` host. Make the key pair once:
+
+```bash
+bun -e 'const { privateKey } = require("node:crypto").generateKeyPairSync("ec", { namedCurve: "P-256" }); const jwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "broods-self-host", use: "sig" }; const { d, ...pub } = jwk; console.log("BROODS_SESSION_SIGNING_KEY=" + JSON.stringify(jwk)); console.log("BROODS_SESSION_JWKS=" + JSON.stringify({ keys: [pub] }))'
+```
+
+The first line goes to the dashboard, the second to Convex. See `apps/dashboard/.env.example`.
 
 ### Forwarders
 
@@ -230,7 +237,7 @@ Until `CLOUDFLARE_MCP_URL` is set, every server runs on Lambda.
 
 ## 5. Create an account
 
-With the dashboard, sign in and the account is provisioned for your organization. Without it, create one with the admin secret:
+With the dashboard, sign in with the admin key and the account is provisioned for your organization. Without it, create one with the admin secret:
 
 ```bash
 curl -X POST "$BROODS_BASE_URL/v1/accounts" \
@@ -294,4 +301,9 @@ bun run local:down      # --purge deletes the instance state
 
 `verify` passes without a model key. The run fails at the provider call, which still proves routing, auth, config encryption and the Convex round trips. Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for a full run. The local stack has no AWS data plane or NATS, so it covers the config plane and runs without sandboxes or WebSocket.
 
-`bun run local:up -- --dashboard` also serves the dashboard on the stack. It signs in through the WorkOS app in `apps/dashboard/.env.local`, and the local Convex trusts that app. Each stack serves the dashboard on its own port, so add the redirect URI `http://localhost:*/auth/callback` to that WorkOS app (staging only; WorkOS allows a wildcard port on localhost). `up` prints the dashboard URL. Pass it as `E2E_BASE_URL` to `bun run --filter @broods/dashboard test:app` or `perf` to run them signed in against your machine, with `E2E_EMAIL` and `E2E_PASSWORD` from the same file.
+`bun run local:up -- --dashboard` also serves the dashboard on the stack, self-hosted: no WorkOS and nothing on the internet. Each stack serves it on its own port, which `up` prints. Sign in with the admin key `bun run local:status -- --key` prints. The signed-in browser suites run the same way, with no account to set up:
+
+```bash
+cd apps/dashboard
+E2E_ADMIN_KEY=$(bun ../../scripts/local-stack.ts status --key) E2E_BASE_URL=<dashboard URL> bun run test:app
+```

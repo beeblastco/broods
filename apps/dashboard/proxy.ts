@@ -1,32 +1,62 @@
 import { authkitProxy } from "@workos-inc/authkit-nextjs";
 import type { NextMiddlewareResult } from "next/dist/server/web/types";
-import type { NextFetchEvent, NextRequest } from "next/server";
+import {
+  NextResponse,
+  type NextFetchEvent,
+  type NextRequest,
+} from "next/server";
 import { redirectUri } from "@/app/lib/authConfig";
-const authProxy = authkitProxy({
-  redirectUri: redirectUri,
-  // Hands the access token to the browser in a 30 s cookie on document loads,
-  // so the client token store starts full instead of asking a server action.
-  // With `initialAuth` in the root layout that removes both auth round trips
-  // from a cold load.
-  eagerAuth: true,
-  middlewareAuth: {
-    enabled: true,
-    unauthenticatedPaths: [
-      "/healthz",
-      "/auth/callback",
-      "/auth/error",
-      "/auth/sign-in",
-      // The component fixture the browser tests drive; it 404s outside dev.
-      ...(process.env.NODE_ENV === "development" ? ["/ui-gallery"] : []),
-    ],
-  },
-});
+import {
+  SESSION_COOKIE,
+  selfHosted,
+  sessionUser,
+} from "@/app/lib/selfHostSession";
+
+const UNAUTHENTICATED_PATHS = [
+  "/healthz",
+  "/auth/callback",
+  "/auth/error",
+  "/auth/key",
+  "/auth/sign-in",
+  "/auth/session",
+  // The component fixture the browser tests drive; it 404s outside dev.
+  ...(process.env.NODE_ENV === "development" ? ["/ui-gallery"] : []),
+];
+
+// A self-hosted stack never builds the AuthKit proxy, so it needs no WorkOS config.
+const authProxy = selfHosted
+  ? null
+  : authkitProxy({
+      redirectUri: redirectUri,
+      // Hands the access token to the browser in a 30 s cookie on document loads,
+      // so the client token store starts full instead of asking a server action.
+      // With `initialAuth` in the root layout that removes both auth round trips
+      // from a cold load.
+      eagerAuth: true,
+      middlewareAuth: {
+        enabled: true,
+        unauthenticatedPaths: UNAUTHENTICATED_PATHS,
+      },
+    });
 
 export default function proxy(
   request: NextRequest,
   event: NextFetchEvent,
 ): Promise<NextMiddlewareResult> | NextMiddlewareResult {
-  return authProxy(request, event);
+  return authProxy ? authProxy(request, event) : selfHostProxy(request);
+}
+
+// Lets a signed-in admin through; anyone else goes to the admin-key page.
+async function selfHostProxy(request: NextRequest): Promise<NextResponse> {
+  const { pathname, search } = request.nextUrl;
+  if (UNAUTHENTICATED_PATHS.includes(pathname)) return NextResponse.next();
+  if (await sessionUser(request.cookies.get(SESSION_COOKIE)?.value)) {
+    return NextResponse.next();
+  }
+  const keyPage = new URL("/auth/key", request.nextUrl);
+  keyPage.searchParams.set("returnTo", pathname + search);
+
+  return NextResponse.redirect(keyPage);
 }
 
 /**
