@@ -7,7 +7,7 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { mutation } from "../_generated/server";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveAccountForUser, getActiveCaller } from "../org/orgs";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
 // A cron runs stored instructions as any agent of the org, on a schedule, and
@@ -28,12 +28,13 @@ export const create = mutation({
   },
   returns: v.object({ cronId: v.string() }),
   handler: async (ctx, args): Promise<{ cronId: string }> => {
-    const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
+    const caller = await getActiveCaller(ctx, "admin");
+    if (!caller) throw new Error(CRON_ADMIN_REQUIRED);
 
     const cron = (await ctx.runMutation(internal.agent.crons.create, {
-      accountId: account._id,
+      accountId: caller.account._id,
       input: args,
+      createdBy: caller.user._id,
     })) as { cronId: string };
 
     return { cronId: cron.cronId };
