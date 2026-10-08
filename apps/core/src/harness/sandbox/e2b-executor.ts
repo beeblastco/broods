@@ -37,6 +37,9 @@ import {
   truncateText,
 } from "./utils.ts";
 
+// How long a size read may take before the size is left unknown.
+const SPECS_READ_TIMEOUT_MS = 3_000;
+
 // What E2B reported for each reserved sandbox. Its template fixes the size, so
 // one read covers every reconnect; release drops the entry.
 const RESERVED_SPECS = new Map<string, SandboxSpecs>();
@@ -53,7 +56,8 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
     const controlPlane = this.#config.controlPlane;
-    // Only a metered call reads the size: its row is the one place it shows.
+    // Only a metered call reads the size, since its row is the one place it
+    // shows, and the read runs beside the command rather than ahead of it.
     const endMeter = persistent
       ? undefined
       : meterEphemeralSandbox(
@@ -62,7 +66,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           sandbox.sandboxId,
           request.metadata,
           controlPlane && !controlPlane.ownCredentials
-            ? await e2bSpecs(sandbox)
+            ? e2bSpecs(sandbox)
             : undefined,
         );
 
@@ -317,11 +321,13 @@ async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
   return Sandbox;
 }
 
-// The vCPUs and memory E2B gave the sandbox. E2B reports no disk size. A failed
-// read leaves the config's size in place rather than failing the call.
+// The vCPUs and memory E2B gave the sandbox. E2B reports no disk size. A slow or
+// failed read leaves the size unknown rather than holding up or failing the call.
 async function e2bSpecs(sandbox: Sandbox): Promise<SandboxSpecs | undefined> {
   try {
-    const info = await sandbox.getInfo();
+    const info = await sandbox.getInfo({
+      requestTimeoutMs: SPECS_READ_TIMEOUT_MS,
+    });
 
     return { vcpu: info.cpuCount, memoryMb: info.memoryMB };
   } catch {

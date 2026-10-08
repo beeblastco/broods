@@ -208,27 +208,28 @@ export function mergeSandboxEnv(
  * in between. Call it only once the provider confirms the sandbox is gone, so a
  * failed teardown keeps billing until the stale-row sweep. The account's own
  * credentials, or no account, get no row. `specs` is the size the provider
- * reported, when it reports one.
+ * reported, or a read of it still running; the row waits for that read, which
+ * runs beside the command and so never holds it up.
  */
 export function meterEphemeralSandbox(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
   sandboxId: string,
   metadata: SandboxRunMetadata | undefined,
-  specs?: SandboxSpecs,
+  specs?: SandboxSpecs | Promise<SandboxSpecs | undefined>,
 ): () => void {
   const accountId = controlPlane?.ownCredentials
     ? undefined
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
-  void queueMirrorWrite(sandboxId, (): Promise<void> =>
+  void queueMirrorWrite(sandboxId, async (): Promise<void> =>
     upsertSandboxInstance(
       controlPlane,
       provider,
       sandboxId,
       sandboxId,
       metadata,
-      { ephemeral: true, specs: specs },
+      { ephemeral: true, specs: await specs },
     ),
   );
 

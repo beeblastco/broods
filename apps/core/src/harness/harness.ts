@@ -135,7 +135,10 @@ import {
 } from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
-import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
+import {
+  knownSandboxSpecs,
+  type SandboxRunMetadata,
+} from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import {
   parseToolResultOutput,
@@ -2119,7 +2122,11 @@ export async function runAgentLoop(
         formatSandboxStatus({
           name: sandboxes[0]!.name,
           provider: compute.provider,
-          specs: compute.controlPlane?.specs,
+          specs: knownSandboxSpecs(
+            compute.provider,
+            reservationKey,
+            compute.controlPlane?.specs,
+          ),
           state: "running",
           shared: shared,
           usage: usage,

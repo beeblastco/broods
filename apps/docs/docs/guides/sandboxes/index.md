@@ -120,14 +120,16 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `sandbox`    | Creates the VM at that size, `tiny` rounded up to 0.5 vCPU                                   | The resources the VM was created with                                         |
 | `cloudflare` | Starts the nearest instance type: `tiny` and `xsmall` `standard-1`, then `standard-2` to `4` | That instance type: 0.5 vCPU, 4 GB, 8 GB up to 4 vCPU, 12 GB, 20 GB           |
-| `lambda`     | Nothing                                                                                      | 4 vCPU, 8 GB, 8 GB disk, the one MicroVM size                                 |
+| `lambda`     | Nothing                                                                                      | 4 vCPU, 8 GB, 8 GB disk: the MicroVM's ceiling, every MicroVM the same        |
 | `daytona`    | Nothing, the snapshot and Daytona's defaults size it                                         | vCPU, memory and disk Daytona reports                                         |
 | `e2b`        | Nothing, the template sizes it                                                               | vCPU and memory E2B reports. Disk is `?`, E2B does not report it              |
 | `vercel`     | Nothing, Vercel sizes it                                                                     | vCPU and memory Vercel reports. Disk is `?`, Vercel does not report it        |
 | `machine`    | Rejected                                                                                     | CPUs, memory and home disk of your computer, as `broods machine` reports them |
 | `custom`     | Rejected                                                                                     | No instance row: Broods cannot see your server's hardware                     |
 
-On the managed service, sandbox time on platform credentials counts at the size the dashboard shows. A `machine` sandbox, and one on your own provider credentials, does not count.
+When a provider that sizes itself does not answer, its whole size shows as `?`.
+
+On the managed service, sandbox time on platform credentials counts at the size the dashboard shows, except on `lambda`: a MicroVM counts at its 1 vCPU / 2 GB baseline, plus the vCPU and memory it bursts above that while in use, see [Persistent sandboxes](persistent.md). A `machine` sandbox, and one on your own provider credentials, does not count.
 
 ## Images
 

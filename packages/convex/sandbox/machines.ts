@@ -50,6 +50,9 @@ export const connected = internalMutation({
     const now = Date.now();
     const row = {
       ...args,
+      // The client drops an undefined arg, so a daemon that sent no size must
+      // still unset the size an earlier connection left.
+      specs: args.specs,
       projectId: config.projectId,
       stageId: config.stageId,
       connectedAt: now,

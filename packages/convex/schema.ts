@@ -602,7 +602,13 @@ export const sandboxInstancesFields = {
   permissionMode: v.optional(
     v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
   ),
+  /** What the meter bills: the size the provider reported, else the config's. */
   specs: sandboxSpecsValidator,
+  /**
+   * The provider sizes the machine itself and its size could not be read, so
+   * `specs` is the config's and the dashboard shows the size as unknown.
+   */
+  sizeUnknown: v.optional(v.boolean()),
   createdAt: v.number(),
   lastUsedAt: v.number(),
   createdByTraceId: v.optional(v.string()),

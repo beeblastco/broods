@@ -580,7 +580,10 @@ function InstanceDetailFields({
       <DetailField
         label="Size"
         value={
-          <SpecsValue specs={instance.specs} provider={instance.provider} />
+          <SpecsValue
+            specs={instance.sizeUnknown ? undefined : instance.specs}
+            provider={instance.provider}
+          />
         }
       />
       <DetailField

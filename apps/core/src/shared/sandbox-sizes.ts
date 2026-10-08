@@ -124,11 +124,58 @@ export const CLOUDFLARE_INSTANCE_TYPES: Record<
 // the platform default, a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk.
 const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
 
+/**
+ * Providers that size machines their own way, so a config's size is not what the
+ * machine has. Only the size the provider reports is shown for these.
+ */
+export const SELF_SIZED_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
+  "daytona",
+  "e2b",
+  "vercel",
+]);
+
 /** The size used for the mirror specs when a config pins no explicit size or resources. */
 const DEFAULT_SIZE: SandboxSize = "xsmall";
 
 /** vcpu values workdir accepts; the catalog's `tiny` (0.25) clamps up to 0.5. */
 const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
+
+// The size each reserved sandbox's provider last reported, by reservation key, so
+// the agent's status line names the same size as the dashboard row.
+const REPORTED_SPECS = new Map<string, SandboxSpecs>();
+
+/**
+ * The size a reserved sandbox really has, for the agent's status line: what its
+ * provider reported, else the config's size where that is what the machine gets.
+ * Undefined while a provider that sizes itself has reported nothing.
+ */
+export function knownSandboxSpecs(
+  provider: SandboxProvider,
+  reservationKey: string | undefined,
+  configSpecs: SandboxSpecs | undefined,
+): SandboxSpecs | undefined {
+  const reported = reservationKey
+    ? REPORTED_SPECS.get(reservationKey)
+    : undefined;
+  if (reported) return reported;
+
+  return SELF_SIZED_PROVIDERS.has(provider) ? undefined : configSpecs;
+}
+
+/**
+ * Remembers what a reserved sandbox's provider reported, or with no specs forgets
+ * it. The instance mirror calls it on reserve and on remove.
+ */
+export function rememberReportedSpecs(
+  reservationKey: string,
+  specs: SandboxSpecs | undefined,
+): void {
+  if (specs) {
+    REPORTED_SPECS.set(reservationKey, specs);
+  } else {
+    REPORTED_SPECS.delete(reservationKey);
+  }
+}
 
 /**
  * Resolve the specs to mirror (and bill) for a sandbox config. A workdir (`sandbox`)

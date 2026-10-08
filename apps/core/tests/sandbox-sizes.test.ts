@@ -1,9 +1,30 @@
 import { describe, expect, it } from "bun:test";
 import {
+  knownSandboxSpecs,
+  rememberReportedSpecs,
   resolveSandboxSpecs,
   workdirSizeResources,
   SANDBOX_SIZES,
 } from "../src/shared/sandbox-sizes.ts";
+
+describe("knownSandboxSpecs", () => {
+  const config = SANDBOX_SIZES.xsmall;
+
+  it("names no size for a self-sized provider until it reports one", () => {
+    expect(knownSandboxSpecs("vercel", "key-v", config)).toBeUndefined();
+    rememberReportedSpecs("key-v", { vcpu: 2, memoryMb: 4096 });
+    expect(knownSandboxSpecs("vercel", "key-v", config)).toEqual({
+      vcpu: 2,
+      memoryMb: 4096,
+    });
+    rememberReportedSpecs("key-v", undefined);
+    expect(knownSandboxSpecs("vercel", "key-v", config)).toBeUndefined();
+  });
+
+  it("keeps the config's size where the config sizes the machine", () => {
+    expect(knownSandboxSpecs("sandbox", "key-s", config)).toEqual(config);
+  });
+});
 
 describe("resolveSandboxSpecs", () => {
   it("returns the catalog specs for a pinned size", () => {

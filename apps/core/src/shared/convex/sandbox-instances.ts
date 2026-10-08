@@ -9,10 +9,12 @@
 const internal: any = require("@broods/convex/_generated/api").internal;
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { logError } from "../log.ts";
-import type {
-  SandboxControlPlane,
-  SandboxRunMetadata,
-  SandboxSpecs,
+import {
+  rememberReportedSpecs,
+  SELF_SIZED_PROVIDERS,
+  type SandboxControlPlane,
+  type SandboxRunMetadata,
+  type SandboxSpecs,
 } from "../sandbox-sizes.ts";
 import { getConvexClient } from "./client.ts";
 
@@ -37,6 +39,9 @@ export type SandboxInstanceStatus =
  * row's last-used trace instead of adding a row per tool call.
  * `logStream` is the provider-side guest log stream the dashboard tails. Only the
  * call that launched the VM knows it; reconnects leave the stored value alone.
+ * `specs` is the size the provider reported for this machine. Without it the row
+ * bills the size derived from the config, and a provider that sizes itself marks
+ * the row's size unknown rather than showing the config's as the machine's.
  */
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
@@ -49,6 +54,9 @@ export async function upsertSandboxInstance(
   if (!controlPlane) return;
   const meta: SandboxRunMetadata = metadata ?? {};
   const ephemeral = options?.ephemeral === true;
+  if (options?.specs && !ephemeral) {
+    rememberReportedSpecs(reservationKey, options.specs);
+  }
   try {
     // The Convex client drops undefined object fields, so an unset optional
     // stays absent on the row rather than becoming null.
@@ -61,6 +69,10 @@ export async function upsertSandboxInstance(
       externalId: externalId,
       name: controlPlane.name,
       specs: options?.specs ?? controlPlane.specs,
+      sizeUnknown:
+        !options?.specs && SELF_SIZED_PROVIDERS.has(provider)
+          ? true
+          : undefined,
       sandboxConfigId: controlPlane.sandboxConfigId as any,
       snapshotId: controlPlane.snapshotId,
       egress: controlPlane.egress,
@@ -182,6 +194,7 @@ export async function removeSandboxInstance(
   reservationKey: string,
   externalId?: string,
 ): Promise<void> {
+  rememberReportedSpecs(reservationKey, undefined);
   try {
     // Built once, outside the retries: a missing Convex config is not a blip.
     const client = getConvexClient();

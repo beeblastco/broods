@@ -83,4 +83,17 @@ test("a replaced connection's late heartbeat and disconnect leave its successor'
   );
 
   expect(closed?.disconnectedAt).toEqual(expect.any(Number));
+
+  // A daemon that reports no size must not inherit the last computer's.
+  await t.mutation(internal.sandbox.machines.connected, {
+    ...first,
+    connectionId: "third",
+    computer: false,
+    mcp: [],
+  });
+  const third = await t.run(
+    async (ctx) => await ctx.db.query("machineConnections").unique(),
+  );
+
+  expect(third?.specs).toBeUndefined();
 });

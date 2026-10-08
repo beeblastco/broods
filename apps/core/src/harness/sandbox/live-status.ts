@@ -8,7 +8,10 @@
 import type { BroodsSandboxDriverSession } from "@broods/ai-sdk-sandbox";
 import type { SandboxInstanceInfo } from "./types.ts";
 import { configString } from "./utils.ts";
-import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
+import {
+  knownSandboxSpecs,
+  type SandboxSpecs,
+} from "../../shared/sandbox-sizes.ts";
 import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 
 // A run that never settled (a crashed pod keeps nothing, but a leaked entry would
@@ -74,7 +77,11 @@ export function agentSandboxStatus(
   return {
     name: entry.name,
     provider: entry.sandbox.provider,
-    specs: entry.sandbox.controlPlane?.specs,
+    specs: knownSandboxSpecs(
+      entry.sandbox.provider,
+      reservationKey,
+      entry.sandbox.controlPlane?.specs,
+    ),
     shared: true,
     neighbours: sandboxNeighbours(reservationKey, eventId),
   };
