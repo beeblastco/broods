@@ -150,7 +150,6 @@ export function SandboxResourceDetailsTab({
             size: undefined,
             image: undefined,
             snapshot: undefined,
-            memoryLimit: undefined,
           }
         : { provider: provider, image: undefined, snapshot: undefined },
     );

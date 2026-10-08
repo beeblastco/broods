@@ -100,16 +100,15 @@ const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
  * config bills exactly the resources its VM is created with (see workdirResources),
  * and a lambda config reports the MicroVM's real size whatever it asks for.
  * Elsewhere a pinned `size` wins; otherwise the explicit resource options
- * (`cpu`/`memoryMb`/`diskGb`) and `memoryLimit` fill in. Each missing dimension
- * defaults from the `xsmall` row.
- * @param input the provider, size, raw provider options and memory limit from the config.
+ * (`cpu`/`memoryMb`/`diskGb`) fill in. Each missing dimension defaults from the
+ * `xsmall` row.
+ * @param input the provider, size and raw provider options from the config.
  * @returns the canonical specs.
  */
 export function resolveSandboxSpecs(input: {
   provider?: SandboxProvider;
   size?: SandboxSize;
   options?: Record<string, unknown>;
-  memoryLimit?: number;
 }): SandboxSpecs {
   const base = SANDBOX_SIZES[DEFAULT_SIZE];
   if (input.provider === "sandbox") {
@@ -131,8 +130,7 @@ export function resolveSandboxSpecs(input: {
 
   return {
     vcpu: positiveNumber(options.cpu) ?? base.vcpu,
-    memoryMb:
-      positiveNumber(options.memoryMb) ?? input.memoryLimit ?? base.memoryMb,
+    memoryMb: positiveNumber(options.memoryMb) ?? base.memoryMb,
     storageGb: positiveNumber(options.diskGb) ?? base.storageGb,
   };
 }
@@ -140,20 +138,18 @@ export function resolveSandboxSpecs(input: {
 /**
  * Workdir create-time resources for a config, used by the workdir executor to size
  * the VM and by resolveSandboxSpecs to bill it. A pinned size seeds the dimensions
- * (vcpu clamped to workdir's allowed set); explicit cpu/memoryMb/diskGb options and
- * `memoryLimit` still win over the size defaults.
+ * (vcpu clamped to workdir's allowed set); explicit cpu/memoryMb/diskGb options
+ * still win over the size defaults.
  * @returns the cpu/memoryMb/diskGb to request, or undefined when none is set.
  */
 export function workdirResources(input: {
   size?: SandboxSize;
   options?: Record<string, unknown>;
-  memoryLimit?: number;
 }): { cpu?: number; memoryMb?: number; diskGb?: number } | undefined {
   const options = input.options ?? {};
   const sized = input.size ? workdirSizeResources(input.size) : undefined;
   const cpu = positiveNumber(options.cpu) ?? sized?.cpu;
-  const memoryMb =
-    positiveNumber(options.memoryMb) ?? input.memoryLimit ?? sized?.memoryMb;
+  const memoryMb = positiveNumber(options.memoryMb) ?? sized?.memoryMb;
   const diskGb = positiveNumber(options.diskGb) ?? sized?.diskGb;
   if (cpu === undefined && memoryMb === undefined && diskGb === undefined)
     return undefined;
