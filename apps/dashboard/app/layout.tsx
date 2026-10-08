@@ -19,9 +19,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>): Promise<React.JSX.Element> {
   const initialAuth = await initialAuthFromRequest();
-  // The Convex socket opens only once the JS runs; resolving its host while
-  // the HTML streams takes the DNS lookup off a cold load. Not preconnect:
-  // browsers open a WebSocket on its own connection, not a pooled one.
+  // Resolve the Convex host while the HTML streams. Not preconnect: a WebSocket never reuses a pooled connection.
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (convexUrl) prefetchDNS(convexUrl);
 

@@ -3,7 +3,10 @@ import type { Doc } from "../_generated/dataModel";
 type RankedStage = Pick<Doc<"stages">, "isDefault" | "kind" | "name">;
 
 /** Stage list order: the default first, then by name. */
-export function byDefaultThenName(a: RankedStage, b: RankedStage): number {
+export function byDefaultThenName(
+  a: Pick<RankedStage, "isDefault" | "name">,
+  b: Pick<RankedStage, "isDefault" | "name">,
+): number {
   return a.isDefault !== b.isDefault
     ? a.isDefault
       ? -1
@@ -12,11 +15,8 @@ export function byDefaultThenName(a: RankedStage, b: RankedStage): number {
 }
 
 /**
- * The stage a project opens on when none is named: the Development default,
- * else any Development stage, else the default, else the first. Shared by the
- * dashboard's stage picker and the queries that resolve a missing stage, and
- * ranked in list order first, so both land on the same one whatever order
- * they read the stages in.
+ * The stage a project opens on when none is named, shared by the dashboard and
+ * Convex. Ranked in list order first, so input order never changes the pick.
  */
 export function defaultStage<Stage extends RankedStage>(
   stages: Stage[],
