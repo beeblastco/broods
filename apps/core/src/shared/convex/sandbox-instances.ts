@@ -103,7 +103,7 @@ export async function setSandboxInstanceSpecs(
 ): Promise<void> {
   try {
     await getConvexClient().mutation(internal.sandbox.instances.setSpecs, {
-      accountId: accountId as any,
+      accountId: accountId,
       reservationKey: reservationKey,
       externalId: externalId,
       specs: specs,

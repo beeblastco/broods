@@ -134,7 +134,7 @@ export const box = defineSandbox({
 
 - The Snapshot action captures a reserved sandbox as a Vercel snapshot that does not expire. Vercel stops the sandbox to capture it, and its next call resumes it.
 - All three network modes are enforced natively.
-- `size` does nothing here. The dashboard shows the vCPU and memory Vercel reports, and `?` for disk, which Vercel does not report.
+- `size` does nothing here. The dashboard shows the vCPU and memory once Vercel reports them, and `?` for disk, which Vercel does not report.
 - Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.
 - `onResume` fires only when a stopped sandbox resumes. The idle timeout counts from start, and `maxLifetimeSeconds` is not enforced.
 

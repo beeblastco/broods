@@ -35,8 +35,9 @@ const UNKNOWN_DISK: Record<string, string> = {
   vercel: "Vercel does not report a sandbox's disk size.",
 };
 
-// Why a machine shows no size at all, by provider. Daytona and Vercel report
-// on every use; e2b is read and workdir fixed only when the sandbox is created.
+// Why a machine shows no size at all, by provider. Daytona reports on every
+// use, Vercel when its session carries one; e2b is read and workdir fixed only
+// when the sandbox is created.
 const UNKNOWN_SIZE: Record<string, string> = {
   daytona:
     "Daytona sizes this sandbox itself and has not reported its size yet. It shows the next time this sandbox is used.",
@@ -46,7 +47,7 @@ const UNKNOWN_SIZE: Record<string, string> = {
   sandbox:
     "Workdir fixes the size when it creates the VM, and this one was created before Broods recorded it. It stays unknown until the sandbox is recreated.",
   vercel:
-    "Vercel sizes this sandbox itself and has not reported its size yet. It shows the next time this sandbox is used.",
+    "Vercel sizes this sandbox itself and has not reported its size. It shows once Vercel reports it.",
 };
 
 // Why a lambda or cloudflare size is unknown: the row predates verified sizes.
