@@ -13,6 +13,8 @@ import {
   query,
   type MutationCtx,
 } from "../_generated/server";
+import { authKit } from "../auth";
+import { getProjectStage } from "../model/ownership/stage";
 import { getActiveAccountForUser } from "../org/orgs";
 import { machineConnectionsFields } from "../schema";
 
@@ -85,19 +87,33 @@ export const disconnected = internalMutation({
 export const listForActiveOrg = query({
   args: {
     projectId: v.id("projects"),
-    stageId: v.id("stages"),
+    // Absent reads the project's default stage, as canvas.getByProject does.
+    stageId: v.optional(v.id("stages")),
   },
   returns: v.array(namedConnection),
   handler: async (ctx, args): Promise<NamedConnection[]> => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
     const account = await getActiveAccountForUser(ctx);
     if (!account) return [];
+    const stage = await getProjectStage(
+      ctx,
+      user.id,
+      args.projectId,
+      args.stageId,
+    );
+    if (!stage) return [];
     const rows = await ctx.db
       .query("machineConnections")
       .withIndex("by_accountId_projectId_and_stageId", (q) =>
         q
           .eq("accountId", account._id)
           .eq("projectId", args.projectId)
-          .eq("stageId", args.stageId),
+          .eq("stageId", stage._id),
       )
       .take(100);
     const named = await Promise.all(

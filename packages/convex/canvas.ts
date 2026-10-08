@@ -15,7 +15,7 @@ import { stableJson } from "./model/objects";
 import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
 import { hasReservation } from "./model/cliSyncResources";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
-import { getOwnedStage } from "./model/ownership/stage";
+import { getOwnedStage, getProjectStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import {
   normalizeWorkspaceConfig,
@@ -140,10 +140,14 @@ export const cliManagedResourceNames = query({
   },
 });
 
+/**
+ * A stage's canvas layout. With no `stageId` it reads the project's default
+ * stage, so a cold load can ask before the stage list arrives.
+ */
 export const getByProject = query({
   args: {
     projectId: v.id("projects"),
-    stageId: v.id("stages"),
+    stageId: v.optional(v.id("stages")),
   },
   returns: v.union(
     v.null(),
@@ -161,16 +165,13 @@ export const getByProject = query({
 
     // Reactive subscribers may briefly hold a just-deleted project/stage;
     // return null instead of throwing so the canvas unmounts without crashing.
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) return null;
-
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) return null;
+    const stage = await getProjectStage(ctx, authUser.id, projectId, stageId);
+    if (!stage) return null;
 
     const layout = await ctx.db
       .query("canvasLayouts")
       .withIndex("by_projectId_and_stageId", (q) =>
-        q.eq("projectId", projectId).eq("stageId", stageId),
+        q.eq("projectId", projectId).eq("stageId", stage._id),
       )
       .unique();
 

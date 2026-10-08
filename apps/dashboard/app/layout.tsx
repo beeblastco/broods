@@ -3,6 +3,7 @@ import { withAuth } from "@workos-inc/authkit-nextjs";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import type { ComponentProps } from "react";
+import { prefetchDNS } from "react-dom";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,6 +19,10 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>): Promise<React.JSX.Element> {
   const initialAuth = await initialAuthFromRequest();
+  // The Convex socket opens only once the JS runs; resolving its host while
+  // the HTML streams takes the DNS lookup off a cold load. Not preconnect:
+  // browsers open a WebSocket on its own connection, not a pooled one.
+  prefetchDNS(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
   return (
     <html lang="en" suppressHydrationWarning>

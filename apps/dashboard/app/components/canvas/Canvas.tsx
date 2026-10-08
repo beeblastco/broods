@@ -140,6 +140,7 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
@@ -251,21 +252,49 @@ let firstCanvasReported = false;
 
 type FlowPosition = { x: number; y: number };
 
+/** The stage-scoped queries `Canvas` runs for `CanvasInner`; undefined while loading. */
+type StageData = {
+  canvasLayout: FunctionReturnType<typeof api.canvas.getByProject> | undefined;
+  mcpServers: FunctionReturnType<typeof api.mcp.listByStage> | undefined;
+  machineConnections:
+    | FunctionReturnType<typeof api.sandbox.machines.listForActiveOrg>
+    | undefined;
+};
+
 export function Canvas({
   projectId,
 }: {
   projectId: Id<"projects">;
 }): React.JSX.Element {
   const { stageId } = useStage();
+  // A bare project URL asks for the default stage's data at once, alongside
+  // the stage list instead of after it. A named stage waits for that list.
+  const stageParam = useSearchParams().get("stage");
+  const stageArgs =
+    stageParam === null
+      ? { projectId: projectId }
+      : stageId
+        ? { projectId: projectId, stageId: stageId }
+        : ("skip" as const);
+  const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
+  const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
+  const machineConnections = useQuery(
+    api.sandbox.machines.listForActiveOrg,
+    stageArgs,
+  );
 
   // Remount per stage: a stage switch with a debounced save pending would
   // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
-  // sync) and the next edit would persist it into the new stage.
+  // sync) and the next edit would persist it into the new stage. The queries
+  // live out here so that remount keeps their subscriptions.
   return (
     <ReactFlowProvider>
       <CanvasInner
         key={`${projectId}:${stageId ?? "loading"}`}
         projectId={projectId}
+        canvasLayout={canvasLayout}
+        mcpServers={mcpServers}
+        machineConnections={machineConnections}
       />
     </ReactFlowProvider>
   );
@@ -443,22 +472,16 @@ function findNearestAgentNode(
 
 function CanvasInner({
   projectId,
+  canvasLayout,
+  mcpServers,
+  machineConnections,
 }: {
   projectId: Id<"projects">;
-}): React.JSX.Element {
+} & StageData): React.JSX.Element {
   const { stageId } = useStage();
-  const stageArgs = stageId
-    ? { projectId: projectId, stageId: stageId }
-    : ("skip" as const);
-  const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
-  const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
   const mcpServersByNode = useMemo(
     () => serversByNode(mcpServers ?? []),
     [mcpServers],
-  );
-  const machineConnections = useQuery(
-    api.sandbox.machines.listForActiveOrg,
-    stageArgs,
   );
   const { theme } = useTheme();
   const isDark = theme === "dark";
