@@ -44,7 +44,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `provider`             | `lambda`               | Compute backend, from the table above                                                                             |
 | `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`              |
-| `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
+| `size`                 | provider default       | Compute footprint on `sandbox` and `cloudflare`, ignored elsewhere, see [Sizes](#sizes)                           |
 | `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)       |
 | `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
@@ -114,7 +114,20 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `medium` | 2    | 4 GB   | 16 GB | paid          |
 | `large`  | 4    | 8 GB   | 32 GB | paid          |
 
-Only the `sandbox` provider applies the size to the machine it creates, and it rounds `tiny` up to 0.5 vCPU. On `lambda` every machine is the same, a 2 GB baseline that bursts to 4 vCPU and 8 GB on an 8 GB disk, and the dashboard shows that fixed machine whatever size you set. `daytona`, `e2b` and `vercel` size machines through their own options, and there the size only sets what the dashboard shows. `cloudflare` picks the nearest Cloudflare instance type. Every provider accepts every size name.
+`size` sizes the machine on `sandbox` and `cloudflare` only. Every other provider sizes its machines its own way, and the dashboard shows the size the machine really has, read back from the provider where it reports one. A part Broods cannot know shows as `?`; hover it to see why.
+
+| Provider     | What `size` does                                                                             | Size the dashboard shows                                                      |
+| ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `sandbox`    | Creates the VM at that size, `tiny` rounded up to 0.5 vCPU                                   | The resources the VM was created with                                         |
+| `cloudflare` | Starts the nearest instance type: `tiny` and `xsmall` `standard-1`, then `standard-2` to `4` | That instance type: 0.5 vCPU, 4 GB, 8 GB up to 4 vCPU, 12 GB, 20 GB           |
+| `lambda`     | Nothing                                                                                      | 4 vCPU, 8 GB, 8 GB disk, the one MicroVM size                                 |
+| `daytona`    | Nothing, the snapshot and Daytona's defaults size it                                         | vCPU, memory and disk Daytona reports                                         |
+| `e2b`        | Nothing, the template sizes it                                                               | vCPU and memory E2B reports. Disk is `?`, E2B does not report it              |
+| `vercel`     | Nothing, Vercel sizes it                                                                     | vCPU and memory Vercel reports. Disk is `?`, Vercel does not report it        |
+| `machine`    | Rejected                                                                                     | CPUs, memory and home disk of your computer, as `broods machine` reports them |
+| `custom`     | Rejected                                                                                     | No instance row: Broods cannot see your server's hardware                     |
+
+On the managed service, sandbox time on platform credentials counts at the size the dashboard shows. A `machine` sandbox, and one on your own provider credentials, does not count.
 
 ## Images
 

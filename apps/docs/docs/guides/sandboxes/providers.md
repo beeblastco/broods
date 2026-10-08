@@ -72,6 +72,7 @@ export const box = defineSandbox({
 - Use `options.snapshot` for Daytona snapshots and `options.image` only to create from a Docker image.
 - `network.mode` maps to Daytona's `networkBlockAll`. `restricted` applies the CIDR allowlist only; domain lists are ignored with a warning.
 - Idle and lifetime map to Daytona's `autoStopInterval` and `autoDeleteInterval`.
+- `size` does nothing here. The dashboard shows the vCPU, memory and disk Daytona reports for the sandbox.
 - TypeScript files are not transpiled. Run compiled JavaScript, and call `python3` explicitly.
 - `options.s3Endpoint` must be a public `https` URL.
 
@@ -96,6 +97,7 @@ export const box = defineSandbox({
 - `network.mode` must be `allow-all`, set explicitly. E2B cannot enforce egress limits, so `deny-all`, the default, and `restricted` are rejected.
 - Workspaces are not supported. Attaching one fails.
 - `onCreate` and `onResume` are rejected. Put setup in the template.
+- The template sets the machine size, and `size` does nothing. The dashboard shows the vCPU and memory E2B reports, and `?` for disk, which E2B does not report.
 - Set your E2B key in `options.apiKey`. A self-hosted deployment can set a fallback for every account, see [Self-hosting](../../internals/self-hosting.md). `templateId` is an alias for `template`.
 - Persistent mode pauses on idle and keeps files, installs and processes.
 - Background jobs run natively, and `async_status` offers `status` only, without `logs` or `stop`.
@@ -129,6 +131,7 @@ export const box = defineSandbox({
   | `vercel/sandbox/ubuntu:latest`, `vercel/sandbox/arch:latest` | General base images                                                 |
 
 - All three network modes are enforced natively.
+- `size` does nothing here. The dashboard shows the vCPU and memory Vercel reports, and `?` for disk, which Vercel does not report.
 - Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.
 - `onResume` fires only when a stopped sandbox resumes. The idle timeout counts from start, and `maxLifetimeSeconds` is not enforced.
 

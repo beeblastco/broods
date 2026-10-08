@@ -13,6 +13,7 @@ import type {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
   resolveSandboxLifecycle,
@@ -82,6 +83,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           "vercel",
           sandbox.name,
           request.metadata,
+          vercelSpecs(sandbox),
         );
     const cwd = persistent
       ? this.#workDir(sandboxReservationKey(request)!)
@@ -300,6 +302,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           key,
           storedName,
           request.metadata,
+          { specs: vercelSpecs(sandbox) },
         );
 
         return sandbox;
@@ -340,6 +343,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           key,
           name,
           request.metadata,
+          { specs: vercelSpecs(sandbox) },
         );
 
         return sandbox;
@@ -369,6 +373,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         key,
         name,
         request.metadata,
+        { specs: vercelSpecs(sandbox) },
       );
 
       return sandbox;
@@ -577,4 +582,13 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
 // created under the same key.
 function vercelSandboxName(reservationKey: string): string {
   return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
+}
+
+// The vCPUs and memory Vercel gave the sandbox. Vercel reports no disk size, and
+// an older session may report neither, which leaves the config's size in place.
+function vercelSpecs(sandbox: VercelSandbox): SandboxSpecs | undefined {
+  const { vcpus, memory } = sandbox;
+  if (vcpus === undefined || memory === undefined) return undefined;
+
+  return { vcpu: vcpus, memoryMb: memory };
 }

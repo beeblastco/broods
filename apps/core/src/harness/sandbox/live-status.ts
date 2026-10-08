@@ -82,8 +82,12 @@ export function agentSandboxStatus(
 
 /** The <environment> lines for one machine. */
 export function formatSandboxStatus(status: SandboxStatus): string[] {
+  const disk =
+    status.specs?.storageGb === undefined
+      ? ""
+      : `, ${status.specs.storageGb} GB disk`;
   const specs = status.specs
-    ? `, ${status.specs.vcpu} vCPU, ${formatMegabytes(status.specs.memoryMb)} RAM, ${status.specs.storageGb} GB disk`
+    ? `, ${status.specs.vcpu} vCPU, ${formatMegabytes(status.specs.memoryMb)} RAM${disk}`
     : "";
   const sharing = status.shared
     ? "shared: other conversations of this agent run on it too, each in its own folder"

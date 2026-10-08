@@ -22,6 +22,7 @@ import {
   parseDaemonFrame,
   type MachineComputerFrame,
   type MachineExecFrame,
+  type MachineHelloFrame,
   type MachineMcpCallFrame,
   type MachineMcpListFrame,
   type MachineReadyFrame,
@@ -57,6 +58,7 @@ interface FakeDaemon {
   hostname?: string;
   instance?: string;
   mcp?: string[];
+  specs?: MachineHelloFrame["specs"];
   onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void;
   onMcp?: (
     frame: MachineMcpCallFrame | MachineMcpListFrame,
@@ -401,7 +403,10 @@ test("core records each daemon connection, and a disconnect names that same conn
   const writes: MachineConnectionWrite[] = [];
   setStorageForTests(machineStorage(writes));
   const server = core();
-  await connectDaemon(server, "my-mac", () => {}, { mcp: ["echo"] });
+  await connectDaemon(server, "my-mac", () => {}, {
+    mcp: ["echo"],
+    specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },
+  });
   const replacement = await connectDaemon(server, "my-mac", () => {});
   // An earlier test's socket can still close into `writes`, so match by id.
   const connects = (): MachineConnectionWrite[] =>
@@ -422,6 +427,7 @@ test("core records each daemon connection, and a disconnect names that same conn
     sandboxConfigId: MACHINE_SANDBOX_ID,
     computer: false,
     mcp: ["echo"],
+    specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },
   });
   expect(second?.ref.connectionId).not.toBe(first?.ref.connectionId);
 });
@@ -568,6 +574,7 @@ function connectDaemon(
           // One shared instance, so a fake connecting twice is a reconnect.
           instance: daemon.instance ?? "test-daemon",
           force: daemon.force,
+          specs: daemon.specs,
         }),
       );
     socket.onmessage = (event): void => {

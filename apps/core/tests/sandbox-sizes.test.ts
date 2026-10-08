@@ -40,6 +40,17 @@ describe("resolveSandboxSpecs", () => {
     ).toEqual(real);
   });
 
+  it("reports the Cloudflare instance type a size starts", () => {
+    expect(resolveSandboxSpecs({ provider: "cloudflare" })).toEqual({
+      vcpu: 0.5,
+      memoryMb: 4096,
+      storageGb: 8,
+    });
+    expect(
+      resolveSandboxSpecs({ provider: "cloudflare", size: "large" }),
+    ).toEqual({ vcpu: 4, memoryMb: 12288, storageGb: 20 });
+  });
+
   it("bills a workdir sandbox the resources its VM is created with", () => {
     // Explicit options win over the size, and the size's vcpu clamps like the VM's.
     expect(

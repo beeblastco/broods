@@ -5,10 +5,11 @@
  * reconciles issue #78's tiers with each backend's real limits.
  *
  * The specs are advisory: workdir applies them as create-time resources (clamping
- * vcpu to its allowed set), a lambda MicroVM always reports the one size AWS
- * gives it, daytona/e2b/vercel size natively. The control-plane mirror type
- * lives here too so the Convex writer and the executors share one shape without
- * importing across the shared/harness boundary.
+ * vcpu to its allowed set), cloudflare starts the nearest instance type, a lambda
+ * MicroVM always reports the one size AWS gives it, and daytona/e2b/vercel size
+ * natively, so their executors mirror the size the provider reports instead.
+ * The control-plane mirror type lives here too so the Convex writer and the
+ * executors share one shape without importing across the shared/harness boundary.
  */
 
 import type {
@@ -19,11 +20,14 @@ import type {
 
 export type SandboxSize = "tiny" | "xsmall" | "small" | "medium" | "large";
 
-/** Compute footprint of a sandbox instance, mirrored into Convex for the dashboard. */
+/**
+ * Compute footprint of a sandbox instance, mirrored into Convex for the dashboard.
+ * `storageGb` is absent when the provider does not report its disk (e2b, vercel).
+ */
 export interface SandboxSpecs {
   vcpu: number;
   memoryMb: number;
-  storageGb: number;
+  storageGb?: number;
 }
 
 /** Non-secret execution ownership metadata mirrored for dashboard diagnostics. */
@@ -69,7 +73,7 @@ export interface SandboxControlPlane {
  * later usage workstream); `small`+ are paid. Disk is fixed per size to stay valid
  * on both self-hosted backends (workdir disk ∈ {8,16,32,64}; MicroVM disk is fixed).
  */
-export const SANDBOX_SIZES: Record<SandboxSize, SandboxSpecs> = {
+export const SANDBOX_SIZES: Record<SandboxSize, Required<SandboxSpecs>> = {
   tiny: { vcpu: 0.25, memoryMb: 512, storageGb: 8 },
   xsmall: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
   small: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
@@ -85,6 +89,37 @@ export const SANDBOX_SIZE_NAMES: readonly SandboxSize[] = [
   "large",
 ];
 
+/**
+ * Cloudflare's named instance type nearest each size, with its documented specs
+ * (developers.cloudflare.com/containers/platform/limits). A custom type needs a
+ * whole vCPU, so the small sizes take `standard-1`.
+ */
+export const CLOUDFLARE_INSTANCE_TYPES: Record<
+  SandboxSize,
+  { name: string; specs: Required<SandboxSpecs> }
+> = {
+  tiny: {
+    name: "standard-1",
+    specs: { vcpu: 0.5, memoryMb: 4096, storageGb: 8 },
+  },
+  xsmall: {
+    name: "standard-1",
+    specs: { vcpu: 0.5, memoryMb: 4096, storageGb: 8 },
+  },
+  small: {
+    name: "standard-2",
+    specs: { vcpu: 1, memoryMb: 6144, storageGb: 12 },
+  },
+  medium: {
+    name: "standard-3",
+    specs: { vcpu: 2, memoryMb: 8192, storageGb: 16 },
+  },
+  large: {
+    name: "standard-4",
+    specs: { vcpu: 4, memoryMb: 12288, storageGb: 20 },
+  },
+};
+
 // What every lambda MicroVM runs as: the images ask AWS for no size, so each gets
 // the platform default, a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk.
 const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
@@ -98,7 +133,9 @@ const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
 /**
  * Resolve the specs to mirror (and bill) for a sandbox config. A workdir (`sandbox`)
  * config bills exactly the resources its VM is created with (see workdirResources),
- * and a lambda config reports the MicroVM's real size whatever it asks for.
+ * a cloudflare config the instance type it starts, and a lambda config reports the
+ * MicroVM's real size whatever it asks for. Daytona, e2b and vercel executors
+ * replace these with what the provider reports once the machine exists.
  * Elsewhere a pinned `size` wins; otherwise the explicit resource options
  * (`cpu`/`memoryMb`/`diskGb`) and `memoryLimit` fill in. Each missing dimension
  * defaults from the `xsmall` row.
@@ -123,6 +160,9 @@ export function resolveSandboxSpecs(input: {
   }
   if (input.provider === "lambda") {
     return MICROVM_SPECS;
+  }
+  if (input.provider === "cloudflare") {
+    return CLOUDFLARE_INSTANCE_TYPES[input.size ?? DEFAULT_SIZE].specs;
   }
   if (input.size) {
     return SANDBOX_SIZES[input.size];

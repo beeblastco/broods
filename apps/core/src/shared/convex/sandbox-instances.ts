@@ -12,6 +12,7 @@ import { logError } from "../log.ts";
 import type {
   SandboxControlPlane,
   SandboxRunMetadata,
+  SandboxSpecs,
 } from "../sandbox-sizes.ts";
 import { getConvexClient } from "./client.ts";
 
@@ -43,7 +44,7 @@ export async function upsertSandboxInstance(
   reservationKey: string,
   externalId: string,
   metadata?: SandboxRunMetadata,
-  options?: { ephemeral?: boolean; logStream?: string },
+  options?: { ephemeral?: boolean; logStream?: string; specs?: SandboxSpecs },
 ): Promise<void> {
   if (!controlPlane) return;
   const meta: SandboxRunMetadata = metadata ?? {};
@@ -59,7 +60,7 @@ export async function upsertSandboxInstance(
       reservationKey: reservationKey,
       externalId: externalId,
       name: controlPlane.name,
-      specs: controlPlane.specs,
+      specs: options?.specs ?? controlPlane.specs,
       sandboxConfigId: controlPlane.sandboxConfigId as any,
       snapshotId: controlPlane.snapshotId,
       egress: controlPlane.egress,

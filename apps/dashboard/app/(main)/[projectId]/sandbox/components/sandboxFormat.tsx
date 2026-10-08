@@ -3,6 +3,11 @@
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/app/components/ui/tooltip";
+import {
   MACHINE_LABEL,
   MACHINE_STATE_LABEL,
   MACHINE_TONE,
@@ -26,6 +31,17 @@ const PROVIDER_LABEL: Record<string, string> = {
   machine: MACHINE_LABEL,
   sandbox: "workdir",
 };
+
+// Why a machine's disk is not shown, by provider; the "?" in its place says it.
+const UNKNOWN_DISK: Record<string, string> = {
+  e2b: "E2B does not report a sandbox's disk size.",
+  machine: "Your own computer: its OS did not report the size of its disk.",
+  vercel: "Vercel does not report a sandbox's disk size.",
+};
+
+// Why a computer shows no size at all.
+const UNKNOWN_MACHINE =
+  "Your own computer: its broods CLI predates hardware reporting. Update broods and restart `broods machine` to see it.";
 
 const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
   pending: "running",
@@ -99,16 +115,6 @@ export function formatProvider(provider: string): string {
   return PROVIDER_LABEL[provider] ?? provider;
 }
 
-/** Footprint string, e.g. "1 vCPU · 2 GB · 8 GB". */
-export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
-  const memory =
-    specs.memoryMb >= 1024
-      ? `${specs.memoryMb / 1024} GB`
-      : `${specs.memoryMb} MB`;
-
-  return `${specs.vcpu} vCPU · ${memory} · ${specs.storageGb} GB`;
-}
-
 export function instanceStatusDot(
   status: Doc<"sandboxInstances">["status"],
 ): React.JSX.Element {
@@ -170,4 +176,57 @@ export function snapshotStatusDot(
   status: Doc<"sandboxSnapshots">["status"],
 ): React.JSX.Element {
   return <StatusDot tone={SNAPSHOT_TONE[status]} label={status} />;
+}
+
+/**
+ * Footprint as the provider reports it, e.g. "1 vCPU · 2 GB · 8 GB". What it
+ * does not report is a "?" whose tooltip says why. Sizes the table rows and
+ * the instance and computer panels.
+ */
+export function SpecsValue({
+  specs,
+  provider,
+}: {
+  specs: Doc<"sandboxInstances">["specs"] | undefined;
+  provider: string;
+}): React.JSX.Element {
+  if (!specs) return <UnknownSize reason={UNKNOWN_MACHINE} />;
+  const memory =
+    specs.memoryMb >= 1024
+      ? `${Math.round((specs.memoryMb / 1024) * 10) / 10} GB`
+      : `${specs.memoryMb} MB`;
+
+  return (
+    <span>
+      {specs.vcpu} vCPU · {memory} ·{" "}
+      {specs.storageGb === undefined ? (
+        <UnknownSize
+          reason={
+            UNKNOWN_DISK[provider] ??
+            "The provider does not report its disk size."
+          }
+        />
+      ) : (
+        `${specs.storageGb} GB`
+      )}
+    </span>
+  );
+}
+
+// A "?" for a size Broods cannot know; hover or focus it to read why. The click
+// stays here so it does not also open the row it sits in.
+function UnknownSize({ reason }: { reason: string }): React.JSX.Element {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button type="button" aria-label={reason} className="cursor-help" />
+        }
+        onClick={(event) => event.stopPropagation()}
+      >
+        ?
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">{reason}</TooltipContent>
+    </Tooltip>
+  );
 }

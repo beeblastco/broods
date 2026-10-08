@@ -11,6 +11,7 @@ import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts"
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
+import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
@@ -36,6 +37,10 @@ import {
   truncateText,
 } from "./utils.ts";
 
+// What E2B reported for each reserved sandbox. Its template fixes the size, so
+// one read covers every reconnect; release drops the entry.
+const RESERVED_SPECS = new Map<string, SandboxSpecs>();
+
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
 
@@ -47,13 +52,18 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
+    const controlPlane = this.#config.controlPlane;
+    // Only a metered call reads the size: its row is the one place it shows.
     const endMeter = persistent
       ? undefined
       : meterEphemeralSandbox(
-          this.#config.controlPlane,
+          controlPlane,
           "e2b",
           sandbox.sandboxId,
           request.metadata,
+          controlPlane && !controlPlane.ownCredentials
+            ? await e2bSpecs(sandbox)
+            : undefined,
         );
 
     try {
@@ -132,6 +142,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       externalId,
     ).catch(() => {});
+    RESERVED_SPECS.delete(externalId);
   }
 
   #persistent(request: {
@@ -177,6 +188,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           ns,
           externalId,
           request.metadata,
+          { specs: await reservedSpecs(sandbox) },
         );
 
         return sandbox;
@@ -209,6 +221,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           ns,
           created.sandboxId,
           request.metadata,
+          { specs: await reservedSpecs(created) },
         );
 
         return created;
@@ -302,4 +315,28 @@ async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
   const { Sandbox } = await import("e2b");
 
   return Sandbox;
+}
+
+// The vCPUs and memory E2B gave the sandbox. E2B reports no disk size. A failed
+// read leaves the config's size in place rather than failing the call.
+async function e2bSpecs(sandbox: Sandbox): Promise<SandboxSpecs | undefined> {
+  try {
+    const info = await sandbox.getInfo();
+
+    return { vcpu: info.cpuCount, memoryMb: info.memoryMB };
+  } catch {
+    return undefined;
+  }
+}
+
+// A reserved sandbox's size, read from E2B once and then kept.
+async function reservedSpecs(
+  sandbox: Sandbox,
+): Promise<SandboxSpecs | undefined> {
+  const known = RESERVED_SPECS.get(sandbox.sandboxId);
+  if (known) return known;
+  const specs = await e2bSpecs(sandbox);
+  if (specs) RESERVED_SPECS.set(sandbox.sandboxId, specs);
+
+  return specs;
 }

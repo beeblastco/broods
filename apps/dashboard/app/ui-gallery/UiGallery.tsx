@@ -32,6 +32,7 @@ import {
 } from "@/app/components/canvas/CanvasRefusal";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
+import { SpecsValue } from "@/app/(main)/[projectId]/sandbox/components/sandboxFormat";
 import { StatusDot } from "@/app/components/StatusDot";
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
@@ -75,7 +76,7 @@ import {
 } from "@/app/lib/canvasConnections";
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
 import type { MachineConnection } from "@/app/lib/machineConnection";
-import type { Id } from "@broods/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import {
   agreedSandboxOrderNumbers,
   workspaceOnlySandboxIds,
@@ -288,6 +289,16 @@ const CONVEX_SERVER_ERROR = new Error(
 
 const subscribeNever = (): (() => void) => () => {};
 
+/** Size cells: fully reported, reported without a disk, and not reported. */
+const SIZE_ROWS: Array<{
+  provider: string;
+  specs: Doc<"sandboxInstances">["specs"] | undefined;
+}> = [
+  { provider: "daytona", specs: { vcpu: 2, memoryMb: 4096, storageGb: 10 } },
+  { provider: "e2b", specs: { vcpu: 2, memoryMb: 512 } },
+  { provider: "machine", specs: undefined },
+];
+
 /** The account's ChatGPT plan, signed in; the gallery also renders none. */
 const CONNECTION_FIXTURES: Connection[] = [
   {
@@ -309,6 +320,7 @@ export function UiGallery(): React.JSX.Element {
   const [pressCount, setPressCount] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [sizeRowOpened, setSizeRowOpened] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   // False in the server HTML, true once React owns the page: a spec waits on
   // it so its first interaction lands on a listener, not on static markup.
@@ -573,6 +585,33 @@ export function UiGallery(): React.JSX.Element {
             </StatusPage>
           </div>
         </div>
+      </section>
+
+      <section data-fixture="sandbox-size" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Sandbox size</h2>
+        {/* The instances table's Size cell: a reported size, one without a
+            disk, and a computer whose daemon reported none. The row opens a
+            panel on click, which the "?" must not do. */}
+        <table className="w-fit text-xs whitespace-nowrap">
+          <tbody>
+            {SIZE_ROWS.map((row) => (
+              <tr
+                key={row.provider}
+                data-provider={row.provider}
+                className="cursor-pointer border-t border-border"
+                onClick={() => setSizeRowOpened(row.provider)}
+              >
+                <td className="px-4 py-2.5">{row.provider}</td>
+                <td className="px-4 py-2.5 text-muted-foreground">
+                  <SpecsValue specs={row.specs} provider={row.provider} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p data-testid="size-row-opened" className="text-xs">
+          {sizeRowOpened ?? "none"}
+        </p>
       </section>
 
       <section data-fixture="onboarding" className="flex flex-col gap-2">

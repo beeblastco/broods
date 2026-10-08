@@ -11,6 +11,7 @@ import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -81,6 +82,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           "daytona",
           sandbox.id,
           request.metadata,
+          daytonaSpecs(sandbox),
         );
 
     try {
@@ -282,6 +284,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           ns,
           externalId,
           request.metadata,
+          { specs: daytonaSpecs(sandbox) },
         );
 
         return sandbox;
@@ -317,6 +320,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           ns,
           sandbox.id,
           request.metadata,
+          { specs: daytonaSpecs(sandbox) },
         );
 
         return sandbox;
@@ -584,6 +588,15 @@ function daytonaS3Context(
       ? { endpoint: configString(options.s3Endpoint) }
       : {}),
     attribution: mountAttribution(config, request),
+  };
+}
+
+// The size Daytona gave the sandbox; it reports memory and disk in GiB.
+function daytonaSpecs(sandbox: Sandbox): SandboxSpecs {
+  return {
+    vcpu: sandbox.cpu,
+    memoryMb: sandbox.memory * 1024,
+    storageGb: sandbox.disk,
   };
 }
 

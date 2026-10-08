@@ -543,6 +543,16 @@ export const sandboxProviderValidator = v.union(
 );
 
 /**
+ * A machine's size as its provider reports it. `storageGb` is absent when the
+ * provider does not report a disk (e2b, vercel).
+ */
+export const sandboxSpecsValidator = v.object({
+  vcpu: v.number(),
+  memoryMb: v.number(),
+  storageGb: v.optional(v.number()),
+});
+
+/**
  * Live persistent-sandbox registry, mirrored from broods so the dashboard can
  * show running/suspended instances and drive suspend/resume/terminate through
  * Convex live queries. broods (the runtime) is authoritative. It owns the
@@ -592,11 +602,7 @@ export const sandboxInstancesFields = {
   permissionMode: v.optional(
     v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
   ),
-  specs: v.object({
-    vcpu: v.number(),
-    memoryMb: v.number(),
-    storageGb: v.number(),
-  }),
+  specs: sandboxSpecsValidator,
   createdAt: v.number(),
   lastUsedAt: v.number(),
   createdByTraceId: v.optional(v.string()),
@@ -649,6 +655,8 @@ export const machineConnectionsFields = {
   computer: v.boolean(),
   /** Server names from the daemon's --mcp file. */
   mcp: v.array(v.string()),
+  /** The computer's hardware as the daemon reported it; absent from an older daemon. */
+  specs: v.optional(sandboxSpecsValidator),
   connectedAt: v.number(),
   lastSeenAt: v.number(),
   disconnectedAt: v.optional(v.number()),

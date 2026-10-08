@@ -38,12 +38,17 @@ const e2bRunMock = mock(
   },
 );
 const e2bKillMock = mock(async (_sandboxId: string) => {});
+// The size each fake provider reports for its sandbox.
+const E2B_INFO = { cpuCount: 2, memoryMB: 2048 };
+const DAYTONA_SIZE = { cpu: 2, memory: 4, disk: 10 };
+const VERCEL_SIZE = { vcpus: 2, memory: 4096 };
 const e2bConnectMock = mock(async (sandboxId: string) => ({
   sandboxId: sandboxId,
   commands: {
     run: e2bRunMock,
   },
   kill: e2bKillMock,
+  getInfo: async () => E2B_INFO,
 }));
 const e2bCreateMock = mock(async (_options: Record<string, unknown>) => ({
   sandboxId: "e2b-sandbox",
@@ -51,6 +56,7 @@ const e2bCreateMock = mock(async (_options: Record<string, unknown>) => ({
     run: e2bRunMock,
   },
   kill: e2bKillMock,
+  getInfo: async () => E2B_INFO,
 }));
 
 const daytonaExecuteCommandMock = mock(
@@ -68,6 +74,7 @@ const daytonaDeleteMock = mock(async (_id?: string) => {});
 let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   id: "daytona-sandbox",
+  ...DAYTONA_SIZE,
   process: {
     executeCommand: daytonaExecuteCommandMock,
   },
@@ -83,6 +90,7 @@ const vercelDeleteMock = mock(async () => {});
 function vercelSandbox(name = "vercel-sandbox") {
   return {
     name: name,
+    ...VERCEL_SIZE,
     runCommand: vercelRunCommandMock,
     stop: vercelStopMock,
     delete: vercelDeleteMock,
@@ -710,10 +718,10 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  for (const [provider, sandboxId] of [
-    ["daytona", "daytona-sandbox"],
-    ["e2b", "e2b-sandbox"],
-    ["vercel", "ephemeral"],
+  for (const [provider, sandboxId, specs] of [
+    ["daytona", "daytona-sandbox", { vcpu: 2, memoryMb: 4096, storageGb: 10 }],
+    ["e2b", "e2b-sandbox", { vcpu: 2, memoryMb: 2048 }],
+    ["vercel", "ephemeral", { vcpu: 2, memoryMb: 4096 }],
   ] as const) {
     it(`meters an ephemeral ${provider} sandbox on platform keys with a row for the call`, async () => {
       const {
@@ -742,7 +750,8 @@ describe("createSandboxExecutor", () => {
           sandboxId,
           sandboxId,
           undefined,
-          { ephemeral: true },
+          // The row carries the size the provider reported, not the config's.
+          { ephemeral: true, specs: specs },
         ],
       ]);
       expect(removeSandboxInstanceMock.mock.calls).toEqual([

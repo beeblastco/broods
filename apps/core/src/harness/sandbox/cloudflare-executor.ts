@@ -18,7 +18,7 @@ import { toErrorMessage } from "../../shared/errors.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
-import type { SandboxSize } from "../../shared/sandbox-sizes.ts";
+import { CLOUDFLARE_INSTANCE_TYPES } from "../../shared/sandbox-sizes.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
@@ -49,14 +49,6 @@ import {
 // yet, with any further arguments as the code's own positional parameters.
 const RUN_IN_CWD =
   'mkdir -p -- "$1" && cd -- "$1" && exec bash -lc "$2" bash "${@:3}"';
-// Cloudflare's named instance types nearest each size; a custom type needs a whole vCPU.
-const CLOUDFLARE_INSTANCES: Record<SandboxSize, string> = {
-  tiny: "standard-1",
-  xsmall: "standard-1",
-  small: "standard-2",
-  medium: "standard-3",
-  large: "standard-4",
-};
 // Headroom over the command timeout for the bridge to start the Container.
 const BRIDGE_OVERHEAD_MS = 60_000;
 // How long an ephemeral Container outlives its command if its DELETE fails.
@@ -250,7 +242,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
           ? resolveSandboxLifecycle(this.#config.lifecycle).idleTimeoutSeconds
           : Math.ceil(timeoutMs / 1000) + EPHEMERAL_IDLE_GRACE_SECONDS,
         enableInternet: this.#config.network?.mode === "allow-all",
-        instance: CLOUDFLARE_INSTANCES[this.#config.size ?? "xsmall"],
+        instance: CLOUDFLARE_INSTANCE_TYPES[this.#config.size ?? "xsmall"].name,
       },
       timeoutMs + BRIDGE_OVERHEAD_MS,
     );

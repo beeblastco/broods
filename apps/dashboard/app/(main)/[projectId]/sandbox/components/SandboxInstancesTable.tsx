@@ -44,10 +44,10 @@ import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   dashboardHref,
   formatProvider,
-  formatSpecs,
   instanceStatusDot,
   machineStatusDot,
   relativeTime,
+  SpecsValue,
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -424,7 +424,10 @@ export function SandboxInstancesTable({
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {formatSpecs(instance.specs)}
+                    <SpecsValue
+                      specs={instance.specs}
+                      provider={instance.provider}
+                    />
                   </td>
                   <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
                     {instance.snapshotId ?? "—"}
@@ -595,7 +598,7 @@ function controllable(
   return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
 }
 
-/** A computer has no size, image, trace or lifecycle switch to show. */
+/** A computer has no image, trace or lifecycle switch to show; its size is what its daemon reports. */
 function MachineRow({
   machine,
   now,
@@ -620,7 +623,9 @@ function MachineRow({
       <td className="px-4 py-2.5">
         {machineStatusDot(machineState(machine, now))}
       </td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+        <SpecsValue specs={machine.specs} provider="machine" />
+      </td>
       <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
       <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
       <td className="px-4 py-2.5 text-xs text-muted-foreground">

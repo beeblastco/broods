@@ -41,6 +41,7 @@ export const connected = internalMutation({
     platform: machineConnectionsFields.platform,
     computer: machineConnectionsFields.computer,
     mcp: machineConnectionsFields.mcp,
+    specs: machineConnectionsFields.specs,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {

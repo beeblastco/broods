@@ -15,6 +15,7 @@ import { isPlainObject } from "../../shared/object.ts";
 import type {
   SandboxControlPlane,
   SandboxRunMetadata,
+  SandboxSpecs,
 } from "../../shared/sandbox-sizes.ts";
 import type {
   SandboxProvider,
@@ -206,13 +207,15 @@ export function mergeSandboxEnv(
  * the sandbox id now, and return the call that removes it, which bills the time
  * in between. Call it only once the provider confirms the sandbox is gone, so a
  * failed teardown keeps billing until the stale-row sweep. The account's own
- * credentials, or no account, get no row.
+ * credentials, or no account, get no row. `specs` is the size the provider
+ * reported, when it reports one.
  */
 export function meterEphemeralSandbox(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
   sandboxId: string,
   metadata: SandboxRunMetadata | undefined,
+  specs?: SandboxSpecs,
 ): () => void {
   const accountId = controlPlane?.ownCredentials
     ? undefined
@@ -225,7 +228,7 @@ export function meterEphemeralSandbox(
       sandboxId,
       sandboxId,
       metadata,
-      { ephemeral: true },
+      { ephemeral: true, specs: specs },
     ),
   );
 

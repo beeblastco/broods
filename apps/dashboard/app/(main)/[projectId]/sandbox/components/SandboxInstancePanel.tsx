@@ -26,9 +26,9 @@ import {
   dashboardHref,
   DetailField,
   formatProvider,
-  formatSpecs,
   instanceStatusDot,
   relativeTime,
+  SpecsValue,
 } from "./sandboxFormat";
 import {
   sandboxLogId,
@@ -577,7 +577,12 @@ function InstanceDetailFields({
       {instance.errorMessage && (
         <DetailField label="Reason" value={instance.errorMessage} />
       )}
-      <DetailField label="Size" value={formatSpecs(instance.specs)} />
+      <DetailField
+        label="Size"
+        value={
+          <SpecsValue specs={instance.specs} provider={instance.provider} />
+        }
+      />
       <DetailField
         label="External ID"
         value={<code className="font-mono">{instance.externalId}</code>}
