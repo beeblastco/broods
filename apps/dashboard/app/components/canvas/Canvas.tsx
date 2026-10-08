@@ -508,6 +508,7 @@ function CanvasInner({
     label: string;
   } | null>(null);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const emptyGuideRef = useRef<HTMLDivElement>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [agentCreatePosition, setAgentCreatePosition] =
@@ -1312,6 +1313,14 @@ function CanvasInner({
     if (!open) setAgentCreatePosition(null);
   }, []);
   const onOpenSourcePicker = useCallback(() => {
+    // The empty canvas already shows the source list: point at it, don't
+    // stack the same list in a dialog over it.
+    const emptyGuide = emptyGuideRef.current;
+    if (emptyGuide) {
+      emptyGuide.querySelector<HTMLButtonElement>("button:enabled")?.focus();
+
+      return;
+    }
     setAgentCreatePosition(getFreeAddPosition());
     setSourcePickerOpen(true);
   }, [getFreeAddPosition]);
@@ -1775,7 +1784,10 @@ function CanvasInner({
           </ContextMenu>
 
           {isEmpty && canWrite && (
-            <EmptyCanvasGuide onCreateConfig={() => onOpenCreateConfig()} />
+            <EmptyCanvasGuide
+              ref={emptyGuideRef}
+              onCreateConfig={() => onOpenCreateConfig()}
+            />
           )}
           {isEmpty && !canWrite && (
             <p className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
