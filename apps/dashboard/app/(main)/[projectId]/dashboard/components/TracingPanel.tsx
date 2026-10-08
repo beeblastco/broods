@@ -58,6 +58,7 @@ interface ContinueAttempt {
 
 // One collapsible payload section, with the count line on its header.
 interface PayloadSection extends DetailRow {
+  open: boolean;
   summary: string;
 }
 
@@ -105,13 +106,15 @@ const WAIT_BAR: Partial<Record<SpanStatus, string>> = {
 // Collapsible payload sections. Each row shows the count that describes it, so
 // Details never repeats those counts. The per-tool `tool.output` on each child
 // span is the authoritative "what the model saw", so the step-level
-// model.tool_results is left out as a confusing dupe.
+// model.tool_results is left out as a confusing dupe. `open` sections start
+// expanded: what went into and came out of each model step and tool call.
 const PAYLOAD_SECTIONS: ReadonlyArray<{
   charsKey?: string;
   countKey?: string;
   countLabel?: string;
   key: string;
   label: string;
+  open?: true;
 }> = [
   {
     key: "model.system",
@@ -133,12 +136,13 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
     label: "Model input",
     countKey: "agent.message_count",
     countLabel: "messages",
+    open: true,
   },
   { key: "model.reasoning", label: "Reasoning" },
-  { key: "model.response", label: "Response" },
+  { key: "model.response", label: "Response", open: true },
   { key: "model.tool_calls", label: "Tool calls" },
-  { key: "tool.input", label: "Tool input" },
-  { key: "tool.output", label: "Tool output" },
+  { key: "tool.input", label: "Tool input", open: true },
+  { key: "tool.output", label: "Tool output", open: true },
   // What a run waiting on the person asked them, on its wait row.
   { key: "task.questions", label: "Questions" },
 ];
@@ -769,7 +773,7 @@ export function TracingPanel({
               }
               onClose={() => setSelectedKey(null)}
             >
-              <SpanDetails span={selectedSpan} />
+              <SpanDetails key={selectedKey} span={selectedSpan} />
             </DetailPanel>
           )
         }
@@ -928,7 +932,14 @@ function numericAttribute(
 // the span reports one, or stands in when there is no count at all.
 function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
   return PAYLOAD_SECTIONS.flatMap(
-    ({ charsKey, countKey, countLabel, key, label }): PayloadSection[] => {
+    ({
+      charsKey,
+      countKey,
+      countLabel,
+      key,
+      label,
+      open,
+    }): PayloadSection[] => {
       const value = displayAttribute(span.attributes?.[key]);
       if (!value) return [];
       const count = countKey ? numericAttribute(span, countKey) : undefined;
@@ -944,7 +955,15 @@ function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
         ...(chars === undefined ? [] : [`${chars.toLocaleString()} chars`]),
       ].join(" · ");
 
-      return [{ key: key, label: label, summary: summary, value: value }];
+      return [
+        {
+          key: key,
+          label: label,
+          open: open === true,
+          summary: summary,
+          value: value,
+        },
+      ];
     },
   );
 }
@@ -1604,10 +1623,11 @@ function SpanDetails({
           No bordered card around each one, which would nest a box in a box. */}
       {(sections.length > 0 || rows.length > 0) && (
         <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
-          {sections.map(({ key, label, summary, value }) => (
+          {sections.map(({ key, label, open, summary, value }) => (
             <DetailPayload
               key={key}
               label={label}
+              open={open}
               summary={summary}
               value={value}
             />
