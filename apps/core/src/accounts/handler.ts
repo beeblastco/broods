@@ -73,6 +73,7 @@ import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";
 import { runsOnOwnCredentials } from "../shared/workspaces.ts";
+import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import {
   sealTerminalTicket,
   TERMINAL_TICKET_TTL_MS,
@@ -346,6 +347,17 @@ async function handleSandboxLifecycle(
   );
   if (!record) {
     return errorResponse(404, "Sandbox not found");
+  }
+  // Terminate boots nothing, so it still tears down a sandbox an old config made.
+  if (action !== "terminate") {
+    try {
+      assertNoRetiredImageOptions(
+        record.config.provider,
+        record.config.options ?? {},
+      );
+    } catch (err) {
+      return errorResponse(400, errorText(err));
+    }
   }
 
   const rawBody = parseJsonBody(request);
@@ -669,27 +681,26 @@ async function snapshotSandbox(
   );
   const externalImageId = result.externalImageId ?? result.snapshotId;
   const status = result.status ?? "active";
-  await upsertSandboxSnapshot({
-    accountId: context.accountId,
-    name: name,
-    provider: context.provider,
-    baseImage:
-      context.provider === "lambda"
-        ? await lambdaBaseImage(context)
-        : context.provider,
-    externalImageId: externalImageId,
-    status: status,
-  });
-  // Vercel stops the instance to capture it; its next call resumes it.
-  const instanceStatus = result.instanceStatus ?? "running";
-  if (instanceStatus !== "running") {
-    await setSandboxInstanceStatus(
-      context.accountId,
-      context.reservationKey,
-      instanceStatus,
-    );
+  try {
+    await upsertSandboxSnapshot({
+      accountId: context.accountId,
+      name: name,
+      provider: context.provider,
+      baseImage:
+        context.provider === "lambda"
+          ? await lambdaBaseImage(context)
+          : context.provider,
+      externalImageId: externalImageId,
+      status: status,
+    });
+  } catch (err) {
+    await context.audit("error", { errorMessage: errorText(err) });
+
+    return errorResponse(409, errorText(err));
   }
-  await context.audit("ok", { status: instanceStatus });
+  // A Vercel capture stops the instance, but its next call resumes it on its
+  // own, so the row stays running rather than offering a Resume Vercel lacks.
+  await context.audit("ok", { status: "running" });
 
   return jsonResponse(200, {
     status: status,

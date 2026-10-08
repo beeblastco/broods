@@ -279,9 +279,9 @@ export function normalizeCreateSandboxConfigInput(value: unknown): {
 }
 
 /**
- * Refuses the provider options `config.snapshot` replaced. Config validation
- * and core's executors both call it, so a config stored before the cutover
- * fails loudly instead of booting the provider default.
+ * Refuses the provider options `config.snapshot` replaced. Config validation,
+ * core's run loader and its sandbox lifecycle handler call it, so a config
+ * stored before the cutover fails loudly instead of booting the provider default.
  * @param provider the sandbox compute backend
  * @param options the config's provider options
  */

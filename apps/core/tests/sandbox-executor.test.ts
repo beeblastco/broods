@@ -94,6 +94,7 @@ const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
 const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
   snapshotId: "snap_captured",
+  status: "created",
 }));
 function vercelSandbox(name = "vercel-sandbox") {
   return {
@@ -2965,7 +2966,7 @@ describe("createSandboxExecutor", () => {
         persistent: true,
         options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
       }).snapshot(ref),
-    ).toEqual({ snapshotId: "snap_captured", instanceStatus: "suspended" });
+    ).toEqual({ snapshotId: "snap_captured" });
     expect(vercelGetMock.mock.calls.at(-1)?.[0]).toMatchObject({
       name: "vercel-1",
     });
@@ -3007,6 +3008,25 @@ describe("createSandboxExecutor", () => {
         SNAPSHOT_SANDBOX_PROVIDERS.has(provider),
       ),
     );
+  });
+
+  it("refuses a Vercel capture that did not come back created", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    storedSandboxExternalId = "vercel-1";
+    vercelSnapshotMock.mockImplementationOnce(async () => ({
+      snapshotId: "snap_failed",
+      status: "failed",
+    }));
+
+    await expect(
+      createSandboxExecutor({
+        provider: "vercel",
+        persistent: true,
+        options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+      }).snapshot({ reservationKey: "reservation-1" }),
+    ).rejects.toThrow("Vercel snapshot snap_failed ended failed");
   });
 
   it("refuses a snapshot when nothing is reserved", async () => {

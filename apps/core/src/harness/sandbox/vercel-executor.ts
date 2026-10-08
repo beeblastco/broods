@@ -246,7 +246,14 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       // Vercel expires a snapshot after 30 days by default; a pinned one must not.
       const snapshot = await sandbox.snapshot({ expiration: 0 });
 
-      return { snapshotId: snapshot.snapshotId, instanceStatus: "suspended" };
+      // The SDK answers a capture that failed with a failed snapshot, not a throw.
+      if (snapshot.status !== "created") {
+        throw new Error(
+          `Vercel snapshot ${snapshot.snapshotId} ended ${snapshot.status}`,
+        );
+      }
+
+      return { snapshotId: snapshot.snapshotId };
     } catch (err) {
       throw classifyVercelError(err);
     }

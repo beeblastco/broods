@@ -442,6 +442,41 @@ describe("account management HTTP handler", () => {
       });
     }
   });
+
+  it("refuses a lifecycle verb on a stored config with a removed image option", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(
+      createFakeStorage({
+        sandboxConfigs: {
+          getById: async function () {
+            return {
+              accountId: "acct_test",
+              sandboxId: "sbx_1",
+              config: { provider: "vercel", options: { image: "old" } },
+            };
+          },
+        },
+      }),
+    );
+
+    const response = await handler(
+      createEvent(
+        "POST",
+        "/v1/sandboxes/sbx_1/snapshot",
+        { authorization: "Bearer service-secret", "x-account-id": "acct_test" },
+        { reservationKey: "res_1", name: "base" },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await responseJson(response)).toMatchObject({
+      error: {
+        message: expect.stringContaining(
+          "config.options.image was removed; set config.snapshot",
+        ),
+      },
+    });
+  });
 });
 
 async function responseJson(response: Response): Promise<unknown> {

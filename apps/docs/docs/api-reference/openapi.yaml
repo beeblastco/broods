@@ -2024,7 +2024,10 @@ paths:
           {
             description: Reservation does not belong to this account or sandbox config,
           }
-        "409": { description: Provider does not support snapshot }
+        "409":
+          {
+            description: "Provider does not support snapshot, or the name is already another provider's snapshot",
+          }
 
   /v1/sandboxes/{sandboxId}/terminal:
     post:
