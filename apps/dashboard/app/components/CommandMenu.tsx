@@ -9,7 +9,6 @@
 import { CommandPalette } from "@/app/components/CommandPalette";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
-import { useStage } from "@/app/hooks/useStage";
 import { itemAction } from "@/app/lib/copilotIntent";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useParams } from "next/navigation";
@@ -17,10 +16,9 @@ import { useParams } from "next/navigation";
 export function CommandMenu(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const projectId = (params.projectId ?? null) as Id<"projects"> | null;
-  const { stageId } = useStage();
   const { ask, runAction, setOpen: setCopilotOpen } = useCopilot();
 
-  const items = useDashboardIndex(projectId, stageId);
+  const items = useDashboardIndex(projectId);
 
   return (
     <CommandPalette

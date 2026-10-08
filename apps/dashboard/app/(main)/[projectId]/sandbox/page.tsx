@@ -22,7 +22,7 @@ import { SandboxSnapshotsTable } from "./components/SandboxSnapshotsTable";
 export default function SandboxPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
-  const { stageId: activeStageId } = useStage();
+  const { stageId: activeStageId, stageArgs } = useStage();
   const stages = useQuery(api.stage.list, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
@@ -30,10 +30,7 @@ export default function SandboxPage(): React.JSX.Element {
     api.sandbox.instances.listForActiveOrg,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
-  const machines = useQuery(
-    api.sandbox.machines.listForActiveOrg,
-    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
-  );
+  const machines = useQuery(api.sandbox.machines.listForActiveOrg, stageArgs);
   const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
   const agents = useQuery(api.agent.agents.listForProject, {
     projectId: projectId,
