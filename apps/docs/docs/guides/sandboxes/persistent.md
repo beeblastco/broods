@@ -36,7 +36,45 @@ Set `options.reservationKey` to choose the reservation yourself. Two sandboxes w
 
 Only the workspace mount outlives the reservation. When a reservation ends, local disk is gone.
 
+How one tool call finds its machine:
+
+```mermaid
+flowchart LR
+  T["bash, file tool<br/>or browse call"] --> P{persistent?}
+  P -->|no| N[new machine for this call]
+  N --> R1[run] --> X[destroy]
+  N -.->|provider full| FB[fallbackProvider]
+  P -->|yes| K{reservation}
+  K -->|a workspace mounts it| K1[one machine per workspace]
+  K -->|options.reservationKey| K3[one machine per key]
+  K -->|neither| K2[one machine per agent and sandbox]
+  K1 --> RES[(reserved machine)]
+  K3 --> RES
+  K2 --> RES
+  RES --> OC["onCreate once,<br/>onResume on later calls"]
+  OC --> R2[run the command]
+  OC -->|bash background: true, with a workspace| BG[start a background job]
+  BG --> AS["async_status: status, logs, stop<br/>result delivered to the turn's origin"]
+```
+
 ## Idle and lifetime
+
+A reserved machine moves through these states. Only the workspace survives a recreate or a release.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Running: first call, onCreate
+  Running --> Idle: call ends
+  Idle --> Running: next call, onResume
+  Idle --> Suspended: idleTimeoutSeconds, default 900
+  Suspended --> Running: next call or dashboard terminal
+  Running --> Recreated: lambda 8 h cap
+  Idle --> Recreated: next call past maxLifetimeSeconds
+  Recreated --> Running: fresh disk, workspace kept
+  Suspended --> Released: unused 7 days, or Terminate
+  Running --> Released: Terminate in the dashboard
+  Released --> [*]
+```
 
 | Provider  | On idle                                    | Resume           | Limits                                                |
 | --------- | ------------------------------------------ | ---------------- | ----------------------------------------------------- |
