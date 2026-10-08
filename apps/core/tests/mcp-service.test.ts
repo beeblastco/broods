@@ -59,11 +59,11 @@ const CHATS_WORKSPACE: WorkspaceConfigRecord = {
 /** The stores a test stubs, each with only the methods the code under test calls. */
 type StorageStubs = { [Store in keyof Storage]?: Partial<Storage[Store]> };
 
-/** A stage agent and, when it has one, its reservation on the `web` sandbox. */
+/** A stage agent and, when its VM on the `web` sandbox is live, its claim time. */
 interface StageAgent {
   agentId: string;
   config: AgentConfig;
-  reservation?: { claimedAt: number; expiresAt: number };
+  liveSince?: number;
 }
 
 function rpcRequest(body: unknown): CoreRequest {
@@ -111,7 +111,9 @@ async function explorerReservation(
     },
   };
   setStorageForTests(stubs as Storage);
-  spyOn(instanceStore, "getSandboxReservationRecord").mockImplementation(
+  // Other core test files replace instance-store with mock.module for the whole
+  // process, so the liveness read is stubbed here rather than below it.
+  spyOn(instanceStore, "getLiveSandboxReservation").mockImplementation(
     async (_provider, reservationKey) => {
       const owner = agents.find(
         (agent): boolean =>
@@ -119,9 +121,9 @@ async function explorerReservation(
           agentSandboxReservationKey("acct_test", agent.agentId, "sb_web"),
       );
 
-      return owner?.reservation
-        ? { externalId: `vm_${owner.agentId}`, ...owner.reservation }
-        : null;
+      return owner?.liveSince === undefined
+        ? null
+        : { externalId: `vm_${owner.agentId}`, claimedAt: owner.liveSince };
     },
   );
   const reached: SandboxMcpTarget[] = [];
@@ -155,17 +157,6 @@ async function explorerReservation(
 function agentReservation(agentId: string): { reservationKey: string } {
   return {
     reservationKey: agentSandboxReservationKey("acct_test", agentId, "sb_web"),
-  };
-}
-
-/** A reservation claimed at `claimedAt`, live unless `expired`. */
-function claimed(
-  claimedAt: number,
-  expired = false,
-): { claimedAt: number; expiresAt: number } {
-  return {
-    claimedAt: claimedAt,
-    expiresAt: Date.now() + (expired ? -60_000 : 60_000),
   };
 }
 
@@ -208,19 +199,19 @@ describe("mcp-service rpc", () => {
       {
         agentId: "agent_a",
         config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
-        reservation: claimed(100),
+        liveSince: 100,
       },
       {
         agentId: "agent_b",
         config: { sandboxes: ["sb_web"] },
-        reservation: claimed(200),
+        liveSince: 200,
       },
     ]);
 
     expect(reservation).toEqual(agentReservation("agent_a"));
   });
 
-  it("falls back to the newest other live VM, skipping an idle-expired one", async () => {
+  it("falls back to the newest other live VM", async () => {
     const reservation = await explorerReservation([
       {
         agentId: "agent_a",
@@ -229,17 +220,12 @@ describe("mcp-service rpc", () => {
       {
         agentId: "agent_b",
         config: { sandboxes: ["sb_web"] },
-        reservation: claimed(100),
+        liveSince: 100,
       },
       {
         agentId: "agent_c",
         config: { sandboxes: ["sb_web"] },
-        reservation: claimed(200),
-      },
-      {
-        agentId: "agent_d",
-        config: { sandboxes: ["sb_web"] },
-        reservation: claimed(300, true),
+        liveSince: 200,
       },
     ]);
 

@@ -156,7 +156,7 @@ export const researcher = defineAgent({
 - The tool listing is cached for a few minutes, and refetched sooner when the server or its sandbox changes, so most runs do not start the sandbox just to list tools. A listing with nothing cached starts it.
 - The server shares the VM that `bash` uses on that sandbox, including its workspace, and sees the sandbox's env vars. Changing them restarts the server.
 - A call times out after the sandbox's `timeout`, or 120 seconds when the sandbox sets none.
-- The MCP explorer in the dashboard runs the server on the agent's VM, so it sees the same browser session the agent does. When several agents of the stage run on that sandbox, it picks a running VM of an agent that uses the server, then any other running agent VM (most recently started first), else the first agent that uses the server, so that agent's next run lands on the VM the explorer started. Only when no agent runs on the sandbox does the explorer start a VM of its own. An agent whose workspace on that sandbox has `isolation: "conversation"` gets a VM per conversation, so the explorer does not attach to those. A sandbox that pins `options.reservationKey` shares one VM with the explorer and every agent.
+- The MCP explorer in the dashboard uses a running VM of an agent on that sandbox when there is one, else its own. A sandbox that pins `options.reservationKey` shares one VM with the explorer and every agent.
 
 ## Approvals
 

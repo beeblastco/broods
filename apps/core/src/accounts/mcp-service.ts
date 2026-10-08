@@ -15,10 +15,13 @@ import {
   sandboxMcpTarget,
   type SandboxMcpTarget,
 } from "../harness/mcp/sandbox.ts";
-import { getSandboxReservationRecord } from "../harness/sandbox/instance-store.ts";
+import { getLiveSandboxReservation } from "../harness/sandbox/instance-store.ts";
 import { sandboxReservationKey } from "../harness/sandbox/utils.ts";
+import { agentOwnWorkspace } from "../harness/tools/filesystem-utils.ts";
+import { isToolEnabled } from "../harness/tools/index.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import type { McpRecord } from "../shared/domain/mcp.ts";
+import type { SandboxConfigRecord } from "../shared/domain/sandbox-config.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -114,42 +117,47 @@ export async function handleMcpServiceRpc(
 
 /**
  * The VM `agent` reaches `record` on, whether the agent uses that server, and
- * when its reservation was claimed while it is still inside its idle deadline.
- * Undefined when the agent's config no longer resolves (its own runs fail on
- * that), or when the VM is a conversation-isolated workspace's: each
+ * when its reservation was claimed if it is live. Resolves only what reaches
+ * `host`: the host, and the workspaces that can mount it when it is the agent's
+ * first sandbox. Undefined when that no longer resolves (the agent's own runs
+ * fail on it), or when the VM is a conversation-isolated workspace's: each
  * conversation reserves its own there, and the explorer has no conversation.
  */
 async function agentSandboxCandidate(
   accountId: string,
   record: McpRecord,
   agent: AgentRecord,
+  host: SandboxConfigRecord,
 ): Promise<AgentSandboxCandidate | undefined> {
-  const runtime = await resolveAgentRuntime(agent.config, {
-    accountId: accountId,
-    agentId: agent.agentId,
-  }).catch((): undefined => undefined);
-  const target = runtime && sandboxMcpTarget(record, runtime);
+  const ownsHost = agent.config.sandboxes?.[0] === host.sandboxId;
+  const runtime = await resolveAgentRuntime(
+    {
+      sandboxes: [host.sandboxId],
+      workspaces: ownsHost
+        ? (agent.config.workspaces ?? []).filter(
+            (ref): boolean =>
+              ref.sandbox === undefined || ref.sandbox === host.sandboxId,
+          )
+        : [],
+    },
+    { accountId: accountId, agentId: agent.agentId },
+  ).catch((): undefined => undefined);
+  if (!runtime) return undefined;
+  if (agentOwnWorkspace(runtime)?.config.isolation === "conversation") {
+    return undefined;
+  }
+  const target = sandboxMcpTarget(record, runtime);
   const key = target && sandboxReservationKey(target.reservation);
   if (!target || !key) return undefined;
-  const perConversation = runtime.workspaces.some(
-    (workspace): boolean =>
-      workspace.config.isolation === "conversation" &&
-      workspace.namespace === target.reservation.namespace,
-  );
-  if (perConversation) return undefined;
-  const reservation = await getSandboxReservationRecord(
+  const reservation = await getLiveSandboxReservation(
     target.config.provider,
     key,
   );
-  const entry = agent.config.mcp?.[record.serverId];
 
   return {
     target: target,
-    usesServer: entry !== undefined && entry.enabled !== false,
-    liveSince:
-      reservation && reservation.expiresAt > Date.now()
-        ? reservation.claimedAt
-        : undefined,
+    usesServer: isToolEnabled(agent.config.mcp?.[record.serverId]),
+    liveSince: reservation?.claimedAt,
   };
 }
 
@@ -190,23 +198,24 @@ async function explorerSandboxTarget(
           left.agentId.localeCompare(right.agentId),
         )
         .map((agent): Promise<AgentSandboxCandidate | undefined> =>
-          agentSandboxCandidate(accountId, record, agent),
+          agentSandboxCandidate(accountId, record, agent, host),
         ),
     )
   ).filter(
     (candidate): candidate is AgentSandboxCandidate => candidate !== undefined,
   );
-  // A live VM already runs the agent's own servers; one that runs this server
-  // never needs a new slot for it, so it goes first.
-  const [live] = candidates
-    .filter((candidate): boolean => candidate.liveSince !== undefined)
+  // Tier 0: live and runs this server (no new slot); 1: live; 2: uses it. The
+  // sort is stable over the id order, so tier 2 keeps the first agent by id.
+  const tier = (candidate: AgentSandboxCandidate): number =>
+    (candidate.liveSince === undefined ? 2 : 0) +
+    (candidate.usesServer ? 0 : 1);
+  const [chosen] = candidates
+    .filter((candidate): boolean => tier(candidate) <= 2)
     .toSorted(
       (left, right): number =>
-        Number(right.usesServer) - Number(left.usesServer) ||
+        tier(left) - tier(right) ||
         (right.liveSince ?? 0) - (left.liveSince ?? 0),
     );
-  const user = candidates.find((candidate): boolean => candidate.usesServer);
-  const chosen = live ?? user;
   if (chosen) return chosen.target;
   const runtime = await resolveAgentRuntime(
     { sandboxes: [host.sandboxId] },

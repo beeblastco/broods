@@ -88,6 +88,7 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
     instance: null,
   })),
   getSandboxExternalId: getSandboxExternalIdMock,
+  getLiveSandboxReservation: mock(async () => null),
   getSandboxReservationRecord: mock(
     async (): Promise<{ externalId: string; claimedAt: number } | null> => null,
   ),

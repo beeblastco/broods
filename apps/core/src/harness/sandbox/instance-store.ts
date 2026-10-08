@@ -11,21 +11,37 @@ export function getSandboxExternalId(
     reservationKey: reservationKey,
   });
 }
-// The reserved sandbox, when it was claimed and its idle deadline, in one read,
-// for the executors that enforce `lifecycle.maxLifetimeSeconds` themselves and
-// the MCP explorer. Null when unreserved.
+// The reserved sandbox and when it was claimed, in one read, for the executors
+// that enforce `lifecycle.maxLifetimeSeconds` themselves. Null when unreserved.
 export function getSandboxReservationRecord(
   provider: SandboxProvider,
   reservationKey: string,
-): Promise<{
-  externalId: string;
-  claimedAt: number;
-  expiresAt: number;
-} | null> {
+): Promise<{ externalId: string; claimedAt: number } | null> {
   return runtime.query("getSandboxReservationRecord", {
     provider: provider,
     reservationKey: reservationKey,
   });
+}
+// The reservation while it is inside its idle deadline, for the MCP explorer.
+// Null when unreserved or once the sweeper would release it (`expiresAt` passed).
+export async function getLiveSandboxReservation(
+  provider: SandboxProvider,
+  reservationKey: string,
+): Promise<{ externalId: string; claimedAt: number } | null> {
+  const reservation = await runtime.query<{
+    externalId: string;
+    claimedAt: number;
+    expiresAt: number;
+  } | null>("getSandboxReservationRecord", {
+    provider: provider,
+    reservationKey: reservationKey,
+  });
+  if (!reservation || reservation.expiresAt < Date.now()) return null;
+
+  return {
+    externalId: reservation.externalId,
+    claimedAt: reservation.claimedAt,
+  };
 }
 // The reserved machine, or `externalId` when the caller already holds it, and
 // the instance row's record of whose credentials it runs on, for a release.
