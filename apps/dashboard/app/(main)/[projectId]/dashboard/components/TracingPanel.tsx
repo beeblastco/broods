@@ -430,7 +430,8 @@ export function TracingPanel({
   apiKey,
 }: Props): React.JSX.Element {
   // The selected task's trace, so a link opens on it (a log's View trace,
-  // an agent's link). Written on every pick, dropped only when it is missing.
+  // an agent's link). Written on every pick, dropped when it is missing or a
+  // filter changes.
   const [focusTraceId, setFocusTraceId] = useQueryState(
     "trace",
     parseAsTraceId,

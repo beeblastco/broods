@@ -86,12 +86,14 @@ describe("URL params read as absent when they fail their check", () => {
   });
 
   test("sort takes only a column the list has and a direction", () => {
-    const sort = parseAsSort(["name", "lastUsed"] as const);
+    const sort = parseAsSort({ name: 0, lastUsed: 0 });
     expect(sort.parse("lastUsed.desc")).toEqual({
       column: "lastUsed",
       dir: "desc",
     });
     expect(sort.parse("secret.asc")).toBeNull();
+    expect(sort.parse("__proto__.asc")).toBeNull();
+    expect(sort.parse("constructor.asc")).toBeNull();
     expect(sort.parse("name.sideways")).toBeNull();
     expect(sort.parse("name")).toBeNull();
     expect(sort.serialize({ column: "name", dir: "asc" })).toBe("name.asc");

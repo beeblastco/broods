@@ -74,11 +74,11 @@ export function useListState<Row, Column extends string, Field extends string>(
     remember ? `${remember}.sort` : null,
     spec.initialSort,
   );
-  // Only a column the list sorts by parses. sortKey is a module constant, so this holds.
+  // Only a column the list sorts by parses. sortKey is a module constant, so the memo holds.
   const parsers = useMemo(
     () => ({
       q: parseAsSearch,
-      sort: parseAsSort(Object.keys(sortKey) as Column[]),
+      sort: parseAsSort(sortKey),
     }),
     [sortKey],
   );

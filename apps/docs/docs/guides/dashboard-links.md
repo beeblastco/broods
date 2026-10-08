@@ -1,6 +1,6 @@
 # Dashboard links
 
-Every dashboard view lives in its URL, so a link opens the exact view: the tab, the search, the time range and the row that is open. An agent can build one and hand it to a user ("here is the failed run"), and a teammate can paste the address bar into chat.
+Dashboard views keep their tab, search, time range and open row in the URL, so a link opens the same view. An agent can build one and hand it to a user ("here is the failed run"), and a teammate can paste the address bar into chat.
 
 ```text
 https://dashboard.broods.app/<projectId>/dashboard?stage=<stageId>&tab=tracing&trace=4bf92f3577b34da6a3ce929d0e0e4736
@@ -12,7 +12,7 @@ The first opens Tracing on one run. The second opens Monitoring on error lines t
 
 Lists remember each viewer's last search. A list link without `q` opens with that search, so add `q=` (empty) when the row in `sel` must show.
 
-Copy `<projectId>` and `<stageId>` from any dashboard URL. Without `stage` the project's default Development stage opens. A link to `https://dashboard.broods.app/?project=<projectId>&tab=tracing&trace=...` resolves the project first and keeps the rest.
+Copy `<projectId>` and `<stageId>` from any dashboard URL. Without `stage` the project's default Development stage opens. A link to `https://dashboard.broods.app/?project=<projectId>&tab=tracing&trace=...` resolves the project first and keeps the view params (`tab`, `trace`, `q`, `range`, `from`, `to`, `models`, `bin`, `node`); list params need the full project URL.
 
 ## Params
 

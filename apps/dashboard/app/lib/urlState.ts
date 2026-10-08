@@ -4,7 +4,8 @@
  * parser with an allowlist or a shape check; anything else reads as absent,
  * so a bad link opens the default view and never throws. The URL only holds
  * view state: an id here selects among rows an authorized query already
- * loaded, it never fetches, runs or changes anything.
+ * loaded, and never runs or changes anything. The one read a link can cause
+ * is Tracing fetching a `trace` it does not hold, with the stage's own key.
  */
 import type { Id, TableNames } from "@broods/convex/_generated/dataModel";
 import { createParser, debounce, parseAsStringLiteral } from "nuqs";
@@ -100,22 +101,26 @@ export function parseAsId<T extends TableNames>(): ReturnType<
 > {
   return createParser({
     parse: (value: string): Id<T> | null =>
-      CONVEX_ID_SHAPE.test(value) ? (value as Id<T>) : null,
+      isConvexId<T>(value) ? value : null,
     serialize: (value: Id<T>): string => value,
   });
 }
 
-/** A list's `column.dir` sort, where the column must be one the list sorts by. */
+/** A list's `column.dir` sort, where the column must be a key of the list's `sortKey`. */
 export function parseAsSort<C extends string>(
-  columns: readonly C[],
+  columns: Readonly<Record<C, unknown>>,
 ): ReturnType<typeof createParser<SortState<C>>> {
+  const isColumn = (name: string): name is C => Object.hasOwn(columns, name);
+
   return createParser({
     parse: (value: string): SortState<C> | null => {
       const dot = value.lastIndexOf(".");
-      const column = columns.find((name) => name === value.slice(0, dot));
+      const column = value.slice(0, dot);
       const dir = SORT_DIRS.find((name) => name === value.slice(dot + 1));
 
-      return dot > 0 && column && dir ? { column: column, dir: dir } : null;
+      return dot > 0 && isColumn(column) && dir
+        ? { column: column, dir: dir }
+        : null;
     },
     serialize: (value: SortState<C>): string => `${value.column}.${value.dir}`,
     eq: (a: SortState<C>, b: SortState<C>): boolean =>
@@ -146,4 +151,9 @@ export function windowParams(window: TimeWindow | null): {
     from: window.from,
     to: Number.isFinite(window.to) ? window.to : null,
   };
+}
+
+// A string shaped like a Convex id of table `T`.
+function isConvexId<T extends TableNames>(value: string): value is Id<T> {
+  return CONVEX_ID_SHAPE.test(value);
 }
