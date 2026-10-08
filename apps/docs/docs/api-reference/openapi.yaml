@@ -2570,6 +2570,11 @@ paths:
     patch:
       tags: [MCP servers]
       summary: Update external MCP server
+      description: >-
+        A role session that changes the server's `url`, `transport`,
+        `sandbox`, `command`, bundle, `runtime` or `oauth` answers 400 when
+        an agent's `config.mcp` entry for it names an account env var the
+        session may not read with `env:read`.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: serverId, in: path, required: true, schema: { type: string } }
@@ -2585,6 +2590,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Mcp"
+        "400":
+          description: Invalid body, or a role repoints a server its agents send env vars the role may not read
         "409":
           { description: A server with this name already exists in the stage }
     delete:

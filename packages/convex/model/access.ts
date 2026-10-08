@@ -169,12 +169,20 @@ export async function roleHoldingPolicy(
   const account = await ctx.db.get(policy.accountId);
   const orgId = account ? orgIdOf(ctx, account) : null;
   if (!orgId) return null;
-  const roles = await ctx.db
+  const roles = await orgRoles(ctx, orgId);
+
+  return roles.find((role) => role.policyIds.includes(policy._id)) ?? null;
+}
+
+/** Every custom role in the org. */
+export async function orgRoles(
+  ctx: Ctx,
+  orgId: Id<"orgs">,
+): Promise<Doc<"orgRoles">[]> {
+  return await ctx.db
     .query("orgRoles")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
     .collect();
-
-  return roles.find((role) => role.policyIds.includes(policy._id)) ?? null;
 }
 
 /** The policies that still exist and are active, with the scope their row carries. */

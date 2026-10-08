@@ -523,6 +523,81 @@ describe("stage-pinned role sessions", () => {
     ).toBe(400);
   });
 
+  test("a role cannot repoint an MCP server whose agents send it env vars the role cannot read", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const agentId = await insertAgent(t, seeded, seeded.stageId, "mcp-agent");
+    await t.mutation(internal.account.envVars.set, {
+      accountId: seeded.accountId,
+      name: "GITHUB_TOKEN",
+      value: "ghp_secret",
+    });
+    const serverId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("mcp", {
+          accountId: seeded.accountId,
+          projectId: seeded.projectId,
+          stageId: seeded.stageId,
+          name: "github",
+          transport: "http" as const,
+          url: "https://mcp.example.com/mcp",
+          status: "active" as const,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+    );
+    const request = (
+      path: string,
+      token: string,
+      body: unknown,
+    ): Promise<Response> =>
+      t.fetch(path, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    const set = await request(`/v1/agents/${agentId}`, ACCOUNT_SECRET, {
+      config: {
+        mcp: {
+          [serverId]: { headers: { Authorization: "Bearer ${GITHUB_TOKEN}" } },
+        },
+      },
+    });
+    expect(set.status).toBe(200);
+    const roleId = await createRole(t, seeded, {
+      policy: {
+        version: 1,
+        rules: [{ id: "mcp", effect: "allow", actions: ["mcp:write"] }],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+
+    const repointed = await request(`/v1/mcp/${serverId}`, token, {
+      url: "https://attacker.example/mcp",
+    });
+    expect(repointed.status).toBe(400);
+    expect(((await repointed.json()) as ApiErrorBody).error.message).toContain(
+      "GITHUB_TOKEN",
+    );
+    const row = await t.run(async (ctx) => await ctx.db.get(serverId));
+    expect(row?.url).toBe("https://mcp.example.com/mcp");
+    expect(
+      (await request(`/v1/mcp/${serverId}`, token, { description: "kept" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await request(`/v1/mcp/${serverId}`, ACCOUNT_SECRET, {
+          url: "https://mcp2.example.com/mcp",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   test("an unpinned role cannot create an agent naming an env var it cannot read", async () => {
     const t = roleTest();
     const seeded = await seed(t);

@@ -23,7 +23,7 @@ import {
   dashboardPermissions,
   memberAccess,
   requireDashboardPermission,
-  roleHoldingPolicy,
+  orgRoles,
   tierPermissions,
   type ScopedPolicy,
 } from "./model/access";
@@ -469,12 +469,6 @@ export const removePolicy = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
-    const holder = await roleHoldingPolicy(ctx, policy);
-    if (holder) {
-      throw new ClientError(
-        `The role "${holder.name}" holds this policy; detach it first`,
-      );
-    }
     await assertPolicyUnreferenced(ctx, policy);
     const now = Date.now();
     await ctx.db.patch(policy._id, {
@@ -762,16 +756,6 @@ async function assertOwnedPolicies(
   await Promise.all(
     policyIds.map((policyId) => ownedPolicy(ctx, accountId, policyId)),
   );
-}
-
-async function orgRoles(
-  ctx: Ctx,
-  orgId: Id<"orgs">,
-): Promise<Doc<"orgRoles">[]> {
-  return await ctx.db
-    .query("orgRoles")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-    .collect();
 }
 
 async function ownedRole(

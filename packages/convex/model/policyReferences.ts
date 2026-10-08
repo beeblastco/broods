@@ -7,6 +7,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
+import { orgRoles } from "./access";
 
 /** Opens the guard's refusal, so the HTTP layer can answer 409 on it. */
 export const POLICY_STILL_REFERENCED = "Policy still referenced:";
@@ -85,12 +86,7 @@ export async function loadPolicyReferenceRows(
     )
     .collect();
 
-  const roles = orgId
-    ? await ctx.db
-        .query("orgRoles")
-        .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-        .collect()
-    : [];
+  const roles = orgId ? await orgRoles(ctx, orgId) : [];
 
   return { agents: agents.flat(), records: records, roles: roles };
 }
