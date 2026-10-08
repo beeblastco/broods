@@ -111,9 +111,8 @@ export interface SandboxConfig {
   // A platform image variant by name (lambda only): "browser" has Chromium,
   // "obscura" has the Obscura headless browser. With `snapshot`, the variant it was built from.
   image?: SandboxImage;
-  // What the sandbox boots from, in its provider's own format: a workdir image,
-  // a MicroVM image ARN, a Daytona snapshot, an E2B template or snapshot, or a
-  // Vercel image or `snap_` snapshot id. SNAPSHOT_SANDBOX_PROVIDERS only.
+  // What the sandbox boots from, in its provider's own format. See
+  // SNAPSHOT_SANDBOX_PROVIDERS.
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -401,22 +400,10 @@ function assertEnvVarsAndOptions(
     throw new ClientError("config.options must be an object");
   }
   if (config.options !== undefined) {
-    validateProviderOptions(provider, config.options);
+    validateProviderOptions(provider, config.options, config.snapshot);
   }
   if (provider === "custom") {
     assertCustomOptions(config.options ?? {}, stored?.options?.headers);
-  }
-  // Daytona builds `options.image` into a fresh snapshot on create, so a
-  // sandbox names one or the other.
-  if (
-    provider === "daytona" &&
-    config.snapshot !== undefined &&
-    isPlainObject(config.options) &&
-    config.options.image !== undefined
-  ) {
-    throw new ClientError(
-      "config.snapshot and config.options.image cannot both be set: Daytona boots a snapshot or builds one from an image",
-    );
   }
 }
 
@@ -780,6 +767,7 @@ function requireString(value: unknown, name: string): string {
 function validateProviderOptions(
   provider: SandboxProvider,
   options: unknown,
+  snapshot: unknown,
 ): void {
   if (!isPlainObject(options)) {
     return;
@@ -813,11 +801,15 @@ function validateProviderOptions(
     );
   }
   assertNoRetiredImageOptions(provider, options);
+  // Daytona builds `options.image` into a fresh snapshot on create, so a
+  // sandbox names one or the other.
   if (
     provider === "daytona" &&
-    "image" in options &&
-    typeof options.image !== "string"
+    optionalString(options.image, "config.options.image") !== undefined &&
+    snapshot !== undefined
   ) {
-    throw new ClientError("config.options.image must be a string");
+    throw new ClientError(
+      "config.snapshot and config.options.image cannot both be set: Daytona boots a snapshot or builds one from an image",
+    );
   }
 }

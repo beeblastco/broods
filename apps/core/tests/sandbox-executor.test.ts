@@ -2989,32 +2989,24 @@ describe("createSandboxExecutor", () => {
     expect(daytonaCreateSnapshotMock).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses a stored config that still picks its image through a removed option", async () => {
-    const {
-      createSandboxExecutor,
-    } = require("../src/harness/sandbox/index.ts");
-    for (const [provider, key] of [
-      ["daytona", "snapshot"],
-      ["e2b", "template"],
-      ["vercel", "image"],
-    ] as const) {
-      await expect(
-        createSandboxExecutor({
+  it("lists exactly the providers whose executor can capture a snapshot", async () => {
+    const { providerExecutor } = require("../src/harness/sandbox/index.ts");
+    const { SANDBOX_PROVIDERS, SNAPSHOT_SANDBOX_PROVIDERS } =
+      await import("@broods/convex/model/sandboxProviders");
+    const capturing = SANDBOX_PROVIDERS.filter(
+      (provider) =>
+        typeof providerExecutor({
           provider: provider,
-          options: {
-            token: "tok",
-            teamId: "team_1",
-            projectId: "prj_1",
-            [key]: "x",
-          },
-        }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }),
-      ).rejects.toThrow(
-        `config.options.${key} was removed; set config.snapshot`,
-      );
-    }
-    expect(daytonaCreateMock).not.toHaveBeenCalled();
-    expect(e2bCreateMock).not.toHaveBeenCalled();
-    expect(vercelCreateMock).not.toHaveBeenCalled();
+          // The workdir executor refuses to construct without an endpoint.
+          options: { workdirUrl: "https://workdir.example.com", apiKey: "k" },
+        }).snapshot === "function",
+    );
+
+    expect(capturing).toEqual(
+      SANDBOX_PROVIDERS.filter((provider) =>
+        SNAPSHOT_SANDBOX_PROVIDERS.has(provider),
+      ),
+    );
   });
 
   it("refuses a snapshot when nothing is reserved", async () => {

@@ -6,7 +6,6 @@
  * action captures a reserved sandbox into a new snapshot.
  */
 
-import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import { randomUUID } from "node:crypto";
 import type {
   CommandFinished,
@@ -173,7 +172,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
 
     return parseJobStatus(
       request.jobId,
@@ -183,7 +182,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
   async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
     const bytes = request.outputLimitBytes ?? 64 * 1024;
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     const logs = truncateText(
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
@@ -197,7 +196,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
 
     return parseJobStatus(
@@ -242,19 +241,8 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async snapshot(
     request: SandboxReservationRef,
   ): Promise<SandboxSnapshotResult> {
-    const key = sandboxReservationKey(request);
-    const name = key ? await getSandboxExternalId("vercel", key) : null;
-    if (!name) {
-      throw new Error(
-        "no reserved vercel sandbox to snapshot for this sandbox",
-      );
-    }
     try {
-      const Sandbox = await this.#Sandbox();
-      const sandbox = await Sandbox.get({
-        name: name,
-        ...vercelAuthOptions(this.#config),
-      });
+      const { sandbox } = await this.#reserved(request);
       // Vercel expires a snapshot after 30 days by default; a pinned one must not.
       const snapshot = await sandbox.snapshot({ expiration: 0 });
 
@@ -418,16 +406,16 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  async #jobContext(
-    request: SandboxJobRequest,
+  // The reserved sandbox, for background jobs and the Snapshot action.
+  async #reserved(
+    request: SandboxReservationRef,
   ): Promise<{ sandbox: VercelSandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
     if (!key)
-      throw new Error(
-        "job operations require a persistent sandbox reservation key",
-      );
+      throw new Error("a persistent sandbox reservation key is required");
     const name = await getSandboxExternalId("vercel", key);
-    if (!name) throw new Error("no reserved vercel sandbox for this workspace");
+    if (!name)
+      throw new Error("no reserved vercel sandbox for this reservation");
     const Sandbox = await this.#Sandbox();
     const sandbox = await Sandbox.get({
       name: name,
@@ -575,7 +563,6 @@ function vercelCreateOptions(
   request: { envVars?: Record<string, string>; timeoutSeconds: number },
   persistent: boolean,
 ): VercelCreateOptions {
-  assertNoRetiredImageOptions("vercel", config.options ?? {});
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
   const snapshot = config.snapshot;
   const source = snapshot?.startsWith(SNAPSHOT_ID_PREFIX)

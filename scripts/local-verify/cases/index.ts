@@ -14,7 +14,6 @@ import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { lambdaSnapshot } from "./lambda-snapshot.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
-import { providerSnapshot } from "./provider-snapshot.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { r2Workspace } from "./r2-workspace.ts";
@@ -39,7 +38,6 @@ export const verifyCases: readonly VerifyCase[] = [
   ownBucketSandbox,
   sandboxImage,
   lambdaSnapshot,
-  providerSnapshot,
   browserSandbox,
   mcpCommand,
   customSandbox,

@@ -9,7 +9,6 @@
 
 import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
-import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
@@ -165,7 +164,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
 
     return parseJobStatus(
       request.jobId,
@@ -175,7 +174,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
 
   async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
     const bytes = request.outputLimitBytes ?? 64 * 1024;
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     const logs = truncateText(
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
@@ -189,7 +188,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
 
     // Report the real terminal state: a job that had already finished keeps its
@@ -232,21 +231,10 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   async snapshot(
     request: SandboxReservationRef,
   ): Promise<SandboxSnapshotResult> {
-    const key = sandboxReservationKey(request);
-    const externalId = key ? await getSandboxExternalId("daytona", key) : null;
-    if (!externalId) {
-      throw new Error(
-        "no reserved daytona sandbox to snapshot for this sandbox",
-      );
-    }
     // Daytona snapshot names are unique per organization, so the account's own
     // name for it stays in the snapshot row.
     const name = `broods-${randomUUID()}`;
-    // Daytona captures only a started sandbox, and an idle reservation auto-stops.
-    const sandbox = await this.#reconnect(
-      new Daytona(daytonaClientOptions(this.#config)),
-      externalId,
-    );
+    const { sandbox } = await this.#reserved(request);
     await sandbox.createSnapshot(name, SNAPSHOT_TIMEOUT_SECONDS);
 
     return { snapshotId: name };
@@ -391,17 +379,17 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     return Object.keys(env).length > 0 ? env : undefined;
   }
 
-  async #jobContext(
-    request: SandboxJobRequest,
+  // The reserved sandbox, started if it auto-stopped on idle, for background
+  // jobs and the Snapshot action, which both need it running.
+  async #reserved(
+    request: SandboxReservationRef,
   ): Promise<{ sandbox: Sandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
     if (!key)
-      throw new Error(
-        "job operations require a persistent sandbox reservation key",
-      );
+      throw new Error("a persistent sandbox reservation key is required");
     const externalId = await getSandboxExternalId("daytona", key);
     if (!externalId)
-      throw new Error("no reserved daytona sandbox for this workspace");
+      throw new Error("no reserved daytona sandbox for this reservation");
     const sandbox = await this.#reconnect(
       new Daytona(daytonaClientOptions(this.#config)),
       externalId,
@@ -504,7 +492,6 @@ async function daytonaCreateOptions(
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
-  assertNoRetiredImageOptions("daytona", options);
   // No run identity here: a sandbox outlives the run that created it, and
   // every exec lays its own over this env.
   const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);

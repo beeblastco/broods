@@ -1732,7 +1732,7 @@ paths:
                     snapshot:
                       {
                         type: string,
-                        description: "What the sandbox boots from, in its provider's own format: on sandbox a workdir image id or name; on lambda a platform MicroVM image ARN in the same AWS account and region as the default image (any other ARN fails the run); on daytona a Daytona snapshot; on e2b an E2B template or snapshot; on vercel a Vercel image or a `snap_` snapshot id. Rejected on cloudflare, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row.",
+                        description: "What the sandbox boots from, in its provider's own format (see the Sandboxes guide, Images). On lambda, a MicroVM image ARN in the same AWS account and region as the default image; any other ARN fails the run. Rejected on cloudflare, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row.",
                       }
                     persistent:
                       {

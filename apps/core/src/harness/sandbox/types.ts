@@ -56,9 +56,8 @@ export interface SandboxExecutorConfig {
   // Platform MicroVM image variant by name (lambda only). With `snapshot`, the
   // variant that snapshot was built from.
   image?: SandboxImage;
-  // What to boot, in the provider's own format: workdir image, MicroVM image ARN,
-  // Daytona snapshot, E2B template or snapshot, Vercel image or `snap_` snapshot
-  // id. Unset boots the provider default.
+  // What to boot, in the provider's own format (see SNAPSHOT_SANDBOX_PROVIDERS).
+  // Unset boots the provider default.
   snapshot?: string;
   runtimes?: SandboxRuntime[];
   network?: SandboxNetworkConfig;

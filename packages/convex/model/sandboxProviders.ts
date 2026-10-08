@@ -24,8 +24,9 @@ export const STATELESS_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["machine", "custom"]);
 
 // Providers whose `snapshot` names what a sandbox boots from, in the provider's
-// own format (workdir image, MicroVM image ARN, Daytona snapshot, E2B template,
-// Vercel image or snapshot id), and whose running instance the Snapshot action
-// captures into one. A snapshot boots only on the provider that made it.
+// own format: sandbox a workdir image, lambda a MicroVM image ARN, daytona a
+// Daytona snapshot, e2b an E2B template or snapshot, vercel a Vercel image or a
+// `snap_` snapshot id. Their executors implement `snapshot()`, which the
+// Snapshot action captures with. A snapshot boots only on the provider that made it.
 export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<string> =
   new Set<SandboxProvider>(["sandbox", "lambda", "daytona", "e2b", "vercel"]);
