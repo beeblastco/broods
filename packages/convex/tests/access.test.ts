@@ -506,4 +506,38 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     policyId: staged,
     mode: "enforce",
   });
+
+  // A deny in one policy can mask another policy's allow in the same role, so
+  // dropping it is weighed against every role that holds it.
+  currentAuthId = "auth_owner";
+  const granting = await t.mutation(api.access.createPolicy, {
+    name: "Grants keys",
+    mode: "enforce",
+  });
+  await t.mutation(api.access.addRule, {
+    policyId: granting,
+    permission: "keys:write",
+    scope: {},
+  });
+  currentAuthId = "auth_member";
+  const masking = await t.mutation(api.access.createPolicy, {
+    name: "Masks keys",
+    mode: "enforce",
+  });
+  const maskId = await t.mutation(api.access.addRule, {
+    policyId: masking,
+    permission: "keys:write",
+    effect: "deny",
+    scope: {},
+  });
+  await t.mutation(api.access.updateRole, {
+    roleId: roleId,
+    policyIds: [accessPolicy, granting, masking],
+  });
+  await expect(
+    t.mutation(api.access.removeRule, { policyId: masking, ruleId: maskId }),
+  ).rejects.toThrow(/keys:write, which you do not hold/);
+  expect(await t.query(api.access.viewerPermissions, {})).toEqual([
+    "access:write",
+  ]);
 });

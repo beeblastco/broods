@@ -24,6 +24,7 @@ import {
   memberAccess,
   requireDashboardPermission,
   tierPermissions,
+  type ScopedPolicy,
 } from "./model/access";
 import { randomToken } from "./model/accountSecrets";
 import { actorsOf, actorValidator, type Actor } from "./model/actor";
@@ -711,7 +712,10 @@ async function editablePolicy(
   return policy;
 }
 
-/** The document a policy would hold grants nothing new the caller lacks. */
+/**
+ * The document a policy would hold grants nothing new the caller lacks, alone
+ * or in any role that holds it: a deny here can mask another policy's allow.
+ */
 async function assertPolicyWithinReach(
   ctx: MutationCtx,
   caller: ActiveAccount,
@@ -720,19 +724,34 @@ async function assertPolicyWithinReach(
 ): Promise<void> {
   const orgId = orgIdOf(ctx, caller.account);
   if (!orgId) return;
-  await assertGrantsWithinReach(
-    ctx,
-    orgId,
-    caller.user,
-    [
-      {
-        document: document,
-        projectId: policy.projectId,
-        stageId: policy.stageId,
-      },
-    ],
-    [policy],
+  const edited: ScopedPolicy = {
+    document: document,
+    projectId: policy.projectId,
+    stageId: policy.stageId,
+  };
+  const holders = (await orgRoles(ctx, orgId)).filter((role) =>
+    role.policyIds.includes(policy._id),
   );
+  const alongside = [
+    [],
+    ...(await Promise.all(
+      holders.map((role) =>
+        activePolicies(
+          ctx,
+          role.policyIds.filter((id) => id !== policy._id),
+        ),
+      ),
+    )),
+  ];
+  for (const others of alongside) {
+    await assertGrantsWithinReach(
+      ctx,
+      orgId,
+      caller.user,
+      [...others, edited],
+      [...others, policy],
+    );
+  }
 }
 
 async function assertOwnedPolicies(
