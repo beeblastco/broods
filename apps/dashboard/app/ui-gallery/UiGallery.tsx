@@ -289,13 +289,18 @@ const CONVEX_SERVER_ERROR = new Error(
 
 const subscribeNever = (): (() => void) => () => {};
 
-/** Size cells: fully reported, reported without a disk, and not reported. */
+/**
+ * Size cells: fully reported, reported without a disk, a row written before
+ * sizes were verified (no `specsVerified`, so no specs are passed), and a
+ * computer whose daemon reported none.
+ */
 const SIZE_ROWS: Array<{
   provider: string;
   specs: Doc<"sandboxInstances">["specs"] | undefined;
 }> = [
   { provider: "daytona", specs: { vcpu: 2, memoryMb: 4096, storageGb: 10 } },
   { provider: "e2b", specs: { vcpu: 2, memoryMb: 512 } },
+  { provider: "lambda", specs: undefined },
   { provider: "machine", specs: undefined },
 ];
 
@@ -589,9 +594,8 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="sandbox-size" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Sandbox size</h2>
-        {/* The instances table's Size cell: a reported size, one without a
-            disk, and a computer whose daemon reported none. The row opens a
-            panel on click, which the "?" must not do. */}
+        {/* The instances table's Size cell, one row per SIZE_ROWS case. The
+            row opens a panel on click, which the "?" must not do. */}
         <table className="w-fit text-xs whitespace-nowrap">
           <tbody>
             {SIZE_ROWS.map((row) => (

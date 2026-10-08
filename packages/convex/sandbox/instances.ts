@@ -288,7 +288,7 @@ export const upsert = internalMutation({
     externalId: v.string(),
     name: v.string(),
     specs: sandboxInstancesFields.specs,
-    sizeUnknown: sandboxInstancesFields.sizeUnknown,
+    specsVerified: sandboxInstancesFields.specsVerified,
     sandboxConfigId: v.optional(v.id("sandboxConfigs")),
     snapshotId: v.optional(v.string()),
     egress: sandboxInstancesFields.egress,
@@ -488,7 +488,7 @@ function upsertRefreshFields(
     Partial<
       Pick<
         Doc<"sandboxInstances">,
-        | "sizeUnknown"
+        | "specsVerified"
         | "projectId"
         | "stageId"
         | "sandboxConfigId"
@@ -515,7 +515,7 @@ function upsertRefreshFields(
   Partial<
     Pick<
       Doc<"sandboxInstances">,
-      | "sizeUnknown"
+      | "specsVerified"
       | "projectId"
       | "stageId"
       | "sandboxConfigId"
@@ -539,8 +539,9 @@ function upsertRefreshFields(
     externalId: args.externalId,
     name: args.name,
     specs: args.specs,
-    // Unset rather than kept, so a later read that worked clears it.
-    sizeUnknown: args.sizeUnknown === true ? true : undefined,
+    // Unset rather than kept, so a write with only a guess never keeps a mark
+    // an earlier verified size left.
+    specsVerified: args.specsVerified === true ? true : undefined,
     status: "running" as const,
     // A reconnect only mirrors once the provider handed back a usable sandbox,
     // so the reason goes with the status: `undefined` unsets it on patch and is

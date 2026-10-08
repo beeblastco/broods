@@ -18,6 +18,16 @@ test("an unknown sandbox size is a ? that says why on hover and leaves its row c
     "E2B does not report a sandbox's disk size.",
   );
 
+  // A row written before sizes were verified shows no guess.
+  const unverified = section.locator('[data-provider="lambda"] button');
+  await expect(unverified).toHaveText("?");
+  await unverified.hover();
+  await expect(
+    page.getByText("Recorded before Broods checked sandbox sizes", {
+      exact: false,
+    }),
+  ).toBeVisible();
+
   await section.locator('[data-provider="machine"] button').click();
   await expect(section.getByTestId("size-row-opened")).toHaveText("none");
 });

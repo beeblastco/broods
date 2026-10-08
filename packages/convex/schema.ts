@@ -605,10 +605,11 @@ export const sandboxInstancesFields = {
   /** What the meter bills: the size the provider reported, else the config's. */
   specs: sandboxSpecsValidator,
   /**
-   * The provider sizes the machine itself and its size could not be read, so
-   * `specs` is the config's and the dashboard shows the size as unknown.
+   * `specs` is known to be the machine's real size: reported by the provider, or
+   * one Broods sets itself (workdir, the fixed MicroVM, a cloudflare instance
+   * type). Unset, `specs` is only the config's guess and the dashboard shows `?`.
    */
-  sizeUnknown: v.optional(v.boolean()),
+  specsVerified: v.optional(v.boolean()),
   createdAt: v.number(),
   lastUsedAt: v.number(),
   createdByTraceId: v.optional(v.string()),

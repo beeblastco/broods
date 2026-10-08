@@ -10,8 +10,8 @@ const internal: any = require("@broods/convex/_generated/api").internal;
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { logError } from "../log.ts";
 import {
+  KNOWN_SIZE_PROVIDERS,
   rememberReportedSpecs,
-  SELF_SIZED_PROVIDERS,
   type SandboxControlPlane,
   type SandboxRunMetadata,
   type SandboxSpecs,
@@ -40,8 +40,8 @@ export type SandboxInstanceStatus =
  * `logStream` is the provider-side guest log stream the dashboard tails. Only the
  * call that launched the VM knows it; reconnects leave the stored value alone.
  * `specs` is the size the provider reported for this machine. Without it the row
- * bills the size derived from the config, and a provider that sizes itself marks
- * the row's size unknown rather than showing the config's as the machine's.
+ * bills the size derived from the config, and is marked verified only where that
+ * derived size is the machine's true size, so a guess is never shown as fact.
  */
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
@@ -69,10 +69,8 @@ export async function upsertSandboxInstance(
       externalId: externalId,
       name: controlPlane.name,
       specs: options?.specs ?? controlPlane.specs,
-      sizeUnknown:
-        !options?.specs && SELF_SIZED_PROVIDERS.has(provider)
-          ? true
-          : undefined,
+      specsVerified:
+        options?.specs || KNOWN_SIZE_PROVIDERS.has(provider) ? true : undefined,
       sandboxConfigId: controlPlane.sandboxConfigId as any,
       snapshotId: controlPlane.snapshotId,
       egress: controlPlane.egress,

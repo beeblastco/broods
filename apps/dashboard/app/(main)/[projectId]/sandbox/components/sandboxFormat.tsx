@@ -42,13 +42,17 @@ const UNKNOWN_DISK: Record<string, string> = {
 // Why a machine shows no size at all, by provider.
 const UNKNOWN_SIZE: Record<string, string> = {
   daytona:
-    "Daytona sizes this sandbox itself and did not report its size when Broods asked.",
-  e2b: "The E2B template sizes this sandbox, and E2B did not report its size when Broods asked.",
+    "Daytona sizes this sandbox itself, and Broods has no size Daytona reported for it.",
+  e2b: "The E2B template sizes this sandbox, and Broods has no size E2B reported for it.",
   machine:
     "Your own computer: its broods CLI predates hardware reporting. Update broods and restart `broods machine` to see it.",
   vercel:
-    "Vercel sizes this sandbox itself and did not report its size when Broods asked.",
+    "Vercel sizes this sandbox itself, and Broods has no size Vercel reported for it.",
 };
+
+// Why a size Broods sets itself is still unknown: the row predates verified sizes.
+const UNVERIFIED_SIZE =
+  "Recorded before Broods checked sandbox sizes. The real size shows the next time this sandbox is used.";
 
 const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
   pending: "running",
@@ -187,8 +191,8 @@ export function snapshotStatusDot(
 
 /**
  * Footprint as the provider reports it, e.g. "1 vCPU · 2 GB · 8 GB". What it
- * does not report is a "?" whose tooltip says why; pass no `specs` when the
- * whole size is unknown. Sizes the table rows and the instance and computer panels.
+ * does not report is a "?" whose tooltip says why. Pass `specs` only when the
+ * size is known to be true (a verified instance row, or a daemon's report). Sizes the table rows and the instance and computer panels.
  */
 export function SpecsValue({
   specs,
@@ -198,13 +202,7 @@ export function SpecsValue({
   provider: string;
 }): React.JSX.Element {
   if (!specs) {
-    return (
-      <UnknownSize
-        reason={
-          UNKNOWN_SIZE[provider] ?? "The provider did not report this size."
-        }
-      />
-    );
+    return <UnknownSize reason={UNKNOWN_SIZE[provider] ?? UNVERIFIED_SIZE} />;
   }
   const memory =
     specs.memoryMb >= 1024

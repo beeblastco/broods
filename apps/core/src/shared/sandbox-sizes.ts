@@ -125,13 +125,15 @@ export const CLOUDFLARE_INSTANCE_TYPES: Record<
 const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
 
 /**
- * Providers that size machines their own way, so a config's size is not what the
- * machine has. Only the size the provider reports is shown for these.
+ * Providers whose machine is the size resolveSandboxSpecs derives: workdir creates
+ * the VM with those resources, a MicroVM is one fixed size, and cloudflare starts
+ * that instance type. Anywhere else the derived size is only a guess (it is what
+ * the meter bills when a provider reports nothing), so it is never shown as fact.
  */
-export const SELF_SIZED_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
-  "daytona",
-  "e2b",
-  "vercel",
+export const KNOWN_SIZE_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
+  "cloudflare",
+  "lambda",
+  "sandbox",
 ]);
 
 /** The size used for the mirror specs when a config pins no explicit size or resources. */
@@ -146,8 +148,8 @@ const REPORTED_SPECS = new Map<string, SandboxSpecs>();
 
 /**
  * The size a reserved sandbox really has, for the agent's status line: what its
- * provider reported, else the config's size where that is what the machine gets.
- * Undefined while a provider that sizes itself has reported nothing.
+ * provider reported, else the derived size where that is what the machine gets.
+ * Undefined whenever the size is not known to be true.
  */
 export function knownSandboxSpecs(
   provider: SandboxProvider,
@@ -159,7 +161,7 @@ export function knownSandboxSpecs(
     : undefined;
   if (reported) return reported;
 
-  return SELF_SIZED_PROVIDERS.has(provider) ? undefined : configSpecs;
+  return KNOWN_SIZE_PROVIDERS.has(provider) ? configSpecs : undefined;
 }
 
 /**

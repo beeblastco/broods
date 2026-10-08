@@ -425,7 +425,9 @@ export function SandboxInstancesTable({
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
                     <SpecsValue
-                      specs={instance.sizeUnknown ? undefined : instance.specs}
+                      specs={
+                        instance.specsVerified ? instance.specs : undefined
+                      }
                       provider={instance.provider}
                     />
                   </td>

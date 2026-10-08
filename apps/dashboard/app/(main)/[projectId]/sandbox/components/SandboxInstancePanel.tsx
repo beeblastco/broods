@@ -581,7 +581,7 @@ function InstanceDetailFields({
         label="Size"
         value={
           <SpecsValue
-            specs={instance.sizeUnknown ? undefined : instance.specs}
+            specs={instance.specsVerified ? instance.specs : undefined}
             provider={instance.provider}
           />
         }

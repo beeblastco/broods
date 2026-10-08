@@ -114,7 +114,7 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `medium` | 2    | 4 GB   | 16 GB | paid          |
 | `large`  | 4    | 8 GB   | 32 GB | paid          |
 
-`size` sizes the machine on `sandbox` and `cloudflare` only. Every other provider sizes its machines its own way, and the dashboard shows the size the machine really has, read back from the provider where it reports one. A part Broods cannot know shows as `?`; hover it to see why.
+`size` sizes the machine on `sandbox` and `cloudflare` only. Every other provider sizes its machines its own way. The dashboard shows a size only when it is known to be true: the provider reported it, or Broods set it itself. Anything else shows as `?`, never a guess; hover it to see why.
 
 | Provider     | What `size` does                                                                             | Size the dashboard shows                                                      |
 | ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -127,7 +127,7 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `machine`    | Rejected                                                                                     | CPUs, memory and home disk of your computer, as `broods machine` reports them |
 | `custom`     | Rejected                                                                                     | No instance row: Broods cannot see your server's hardware                     |
 
-When a provider that sizes itself does not answer, its whole size shows as `?`.
+When a provider that sizes itself does not answer, its whole size shows as `?`. So does a sandbox recorded before Broods verified sizes, until it is used again.
 
 On the managed service, sandbox time on platform credentials counts at the size the dashboard shows, except on `lambda`: a MicroVM counts at its 1 vCPU / 2 GB baseline, plus the vCPU and memory it bursts above that while in use, see [Persistent sandboxes](persistent.md). A `machine` sandbox, and one on your own provider credentials, does not count.
 

@@ -21,8 +21,12 @@ describe("knownSandboxSpecs", () => {
     expect(knownSandboxSpecs("vercel", "key-v", config)).toBeUndefined();
   });
 
-  it("keeps the config's size where the config sizes the machine", () => {
+  it("keeps the derived size only where it is the machine's real size", () => {
     expect(knownSandboxSpecs("sandbox", "key-s", config)).toEqual(config);
+    expect(knownSandboxSpecs("lambda", "key-l", config)).toEqual(config);
+    // A guess is never stated: these machines are sized outside the config.
+    expect(knownSandboxSpecs("machine", "key-m", config)).toBeUndefined();
+    expect(knownSandboxSpecs("custom", undefined, config)).toBeUndefined();
   });
 });
 
