@@ -128,18 +128,17 @@ export interface WorkspaceSandboxLimits {
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {
-  const isLambda = provider === "lambda";
-
   return {
-    maxTimeoutSeconds: isLambda
-      ? positiveIntegerEnv(
-          "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
-          LAMBDA_MAX_TIMEOUT_SECONDS,
-        )
-      : positiveIntegerEnv(
-          "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
-          PERSISTENT_MAX_TIMEOUT_SECONDS,
-        ),
+    maxTimeoutSeconds:
+      provider === "lambda"
+        ? positiveIntegerEnv(
+            "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
+            LAMBDA_MAX_TIMEOUT_SECONDS,
+          )
+        : positiveIntegerEnv(
+            "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
+            PERSISTENT_MAX_TIMEOUT_SECONDS,
+          ),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,

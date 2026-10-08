@@ -7,10 +7,9 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 
-// Per-call ceilings differ by provider. The lambda provider runs an AWS Lambda
-// MicroVM: a single blocking (synchronous) exec is bounded by the harness request
-// budget (harness-processing timeout, ~10 min). Detached background jobs are not
-// bounded here. They run inside the long-lived VM (up to its 8 h max lifetime).
+// Per-call timeout ceilings, lambda and the other providers each with their own
+// env override. A blocking exec is also bounded by the harness request budget
+// (~10 min); detached background jobs are not bounded here.
 const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
 const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 
@@ -79,8 +78,6 @@ export function workspaceNamespacePrefix(namespace: string): string {
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {
-  const isLambda = provider === "lambda";
-
   return {
     defaultTimeoutSeconds: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_DEFAULT_TIMEOUT_SECONDS",
@@ -90,15 +87,16 @@ export function workspaceSandboxLimits(
       "WORKSPACE_SANDBOX_DEFAULT_OUTPUT_LIMIT_BYTES",
       DEFAULT_OUTPUT_LIMIT_BYTES,
     ),
-    maxTimeoutSeconds: isLambda
-      ? positiveIntegerEnv(
-          "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
-          LAMBDA_MAX_TIMEOUT_SECONDS,
-        )
-      : positiveIntegerEnv(
-          "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
-          PERSISTENT_MAX_TIMEOUT_SECONDS,
-        ),
+    maxTimeoutSeconds:
+      provider === "lambda"
+        ? positiveIntegerEnv(
+            "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
+            LAMBDA_MAX_TIMEOUT_SECONDS,
+          )
+        : positiveIntegerEnv(
+            "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
+            PERSISTENT_MAX_TIMEOUT_SECONDS,
+          ),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,
