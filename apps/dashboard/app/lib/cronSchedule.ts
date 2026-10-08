@@ -64,18 +64,27 @@ export function describeSchedule(
 
     return count === 1 ? `Every ${unit[1]}` : `Every ${count} ${unit[1]}s`;
   }
+  const zone = timezone ?? "UTC";
   if (schedule.kind === "at") {
-    return `Once at ${new Date(schedule.timestamp).toLocaleString([], {
+    // In the job's own zone, so the words match the expression as written.
+    // Date and time are formatted apart: the joined form varies by ICU version.
+    const at = new Date(schedule.timestamp);
+    const day = at.toLocaleDateString([], {
       month: "short",
       day: "numeric",
+      timeZone: zone,
+    });
+    const clock = at.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-    })}`;
+      timeZone: zone,
+    });
+
+    return `Once at ${day}, ${clock} ${zone}`;
   }
   const [minute, hour, dayOfMonth, month, dayOfWeek] =
     schedule.cronspec.split(" ");
-  const zone = timezone ?? "UTC";
   if (!/^\d+$/.test(minute ?? "") || !/^\d+$/.test(hour ?? "")) {
     return expression;
   }
@@ -92,7 +101,9 @@ export function describeSchedule(
 /**
  * When the job fires next, or null while paused, after a one-time fire, or
  * for an expression the scheduler would reject. An interval counts from the
- * last fire, as the scheduler does, or from creation before the first.
+ * last fire, as the scheduler does, or from creation before the first. A
+ * one-time job whose time passed while it was paused dispatches on resume,
+ * so until its fire lands it reads as due now.
  */
 export function nextRunAt(cron: Scheduled, now: number): number | null {
   if (cron.status !== "active") return null;
@@ -106,7 +117,12 @@ export function nextRunAt(cron: Scheduled, now: number): number | null {
     return null;
   }
   if (schedule.kind === "at") {
-    return schedule.timestamp > now ? schedule.timestamp : null;
+    if (schedule.timestamp > now) return schedule.timestamp;
+    const fired =
+      cron.lastInvokedAt !== undefined &&
+      cron.lastInvokedAt >= schedule.timestamp;
+
+    return fired ? null : now;
   }
   if (schedule.kind === "interval") {
     const anchor = cron.lastInvokedAt ?? cron.createdAt;

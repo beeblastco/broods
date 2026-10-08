@@ -61,6 +61,23 @@ export async function agentsInStage(
   return await agentsForConfigs(ctx, configs, accountId);
 }
 
+/**
+ * Whether `agentId` has a config row in `projectId` on any stage: one indexed
+ * read, for a check on a single cron or conversation.
+ */
+export async function agentInProject(
+  ctx: Ctx,
+  agentId: Id<"agents">,
+  projectId: Id<"projects">,
+): Promise<boolean> {
+  const configs = await ctx.db
+    .query("agentConfigs")
+    .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+    .collect();
+
+  return configs.some((config) => config.projectId === projectId);
+}
+
 /** The crons whose agent belongs to `projectId` and is owned by `accountId`. */
 export async function cronsInProject(
   ctx: Ctx,

@@ -38,6 +38,15 @@ describe("describeSchedule", () => {
     );
   });
 
+  test("a one-time job reads in its own zone", () => {
+    expect(
+      describeSchedule("at(2026-10-07T09:00:00)", "Europe/Amsterdam"),
+    ).toBe("Once at Oct 7, 09:00 Europe/Amsterdam");
+    expect(describeSchedule("at(2026-10-07T09:00:00)", undefined)).toBe(
+      "Once at Oct 7, 09:00 UTC",
+    );
+  });
+
   test("falls back to the expression it cannot phrase", () => {
     expect(describeSchedule("cron(*/5 * * * ? *)", undefined)).toBe(
       "cron(*/5 * * * ? *)",
@@ -74,7 +83,16 @@ describe("nextRunAt", () => {
 
   test("a one-time job fires once, then has no next run", () => {
     expect(nextRunAt(cron("at(2026-10-07T13:00:00)"), NOW)).toBe(NOW + HOUR);
-    expect(nextRunAt(cron("at(2026-10-07T11:00:00)"), NOW)).toBe(null);
+    expect(
+      nextRunAt(
+        cron("at(2026-10-07T11:00:00)", { lastInvokedAt: NOW - HOUR }),
+        NOW,
+      ),
+    ).toBe(null);
+  });
+
+  test("a one-time job whose time passed unfired is due now", () => {
+    expect(nextRunAt(cron("at(2026-10-07T11:00:00)"), NOW)).toBe(NOW);
   });
 });
 

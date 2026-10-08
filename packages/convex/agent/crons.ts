@@ -33,7 +33,7 @@ import {
   unregisterSchedule,
 } from "../model/cronSchedules";
 import { getProjectForRole } from "../model/ownership/project";
-import { cronsInProject } from "../model/projectScope";
+import { agentInProject, cronsInProject } from "../model/projectScope";
 import { toCronResponse } from "../model/responses";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
@@ -339,10 +339,7 @@ export const listRunsForProject = query({
     if (!accountId) return [];
     const cron = await getOwned(ctx, accountId, args.cronId);
     if (!cron) return [];
-    const inProject = (
-      await cronsInProject(ctx, args.projectId, accountId)
-    ).some((candidate) => candidate._id === cron._id);
-    if (!inProject) return [];
+    if (!(await agentInProject(ctx, cron.agentId, args.projectId))) return [];
 
     const runs = await ctx.db
       .query("cronRuns")
