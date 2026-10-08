@@ -360,7 +360,13 @@ async function handleSandboxLifecycle(
         record.config.options ?? {},
       );
     } catch (err) {
-      return errorResponse(400, errorText(err));
+      logWarn("Rejected sandbox action due to invalid/retired image options", {
+        accountId,
+        sandboxId,
+        action,
+        err,
+      });
+      return errorResponse(400, "Invalid sandbox configuration");
     }
   }
 
