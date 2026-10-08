@@ -164,6 +164,7 @@ export function MonitoringPanel({
         detail={
           selected && (
             <DetailPanel
+              key={entryKey(selected)}
               title={selectedSummary}
               meta={
                 <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
