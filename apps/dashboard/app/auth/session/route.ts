@@ -4,11 +4,25 @@ import {
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
   adminKeyMatches,
+  currentSession,
   keyPagePath,
   redirectToPath,
   selfHosted,
   signSessionToken,
 } from "@/app/lib/selfHostSession";
+
+/**
+ * A fresh short-lived Convex token for the signed-in admin, for the client's
+ * refresh before the one from the page expires; `null` once signed out.
+ */
+export async function GET(): Promise<NextResponse<{ token: string | null }>> {
+  const session = selfHosted ? await currentSession() : null;
+
+  return NextResponse.json(
+    { token: session?.token ?? null },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
 
 /**
  * The self-hosted session. POST is the admin-key form, DELETE signs out. Both

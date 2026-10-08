@@ -73,9 +73,9 @@ export function useSession(): Session {
   return session;
 }
 
-// The layout hands over the token it verified, so Convex authenticates with
-// no round trip. It lives as long as the cookie, so a forced refresh means the
-// session is over: null signs the app out.
+// The layout hands over a short-lived Convex token, so Convex authenticates
+// with no round trip; a forced refresh, before it expires, asks
+// /auth/session for the next one, and null once signed out signs the app out.
 function SelfHostSession({
   children,
   session,
@@ -87,8 +87,15 @@ function SelfHostSession({
     (): Session => ({
       fetchAccessToken: async ({
         forceRefreshToken,
-      }): Promise<string | null> =>
-        forceRefreshToken ? null : (session?.token ?? null),
+      }): Promise<string | null> => {
+        if (!session) return null;
+        if (!forceRefreshToken) return session.token;
+        const response = await fetch("/auth/session", { cache: "no-store" });
+        if (!response.ok) return null;
+        const { token }: { token: string | null } = await response.json();
+
+        return token;
+      },
       isAuthenticated: session !== null,
       isLoading: false,
       signOut: (): void => void signOutSelfHost(),

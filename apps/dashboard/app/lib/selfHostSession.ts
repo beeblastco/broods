@@ -12,9 +12,16 @@ import { NextResponse } from "next/server";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { SessionUser } from "@/app/lib/session";
 
-/** httpOnly cookie holding the session token; the token is also what Convex verifies. */
+/** httpOnly cookie holding the session token, which only the dashboard accepts. */
 export const SESSION_COOKIE = "broods-session";
 export const SESSION_TTL_SECONDS = 12 * 60 * 60;
+// The session token's audience. Convex trusts only SELF_HOST_AUDIENCE, so the
+// cookie's token is useless to it; the browser gets short Convex tokens.
+const SESSION_AUDIENCE = "broods-dashboard-session";
+// A Convex token copied before sign-out dies within this.
+const CONVEX_TOKEN_TTL_SECONDS = 15 * 60;
+// Long enough that guessing it through the sign-in form is hopeless.
+const MIN_ADMIN_SECRET_LENGTH = 32;
 
 /**
  * Self-hosted when the stack hands the dashboard a session signing key
@@ -31,11 +38,18 @@ const ADMIN: SessionUser = {
   profilePictureUrl: null,
 };
 
-// Parsed at startup, so a malformed key fails the server loudly instead of
-// every sign-in.
+const ADMIN_SECRET = process.env.ADMIN_ACCOUNT_SECRET?.trim() ?? "";
+
+// Checked at startup, so a malformed key or a guessable secret fails the
+// server loudly instead of every sign-in.
 const SIGNING_JWK: JWK | null = selfHosted
   ? JSON.parse(process.env.BROODS_SESSION_SIGNING_KEY ?? "")
   : null;
+if (selfHosted && ADMIN_SECRET.length < MIN_ADMIN_SECRET_LENGTH) {
+  throw new Error(
+    `ADMIN_ACCOUNT_SECRET must be at least ${MIN_ADMIN_SECRET_LENGTH} characters on a self-hosted dashboard`,
+  );
+}
 
 type SigningKey = Awaited<ReturnType<typeof importJWK>>;
 
@@ -48,21 +62,26 @@ let signingKeys:
  * carries a newline. Compares digests, in constant time.
  */
 export function adminKeyMatches(key: string): boolean {
-  const secret = process.env.ADMIN_ACCOUNT_SECRET?.trim();
-  if (!secret) return false;
+  if (!ADMIN_SECRET) return false;
 
-  return timingSafeEqual(digest(key.trim()), digest(secret));
+  return timingSafeEqual(digest(key.trim()), digest(ADMIN_SECRET));
 }
 
-/** The signed-in admin and their token from this request's cookie, or null. */
+/**
+ * The signed-in admin from this request's session cookie, with a fresh
+ * short-lived token for Convex, or null when signed out.
+ */
 export async function currentSession(): Promise<{
   token: string;
   user: SessionUser;
 } | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!token || !(await verifySessionToken(token))) return null;
+  const session = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!(await verifySessionToken(session))) return null;
 
-  return { token: token, user: ADMIN };
+  return {
+    token: await signToken(SELF_HOST_AUDIENCE, CONVEX_TOKEN_TTL_SECONDS),
+    user: ADMIN,
+  };
 }
 
 /** The admin-key page, coming back to `returnTo`; `rejected` shows the wrong-key error. */
@@ -84,19 +103,9 @@ export function redirectToPath(path: string, status = 307): NextResponse {
   });
 }
 
-/** A session token for the admin, signed with the stack's key. */
+/** A session token for the cookie, signed with the stack's key. */
 export async function signSessionToken(): Promise<string> {
-  return new SignJWT({
-    email: SELF_HOST_ADMIN.email,
-    given_name: SELF_HOST_ADMIN.firstName,
-  })
-    .setProtectedHeader({ alg: SELF_HOST_ALGORITHM, kid: SELF_HOST_KEY_ID })
-    .setIssuer(SELF_HOST_ISSUER)
-    .setAudience(SELF_HOST_AUDIENCE)
-    .setSubject(SELF_HOST_ADMIN.subject)
-    .setIssuedAt()
-    .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
-    .sign((await keys()).privateKey);
+  return signToken(SESSION_AUDIENCE, SESSION_TTL_SECONDS);
 }
 
 /** Whether `token` is an unexpired session token signed with the stack's key. */
@@ -106,7 +115,7 @@ export async function verifySessionToken(
   if (!token) return false;
   try {
     await jwtVerify(token, (await keys()).publicKey, {
-      audience: SELF_HOST_AUDIENCE,
+      audience: SESSION_AUDIENCE,
       issuer: SELF_HOST_ISSUER,
     });
 
@@ -133,4 +142,22 @@ function keys(): Promise<{ privateKey: SigningKey; publicKey: SigningKey }> {
   })();
 
   return signingKeys;
+}
+
+// An admin token for `audience`, valid for `ttlSeconds`.
+async function signToken(
+  audience: string,
+  ttlSeconds: number,
+): Promise<string> {
+  return new SignJWT({
+    email: SELF_HOST_ADMIN.email,
+    given_name: SELF_HOST_ADMIN.firstName,
+  })
+    .setProtectedHeader({ alg: SELF_HOST_ALGORITHM, kid: SELF_HOST_KEY_ID })
+    .setIssuer(SELF_HOST_ISSUER)
+    .setAudience(audience)
+    .setSubject(SELF_HOST_ADMIN.subject)
+    .setIssuedAt()
+    .setExpirationTime(`${ttlSeconds}s`)
+    .sign((await keys()).privateKey);
 }

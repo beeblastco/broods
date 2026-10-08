@@ -12,8 +12,10 @@ export default async function KeyPage({
     returnTo?: string | string[];
   }>;
 }): Promise<React.JSX.Element> {
-  if (!selfHosted) notFound();
+  // Read the query first: it makes the page render per request, so the build
+  // cannot prerender the 404 when the signing key only exists at runtime.
   const { error, returnTo } = await searchParams;
+  if (!selfHosted) notFound();
 
   return (
     <main className="flex h-screen w-screen items-center justify-center bg-background p-4">
