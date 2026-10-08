@@ -16,6 +16,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { SNAPSHOT_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { useAction, useQuery } from "convex/react";
 import { Camera, ExternalLink, Play, Terminal } from "lucide-react";
 import Link from "next/link";
@@ -111,10 +112,9 @@ export function SandboxInstancePanel({
   // providers keep the bounded command runner.
   const supportsLiveTerminal =
     instance.provider === "sandbox" || instance.provider === "lambda";
-  // workdir captures a running sandbox; a lambda MicroVM is rebuilt as a new
-  // image from the files it changed. The others keep state through suspend.
-  const supportsSnapshot =
-    instance.provider === "sandbox" || instance.provider === "lambda";
+  // workdir, Daytona, E2B and Vercel capture a running sandbox; a lambda MicroVM
+  // is rebuilt as a new image from the files it changed.
+  const supportsSnapshot = SNAPSHOT_SANDBOX_PROVIDERS.has(instance.provider);
   const buildsSnapshot = instance.provider === "lambda";
   // Only a provider with its own guest log stream can be tailed, and only a
   // deployment-scoped run has lines the gateway can find.
@@ -262,10 +262,8 @@ export function SandboxInstancePanel({
               </>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">
-                {formatProvider(instance.provider)} sandboxes have no runtime
-                image-capture API, so snapshots aren&apos;t created here. State
-                is preserved across idle via suspend/resume, and the launch
-                image is managed as versioned image builds.
+                {formatProvider(instance.provider)} sandboxes boot the image
+                their provider sets, so snapshots aren&apos;t created here.
               </p>
             )}
           </div>

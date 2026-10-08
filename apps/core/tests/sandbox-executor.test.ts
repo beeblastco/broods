@@ -45,6 +45,12 @@ const e2bConnectMock = mock(async (sandboxId: string) => ({
   },
   kill: e2bKillMock,
 }));
+const e2bCreateSnapshotMock = mock(
+  async (_sandboxId: string, _options?: Record<string, unknown>) => ({
+    snapshotId: "team/broods-snap:default",
+    names: ["team/broods-snap:default"],
+  }),
+);
 const e2bCreateMock = mock(async (_options: Record<string, unknown>) => ({
   sandboxId: "e2b-sandbox",
   commands: {
@@ -65,6 +71,9 @@ const daytonaExecuteCommandMock = mock(
   }),
 );
 const daytonaDeleteMock = mock(async (_id?: string) => {});
+const daytonaCreateSnapshotMock = mock(
+  async (_id: string, _name: string, _timeout?: number) => {},
+);
 let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   id: "daytona-sandbox",
@@ -80,12 +89,16 @@ const vercelRunCommandMock = mock(async (_params: Record<string, unknown>) => ({
 }));
 const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
+const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
+  snapshotId: "snap_captured",
+}));
 function vercelSandbox(name = "vercel-sandbox") {
   return {
     name: name,
     runCommand: vercelRunCommandMock,
     stop: vercelStopMock,
     delete: vercelDeleteMock,
+    snapshot: vercelSnapshotMock,
   };
 }
 const vercelCreateMock = mock(
@@ -303,6 +316,7 @@ await mock.module("e2b", () => ({
     create: e2bCreateMock,
     connect: e2bConnectMock,
     kill: e2bKillMock,
+    createSnapshot: e2bCreateSnapshotMock,
   },
 }));
 
@@ -317,6 +331,8 @@ await mock.module("@daytona/sdk", () => ({
     // handle shape create returns.
     get = mock(async (id: string) => ({
       delete: () => daytonaDeleteMock(id),
+      createSnapshot: (name: string, timeout?: number) =>
+        daytonaCreateSnapshotMock(id, name, timeout),
     }));
   },
 }));
@@ -398,8 +414,11 @@ beforeEach(() => {
   e2bKillMock.mockClear();
   e2bCreateMock.mockClear();
   e2bConnectMock.mockClear();
+  e2bCreateSnapshotMock.mockClear();
   daytonaExecuteCommandMock.mockClear();
   daytonaDeleteMock.mockClear();
+  daytonaCreateSnapshotMock.mockClear();
+  vercelSnapshotMock.mockClear();
   daytonaCreateMock.mockClear();
   daytonaClientOptionsSeen = [];
   vercelRunCommandMock.mockClear();
@@ -2542,7 +2561,8 @@ describe("createSandboxExecutor", () => {
     const executor = createSandboxExecutor({
       provider: "e2b",
       envVars: { MY_API_BASE: "https://api.example.com" },
-      options: { workspaceRoot: "/workspace", template: "mounted-template" },
+      snapshot: "mounted-template",
+      options: { workspaceRoot: "/workspace" },
     });
 
     const result = await executor.run({
@@ -2596,7 +2616,7 @@ describe("createSandboxExecutor", () => {
       provider: "e2b",
       persistent: true,
       network: { mode: "allow-all" },
-      options: { template: "runtime-template" },
+      snapshot: "runtime-template",
     });
 
     const handle = await executor.runBackground({
@@ -2623,10 +2643,10 @@ describe("createSandboxExecutor", () => {
     const executor = createSandboxExecutor({
       provider: "daytona",
       envVars: { MY_API_BASE: "https://api.example.com" },
+      snapshot: "fuse-s3",
       options: {
         organizationId: "org-id",
         workspaceRoot: "/mnt/workspaces",
-        snapshot: "fuse-s3",
         mountAwsS3Buckets: true,
       },
     });
@@ -2752,10 +2772,10 @@ describe("createSandboxExecutor", () => {
     const stsCallCount = stsSendMock.mock.calls.length;
     const executor = createSandboxExecutor({
       provider: "daytona",
+      snapshot: "fuse-s3",
       options: {
         organizationId: "org-id",
         workspaceRoot: "/mnt/workspaces",
-        snapshot: "fuse-s3",
         mountAwsS3Buckets: true,
       },
     });
@@ -2878,34 +2898,83 @@ describe("createSandboxExecutor", () => {
     expect(vercelStopMock).toHaveBeenCalledTimes(1);
   });
 
-  it("passes a Vercel managed image without the legacy runtime option", async () => {
+  it("boots a Vercel snapshot id as a snapshot and anything else as an image", async () => {
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
-    const executor = createSandboxExecutor({
-      provider: "vercel",
-      options: {
-        token: "tok",
-        teamId: "team_1",
-        projectId: "prj_1",
-        image: "vercel/sandbox/python:3.14",
-      },
-    });
+    const auth = { token: "tok", teamId: "team_1", projectId: "prj_1" };
+    for (const snapshot of ["vercel/sandbox/python:3.14", "snap_abc"]) {
+      await createSandboxExecutor({
+        provider: "vercel",
+        snapshot: snapshot,
+        options: auth,
+      }).run({
+        code: "python --version",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
+    }
 
-    await executor.run({
-      code: "python --version",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
+    const [image, fromSnapshot] = vercelCreateMock.mock.calls.map(
+      (call) => call[0],
+    );
+    expect(image).toMatchObject({ image: "vercel/sandbox/python:3.14" });
+    expect(image).not.toHaveProperty("source");
+    expect(fromSnapshot).toMatchObject({
+      source: { type: "snapshot", snapshotId: "snap_abc" },
     });
+    expect(fromSnapshot).not.toHaveProperty("image");
+  });
 
-    expect(vercelCreateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        image: "vercel/sandbox/python:3.14",
+  it("captures a reserved Daytona, E2B or Vercel sandbox as a snapshot it can boot", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const ref = { reservationKey: "reservation-1" };
+
+    storedSandboxExternalId = "daytona-1";
+    const daytona = await createSandboxExecutor({
+      provider: "daytona",
+      persistent: true,
+    }).snapshot(ref);
+    const [daytonaId, daytonaName] = daytonaCreateSnapshotMock.mock.calls[0]!;
+    expect(daytonaId).toBe("daytona-1");
+    expect(daytona).toEqual({ snapshotId: daytonaName });
+
+    storedSandboxExternalId = "e2b-1";
+    expect(
+      await createSandboxExecutor({
+        provider: "e2b",
+        persistent: true,
+        network: { mode: "allow-all" },
+      }).snapshot(ref),
+    ).toEqual({ snapshotId: "team/broods-snap:default" });
+    expect(e2bCreateSnapshotMock.mock.calls[0]?.[0]).toBe("e2b-1");
+
+    storedSandboxExternalId = "vercel-1";
+    expect(
+      await createSandboxExecutor({
+        provider: "vercel",
+        persistent: true,
+        options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+      }).snapshot(ref),
+    ).toEqual({ snapshotId: "snap_captured" });
+    expect(vercelGetMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      name: "vercel-1",
+    });
+    // A pinned snapshot must outlive Vercel's 30-day default.
+    expect(vercelSnapshotMock).toHaveBeenCalledWith({ expiration: 0 });
+  });
+
+  it("refuses a snapshot when nothing is reserved", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    expect(
+      createSandboxExecutor({ provider: "e2b", persistent: true }).snapshot({
+        reservationKey: "missing",
       }),
-    );
-    expect(vercelCreateMock.mock.calls.at(-1)?.[0]).not.toHaveProperty(
-      "runtime",
-    );
+    ).rejects.toThrow("no reserved e2b sandbox to snapshot");
   });
 
   it("runs Vercel lifecycle hooks explicitly for persistent sandboxes", async () => {

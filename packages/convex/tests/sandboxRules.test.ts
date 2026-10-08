@@ -108,30 +108,61 @@ describe("sandbox config", () => {
     ).toThrow("config.options.logGroup is not supported");
   });
 
-  it("validates Vercel image selection", () => {
+  it("picks every provider's boot image with config.snapshot", () => {
+    for (const [provider, snapshot] of [
+      ["daytona", "fuse-s3"],
+      ["e2b", "runtime-template"],
+      ["vercel", "vercel/sandbox/python:3.14"],
+      ["vercel", "snap_abc"],
+    ]) {
+      expect(
+        normalizeSandboxConfig({
+          provider: provider,
+          network: { mode: "allow-all" },
+          snapshot: snapshot,
+        }).snapshot,
+      ).toBe(snapshot);
+    }
+    expect(() =>
+      normalizeSandboxConfig({ provider: "cloudflare", snapshot: "img" }),
+    ).toThrow("config.snapshot does not apply to the cloudflare provider");
+  });
+
+  it("refuses the provider options snapshot replaced", () => {
+    for (const [provider, key] of [
+      ["daytona", "snapshot"],
+      ["e2b", "template"],
+      ["e2b", "templateId"],
+      ["vercel", "image"],
+      ["vercel", "runtime"],
+    ]) {
+      expect(() =>
+        normalizeSandboxConfig({
+          provider: provider,
+          network: { mode: "allow-all" },
+          options: { [key]: "x" },
+        }),
+      ).toThrow(`config.options.${key} is not supported; set config.snapshot`);
+    }
+  });
+
+  it("builds a Daytona sandbox from options.image or boots a snapshot, never both", () => {
     expect(
       normalizeSandboxConfig({
-        provider: "vercel",
-        options: { image: "vercel/sandbox/universal:latest" },
+        provider: "daytona",
+        options: { image: "python:3.12" },
       }).options,
-    ).toEqual({ image: "vercel/sandbox/universal:latest" });
+    ).toEqual({ image: "python:3.12" });
     expect(() =>
-      normalizeSandboxConfig({
-        provider: "vercel",
-        options: { image: 24 },
-      }),
+      normalizeSandboxConfig({ provider: "daytona", options: { image: 24 } }),
     ).toThrow("config.options.image must be a string");
     expect(() =>
       normalizeSandboxConfig({
-        provider: "vercel",
-        options: {
-          image: "vercel/sandbox/node:24",
-          runtime: "node24",
-        },
+        provider: "daytona",
+        snapshot: "fuse-s3",
+        options: { image: "python:3.12" },
       }),
-    ).toThrow(
-      "config.options.image and config.options.runtime cannot both be set",
-    );
+    ).toThrow("config.snapshot and config.options.image cannot both be set");
   });
 
   it("redacts env vars, sensitive provider option names and resolved headers", () => {
@@ -719,6 +750,9 @@ describe("sandbox config custom provider", () => {
     expect(() => normalizeSandboxConfig({ ...custom, size: "small" })).toThrow(
       "config.size does not apply to the custom provider",
     );
+    expect(() =>
+      normalizeSandboxConfig({ ...custom, snapshot: "img" }),
+    ).toThrow("config.snapshot does not apply to the custom provider");
     expect(() =>
       normalizeSandboxConfig({
         provider: "lambda",

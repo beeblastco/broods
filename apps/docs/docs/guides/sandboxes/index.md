@@ -46,7 +46,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`              |
 | `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
 | `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)       |
-| `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
+| `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                   |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
 | `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
 | `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary       |
@@ -118,13 +118,24 @@ Only the `sandbox` provider applies the size to the machine it creates, and it r
 
 ## Images
 
-Set `snapshot` to boot a prebuilt image instead of the provider default. Bake heavy toolchains into an image once rather than installing them on every cold start.
+Set `snapshot` to boot a prebuilt image instead of the provider default. Bake heavy toolchains into an image once rather than installing them on every cold start. It is the one field for this on every provider, and each provider reads it in its own format.
 
-- `sandbox` boots the named image. The dashboard's Snapshot action on a running instance captures it into an image you can pin later.
-- `lambda` selects a MicroVM image by ARN, in the same AWS account and region as the default image. The Snapshot action on a running instance saves every file changed since that machine started as a new image. It shows as building for a few minutes, then active. Workspace files stay in the workspace, and deleted files are not carried over.
-- `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
+| Provider     | `snapshot` names                                                      | The Snapshot action saves                                                                             |
+| ------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `sandbox`    | a workdir image                                                       | the running instance                                                                                  |
+| `lambda`     | a MicroVM image ARN, in the default image's AWS account and region    | every file changed since the machine started, built as a new image in a few minutes                   |
+| `daytona`    | a Daytona snapshot                                                    | the sandbox filesystem, as a Daytona snapshot                                                         |
+| `e2b`        | an E2B template or snapshot                                           | the sandbox, as an E2B snapshot. E2B pauses it while it captures                                      |
+| `vercel`     | a Vercel image, such as `vercel/sandbox/python:3.14`, or a `snap_` id | the sandbox, as a Vercel snapshot that does not expire. Vercel stops it, and its next call resumes it |
+| `cloudflare` | rejected. The bridge Worker's image sets the machine                  | not available                                                                                         |
 
-The dashboard Snapshots view shows which image each running instance booted from. On a `sandbox` or `lambda` sandbox node, the Snapshot select pins one of the account's active snapshots for that provider.
+The Snapshot action runs on a running instance of a persistent sandbox and saves it under a name you pick. Any sandbox of the same provider in the account can then pin it, with the Snapshot select on its node or `snapshot` in code. On `lambda`, workspace files stay in the workspace, and deleted files are not carried over.
+
+A snapshot boots only on the provider that made it. A MicroVM image, a workdir image, a Daytona snapshot, an E2B template and a Vercel snapshot are different formats held by different clouds, and none of them imports another, so there is no snapshot that moves between providers. Put setup you need everywhere in `onCreate`, or bake it into each provider's image. Daytona, E2B and Vercel keep snapshots in the provider account behind the sandbox's credentials, so only a sandbox using the same credentials can boot one.
+
+On `daytona`, `options.image` builds the sandbox from a Docker image when it is created, instead of booting a snapshot. Set one or the other.
+
+The dashboard Snapshots view shows which image each running instance booted from.
 
 On `lambda`, `image` picks a platform image with a browser by name. With `snapshot` set too, the machine boots the snapshot and `image` names the variant it was built from, so a snapshot of an Obscura sandbox keeps `browse` working. The dashboard sets it when you pick the snapshot. `image` cannot be combined with `fallbackProvider`.
 

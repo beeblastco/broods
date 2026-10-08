@@ -53,10 +53,12 @@ export interface SandboxExecutorConfig {
   // Predefined compute size; drives workdir create-time resources (see
   // _shared/sandbox-sizes). Advisory on providers that size natively.
   size?: SandboxSize;
-  // Platform MicroVM image variant by name (lambda only, never with `snapshot`).
+  // Platform MicroVM image variant by name (lambda only). With `snapshot`, the
+  // variant that snapshot was built from.
   image?: SandboxImage;
-  // Prebuilt image/snapshot to launch from (workdir image id/name, MicroVM image
-  // ARN). Consumed by the self-hosted backends; unset boots the provider default.
+  // What to boot, in the provider's own format: workdir image, MicroVM image ARN,
+  // Daytona snapshot, E2B template or snapshot, Vercel image or `snap_` snapshot
+  // id. Unset boots the provider default.
   snapshot?: string;
   runtimes?: SandboxRuntime[];
   network?: SandboxNetworkConfig;
@@ -332,7 +334,8 @@ export interface SandboxExecutor {
   // while it still names it, so a key re-claimed in between keeps its replacement.
   // Without it, whatever the key points at now.
   release?(request: SandboxReleaseRequest): Promise<void>;
-  // --- Snapshot/standby lifecycle (workdir + lambda-microvm). All optional; callers
+  // --- Snapshot/standby lifecycle (snapshot: workdir, lambda, daytona, e2b, vercel;
+  // suspend/resume: workdir, lambda). All optional; callers
   // feature-detect. Drives control-plane sync + dashboard suspend/resume/snapshot. ---
   // Suspend a reserved sandbox, preserving disk+memory while freeing compute.
   suspend?(request: SandboxReservationRef): Promise<void>;

@@ -2,6 +2,8 @@
  * Vercel Sandbox executor.
  * Keep @vercel/sandbox adaptation here. Persistent mode reserves one named
  * sandbox per reservation key and uses Vercel's native lifecycle callbacks.
+ * `config.snapshot` names the image or snapshot it boots, and the Snapshot
+ * action captures a reserved sandbox into a new snapshot.
  */
 
 import { randomUUID } from "node:crypto";
@@ -40,8 +42,10 @@ import type {
   SandboxJobRequest,
   SandboxJobStatus,
   SandboxReleaseRequest,
+  SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
+  SandboxSnapshotResult,
 } from "./types.ts";
 import {
   configString,
@@ -57,6 +61,8 @@ import {
 } from "./utils.ts";
 
 const GENERATION_LENGTH = 8;
+// Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
+const SNAPSHOT_ID_PREFIX = "snap_";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
 type VercelCreateOptions = NonNullable<
@@ -225,6 +231,36 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       name,
     ).catch(() => {});
+  }
+
+  /**
+   * Captures the reserved sandbox as a Vercel snapshot, which any vercel
+   * sandbox of the account can then boot through `config.snapshot`. Vercel stops
+   * the sandbox to capture it; its next call resumes it.
+   */
+  async snapshot(
+    request: SandboxReservationRef,
+  ): Promise<SandboxSnapshotResult> {
+    const key = sandboxReservationKey(request);
+    const name = key ? await getSandboxExternalId("vercel", key) : null;
+    if (!name) {
+      throw new Error(
+        "no reserved vercel sandbox to snapshot for this sandbox",
+      );
+    }
+    try {
+      const Sandbox = await this.#Sandbox();
+      const sandbox = await Sandbox.get({
+        name: name,
+        ...vercelAuthOptions(this.#config),
+      });
+      // Vercel expires a snapshot after 30 days by default; a pinned one must not.
+      const snapshot = await sandbox.snapshot({ expiration: 0 });
+
+      return { snapshotId: snapshot.snapshotId };
+    } catch (err) {
+      throw classifyVercelError(err);
+    }
   }
 
   #persistent(request: {
@@ -538,14 +574,17 @@ function vercelCreateOptions(
   request: { envVars?: Record<string, string>; timeoutSeconds: number },
   persistent: boolean,
 ): VercelCreateOptions {
-  const options = isPlainObject(config.options) ? config.options : {};
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
-  const image = configString(options.image);
-  const runtime = configString(options.runtime);
+  const snapshot = config.snapshot;
+  const source = snapshot?.startsWith(SNAPSHOT_ID_PREFIX)
+    ? { source: { type: "snapshot" as const, snapshotId: snapshot } }
+    : snapshot
+      ? { image: snapshot }
+      : {};
 
   return {
     ...vercelAuthOptions(config),
-    ...(image ? { image: image } : runtime ? { runtime: runtime } : {}),
+    ...source,
     persistent: persistent,
     timeout:
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *

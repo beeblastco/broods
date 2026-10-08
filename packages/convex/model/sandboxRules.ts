@@ -10,6 +10,7 @@ import { normalizeHeaders } from "./mcp";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
   SANDBOX_PROVIDERS,
+  SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
   type SandboxProvider,
 } from "./sandboxProviders";
@@ -18,6 +19,7 @@ import { ClientError } from "./clientError";
 
 export {
   SANDBOX_PROVIDERS,
+  SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
   type SandboxProvider,
 } from "./sandboxProviders";
@@ -64,6 +66,14 @@ const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
   "workspaceRoot",
 ]);
+// Provider options that used to pick the boot image. `config.snapshot` does now.
+const RETIRED_IMAGE_OPTIONS: Partial<
+  Record<SandboxProvider, readonly string[]>
+> = {
+  daytona: ["snapshot"],
+  e2b: ["template", "templateId"],
+  vercel: ["image", "runtime"],
+};
 
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
 
@@ -101,6 +111,9 @@ export interface SandboxConfig {
   // A platform image variant by name (lambda only): "browser" has Chromium,
   // "obscura" has the Obscura headless browser. With `snapshot`, the variant it was built from.
   image?: SandboxImage;
+  // What the sandbox boots from, in its provider's own format: a workdir image,
+  // a MicroVM image ARN, a Daytona snapshot, an E2B template or snapshot, or a
+  // Vercel image or `snap_` snapshot id. SNAPSHOT_SANDBOX_PROVIDERS only.
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -200,6 +213,14 @@ export function normalizeSandboxConfig(
   assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
   assertOptionalBoolean(config.persistent, "config.persistent");
   const snapshot = optionalString(config.snapshot, "config.snapshot");
+  if (
+    config.snapshot !== undefined &&
+    !SNAPSHOT_SANDBOX_PROVIDERS.has(provider)
+  ) {
+    throw new ClientError(
+      `config.snapshot does not apply to the ${provider} provider`,
+    );
+  }
   const image = assertOptionalEnum(
     config.image,
     "config.image",
@@ -365,6 +386,18 @@ function assertEnvVarsAndOptions(
   if (provider === "custom") {
     assertCustomOptions(config.options ?? {}, stored?.options?.headers);
   }
+  // Daytona builds `options.image` into a fresh snapshot on create, so a
+  // sandbox names one or the other.
+  if (
+    provider === "daytona" &&
+    config.snapshot !== undefined &&
+    isPlainObject(config.options) &&
+    config.options.image !== undefined
+  ) {
+    throw new ClientError(
+      "config.snapshot and config.options.image cannot both be set: Daytona boots a snapshot or builds one from an image",
+    );
+  }
 }
 
 // An image variant is a platform MicroVM image, so only lambda boots it, and a
@@ -487,13 +520,13 @@ function assertRuntimes(value: unknown): void {
   }
 }
 
-// A stateless provider is never sized, snapshotted or reserved by Broods.
+// A stateless provider is never sized or reserved by Broods.
 function assertStatelessProviderFields(
   config: Record<string, unknown>,
   provider: SandboxProvider,
 ): void {
   if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
-  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+  for (const field of ["persistent", "size", "memoryLimit"]) {
     if (config[field] !== undefined) {
       throw new ClientError(
         `config.${field} does not apply to the ${provider} provider`,
@@ -663,7 +696,7 @@ function normalizePersistentFields(
     );
   }
   if (provider === "cloudflare") {
-    for (const field of ["onCreate", "onResume", "snapshot"]) {
+    for (const field of ["onCreate", "onResume"]) {
       if (config[field] !== undefined)
         throw new ClientError(
           `config.${field} is not supported by the cloudflare provider; the bridge Worker's image sets the machine`,
@@ -759,17 +792,18 @@ function validateProviderOptions(
       "config.options.s3Endpoint",
     );
   }
-  if (provider === "vercel") {
-    if ("image" in options && typeof options.image !== "string") {
-      throw new ClientError("config.options.image must be a string");
-    }
-    if ("runtime" in options && typeof options.runtime !== "string") {
-      throw new ClientError("config.options.runtime must be a string");
-    }
-    if ("image" in options && "runtime" in options) {
+  for (const key of RETIRED_IMAGE_OPTIONS[provider] ?? []) {
+    if (key in options) {
       throw new ClientError(
-        "config.options.image and config.options.runtime cannot both be set",
+        `config.options.${key} is not supported; set config.snapshot to pick what a ${provider} sandbox boots from`,
       );
     }
+  }
+  if (
+    provider === "daytona" &&
+    "image" in options &&
+    typeof options.image !== "string"
+  ) {
+    throw new ClientError("config.options.image must be a string");
   }
 }
