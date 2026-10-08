@@ -243,8 +243,9 @@ export const getForStage = query({
 /**
  * Any org member: mint a short-lived stage session ticket the dashboard uses
  * in place of the runtime key for logs, traces and the test chat. Core accepts
- * it as the stage's deployment credential until it expires. Null when the
- * stage has no deployment yet.
+ * it as the stage's deployment credential until it expires, but never for a
+ * machine sandbox claim: any member can mint this one. Null when the stage
+ * has no deployment yet.
  */
 export const mintStageSession = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
@@ -271,13 +272,16 @@ export const mintStageSession = mutation({
 
 /**
  * Seal a stage session ticket for the stage's active deployment. The caller
- * has already checked the member may read that stage. Null before the first
- * deploy. The slugs are what the gateway's observability path matches on.
+ * has already checked the member may read that stage, and passes
+ * `sandboxWrite` only once it has checked they may also write its sandboxes.
+ * Null before the first deploy. The slugs are what the gateway's
+ * observability path matches on; the ids scope a machine sandbox claim.
  */
 export async function mintStageSessionTicket(
   ctx: QueryCtx,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
+  sandboxWrite = false,
 ): Promise<StageSession | null> {
   const deployment = await ctx.db
     .query("agentDeployments")
@@ -295,8 +299,11 @@ export async function mintStageSessionTicket(
     {
       accountId: deployment.accountId,
       endpointId: deployment.endpointId,
+      projectId: projectId,
       projectSlug: deployment.projectSlug,
+      stageId: stageId,
       stageSlug: deployment.stageSlug,
+      ...(sandboxWrite ? { sandboxWrite: true as const } : {}),
       expiresAt: expiresAt,
     },
     stageTicketSecret(),

@@ -12,9 +12,14 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../src/shared/runtime-keys.ts";
-import type { AuthContext } from "../src/shared/auth.ts";
+import type { AuthContext, StageTicketScope } from "../src/shared/auth.ts";
 import { coreRequest } from "./helpers/http.ts";
 
+const STAGE_TICKET: StageTicketScope = {
+  projectId: "proj_1",
+  stageId: "stage_1",
+  sandboxWrite: false,
+};
 const CHILD_RUN_ID = `run_${"b".repeat(32)}`;
 const TEST_RUN_ID = `run_${"a".repeat(32)}`;
 
@@ -105,7 +110,7 @@ describe("direct API ingress", () => {
             endpointId: "env-endpoint",
             projectSlug: "demo",
             stageSlug: "development",
-            ...(stageTicket ? { stageTicket: true } : {}),
+            ...(stageTicket ? { stageTicket: STAGE_TICKET } : {}),
           }),
         },
       );
@@ -350,7 +355,7 @@ describe("direct API ingress", () => {
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
                 stageSlug: "development",
-                stageTicket: true,
+                stageTicket: STAGE_TICKET,
               }
             : null,
       },
@@ -398,7 +403,7 @@ describe("direct API ingress", () => {
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
                 stageSlug: "development",
-                stageTicket: true,
+                stageTicket: STAGE_TICKET,
               }
             : null,
       },
@@ -2442,7 +2447,7 @@ async function runtimeKeyRequest(
         endpointId: "env-endpoint",
         projectSlug: "demo",
         stageSlug: "development",
-        ...(stageTicket ? { stageTicket: true } : {}),
+        ...(stageTicket ? { stageTicket: STAGE_TICKET } : {}),
       }),
     },
   );
@@ -2646,7 +2651,7 @@ describe("run token (auth kind agent)", () => {
           endpointId: "env-endpoint",
           projectSlug: "demo",
           stageSlug: "development",
-          stageTicket: true,
+          stageTicket: STAGE_TICKET,
         }),
         deploymentLoader: async () => ({
           accountId: TEST_ACCOUNT.accountId,
