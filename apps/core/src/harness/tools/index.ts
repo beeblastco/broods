@@ -463,9 +463,13 @@ function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   return runtimeConfig;
 }
 
-function isToolEnabled(
-  config: AgentToolConfig | undefined,
-): config is AgentToolConfig {
+/**
+ * Whether a `config.tools` or `config.mcp` entry is on: present and not
+ * `enabled: false`. The MCP explorer asks it which agents use a server.
+ */
+export function isToolEnabled<Entry extends { enabled?: boolean }>(
+  config: Entry | undefined,
+): config is Entry {
   return config !== undefined && config.enabled !== false;
 }
 
@@ -480,7 +484,7 @@ async function registerMcpTools(
   context: Omit<ToolContext, "config">,
 ): Promise<void> {
   const entries = Object.entries(agentConfig.mcp ?? {}).filter(
-    ([, serverConfig]) => serverConfig.enabled !== false,
+    ([, serverConfig]) => isToolEnabled(serverConfig),
   );
   if (entries.length === 0) return;
   const accountId = context.accountId;

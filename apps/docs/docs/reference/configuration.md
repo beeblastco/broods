@@ -238,14 +238,13 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                                 |
 | `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                              |
 | `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. With `snapshot`, the variant it was built from. Not with `fallbackProvider` |
-| `snapshot`             | provider   | Image or snapshot to boot from. On `lambda`, a MicroVM image ARN in the default image's account and region                                |
+| `snapshot`             | provider   | Image or snapshot to boot from, in the provider's format. See [Images](../guides/sandboxes/index.md#images)                               |
 | `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                                        |
 | `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                               |
 | `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                                                                                 |
 | `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                                                                         |
 | `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                                                                      |
 | `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                                                                           |
-| `memoryLimit`          |            | MB, informational                                                                                                                         |
 | `outputLimitBytes`     | 65536      | Output kept per call                                                                                                                      |
 | `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey`            |
 

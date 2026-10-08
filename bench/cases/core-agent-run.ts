@@ -238,6 +238,7 @@ function fakeStorage(): Storage {
       getById: none,
       listForProduction: empty,
       listForEndpoint: empty,
+      listForStage: empty,
       removeAllForAccount: zero,
     },
     agentDeployments: { getByApiKeyHash: none, touchLastUsed: async () => {} },

@@ -36,7 +36,7 @@ export const helper = defineAgent({
 
 `env("NAME")` resolves when `broods dev` or `broods deploy` syncs the project. A sandbox created through the REST API keeps `${NAME}` as written and its runs fail on it, so pass the credential as `token` there.
 
-`network.mode` must be `allow-all`, set explicitly: Broods cannot enforce egress on a server it does not run. `persistent`, `size`, `snapshot` and `memoryLimit` are rejected, a workspace cannot be attached, and `custom` cannot be a `fallbackProvider`. `envVars` and `timeout` apply as on every provider.
+`network.mode` must be `allow-all`, set explicitly: Broods cannot enforce egress on a server it does not run. `persistent`, `size` and `snapshot` are rejected, a workspace cannot be attached, and `custom` cannot be a `fallbackProvider`. `envVars` and `timeout` apply as on every provider.
 
 Broods resolves the endpoint's name, refuses any private, loopback or metadata address, pins the connection to the address it validated and follows no redirects. A tunnel or a reverse proxy with a public name is fine; a private IP is not.
 

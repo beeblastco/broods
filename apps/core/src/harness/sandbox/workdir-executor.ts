@@ -72,6 +72,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  configuredSandboxSpecs,
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
@@ -174,7 +175,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
-    // row; recoverable on the next call, so it never holds up the session.
+    // row; recoverable on the next call, so it never holds up the session. No
+    // size: workdir fixed it at create, and the row keeps that one even if the
+    // config's size was edited since.
     void upsertSandboxInstance(
       this.#config.controlPlane,
       "sandbox",
@@ -207,6 +210,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           "sandbox",
           sandbox.id,
           request.metadata,
+          () => configuredSandboxSpecs(this.#config),
         );
 
     try {
@@ -739,6 +743,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           created.id,
           "metadata" in request ? request.metadata : undefined,
+          { specs: configuredSandboxSpecs(this.#config) },
         );
 
         return { sandbox: created, isFirstCreate: true };

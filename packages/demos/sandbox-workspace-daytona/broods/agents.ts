@@ -7,12 +7,13 @@ export const daytonaSandbox = defineSandbox({
   permissionMode: "bypass",
   timeout: 120,
   outputLimitBytes: 65536,
+  // A Daytona snapshot with mount-s3, which the workspace mount needs.
+  snapshot: "fuse-s3",
   options: {
     apiKey: env("DAYTONA_API_KEY"),
     organizationId: env("DAYTONA_ORGANIZATION_ID"),
     apiUrl: "https://app.daytona.io/api",
     target: "eu",
-    snapshot: "fuse-s3",
     workspaceRoot: "/mnt/workspaces",
     mountAwsS3Buckets: true,
   },

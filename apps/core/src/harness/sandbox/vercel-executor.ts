@@ -2,6 +2,8 @@
  * Vercel Sandbox executor.
  * Keep @vercel/sandbox adaptation here. Persistent mode reserves one named
  * sandbox per reservation key and uses Vercel's native lifecycle callbacks.
+ * `config.snapshot` names the image or snapshot it boots, and the Snapshot
+ * action captures a reserved sandbox into a new snapshot.
  */
 
 import { randomUUID } from "node:crypto";
@@ -13,6 +15,7 @@ import type {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
   resolveSandboxLifecycle,
@@ -40,8 +43,10 @@ import type {
   SandboxJobRequest,
   SandboxJobStatus,
   SandboxReleaseRequest,
+  SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
+  SandboxSnapshotResult,
 } from "./types.ts";
 import {
   configString,
@@ -57,6 +62,8 @@ import {
 } from "./utils.ts";
 
 const GENERATION_LENGTH = 8;
+// Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
+const SNAPSHOT_ID_PREFIX = "snap_";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
 type VercelCreateOptions = NonNullable<
@@ -82,6 +89,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           "vercel",
           sandbox.name,
           request.metadata,
+          () => vercelSpecs(sandbox),
         );
     const cwd = persistent
       ? this.#workDir(sandboxReservationKey(request)!)
@@ -166,7 +174,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
 
     return parseJobStatus(
       request.jobId,
@@ -176,7 +184,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
   async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
     const bytes = request.outputLimitBytes ?? 64 * 1024;
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     const logs = truncateText(
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
@@ -190,7 +198,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
 
     return parseJobStatus(
@@ -225,6 +233,32 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       name,
     ).catch(() => {});
+  }
+
+  /**
+   * Captures the reserved sandbox as a Vercel snapshot, which any vercel
+   * sandbox of the account can then boot through `config.snapshot`. Vercel stops
+   * the sandbox to capture it; its next call resumes it.
+   */
+  async snapshot(
+    request: SandboxReservationRef,
+  ): Promise<SandboxSnapshotResult> {
+    try {
+      const { sandbox } = await this.#reserved(request);
+      // Vercel expires a snapshot after 30 days by default; a pinned one must not.
+      const snapshot = await sandbox.snapshot({ expiration: 0 });
+
+      // The SDK answers a capture that failed with a failed snapshot, not a throw.
+      if (snapshot.status !== "created") {
+        throw new Error(
+          `Vercel snapshot ${snapshot.snapshotId} ended ${snapshot.status}`,
+        );
+      }
+
+      return { snapshotId: snapshot.snapshotId };
+    } catch (err) {
+      throw classifyVercelError(err);
+    }
   }
 
   #persistent(request: {
@@ -300,6 +334,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           key,
           storedName,
           request.metadata,
+          { specs: vercelSpecs(sandbox) },
         );
 
         return sandbox;
@@ -340,6 +375,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           key,
           name,
           request.metadata,
+          { specs: vercelSpecs(sandbox) },
         );
 
         return sandbox;
@@ -369,6 +405,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         key,
         name,
         request.metadata,
+        { specs: vercelSpecs(sandbox) },
       );
 
       return sandbox;
@@ -381,16 +418,16 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  async #jobContext(
-    request: SandboxJobRequest,
+  // The reserved sandbox, for background jobs and the Snapshot action.
+  async #reserved(
+    request: SandboxReservationRef,
   ): Promise<{ sandbox: VercelSandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
     if (!key)
-      throw new Error(
-        "job operations require a persistent sandbox reservation key",
-      );
+      throw new Error("a persistent sandbox reservation key is required");
     const name = await getSandboxExternalId("vercel", key);
-    if (!name) throw new Error("no reserved vercel sandbox for this workspace");
+    if (!name)
+      throw new Error("no reserved vercel sandbox for this reservation");
     const Sandbox = await this.#Sandbox();
     const sandbox = await Sandbox.get({
       name: name,
@@ -538,14 +575,17 @@ function vercelCreateOptions(
   request: { envVars?: Record<string, string>; timeoutSeconds: number },
   persistent: boolean,
 ): VercelCreateOptions {
-  const options = isPlainObject(config.options) ? config.options : {};
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
-  const image = configString(options.image);
-  const runtime = configString(options.runtime);
+  const snapshot = config.snapshot;
+  const source = snapshot?.startsWith(SNAPSHOT_ID_PREFIX)
+    ? { source: { type: "snapshot" as const, snapshotId: snapshot } }
+    : snapshot
+      ? { image: snapshot }
+      : {};
 
   return {
     ...vercelAuthOptions(config),
-    ...(image ? { image: image } : runtime ? { runtime: runtime } : {}),
+    ...source,
     persistent: persistent,
     timeout:
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
@@ -577,4 +617,13 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
 // created under the same key.
 function vercelSandboxName(reservationKey: string): string {
   return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
+}
+
+// The vCPUs and memory Vercel gave the sandbox. Vercel reports no disk size, and
+// an older session may report neither, which leaves the config's size in place.
+function vercelSpecs(sandbox: VercelSandbox): SandboxSpecs | undefined {
+  const { vcpus, memory } = sandbox;
+  if (vcpus === undefined || memory === undefined) return undefined;
+
+  return { vcpu: vcpus, memoryMb: memory };
 }

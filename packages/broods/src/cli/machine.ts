@@ -6,7 +6,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { hostname } from "node:os";
+import { statfsSync } from "node:fs";
+import { availableParallelism, homedir, hostname, totalmem } from "node:os";
 import { performance } from "node:perf_hooks";
 import {
   MACHINE_CLOSE,
@@ -15,6 +16,7 @@ import {
   type MachineComputerFrame,
   type MachineDaemonFrame,
   type MachineExecFrame,
+  type MachineHelloFrame,
   type MachineMcpCallFrame,
   type MachineMcpListFrame,
   type MachineMcpResultFrame,
@@ -224,6 +226,28 @@ function describeComputerFrame(frame: MachineComputerFrame): string {
   return parts.join(" ");
 }
 
+// This computer's CPUs, memory and home disk, so the dashboard can show its size.
+function hardwareSpecs(): MachineHelloFrame["specs"] {
+  const storageGb = homeDiskGb();
+
+  return {
+    vcpu: availableParallelism(),
+    memoryMb: Math.round(totalmem() / 1024 ** 2),
+    ...(storageGb ? { storageGb: storageGb } : {}),
+  };
+}
+
+// Size of the disk holding the home folder, or undefined when the OS will not say.
+function homeDiskGb(): number | undefined {
+  try {
+    const disk = statfsSync(homedir());
+
+    return Math.round((disk.blocks * disk.bsize) / 1024 ** 3);
+  } catch {
+    return undefined;
+  }
+}
+
 function oneLine(text: string): string {
   const line = text.trim().split("\n")[0] ?? "";
 
@@ -326,6 +350,7 @@ function serveOnce(
         mcp: mcp?.names(),
         instance: instance,
         force: options.force,
+        specs: hardwareSpecs(),
       });
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);

@@ -7,7 +7,7 @@
 
 import type { BroodsSandboxDriverSession } from "@broods/ai-sdk-sandbox";
 import type { SandboxInstanceInfo } from "./types.ts";
-import { configString } from "./utils.ts";
+import { configString, configuredSandboxSpecs } from "./utils.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 
@@ -74,7 +74,9 @@ export function agentSandboxStatus(
   return {
     name: entry.name,
     provider: entry.sandbox.provider,
-    specs: entry.sandbox.controlPlane?.specs,
+    // Only a size known before the machine runs; a provider that sizes itself
+    // reports it to the instance row, and the line leaves it out.
+    specs: configuredSandboxSpecs(entry.sandbox),
     shared: true,
     neighbours: sandboxNeighbours(reservationKey, eventId),
   };
@@ -82,8 +84,12 @@ export function agentSandboxStatus(
 
 /** The <environment> lines for one machine. */
 export function formatSandboxStatus(status: SandboxStatus): string[] {
+  const disk =
+    status.specs?.storageGb === undefined
+      ? ""
+      : `, ${status.specs.storageGb} GB disk`;
   const specs = status.specs
-    ? `, ${status.specs.vcpu} vCPU, ${formatMegabytes(status.specs.memoryMb)} RAM, ${status.specs.storageGb} GB disk`
+    ? `, ${status.specs.vcpu} vCPU, ${formatMegabytes(status.specs.memoryMb)} RAM${disk}`
     : "";
   const sharing = status.shared
     ? "shared: other conversations of this agent run on it too, each in its own folder"

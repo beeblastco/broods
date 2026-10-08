@@ -290,6 +290,26 @@ export const listForEndpoint = internalQuery({
 });
 
 /**
+ * The agents of one stage the account owns, deployed or not. Core's MCP
+ * explorer reads it to run a sandbox-hosted server on an agent's VM.
+ */
+export const listForStage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+  },
+  returns: v.array(agentDoc),
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
+    return await agentsInStage(
+      ctx,
+      { projectId: args.projectId, stageId: args.stageId },
+      args.accountId,
+    );
+  },
+});
+
+/**
  * Lists the agents this project owns, for the project's scheduler.
  *
  * `agents` rows are account-scoped and carry no projectId; the link is
