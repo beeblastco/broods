@@ -312,7 +312,7 @@ export function TokensUsagePanel({
           <div className={cn("p-3", selected !== null && "lg:col-span-2")}>
             <UsageChart
               kind="area"
-              height={250}
+              height={400}
               series={TOKEN_SERIES}
               rows={tokenRows}
               bucketStarts={bucketStarts}
