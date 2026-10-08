@@ -210,6 +210,9 @@ export default function DashboardPage(): React.JSX.Element {
             apiKey={copyableKey}
             revealed={revealedKey}
             onRotate={rotateViewingKey}
+            projectId={projectId}
+            projectSlug={projectSlug}
+            stageSlug={stageSlug}
           />
         ) : observabilityApiKey ? (
           <p className="text-sm text-muted-foreground">

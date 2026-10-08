@@ -77,7 +77,9 @@ test("a segment that is no project id is the not-found page", async ({
   ).toBeVisible();
 });
 
-test("the API access panel shows the gateway it reaches as the base URL", async ({
+// @rollout: the panel reads the key list and the viewer's permissions, which
+// the dev backend has only once this build's Convex functions deploy.
+test("the API access panel shows the gateway it reaches as the base URL @rollout", async ({
   page,
 }) => {
   await page.goto("/settings/org?tab=api-access");
