@@ -175,14 +175,15 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
-    // row; recoverable on the next call, so it never holds up the session.
+    // row; recoverable on the next call, so it never holds up the session. No
+    // size: workdir fixed it at create, and the row keeps that one even if the
+    // config's size was edited since.
     void upsertSandboxInstance(
       this.#config.controlPlane,
       "sandbox",
       request.reservationKey,
       externalId,
       request.metadata,
-      { specs: configuredSandboxSpecs(this.#config) },
     );
     request.abortSignal?.throwIfAborted();
 
@@ -709,7 +710,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           externalId,
           "metadata" in request ? request.metadata : undefined,
-          { specs: configuredSandboxSpecs(this.#config) },
         );
 
         return { sandbox: sandbox, isFirstCreate: false };

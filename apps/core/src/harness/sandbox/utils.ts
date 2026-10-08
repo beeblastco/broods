@@ -7,15 +7,17 @@
 
 import {
   removeSandboxInstance,
+  setSandboxInstanceSpecs,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import type {
-  SandboxControlPlane,
-  SandboxRunMetadata,
-  SandboxSpecs,
+import {
+  CONFIGURED_SIZE_PROVIDERS,
+  type SandboxControlPlane,
+  type SandboxRunMetadata,
+  type SandboxSpecs,
 } from "../../shared/sandbox-sizes.ts";
 import type {
   SandboxExecutorConfig,
@@ -24,13 +26,6 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-
-// Providers whose machine is the size derived from the config; see configuredSandboxSpecs.
-const CONFIGURED_SIZE_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
-  "cloudflare",
-  "lambda",
-  "sandbox",
-]);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -150,11 +145,6 @@ export function configString(value: unknown): string | undefined {
 }
 
 /**
- * True when a provider rejected sandbox creation because no runner could host it
- * (capacity, or a region-pinned/non-general snapshot). Capacity is the provider's
- * to resolve; the executor only surfaces a clearer message.
- */
-/**
  * The machine size Broods itself sets from a config: workdir creates the VM with
  * those resources, every MicroVM is one size, and cloudflare starts that instance
  * type. Undefined for providers that size machines themselves, whose real size
@@ -169,6 +159,11 @@ export function configuredSandboxSpecs(
     : undefined;
 }
 
+/**
+ * True when a provider rejected sandbox creation because no runner could host it
+ * (capacity, or a region-pinned/non-general snapshot). Capacity is the provider's
+ * to resolve; the executor only surfaces a clearer message.
+ */
 export function isNoRunnersError(error: unknown): boolean {
   const message =
     isPlainObject(error) && typeof error.message === "string"
@@ -231,8 +226,8 @@ export function mergeSandboxEnv(
  * in between. Call it only once the provider confirms the sandbox is gone, so a
  * failed teardown keeps billing until the stale-row sweep. The account's own
  * credentials, or no account, get no row. `readSpecs` returns the machine's real
- * size, or a read of it; it is called only for a metered call, and the row waits
- * for the read, which runs beside the command and so never holds it up.
+ * size, or a read of it; it is called only for a metered call. The row is written
+ * at once either way, and a read that answers later only patches its size in.
  */
 export function meterEphemeralSandbox(
   controlPlane: SandboxControlPlane | undefined,
@@ -249,16 +244,24 @@ export function meterEphemeralSandbox(
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
   const specs = readSpecs?.();
-  void queueMirrorWrite(sandboxId, async (): Promise<void> =>
+  void queueMirrorWrite(sandboxId, (): Promise<void> =>
     upsertSandboxInstance(
       controlPlane,
       provider,
       sandboxId,
       sandboxId,
       metadata,
-      { ephemeral: true, specs: await specs },
+      { ephemeral: true, specs: specs instanceof Promise ? undefined : specs },
     ),
   );
+  if (specs instanceof Promise) {
+    void specs.then((reported): void => {
+      if (!reported) return;
+      void queueMirrorWrite(sandboxId, (): Promise<void> =>
+        setSandboxInstanceSpecs(accountId, sandboxId, sandboxId, reported),
+      );
+    });
+  }
 
   return (): void =>
     waitUntil(

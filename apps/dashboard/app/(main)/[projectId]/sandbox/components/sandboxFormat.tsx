@@ -35,18 +35,21 @@ const UNKNOWN_DISK: Record<string, string> = {
   vercel: "Vercel does not report a sandbox's disk size.",
 };
 
-// Why a machine shows no size at all, by provider.
+// Why a machine shows no size at all, by provider. Daytona and Vercel report
+// on every use; e2b is read and workdir fixed only when the sandbox is created.
 const UNKNOWN_SIZE: Record<string, string> = {
   daytona:
-    "Daytona sizes this sandbox itself, and Broods has no size Daytona reported for it.",
-  e2b: "The E2B template sizes this sandbox, and Broods has no size E2B reported for it.",
+    "Daytona sizes this sandbox itself and has not reported its size yet. It shows the next time this sandbox is used.",
+  e2b: "The E2B template sizes this sandbox, and Broods reads that size only when the sandbox is created. This one predates that or the read failed, so it stays unknown until the sandbox is recreated.",
   machine:
     "Your own computer: its broods CLI predates hardware reporting. Update broods and restart `broods machine` to see it.",
+  sandbox:
+    "Workdir fixes the size when it creates the VM, and this one was created before Broods recorded it. It stays unknown until the sandbox is recreated.",
   vercel:
-    "Vercel sizes this sandbox itself, and Broods has no size Vercel reported for it.",
+    "Vercel sizes this sandbox itself and has not reported its size yet. It shows the next time this sandbox is used.",
 };
 
-// Why a size Broods sets itself is still unknown: the row predates verified sizes.
+// Why a lambda or cloudflare size is unknown: the row predates verified sizes.
 const UNVERIFIED_SIZE =
   "Recorded before Broods checked sandbox sizes. The real size shows the next time this sandbox is used.";
 

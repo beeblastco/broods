@@ -7,7 +7,10 @@
 
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
+import {
+  setSandboxInstanceSpecs,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
@@ -32,7 +35,6 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
-  queueMirrorWrite,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -132,8 +134,6 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    // A create's row write may still be queued; let it land before the removal.
-    await queueMirrorWrite(externalId, async (): Promise<void> => {});
     await deleteSandboxInstance(
       "e2b",
       key,
@@ -212,18 +212,28 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        // The size is read once, here, beside the row write rather than ahead
-        // of the command. Release waits for this write, so it cannot land after.
-        void queueMirrorWrite(created.sandboxId, async (): Promise<void> =>
-          upsertSandboxInstance(
-            this.#config.controlPlane,
-            "e2b",
-            ns,
-            created.sandboxId,
-            request.metadata,
-            { specs: await e2bSpecs(created) },
-          ),
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          "e2b",
+          ns,
+          created.sandboxId,
+          request.metadata,
         );
+        // The size is read once, now, off the acquire path, and patched onto
+        // the row; reconnects send none and the row keeps it.
+        const accountId = this.#config.controlPlane?.accountId;
+        if (accountId) {
+          void e2bSpecs(created).then((specs): void => {
+            if (specs) {
+              void setSandboxInstanceSpecs(
+                accountId,
+                ns,
+                created.sandboxId,
+                specs,
+              );
+            }
+          });
+        }
 
         return created;
       }

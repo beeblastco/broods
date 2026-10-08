@@ -1721,7 +1721,7 @@ paths:
                       {
                         type: string,
                         enum: [tiny, xsmall, small, medium, large],
-                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Rejected on machine and custom. Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
+                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Rejected on machine and custom. Defaults to the provider's own default when unset. tiny and xsmall are the free-tier size names; usage counts at the machine a name starts, so on cloudflare both start a 0.5 vCPU / 4 GB instance.",
                       }
                     image:
                       {

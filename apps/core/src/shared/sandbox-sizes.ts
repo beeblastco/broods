@@ -124,6 +124,18 @@ export const CLOUDFLARE_INSTANCE_TYPES: Record<
 // the platform default, a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk.
 const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
 
+/**
+ * The providers resolveSandboxSpecs sizes from the config, which are therefore
+ * the machine's real size: workdir creates the VM with them, every MicroVM is
+ * MICROVM_SPECS, and cloudflare starts the CLOUDFLARE_INSTANCE_TYPES entry.
+ * Keep it in step with the provider branches there.
+ */
+export const CONFIGURED_SIZE_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
+  "cloudflare",
+  "lambda",
+  "sandbox",
+]);
+
 /** The size used for the mirror specs when a config pins no explicit size or resources. */
 const DEFAULT_SIZE: SandboxSize = "xsmall";
 

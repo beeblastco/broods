@@ -164,6 +164,14 @@ const recordSandboxBurstMock = mock(
     _totals: { vcpuSeconds: number; gbSeconds: number },
   ) => true,
 );
+const setSandboxInstanceSpecsMock = mock(
+  async (
+    _accountId: string,
+    _reservationKey: string,
+    _externalId: string,
+    _specs: unknown,
+  ): Promise<void> => {},
+);
 const upsertSandboxInstanceMock = mock(
   async (..._args: Parameters<typeof upsertSandboxInstance>): Promise<void> => {
     if (!waitForSandboxInstanceUpsert) return;
@@ -349,6 +357,7 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 }));
 
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  setSandboxInstanceSpecs: setSandboxInstanceSpecsMock,
   recordSandboxBurst: recordSandboxBurstMock,
   removeSandboxInstance: removeSandboxInstanceMock,
   upsertSandboxInstance: upsertSandboxInstanceMock,
@@ -385,6 +394,7 @@ await mock.module("@aws-sdk/client-sts", () => ({
 }));
 
 beforeEach(() => {
+  setSandboxInstanceSpecsMock.mockClear();
   process.env.AWS_ACCESS_KEY_ID = "test-access-key";
   process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
   process.env.AWS_SESSION_TOKEN = "test-session-token";
@@ -720,10 +730,17 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  for (const [provider, sandboxId, specs] of [
-    ["daytona", "daytona-sandbox", { vcpu: 2, memoryMb: 4096, storageGb: 10 }],
-    ["e2b", "e2b-sandbox", { vcpu: 2, memoryMb: 2048 }],
-    ["vercel", "ephemeral", { vcpu: 2, memoryMb: 4096 }],
+  // e2b's size needs a read, so its row is written without one and the size
+  // is patched in once the read answers.
+  for (const [provider, sandboxId, specs, patched] of [
+    [
+      "daytona",
+      "daytona-sandbox",
+      { vcpu: 2, memoryMb: 4096, storageGb: 10 },
+      false,
+    ],
+    ["e2b", "e2b-sandbox", { vcpu: 2, memoryMb: 2048 }, true],
+    ["vercel", "ephemeral", { vcpu: 2, memoryMb: 4096 }, false],
   ] as const) {
     it(`meters an ephemeral ${provider} sandbox on platform keys with a row for the call`, async () => {
       const {
@@ -743,7 +760,7 @@ describe("createSandboxExecutor", () => {
         provider: provider,
         controlPlane: controlPlane,
       }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
-      await Bun.sleep(0);
+      await Bun.sleep(5);
 
       expect(upsertSandboxInstanceMock.mock.calls).toEqual([
         [
@@ -753,9 +770,12 @@ describe("createSandboxExecutor", () => {
           sandboxId,
           undefined,
           // The row carries the size the provider reported, not the config's.
-          { ephemeral: true, specs: specs },
+          { ephemeral: true, specs: patched ? undefined : specs },
         ],
       ]);
+      expect(setSandboxInstanceSpecsMock.mock.calls).toEqual(
+        patched ? [["account-1", sandboxId, sandboxId, specs]] : [],
+      );
       expect(removeSandboxInstanceMock.mock.calls).toEqual([
         ["account-1", sandboxId, sandboxId],
       ]);

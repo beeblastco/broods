@@ -152,9 +152,9 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `machine`    | Rejected                                                                                     | CPUs, memory and home disk of your computer, as `broods machine` reports them |
 | `custom`     | Rejected                                                                                     | No instance row: Broods cannot see your server's hardware                     |
 
-When a provider that sizes itself does not answer, its whole size shows as `?`. So does a sandbox recorded before Broods verified sizes, until it is used again.
+When the size is not known its whole size shows as `?`. Daytona and Vercel report on every use, so their `?` clears the next time the sandbox runs, as does a `lambda` or `cloudflare` sandbox recorded before Broods verified sizes. Broods reads an `e2b` size, and workdir fixes a `sandbox` size, only when the sandbox is created, so an older or unread one stays `?` until it is recreated.
 
-On the managed service, sandbox time on platform credentials counts at the size the dashboard shows, except on `lambda`: a MicroVM counts at its 1 vCPU / 2 GB baseline, plus the vCPU and memory it bursts above that while in use, see [Persistent sandboxes](persistent.md). A `machine` sandbox, and one on your own provider credentials, does not count.
+On the managed service, sandbox time on platform credentials counts at the machine's size when Broods knows it, and at the size derived from the config when it shows `?`, except on `lambda`: a MicroVM counts at its 1 vCPU / 2 GB baseline, plus the vCPU and memory it bursts above that while in use, see [Persistent sandboxes](persistent.md). A `machine` sandbox, and one on your own provider credentials, does not count.
 
 ## Images
 

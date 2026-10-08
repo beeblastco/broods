@@ -91,6 +91,31 @@ export async function upsertSandboxInstance(
 }
 
 /**
+ * Records a machine's real size on its existing row once the provider reports it
+ * after the row was written (an e2b size read). Never creates a row, so a late
+ * report cannot bring back a removed one; a mirror failure is only logged.
+ */
+export async function setSandboxInstanceSpecs(
+  accountId: string,
+  reservationKey: string,
+  externalId: string,
+  specs: SandboxSpecs,
+): Promise<void> {
+  try {
+    await getConvexClient().mutation(internal.sandbox.instances.setSpecs, {
+      accountId: accountId as any,
+      reservationKey: reservationKey,
+      externalId: externalId,
+      specs: specs,
+    });
+  } catch (err) {
+    logError("Sandbox instance size mirror failed (convex)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Mirrors a suspend/resume status transition into Convex. No-op when no row
  * matches the reservation key.
  * @param options.observed the status was read off the provider, not caused by a
