@@ -27,11 +27,12 @@ export const provision = action({
     ctx,
     args,
   ): Promise<{ accountId: Id<"accounts">; secret: string }> => {
-    const org = await ctx.runQuery(api.org.orgs.getByIdForAdmin, {
+    const org = await ctx.runQuery(api.org.orgs.getByIdForPermission, {
       orgId: args.orgId,
+      permission: "keys:write",
     });
     if (!org) {
-      throw new ClientError("Org not found or admin role required");
+      throw new ClientError("Org not found or no permission to make keys");
     }
 
     const existing = await ctx.runQuery(internal.account.accounts.getByOrgId, {
@@ -69,11 +70,12 @@ export const rotateSecret = action({
   args: { orgId: v.id("orgs") },
   returns: v.object({ secret: v.string() }),
   handler: async (ctx, args): Promise<{ secret: string }> => {
-    const org = await ctx.runQuery(api.org.orgs.getByIdForAdmin, {
+    const org = await ctx.runQuery(api.org.orgs.getByIdForPermission, {
       orgId: args.orgId,
+      permission: "keys:write",
     });
     if (!org) {
-      throw new ClientError("Org not found or admin role required");
+      throw new ClientError("Org not found or no permission to rotate keys");
     }
 
     const account = await ctx.runQuery(internal.account.accounts.getByOrgId, {

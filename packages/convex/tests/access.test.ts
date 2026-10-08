@@ -227,6 +227,12 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
   expect(await t.query(api.access.viewerPermissions, {})).toEqual([
     "keys:read",
   ]);
+  // The key list says which stages the member may write on.
+  const keys = await t.query(api.apiKeys.listForProject, {
+    projectId: projectA,
+  });
+  expect(keys?.writable).toEqual([stageId]);
+
   // Holding members:write is not a way up: no admin tier, no role beyond one's own.
   currentAuthId = "auth_owner";
   await t.mutation(api.access.addRule, {

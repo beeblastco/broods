@@ -50,7 +50,6 @@ import {
 import { PLATFORM, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
-import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatDate } from "@/app/lib/formatTime";
@@ -106,7 +105,6 @@ interface Props {
 }
 
 export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
-  const { can } = usePermissions(projectId);
   const keys = useQuery(api.apiKeys.listForProject, { projectId: projectId });
   const stages = useQuery(api.stage.list, { projectId: projectId });
 
@@ -119,31 +117,24 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
 
   return (
     <div className="grid gap-6">
-      <RuntimeKeysTable
-        projectId={projectId}
-        keys={keys.runtime}
-        canWrite={can("keys:write")}
-      />
+      <RuntimeKeysTable projectId={projectId} keys={keys.runtime} />
       <ApiKeysTable
         projectId={projectId}
         keys={keys.api}
-        stages={stages}
+        stages={stages.filter((stage) => keys.writable.includes(stage._id))}
         defaultStageId={stageId}
-        canWrite={can("keys:write")}
       />
     </div>
   );
 }
 
-/** One row per stage: the key minted with it, when it was rotated and by whom. */
+/** One row per stage: the key minted with it, when it was rotated and by whom. Each row asks its own stage for Rotate. */
 function RuntimeKeysTable({
   projectId,
   keys,
-  canWrite,
 }: {
   projectId: Id<"projects">;
   keys: RuntimeKey[];
-  canWrite: boolean;
 }): React.JSX.Element {
   const now = useNow();
   const rotate = useMutation(api.agent.deployments.rotate);
@@ -217,7 +208,7 @@ function RuntimeKeysTable({
                   <Who actor={key.rotatedBy ?? PLATFORM} />
                 </DataTableCell>
                 <DataTableCell align="right">
-                  {canWrite ? (
+                  {key.canWrite ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -228,7 +219,7 @@ function RuntimeKeysTable({
                       Rotate
                     </Button>
                   ) : (
-                    <LockedValue reason="No permission to rotate keys">
+                    <LockedValue reason="No permission to rotate this stage's key">
                       Rotate
                     </LockedValue>
                   )}
@@ -264,20 +255,19 @@ function RuntimeKeysTable({
   );
 }
 
-/** Keys people make: name, description, the stage they reach, and who made them. */
+/** Keys people make: name, description, the stage they reach, and who made them. `stages` are the ones the viewer may make keys on; each row asks its own stage for Revoke. */
 function ApiKeysTable({
   projectId,
   keys,
   stages,
   defaultStageId,
-  canWrite,
 }: {
   projectId: Id<"projects">;
   keys: ApiKey[];
   stages: Doc<"stages">[];
   defaultStageId: Id<"stages"> | null;
-  canWrite: boolean;
 }): React.JSX.Element {
+  const canWrite = stages.length > 0;
   const now = useNow();
   const remove = useMutation(api.deployKeys.remove);
   const [creating, setCreating] = useState(false);
@@ -327,7 +317,9 @@ function ApiKeysTable({
             size="sm"
             className="cursor-pointer"
             disabled={!canWrite}
-            title={canWrite ? undefined : "No permission to create keys"}
+            title={
+              canWrite ? undefined : "No permission to make keys on any stage"
+            }
             onClick={() => setCreating(true)}
           >
             <Plus className="size-4" />
@@ -390,7 +382,7 @@ function ApiKeysTable({
                   )}
                 </DataTableCell>
                 <DataTableCell align="right">
-                  {canWrite && (
+                  {key.canWrite && (
                     <Button
                       variant="ghost"
                       size="sm"
