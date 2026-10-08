@@ -395,7 +395,7 @@ export function SandboxInstancesTable({
         <LoadMore
           shown={visible.length}
           total={list.shown.length}
-          noun="sandboxes"
+          noun={["sandbox", "sandboxes"]}
           pageSize={PAGE_SIZE}
           remaining={list.shown.length - visible.length}
           onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}

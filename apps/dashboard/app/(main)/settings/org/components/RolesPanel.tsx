@@ -195,7 +195,7 @@ export function RolesPanel(): React.JSX.Element {
         <DataTableFooter
           shown={list.shown.length}
           total={roles.length}
-          noun="roles"
+          noun={["role", "roles"]}
         />
       </DetailSplit>
       {creating && (

@@ -323,7 +323,7 @@ export function CronsTable({
         <DataTableFooter
           shown={list.shown.length}
           total={crons.length}
-          noun="jobs"
+          noun={["job", "jobs"]}
         >
           {`, ${activeCount} active`}
         </DataTableFooter>
