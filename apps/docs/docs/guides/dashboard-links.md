@@ -10,6 +10,8 @@ https://dashboard.broods.app/<projectId>/scheduler?q=status%3Afailed&sort=next.a
 
 The first opens Tracing on one run. The second opens Monitoring on error lines that mention `timeout` in the last day. The third opens the scheduler filtered to failed schedules, soonest first, with one schedule's panel open.
 
+Lists remember each viewer's last search. A list link without `q` opens with that search, so add `q=` (empty) when the row in `sel` must show.
+
 Copy `<projectId>` and `<stageId>` from any dashboard URL. Without `stage` the project's default Development stage opens. A link to `https://dashboard.broods.app/?project=<projectId>&tab=tracing&trace=...` resolves the project first and keeps the rest.
 
 ## Params
