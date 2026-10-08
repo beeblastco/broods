@@ -98,11 +98,16 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
+import {
+  ObservabilityToolbar,
+  type VolumePoint,
+} from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
+import type { RangePreset, TimeWindow } from "@/app/lib/queryTokens";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
 
+// The press-and-drag fixture's select, a level list like the side panel's.
 const LEVEL_OPTIONS = [
   { value: "all", label: "All levels" },
   { value: "ERROR", label: "ERROR" },
@@ -110,6 +115,18 @@ const LEVEL_OPTIONS = [
   { value: "INFO", label: "INFO" },
   { value: "DEBUG", label: "DEBUG" },
 ];
+
+// The toolbar fixture's search fields, the log panel's.
+const LOG_FIELDS = ["level", "source", "agent", "trace", "event"] as const;
+
+// A fixed clock, so the strip's bins land in the same place on every run.
+const FIXTURE_NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
+
+// Entries across the last hour, one failure in the newest quarter.
+const VOLUME_POINTS: VolumePoint[] = Array.from({ length: 40 }, (_, i) => ({
+  ts: FIXTURE_NOW - 60 * 60 * 1000 + i * 90 * 1000,
+  severity: i === 36 ? "error" : i % 7 === 0 ? "warn" : "none",
+}));
 
 const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
 
@@ -302,8 +319,9 @@ const CONNECTION_FIXTURES: Connection[] = [
 ];
 
 export function UiGallery(): React.JSX.Element {
-  const [level, setLevel] = useState("INFO");
   const [search, setSearch] = useState("");
+  const [range, setRange] = useState<RangePreset>("1h");
+  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
   const [pressLevel, setPressLevel] = useState("INFO");
   const [pressTab, setPressTab] = useState(PRESS_TABS[0]);
   const [pressCount, setPressCount] = useState(0);
@@ -372,22 +390,31 @@ export function UiGallery(): React.JSX.Element {
         <ObservabilityToolbar
           search={search}
           onSearchChange={setSearch}
-          searchPlaceholder="Search logs…"
-          filterAriaLabel="Filter by log level"
-          filterValue={level}
-          filterOptions={LEVEL_OPTIONS}
-          onFilterChange={setLevel}
-          fromTime=""
-          onFromTimeChange={() => {}}
-          toTime=""
-          onToTimeChange={() => {}}
-          hasFilters={false}
-          onClear={() => {}}
+          searchPlaceholder="Search logs · level: source: agent: trace: event:"
+          searchFields={LOG_FIELDS}
+          range={range}
+          onRangeChange={setRange}
+          window={timeWindow}
+          onWindowChange={setTimeWindow}
+          points={VOLUME_POINTS}
+          now={FIXTURE_NOW}
+          shown={VOLUME_POINTS.length}
           onRefresh={() => {}}
           refreshDisabled={false}
           refreshTitle="Refresh"
           isError={false}
         />
+        <p className="text-xs text-muted-foreground">
+          query <span data-toolbar-query>{search}</span>
+          {timeWindow && (
+            <>
+              {" · window "}
+              <span data-toolbar-window>
+                {Math.round(timeWindow.from)}-{Math.round(timeWindow.to)}
+              </span>
+            </>
+          )}
+        </p>
         <LogTableStandIn />
       </section>
 

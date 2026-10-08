@@ -1,39 +1,46 @@
 "use client";
 
-/** Shared by the logs and tracing panels, so a filter added here shows up on both. */
-import { useShortcut } from "@/app/components/ShortcutProvider";
-import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/app/components/ui/select";
+/**
+ * Shared by the logs and tracing panels, so a filter added here shows up on
+ * both: the token search, the range presets, the count, refresh, and the
+ * volume strip whose drag narrows the range to a custom window.
+ */
+import { SearchInput } from "@/app/components/SearchInput";
+import { SegmentedControl } from "@/app/components/SegmentedControl";
+import { RefreshButton, Toolbar, ToolbarCount } from "@/app/components/Toolbar";
+import { VolumeStrip } from "@/app/components/VolumeStrip";
 import type { ObservabilityHistoryStatus } from "@/app/hooks/useObservabilityStream";
-import { RefreshCw, Search, X } from "lucide-react";
-import { useRef } from "react";
+import {
+  RANGE_PRESETS,
+  rangeMs,
+  volumeBins,
+  type RangePreset,
+  type TimeWindow,
+} from "@/app/lib/queryTokens";
+import { useMemo } from "react";
 
-export interface ToolbarFilterOption {
-  value: string;
-  label: string;
+/** The one point per entry the strip needs. */
+export interface VolumePoint {
+  ts: number;
+  severity: "error" | "warn" | "none";
 }
 
 interface Props {
   search: string;
   onSearchChange: (value: string) => void;
   searchPlaceholder: string;
-  filterAriaLabel: string;
-  filterValue: string;
-  filterOptions: ToolbarFilterOption[];
-  onFilterChange: (value: string) => void;
-  fromTime: string;
-  onFromTimeChange: (value: string) => void;
-  toTime: string;
-  onToTimeChange: (value: string) => void;
-  hasFilters: boolean;
-  onClear: () => void;
+  /** Field names the search box turns into chips. */
+  searchFields: readonly string[];
+  range: RangePreset;
+  onRangeChange: (range: RangePreset) => void;
+  /** The drag-picked part of the range, or null for the whole range. */
+  window: TimeWindow | null;
+  onWindowChange: (window: TimeWindow | null) => void;
+  /** Every entry held, before filters; the strip draws their volume. */
+  points: VolumePoint[];
+  /** The strip's right edge; the panels pass the same clock their filters use. */
+  now: number;
+  shown: number;
   onRefresh: () => void;
   refreshDisabled: boolean;
   refreshTitle: string;
@@ -62,115 +69,60 @@ export function ObservabilityToolbar({
   search,
   onSearchChange,
   searchPlaceholder,
-  filterAriaLabel,
-  filterValue,
-  filterOptions,
-  onFilterChange,
-  fromTime,
-  onFromTimeChange,
-  toTime,
-  onToTimeChange,
-  hasFilters,
-  onClear,
+  searchFields,
+  range,
+  onRangeChange,
+  window,
+  onWindowChange,
+  points,
+  now,
+  shown,
   onRefresh,
   refreshDisabled,
   refreshTitle,
   isError,
 }: Props): React.JSX.Element {
-  const searchInput = useRef<HTMLInputElement>(null);
-
-  useShortcut("table.filter", () => searchInput.current?.focus());
-  useShortcut("table.refresh", () => !refreshDisabled && onRefresh());
+  const rangeWindow = useMemo(
+    () => ({ from: now - rangeMs(range), to: now }),
+    [now, range],
+  );
+  const bins = useMemo(
+    () => volumeBins(points, rangeWindow),
+    [points, rangeWindow],
+  );
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2 select-none">
-      <div className="relative min-w-50 flex-1">
-        <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          ref={searchInput}
-          type="text"
+    <>
+      <Toolbar>
+        <SearchInput
           value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
+          onChange={onSearchChange}
+          fields={searchFields}
           placeholder={searchPlaceholder}
-          aria-label="Search"
-          className="h-8 pl-8 text-xs"
         />
-      </div>
-
-      <Select
-        items={filterOptions}
-        value={filterValue}
-        onValueChange={(value) => {
-          if (value !== null) {
-            onFilterChange(value);
-          }
-        }}
-      >
-        <SelectTrigger
-          size="sm"
-          aria-label={filterAriaLabel}
-          className="w-32.5 cursor-pointer text-xs"
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {filterOptions.map((option) => (
-            <SelectItem
-              key={option.value}
-              value={option.value}
-              className="cursor-pointer text-xs"
-            >
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <Input
-        type="datetime-local"
-        value={fromTime}
-        onChange={(event) => onFromTimeChange(event.target.value)}
-        aria-label="From time"
-        title="From"
-        className="h-8 w-auto cursor-pointer text-xs"
+        <SegmentedControl
+          options={RANGE_PRESETS}
+          value={range}
+          onChange={(next) => {
+            onRangeChange(next);
+            onWindowChange(null);
+          }}
+          ariaLabel="Time range"
+        />
+        <ToolbarCount shown={shown} total={points.length} />
+        <RefreshButton
+          onRefresh={onRefresh}
+          disabled={refreshDisabled}
+          title={refreshTitle}
+          isError={isError}
+        />
+      </Toolbar>
+      <VolumeStrip
+        bins={bins}
+        window={rangeWindow}
+        selection={window}
+        onSelect={onWindowChange}
       />
-      <Input
-        type="datetime-local"
-        value={toTime}
-        onChange={(event) => onToTimeChange(event.target.value)}
-        aria-label="To time"
-        title="To"
-        className="h-8 w-auto cursor-pointer text-xs"
-      />
-
-      {hasFilters && (
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-sm"
-          onClick={onClear}
-          aria-label="Clear filters"
-          title="Clear filters"
-          tone="muted"
-          className="cursor-pointer"
-        >
-          <X className="size-3.5" />
-        </Button>
-      )}
-
-      <Button
-        type="button"
-        variant="outline"
-        size="icon-sm"
-        onClick={onRefresh}
-        disabled={refreshDisabled}
-        aria-label="Refresh"
-        title={refreshTitle}
-        tone={isError ? "destructive" : "muted"}
-        className="cursor-pointer"
-      >
-        <RefreshCw className="size-3.5" />
-      </Button>
-    </div>
+    </>
   );
 }

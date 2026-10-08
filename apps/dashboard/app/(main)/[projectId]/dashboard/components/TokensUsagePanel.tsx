@@ -1,5 +1,6 @@
 "use client";
 
+import { SegmentedControl } from "@/app/components/SegmentedControl";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -93,7 +94,14 @@ const RANGE_BIN_SECONDS: Record<Range, number> = {
   "1y": 7 * 24 * 60 * 60,
 };
 
-const RANGES: Range[] = ["1h", "3h", "1d", "7d", "30d", "1y"];
+const RANGES: Array<{ id: Range }> = [
+  { id: "1h" },
+  { id: "3h" },
+  { id: "1d" },
+  { id: "7d" },
+  { id: "30d" },
+  { id: "1y" },
+];
 
 const COUNTER_KEYS: CounterKey[] = [
   "inputTokens",
@@ -588,24 +596,12 @@ function UsageToolbar({
 }): React.JSX.Element {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5">
-        {RANGES.map((id) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={range === id}
-            onClick={() => onRangeChange(id)}
-            className={cn(
-              "cursor-pointer rounded px-2.5 py-1 text-xs transition-colors",
-              range === id
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {id}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        options={RANGES}
+        value={range}
+        onChange={onRangeChange}
+        ariaLabel="Time range"
+      />
       {modelMenu}
       {selectedStart !== null && (
         <button
