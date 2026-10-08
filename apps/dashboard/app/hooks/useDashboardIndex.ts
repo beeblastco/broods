@@ -3,9 +3,9 @@
 /**
  * Everything the palette and the copilot can find, as one list of rows.
  *
- * All of it comes from queries the dashboard already subscribes to, so opening
- * the palette costs no round trip: Convex serves the cached documents and the
- * rows re-rank as they change.
+ * All of it is subscribed up front (the canvas just after the first batch), so
+ * opening the palette costs no round trip: Convex serves the cached documents
+ * and the rows re-rank as they change.
  */
 import { NAV_ITEMS, navHref } from "@/app/lib/navigation";
 import type { SearchItem } from "@/app/lib/paletteSearch";
@@ -23,7 +23,6 @@ export function useDashboardIndex(
   const { stageId, stageArgs } = useStage();
   const projectArgs = projectId ? { projectId: projectId } : "skip";
 
-  const canvas = useQuery(api.canvas.getByProject, stageArgs);
   const crons = useQuery(api.agent.crons.listForProject, projectArgs);
   const envVars = useQuery(
     api.environmentVariables.list,
@@ -31,6 +30,12 @@ export function useDashboardIndex(
   );
   const projects = useQuery(api.project.list, {});
   const stages = useQuery(api.stage.list, projectArgs);
+  // Convex answers a batch of new queries in one message: waiting for the first
+  // batch keeps the canvas layout from delaying every page's own queries.
+  const canvas = useQuery(
+    api.canvas.getByProject,
+    projects === undefined ? "skip" : stageArgs,
+  );
 
   return useMemo(() => {
     if (!projectId) return [];
