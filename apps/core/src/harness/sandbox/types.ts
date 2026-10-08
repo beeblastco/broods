@@ -257,6 +257,8 @@ export interface SandboxSnapshotResult {
   externalImageId?: string;
   // "building" while the provider still builds the image; absent means ready.
   status?: SandboxSnapshotBuildState;
+  // Set when the capture stopped the instance (Vercel); absent means still running.
+  instanceStatus?: "suspended";
 }
 
 /** Live instance info surfaced for control-plane sync (Convex sandboxInstances). */

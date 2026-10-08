@@ -680,7 +680,16 @@ async function snapshotSandbox(
     externalImageId: externalImageId,
     status: status,
   });
-  await context.audit("ok", { status: "running" });
+  // Vercel stops the instance to capture it; its next call resumes it.
+  const instanceStatus = result.instanceStatus ?? "running";
+  if (instanceStatus !== "running") {
+    await setSandboxInstanceStatus(
+      context.accountId,
+      context.reservationKey,
+      instanceStatus,
+    );
+  }
+  await context.audit("ok", { status: instanceStatus });
 
   return jsonResponse(200, {
     status: status,

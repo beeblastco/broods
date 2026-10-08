@@ -28,5 +28,5 @@ export const STATELESS_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 // Daytona snapshot, e2b an E2B template or snapshot, vercel a Vercel image or a
 // `snap_` snapshot id. Their executors implement `snapshot()`, which the
 // Snapshot action captures with. A snapshot boots only on the provider that made it.
-export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<string> =
+export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda", "daytona", "e2b", "vercel"]);

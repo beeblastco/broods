@@ -2965,7 +2965,7 @@ describe("createSandboxExecutor", () => {
         persistent: true,
         options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
       }).snapshot(ref),
-    ).toEqual({ snapshotId: "snap_captured" });
+    ).toEqual({ snapshotId: "snap_captured", instanceStatus: "suspended" });
     expect(vercelGetMock.mock.calls.at(-1)?.[0]).toMatchObject({
       name: "vercel-1",
     });
