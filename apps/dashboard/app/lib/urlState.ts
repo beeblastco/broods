@@ -33,7 +33,8 @@ const RANGE_IDS = RANGE_PRESETS.map((preset) => preset.id);
 export const parseAsSearch = createParser({
   parse: (value: string): string | null =>
     value.length <= MAX_QUERY_LENGTH ? value : null,
-  serialize: (value: string): string => value,
+  // Capped on write too, so every link the UI makes reads back.
+  serialize: (value: string): string => value.slice(0, MAX_QUERY_LENGTH),
 })
   // Typing writes once it pauses: each URL write re-renders every search-param reader.
   .withOptions({ limitUrlUpdates: debounce(300) });
