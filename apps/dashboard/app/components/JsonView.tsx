@@ -22,12 +22,14 @@ export const JsonView = memo(function JsonView({
   );
 });
 
-/** One key and value; objects and arrays carry the fold toggle in the gutter. */
+/** One key and value; objects and arrays carry the fold toggle in the gutter. `index` names an array item. */
 function JsonNode({
+  index,
   name,
   value,
   last,
 }: {
+  index?: number;
   name?: string;
   value: JSONValue;
   last: boolean;
@@ -56,6 +58,7 @@ function JsonNode({
     ? value.map((item, index): [string, JSONValue] => [String(index), item])
     : Object.entries(value);
   const [start, end] = isArray ? ["[", "]"] : ["{", "}"];
+  const target = name ?? (index === undefined ? "value" : `item ${index}`);
   if (entries.length === 0) {
     return (
       <div className="pl-4">
@@ -72,7 +75,7 @@ function JsonNode({
       <button
         type="button"
         aria-expanded={open}
-        aria-label={open ? "Fold" : "Unfold"}
+        aria-label={`${open ? "Fold" : "Unfold"} ${target}`}
         onClick={() => setOpen(!open)}
         className="absolute left-0 top-1 cursor-pointer text-code-foreground/50 hover:text-code-foreground"
       >
@@ -87,6 +90,7 @@ function JsonNode({
           {entries.map(([key, item], index) => (
             <JsonNode
               key={key}
+              index={isArray ? index : undefined}
               name={isArray ? undefined : key}
               value={item}
               last={index === entries.length - 1}
@@ -101,6 +105,7 @@ function JsonNode({
         <>
           <button
             type="button"
+            aria-label={`Unfold ${target}`}
             onClick={() => setOpen(true)}
             className="cursor-pointer px-1 text-code-foreground/50 hover:text-code-foreground"
           >
