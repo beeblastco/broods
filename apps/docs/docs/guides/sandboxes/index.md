@@ -77,7 +77,6 @@ flowchart TD
 | `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
 | `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary       |
 | `timeout`              | 30                     | Seconds per call. Maximum 600                                                                                     |
-| `memoryLimit`          | none                   | MB. Validated, maximum 8192 on `lambda`, but executors do not resize to it                                        |
 | `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                              |
 | `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                       |
 | `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey` |

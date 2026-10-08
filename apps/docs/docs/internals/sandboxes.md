@@ -23,7 +23,7 @@ Every sandbox tool (`bash`, `read`, `write`, `edit`, `glob`, `grep`) compiles to
 
 One file plus one line. Write `src/harness/sandbox/<name>-executor.ts` implementing `SandboxExecutor` from `types.ts` (`run` is the only required method; reservation, jobs and lifecycle are optional and feature-detected), add the name to `SANDBOX_PROVIDERS`, then in `index.ts` import the file and add `<name>: (config) => new YourExecutor(config)` to `EXECUTORS`; the build fails until you do. The explicit import is what pulls the file into the compiled binary. A provider Broods never reserves also goes in `STATELESS_SANDBOX_PROVIDERS`. Validation for the provider's options goes in `sandboxRules.ts` beside the others, and `runsOnOwnCredentials` in `src/shared/workspaces.ts` says whether the platform meters it.
 
-Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 30 s and caps at 600 s, set by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`. `outputLimitBytes` defaults to 64 KiB and caps at 256 KiB, set by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. Every executor truncates stdout and stderr to it. `memoryLimit` caps at 8192 MB on `lambda`. A blocking call also stays inside the request budget, `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`, 10 minutes by default. Background jobs are bound by neither.
+Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 30 s and caps at 600 s, set by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`. `outputLimitBytes` defaults to 64 KiB and caps at 256 KiB, set by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. Every executor truncates stdout and stderr to it. A blocking call also stays inside the request budget, `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`, 10 minutes by default. Background jobs are bound by neither.
 
 ### Capability matrix
 
@@ -38,7 +38,7 @@ Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 
 | `machine`    | not supported, rejected                             | no                                            | no                                               |
 | `custom`     | not supported, rejected                             | no                                            | no                                               |
 
-`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. The fallback always runs on the platform's credentials, so it is metered, with the specs the fallback provider creates from `size` and `memoryLimit`. Validation refuses a fallback equal to `provider`, a `machine` or `custom` fallback, and any fallback on a `persistent` config.
+`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. The fallback always runs on the platform's credentials, so it is metered, with the specs the fallback provider creates from `size`. Validation refuses a fallback equal to `provider`, a `machine` or `custom` fallback, and any fallback on a `persistent` config.
 
 One tool call from dispatch to result. Runs on the platform's credentials pass the account's sandbox budget check first:
 
@@ -286,7 +286,7 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 - One daemon holds a record. A second is closed with `4423` and a reason naming the holder's host; `--force` replaces the holder, which gets `4409`. Bad credentials close with `4401`, an unknown sandbox name with `4404`, a malformed frame with `4400`.
 - The socket accepts a login-derived stage ticket, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key.
 - Frames are capped at 4 MiB. A computer action has 30 s, an MCP call 60 s, and a `bash` call its timeout plus 5 s.
-- Validation rejects `persistent`, `size`, `snapshot`, `memoryLimit` and any network mode other than `allow-all`, and a machine cannot back a workspace.
+- Validation rejects `persistent`, `size`, `snapshot` and any network mode other than `allow-all`, and a machine cannot back a workspace.
 
 ## Reservations
 

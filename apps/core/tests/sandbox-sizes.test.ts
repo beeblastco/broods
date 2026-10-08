@@ -18,12 +18,7 @@ describe("resolveSandboxSpecs", () => {
     });
   });
 
-  it("falls back to memoryLimit then to the xsmall default", () => {
-    expect(resolveSandboxSpecs({ memoryLimit: 3000 })).toEqual({
-      vcpu: SANDBOX_SIZES.xsmall.vcpu,
-      memoryMb: 3000,
-      storageGb: SANDBOX_SIZES.xsmall.storageGb,
-    });
+  it("falls back to the xsmall default", () => {
     expect(resolveSandboxSpecs({})).toEqual(SANDBOX_SIZES.xsmall);
   });
 
@@ -35,7 +30,6 @@ describe("resolveSandboxSpecs", () => {
         provider: "lambda",
         size: "tiny",
         options: { cpu: 1 },
-        memoryLimit: 1024,
       }),
     ).toEqual(real);
   });
@@ -46,8 +40,7 @@ describe("resolveSandboxSpecs", () => {
       resolveSandboxSpecs({
         provider: "sandbox",
         size: "large",
-        options: { cpu: 1 },
-        memoryLimit: 3000,
+        options: { cpu: 1, memoryMb: 3000 },
       }),
     ).toEqual({ vcpu: 1, memoryMb: 3000, storageGb: 32 });
     expect(resolveSandboxSpecs({ provider: "sandbox", size: "tiny" })).toEqual({
