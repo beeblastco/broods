@@ -730,7 +730,6 @@ export function TracingPanel({
         onWindowChange={setTimeWindow}
         points={points}
         now={now}
-        shown={groups.length}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
         refreshTitle={error ?? "Refresh traces"}
@@ -809,6 +808,8 @@ export function TracingPanel({
               </p>
             )}
             <LoadMore
+              shown={groups.length}
+              total={points.length}
               pageSize={PAGE_SIZE}
               remaining={remaining}
               onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
