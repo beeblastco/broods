@@ -20,10 +20,13 @@ import {
   sessionHttpHandle as cliStageSessionHttp,
 } from "./cli/stages";
 import { handle as configHttp } from "./config/http";
+import { selfHostJwks } from "./model/selfHostAuth";
 
 const http = httpRouter();
 
-authKit.registerRoutes(http);
+// A self-hosted stack has no WorkOS, and its AuthKit holds a placeholder
+// webhook secret anyone could sign with, so the webhook is not mounted.
+if (selfHostJwks() === undefined) authKit.registerRoutes(http);
 
 http.route({
   path: "/stripe/webhook",

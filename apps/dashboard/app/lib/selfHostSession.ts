@@ -8,6 +8,7 @@ import {
 } from "@broods/convex/model/selfHostAuth";
 import { SignJWT, importJWK, jwtVerify, type JWK } from "jose";
 import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { SessionUser } from "@/app/lib/session";
 
@@ -30,18 +31,27 @@ const ADMIN: SessionUser = {
   profilePictureUrl: null,
 };
 
+// Parsed at startup, so a malformed key fails the server loudly instead of
+// every sign-in.
+const SIGNING_JWK: JWK | null = selfHosted
+  ? JSON.parse(process.env.BROODS_SESSION_SIGNING_KEY ?? "")
+  : null;
+
 type SigningKey = Awaited<ReturnType<typeof importJWK>>;
 
 let signingKeys:
   | Promise<{ privateKey: SigningKey; publicKey: SigningKey }>
   | undefined;
 
-/** Whether `key` is the stack's admin secret. Compares digests, in constant time. */
+/**
+ * Whether `key` is the stack's admin secret, both trimmed: a pasted key often
+ * carries a newline. Compares digests, in constant time.
+ */
 export function adminKeyMatches(key: string): boolean {
-  const secret = process.env.ADMIN_ACCOUNT_SECRET;
+  const secret = process.env.ADMIN_ACCOUNT_SECRET?.trim();
   if (!secret) return false;
 
-  return timingSafeEqual(digest(key), digest(secret));
+  return timingSafeEqual(digest(key.trim()), digest(secret));
 }
 
 /** The signed-in admin and their token from this request's cookie, or null. */
@@ -56,12 +66,22 @@ export async function currentSession(): Promise<{
 }
 
 /** The admin-key page, coming back to `returnTo`; `rejected` shows the wrong-key error. */
-export function keyPageUrl(base: URL, returnTo: string, rejected = false): URL {
-  const keyPage = new URL("/auth/key", base);
-  keyPage.searchParams.set("returnTo", returnTo);
-  if (rejected) keyPage.searchParams.set("error", "1");
+export function keyPagePath(returnTo: string, rejected = false): string {
+  const query = new URLSearchParams({ returnTo: returnTo });
+  if (rejected) query.set("error", "1");
 
-  return keyPage;
+  return `/auth/key?${query}`;
+}
+
+/**
+ * A redirect to a same-origin `path`, as a relative Location: behind a proxy
+ * the request URL can carry the server's bind host, not the public one.
+ */
+export function redirectToPath(path: string, status = 307): NextResponse {
+  return new NextResponse(null, {
+    headers: { Location: path },
+    status: status,
+  });
 }
 
 /** A session token for the admin, signed with the stack's key. */
@@ -96,13 +116,15 @@ export async function verifySessionToken(
   }
 }
 
+// SHA-256, so `timingSafeEqual` compares equal lengths whatever was typed.
 function digest(value: string): Buffer {
   return createHash("sha256").update(value).digest();
 }
 
+// The imported signing key and its public half, once per process.
 function keys(): Promise<{ privateKey: SigningKey; publicKey: SigningKey }> {
   signingKeys ??= (async () => {
-    const jwk: JWK = JSON.parse(process.env.BROODS_SESSION_SIGNING_KEY ?? "");
+    const jwk = SIGNING_JWK ?? {};
 
     return {
       privateKey: await importJWK(jwk, SELF_HOST_ALGORITHM),

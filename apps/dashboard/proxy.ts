@@ -8,7 +8,7 @@ import {
 import { redirectUri } from "@/app/lib/authConfig";
 import {
   SESSION_COOKIE,
-  keyPageUrl,
+  keyPagePath,
   selfHosted,
   verifySessionToken,
 } from "@/app/lib/selfHostSession";
@@ -55,7 +55,11 @@ async function selfHostProxy(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  return NextResponse.redirect(keyPageUrl(request.nextUrl, pathname + search));
+  // The proxy must redirect to an absolute URL; `request.url` carries the
+  // request's own Host, not the server's bind address.
+  return NextResponse.redirect(
+    new URL(keyPagePath(pathname + search), request.url),
+  );
 }
 
 /**

@@ -210,6 +210,8 @@ bun -e 'const { privateKey } = require("node:crypto").generateKeyPairSync("ec", 
 
 The first line goes to the dashboard, the second to Convex. See `apps/dashboard/.env.example`.
 
+A session lasts 12 hours. Signing out drops the browser's cookie, but a token copied before then keeps working until it expires. To end every session at once, make a new key pair and set both values again. Rotating `ADMIN_ACCOUNT_SECRET` does not end existing sessions. The sign-in form has no rate limit of its own, so keep the admin secret long and random, as `local:up` generates it, or put the dashboard behind the edge's per-address limit.
+
 ### Forwarders
 
 Run these only for Discord or Matrix agents. Each is one release for every Convex deployment you run, never one per stage. See [operations](operations.md#forwarders) for why.

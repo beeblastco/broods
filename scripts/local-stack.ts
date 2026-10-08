@@ -474,25 +474,6 @@ function configureDeploymentEnv(
   }
 }
 
-// A self-hosted deployment: BROODS_SESSION_JWKS makes Convex trust the
-// dashboard's admin session instead of WorkOS, so no WORKOS_* is set.
-// BROODS_ACCOUNT_MANAGE_URL points at core on the host (the backend runs
-// inside docker).
-function deploymentEnvEntries(state: InstanceState): Record<string, string> {
-  const signingKey: { d?: string } = JSON.parse(
-    state.secrets.sessionSigningKey,
-  );
-
-  return {
-    ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
-    ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
-    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
-    BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk(signingKey)] }),
-    SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
-    STAGE_TICKET_SECRET: state.secrets.stageTicket,
-  };
-}
-
 function convexSourceHash(): string {
   const listed = execFileSync(
     "git",
@@ -547,6 +528,25 @@ function createManifestAccount(state: InstanceState, runId: string): string {
   );
 
   return secret;
+}
+
+// A self-hosted deployment: BROODS_SESSION_JWKS makes Convex trust the
+// dashboard's admin session instead of WorkOS, so no WORKOS_* is set.
+// BROODS_ACCOUNT_MANAGE_URL points at core on the host (the backend runs
+// inside docker).
+function deploymentEnvEntries(state: InstanceState): Record<string, string> {
+  const signingKey: { d?: string } = JSON.parse(
+    state.secrets.sessionSigningKey,
+  );
+
+  return {
+    ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
+    ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
+    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
+    BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk(signingKey)] }),
+    SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
+    STAGE_TICKET_SECRET: state.secrets.stageTicket,
+  };
 }
 
 // Maps host.docker.internal so Convex reaches core on Linux; Docker Desktop
@@ -1180,15 +1180,15 @@ function allocatePortBase(): number {
   throw new Error("no free port block under ~/.broods-local");
 }
 
-function dashboardUrl(state: InstanceState): string {
-  return `http://localhost:${ports(state).dashboard}`;
-}
-
 function currentInstanceId(): string {
   const digest = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
   const basename = repoRoot.split("/").filter(Boolean).pop() ?? "broods";
 
   return `${basename}-${digest}`;
+}
+
+function dashboardUrl(state: InstanceState): string {
+  return `http://localhost:${ports(state).dashboard}`;
 }
 
 function instanceDir(instanceId: string): string {
@@ -1235,6 +1235,13 @@ function loadOrCreateState(): InstanceState {
   return state;
 }
 
+function loadState(instanceId: string): InstanceState | null {
+  const path = join(instanceDir(instanceId), "state.json");
+  if (!existsSync(path)) return null;
+
+  return JSON.parse(readFileSync(path, "utf8")) as InstanceState;
+}
+
 // A P-256 key as a private JWK, the form BROODS_SESSION_SIGNING_KEY takes.
 function newSessionSigningKey(): string {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -1245,13 +1252,6 @@ function newSessionSigningKey(): string {
     kid: SELF_HOST_KEY_ID,
     use: "sig",
   });
-}
-
-function loadState(instanceId: string): InstanceState | null {
-  const path = join(instanceDir(instanceId), "state.json");
-  if (!existsSync(path)) return null;
-
-  return JSON.parse(readFileSync(path, "utf8")) as InstanceState;
 }
 
 function ports(state: InstanceState): InstancePorts {

@@ -4,7 +4,8 @@ import {
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
   adminKeyMatches,
-  keyPageUrl,
+  keyPagePath,
+  redirectToPath,
   selfHosted,
   signSessionToken,
 } from "@/app/lib/selfHostSession";
@@ -21,17 +22,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const returnTo =
     parseReturnTo(typeof returnToValue === "string" ? returnToValue : null) ??
     "/";
-  if (!selfHosted || typeof key !== "string" || !adminKeyMatches(key.trim())) {
-    return NextResponse.redirect(
-      keyPageUrl(request.nextUrl, returnTo, true),
-      303,
-    );
+  if (!selfHosted || typeof key !== "string" || !adminKeyMatches(key)) {
+    return redirectToPath(keyPagePath(returnTo, true), 303);
   }
 
-  const response = NextResponse.redirect(
-    new URL(returnTo, request.nextUrl),
-    303,
-  );
+  const response = redirectToPath(returnTo, 303);
   response.cookies.set({
     httpOnly: true,
     maxAge: SESSION_TTL_SECONDS,
@@ -48,6 +43,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   return response;
 }
 
+/** Signs out: drops the session cookie; the client then loads the key page. */
 export async function DELETE(): Promise<NextResponse> {
   const response = new NextResponse(null, { status: 204 });
   response.cookies.delete(SESSION_COOKIE);

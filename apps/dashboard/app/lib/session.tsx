@@ -65,6 +65,7 @@ export function SessionProvider({
   );
 }
 
+/** The session `SessionProvider` holds; the app reads the user, Convex the token. */
 export function useSession(): Session {
   const session = useContext(SessionContext);
   if (!session) throw new Error("useSession needs a SessionProvider");
@@ -107,6 +108,7 @@ async function signOutSelfHost(): Promise<void> {
   window.location.assign("/auth/key");
 }
 
+// AuthKit's user and access token, under AuthKitProvider, as a Session.
 function WorkOSSession({
   children,
 }: {

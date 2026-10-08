@@ -12,7 +12,6 @@ import { PAGE_RENDER_BUDGET_MS } from "../../app/lib/perfReport";
 import {
   BASE_URL,
   CANVAS_READY,
-  DEV_URL,
   hasProbe,
   MISSING_PROBE,
   readProjectId,
@@ -39,11 +38,15 @@ const COLD_VISITS = 2;
  * network is in the number: measured from Azure westus2 to Hetzner, every
  * page loads cold in 2.3 s and the canvas in 2.9 s, at a 160 ms round trip.
  * The same margin over that as PAGE_RENDER_BUDGET_MS holds over the local
- * figures. The local server keeps the page's own budget.
+ * figures. A server on this machine, on any port (the local stack's own), keeps
+ * the page's own budget.
  */
 const DEPLOYED_RENDER_BUDGET_MS = 3500;
-const RENDER_BUDGET_MS =
-  BASE_URL === DEV_URL ? PAGE_RENDER_BUDGET_MS : DEPLOYED_RENDER_BUDGET_MS;
+const RENDER_BUDGET_MS = ["localhost", "127.0.0.1"].includes(
+  new URL(BASE_URL).hostname,
+)
+  ? PAGE_RENDER_BUDGET_MS
+  : DEPLOYED_RENDER_BUDGET_MS;
 
 // Pages under one project, keyed by the nav label that reaches them.
 const PROJECT_PAGES: ProbePage[] = [

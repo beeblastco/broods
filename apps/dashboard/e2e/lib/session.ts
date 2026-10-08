@@ -119,7 +119,6 @@ export async function signIn(page: Page): Promise<void> {
     await page.waitForURL((url) => !url.pathname.startsWith("/auth/"), {
       timeout: AUTH_TIMEOUT_MS,
     });
-
     return;
   }
   await page.waitForURL((url) => url.origin !== origin, {
