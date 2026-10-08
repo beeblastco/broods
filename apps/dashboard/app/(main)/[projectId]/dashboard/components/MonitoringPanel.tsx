@@ -1,5 +1,6 @@
 "use client";
 
+import { CopyButton } from "@/app/components/CopyButton";
 import {
   DetailFields,
   DetailPayload,
@@ -24,6 +25,9 @@ import {
   ObservabilityToolbar,
   type ToolbarFilterOption,
 } from "./ObservabilityToolbar";
+
+// The CLI line that sends a first run, shown while the stage has no logs yet.
+const FIRST_RUN_COMMAND = 'broods run <agent> "hello"';
 
 const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "all", label: "Info and above" },
@@ -227,6 +231,14 @@ export function MonitoringPanel({
                   {entries.length === 0
                     ? emptyStreamMessage(history, error, "logs", "30 days")
                     : "No logs match the current filters."}
+                  {entries.length === 0 && history === "loaded" && (
+                    <div className="mt-2 flex items-center justify-center gap-1">
+                      <code className="font-mono text-foreground">
+                        {FIRST_RUN_COMMAND}
+                      </code>
+                      <CopyButton value={FIRST_RUN_COMMAND} label="command" />
+                    </div>
+                  )}
                 </td>
               </tr>
             )}

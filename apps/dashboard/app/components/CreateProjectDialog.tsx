@@ -1,5 +1,6 @@
 "use client";
 
+import { markProjectCreated } from "@/app/components/canvas/CanvasKeyReady";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -91,6 +92,7 @@ export function CreateProjectDialog({
         description: undefined,
       });
       handleOpenChange(false);
+      markProjectCreated(id);
       router.push(`/${id}`);
     } catch (err) {
       setError(toErrorMessage(err));

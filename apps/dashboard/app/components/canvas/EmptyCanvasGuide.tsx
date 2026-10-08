@@ -1,8 +1,12 @@
 "use client";
 
 import { AgentSourceOptions } from "@/app/components/AgentSourceOptions";
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 
-/** Shown over an empty canvas so the first agent config can be created from it. */
+/**
+ * Shown over an empty canvas so the first agent config can be created from it.
+ * The footer teaches the shortcuts that open the same list later.
+ */
 export function EmptyCanvasGuide({
   onCreateConfig,
 }: {
@@ -16,6 +20,12 @@ export function EmptyCanvasGuide({
         </h3>
         <p className="mb-4 px-3 text-xs text-muted-foreground">Pick a source</p>
         <AgentSourceOptions onCreateNew={onCreateConfig} />
+        <div className="mt-1 flex items-center gap-1 border-t border-border px-3 py-2 text-2xs text-muted-foreground">
+          <span className="mr-auto">Same list anywhere</span>
+          <ShortcutKeys id="canvas.addAgent" bordered />
+          or
+          <ShortcutKeys id="search.open" bordered />
+        </div>
       </div>
     </div>
   );
