@@ -26,7 +26,7 @@ export const helper = defineAgent({
 });
 ```
 
-`persistent`, `size`, `snapshot` and `memoryLimit` are rejected, and `network.mode` must be `allow-all`.
+`persistent`, `size` and `snapshot` are rejected, and `network.mode` must be `allow-all`.
 
 The daemon strips every `BROODS_*` variable from the environment of agent commands and MCP servers, so an agent shell cannot read `BROODS_API_KEY` or `BROODS_TOKEN`.
 
