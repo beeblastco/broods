@@ -33,6 +33,11 @@ export function CanvasKeyReady({
   );
   const visible = armed && Boolean(deployment);
 
+  // No key on this stage (org not provisioned): drop the marker for good.
+  useEffect(() => {
+    if (armed && deployment === null) createdProjectId = null;
+  }, [armed, deployment]);
+
   // Consumed only once the pill is on screen: the canvas remounts when its
   // stage loads, and a slow key lookup must not eat the display time.
   useEffect(() => {

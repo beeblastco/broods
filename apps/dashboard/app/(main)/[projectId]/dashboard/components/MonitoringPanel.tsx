@@ -238,6 +238,7 @@ export function MonitoringPanel({
                         {FIRST_RUN_COMMAND}
                       </code>
                       <CopyButton value={FIRST_RUN_COMMAND} label="command" />
+                      <span>Replace AGENT with your agent&apos;s name.</span>
                     </div>
                   )}
                 </td>

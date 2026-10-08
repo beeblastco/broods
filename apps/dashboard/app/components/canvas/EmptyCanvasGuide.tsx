@@ -21,7 +21,7 @@ export function EmptyCanvasGuide({
         <p className="mb-4 px-3 text-xs text-muted-foreground">Pick a source</p>
         <AgentSourceOptions onCreateNew={onCreateConfig} />
         <div className="mt-1 flex items-center gap-1 border-t border-border px-3 py-2 text-2xs text-muted-foreground">
-          <span className="mr-auto">Same list anywhere</span>
+          <span className="mr-auto">Open again with</span>
           <ShortcutKeys id="canvas.addAgent" bordered />
           or
           <ShortcutKeys id="search.open" bordered />
