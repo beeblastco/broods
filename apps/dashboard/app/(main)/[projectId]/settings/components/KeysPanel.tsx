@@ -4,8 +4,9 @@
  * Project › Settings › Keys: two lists with two purposes. Runtime keys are
  * minted with the stage, one each; the only actions are rotate and reveal
  * (on the Runtime key tab). API keys are made by people for deploys and
- * integrations and carry a name and a description. Admins only; a member
- * sees a lock.
+ * integrations and carry a name and a description. Each stage answers for
+ * itself: `keys:read` shows its rows, `keys:write` unlocks Rotate, Revoke and
+ * New key for it; a member without either sees a lock.
  */
 
 import { ConfirmDialog } from "@/app/components/ConfirmDialog";
@@ -50,13 +51,12 @@ import {
 import { PLATFORM, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
-import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatDate } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
@@ -68,6 +68,7 @@ type ProjectKeys = NonNullable<
 >;
 type RuntimeKey = ProjectKeys["runtime"][number];
 type ApiKey = ProjectKeys["api"][number];
+type WritableStage = ProjectKeys["writable"][number];
 type RuntimeColumn = "stage" | "lastUsed" | "rotatedAt" | "rotatedBy";
 type ApiColumn =
   | "name"
@@ -106,11 +107,9 @@ interface Props {
 }
 
 export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
-  const { can } = usePermissions(projectId);
   const keys = useQuery(api.apiKeys.listForProject, { projectId: projectId });
-  const stages = useQuery(api.stage.list, { projectId: projectId });
 
-  if (keys === undefined || stages === undefined) {
+  if (keys === undefined) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
   if (keys === null) {
@@ -122,28 +121,27 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
       <RuntimeKeysTable
         projectId={projectId}
         keys={keys.runtime}
-        canWrite={can("keys:write")}
+        writable={keys.writable}
       />
       <ApiKeysTable
         projectId={projectId}
         keys={keys.api}
-        stages={stages}
+        writable={keys.writable}
         defaultStageId={stageId}
-        canWrite={can("keys:write")}
       />
     </div>
   );
 }
 
-/** One row per stage: the key minted with it, when it was rotated and by whom. */
+/** One row per stage: the key minted with it, when it was rotated and by whom. Rotate is for the stages in `writable`. */
 function RuntimeKeysTable({
   projectId,
   keys,
-  canWrite,
+  writable,
 }: {
   projectId: Id<"projects">;
   keys: RuntimeKey[];
-  canWrite: boolean;
+  writable: WritableStage[];
 }): React.JSX.Element {
   const now = useNow();
   const rotate = useMutation(api.agent.deployments.rotate);
@@ -217,7 +215,7 @@ function RuntimeKeysTable({
                   <Who actor={key.rotatedBy ?? PLATFORM} />
                 </DataTableCell>
                 <DataTableCell align="right">
-                  {canWrite ? (
+                  {writable.some((stage) => stage._id === key.stageId) ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -228,7 +226,7 @@ function RuntimeKeysTable({
                       Rotate
                     </Button>
                   ) : (
-                    <LockedValue reason="No permission to rotate keys">
+                    <LockedValue reason="No permission to rotate this stage's key">
                       Rotate
                     </LockedValue>
                   )}
@@ -261,20 +259,19 @@ function RuntimeKeysTable({
   );
 }
 
-/** Keys people make: name, description, the stage they reach, and who made them. */
+/** Keys people make: name, description, the stage they reach, and who made them. Revoke and New key are for the stages in `writable`. */
 function ApiKeysTable({
   projectId,
   keys,
-  stages,
+  writable,
   defaultStageId,
-  canWrite,
 }: {
   projectId: Id<"projects">;
   keys: ApiKey[];
-  stages: Doc<"stages">[];
+  writable: WritableStage[];
   defaultStageId: Id<"stages"> | null;
-  canWrite: boolean;
 }): React.JSX.Element {
+  const canWrite = writable.length > 0;
   const now = useNow();
   const remove = useMutation(api.deployKeys.remove);
   const [creating, setCreating] = useState(false);
@@ -324,7 +321,9 @@ function ApiKeysTable({
             size="sm"
             className="cursor-pointer"
             disabled={!canWrite}
-            title={canWrite ? undefined : "No permission to create keys"}
+            title={
+              canWrite ? undefined : "No permission to make keys on any stage"
+            }
             onClick={() => setCreating(true)}
           >
             <Plus className="size-4" />
@@ -387,7 +386,7 @@ function ApiKeysTable({
                   )}
                 </DataTableCell>
                 <DataTableCell align="right">
-                  {canWrite && (
+                  {writable.some((stage) => stage._id === key.stageId) && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -422,7 +421,7 @@ function ApiKeysTable({
       {creating && (
         <NewKeyDialog
           projectId={projectId}
-          stages={stages}
+          stages={writable}
           defaultStageId={defaultStageId}
           onClose={() => setCreating(false)}
           onCreated={(token, stageName) => {
@@ -462,7 +461,7 @@ function NewKeyDialog({
   onCreated,
 }: {
   projectId: Id<"projects">;
-  stages: Doc<"stages">[];
+  stages: WritableStage[];
   defaultStageId: Id<"stages"> | null;
   onClose: () => void;
   onCreated: (token: string, stageName: string) => void;
@@ -470,7 +469,7 @@ function NewKeyDialog({
   const create = useMutation(api.deployKeys.create);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [stage, setStage] = useState<Doc<"stages"> | null>(
+  const [stage, setStage] = useState<WritableStage | null>(
     stages.find((entry) => entry._id === defaultStageId) ?? stages[0] ?? null,
   );
   const { pending, error, run } = useSubmit();

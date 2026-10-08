@@ -15,6 +15,7 @@ import {
   DASHBOARD_POLICY_ACTIONS,
   type DashboardPolicyAction,
   type PolicyDocument,
+  type PolicyEffect,
   type PolicyRule,
 } from "./policyRules";
 
@@ -48,19 +49,7 @@ export function policiesAllow(
   action: string,
   scope: DashboardScope = {},
 ): boolean {
-  let allowed = false;
-  for (const policy of policies) {
-    if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {
-      continue;
-    }
-    for (const rule of policy.document.rules) {
-      if (!rule.actions.includes(action) || !ruleApplies(rule, scope)) continue;
-      if (rule.effect === "deny") return false;
-      allowed = true;
-    }
-  }
-
-  return allowed;
+  return ruleVerdict(policies, action, scope) === "allow";
 }
 
 /** The tier's permissions plus what the policies allow in the scope. */
@@ -68,12 +57,9 @@ export function dashboardPermissions(
   access: MemberAccess,
   scope: DashboardScope = {},
 ): DashboardPolicyAction[] {
-  const held = new Set(tierPermissions(access.tier));
-  for (const action of DASHBOARD_POLICY_ACTIONS) {
-    if (policiesAllow(access.policies, action, scope)) held.add(action);
-  }
-
-  return [...held];
+  return DASHBOARD_POLICY_ACTIONS.filter((action) =>
+    policiesAllowOrTier(access, action, scope),
+  );
 }
 
 /** One member's tier and policies in one org; null when they are not a member. */
@@ -170,14 +156,19 @@ export async function activePolicies(
     }));
 }
 
-function policiesAllowOrTier(
+/** Whether the tier holds the action, or the policies allow it in the scope. Without a rule on `keys:read`, a granted `keys:write` reads, so a writer sees the list. */
+export function policiesAllowOrTier(
   access: MemberAccess,
   action: DashboardPolicyAction,
   scope: DashboardScope,
 ): boolean {
+  if (tierPermissions(access.tier).includes(action)) return true;
+  const verdict = ruleVerdict(access.policies, action, scope);
+  if (verdict) return verdict === "allow";
+
   return (
-    tierPermissions(access.tier).includes(action) ||
-    policiesAllow(access.policies, action, scope)
+    action === "keys:read" &&
+    policiesAllow(access.policies, "keys:write", scope)
   );
 }
 
@@ -224,6 +215,27 @@ function idCondition<T extends "projects" | "stages">(
   return typeof match?.value === "string"
     ? (ctx.db.normalizeId(table, match.value) ?? undefined)
     : undefined;
+}
+
+/** What the rules on one action say in one scope: a matching deny, else a matching allow, else nothing. */
+function ruleVerdict(
+  policies: readonly ScopedPolicy[],
+  action: string,
+  scope: DashboardScope,
+): PolicyEffect | null {
+  let verdict: PolicyEffect | null = null;
+  for (const policy of policies) {
+    if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {
+      continue;
+    }
+    for (const rule of policy.document.rules) {
+      if (!rule.actions.includes(action) || !ruleApplies(rule, scope)) continue;
+      if (rule.effect === "deny") return "deny";
+      verdict = "allow";
+    }
+  }
+
+  return verdict;
 }
 
 /** A policy row made for one project or stage applies only there. */
