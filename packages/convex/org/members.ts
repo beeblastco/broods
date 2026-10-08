@@ -222,7 +222,13 @@ export const updateRole = mutation({
     assertCanTouchOwnerRole(callerMembership, membership.role);
     assertCanTouchOwnerRole(callerMembership, role);
     await assertWithinReach(ctx, membership.orgId, caller, role, args.roleId);
-    await assertWithinReach(ctx, membership.orgId, caller, membership.role);
+    await assertWithinReach(
+      ctx,
+      membership.orgId,
+      caller,
+      membership.role,
+      membership.roleId,
+    );
 
     const targetUser = await ctx.db.get(membership.userId);
     const org = await ctx.db.get(membership.orgId);
@@ -276,7 +282,13 @@ export const remove = mutation({
       "members:write",
     );
     assertCanTouchOwnerRole(callerMembership, membership.role);
-    await assertWithinReach(ctx, membership.orgId, caller, membership.role);
+    await assertWithinReach(
+      ctx,
+      membership.orgId,
+      caller,
+      membership.role,
+      membership.roleId,
+    );
 
     const targetUser = await ctx.db.get(membership.userId);
     const org = await ctx.db.get(membership.orgId);

@@ -1,9 +1,10 @@
 import { ConvexClientProvider } from "@/app/components/ConvexClientProvider";
+import { currentSession, selfHosted } from "@/app/lib/selfHostSession";
+import type { InitialSession } from "@/app/lib/session";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import type { Metadata } from "next";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { headers } from "next/headers";
-import type { ComponentProps } from "react";
 import { prefetchDNS } from "react-dom";
 import "./globals.css";
 
@@ -19,7 +20,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>): Promise<React.JSX.Element> {
-  const initialAuth = await initialAuthFromRequest();
+  const initialSession = await initialSessionFromRequest();
   // Resolve the Convex host while the HTML streams. Not preconnect: a WebSocket never reuses a pooled connection.
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (convexUrl) prefetchDNS(convexUrl);
@@ -29,7 +30,7 @@ export default async function RootLayout({
       <body className="antialiased">
         {/* View state lives in the URL (app/lib/urlState.ts); writes are shallow. */}
         <NuqsAdapter>
-          <ConvexClientProvider initialAuth={initialAuth}>
+          <ConvexClientProvider initialSession={initialSession}>
             {children}
           </ConvexClientProvider>
         </NuqsAdapter>
@@ -43,13 +44,18 @@ export default async function RootLayout({
  * asking a server action who the user is. The token itself stays out of the
  * HTML: the proxy's `eagerAuth` cookie carries it to the browser. Without the
  * proxy header there is no session to read: the not-found page for an asset
- * path the proxy matcher skips renders through this layout too.
+ * path the proxy matcher skips renders through this layout too. A self-hosted
+ * stack reads its own session cookie, and hands the client the token so the
+ * Convex client authenticates without a round trip.
  */
-async function initialAuthFromRequest(): Promise<
-  ComponentProps<typeof ConvexClientProvider>["initialAuth"]
-> {
-  if (!(await headers()).has("x-workos-middleware")) return { user: null };
+async function initialSessionFromRequest(): Promise<InitialSession> {
+  if (selfHosted) {
+    return { kind: "selfHost", session: await currentSession() };
+  }
+  if (!(await headers()).has("x-workos-middleware")) {
+    return { initialAuth: { user: null }, kind: "workos" };
+  }
   const { accessToken: _accessToken, ...initialAuth } = await withAuth();
 
-  return initialAuth;
+  return { initialAuth: initialAuth, kind: "workos" };
 }

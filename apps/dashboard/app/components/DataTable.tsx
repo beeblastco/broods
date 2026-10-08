@@ -255,8 +255,8 @@ export function DataTableFooter({
 }: {
   shown?: number;
   total: number;
-  /** The rows' plural name, or the singular when `total` is one. */
-  noun: string;
+  /** The rows' name, singular and plural: `["job", "jobs"]`. */
+  noun: [string, string];
   children?: ReactNode;
 }): React.JSX.Element {
   const count =
@@ -267,7 +267,7 @@ export function DataTableFooter({
   return (
     <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-1.5 text-2xs text-muted-foreground tabular-nums">
       <span>
-        {count} {noun}
+        {count} {total === 1 ? noun[0] : noun[1]}
         {typeof children === "string" && children}
       </span>
       {typeof children !== "string" && children}

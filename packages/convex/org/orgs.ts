@@ -15,6 +15,7 @@ import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
 import { ClientError } from "../model/clientError";
+import { hasDashboardPermission } from "../model/access";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -268,8 +269,8 @@ export const userIdByAuthId = internalQuery({
   },
 });
 
-/** One org by id when the caller is an admin or owner there; null otherwise. */
-export const getByIdForAdmin = query({
+/** One org by id when the caller holds `keys:write` for it, so may mint or rotate its account key; null otherwise. */
+export const getByIdForKeyWriter = internalQuery({
   args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {
@@ -282,7 +283,9 @@ export const getByIdForAdmin = query({
     if (!user) {
       return null;
     }
-    await requireOrgMember(ctx, args.orgId, user._id, "admin");
+    if (!(await hasDashboardPermission(ctx, args.orgId, user, "keys:write"))) {
+      return null;
+    }
 
     return await ctx.db.get(args.orgId);
   },

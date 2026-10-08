@@ -210,7 +210,7 @@ export function OrgPoliciesPanel(): React.JSX.Element {
         <DataTableFooter
           shown={list.shown.length}
           total={policies.length}
-          noun="policies"
+          noun={["policy", "policies"]}
         />
       </DetailSplit>
       {creating && <PolicyDialog onClose={() => setCreating(false)} />}

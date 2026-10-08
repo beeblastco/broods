@@ -205,7 +205,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         <DataTableFooter
           shown={list.shown.length}
           total={members.length}
-          noun="members"
+          noun={["member", "members"]}
         />
       </DetailSplit>
       {inviting && (

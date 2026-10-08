@@ -22,7 +22,7 @@ import { EmptyState, NoPermission } from "@/app/components/EmptyState";
 import { RevealSecretDialog } from "@/app/components/RevealSecretDialog";
 import { Button } from "@/app/components/ui/button";
 import { PLATFORM, Who } from "@/app/components/Who";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatDate } from "@/app/lib/formatTime";
@@ -36,9 +36,10 @@ interface Props {
 }
 
 export function ApiAccessPanel({ org }: Props): React.JSX.Element {
-  // The account key is the whole account API, so only the admin tier mints
-  // or rotates it; a role with `keys:read` still sees the list.
-  const { canWrite } = useOrgRole();
+  // `keys:write` for the organization mints or rotates the account key: the
+  // admin tier holds it, and a role may be granted it.
+  const { can } = usePermissions();
+  const canWrite = can("keys:write");
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const keys = useQuery(api.apiKeys.listForOrg, {});
   const provision = useAction(api.org.lifecycle.provision);
@@ -174,7 +175,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
         )}
         <DataTableFooter
           total={account ? keys.length : 0}
-          noun={account ? (keys.length === 1 ? "key" : "keys") : "account"}
+          noun={account ? ["key", "keys"] : ["account", "accounts"]}
         />
       </div>
       {error && !rotateOpen && (
