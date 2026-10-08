@@ -9,6 +9,8 @@ import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
   SANDBOX_IMAGES,
+  SANDBOX_PROVIDERS,
+  SNAPSHOT_SANDBOX_PROVIDERS,
   type SandboxImage,
 } from "@broods/convex/model/sandboxRules";
 import { isWorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
@@ -129,7 +131,12 @@ export function SandboxResourceDetailsTab({
     typeof config.provider === "string" ? config.provider : "lambda";
   const snapshot =
     typeof config.snapshot === "string" ? config.snapshot : undefined;
-  const hasSnapshots = provider === "sandbox" || provider === "lambda";
+  const sandboxProvider = SANDBOX_PROVIDERS.find(
+    (candidate) => candidate === provider,
+  );
+  const hasSnapshots =
+    sandboxProvider !== undefined &&
+    SNAPSHOT_SANDBOX_PROVIDERS.has(sandboxProvider);
   const snapshots = useQuery(
     api.sandbox.snapshots.listForActiveOrg,
     hasSnapshots ? {} : "skip",

@@ -2,7 +2,9 @@
  * E2B-backed sandbox executor.
  * Keep E2B SDK adaptation here. Commands run in E2B's native sandbox filesystem.
  * Persistent mode reserves one sandbox per key, reconnecting by stored id (E2B
- * auto-pauses it on idle and connect resumes it).
+ * auto-pauses it on idle and connect resumes it). `config.snapshot` names the
+ * template or snapshot it boots, and the Snapshot action captures a reserved
+ * sandbox into a new snapshot.
  */
 
 import type { Sandbox } from "e2b";
@@ -27,8 +29,10 @@ import type {
   SandboxExecutorConfig,
   SandboxJobHandle,
   SandboxReleaseRequest,
+  SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
+  SandboxSnapshotResult,
 } from "./types.ts";
 import {
   configString,
@@ -140,6 +144,28 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       externalId,
     ).catch(() => {});
+  }
+
+  /**
+   * Captures the reserved sandbox as an E2B snapshot, which any e2b sandbox of
+   * the account can then boot through `config.snapshot`. E2B pauses the sandbox
+   * while it captures.
+   */
+  async snapshot(
+    request: SandboxReservationRef,
+  ): Promise<SandboxSnapshotResult> {
+    const key = sandboxReservationKey(request);
+    const externalId = key ? await getSandboxExternalId("e2b", key) : null;
+    if (!externalId) {
+      throw new Error("no reserved e2b sandbox to snapshot for this sandbox");
+    }
+    const Sandbox = await e2bSandboxApi();
+    const snapshot = await Sandbox.createSnapshot(
+      externalId,
+      e2bApiOptions(this.#config),
+    );
+
+    return { snapshotId: snapshot.snapshotId };
   }
 
   #persistent(request: {
@@ -303,12 +329,10 @@ function e2bCreateOptions(
 ): Record<string, unknown> {
   const options = isPlainObject(config.options) ? config.options : {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
-  const template =
-    configString(options.template) ?? configString(options.templateId);
 
   return {
     ...(apiKey ? { apiKey: apiKey } : {}),
-    ...(template ? { template: template } : {}),
+    ...(config.snapshot ? { template: config.snapshot } : {}),
     // Auto-pause on idle (instead of kill) so a reserved sandbox can be resumed.
     ...(persistent
       ? {

@@ -3,8 +3,11 @@
  * Keep Daytona SDK adaptation here. A real VM: mount the workspace, then run the
  * bash `code` as-is. Persistent mode reserves one sandbox per workspace,
  * reconnecting by stored id (Daytona auto-stops it on idle; the harness restarts it).
+ * `config.snapshot` names the Daytona snapshot it boots, and the Snapshot action
+ * captures a reserved sandbox into a new one.
  */
 
+import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
@@ -48,8 +51,10 @@ import type {
   SandboxJobRequest,
   SandboxJobStatus,
   SandboxReleaseRequest,
+  SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
+  SandboxSnapshotResult,
 } from "./types.ts";
 import {
   configString,
@@ -63,6 +68,9 @@ import {
   truncateText,
   workspacePath,
 } from "./utils.ts";
+
+// How long the Snapshot action waits for Daytona to finish capturing a sandbox.
+const SNAPSHOT_TIMEOUT_SECONDS = 300;
 
 export class DaytonaSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -158,7 +166,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
 
     return parseJobStatus(
       request.jobId,
@@ -168,7 +176,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
 
   async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
     const bytes = request.outputLimitBytes ?? 64 * 1024;
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     const logs = truncateText(
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
@@ -182,7 +190,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
-    const { sandbox, jobsDir } = await this.#jobContext(request);
+    const { sandbox, jobsDir } = await this.#reserved(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
 
     // Report the real terminal state: a job that had already finished keeps its
@@ -216,6 +224,22 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       externalId,
     ).catch(() => {});
+  }
+
+  /**
+   * Captures the reserved sandbox's filesystem as a Daytona snapshot, which any
+   * daytona sandbox of the account can then boot through `config.snapshot`.
+   */
+  async snapshot(
+    request: SandboxReservationRef,
+  ): Promise<SandboxSnapshotResult> {
+    // Daytona snapshot names are unique per organization, so the account's own
+    // name for it stays in the snapshot row.
+    const name = `broods-${randomUUID()}`;
+    const { sandbox } = await this.#reserved(request);
+    await sandbox.createSnapshot(name, SNAPSHOT_TIMEOUT_SECONDS);
+
+    return { snapshotId: name };
   }
 
   #persistent(request: {
@@ -359,17 +383,17 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     return Object.keys(env).length > 0 ? env : undefined;
   }
 
-  async #jobContext(
-    request: SandboxJobRequest,
+  // The reserved sandbox, started if it auto-stopped on idle, for background
+  // jobs and the Snapshot action, which both need it running.
+  async #reserved(
+    request: SandboxReservationRef,
   ): Promise<{ sandbox: Sandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
     if (!key)
-      throw new Error(
-        "job operations require a persistent sandbox reservation key",
-      );
+      throw new Error("a persistent sandbox reservation key is required");
     const externalId = await getSandboxExternalId("daytona", key);
     if (!externalId)
-      throw new Error("no reserved daytona sandbox for this workspace");
+      throw new Error("no reserved daytona sandbox for this reservation");
     const sandbox = await this.#reconnect(
       new Daytona(daytonaClientOptions(this.#config)),
       externalId,
@@ -386,11 +410,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       return await client.create(options);
     } catch (err) {
       if (isNoRunnersError(err)) {
-        const snapshot = configString(
-          isPlainObject(this.#config.options)
-            ? this.#config.options.snapshot
-            : undefined,
-        );
+        const snapshot = this.#config.snapshot;
         throw new SandboxCapacityError(
           `Daytona has no available runner for ${snapshot ? `snapshot '${snapshot}'` : "the request"} in the ` +
             `selected region. The snapshot may be non-general (pinned to one runner) or the runner is at capacity. ` +
@@ -496,9 +516,7 @@ async function daytonaCreateOptions(
 
   return {
     language: "typescript",
-    ...(configString(options.snapshot)
-      ? { snapshot: configString(options.snapshot) }
-      : {}),
+    ...(config.snapshot ? { snapshot: config.snapshot } : {}),
     ...(configString(options.image)
       ? { image: configString(options.image) }
       : {}),

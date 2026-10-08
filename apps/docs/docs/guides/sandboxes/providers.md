@@ -44,7 +44,7 @@ export const box = defineSandbox({
 - A workspace that brings its own bucket cannot be reached under `deny-all`, so the run is refused. Pair it with `allow-all`.
 - The workspace mount cannot append or edit in place. `>>` and in-place edits fail. The `write` and `edit` tools rewrite whole files, so tell the agent not to append.
 - The image, roles and log group are managed by the platform. `options` accepts only `workspaceRoot` and `reservationKey`.
-- The Snapshot action builds a new image from the files a running machine changed, see [Images](index.md#images). `image: "obscura"` or `image: "browser"` boots a platform image with a headless browser. `snapshot` pins an image by ARN, in the same AWS account and region as the default. Any other ARN fails the run.
+- The Snapshot action builds a new image from the files a running machine changed, see [Images](index.md#images). `image: "obscura"` or `image: "browser"` boots a platform image with a headless browser. `snapshot` pins an image by ARN, in the same AWS account and region as the default. Any other ARN, or a snapshot another account built, fails the run.
 - `broods logs --sandbox <uuid>` and the Instances Logs tab show what the guest itself writes to stdout and stderr.
 
 The first exec after a resume can take 1 to 10 seconds while the VM restores.
@@ -58,8 +58,8 @@ export const box = defineSandbox({
   name: "daytona",
   provider: "daytona",
   permissionMode: "ask",
+  snapshot: "fuse-s3",
   options: {
-    snapshot: "fuse-s3",
     target: "default",
     workspaceRoot: "/mnt/workspaces",
     mountAwsS3Buckets: true,
@@ -69,7 +69,8 @@ export const box = defineSandbox({
 
 - Set your Daytona credentials in `options.apiKey`, `organizationId`, `apiUrl` and `target`, with `env("NAME")` for the key. A self-hosted deployment can set fallbacks for every account. See [Self-hosting](../../internals/self-hosting.md).
 - Set `options.mountAwsS3Buckets: true` for workspace tools. The snapshot must include `mount-s3`.
-- Use `options.snapshot` for Daytona snapshots and `options.image` only to create from a Docker image.
+- `snapshot` names the Daytona snapshot to boot. `options.image` instead builds the sandbox from a Docker image when it is created. Set one or the other.
+- The Snapshot action captures a reserved sandbox's filesystem as a new Daytona snapshot, see [Images](index.md#images).
 - `network.mode` maps to Daytona's `networkBlockAll`. `restricted` applies the CIDR allowlist only; domain lists are ignored with a warning.
 - Idle and lifetime map to Daytona's `autoStopInterval` and `autoDeleteInterval`.
 - `size` does nothing here. The dashboard shows the vCPU, memory and disk Daytona reports for the sandbox.
@@ -90,7 +91,7 @@ export const box = defineSandbox({
   provider: "e2b",
   network: { mode: "allow-all" },
   permissionMode: "ask",
-  options: { template: "runtime-template" },
+  snapshot: "runtime-template",
 });
 ```
 
@@ -98,7 +99,8 @@ export const box = defineSandbox({
 - Workspaces are not supported. Attaching one fails.
 - `onCreate` and `onResume` are rejected. Put setup in the template.
 - The template sets the machine size, and `size` does nothing. The dashboard shows the vCPU and memory E2B reports, and `?` for disk, which E2B does not report.
-- Set your E2B key in `options.apiKey`. A self-hosted deployment can set a fallback for every account, see [Self-hosting](../../internals/self-hosting.md). `templateId` is an alias for `template`.
+- Set your E2B key in `options.apiKey`. A self-hosted deployment can set a fallback for every account, see [Self-hosting](../../internals/self-hosting.md).
+- `snapshot` names the E2B template or snapshot to boot. The Snapshot action captures a reserved sandbox as an E2B snapshot, pausing it while it captures.
 - Persistent mode pauses on idle and keeps files, installs and processes.
 - Background jobs run natively, and `async_status` offers `status` only, without `logs` or `stop`.
 - The template needs Python for background-job completion callbacks.
@@ -116,12 +118,12 @@ export const box = defineSandbox({
   permissionMode: "bypass",
   onCreate: ["npm install"],
   onResume: ["test -d node_modules"],
-  options: { image: "vercel/sandbox/universal:latest" },
+  snapshot: "vercel/sandbox/universal:latest",
 });
 ```
 
 - Set your Vercel credentials in `options.token`, `teamId` and `projectId`. A self-hosted deployment can set fallbacks for every account. See [Self-hosting](../../internals/self-hosting.md).
-- `options.image` takes a managed image or an OCI image in your project's Vercel Container Registry. `runtime` is deprecated and cannot be combined with `image`.
+- `snapshot` takes a managed image, an OCI image in your project's Vercel Container Registry, or a Vercel snapshot id, which starts with `snap_`.
 
   | Image                                                        | Contents                                                            |
   | ------------------------------------------------------------ | ------------------------------------------------------------------- |
@@ -130,6 +132,7 @@ export const box = defineSandbox({
   | `vercel/sandbox/python:3.14`                                 | Python with pip, venv and uv                                        |
   | `vercel/sandbox/ubuntu:latest`, `vercel/sandbox/arch:latest` | General base images                                                 |
 
+- The Snapshot action captures a reserved sandbox as a Vercel snapshot that does not expire. Vercel stops the sandbox to capture it, and its next call resumes it.
 - All three network modes are enforced natively.
 - `size` does nothing here. The dashboard shows the vCPU and memory Vercel reports, and `?` for disk, which Vercel does not report.
 - Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.

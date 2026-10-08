@@ -13,11 +13,12 @@ export const vercelSandbox = defineSandbox({
   envVars: {
     SANDBOX_SMOKE_VAR: "sandbox-env-ok",
   },
+  // A Vercel image, or a `snap_` snapshot the dashboard Snapshot action captured.
+  snapshot: "vercel/sandbox/universal:latest",
   options: {
     token: env("VERCEL_TOKEN"),
     teamId: env("VERCEL_TEAM_ID"),
     projectId: env("VERCEL_PROJECT_ID"),
-    image: "vercel/sandbox/universal:latest",
   },
 });
 

@@ -134,6 +134,12 @@ interface AgentStore {
     accountId: string,
     endpointId: string,
   ): Promise<AgentRecord[]>;
+  /** Agents of one stage, deployed or not, for the MCP explorer. */
+  listForStage(
+    accountId: string,
+    projectId: string,
+    stageId: string,
+  ): Promise<AgentRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
