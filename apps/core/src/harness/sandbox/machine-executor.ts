@@ -334,6 +334,8 @@ async function claimSandbox(
     !authorize(rolePrincipal(socket.data.role), "sandboxes:write", {
       type: "sandboxes",
       id: record.sandboxId,
+      projectId: record.projectId,
+      stageId: record.stageId,
     }).allow;
   if (denied) {
     logWarn("Machine sandbox claim refused", {

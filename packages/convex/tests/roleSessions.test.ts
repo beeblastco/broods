@@ -246,6 +246,129 @@ describe("role sessions on config-plane routes", () => {
   });
 });
 
+describe("stage-pinned role sessions", () => {
+  const AGENTS_WRITE_POLICY: PolicyDocument = {
+    version: 1,
+    rules: [
+      {
+        id: "agents",
+        effect: "allow",
+        actions: ["agents:read", "agents:write"],
+      },
+    ],
+  };
+
+  async function insertAgent(
+    t: T,
+    seeded: Seeded,
+    stageId: Id<"stages">,
+    name: string,
+  ): Promise<Id<"agents">> {
+    return await t.run(async (ctx) => {
+      const agentId = await ctx.db.insert("agents", {
+        accountId: seeded.accountId,
+        name: name,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("agentConfigs", {
+        authId: AUTH_ID,
+        name: name,
+        agentId: agentId,
+        projectId: seeded.projectId,
+        stageId: stageId,
+        updatedAt: Date.now(),
+      });
+
+      return agentId;
+    });
+  }
+
+  async function pinnedSession(t: T, seeded: Seeded): Promise<string> {
+    // Pinned to the development stage.
+    const roleId = await createRole(t, seeded, {
+      scoped: true,
+      policy: AGENTS_WRITE_POLICY,
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+
+    return token;
+  }
+
+  function patchAgent(t: T, token: string, agentId: string): Promise<Response> {
+    return t.fetch(`/v1/agents/${agentId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: "patched" }),
+    });
+  }
+
+  test("a dev-pinned role cannot PATCH or read a production agent", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const prodAgent = await insertAgent(
+      t,
+      seeded,
+      seeded.otherStageId,
+      "prod-agent",
+    );
+    const token = await pinnedSession(t, seeded);
+
+    const write = await patchAgent(t, token, prodAgent);
+    expect(write.status).toBe(403);
+    const body = (await write.json()) as ApiErrorBody;
+    expect(body.error.message).toContain("pinned");
+
+    const read = await t.fetch(`/v1/agents/${prodAgent}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(read.status).toBe(403);
+
+    const unchanged = await t.run(async (ctx) => await ctx.db.get(prodAgent));
+    expect(unchanged?.description).toBeUndefined();
+  });
+
+  test("a dev-pinned role still acts on its own stage's agent", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const devAgent = await insertAgent(t, seeded, seeded.stageId, "dev-agent");
+    const token = await pinnedSession(t, seeded);
+
+    const read = await t.fetch(`/v1/agents/${devAgent}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(read.status).toBe(200);
+
+    const write = await patchAgent(t, token, devAgent);
+    expect(write.status).toBe(200);
+  });
+
+  test("a dev-pinned role cannot list or create account-wide", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const token = await pinnedSession(t, seeded);
+
+    const list = await t.fetch("/v1/agents", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(list.status).toBe(403);
+
+    const create = await t.fetch("/v1/agents", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "sneaky" }),
+    });
+    expect(create.status).toBe(403);
+  });
+});
+
 describe("POST /v1/roles", () => {
   test("rejects the retired tools:write action with a 400", async () => {
     const t = roleTest();

@@ -510,6 +510,57 @@ describe("account management HTTP handler", () => {
     }
   });
 
+  it("holds a stage-pinned role session to its own stage's sandboxes", async () => {
+    setStorageForTests(
+      createFakeStorage({
+        sandboxConfigs: {
+          getById: async function (_accountId: string, sandboxId: string) {
+            return {
+              accountId: "acct_test",
+              sandboxId: sandboxId,
+              projectId: "project_1",
+              stageId: sandboxId === "sbx_dev" ? "stage_dev" : "stage_prod",
+              config: { provider: "daytona" },
+            };
+          },
+        },
+        roleSessions: {
+          resolveByTokenHash: async function () {
+            return {
+              accountId: "acct_test",
+              roleId: "brole_dev",
+              projectId: "project_1",
+              stageId: "stage_dev",
+              policy: {
+                version: 1,
+                rules: [
+                  { id: "sbx", effect: "allow", actions: ["sandboxes:write"] },
+                ],
+              },
+            };
+          },
+        },
+      }),
+    );
+    const headers = { authorization: "Bearer bsts_dev-session" };
+
+    const prod = await handler(
+      createEvent("POST", "/v1/sandboxes/sbx_prod/suspend", headers, {
+        reservationKey: "res_1",
+      }),
+    );
+    expect(prod.status).toBe(403);
+    expect(await responseJson(prod)).toMatchObject({
+      error: { message: expect.stringContaining("pinned") },
+    });
+
+    // Past the role gate, the dev sandbox reaches the body checks.
+    const dev = await handler(
+      createEvent("POST", "/v1/sandboxes/sbx_dev/suspend", headers, {}),
+    );
+    expect(dev.status).toBe(400);
+  });
+
   it("refuses a lifecycle verb on a stored config with a removed image option", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(
@@ -706,6 +757,12 @@ function createFakeStorage(overrides: Record<string, unknown>) {
         return 0;
       },
       ...(overrides.mcp as Record<string, unknown> | undefined),
+    },
+    roleSessions: {
+      resolveByTokenHash: async function () {
+        return null;
+      },
+      ...(overrides.roleSessions as Record<string, unknown> | undefined),
     },
   } as never;
 }

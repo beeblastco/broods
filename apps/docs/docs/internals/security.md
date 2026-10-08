@@ -104,7 +104,7 @@ Rules the code enforces:
 - A project key syncs its own stage only. Skills and hooks are account-wide by name, so a project key whose manifest names one that another stage manages is refused instead of replacing it. The account key and a login token may move a name between stages. `--prune` leaves other stages' rows alone and fails when an agent or channel record still lists a policy it would remove.
 - A project key can set and list env vars but never read a value back. `broods env get` needs a login token or the account key, and every reveal is recorded in `environmentVariableReveals`.
 - `broods login` binds the one-time code to the CLI process with S256 PKCE, so a code caught by another local listener cannot be exchanged.
-- Sessions cannot mint new sessions, rotate the account key, or touch `/v1/roles`. A runtime key may assume only roles pinned to its own project and stage. `status: "disabled"` on a role kills every live session.
+- Sessions cannot mint new sessions, rotate the account key, or touch `/v1/roles`. A runtime key may assume only roles pinned to its own project and stage. A pinned session's resource must resolve to that stage before any rule is read (`authorize()` in `packages/convex/model/apiAuthorization.ts`), so collections and account-wide resources are refused. `status: "disabled"` on a role kills every live session.
 - Webhook signing secrets and env var values are write-only in the dashboard.
 
 ## Hosted MCP servers

@@ -16,6 +16,7 @@ import {
   type QueryCtx,
 } from "../_generated/server";
 import { accountIdForProject } from "../model/auditEvents";
+import { resourceStageScope } from "../model/projectScope";
 import {
   API_POLICY_ACTIONS,
   normalizePolicyDocument,
@@ -226,6 +227,32 @@ export const resolveSession = internalQuery({
       ...(role.stageId !== undefined ? { stageId: role.stageId } : {}),
     };
   },
+});
+
+/**
+ * The stage a config-plane resource lives in, for a stage-pinned role session.
+ * Null when it has none or is not this account's.
+ */
+export const resourceScope = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    type: v.union(
+      v.literal("agents"),
+      v.literal("channels"),
+      v.literal("crons"),
+      v.literal("mcp"),
+      v.literal("policies"),
+      v.literal("sandboxes"),
+      v.literal("workspaces"),
+    ),
+    id: v.string(),
+  },
+  returns: v.union(
+    v.object({ projectId: v.id("projects"), stageId: v.id("stages") }),
+    v.null(),
+  ),
+  handler: async (ctx, args) =>
+    await resourceStageScope(ctx, args.accountId, args.type, args.id),
 });
 
 /** Null when the role is unknown or belongs to another account. */
