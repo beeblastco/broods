@@ -110,6 +110,7 @@ import {
   findFreePosition,
   GRID,
 } from "@broods/convex/model/canvasLayout";
+import { defaultStage } from "@broods/convex/model/defaultStage";
 import { api } from "@broods/convex/_generated/api";
 import {
   agreedSandboxOrderNumbers,
@@ -470,7 +471,7 @@ function CanvasInner({
 }: {
   projectId: Id<"projects">;
 } & StageData): React.JSX.Element {
-  const { stageId, stageArgs } = useStage();
+  const { stageId } = useStage();
   const mcpServersByNode = useMemo(
     () => serversByNode(mcpServers ?? []),
     [mcpServers],
@@ -605,15 +606,24 @@ function CanvasInner({
   ).withOptimisticUpdate((localStore, args) => {
     // Keep the cached layout in sync with the pending write so the post-save
     // snapshot matches what's on screen (local React state is already optimistic).
-    // A bare project URL reads the layout without a stageId, so that entry too.
+    // A bare project URL reads the layout without a stageId, so that entry too
+    // while the saved stage is still the default: this re-runs on every server
+    // change, and a moved default must not show this stage's graph.
     const layout = { nodes: args.nodes, edges: args.edges };
     localStore.setQuery(
       api.canvas.getByProject,
       { projectId: args.projectId, stageId: args.stageId },
       layout,
     );
-    if (stageArgs !== "skip" && !stageArgs.stageId) {
-      localStore.setQuery(api.canvas.getByProject, stageArgs, layout);
+    const stages = localStore.getQuery(api.stage.list, {
+      projectId: args.projectId,
+    });
+    if (stages && defaultStage(stages)?._id === args.stageId) {
+      localStore.setQuery(
+        api.canvas.getByProject,
+        { projectId: args.projectId },
+        layout,
+      );
     }
   });
   const updateRuntimeRefs = useMutation(api.agent.config.updateRuntimeRefs);
