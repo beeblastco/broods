@@ -4,12 +4,70 @@
  * the full chain runs in the local-stack E2E.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { handleMcpServiceRpc } from "../src/accounts/mcp-service.ts";
 import { setMcpForTests } from "../src/harness/mcp/client.ts";
+import type { SandboxMcpTarget } from "../src/harness/mcp/sandbox.ts";
+import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import type { SandboxConfigRecord } from "../src/shared/domain/sandbox-config.ts";
+import type { WorkspaceConfigRecord } from "../src/shared/domain/workspace-config.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
-import { setStorageForTests } from "../src/shared/storage.ts";
+import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 import { agentSandboxReservationKey } from "../src/shared/workspaces.ts";
+
+const CREATED_AT = "2026-10-07T00:00:00.000Z";
+const WEB_SANDBOX: SandboxConfigRecord = {
+  accountId: "acct_test",
+  sandboxId: "sb_web",
+  stageId: "stage_1",
+  name: "web",
+  config: { provider: "lambda", persistent: true, image: "obscura" },
+  createdAt: CREATED_AT,
+  updatedAt: CREATED_AT,
+};
+const OTHER_STAGE_SANDBOX: SandboxConfigRecord = {
+  ...WEB_SANDBOX,
+  sandboxId: "sb_other_stage",
+  stageId: "stage_2",
+  config: { provider: "machine" },
+};
+const OBSCURA_ROW: McpRecord = {
+  accountId: "acct_test",
+  serverId: "mcp_1",
+  projectId: "proj_1",
+  stageId: "stage_1",
+  name: "obscura",
+  transport: "machine",
+  sandbox: "web",
+  command: ["obscura", "mcp"],
+  status: "active",
+  createdAt: CREATED_AT,
+  updatedAt: CREATED_AT,
+};
+const CHATS_WORKSPACE: WorkspaceConfigRecord = {
+  accountId: "acct_test",
+  workspaceId: "ws_chats",
+  name: "chats",
+  config: { storage: { provider: "s3" }, isolation: "conversation" },
+  createdAt: CREATED_AT,
+  updatedAt: CREATED_AT,
+};
+
+/** The stores a test stubs, each with only the methods the code under test calls. */
+type StorageStubs = { [Store in keyof Storage]?: Partial<Storage[Store]> };
+
+/**
+ * A stage agent and its reservation row on the `web` sandbox, if any:
+ * `expiresIn` is seconds from now, so a negative one is past its idle deadline.
+ */
+interface StageAgent {
+  agentId: string;
+  config: AgentConfig;
+  reservation?: { claimedAt: number; expiresIn: number };
+}
 
 function rpcRequest(body: unknown): CoreRequest {
   return {
@@ -20,10 +78,101 @@ function rpcRequest(body: unknown): CoreRequest {
   } as CoreRequest;
 }
 
+/**
+ * Lists the saved obscura row on the `web` lambda sandbox with the given stage
+ * agents, and returns the reservation the explorer reached it on.
+ */
+async function explorerReservation(
+  agents: StageAgent[],
+): Promise<SandboxMcpTarget["reservation"]> {
+  const stubs: StorageStubs = {
+    agents: {
+      listForStage: async (): Promise<AgentRecord[]> =>
+        agents.map((agent): AgentRecord => ({
+          accountId: "acct_test",
+          agentId: agent.agentId,
+          name: agent.agentId,
+          config: agent.config,
+          createdAt: CREATED_AT,
+          updatedAt: CREATED_AT,
+        })),
+    },
+    mcp: { getById: async (): Promise<McpRecord> => OBSCURA_ROW },
+    sandboxConfigs: {
+      list: async (): Promise<SandboxConfigRecord[]> => [
+        OTHER_STAGE_SANDBOX,
+        WEB_SANDBOX,
+      ],
+      getById: async (
+        _accountId: string,
+        sandboxId: string,
+      ): Promise<SandboxConfigRecord | null> =>
+        sandboxId === "sb_web" ? WEB_SANDBOX : null,
+    },
+    workspaceConfigs: {
+      getById: async (): Promise<WorkspaceConfigRecord> => CHATS_WORKSPACE,
+    },
+  };
+  setStorageForTests(stubs as Storage);
+  // The reservation row as Convex stores it, `expiresAt` in unix seconds, so
+  // the explorer's own idle rule decides what is live.
+  spyOn(instanceStore, "getSandboxReservationRecord").mockImplementation(
+    async (_provider, reservationKey) => {
+      const owner = agents.find(
+        (agent): boolean =>
+          reservationKey ===
+          agentSandboxReservationKey("acct_test", agent.agentId, "sb_web"),
+      );
+
+      return owner?.reservation
+        ? {
+            externalId: `vm_${owner.agentId}`,
+            claimedAt: owner.reservation.claimedAt,
+            expiresAt:
+              Math.floor(Date.now() / 1000) + owner.reservation.expiresIn,
+          }
+        : null;
+    },
+  );
+  const reached: SandboxMcpTarget[] = [];
+  setMcpForTests({
+    listTools: async function (connection) {
+      expect(connection.sandbox).toEqual({
+        config: expect.objectContaining({
+          provider: "lambda",
+          image: "obscura",
+        }),
+        reservation: expect.anything(),
+        command: ["obscura", "mcp"],
+      });
+      if (connection.sandbox) reached.push(connection.sandbox);
+
+      return [{ name: "fetch", inputSchema: { type: "object" } }];
+    },
+  });
+
+  const response = await handleMcpServiceRpc(
+    "acct_test",
+    rpcRequest({ method: "tools/list", serverId: "mcp_1" }),
+  );
+  expect(response.status).toBe(200);
+  expect(reached).toHaveLength(1);
+
+  return reached[0]!.reservation;
+}
+
+/** The reservation an agent's own run reserves on the `web` sandbox. */
+function agentReservation(agentId: string): { reservationKey: string } {
+  return {
+    reservationKey: agentSandboxReservationKey("acct_test", agentId, "sb_web"),
+  };
+}
+
 describe("mcp-service rpc", () => {
   afterEach(() => {
     setMcpForTests(null);
     setStorageForTests(null);
+    mock.restore();
   });
 
   it("lists tools for a probe without a stored row", async () => {
@@ -33,7 +182,7 @@ describe("mcp-service rpc", () => {
         expect(connection.record.transport).toBe("http");
         expect(connection.uncached).toBe(true);
 
-        return [{ name: "query", inputSchema: { type: "object" } }] as never;
+        return [{ name: "query", inputSchema: { type: "object" } }];
       },
     });
 
@@ -53,85 +202,95 @@ describe("mcp-service rpc", () => {
     expect(body.tools.map((tool) => tool.name)).toEqual(["query"]);
   });
 
-  it("reaches a saved row on a lambda sandbox through its VM, not a machine daemon", async () => {
-    setStorageForTests({
-      mcp: {
-        getById: async () => ({
-          accountId: "acct_test",
-          serverId: "mcp_1",
-          projectId: "proj_1",
-          stageId: "stage_1",
-          name: "obscura",
-          transport: "machine",
-          sandbox: "web",
-          command: ["obscura", "mcp"],
-          status: "active",
-          createdAt: "2026-10-07T00:00:00.000Z",
-          updatedAt: "2026-10-07T00:00:00.000Z",
-        }),
-      },
-      sandboxConfigs: {
-        list: async () => [
-          {
-            sandboxId: "sb_other_stage",
-            stageId: "stage_2",
-            name: "web",
-            config: { provider: "machine" },
-          },
-          {
-            sandboxId: "sb_web",
-            stageId: "stage_1",
-            name: "web",
-            config: { provider: "lambda", persistent: true, image: "obscura" },
-          },
-        ],
-        getById: async (_accountId: string, sandboxId: string) =>
-          sandboxId === "sb_web"
-            ? {
-                sandboxId: "sb_web",
-                stageId: "stage_1",
-                name: "web",
-                config: {
-                  provider: "lambda",
-                  persistent: true,
-                  image: "obscura",
-                },
-              }
-            : null,
-      },
-    } as never);
-    const reached: unknown[] = [];
-    setMcpForTests({
-      listTools: async function (connection) {
-        reached.push(connection.sandbox);
-
-        return [{ name: "fetch", inputSchema: { type: "object" } }] as never;
-      },
-    });
-
-    const response = await handleMcpServiceRpc(
-      "acct_test",
-      rpcRequest({ method: "tools/list", serverId: "mcp_1" }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(reached).toEqual([
+  it("runs on the live VM with the oldest claim among agents that use the server", async () => {
+    const reservation = await explorerReservation([
       {
-        config: expect.objectContaining({
-          provider: "lambda",
-          image: "obscura",
-        }),
-        // The explorer has no agent: it reserves a VM of its own on the sandbox.
-        reservation: {
-          reservationKey: agentSandboxReservationKey(
-            "acct_test",
-            "mcp-explorer",
-            "sb_web",
-          ),
-        },
-        command: ["obscura", "mcp"],
+        agentId: "agent_a",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+        reservation: { claimedAt: 200, expiresIn: 600 },
+      },
+      {
+        agentId: "agent_b",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+        reservation: { claimedAt: 100, expiresIn: 600 },
+      },
+      {
+        agentId: "agent_c",
+        config: { sandboxes: ["sb_web"] },
+        reservation: { claimedAt: 50, expiresIn: 600 },
       },
     ]);
+
+    expect(reservation).toEqual(agentReservation("agent_b"));
+  });
+
+  it("counts a reservation live only inside its idle deadline, in unix seconds", async () => {
+    const reservation = await explorerReservation([
+      {
+        agentId: "agent_a",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+        reservation: { claimedAt: 100, expiresIn: -60 },
+      },
+      {
+        agentId: "agent_b",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+        reservation: { claimedAt: 200, expiresIn: 60 },
+      },
+    ]);
+
+    expect(reservation).toEqual(agentReservation("agent_b"));
+  });
+
+  it("starts the VM of the first agent that uses the server when none is live", async () => {
+    const reservation = await explorerReservation([
+      {
+        agentId: "agent_a",
+        config: { sandboxes: ["sb_web"] },
+        reservation: { claimedAt: 100, expiresIn: 600 },
+      },
+      {
+        agentId: "agent_b",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: { enabled: false } } },
+      },
+      {
+        agentId: "agent_c",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+      },
+      {
+        agentId: "agent_d",
+        config: { sandboxes: ["sb_web"], mcp: { mcp_1: {} } },
+      },
+    ]);
+
+    expect(reservation).toEqual(agentReservation("agent_c"));
+  });
+
+  it("reserves a VM of its own when no agent uses the server on the sandbox", async () => {
+    const reservation = await explorerReservation([
+      { agentId: "agent_a", config: { mcp: { mcp_1: {} } } },
+      {
+        agentId: "agent_b",
+        config: { sandboxes: ["sb_web"] },
+        reservation: { claimedAt: 100, expiresIn: 600 },
+      },
+    ]);
+
+    expect(reservation).toEqual(agentReservation("mcp-explorer"));
+  });
+
+  it("skips an agent whose VM is a conversation-isolated workspace's", async () => {
+    const reservation = await explorerReservation([
+      {
+        agentId: "agent_a",
+        config: {
+          sandboxes: ["sb_web"],
+          workspaces: [{ name: "chats", workspaceId: "ws_chats" }],
+          mcp: { mcp_1: {} },
+        },
+      },
+    ]);
+
+    expect(reservation).toEqual(agentReservation("mcp-explorer"));
   });
 
   it("calls a tool and returns the raw result with isError", async () => {
@@ -143,7 +302,7 @@ describe("mcp-service rpc", () => {
         return {
           content: [{ type: "text", text: "boom" }],
           isError: true,
-        } as never;
+        };
       },
     });
 
