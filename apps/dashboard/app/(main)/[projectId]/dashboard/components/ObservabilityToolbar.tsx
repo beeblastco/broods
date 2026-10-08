@@ -2,12 +2,12 @@
 
 /**
  * Shared by the logs and tracing panels, so a filter added here shows up on
- * both: the token search, the range presets, the count, refresh, and the
+ * both: the token search, the range presets, Refresh, and the
  * volume strip whose drag narrows the range to a custom window.
  */
 import { SearchInput } from "@/app/components/SearchInput";
 import { SegmentedControl } from "@/app/components/SegmentedControl";
-import { RefreshButton, Toolbar, ToolbarCount } from "@/app/components/Toolbar";
+import { RefreshButton, Toolbar } from "@/app/components/Toolbar";
 import { VolumeStrip } from "@/app/components/VolumeStrip";
 import type { ObservabilityHistoryStatus } from "@/app/hooks/useObservabilityStream";
 import {
@@ -40,7 +40,6 @@ interface Props {
   points: VolumePoint[];
   /** The strip's right edge; the panels pass the same clock their filters use. */
   now: number;
-  shown: number;
   onRefresh: () => void;
   refreshDisabled: boolean;
   refreshTitle: string;
@@ -76,7 +75,6 @@ export function ObservabilityToolbar({
   onWindowChange,
   points,
   now,
-  shown,
   onRefresh,
   refreshDisabled,
   refreshTitle,
@@ -117,7 +115,6 @@ export function ObservabilityToolbar({
           }}
           ariaLabel="Time range"
         />
-        <ToolbarCount shown={shown} total={points.length} />
         <RefreshButton
           onRefresh={onRefresh}
           disabled={refreshDisabled}

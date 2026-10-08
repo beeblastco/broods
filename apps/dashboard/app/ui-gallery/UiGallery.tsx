@@ -105,6 +105,7 @@ import {
 } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import type { RangePreset, TimeWindow } from "@/app/lib/queryTokens";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
+import { DataTableStandIn } from "./DataTableStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
 
@@ -423,7 +424,6 @@ export function UiGallery(): React.JSX.Element {
           onWindowChange={setTimeWindow}
           points={VOLUME_POINTS}
           now={FIXTURE_NOW}
-          shown={VOLUME_POINTS.length}
           onRefresh={() => {}}
           refreshDisabled={false}
           refreshTitle="Refresh"
@@ -441,6 +441,11 @@ export function UiGallery(): React.JSX.Element {
           )}
         </p>
         <LogTableStandIn />
+      </section>
+
+      <section data-fixture="data-table" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Data table</h2>
+        <DataTableStandIn />
       </section>
 
       <section data-fixture="usage-chart" className="flex flex-col gap-2">

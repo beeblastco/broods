@@ -1,7 +1,43 @@
 "use client";
 
+import { Button } from "@/app/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
+import type { SortDir } from "@/app/lib/tableState";
 import { cn } from "@/app/lib/utils";
-import type { ComponentProps } from "react";
+import { ArrowDown, ArrowUp } from "lucide-react";
+import type { ComponentProps, ReactNode } from "react";
+
+/** One value a column can filter by, with how the menu shows it. */
+export interface FilterValue {
+  value: string;
+  label: ReactNode;
+}
+
+/** The sort half of a header menu: which way this column is sorted, if at all. */
+export interface HeadSort {
+  dir: SortDir | null;
+  onSort: (dir: SortDir) => void;
+  /** Word pairs for the two directions; dates say oldest and newest first. */
+  words?: [string, string];
+}
+
+/** The filter half of a header menu: the column's values and the ones in effect. */
+export interface HeadFilter {
+  field: string;
+  values: FilterValue[];
+  active: string[];
+  onToggle: (value: string) => void;
+  onClear: () => void;
+}
 
 /**
  * The dense list table every page shares: a sticky muted header, 12px cells,
@@ -20,21 +56,103 @@ export function DataTable({
   );
 }
 
-/** The column header cell. `align="right"` for numbers and switches. */
+/**
+ * The column header cell. With `sort` or `filter` it opens one menu: sort
+ * either way, then the column's values with a check on the ones in effect.
+ * The sorted column reads in foreground with an arrow. `align="right"` for
+ * numbers and switches.
+ */
 export function DataTableHead({
   align = "left",
+  sort,
+  filter,
   className,
+  children,
   ...props
-}: ComponentProps<"th"> & { align?: "left" | "right" }): React.JSX.Element {
+}: ComponentProps<"th"> & {
+  align?: "left" | "right";
+  sort?: HeadSort;
+  filter?: HeadFilter;
+}): React.JSX.Element {
+  const menu = sort !== undefined || filter !== undefined;
+
   return (
     <th
       className={cn(
-        "px-3 py-2 font-medium",
+        "font-medium",
+        menu ? "px-1 py-1" : "px-3 py-2",
         align === "right" ? "text-right" : "text-left",
         className,
       )}
       {...props}
-    />
+    >
+      {menu ? (
+        <HeadMenu sort={sort} filter={filter} align={align}>
+          {children}
+        </HeadMenu>
+      ) : (
+        children
+      )}
+    </th>
+  );
+}
+
+/** The header's menu: the sort pair, a rule, then the filter values. */
+function HeadMenu({
+  sort,
+  filter,
+  align,
+  children,
+}: {
+  sort?: HeadSort;
+  filter?: HeadFilter;
+  align: "left" | "right";
+  children: ReactNode;
+}): React.JSX.Element {
+  const sorted = sort?.dir ?? null;
+  const emphasized = sorted !== null || (filter?.active.length ?? 0) > 0;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            tone={emphasized ? "default" : "muted"}
+            className="cursor-pointer font-medium"
+          />
+        }
+      >
+        {children}
+        {sorted === "asc" && <ArrowUp className="size-3" />}
+        {sorted === "desc" && <ArrowDown className="size-3" />}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align={align === "right" ? "end" : "start"}>
+        {sort && (
+          <>
+            <DropdownMenuItem
+              data-active={sorted === "asc"}
+              onClick={() => sort.onSort("asc")}
+            >
+              <ArrowUp />
+              {sort.words?.[0] ?? "Sort A to Z"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-active={sorted === "desc"}
+              onClick={() => sort.onSort("desc")}
+            >
+              <ArrowDown />
+              {sort.words?.[1] ?? "Sort Z to A"}
+            </DropdownMenuItem>
+          </>
+        )}
+        {sort && filter && <DropdownMenuSeparator />}
+        {filter && (
+          <FilterItems filter={filter} label={`Filter by ${filter.field}`} />
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -98,7 +216,7 @@ export function DataTableCell({
   return (
     <td
       className={cn(
-        "px-3 py-2 align-top",
+        "px-3 py-2 align-middle",
         align === "right" && "text-right",
         muted && "text-muted-foreground",
         className,
@@ -118,5 +236,60 @@ export function DataTableSub({
       className={cn("truncate text-2xs text-muted-foreground", className)}
       {...props}
     />
+  );
+}
+
+/** The line under a list: "4 jobs, 3 active". Pages write the words. */
+export function DataTableFooter({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <div
+      className={cn(
+        "shrink-0 border-t border-border px-3 py-1.5 text-2xs text-muted-foreground tabular-nums",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The value list of a filter menu; the header menu and the Filter button share it. */
+export function FilterItems({
+  filter,
+  label,
+}: {
+  filter: HeadFilter;
+  label: string;
+}): React.JSX.Element {
+  return (
+    <>
+      <DropdownMenuGroup>
+        <DropdownMenuLabel variant="muted">{label}</DropdownMenuLabel>
+        {filter.values.map((entry) => (
+          <DropdownMenuCheckboxItem
+            key={entry.value}
+            checked={filter.active.includes(entry.value)}
+            onCheckedChange={() => filter.onToggle(entry.value)}
+            closeOnClick={false}
+          >
+            {entry.label}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuGroup>
+      {filter.active.length > 0 && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={filter.onClear}>
+            Clear filter
+          </DropdownMenuItem>
+        </>
+      )}
+    </>
   );
 }

@@ -1,27 +1,45 @@
 "use client";
 
-/** The footer under a paged list: "Load 50 more · 1,204 older". Hidden when nothing is left. */
+import { DataTableFooter } from "@/app/components/DataTable";
+import { Button } from "@/app/components/ui/button";
+
+/**
+ * The footer under a paged list: how many rows show of how many are held,
+ * and a button for the next page while older rows remain.
+ */
 export function LoadMore({
+  shown,
+  total,
   pageSize,
   remaining,
   onLoad,
 }: {
+  shown: number;
+  total: number;
   pageSize: number;
   remaining: number;
   onLoad: () => void;
-}): React.JSX.Element | null {
-  if (remaining <= 0) return null;
-
+}): React.JSX.Element {
   return (
-    <div className="border-t border-border/40 bg-card/60 p-2 text-center">
-      <button
-        type="button"
-        onClick={onLoad}
-        className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-      >
-        Load {Math.min(pageSize, remaining)} more · {remaining.toLocaleString()}{" "}
-        older
-      </button>
-    </div>
+    <DataTableFooter className="flex items-center justify-between gap-2">
+      <span>
+        {shown === total
+          ? total.toLocaleString()
+          : `${shown.toLocaleString()} of ${total.toLocaleString()}`}
+      </span>
+      {remaining > 0 && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          tone="muted"
+          onClick={onLoad}
+          className="cursor-pointer"
+        >
+          Load {Math.min(pageSize, remaining)} more ·{" "}
+          {remaining.toLocaleString()} older
+        </Button>
+      )}
+    </DataTableFooter>
   );
 }

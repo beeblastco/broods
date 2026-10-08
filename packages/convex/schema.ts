@@ -1257,6 +1257,8 @@ export const cronsFields = {
   // `lastInvokedAt` is that fire's scheduled time, so an older fire never
   // takes the status back.
   lastRunId: v.optional(v.id("cronRuns")),
+  // The member who made it in the dashboard; a job made over the API has none.
+  createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };

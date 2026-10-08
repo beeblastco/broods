@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   describeSchedule,
+  nextFireAt,
   nextRunAt,
   untilLabel,
 } from "../app/lib/cronSchedule";
@@ -28,22 +29,22 @@ describe("describeSchedule", () => {
       "Every 15 minutes",
     );
     expect(describeSchedule("cron(0 9 * * ? *)", undefined)).toBe(
-      "Every day 09:00 UTC",
+      "Every day 09:00",
     );
     expect(describeSchedule("cron(30 9 ? * MON *)", "Europe/Amsterdam")).toBe(
-      "Mondays 09:30 Europe/Amsterdam",
+      "Mondays 09:30",
     );
     expect(describeSchedule("cron(0 9 ? * 2 *)", undefined)).toBe(
-      "Mondays 09:00 UTC",
+      "Mondays 09:00",
     );
   });
 
   test("a one-time job reads in its own zone", () => {
     expect(
       describeSchedule("at(2026-10-07T09:00:00)", "Europe/Amsterdam"),
-    ).toBe("Once at Oct 7, 09:00 Europe/Amsterdam");
+    ).toBe("Once at Oct 7, 09:00");
     expect(describeSchedule("at(2026-10-07T09:00:00)", undefined)).toBe(
-      "Once at Oct 7, 09:00 UTC",
+      "Once at Oct 7, 09:00",
     );
   });
 
@@ -56,10 +57,10 @@ describe("describeSchedule", () => {
 });
 
 describe("nextRunAt", () => {
-  test("a paused job has no next run", () => {
-    expect(nextRunAt(cron("rate(1 hour)", { status: "paused" }), NOW)).toBe(
-      null,
-    );
+  test("a paused job has no next run, but still a time it would fire", () => {
+    const paused = cron("rate(1 hour)", { status: "paused" });
+    expect(nextRunAt(paused, NOW)).toBe(null);
+    expect(nextFireAt(paused, NOW)).toBe(NOW + HOUR);
   });
 
   test("an interval counts from the last fire, else from creation", () => {
