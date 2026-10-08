@@ -354,14 +354,12 @@ async function handleSandboxLifecycle(
   }
   // Terminate boots nothing, so it still tears down a sandbox an old config made.
   if (action !== "terminate") {
-    try {
-      assertNoRetiredImageOptions(
-        record.config.provider,
-        record.config.options ?? {},
-      );
-    } catch (err) {
-      return errorResponse(400, errorText(err));
-    }
+    const refusal = retiredImageOptionsRefusal(
+      accountId,
+      sandboxId,
+      record.config,
+    );
+    if (refusal) return refusal;
   }
 
   const rawBody = parseJsonBody(request);
@@ -875,6 +873,33 @@ function errorResponseForError(err: unknown): Response {
     400,
     err instanceof Error ? err.message : "Invalid request",
   );
+}
+
+/**
+ * Refuses a stored config that still sets an image option `snapshot` replaced.
+ * The refusal names the migration step; any other error is logged and answered
+ * generically so its text stays out of the response.
+ */
+function retiredImageOptionsRefusal(
+  accountId: string,
+  sandboxId: string,
+  config: SandboxConfig,
+): Response | null {
+  try {
+    assertNoRetiredImageOptions(config.provider, config.options ?? {});
+
+    return null;
+  } catch (err) {
+    const refusal = clientErrorData(err);
+    if (refusal) return errorResponse(400, refusal.message);
+    logWarn("Sandbox config check failed", {
+      accountId: accountId,
+      sandboxId: sandboxId,
+      error: errorText(err),
+    });
+
+    return errorResponse(400, "Invalid sandbox configuration");
+  }
 }
 
 /** An error's message, or the value as a string, for logs and audit rows. */
