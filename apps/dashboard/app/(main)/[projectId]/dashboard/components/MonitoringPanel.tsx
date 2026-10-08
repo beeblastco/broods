@@ -27,7 +27,8 @@ import {
 } from "./ObservabilityToolbar";
 
 // The CLI line that sends a first run, shown while the stage has no logs yet.
-const FIRST_RUN_COMMAND = 'broods run <agent> "hello"';
+// AGENT stands in for the agent name; angle brackets would be a shell redirect.
+const FIRST_RUN_COMMAND = 'broods run AGENT "hello"';
 
 const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "all", label: "Info and above" },

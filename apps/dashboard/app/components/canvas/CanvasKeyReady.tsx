@@ -31,16 +31,19 @@ export function CanvasKeyReady({
     api.agent.deployments.getForStage,
     armed && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
+  const visible = armed && Boolean(deployment);
 
+  // Consumed only once the pill is on screen: the canvas remounts when its
+  // stage loads, and a slow key lookup must not eat the display time.
   useEffect(() => {
-    if (!armed) return;
+    if (!visible) return;
     createdProjectId = null;
     const timer = setTimeout(() => setArmed(false), KEY_READY_MS);
 
     return () => clearTimeout(timer);
-  }, [armed]);
+  }, [visible]);
 
-  if (!armed || !deployment) return null;
+  if (!visible) return null;
 
   return (
     <CanvasPill slot="canvas-key-ready">
