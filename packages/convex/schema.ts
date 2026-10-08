@@ -1,7 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
-import { policyDocumentValidator } from "./model/policyRules";
+import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 

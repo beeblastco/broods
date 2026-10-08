@@ -27,7 +27,7 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "../model/auditEvents";
-import { accountDoc } from "../account/accounts";
+import { accountDoc } from "../model/accountDoc";
 import { requireDashboardPermission } from "../model/access";
 import {
   keyHint,

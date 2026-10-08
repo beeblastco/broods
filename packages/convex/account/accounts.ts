@@ -8,13 +8,7 @@ import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { deleteAccountContentsBatch } from "../model/cascade";
-import { accountsFields } from "../schema";
-
-export const accountDoc = v.object({
-  ...accountsFields,
-  _id: v.id("accounts"),
-  _creationTime: v.number(),
-});
+import { accountDoc } from "../model/accountDoc";
 
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
