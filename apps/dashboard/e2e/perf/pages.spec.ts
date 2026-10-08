@@ -32,6 +32,7 @@ interface Sample {
 }
 
 const COLD_VISITS = 2;
+const READY_TIMEOUT_MS = 30_000;
 
 /**
  * A deployment is probed from a GitHub runner on another continent, so the
@@ -136,7 +137,7 @@ test("every page renders cold within budget, and every sidebar destination by na
       const context = await browser.newContext(SIGNED_IN_CONTEXT);
       const page = await context.newPage();
       await page.goto(`/${projectId}${probe.path}`, { waitUntil: "commit" });
-      await probe.ready(page).first().waitFor({ timeout: 30_000 });
+      await waitForReady(probe.ready(page));
       // performance.now() counts from this document's navigation start, so
       // it is the cold-load time to the ready marker with no harness overhead.
       fastest = Math.min(fastest, await page.evaluate(() => performance.now()));
@@ -150,11 +151,11 @@ test("every page renders cold within budget, and every sidebar destination by na
   const navContext = await browser.newContext(SIGNED_IN_CONTEXT);
   const navPage = await navContext.newPage();
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
-  await PROJECT_PAGES[0].ready(navPage).first().waitFor({ timeout: 30_000 });
+  await waitForReady(PROJECT_PAGES[0].ready(navPage));
   for (const dest of SIDEBAR_NAV) {
     const start = await navPage.evaluate(() => performance.now());
     await navPage.getByRole("link", { name: dest.label, exact: true }).click();
-    await dest.ready(navPage).first().waitFor({ timeout: 30_000 });
+    await waitForReady(dest.ready(navPage));
     const end = await navPage.evaluate(() => performance.now());
     samples.push({ page: dest.label, kind: "navigate", ms: end - start });
   }
@@ -182,3 +183,13 @@ test("every page renders cold within budget, and every sidebar destination by na
     `pages over the ${RENDER_BUDGET_MS} ms render budget`,
   ).toEqual([]);
 });
+
+/** Polls every frame: `locator.waitFor` backs off to 500 ms, rounding timings up to the next half second. */
+async function waitForReady(marker: Locator): Promise<void> {
+  await expect
+    .poll(() => marker.first().isVisible(), {
+      intervals: [16],
+      timeout: READY_TIMEOUT_MS,
+    })
+    .toBe(true);
+}
