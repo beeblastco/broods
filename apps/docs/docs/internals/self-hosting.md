@@ -292,4 +292,6 @@ bun run local:status
 bun run local:down      # --purge deletes the instance state
 ```
 
-`verify` passes without a model key. The run fails at the provider call, which still proves routing, auth, config encryption and the Convex round trips. Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for a full run. The local stack has no dashboard, AWS data plane or NATS, so it covers the config plane and runs without sandboxes or WebSocket.
+`verify` passes without a model key. The run fails at the provider call, which still proves routing, auth, config encryption and the Convex round trips. Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for a full run. The local stack has no AWS data plane or NATS, so it covers the config plane and runs without sandboxes or WebSocket.
+
+`bun run local:up -- --dashboard` also serves the dashboard on the stack. It signs in through the WorkOS app in `apps/dashboard/.env.local`, and the local Convex trusts that app. The dashboard listens on the port of that file's `WORKOS_REDIRECT_URI`, because WorkOS only redirects to registered URIs. Then `bun run --filter @broods/dashboard test:app` and `perf` run signed in against your machine, using `E2E_EMAIL` and `E2E_PASSWORD` from the same file.

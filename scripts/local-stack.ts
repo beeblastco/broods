@@ -9,12 +9,17 @@
  * A warm `up` is idempotent: the containers restart in place and the script
  * skips `convex deploy` while packages/convex is unchanged.
  *
+ * `up --dashboard` also serves the dashboard on this stack. It signs in with the
+ * WorkOS app in apps/dashboard/.env.local, which local Convex then trusts, and
+ * listens on the port of that file's redirect URI, since WorkOS only redirects
+ * to registered ones.
+ *
  * `verify` drives the cases in scripts/local-verify/cases through the edge.
  * `up --perf` answers the model in process and traces core's Convex calls, and
  * `perf` then grades scripts/local-verify/perf.ts against its baseline.
  * Under GitHub Actions each command also writes its timings to the job summary.
  *
- * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--record]
+ * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--record]
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -31,6 +36,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { parseEnv } from "node:util";
 import type { Doc } from "../packages/convex/_generated/dataModel.ts";
 
 import { renderFileConfig } from "../apps/edge/src/traefik.ts";
@@ -83,11 +89,12 @@ interface InstanceSecrets {
 interface InstanceState {
   adminKey?: string;
   convexSourceHash?: string;
-  deploymentEnvConfigured?: boolean;
+  /** Hash of the env last set on the Convex deployment. */
+  deploymentEnvHash?: string;
   instanceId: string;
   instanceSecret: string;
   perf?: boolean;
-  pids: { core?: number; gateway?: number };
+  pids: { core?: number; dashboard?: number; gateway?: number };
   /** First port of the instance's block; `ports()` derives the rest. */
   portBase: number;
   secrets: InstanceSecrets;
@@ -107,12 +114,17 @@ interface PerfStep {
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
+const dashboardDir = join(repoRoot, "apps", "dashboard");
 const command = process.argv[2];
 const flags = new Set(process.argv.slice(3));
 
 switch (command) {
   case "up":
-    await up(flags.has("--fresh"), flags.has("--perf"));
+    await up(
+      flags.has("--fresh"),
+      flags.has("--perf"),
+      flags.has("--dashboard"),
+    );
     break;
   case "down":
     await down(flags.has("--purge"));
@@ -128,7 +140,7 @@ switch (command) {
     break;
   default:
     console.error(
-      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--record]",
+      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--record]",
     );
     process.exit(2);
 }
@@ -143,6 +155,7 @@ async function down(purge: boolean): Promise<void> {
   }
 
   await Promise.all([
+    stopProcess(state.pids.dashboard, "dashboard"),
     stopProcess(state.pids.gateway, "gateway"),
     stopProcess(state.pids.core, "core"),
   ]);
@@ -191,6 +204,7 @@ async function status(): Promise<void> {
   console.log(
     `gateway   ${processState(state.pids.gateway)} (:${ports(state).gateway})`,
   );
+  console.log(`dashboard ${processState(state.pids.dashboard)}`);
 
   const health = await probeHttp(
     `http://127.0.0.1:${ports(state).edge}/healthz`,
@@ -213,9 +227,17 @@ async function status(): Promise<void> {
   }
 }
 
-async function up(fresh: boolean, perfMode: boolean): Promise<void> {
+async function up(
+  fresh: boolean,
+  perfMode: boolean,
+  withDashboard: boolean,
+): Promise<void> {
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
+  const dashboardEnv = loadDashboardEnv();
+  const dashboardUrl = withDashboard
+    ? dashboardOrigin(dashboardEnv)
+    : undefined;
   if (fresh) {
     await down(true);
   }
@@ -242,10 +264,16 @@ async function up(fresh: boolean, perfMode: boolean): Promise<void> {
     });
   }
 
-  if (!state.deploymentEnvConfigured) {
+  const deploymentEnv = deploymentEnvEntries(state, dashboardEnv);
+  const deploymentEnvHash = createHash("sha256")
+    .update(JSON.stringify(deploymentEnv))
+    .digest("hex");
+  if (state.deploymentEnvHash !== deploymentEnvHash) {
     await measureStep(perf, "deployment env", () => {
-      configureDeploymentEnv(state);
-      state.deploymentEnvConfigured = true;
+      configureDeploymentEnv(state, deploymentEnv);
+      state.deploymentEnvHash = deploymentEnvHash;
+      // auth.config.ts reads WORKOS_CLIENT_ID at deploy time.
+      state.convexSourceHash = undefined;
       saveState(state);
     });
   }
@@ -290,11 +318,20 @@ async function up(fresh: boolean, perfMode: boolean): Promise<void> {
     ]);
   });
 
+  if (dashboardUrl) {
+    await measureStep(perf, "dashboard", async () => {
+      await startDashboard(state, dashboardUrl);
+      saveState(state);
+      await waitForHttp(`${dashboardUrl}/healthz`, "dashboard");
+    });
+  }
+
   const totalMs = Date.now() - startedAt;
   recordPerf(state.instanceId, "up", perf, totalMs);
   printPerfBreakdown(perf, totalMs);
   console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
   console.log(`  edge      ${edgeUrl}`);
+  if (dashboardUrl) console.log(`  dashboard ${dashboardUrl}`);
   console.log(
     `  admin     read secrets.adminAccount in ${join(instanceDir(state.instanceId), "state.json")}`,
   );
@@ -401,20 +438,11 @@ async function verify(): Promise<void> {
 
 // --- convex backend -----------------------------------------------------
 
-// AuthKit validates WORKOS_* at import time, so dummies must exist before the
-// first deploy. BROODS_ACCOUNT_MANAGE_URL points at core on the host (the
-// backend runs inside docker). One batched `env set` beats a CLI boot per var.
-function configureDeploymentEnv(state: InstanceState): void {
-  const entries: Record<string, string> = {
-    ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
-    ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
-    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
-    SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
-    STAGE_TICKET_SECRET: state.secrets.stageTicket,
-    WORKOS_API_KEY: "sk_local_dummy",
-    WORKOS_CLIENT_ID: "client_local_dummy",
-    WORKOS_WEBHOOK_SECRET: "whsec_local_dummy",
-  };
+// One batched `env set` beats a CLI boot per var.
+function configureDeploymentEnv(
+  state: InstanceState,
+  entries: Record<string, string>,
+): void {
   console.log("configuring convex deployment env...");
   const envFile = join(instanceDir(state.instanceId), "deployment.env");
   writeFileSync(
@@ -429,6 +457,26 @@ function configureDeploymentEnv(state: InstanceState): void {
   } finally {
     rmSync(envFile, { force: true });
   }
+}
+
+// AuthKit validates WORKOS_* at import time, so dummies stand in when the
+// dashboard's .env.local has no WorkOS app. BROODS_ACCOUNT_MANAGE_URL points at
+// core on the host (the backend runs inside docker).
+function deploymentEnvEntries(
+  state: InstanceState,
+  dashboardEnv: NodeJS.Dict<string>,
+): Record<string, string> {
+  return {
+    ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
+    ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
+    BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
+    SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
+    STAGE_TICKET_SECRET: state.secrets.stageTicket,
+    WORKOS_API_KEY: dashboardEnv.WORKOS_API_KEY || "sk_local_dummy",
+    WORKOS_CLIENT_ID: dashboardEnv.WORKOS_CLIENT_ID || "client_local_dummy",
+    WORKOS_WEBHOOK_SECRET:
+      dashboardEnv.WORKOS_WEBHOOK_SECRET || "whsec_local_dummy",
+  };
 }
 
 function convexSourceHash(): string {
@@ -646,6 +694,8 @@ function processState(pid: number | undefined): string {
 
 function spawnDetached(options: {
   args: string[];
+  /** Defaults to bun. */
+  command?: string;
   cwd: string;
   env: Record<string, string>;
   instanceId: string;
@@ -654,7 +704,7 @@ function spawnDetached(options: {
   const logDir = join(instanceDir(options.instanceId), "logs");
   mkdirSync(logDir, { recursive: true });
   const log = openSync(join(logDir, `${options.logName}.log`), "a");
-  const child = spawn("bun", options.args, {
+  const child = spawn(options.command ?? "bun", options.args, {
     cwd: options.cwd,
     detached: true,
     stdio: ["ignore", log, log],
@@ -712,6 +762,43 @@ function startCore(state: InstanceState): void {
     },
     instanceId: state.instanceId,
     logName: "core",
+  });
+}
+
+// Mirrors apps/dashboard "dev", run by node as that script is. The stack's URLs
+// override .env.local; next loads the rest of that file itself.
+async function startDashboard(
+  state: InstanceState,
+  url: string,
+): Promise<void> {
+  if (isProcessAlive(state.pids.dashboard)) {
+    console.log("dashboard already running");
+
+    return;
+  }
+  if ((await probeHttp(`${url}/healthz`)) !== null) {
+    throw new Error(
+      `${url} is already serving; stop that server, the WorkOS redirect URI pins the dashboard to this port`,
+    );
+  }
+
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
+  state.pids.dashboard = spawnDetached({
+    args: [
+      join(dashboardDir, "node_modules", ".bin", "next"),
+      "dev",
+      "--port",
+      new URL(url).port,
+    ],
+    command: "node",
+    cwd: dashboardDir,
+    env: {
+      BROODS_BASE_URL: edgeUrl,
+      NEXT_PUBLIC_BROODS_BASE_URL: edgeUrl,
+      NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
+    },
+    instanceId: state.instanceId,
+    logName: "dashboard",
   });
 }
 
@@ -1052,6 +1139,18 @@ function allocatePortBase(): number {
   throw new Error("no free port block under ~/.broods-local");
 }
 
+// Where the dashboard listens: the origin of its WorkOS redirect URI.
+function dashboardOrigin(dashboardEnv: NodeJS.Dict<string>): string {
+  const redirect = dashboardEnv.WORKOS_REDIRECT_URI;
+  if (!dashboardEnv.WORKOS_CLIENT_ID || !redirect) {
+    throw new Error(
+      "--dashboard needs a WorkOS app in apps/dashboard/.env.local (WORKOS_CLIENT_ID, WORKOS_REDIRECT_URI; see .env.example)",
+    );
+  }
+
+  return new URL(redirect).origin;
+}
+
 function currentInstanceId(): string {
   const digest = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
   const basename = repoRoot.split("/").filter(Boolean).pop() ?? "broods";
@@ -1095,6 +1194,13 @@ function loadOrCreateState(): InstanceState {
   saveState(state);
 
   return state;
+}
+
+// apps/dashboard/.env.local, or nothing when this checkout has none.
+function loadDashboardEnv(): NodeJS.Dict<string> {
+  const path = join(dashboardDir, ".env.local");
+
+  return existsSync(path) ? parseEnv(readFileSync(path, "utf8")) : {};
 }
 
 function loadState(instanceId: string): InstanceState | null {
