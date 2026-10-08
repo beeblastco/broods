@@ -393,6 +393,79 @@ describe("stage-pinned role sessions", () => {
     expect(cron?.agentId).toBe(devAgent);
   });
 
+  test("a dev-pinned role cannot wire its agent or channel to production", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const devAgent = await insertAgent(t, seeded, seeded.stageId, "dev-agent");
+    const prodAgent = await insertAgent(
+      t,
+      seeded,
+      seeded.otherStageId,
+      "prod-agent",
+    );
+    const { prodSandbox, devChannel } = await t.run(async (ctx) => ({
+      prodSandbox: await ctx.db.insert("sandboxConfigs", {
+        accountId: seeded.accountId,
+        projectId: seeded.projectId,
+        stageId: seeded.otherStageId,
+        name: "prod-box",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+      devChannel: await ctx.db.insert("channelRecords", {
+        accountId: seeded.accountId,
+        projectId: seeded.projectId,
+        stageId: seeded.stageId,
+        platform: "slack",
+        externalId: "C1",
+        name: "dev-channel",
+        config: { agentBindings: [{ agentId: devAgent }] },
+        status: "active" as const,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    }));
+    const roleId = await createRole(t, seeded, {
+      scoped: true,
+      policy: {
+        version: 1,
+        rules: [
+          {
+            id: "write",
+            effect: "allow",
+            actions: ["agents:write", "channels:write"],
+          },
+        ],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+    const patch = (path: string, body: unknown): Promise<Response> =>
+      t.fetch(path, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+    const agent = await patch(`/v1/agents/${devAgent}`, {
+      config: { sandboxes: [prodSandbox] },
+    });
+    expect(agent.status).toBe(400);
+    expect(((await agent.json()) as ApiErrorBody).error.message).toContain(
+      `sandboxes ${prodSandbox}`,
+    );
+
+    const channel = await patch(`/v1/channels/${devChannel}`, {
+      config: { agentBindings: [{ agentId: prodAgent }] },
+    });
+    expect(channel.status).toBe(400);
+    const record = await t.run(async (ctx) => await ctx.db.get(devChannel));
+    expect(record?.config.agentBindings).toEqual([{ agentId: devAgent }]);
+  });
+
   test("a dev-pinned role cannot list or create account-wide", async () => {
     const t = roleTest();
     const seeded = await seed(t);

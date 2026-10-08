@@ -187,6 +187,30 @@ export const STAGE_SCOPED_RESOURCE_TYPES = [
 export type StageScopedResourceType =
   (typeof STAGE_SCOPED_RESOURCE_TYPES)[number];
 
+/** A stage-scoped resource one config names, e.g. an agent's sandbox. */
+export type StageScopedRef = { type: StageScopedResourceType; id: string };
+
+/**
+ * The refs that do not resolve to `pin`'s stage, so a pinned role's write
+ * cannot point a resource at another stage's.
+ */
+export async function refsOutsideStage(
+  ctx: Ctx,
+  accountId: Id<"accounts">,
+  pin: { projectId: string; stageId: string },
+  refs: StageScopedRef[],
+): Promise<StageScopedRef[]> {
+  const outside: StageScopedRef[] = [];
+  for (const ref of refs) {
+    const scope = await resourceStageScope(ctx, accountId, ref.type, ref.id);
+    if (scope?.projectId !== pin.projectId || scope.stageId !== pin.stageId) {
+      outside.push(ref);
+    }
+  }
+
+  return outside;
+}
+
 /**
  * The stage one of `accountId`'s resources lives in, for a stage-pinned role's
  * check. Null when the row is missing, belongs to another account, is

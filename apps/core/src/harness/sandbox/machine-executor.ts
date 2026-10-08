@@ -322,9 +322,13 @@ async function claimSandbox(
   hello: MachineHelloFrame,
 ): Promise<void> {
   const records = await getStorage().sandboxConfigs.list(accountId);
+  // Names repeat across stages, so a stage-pinned role claims its own stage's.
+  const pinnedStage = socket.data.role?.stageId;
   const record = records.find(
     (entry) =>
-      entry.name === hello.sandbox && entry.config.provider === "machine",
+      entry.name === hello.sandbox &&
+      entry.config.provider === "machine" &&
+      (pinnedStage === undefined || entry.stageId === pinnedStage),
   );
   // Claiming a machine is a write on that sandbox, so a role session needs
   // sandboxes:write for it. The name only arrives in the hello, hence here.

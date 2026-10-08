@@ -350,6 +350,7 @@ async function dispatchResourceRoute(
         accountId,
         actor,
         route.channelId,
+        role,
       );
     case "agents":
       return await handleAgentConfigRoute(
@@ -358,6 +359,7 @@ async function dispatchResourceRoute(
         accountId,
         actor,
         route.agentId,
+        role,
       );
     case "agentChannelDirectory":
       return await handleAgentChannelDirectoryRoute(
