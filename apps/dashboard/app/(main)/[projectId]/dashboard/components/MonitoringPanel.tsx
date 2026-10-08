@@ -15,7 +15,16 @@ import {
   useObservabilityStream,
   type ObservabilityLogEntry,
 } from "@/app/hooks/useObservabilityStream";
-import { formatDateTimeMillis, toEpochMs } from "@/app/lib/formatTime";
+import { LoadMore } from "@/app/components/LoadMore";
+import { useNow } from "@/app/hooks/useNow";
+import { formatDateTimeMillis } from "@/app/lib/formatTime";
+import {
+  effectiveWindow,
+  parseQuery,
+  type Query,
+  type RangePreset,
+  type TimeWindow,
+} from "@/app/lib/queryTokens";
 import { cn } from "@/app/lib/utils";
 import { ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -23,16 +32,46 @@ import { useMemo, useState } from "react";
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
-  type ToolbarFilterOption,
+  type VolumePoint,
 } from "./ObservabilityToolbar";
 
-const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
-  { value: "all", label: "Info and above" },
-  { value: "ERROR", label: "error" },
-  { value: "WARN", label: "warn" },
-  { value: "INFO", label: "info" },
-  { value: "DEBUG", label: "debug" },
-];
+// The `field:value` tokens the search box understands, in the placeholder's order.
+const LOG_QUERY_FIELDS = [
+  "level",
+  "source",
+  "agent",
+  "trace",
+  "event",
+] as const;
+
+type LogQueryField = (typeof LOG_QUERY_FIELDS)[number];
+
+// One matcher per token. Values arrive lowercased.
+const QUERY_MATCHERS: Record<
+  LogQueryField,
+  (entry: ObservabilityLogEntry, value: string) => boolean
+> = {
+  agent: (entry, value) =>
+    (entry.agentId ?? "").toLowerCase().startsWith(value),
+  event: (entry, value) => entry.eventType.toLowerCase().includes(value),
+  level: (entry, value) => entry.level.toLowerCase() === value,
+  source: (entry, value) =>
+    sourceLabel(entry).toLowerCase().startsWith(value) ||
+    (entry.service ?? "").toLowerCase().startsWith(value) ||
+    (entry.endpointId ?? "").toLowerCase().startsWith(value),
+  trace: (entry, value) =>
+    (entry.traceId ?? "").toLowerCase().startsWith(value),
+};
+
+const SEVERITY: Record<
+  ObservabilityLogEntry["level"],
+  VolumePoint["severity"]
+> = {
+  ERROR: "error",
+  WARN: "warn",
+  INFO: "none",
+  DEBUG: "none",
+};
 
 const LEVEL_TONE: Record<ObservabilityLogEntry["level"], StatusTone> = {
   ERROR: "error",
@@ -44,8 +83,6 @@ const LEVEL_TONE: Record<ObservabilityLogEntry["level"], StatusTone> = {
 // Rows rendered before the "Load more" pager; keeps the DOM bounded even when the
 // live buffer holds thousands of entries.
 const PAGE_SIZE = 100;
-
-type LevelFilter = "all" | ObservabilityLogEntry["level"];
 
 interface Props {
   projectSlug: string | undefined;
@@ -65,10 +102,11 @@ export function MonitoringPanel({
   // and would silently repoint the open panel at a different line.
   const [selected, setSelected] = useState<ObservabilityLogEntry | null>(null);
   const [filter, setFilter] = useState("");
-  const [level, setLevel] = useState<LevelFilter>("all");
-  const [fromTime, setFromTime] = useState("");
-  const [toTime, setToTime] = useState("");
+  // The backfill reaches 30 days back, so the widest preset shows all of it.
+  const [range, setRange] = useState<RangePreset>("30d");
+  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const now = useNow();
 
   // Memoized so the streaming re-renders don't re-parse the open payload.
   const selectedSummary = useMemo(
@@ -83,46 +121,54 @@ export function MonitoringPanel({
     router.push(`${pathname}?${next.toString()}`);
   };
 
+  const query = useMemo(() => parseQuery(filter, LOG_QUERY_FIELDS), [filter]);
+  const wantsDebug = query.fields.some(
+    ({ field, value }) => field === "level" && value === "debug",
+  );
+
   const { entries, status, history, error, refresh } = useObservabilityStream({
     stream: "logs",
     projectSlug: projectSlug,
     stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 200,
-    // Debug lines stay on the server until the debug filter asks for them.
-    minLevel: level === "DEBUG" ? "DEBUG" : "INFO",
+    // Debug lines stay on the server until a `level:debug` token asks for them.
+    minLevel: wantsDebug ? "DEBUG" : "INFO",
   });
+
+  // Memoized: the filtered list keys on it, and a fresh object each render
+  // would rebuild the list, and everything downstream of it, every time.
+  const bounds = useMemo(
+    () => effectiveWindow(timeWindow, range, now),
+    [timeWindow, range, now],
+  );
 
   // The CLI line that sends a first run to this stage, shown while it has no
   // logs. AGENT stands in for the agent name; <agent> would be a shell redirect.
   const firstRunCommand = `broods run AGENT "hello"${stageSlug ? ` --stage ${stageSlug}` : ""}`;
 
-  const fromMs = toEpochMs(fromTime);
-  const toMs = toEpochMs(toTime);
-  const hasFilters =
-    filter.trim() !== "" || level !== "all" || fromMs !== null || toMs !== null;
-
-  const filtered = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-
-    return entries.filter((e) => {
-      if (level !== "all" && e.level !== level) return false;
-      if (fromMs !== null && e.ts < fromMs) return false;
-      if (toMs !== null && e.ts > toMs) return false;
-      if (!needle) return true;
-
-      return (
-        e.message.toLowerCase().includes(needle) ||
-        (e.endpointId ?? "").toLowerCase().includes(needle) ||
-        (e.service ?? "").toLowerCase().includes(needle) ||
-        e.eventType.toLowerCase().includes(needle)
-      );
-    });
-  }, [entries, filter, level, fromMs, toMs]);
+  const filtered = useMemo(
+    () =>
+      entries.filter(
+        (entry) =>
+          entry.ts >= bounds.from &&
+          entry.ts <= bounds.to &&
+          matchesLogQuery(entry, query),
+      ),
+    [entries, query, bounds],
+  );
+  const points = useMemo<VolumePoint[]>(
+    () =>
+      entries.map((entry) => ({
+        ts: entry.ts,
+        severity: SEVERITY[entry.level],
+      })),
+    [entries],
+  );
 
   // Reset paging whenever the filters change so "Load more" always starts from
   // the top of the current view. Render-time adjustment, not an effect.
-  const filterSignature = `${filter}|${level}|${fromMs}|${toMs}`;
+  const filterSignature = `${filter}|${range}|${timeWindow?.from}|${timeWindow?.to}`;
   const [prevFilterSignature, setPrevFilterSignature] =
     useState(filterSignature);
   if (filterSignature !== prevFilterSignature) {
@@ -135,29 +181,19 @@ export function MonitoringPanel({
   const selectedTraceId =
     selected && isTraceId(selected.traceId) ? selected.traceId : null;
 
-  const clearFilters = (): void => {
-    setFilter("");
-    setLevel("all");
-    setFromTime("");
-    setToTime("");
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ObservabilityToolbar
         search={filter}
         onSearchChange={setFilter}
-        searchPlaceholder={`Search ${filtered.length} of ${entries.length} log${entries.length === 1 ? "" : "s"}…`}
-        filterAriaLabel="Filter by log level"
-        filterValue={level}
-        filterOptions={LEVEL_FILTER_OPTIONS}
-        onFilterChange={(value) => setLevel(value as LevelFilter)}
-        fromTime={fromTime}
-        onFromTimeChange={setFromTime}
-        toTime={toTime}
-        onToTimeChange={setToTime}
-        hasFilters={hasFilters}
-        onClear={clearFilters}
+        searchPlaceholder="Search logs · level: source: agent: trace: event:"
+        searchFields={LOG_QUERY_FIELDS}
+        range={range}
+        onRangeChange={setRange}
+        window={timeWindow}
+        onWindowChange={setTimeWindow}
+        points={points}
+        now={now}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
         refreshTitle={error ?? "Refresh logs"}
@@ -247,18 +283,13 @@ export function MonitoringPanel({
             )}
           </tbody>
         </table>
-        {remaining > 0 && (
-          <div className="border-t border-border/40 bg-card/60 p-2 text-center">
-            <button
-              type="button"
-              onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-              className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-            >
-              Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
-              {remaining.toLocaleString()} older
-            </button>
-          </div>
-        )}
+        <LoadMore
+          shown={filtered.length}
+          total={points.length}
+          pageSize={PAGE_SIZE}
+          remaining={remaining}
+          onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
+        />
       </DetailSplit>
     </div>
   );
@@ -291,6 +322,28 @@ function detailRows(entry: ObservabilityLogEntry): DetailRow[] {
   });
 
   return rows;
+}
+
+/** Whether a line passes the search box: every field token, then the free text. */
+function matchesLogQuery(
+  entry: ObservabilityLogEntry,
+  query: Query<LogQueryField>,
+): boolean {
+  if (
+    !query.fields.every(({ field, value }) =>
+      QUERY_MATCHERS[field](entry, value),
+    )
+  ) {
+    return false;
+  }
+  if (!query.text) return true;
+
+  return (
+    entry.message.toLowerCase().includes(query.text) ||
+    (entry.endpointId ?? "").toLowerCase().includes(query.text) ||
+    (entry.service ?? "").toLowerCase().includes(query.text) ||
+    entry.eventType.toLowerCase().includes(query.text)
+  );
 }
 
 /** `pretty` is the raw string unchanged when the message is not JSON. */

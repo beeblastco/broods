@@ -17,7 +17,15 @@ import {
 } from "@/app/hooks/useObservabilityStream";
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatNumber } from "@/app/lib/formatNumber";
-import { formatDateTime, formatTime, toEpochMs } from "@/app/lib/formatTime";
+import { formatDateTime, formatTime } from "@/app/lib/formatTime";
+import {
+  effectiveWindow,
+  parseQuery,
+  rangeMs,
+  type Query,
+  type RangePreset,
+  type TimeWindow,
+} from "@/app/lib/queryTokens";
 import { isEditableTarget } from "@/app/lib/shortcuts";
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -34,8 +42,10 @@ import {
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
-  type ToolbarFilterOption,
+  type VolumePoint,
 } from "./ObservabilityToolbar";
+import { LoadMore } from "@/app/components/LoadMore";
+import { useNow } from "@/app/hooks/useNow";
 import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
@@ -48,7 +58,6 @@ interface Props {
 const PAGE_SIZE = 50;
 
 type SpanStatus = ObservabilitySpanRow["status"];
-type StatusFilter = "all" | SpanStatus;
 
 // A Continue click on one failed task. `error` is null from the click until
 // the continuation's trace arrives, which then replaces the button.
@@ -78,14 +87,6 @@ const STATUS_TONE: Record<SpanStatus, StatusTone> = {
   ok: "ok",
   error: "error",
 };
-
-const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
-  { value: "all", label: "All statuses" },
-  ...(Object.keys(TASK_STATUS_WORD) as SpanStatus[]).map((status) => ({
-    value: status,
-    label: TASK_STATUS_WORD[status],
-  })),
-];
 
 // The synthetic span that stands for the time between a run that closed on
 // something open and the next run of its task.
@@ -380,21 +381,22 @@ export interface SpanGroup {
   nextRun: ObservabilitySpanRow | null;
 }
 
-type TaskQueryField =
-  | "agent"
-  | "channel"
-  | "conv"
-  | "error"
-  | "status"
-  | "tool"
-  | "trace";
+// The `field:value` tokens the search box understands, in the placeholder's order.
+export const TASK_QUERY_FIELDS = [
+  "status",
+  "channel",
+  "agent",
+  "tool",
+  "error",
+  "trace",
+  "conv",
+] as const;
+
+type TaskQueryField = (typeof TASK_QUERY_FIELDS)[number];
 
 // The parsed search box: every `field:value` token must match, and the free
 // words, rejoined, must appear in one span's search text.
-export interface TaskQuery {
-  fields: Array<{ field: TaskQueryField; value: string }>;
-  text: string;
-}
+export type TaskQuery = Query<TaskQueryField>;
 
 // Consecutive model steps that all called one tool, shown as one row. `span`
 // is the synthetic row: first start to last end, summed duration.
@@ -433,10 +435,11 @@ export function TracingPanel({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [fromTime, setFromTime] = useState("");
-  const [toTime, setToTime] = useState("");
+  // The backfill reaches 7 days back, so that preset shows all of it.
+  const [range, setRange] = useState<RangePreset>("7d");
+  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const now = useNow();
   const [continueAttempts, setContinueAttempts] = useState<
     ReadonlyMap<string, ContinueAttempt>
   >(new Map());
@@ -450,13 +453,12 @@ export function TracingPanel({
       backfill: 100,
     });
 
-  const fromMs = toEpochMs(fromTime);
-  const toMs = toEpochMs(toTime);
-  const hasFilters =
-    filter.trim() !== "" ||
-    statusFilter !== "all" ||
-    fromMs !== null ||
-    toMs !== null;
+  // Memoized: the filtered list keys on it, and a fresh object each render
+  // would rebuild the list, and everything downstream of it, every time.
+  const bounds = useMemo(
+    () => effectiveWindow(timeWindow, range, now),
+    [timeWindow, range, now],
+  );
 
   // Every task in the buffer, before filters. Focus resolution runs against
   // this so a filtered-out trace is never mistaken for one absent from history.
@@ -466,17 +468,25 @@ export function TracingPanel({
   // full buffer is searched.
   const deferredFilter = useDeferredValue(filter);
   const groups = useMemo(() => {
-    const query = parseTaskQuery(deferredFilter);
+    const query = parseQuery(deferredFilter, TASK_QUERY_FIELDS);
 
     return allGroups.filter((group) => {
       const { root } = group;
-      if (statusFilter !== "all" && group.status !== statusFilter) return false;
-      if (fromMs !== null && root.startTimeMs < fromMs) return false;
-      if (toMs !== null && root.startTimeMs > toMs) return false;
+      if (root.startTimeMs < bounds.from || root.startTimeMs > bounds.to) {
+        return false;
+      }
 
       return matchesTaskQuery(group, query);
     });
-  }, [allGroups, deferredFilter, statusFilter, fromMs, toMs]);
+  }, [allGroups, deferredFilter, bounds]);
+  const points = useMemo<VolumePoint[]>(
+    () =>
+      allGroups.map((group) => ({
+        ts: group.root.startTimeMs,
+        severity: group.status === "error" ? "error" : "none",
+      })),
+    [allGroups],
+  );
 
   const visibleGroups = useMemo(
     () => groups.slice(0, visibleCount),
@@ -497,7 +507,7 @@ export function TracingPanel({
 
   // Reset paging when the filters change so "Load more" starts from the top.
   // Render-time adjustment, not an effect.
-  const filterSignature = `${filter}|${statusFilter}|${fromMs}|${toMs}`;
+  const filterSignature = `${filter}|${range}|${timeWindow?.from}|${timeWindow?.to}`;
   const [prevFilterSignature, setPrevFilterSignature] =
     useState(filterSignature);
   if (filterSignature !== prevFilterSignature) {
@@ -536,11 +546,18 @@ export function TracingPanel({
       // The trace is in the buffer but a filter is hiding it: clear the filters
       // so it lists, then let the effect re-run and select it. Only a trace
       // absent from the whole buffer is a candidate for a Tempo fetch.
-      if (allGroups.some((group) => hasTrace(group, focusTraceId))) {
+      const hidden = allGroups.find((group) => hasTrace(group, focusTraceId));
+      if (hidden) {
         setFilter("");
-        setStatusFilter("all");
-        setFromTime("");
-        setToTime("");
+        setRange("30d");
+        // A trace fetched by id can predate the widest preset: open a window
+        // from its start, else the preset alone lists it.
+        const start = hidden.root.startTimeMs;
+        setTimeWindow(
+          start < now - rangeMs("30d")
+            ? { from: start - 1, to: Number.POSITIVE_INFINITY }
+            : null,
+        );
 
         return;
       }
@@ -584,6 +601,7 @@ export function TracingPanel({
     history,
     fetchTrace,
     dropFocusParam,
+    now,
   ]);
 
   // j and k walk the task list. `/` is the toolbar's own table.filter binding.
@@ -699,29 +717,19 @@ export function TracingPanel({
     }
   };
 
-  const clearFilters = (): void => {
-    setFilter("");
-    setStatusFilter("all");
-    setFromTime("");
-    setToTime("");
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ObservabilityToolbar
         search={filter}
         onSearchChange={setFilter}
-        searchPlaceholder="Search tasks, or status: channel: agent: tool: error: trace: conv:"
-        filterAriaLabel="Filter by status"
-        filterValue={statusFilter}
-        filterOptions={STATUS_FILTER_OPTIONS}
-        onFilterChange={(value) => setStatusFilter(value as StatusFilter)}
-        fromTime={fromTime}
-        onFromTimeChange={setFromTime}
-        toTime={toTime}
-        onToTimeChange={setToTime}
-        hasFilters={hasFilters}
-        onClear={clearFilters}
+        searchPlaceholder="Search tasks · status: channel: agent: tool: error: trace: conv:"
+        searchFields={TASK_QUERY_FIELDS}
+        range={range}
+        onRangeChange={setRange}
+        window={timeWindow}
+        onWindowChange={setTimeWindow}
+        points={points}
+        now={now}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
         refreshTitle={error ?? "Refresh traces"}
@@ -799,19 +807,13 @@ export function TracingPanel({
                   : "No tasks match the current filters."}
               </p>
             )}
-            {remaining > 0 && (
-              <div className="p-2 text-center">
-                <button
-                  type="button"
-                  onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                  className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-                >
-                  Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
-                  {remaining.toLocaleString()} older task
-                  {remaining === 1 ? "" : "s"}
-                </button>
-              </div>
-            )}
+            <LoadMore
+              shown={groups.length}
+              total={points.length}
+              pageSize={PAGE_SIZE}
+              remaining={remaining}
+              onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
+            />
           </div>
 
           <div
@@ -1120,28 +1122,6 @@ export function matchesTaskQuery(group: SpanGroup, query: TaskQuery): boolean {
   );
 }
 
-/**
- * Splits the search box into `field:value` tokens and free words. An unknown
- * field is a free word; a known field with no value yet is dropped while typing.
- */
-export function parseTaskQuery(input: string): TaskQuery {
-  const fields: TaskQuery["fields"] = [];
-  const words: string[] = [];
-  for (const token of input.trim().toLowerCase().split(/\s+/)) {
-    if (!token) continue;
-    const colon = token.indexOf(":");
-    const field = token.slice(0, colon);
-    if (colon > 0 && isTaskQueryField(field)) {
-      const value = token.slice(colon + 1);
-      if (value) fields.push({ field: field, value: value });
-      continue;
-    }
-    words.push(token);
-  }
-
-  return { fields: fields, text: words.join(" ") };
-}
-
 /** Where a task came in, from its conversation key; a cron root is Cron. */
 export function taskChannel(root: ObservabilitySpanRow): string {
   if (root.kind === "cron") return "Cron";
@@ -1317,11 +1297,6 @@ function groupTone(group: SpanGroup): StatusTone {
   return group.status === "running" && !group.live
     ? "ended"
     : STATUS_TONE[group.status];
-}
-
-/** Whether a search token's prefix names a field the search box understands. */
-function isTaskQueryField(field: string): field is TaskQueryField {
-  return Object.hasOwn(QUERY_MATCHERS, field);
 }
 
 /** The one named tool every tool call of a model step went to, or null. */

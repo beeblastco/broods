@@ -1,78 +1,63 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// The level select once opened with a blank first row and its list pushed
-// down from the trigger. The popup must sit flush under the trigger and show
-// every option, the first one included.
-test("the level select opens flush under its trigger with every option visible", async ({
+// The search box turns a finished `field:value` token into a chip and hands
+// the panel one joined query string, so the panel's parser sees the same text
+// whether the token was typed or chipped.
+test("a finished field token becomes a chip and stays in the query", async ({
   page,
 }) => {
   await openGallery(page);
-  const trigger = page.getByRole("combobox", { name: "Filter by log level" });
-  await expect(trigger).toHaveText(/INFO/);
-  await trigger.click();
+  const bar = page.locator('[data-fixture="observability-toolbar"]');
+  const input = bar.getByRole("textbox", { name: "Search" });
+  await input.fill("level:error timeout");
 
-  const listbox = page.getByRole("listbox");
-  await expect(listbox).toBeVisible();
-  const options = listbox.getByRole("option");
-  await expect(options).toHaveText([
-    "All levels",
-    "ERROR",
-    "WARN",
-    "INFO",
-    "DEBUG",
-  ]);
+  await expect(
+    bar.getByRole("button", { name: "Remove level:error" }),
+  ).toBeVisible();
+  await expect(input).toHaveValue("timeout");
+  await expect(bar.locator("[data-toolbar-query]")).toHaveText(
+    "level:error timeout",
+  );
 
-  const triggerBox = (await trigger.boundingBox())!;
-  const popupBox = (await listbox.boundingBox())!;
-  const firstOptionBox = (await options.first().boundingBox())!;
-  const gap = popupBox.y - (triggerBox.y + triggerBox.height);
-  expect(gap).toBeGreaterThanOrEqual(0);
-  expect(gap).toBeLessThanOrEqual(8);
-  // The first option starts where the popup does, padding aside: no dead band.
-  expect(firstOptionBox.y - popupBox.y).toBeLessThanOrEqual(12);
-  expect(firstOptionBox.height).toBeGreaterThan(16);
+  // Backspace on empty text pulls the chip back into the input for editing.
+  await input.fill("");
+  await input.press("Backspace");
+  await expect(input).toHaveValue("level:error");
+  await expect(
+    bar.getByRole("button", { name: "Remove level:error" }),
+  ).toHaveCount(0);
 
-  await options.filter({ hasText: "ERROR" }).click();
-  await expect(trigger).toHaveText(/ERROR/);
+  // Escape clears everything.
+  await input.press("Escape");
+  await expect(bar.locator("[data-toolbar-query]")).toHaveText("");
 });
 
-// The popup renders in a portal, but Base UI transforms its positioner, so the
-// positioner is the stacking context the page competes with. With the z-index
-// only on the popup inside it, the log table's sticky head painted over
-// whichever option it overlapped and ate the click that should have picked it.
-test("the level select popup covers the sticky table head under it", async ({
+// Dragging across the volume strip narrows the range to a custom window and
+// a click on it clears that window again.
+test("dragging on the volume strip picks a window, a click clears it", async ({
   page,
 }) => {
   await openGallery(page);
-  const trigger = page.getByRole("combobox", { name: "Filter by log level" });
-  await trigger.click();
-  await expect(page.getByRole("listbox")).toBeVisible();
+  const bar = page.locator('[data-fixture="observability-toolbar"]');
+  const strip = bar.getByTitle("Drag to narrow the time window");
+  const box = (await strip.boundingBox())!;
 
-  const stickyHead = page.locator("thead.sticky").first();
-  const headBox = (await stickyHead.boundingBox())!;
-  const popupBox = (await page.getByRole("listbox").boundingBox())!;
-  // The fixture is only meaningful while the two actually overlap.
-  expect(headBox.y).toBeLessThan(popupBox.y + popupBox.height);
-
-  const buried = await page.evaluate(() => {
-    const popup = document.querySelector('[data-slot="select-content"]')!;
-
-    return [...popup.querySelectorAll('[data-slot="select-item"]')]
-      .filter((item) => {
-        const box = item.getBoundingClientRect();
-        const onTop = document.elementFromPoint(
-          box.x + box.width / 2,
-          box.y + box.height / 2,
-        );
-
-        return !popup.contains(onTop);
-      })
-      .map((item) => item.textContent);
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height / 2, {
+    steps: 4,
   });
-  expect(buried).toEqual([]);
+  await page.mouse.up();
 
-  // The option the head used to swallow still selects on a real click.
-  await page.getByRole("option").filter({ hasText: "ERROR" }).click();
-  await expect(trigger).toHaveText(/ERROR/);
+  const window = bar.locator("[data-toolbar-window]");
+  await expect(window).toBeVisible();
+  const [from, to] = (await window.textContent())!.split("-").map(Number);
+  // The fixture's hour runs up to its fixed clock; the pick is its third quarter.
+  const hour = 60 * 60 * 1000;
+  expect(to - from).toBeGreaterThan(hour * 0.2);
+  expect(to - from).toBeLessThan(hour * 0.3);
+
+  await page.mouse.click(box.x + box.width * 0.1, box.y + box.height / 2);
+  await expect(window).toHaveCount(0);
 });
