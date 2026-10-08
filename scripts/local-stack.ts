@@ -548,10 +548,21 @@ function createManifestAccount(state: InstanceState, runId: string): string {
 }
 
 // Maps host.docker.internal so Convex reaches core on Linux; Docker Desktop
-// resolves it on its own.
+// resolves it on its own. The backend binds the host's port numbers, not the
+// image's fixed 3210/3211: Node actions call it back at CONVEX_CLOUD_ORIGIN
+// from inside the container.
 function ensureConvexContainer(state: InstanceState): void {
   const name = containerName(state.instanceId);
+  const { convexApi, convexSite } = ports(state);
   const containerState = dockerContainerState(name);
+  if (
+    containerState &&
+    docker(["port", name, `${convexApi}/tcp`], { allowFailure: true }) === ""
+  ) {
+    throw new Error(
+      "this stack predates Node action callbacks; run `bun run local:up -- --fresh` to recreate it",
+    );
+  }
   if (containerState === "running") return;
   if (containerState) {
     docker(["start", name]);
@@ -566,9 +577,9 @@ function ensureConvexContainer(state: InstanceState): void {
     "--name",
     name,
     "-p",
-    `${ports(state).convexApi}:3210`,
+    `${convexApi}:${convexApi}`,
     "-p",
-    `${ports(state).convexSite}:3211`,
+    `${convexSite}:${convexSite}`,
     "-v",
     `${dataVolumeName(state.instanceId)}:/convex/data`,
     "--add-host",
@@ -585,7 +596,11 @@ function ensureConvexContainer(state: InstanceState): void {
     "DISABLE_BEACON=true",
     "-e",
     "DO_NOT_REQUIRE_SSL=true",
+    "--entrypoint",
+    "bash",
     CONVEX_IMAGE,
+    "-c",
+    `sed -e 's/--port 3210/--port ${convexApi}/' -e 's/--site-proxy-port 3211/--site-proxy-port ${convexSite}/' run_backend.sh > /tmp/run_backend.sh && exec bash /tmp/run_backend.sh`,
   ]);
 }
 
