@@ -13,7 +13,10 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 // Same four tones as the tracing panel: sky while the provider is still moving
 // (suspending, terminating, building), grey once nothing runs. Tables and
 // titles show the dot only; the detail view spells the word out.
-const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
+export const INSTANCE_TONE: Record<
+  Doc<"sandboxInstances">["status"],
+  StatusTone
+> = {
   running: "ok",
   suspending: "running",
   suspended: "ended",
@@ -27,7 +30,10 @@ const PROVIDER_LABEL: Record<string, string> = {
   sandbox: "workdir",
 };
 
-const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
+export const SNAPSHOT_TONE: Record<
+  Doc<"sandboxSnapshots">["status"],
+  StatusTone
+> = {
   pending: "running",
   building: "running",
   pulling: "running",
@@ -99,14 +105,16 @@ export function formatProvider(provider: string): string {
   return PROVIDER_LABEL[provider] ?? provider;
 }
 
-/** Footprint string, e.g. "1 vCPU · 2 GB · 8 GB". */
+/** Footprint string, e.g. "1 vCPU · 2 GB · 8 GB". Disk is left out when the row has none. */
 export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
   const memory =
     specs.memoryMb >= 1024
-      ? `${specs.memoryMb / 1024} GB`
+      ? `${Math.round(specs.memoryMb / 102.4) / 10} GB`
       : `${specs.memoryMb} MB`;
+  const parts = [`${specs.vcpu} vCPU`, memory];
+  if (specs.storageGb > 0) parts.push(`${specs.storageGb} GB`);
 
-  return `${specs.vcpu} vCPU · ${memory} · ${specs.storageGb} GB`;
+  return parts.join(" · ");
 }
 
 export function instanceStatusDot(

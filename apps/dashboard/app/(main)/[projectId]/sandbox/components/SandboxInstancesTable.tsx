@@ -1,13 +1,22 @@
 "use client";
 
-import { DetailSplit } from "@/app/components/DetailSplit";
-import { Button } from "@/app/components/ui/button";
-import { useNow } from "@/app/hooks/useNow";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
-  machineState,
-  type MachineConnection,
-} from "@/app/lib/machineConnection";
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+  DataTableSub,
+} from "@/app/components/DataTable";
+import { DetailSplit } from "@/app/components/DetailSplit";
+import { EmptyState } from "@/app/components/EmptyState";
+import { LoadMore } from "@/app/components/LoadMore";
+import { SearchInput } from "@/app/components/SearchInput";
+import { SegmentedControl } from "@/app/components/SegmentedControl";
+import { StatusDot } from "@/app/components/StatusDot";
+import { RefreshButton, Toolbar, ToolbarCount } from "@/app/components/Toolbar";
+import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -16,41 +25,34 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
-import { Input } from "@/app/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/app/components/ui/select";
 import { Switch } from "@/app/components/ui/switch";
+import { useNow } from "@/app/hooks/useNow";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { toErrorMessage } from "@/app/lib/errors";
+import {
+  MACHINE_STATE_LABEL,
+  MACHINE_TONE,
+  machineState,
+  type MachineConnection,
+} from "@/app/lib/machineConnection";
+import { parseQuery } from "@/app/lib/queryTokens";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  RefreshCw,
-  Search,
-  X,
-} from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MachinePanel } from "./MachinePanel";
+import type { SandboxObservabilityScope } from "./SandboxLogTail";
 import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   dashboardHref,
   formatProvider,
   formatSpecs,
-  instanceStatusDot,
-  machineStatusDot,
+  INSTANCE_TONE,
   relativeTime,
 } from "./sandboxFormat";
-import type { SandboxObservabilityScope } from "./SandboxLogTail";
-import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   instances: Array<Doc<"sandboxInstances">>;
@@ -67,17 +69,34 @@ type TableRow =
   | { kind: "machine"; machine: MachineConnection }
   | { kind: "instance"; instance: Doc<"sandboxInstances"> };
 
-/** Status filter values; "all" disables the status predicate. */
-const STATUS_FILTERS: Array<{ value: string; label: string }> = [
-  { value: "all", label: "All statuses" },
-  { value: "running", label: "Running" },
-  { value: "suspending", label: "Suspending" },
-  { value: "suspended", label: "Suspended" },
-  { value: "terminating", label: "Terminating" },
-  { value: "error", label: "Error" },
+// The `field:value` tokens the search box understands.
+const INSTANCE_QUERY_FIELDS = ["provider", "status", "agent"] as const;
+
+// The status groups the segmented control counts. Transitional states count
+// with the state they are leaving, so the numbers add up to the list.
+type StatusGroup = "all" | "running" | "suspended" | "error";
+
+const STATUS_GROUP_OF: Record<Doc<"sandboxInstances">["status"], StatusGroup> =
+  {
+    running: "running",
+    suspending: "running",
+    terminating: "running",
+    suspended: "suspended",
+    error: "error",
+  };
+
+const STATUS_GROUPS: Array<{ id: StatusGroup; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "running", label: "Running" },
+  { id: "suspended", label: "Suspended" },
+  { id: "error", label: "Error" },
 ];
 
-const PAGE_SIZE = 8;
+// Rows rendered before the "Load more" footer, like the logs table.
+const PAGE_SIZE = 50;
+
+// Six columns of short text; below this the detail panel would wrap them.
+const INSTANCE_TABLE_MIN_WIDTH = 720;
 
 export function SandboxInstancesTable({
   instances,
@@ -109,44 +128,88 @@ export function SandboxInstancesTable({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const [page, setPage] = useState(0);
-  const refreshedPages = useRef(new Set<string>());
+  const [filter, setFilter] = useState("");
+  const [group, setGroup] = useState<StatusGroup>("all");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const refreshedSets = useRef(new Set<string>());
 
-  // Filter by name/externalId/provider substring + status, then paginate. The
-  // live query returns the whole (small) list, so filtering client-side is fine.
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
+  const counts = useMemo(() => {
+    const tally: Record<StatusGroup, number> = {
+      all: instances.length + machines.length,
+      running: 0,
+      suspended: 0,
+      error: 0,
+    };
+    for (const instance of instances) tally[STATUS_GROUP_OF[instance.status]]++;
+    for (const machine of machines) {
+      if (machineState(machine, now) === "connected") tally.running++;
+    }
 
-    return instances.filter((instance) => {
-      if (status !== "all" && instance.status !== status) return false;
-      if (!needle) return true;
+    return tally;
+  }, [instances, machines, now]);
 
-      return (
-        instance.name.toLowerCase().includes(needle) ||
-        instance.externalId.toLowerCase().includes(needle) ||
-        instance.provider.toLowerCase().includes(needle) ||
-        (instance.conversationKey?.toLowerCase().includes(needle) ?? false) ||
-        (instance.lastUsedTraceId?.toLowerCase().includes(needle) ?? false)
-      );
-    });
-  }, [instances, search, status]);
+  // The live query returns the whole (small) list, so filtering is client-side.
+  const query = useMemo(
+    () => parseQuery(filter, INSTANCE_QUERY_FIELDS),
+    [filter],
+  );
+  const filtered = useMemo(
+    () =>
+      instances.filter((instance) => {
+        if (group !== "all" && STATUS_GROUP_OF[instance.status] !== group) {
+          return false;
+        }
+        const fieldsPass = query.fields.every(({ field, value }) =>
+          field === "provider"
+            ? formatProvider(instance.provider).toLowerCase().startsWith(value)
+            : field === "status"
+              ? instance.status.startsWith(value)
+              : (instance.agentId ?? "").toLowerCase().startsWith(value),
+        );
+        if (!fieldsPass) return false;
+        if (!query.text) return true;
 
-  // A computer has no lifecycle status, so any status filter hides it.
-  const filteredMachines = useMemo(() => {
-    if (status !== "all") return [];
-    const needle = search.trim().toLowerCase();
+        return [
+          instance.name,
+          instance.externalId,
+          instance.provider,
+          instance.conversationKey ?? "",
+          instance.lastUsedTraceId ?? "",
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query.text);
+      }),
+    [instances, group, query],
+  );
 
-    return machines.filter(
-      (machine) =>
-        machine.name.toLowerCase().includes(needle) ||
-        (machine.hostname?.toLowerCase().includes(needle) ?? false),
-    );
-  }, [machines, search, status]);
+  // A computer is running while connected, and has no other state or agent.
+  const filteredMachines = useMemo(
+    () =>
+      machines.filter((machine) => {
+        const connected = machineState(machine, now) === "connected";
+        if (group === "running" && !connected) return false;
+        if (group !== "all" && group !== "running") return false;
+        const fieldsPass = query.fields.every(
+          ({ field, value }) =>
+            (field === "provider" && "broods machine".startsWith(value)) ||
+            (field === "status" &&
+              MACHINE_STATE_LABEL[machineState(machine, now)]
+                .toLowerCase()
+                .startsWith(value)),
+        );
+        if (!fieldsPass) return false;
+        if (!query.text) return true;
 
-  // Computers sort above the instances and paginate with them, so the count
-  // under the table matches what is on screen.
+        return `${machine.name} ${machine.hostname ?? ""}`
+          .toLowerCase()
+          .includes(query.text);
+      }),
+    [machines, group, query, now],
+  );
+
+  // Computers sort above the instances and page with them, so the count in
+  // the toolbar matches what is on screen.
   const rows = useMemo(
     (): TableRow[] => [
       ...filteredMachines.map((machine): TableRow => ({
@@ -160,22 +223,29 @@ export function SandboxInstancesTable({
     ],
     [filtered, filteredMachines],
   );
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageRows = useMemo(
-    () => rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [rows, safePage],
+  const visible = useMemo(
+    () => rows.slice(0, visibleCount),
+    [rows, visibleCount],
   );
+  const remaining = rows.length - visible.length;
+
+  // Reset paging whenever the filters change so "Load more" starts from the
+  // top of the current view. Render-time adjustment, not an effect.
+  const filterSignature = `${filter}|${group}`;
+  const [prevFilterSignature, setPrevFilterSignature] =
+    useState(filterSignature);
+  if (filterSignature !== prevFilterSignature) {
+    setPrevFilterSignature(filterSignature);
+    setVisibleCount(PAGE_SIZE);
+  }
+
   // Only instances have a lifecycle, so the refresh controls work off these.
-  const pageInstances = useMemo(
+  const visibleInstances = useMemo(
     () =>
-      pageRows.flatMap((row) =>
-        row.kind === "instance" ? [row.instance] : [],
-      ),
-    [pageRows],
+      visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
+    [visible],
   );
-  const hasFilters = search.trim() !== "" || status !== "all";
-  const refreshKey = pageInstances
+  const refreshKey = visibleInstances
     .filter(controllable)
     .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
     .join("|");
@@ -204,7 +274,7 @@ export function SandboxInstancesTable({
   }
 
   const refreshVisible = useCallback(async (): Promise<void> => {
-    const targets = pageInstances.filter(controllable);
+    const targets = visibleInstances.filter(controllable);
     if (targets.length === 0) return;
     setRefreshing(true);
     setError(null);
@@ -222,115 +292,64 @@ export function SandboxInstancesTable({
     } finally {
       setRefreshing(false);
     }
-  }, [pageInstances, refresh]);
+  }, [visibleInstances, refresh]);
 
   useEffect(() => {
-    if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
-    refreshedPages.current.add(refreshKey);
+    if (!refreshKey || refreshedSets.current.has(refreshKey)) return;
+    refreshedSets.current.add(refreshKey);
     void refreshVisible();
   }, [refreshKey, refreshVisible]);
 
-  /** Resets pagination whenever a filter changes so results stay visible. */
-  function setSearchAndReset(value: string): void {
-    setSearch(value);
-    setPage(0);
-  }
-
-  function setStatusAndReset(value: string): void {
-    setStatus(value);
-    setPage(0);
-  }
-
   if (instances.length === 0 && machines.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
-        <p className="text-sm text-foreground">No running sandbox instances.</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Run an agent against a sandbox and it appears here live. Per-call
-          instances last the length of the call, reserved ones until suspended.
-          A computer running <code>broods machine</code> shows up here too.
-        </p>
-      </div>
+      <EmptyState
+        title="No running sandbox instances."
+        detail="Run an agent against a sandbox and it appears here live. Per-call instances last the length of the call, reserved ones until suspended. A computer running broods machine shows up here too."
+      />
     );
   }
 
+  const traceHref = (instance: Doc<"sandboxInstances">): string | null => {
+    const traceId = instance.lastUsedTraceId ?? instance.createdByTraceId;
+
+    return traceId
+      ? dashboardHref(projectId, searchParams.get("stage"), {
+          tab: "tracing",
+          trace: traceId,
+        })
+      : null;
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-50 flex-1">
-          <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="text"
-            value={search}
-            onChange={(event) => setSearchAndReset(event.target.value)}
-            placeholder="Search name, id, provider…"
-            aria-label="Search instances"
-            className="h-8 pl-8 text-xs"
-          />
-        </div>
-
-        <Select
-          items={STATUS_FILTERS}
-          value={status}
-          onValueChange={(value) => {
-            if (value !== null) {
-              setStatusAndReset(value);
-            }
-          }}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label="Filter by status"
-            className="w-36 cursor-pointer text-xs"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUS_FILTERS.map((option) => (
-              <SelectItem
-                key={option.value}
-                value={option.value}
-                className="cursor-pointer text-xs"
-              >
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={refreshVisible}
-          disabled={refreshing || !pageInstances.some(controllable)}
-          className="cursor-pointer"
-        >
-          <RefreshCw className="size-3.5" />
-          {refreshing ? "Refreshing…" : "Refresh visible"}
-        </Button>
-
-        {hasFilters && (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            onClick={() => {
-              setSearch("");
-              setStatus("all");
-              setPage(0);
-            }}
-            aria-label="Clear filters"
-            title="Clear filters"
-            tone="muted"
-            className="cursor-pointer"
-          >
-            <X className="size-3.5" />
-          </Button>
-        )}
-      </div>
+      <Toolbar className="border-b-0 px-0">
+        <SearchInput
+          value={filter}
+          onChange={setFilter}
+          fields={INSTANCE_QUERY_FIELDS}
+          placeholder="Search name, id, agent · provider: status: agent:"
+        />
+        <SegmentedControl
+          options={STATUS_GROUPS.map((option) => ({
+            ...option,
+            count: counts[option.id],
+          }))}
+          value={group}
+          onChange={setGroup}
+          ariaLabel="Filter by status"
+        />
+        <ToolbarCount shown={rows.length} total={counts.all} />
+        <RefreshButton
+          onRefresh={refreshVisible}
+          disabled={refreshing || !visibleInstances.some(controllable)}
+          title="Refresh the listed instances"
+          isError={error !== null}
+        />
+      </Toolbar>
+      {error && <p className="pb-2 text-xs text-destructive">{error}</p>}
 
       <DetailSplit
+        tableMinWidth={INSTANCE_TABLE_MIN_WIDTH}
         detail={
           selected ? (
             <SandboxInstancePanel
@@ -353,28 +372,26 @@ export function SandboxInstancesTable({
           )
         }
       >
-        <table className="w-full text-sm whitespace-nowrap">
-          <thead className="bg-muted/40 text-xs text-muted-foreground">
+        <DataTable>
+          <DataTableHeader>
             <tr>
-              <th className="px-4 py-2 text-left font-medium">Name</th>
-              <th className="px-4 py-2 text-left font-medium">Provider</th>
-              <th className="px-4 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-left font-medium">Size</th>
-              <th className="px-4 py-2 text-left font-medium">Image</th>
-              <th className="px-4 py-2 text-left font-medium">Trace</th>
-              <th className="px-4 py-2 text-left font-medium">Created</th>
-              <th className="px-4 py-2 text-left font-medium">Last used</th>
-              <th className="px-4 py-2 text-right font-medium">Running</th>
+              <DataTableHead>Name</DataTableHead>
+              <DataTableHead>Status</DataTableHead>
+              <DataTableHead>Size</DataTableHead>
+              <DataTableHead>Agent</DataTableHead>
+              <DataTableHead>Activity</DataTableHead>
+              <DataTableHead align="right">Running</DataTableHead>
             </tr>
-          </thead>
-          <tbody>
-            {pageRows.map((row) => {
+          </DataTableHeader>
+          <DataTableBody>
+            {visible.map((row) => {
               if (row.kind === "machine") {
                 return (
                   <MachineRow
                     key={row.machine._id}
                     machine={row.machine}
                     now={now}
+                    selected={selectedMachineId === row.machine._id}
                     onSelect={() => {
                       setSelectedId(null);
                       setSelectedMachineId(row.machine._id);
@@ -389,153 +406,102 @@ export function SandboxInstancesTable({
                 (instance.status === "running" ||
                   instance.status === "suspended") &&
                 pendingId !== instance._id;
+              const href = traceHref(instance);
 
               return (
-                <tr
+                <DataTableRow
                   key={instance._id}
-                  className="cursor-pointer border-t border-border hover:bg-muted/30"
+                  selected={selectedId === instance._id}
+                  className="group"
                   onClick={() => {
                     setSelectedMachineId(null);
                     setSelectedId(instance._id);
                   }}
                 >
-                  <td className="px-4 py-2.5">
-                    <div className="font-medium text-foreground">
+                  <DataTableCell className="max-w-64">
+                    <div className="truncate font-medium text-foreground">
                       {instance.name}
                     </div>
-                    <div className="font-mono text-xs text-muted-foreground">
+                    <DataTableSub className="font-mono">
+                      {formatProvider(instance.provider)}
+                      {instance.ephemeral && " · per-call"} ·{" "}
                       {instance.externalId}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs">
-                    {instance.ephemeral
-                      ? `${formatProvider(instance.provider)} · per-call`
-                      : formatProvider(instance.provider)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {instanceStatusDot(instance.status)}
+                    </DataTableSub>
+                  </DataTableCell>
+                  <DataTableCell>
+                    <span className="inline-flex items-center gap-1.5">
+                      <StatusDot tone={INSTANCE_TONE[instance.status]} />
+                      {instance.status}
+                    </span>
                     {instance.errorMessage && (
-                      <div
-                        className="mt-1 max-w-xs truncate text-xs text-destructive"
+                      <DataTableSub
+                        className="max-w-56 text-destructive"
                         title={instance.errorMessage}
                       >
                         {instance.errorMessage}
-                      </div>
+                      </DataTableSub>
                     )}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                  </DataTableCell>
+                  <DataTableCell muted>
                     {formatSpecs(instance.specs)}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                    {instance.snapshotId ?? "—"}
-                  </td>
-                  <td
-                    className="px-4 py-2.5"
-                    onClick={(e) => e.stopPropagation()}
+                  </DataTableCell>
+                  <DataTableCell muted>{instance.agentId ?? "—"}</DataTableCell>
+                  <DataTableCell>
+                    <div>used {relativeTime(instance.lastUsedAt, now)}</div>
+                    <DataTableSub>
+                      created {relativeTime(instance.createdAt, now)}
+                      {instance.snapshotId &&
+                        ` · snapshot ${instance.snapshotId}`}
+                    </DataTableSub>
+                  </DataTableCell>
+                  <DataTableCell
+                    align="right"
+                    onClick={(event) => event.stopPropagation()}
                   >
-                    {instance.lastUsedTraceId || instance.createdByTraceId ? (
-                      <Button
-                        nativeButton={false}
-                        render={
-                          <Link
-                            href={dashboardHref(
-                              projectId,
-                              searchParams.get("stage"),
-                              {
-                                tab: "tracing",
-                                trace:
-                                  instance.lastUsedTraceId ??
-                                  instance.createdByTraceId!,
-                              },
-                            )}
-                            draggable={false}
-                          />
-                        }
-                        variant="outline"
-                        size="xs"
+                    <span className="inline-flex items-center gap-2">
+                      {href && (
+                        // Shown on row hover or keyboard focus; the switch stays put.
+                        <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                          <Button
+                            nativeButton={false}
+                            render={<Link href={href} draggable={false} />}
+                            variant="ghost"
+                            size="xs"
+                            tone="muted"
+                            className="cursor-pointer"
+                          >
+                            Trace
+                            <ExternalLink className="size-3" />
+                          </Button>
+                        </span>
+                      )}
+                      <Switch
+                        checked={running}
+                        disabled={!toggleable || !canWrite}
                         className="cursor-pointer"
-                      >
-                        <ExternalLink className="size-3" />
-                        Trace
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.createdAt, now)}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.lastUsedAt, now)}
-                  </td>
-                  <td
-                    className="px-4 py-2.5 text-right"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Switch
-                      checked={running}
-                      disabled={!toggleable || !canWrite}
-                      className="cursor-pointer"
-                      onCheckedChange={(next) =>
-                        next ? toggle(instance, true) : setConfirming(instance)
-                      }
-                      aria-label={running ? "Suspend" : "Resume"}
-                    />
-                  </td>
-                </tr>
+                        onCheckedChange={(next) =>
+                          next
+                            ? toggle(instance, true)
+                            : setConfirming(instance)
+                        }
+                        aria-label={running ? "Suspend" : "Resume"}
+                      />
+                    </span>
+                  </DataTableCell>
+                </DataTableRow>
               );
             })}
-            {pageRows.length === 0 && (
-              <tr>
-                <td
-                  colSpan={9}
-                  className="px-4 py-10 text-center text-xs text-muted-foreground"
-                >
-                  Nothing matches the current filters.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
+        {rows.length === 0 && (
+          <EmptyState title="Nothing matches the current filters." />
+        )}
+        <LoadMore
+          pageSize={PAGE_SIZE}
+          remaining={remaining}
+          onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
+        />
       </DetailSplit>
-
-      {rows.length > PAGE_SIZE && (
-        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            {safePage * PAGE_SIZE + 1}-
-            {Math.min((safePage + 1) * PAGE_SIZE, rows.length)} of {rows.length}
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              onClick={() => setPage(safePage - 1)}
-              disabled={safePage === 0}
-              aria-label="Previous page"
-              className="cursor-pointer"
-            >
-              <ChevronLeft className="size-3.5" />
-            </Button>
-            <span>
-              {safePage + 1} / {pageCount}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              onClick={() => setPage(safePage + 1)}
-              disabled={safePage >= pageCount - 1}
-              aria-label="Next page"
-              className="cursor-pointer"
-            >
-              <ChevronRight className="size-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
       {instances.length > 0 && !instances.some(controllable) && (
         <p className="mt-2 text-xs text-muted-foreground">
@@ -595,43 +561,58 @@ function controllable(
   return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
 }
 
-/** A computer has no size, image, trace or lifecycle switch to show. */
+/** A computer: its reported size, what it serves, and when it was last seen. */
 function MachineRow({
   machine,
   now,
+  selected,
   onSelect,
 }: {
   machine: MachineConnection;
   now: number;
+  selected: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
+  const state = machineState(machine, now);
+  const serves = [
+    "bash",
+    ...(machine.computer ? ["computer use"] : []),
+    ...(machine.mcp.length ? ["mcp"] : []),
+  ].join(" · ");
+
   return (
-    <tr
-      className="cursor-pointer border-t border-border hover:bg-muted/30"
-      onClick={onSelect}
-    >
-      <td className="px-4 py-2.5">
-        <div className="font-medium text-foreground">{machine.name}</div>
-        <div className="font-mono text-xs text-muted-foreground">
-          {machine.hostname ?? "—"}
+    <DataTableRow selected={selected} onClick={onSelect}>
+      <DataTableCell className="max-w-64">
+        <div className="truncate font-medium text-foreground">
+          {machine.name}
         </div>
-      </td>
-      <td className="px-4 py-2.5 text-xs">{formatProvider("machine")}</td>
-      <td className="px-4 py-2.5">
-        {machineStatusDot(machineState(machine, now))}
-      </td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
-      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">
-        {relativeTime(machine.connectedAt, now)}
-      </td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground">
-        {relativeTime(machine.lastSeenAt, now)}
-      </td>
-      <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+        <DataTableSub className="font-mono">
+          {formatProvider("machine")}
+          {machine.hostname && ` · ${machine.hostname}`}
+        </DataTableSub>
+      </DataTableCell>
+      <DataTableCell>
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone={MACHINE_TONE[state]} />
+          {MACHINE_STATE_LABEL[state].toLowerCase()}
+        </span>
+      </DataTableCell>
+      <DataTableCell muted>
+        {machine.specs ? formatSpecs(machine.specs) : "—"}
+        {(machine.platform || machine.arch) && (
+          <DataTableSub>
+            {[machine.platform, machine.arch].filter(Boolean).join(" · ")}
+          </DataTableSub>
+        )}
+      </DataTableCell>
+      <DataTableCell muted>—</DataTableCell>
+      <DataTableCell>
+        <div>seen {relativeTime(machine.lastSeenAt, now)}</div>
+        <DataTableSub>{serves}</DataTableSub>
+      </DataTableCell>
+      <DataTableCell align="right" muted>
         —
-      </td>
-    </tr>
+      </DataTableCell>
+    </DataTableRow>
   );
 }

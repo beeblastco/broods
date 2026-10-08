@@ -551,6 +551,14 @@ export const sandboxProviderValidator = v.union(
  * One row per reserved sandbox, keyed by `reservationKey` (the broods
  * reconnection key, globally unique since it embeds the account + workspace).
  */
+
+/** A sandbox's footprint; a connected machine reports its own in the same units. */
+const sandboxSpecs = v.object({
+  vcpu: v.number(),
+  memoryMb: v.number(),
+  storageGb: v.number(),
+});
+
 export const sandboxInstancesFields = {
   accountId: v.id("accounts"),
   /** Stage scope; unset for account-scoped sandboxes, like `sandboxConfigsFields`. */
@@ -592,11 +600,7 @@ export const sandboxInstancesFields = {
   permissionMode: v.optional(
     v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
   ),
-  specs: v.object({
-    vcpu: v.number(),
-    memoryMb: v.number(),
-    storageGb: v.number(),
-  }),
+  specs: sandboxSpecs,
   createdAt: v.number(),
   lastUsedAt: v.number(),
   createdByTraceId: v.optional(v.string()),
@@ -645,6 +649,9 @@ export const machineConnectionsFields = {
   connectionId: v.string(),
   hostname: v.optional(v.string()),
   platform: v.optional(v.string()),
+  arch: v.optional(v.string()),
+  /** The computer's size, in the units sandbox instances use; absent from an older daemon. */
+  specs: v.optional(sandboxSpecs),
   /** The daemon started with --computer. */
   computer: v.boolean(),
   /** Server names from the daemon's --mcp file. */

@@ -127,11 +127,21 @@ const execFrame = z.object({
   outputLimitBytes: z.number().positive(),
 });
 
+// The computer's size in the sandbox instances' units, so the dashboard lists
+// a machine like any other sandbox. A field the daemon could not read is 0.
+const machineSpecs = z.object({
+  vcpu: z.number().int().nonnegative(),
+  memoryMb: z.number().int().nonnegative(),
+  storageGb: z.number().int().nonnegative(),
+});
+
 const helloFrame = z.object({
   type: z.literal("hello"),
   sandbox: z.string().min(1),
   hostname: z.string().optional(),
   platform: z.string().optional(),
+  arch: z.string().optional(),
+  specs: machineSpecs.optional(),
   computer: z.boolean().optional(),
   // Names of the MCP servers in the daemon's --mcp file.
   mcp: z.array(z.string()).optional(),

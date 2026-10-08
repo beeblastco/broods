@@ -11,6 +11,7 @@ import {
 import {
   DetailField,
   formatProvider,
+  formatSpecs,
   machineStatusDot,
   relativeTime,
 } from "./sandboxFormat";
@@ -32,7 +33,9 @@ export function MachinePanel({
     ...(machine.computer ? ["computer use"] : []),
     ...machine.mcp.map((server): string => `mcp: ${server}`),
   ];
-  const host = [machine.hostname, machine.platform].filter(Boolean).join(" · ");
+  const host = [machine.hostname, machine.platform, machine.arch]
+    .filter(Boolean)
+    .join(" · ");
   const command = machineStartCommand(machine.name, machine);
 
   return (
@@ -55,6 +58,10 @@ export function MachinePanel({
         <DetailField
           label="Host"
           value={<span className="break-all">{host || "—"}</span>}
+        />
+        <DetailField
+          label="Size"
+          value={machine.specs ? formatSpecs(machine.specs) : "—"}
         />
         <DetailField label="Serves" value={serves.join(", ")} />
         <DetailField

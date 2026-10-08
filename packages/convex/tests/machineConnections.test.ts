@@ -51,6 +51,8 @@ test("a replaced connection's late heartbeat and disconnect leave its successor'
     ...second,
     hostname: "phicks-mbp",
     platform: "darwin",
+    arch: "arm64",
+    specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },
     computer: true,
     mcp: ["echo"],
   });
@@ -70,6 +72,8 @@ test("a replaced connection's late heartbeat and disconnect leave its successor'
   expect(held).toMatchObject({
     connectionId: "second",
     hostname: "phicks-mbp",
+    arch: "arm64",
+    specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },
     computer: true,
     mcp: ["echo"],
   });

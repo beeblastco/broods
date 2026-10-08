@@ -94,10 +94,13 @@ export interface MachineConnectionRef {
 }
 
 export interface MachineConnectionRecord extends MachineConnectionRef {
+  arch?: string;
   computer: boolean;
   hostname?: string;
   mcp: string[];
   platform?: string;
+  /** The computer's size in the sandbox instances' units. */
+  specs?: { vcpu: number; memoryMb: number; storageGb: number };
 }
 
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */

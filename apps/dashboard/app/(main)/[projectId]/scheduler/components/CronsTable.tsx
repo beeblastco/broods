@@ -1,5 +1,14 @@
 "use client";
 
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+  DataTableSub,
+} from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
@@ -18,7 +27,6 @@ import {
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatDateTime } from "@/app/lib/formatTime";
 import { parseQuery } from "@/app/lib/queryTokens";
-import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
@@ -165,80 +173,73 @@ export function CronsTable({
           )
         }
       >
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 text-muted-foreground">
-            <tr className="text-left whitespace-nowrap">
-              <th className="px-3 py-2 font-medium">Name</th>
-              <th className="px-3 py-2 font-medium">Agent</th>
-              <th className="px-3 py-2 font-medium">Schedule</th>
-              <th className="px-3 py-2 font-medium">Next run</th>
-              <th className="px-3 py-2 font-medium">Last run</th>
-              <th className="px-3 py-2 text-right font-medium">Active</th>
+        <DataTable>
+          <DataTableHeader>
+            <tr>
+              <DataTableHead>Name</DataTableHead>
+              <DataTableHead>Agent</DataTableHead>
+              <DataTableHead>Schedule</DataTableHead>
+              <DataTableHead>Next run</DataTableHead>
+              <DataTableHead>Last run</DataTableHead>
+              <DataTableHead align="right">Active</DataTableHead>
             </tr>
-          </thead>
-          <tbody>
+          </DataTableHeader>
+          <DataTableBody>
             {shown.map((cron) => {
               const next = nextRunAt(cron, now);
 
               return (
-                <tr
+                <DataTableRow
                   key={cron._id}
+                  selected={selectedId === cron._id}
                   onClick={() => setSelectedId(cron._id)}
-                  className={cn(
-                    "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
-                    selectedId === cron._id && "bg-accent/30",
-                  )}
                 >
-                  <td className="max-w-64 px-3 py-2">
+                  <DataTableCell className="max-w-64">
                     <div className="truncate font-medium text-foreground">
                       {cron.name}
                     </div>
                     {cron.description && (
-                      <div className="truncate text-muted-foreground">
-                        {cron.description}
-                      </div>
+                      <DataTableSub>{cron.description}</DataTableSub>
                     )}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                  </DataTableCell>
+                  <DataTableCell muted>
                     {agentName(agentNameById, cron)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  </DataTableCell>
+                  <DataTableCell>
                     <div>
                       {describeSchedule(cron.scheduleExpression, cron.timezone)}
                     </div>
-                    <div className="font-mono text-2xs text-muted-foreground">
+                    <DataTableSub className="font-mono">
                       {cron.scheduleExpression}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                    </DataTableSub>
+                  </DataTableCell>
+                  <DataTableCell>
                     {next === null ? (
                       <span className="text-muted-foreground">—</span>
                     ) : (
                       <>
                         <div>{untilLabel(next, now)}</div>
-                        <div className="text-2xs text-muted-foreground">
-                          {formatDateTime(next)}
-                        </div>
+                        <DataTableSub>{formatDateTime(next)}</DataTableSub>
                       </>
                     )}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  </DataTableCell>
+                  <DataTableCell>
                     {cron.lastStatus ? (
                       <>
                         <span className="inline-flex items-center gap-1.5">
                           <StatusDot tone={RUN_TONE[cron.lastStatus]} />
                           {RUN_WORD[cron.lastStatus]}
                         </span>
-                        <div className="text-2xs text-muted-foreground">
+                        <DataTableSub>
                           {relativeTime(cron.lastInvokedAt, now)}
-                        </div>
+                        </DataTableSub>
                       </>
                     ) : (
                       <span className="text-muted-foreground">never</span>
                     )}
-                  </td>
-                  <td
-                    className="px-3 py-2 text-right"
+                  </DataTableCell>
+                  <DataTableCell
+                    align="right"
                     onClick={(event) => event.stopPropagation()}
                   >
                     <Switch
@@ -247,12 +248,12 @@ export function CronsTable({
                       aria-label={`${cron.name} active`}
                       onCheckedChange={(checked) => setActive(cron, checked)}
                     />
-                  </td>
-                </tr>
+                  </DataTableCell>
+                </DataTableRow>
               );
             })}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
         {shown.length === 0 && (
           <EmptyState title="No jobs match the current filters." />
         )}

@@ -39,6 +39,8 @@ export const connected = internalMutation({
     ...connectionRef,
     hostname: machineConnectionsFields.hostname,
     platform: machineConnectionsFields.platform,
+    arch: machineConnectionsFields.arch,
+    specs: machineConnectionsFields.specs,
     computer: machineConnectionsFields.computer,
     mcp: machineConnectionsFields.mcp,
   },

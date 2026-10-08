@@ -6,7 +6,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { hostname } from "node:os";
+import { statfsSync } from "node:fs";
+import { cpus, homedir, hostname, totalmem } from "node:os";
 import { performance } from "node:perf_hooks";
 import {
   MACHINE_CLOSE,
@@ -15,6 +16,7 @@ import {
   type MachineComputerFrame,
   type MachineDaemonFrame,
   type MachineExecFrame,
+  type MachineHelloFrame,
   type MachineMcpCallFrame,
   type MachineMcpListFrame,
   type MachineMcpResultFrame,
@@ -215,6 +217,26 @@ class OutputBuffer {
   }
 }
 
+/**
+ * The computer's size in the units sandbox instances report, so the dashboard
+ * lists it like one. Disk is the home directory's volume; 0 when unreadable.
+ */
+function machineSpecs(): NonNullable<MachineHelloFrame["specs"]> {
+  let storageGb = 0;
+  try {
+    const volume = statfsSync(homedir());
+    storageGb = Math.round((volume.blocks * volume.bsize) / 1024 ** 3);
+  } catch {
+    // Not every runtime exposes statfs; the size reads without disk then.
+  }
+
+  return {
+    vcpu: cpus().length,
+    memoryMb: Math.round(totalmem() / 1024 ** 2),
+    storageGb: storageGb,
+  };
+}
+
 function describeComputerFrame(frame: MachineComputerFrame): string {
   const parts: string[] = [frame.action];
   if (frame.coordinate) parts.push(`at ${frame.coordinate.join(",")}`);
@@ -322,6 +344,8 @@ function serveOnce(
         sandbox: options.sandbox,
         hostname: hostname(),
         platform: process.platform,
+        arch: process.arch,
+        specs: machineSpecs(),
         computer: desktop !== null,
         mcp: mcp?.names(),
         instance: instance,
