@@ -183,6 +183,8 @@ export const agentDeploymentsFields = {
   createdAt: v.optional(v.number()),
   /** Display name of the user who minted or rotated the current key. */
   createdBy: v.optional(v.string()),
+  /** The member who minted or rotated it from the dashboard, for the key list. */
+  createdByUserId: v.optional(v.id("users")),
   /** Last runtime request the key authenticated, written by core at most every few minutes. */
   lastUsedAt: v.optional(v.number()),
   updatedAt: v.number(),
@@ -199,12 +201,15 @@ export const deployKeysFields = {
   projectId: v.id("projects"),
   stageId: v.id("stages"),
   name: v.string(),
+  description: v.optional(v.string()),
   /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
   keyHash: v.string(),
   /** Masked display label (prefix + last four), safe to list without revealing the secret. */
   keyHint: v.string(),
   status: v.union(v.literal("active"), v.literal("revoked")),
   lastUsedAt: v.optional(v.number()),
+  /** The member who made it; a key made over the API has none. */
+  createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -446,6 +451,11 @@ export const accountsFields = {
   username: v.string(),
   description: v.optional(v.string()),
   secretHash: v.string(),
+  /** Masked label of the account key (prefix + last four), safe to list. */
+  secretHint: v.optional(v.string()),
+  /** When and by whom the account key was last minted or rotated from the dashboard. */
+  secretRotatedAt: v.optional(v.number()),
+  secretRotatedBy: v.optional(v.id("users")),
   status: v.union(v.literal("active"), v.literal("disabled")),
   /** Days an audit ledger row is kept before pruning; 90 when unset. */
   auditRetentionDays: v.optional(v.number()),

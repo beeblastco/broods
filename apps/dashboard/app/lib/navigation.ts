@@ -56,7 +56,7 @@ export const SANDBOX_TABS = [
 export const SETTINGS_TABS = [
   { id: "general", label: "General" },
   { id: "variables", label: "Environment variables" },
-  { id: "deploy", label: "Deploy" },
+  { id: "keys", label: "Keys" },
   { id: "webhooks", label: "Webhooks" },
   { id: "policies", label: "Policies" },
   { danger: true, id: "danger", label: "Danger Zone" },
@@ -64,7 +64,7 @@ export const SETTINGS_TABS = [
 
 export const ORG_TABS = [
   { id: "general", label: "General" },
-  { id: "api-access", label: "API Access" },
+  { id: "api-access", label: "API access" },
   { id: "members", label: "Members" },
   { danger: true, id: "danger", label: "Danger Zone" },
 ] as const;

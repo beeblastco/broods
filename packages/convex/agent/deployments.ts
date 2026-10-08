@@ -123,6 +123,7 @@ export const ensureForStage = mutation({
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
       createdBy: deriveName(authUser),
+      createdByUserId: await userIdByAuthId(ctx, authUser.id),
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
       accountId: context.account._id,
@@ -398,6 +399,7 @@ export const rotate = mutation({
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
       createdBy: deriveName(authUser),
+      createdByUserId: await userIdByAuthId(ctx, authUser.id),
       rotate: true,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
@@ -429,6 +431,8 @@ export async function ensureStageDeployment(
     stageSlug: string;
     /** Display name stamped on a newly minted or rotated key. */
     createdBy?: string;
+    /** The member behind it, when the dashboard minted or rotated. */
+    createdByUserId?: Id<"users">;
     rotate?: boolean;
   },
 ): Promise<EnsureResult> {
@@ -479,6 +483,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       createdAt: now,
       createdBy: args.createdBy,
+      createdByUserId: args.createdByUserId,
       lastUsedAt: undefined,
       updatedAt: now,
     });
@@ -506,6 +511,7 @@ export async function ensureStageDeployment(
     ...keyFields,
     createdAt: now,
     createdBy: args.createdBy,
+    createdByUserId: args.createdByUserId,
     updatedAt: now,
   });
   await refreshAccountChannelEndpoints(ctx, args.accountId);
@@ -570,6 +576,19 @@ async function runtimeKeyFields(
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,
   };
+}
+
+/** The member row behind the signed-in user, so the key list can name them. */
+async function userIdByAuthId(
+  ctx: QueryCtx,
+  authId: string,
+): Promise<Id<"users"> | undefined> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+
+  return user?._id;
 }
 
 /** Stable opaque endpoint handle for a stage's runtime API. */

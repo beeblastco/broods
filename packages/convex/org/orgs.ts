@@ -5,7 +5,12 @@
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { internalMutation, mutation, query } from "../_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "../_generated/server";
 import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
@@ -248,6 +253,20 @@ export const getActiveAccount = query({
       status: active.account.status,
       role: active.role,
     };
+  },
+});
+
+/** The user row behind an auth id, for actions that record who acted. */
+export const userByAuthId = internalQuery({
+  args: { authId: v.string() },
+  returns: v.union(v.object({ _id: v.id("users") }), v.null()),
+  handler: async (ctx, args): Promise<{ _id: Id<"users"> } | null> => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .unique();
+
+    return user ? { _id: user._id } : null;
   },
 });
 

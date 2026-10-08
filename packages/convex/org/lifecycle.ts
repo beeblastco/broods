@@ -8,8 +8,12 @@
 import { v } from "convex/values";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { action } from "../_generated/server";
-import { createAccountSecret, sha256Hex } from "../model/accountSecrets";
+import { action, type ActionCtx } from "../_generated/server";
+import {
+  ACCOUNT_KEY_PREFIX,
+  createAccountSecret,
+  sha256Hex,
+} from "../model/accountSecrets";
 import { ClientError } from "../model/clientError";
 
 export const provision = action({
@@ -40,14 +44,16 @@ export const provision = action({
     }
 
     const secret = createAccountSecret();
+    const identity = await ctx.auth.getUserIdentity();
     const account = await ctx.runMutation(internal.account.accounts.create, {
       orgId: args.orgId,
       username: org.slug,
       description: `Cherry-coke org ${org.name}`,
       secretHash: await sha256Hex(secret),
+      secretHint: secretHint(secret),
+      secretRotatedBy: await userIdOf(ctx, identity?.subject),
     });
 
-    const identity = await ctx.auth.getUserIdentity();
     console.log("AUDIT account key provisioned", {
       orgId: args.orgId,
       accountId: account._id,
@@ -77,12 +83,14 @@ export const rotateSecret = action({
     }
 
     const secret = createAccountSecret();
+    const identity = await ctx.auth.getUserIdentity();
     await ctx.runMutation(internal.account.accounts.update, {
       accountId: account._id,
       secretHash: await sha256Hex(secret),
+      secretHint: secretHint(secret),
+      secretRotatedBy: await userIdOf(ctx, identity?.subject),
     });
 
-    const identity = await ctx.auth.getUserIdentity();
     console.log("AUDIT account key rotated", {
       orgId: args.orgId,
       accountId: account._id,
@@ -92,3 +100,22 @@ export const rotateSecret = action({
     return { secret: secret };
   },
 });
+
+/** Masked label for the key list: prefix plus the last four characters. */
+function secretHint(secret: string): string {
+  return `${ACCOUNT_KEY_PREFIX}…${secret.slice(-4)}`;
+}
+
+/** The member row behind the caller's auth id, so the key list can name them. */
+async function userIdOf(
+  ctx: ActionCtx,
+  authId: string | undefined,
+): Promise<Id<"users"> | undefined> {
+  if (!authId) return undefined;
+  const user: { _id: Id<"users"> } | null = await ctx.runQuery(
+    internal.org.orgs.userByAuthId,
+    { authId: authId },
+  );
+
+  return user?._id;
+}

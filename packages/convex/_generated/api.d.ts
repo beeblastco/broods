@@ -26,6 +26,7 @@ import type * as agent_deployments from "../agent/deployments.js";
 import type * as agent_policies from "../agent/policies.js";
 import type * as audit_ledger from "../audit/ledger.js";
 import type * as audit_sinks from "../audit/sinks.js";
+import type * as apiKeys from "../apiKeys.js";
 import type * as auth from "../auth.js";
 import type * as aws_bundles from "../aws/bundles.js";
 import type * as aws_skills from "../aws/skills.js";
@@ -186,6 +187,7 @@ declare const fullApi: ApiFromModules<{
   "agent/policies": typeof agent_policies;
   "audit/ledger": typeof audit_ledger;
   "audit/sinks": typeof audit_sinks;
+  apiKeys: typeof apiKeys;
   auth: typeof auth;
   "aws/bundles": typeof aws_bundles;
   "aws/skills": typeof aws_skills;
