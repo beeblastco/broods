@@ -315,7 +315,9 @@ describe("stage session tickets", () => {
   const ticket = {
     accountId: ACCOUNT.accountId,
     endpointId: "stage-abcd1234",
+    projectId: "proj_shop",
     projectSlug: "shop",
+    stageId: "stage_dev",
     stageSlug: "development",
     expiresAt: Date.now() + 60_000,
   };
@@ -331,8 +333,23 @@ describe("stage session tickets", () => {
       endpointId: "stage-abcd1234",
       projectSlug: "shop",
       stageSlug: "development",
-      stageTicket: true,
+      stageTicket: {
+        projectId: "proj_shop",
+        stageId: "stage_dev",
+        sandboxWrite: false,
+      },
     });
+  });
+
+  it("carries sandboxWrite only when the minter was given it", async () => {
+    const token = await sealStageSessionTicket(
+      { ...ticket, sandboxWrite: true },
+      "stage-secret",
+    );
+
+    expect(
+      await resolveBearerAuth({ authorization: `Bearer ${token}` }),
+    ).toMatchObject({ stageTicket: { sandboxWrite: true } });
   });
 
   it("rejects a ticket signed with another secret, expired, or for a disabled account", async () => {
