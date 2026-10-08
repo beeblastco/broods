@@ -7,6 +7,7 @@
  * sandbox into a new snapshot.
  */
 
+import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
@@ -304,6 +305,7 @@ function e2bCreateOptions(
   persistent: boolean,
 ): Record<string, unknown> {
   const options = isPlainObject(config.options) ? config.options : {};
+  assertNoRetiredImageOptions("e2b", options);
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
 
   return {

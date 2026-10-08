@@ -6,6 +6,7 @@
  * action captures a reserved sandbox into a new snapshot.
  */
 
+import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import { randomUUID } from "node:crypto";
 import type {
   CommandFinished,
@@ -574,6 +575,7 @@ function vercelCreateOptions(
   request: { envVars?: Record<string, string>; timeoutSeconds: number },
   persistent: boolean,
 ): VercelCreateOptions {
+  assertNoRetiredImageOptions("vercel", config.options ?? {});
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
   const snapshot = config.snapshot;
   const source = snapshot?.startsWith(SNAPSHOT_ID_PREFIX)

@@ -292,6 +292,26 @@ export function normalizeCreateSandboxConfigInput(value: unknown): {
 }
 
 /**
+ * Refuses the provider options `config.snapshot` replaced. Config validation
+ * and core's executors both call it, so a config stored before the cutover
+ * fails loudly instead of booting the provider default.
+ * @param provider the sandbox compute backend
+ * @param options the config's provider options
+ */
+export function assertNoRetiredImageOptions(
+  provider: SandboxProvider,
+  options: Record<string, unknown>,
+): void {
+  for (const key of RETIRED_IMAGE_OPTIONS[provider] ?? []) {
+    if (key in options) {
+      throw new ClientError(
+        `config.options.${key} was removed; set config.snapshot to pick what a ${provider} sandbox boots from`,
+      );
+    }
+  }
+}
+
+/**
  * Validate an update-sandbox request body against the stored config.
  * @param existingConfig the stored sandbox config
  * @param value the raw request body
@@ -792,13 +812,7 @@ function validateProviderOptions(
       "config.options.s3Endpoint",
     );
   }
-  for (const key of RETIRED_IMAGE_OPTIONS[provider] ?? []) {
-    if (key in options) {
-      throw new ClientError(
-        `config.options.${key} is not supported; set config.snapshot to pick what a ${provider} sandbox boots from`,
-      );
-    }
-  }
+  assertNoRetiredImageOptions(provider, options);
   if (
     provider === "daytona" &&
     "image" in options &&

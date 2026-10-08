@@ -142,7 +142,7 @@ describe("sandbox config", () => {
           network: { mode: "allow-all" },
           options: { [key]: "x" },
         }),
-      ).toThrow(`config.options.${key} is not supported; set config.snapshot`);
+      ).toThrow(`config.options.${key} was removed; set config.snapshot`);
     }
   });
 

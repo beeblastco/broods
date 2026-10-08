@@ -74,6 +74,9 @@ const daytonaDeleteMock = mock(async (_id?: string) => {});
 const daytonaCreateSnapshotMock = mock(
   async (_id: string, _name: string, _timeout?: number) => {},
 );
+const daytonaStartMock = mock(async () => {});
+// What a reconnected Daytona sandbox reports; an idle reservation is "stopped".
+let daytonaState = "started";
 let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   id: "daytona-sandbox",
@@ -330,6 +333,8 @@ await mock.module("@daytona/sdk", () => ({
     // Release reaches an existing sandbox by id; it deletes through the same
     // handle shape create returns.
     get = mock(async (id: string) => ({
+      state: daytonaState,
+      start: daytonaStartMock,
       delete: () => daytonaDeleteMock(id),
       createSnapshot: (name: string, timeout?: number) =>
         daytonaCreateSnapshotMock(id, name, timeout),
@@ -418,6 +423,8 @@ beforeEach(() => {
   daytonaExecuteCommandMock.mockClear();
   daytonaDeleteMock.mockClear();
   daytonaCreateSnapshotMock.mockClear();
+  daytonaStartMock.mockClear();
+  daytonaState = "started";
   vercelSnapshotMock.mockClear();
   daytonaCreateMock.mockClear();
   daytonaClientOptionsSeen = [];
@@ -2966,6 +2973,50 @@ describe("createSandboxExecutor", () => {
     expect(vercelSnapshotMock).toHaveBeenCalledWith({ expiration: 0 });
   });
 
+  it("starts an auto-stopped Daytona reservation before capturing it", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    storedSandboxExternalId = "daytona-idle";
+    daytonaState = "stopped";
+
+    await createSandboxExecutor({
+      provider: "daytona",
+      persistent: true,
+    }).snapshot({ reservationKey: "reservation-1" });
+
+    expect(daytonaStartMock).toHaveBeenCalledTimes(1);
+    expect(daytonaCreateSnapshotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a stored config that still picks its image through a removed option", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    for (const [provider, key] of [
+      ["daytona", "snapshot"],
+      ["e2b", "template"],
+      ["vercel", "image"],
+    ] as const) {
+      await expect(
+        createSandboxExecutor({
+          provider: provider,
+          options: {
+            token: "tok",
+            teamId: "team_1",
+            projectId: "prj_1",
+            [key]: "x",
+          },
+        }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 }),
+      ).rejects.toThrow(
+        `config.options.${key} was removed; set config.snapshot`,
+      );
+    }
+    expect(daytonaCreateMock).not.toHaveBeenCalled();
+    expect(e2bCreateMock).not.toHaveBeenCalled();
+    expect(vercelCreateMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a snapshot when nothing is reserved", async () => {
     const {
       createSandboxExecutor,
@@ -3415,7 +3466,8 @@ describe("persistent acquire teardown", () => {
     {
       provider: "e2b",
       destroy: e2bKillMock,
-      options: { workspaceRoot: "/workspace", template: "mounted-template" },
+      snapshot: "mounted-template",
+      options: { workspaceRoot: "/workspace" },
     },
     {
       provider: "daytona",
@@ -3485,7 +3537,8 @@ describe("conditional release", () => {
     {
       provider: "e2b",
       destroyed: () => e2bKillMock.mock.calls.map((c) => c[0]),
-      options: { workspaceRoot: "/workspace", template: "mounted-template" },
+      snapshot: "mounted-template",
+      options: { workspaceRoot: "/workspace" },
     },
     {
       provider: "vercel",

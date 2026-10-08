@@ -36,7 +36,7 @@ export async function providerSnapshot(context: VerifyContext): Promise<void> {
     );
   assertStep(
     "options.template is refused in favor of snapshot",
-    refused.includes("config.options.template is not supported"),
+    refused.includes("config.options.template was removed"),
     refused,
   );
 }

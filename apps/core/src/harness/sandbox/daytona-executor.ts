@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
+import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
@@ -241,7 +242,9 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     // Daytona snapshot names are unique per organization, so the account's own
     // name for it stays in the snapshot row.
     const name = `broods-${randomUUID()}`;
-    const sandbox = await new Daytona(daytonaClientOptions(this.#config)).get(
+    // Daytona captures only a started sandbox, and an idle reservation auto-stops.
+    const sandbox = await this.#reconnect(
+      new Daytona(daytonaClientOptions(this.#config)),
       externalId,
     );
     await sandbox.createSnapshot(name, SNAPSHOT_TIMEOUT_SECONDS);
@@ -501,6 +504,7 @@ async function daytonaCreateOptions(
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
+  assertNoRetiredImageOptions("daytona", options);
   // No run identity here: a sandbox outlives the run that created it, and
   // every exec lays its own over this env.
   const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
