@@ -33,11 +33,13 @@ export function useStage(): {
   ) as Doc<"stages">[] | undefined;
 
   const stageParam = searchParams.get("stage");
+  const defaultStageId = defaultStage(stages ?? [])?._id ?? null;
   const stageId =
-    (
-      stages?.find((stage) => stage._id === stageParam) ??
-      defaultStage(stages ?? [])
-    )?._id ?? null;
+    stages?.find((stage) => stage._id === stageParam)?._id ?? defaultStageId;
+  // The default stage keeps one query key whether or not the URL names it, so
+  // picking the stage already on screen does not refetch it.
+  const readsDefault =
+    stageParam === null || (stageId !== null && stageId === defaultStageId);
 
   const setStageId = useCallback(
     (id: Id<"stages"> | null) => {
@@ -62,22 +64,23 @@ export function useStage(): {
 
   return {
     stageId: stageId,
-    stageArgs: stageQueryArgs(projectId, stageParam, stageId),
+    stageArgs: stageQueryArgs(projectId, readsDefault, stageId),
     setStageId: setStageId,
   };
 }
 
 /**
- * A bare project URL leaves `stageId` out, so the query reads the default
- * stage and starts alongside the stage list. A named stage waits for the list.
+ * The default stage leaves `stageId` out, so the query reads it on the server
+ * and a bare URL starts it alongside the stage list. Another stage waits for
+ * the list.
  */
 function stageQueryArgs(
   projectId: Id<"projects"> | undefined,
-  stageParam: string | null,
+  readsDefault: boolean,
   stageId: Id<"stages"> | null,
 ): StageArgs {
   if (!projectId) return "skip";
-  if (stageParam === null) return { projectId: projectId };
+  if (readsDefault) return { projectId: projectId };
 
   return stageId ? { projectId: projectId, stageId: stageId } : "skip";
 }
