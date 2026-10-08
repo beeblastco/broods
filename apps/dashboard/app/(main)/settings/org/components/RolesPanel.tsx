@@ -44,6 +44,7 @@ import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
+import { parseAsName } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
@@ -53,6 +54,7 @@ import {
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
+import { useQueryState } from "nuqs";
 import { useState } from "react";
 
 type Role = FunctionReturnType<typeof api.access.listRoles>[number];
@@ -80,7 +82,7 @@ export function RolesPanel(): React.JSX.Element {
   const canChange = can("access:write");
   const roles = useQuery(api.access.listRoles, {});
   const policies = useQuery(api.access.listPolicies, {});
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useQueryState("sel", parseAsName);
   const [creating, setCreating] = useState(false);
   const list = useListState({
     rows: roles ?? NO_ROWS,

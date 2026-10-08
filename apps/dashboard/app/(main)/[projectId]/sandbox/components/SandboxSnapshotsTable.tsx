@@ -22,13 +22,17 @@ import { Toolbar } from "@/app/components/Toolbar";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
 import type { SortKey } from "@/app/lib/tableState";
+import { parseAsId } from "@/app/lib/urlState";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useState } from "react";
+import { useQueryState } from "nuqs";
 import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
 import { formatProvider, relativeTime, SNAPSHOT_TONE } from "./sandboxFormat";
 
 // The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["provider", "status"] as const;
+
+// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
+const SNAPSHOT_ID = parseAsId<"sandboxSnapshots">();
 
 type Snapshot = Doc<"sandboxSnapshots">;
 type Field = (typeof QUERY_FIELDS)[number];
@@ -62,7 +66,9 @@ export function SandboxSnapshotsTable({
   snapshots,
 }: Props): React.JSX.Element {
   const now = useNow();
-  const [selected, setSelected] = useState<Snapshot | null>(null);
+  const [selectedId, setSelectedId] = useQueryState("sel", SNAPSHOT_ID);
+  const selected =
+    snapshots.find((snapshot) => snapshot._id === selectedId) ?? null;
   const list = useListState({
     rows: snapshots,
     fields: QUERY_FIELDS,
@@ -121,8 +127,8 @@ export function SandboxSnapshotsTable({
             {list.shown.map((snapshot) => (
               <DataTableRow
                 key={snapshot._id}
-                selected={selected?._id === snapshot._id}
-                onClick={() => setSelected(snapshot)}
+                selected={selectedId === snapshot._id}
+                onClick={() => void setSelectedId(snapshot._id)}
               >
                 <DataTableCell className="max-w-64 truncate font-medium">
                   {snapshot.name}
@@ -163,7 +169,7 @@ export function SandboxSnapshotsTable({
         <SandboxSnapshotSheet
           snapshot={selected}
           now={now}
-          onClose={() => setSelected(null)}
+          onClose={() => void setSelectedId(null)}
         />
       )}
     </div>

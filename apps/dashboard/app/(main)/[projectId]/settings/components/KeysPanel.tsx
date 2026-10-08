@@ -154,6 +154,8 @@ function RuntimeKeysTable({
     fields: NO_FIELDS,
     initialSort: { column: "stage", dir: "asc" },
     sortKey: RUNTIME_SORT,
+    // The API keys list below owns the page's `q` and `sort`.
+    url: false,
   });
 
   async function confirmRotate(): Promise<void> {

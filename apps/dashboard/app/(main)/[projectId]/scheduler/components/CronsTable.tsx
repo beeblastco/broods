@@ -31,12 +31,14 @@ import {
 } from "@/app/lib/cronSchedule";
 import { formatDate, formatDateTime } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
+import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
 import Link from "next/link";
+import { useQueryState } from "nuqs";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
@@ -50,6 +52,9 @@ const QUERY_FIELDS = ["agent", "status", "timezone"] as const;
 
 // Eight columns of short text; below this the detail panel would wrap them.
 const TABLE_MIN_WIDTH = 760;
+
+// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
+const CRON_ID = parseAsId<"crons">();
 
 // A job with no zone of its own runs in UTC, so that is what the row says.
 const DEFAULT_TIMEZONE = "UTC";
@@ -138,7 +143,7 @@ export function CronsTable({
   const { canWrite } = useOrgRole();
   const update = useMutation(api.agent.cronsPublic.update);
   const now = useNow();
-  const [selectedId, setSelectedId] = useState<Id<"crons"> | null>(null);
+  const [selectedId, setSelectedId] = useQueryState("sel", CRON_ID);
   const { error, run } = useSubmit();
 
   const rows = useMemo((): CronRow[] => {
