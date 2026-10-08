@@ -18,18 +18,17 @@ import { useMemo } from "react";
 
 export function useDashboardIndex(
   projectId: Id<"projects"> | null,
-  stageId: Id<"stages"> | null,
 ): readonly SearchItem[] {
   const pathname = usePathname();
+  const { stageId, stageArgs } = useStage();
   const projectArgs = projectId ? { projectId: projectId } : "skip";
-  const stageArgs =
-    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip";
 
-  // The canvas's own arguments, so this shares its subscription.
-  const { stageArgs: canvasArgs } = useStage();
-  const canvas = useQuery(api.canvas.getByProject, canvasArgs);
+  const canvas = useQuery(api.canvas.getByProject, stageArgs);
   const crons = useQuery(api.agent.crons.listForProject, projectArgs);
-  const envVars = useQuery(api.environmentVariables.list, stageArgs);
+  const envVars = useQuery(
+    api.environmentVariables.list,
+    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  );
   const projects = useQuery(api.project.list, {});
   const stages = useQuery(api.stage.list, projectArgs);
 

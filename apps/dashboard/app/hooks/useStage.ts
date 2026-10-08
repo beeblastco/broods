@@ -60,16 +60,24 @@ export function useStage(): {
     [searchParams, pathname],
   );
 
-  // A bare project URL asks for the default stage by leaving `stageId` out, so
-  // queries that take it start alongside the stage list instead of after it.
-  // A named stage waits for the list to confirm it.
-  const stageArgs: StageArgs = !projectId
-    ? "skip"
-    : stageParam === null
-      ? { projectId: projectId }
-      : stageId
-        ? { projectId: projectId, stageId: stageId }
-        : "skip";
+  return {
+    stageId: stageId,
+    stageArgs: stageQueryArgs(projectId, stageParam, stageId),
+    setStageId: setStageId,
+  };
+}
 
-  return { stageId: stageId, stageArgs: stageArgs, setStageId: setStageId };
+/**
+ * A bare project URL leaves `stageId` out, so the query reads the default
+ * stage and starts alongside the stage list. A named stage waits for the list.
+ */
+function stageQueryArgs(
+  projectId: Id<"projects"> | undefined,
+  stageParam: string | null,
+  stageId: Id<"stages"> | null,
+): StageArgs {
+  if (!projectId) return "skip";
+  if (stageParam === null) return { projectId: projectId };
+
+  return stageId ? { projectId: projectId, stageId: stageId } : "skip";
 }

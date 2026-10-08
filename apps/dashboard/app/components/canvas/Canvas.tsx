@@ -278,8 +278,8 @@ export function Canvas({
   // Remount per stage: a stage switch with a debounced save pending would
   // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
   // sync) and the next edit would persist it into the new stage. The queries
-  // live out here so that remount keeps their subscriptions, and their data
-  // waits for the stage, which saves need, so no edit lands before it.
+  // live out here to keep their subscriptions across that remount; their data
+  // waits for the stage, so no edit lands before a save knows where to go.
   return (
     <ReactFlowProvider>
       <CanvasInner
@@ -606,9 +606,8 @@ function CanvasInner({
   ).withOptimisticUpdate((localStore, args) => {
     // Keep the cached layout in sync with the pending write so the post-save
     // snapshot matches what's on screen (local React state is already optimistic).
-    // A bare project URL reads the layout without a stageId, so that entry too
-    // while the saved stage is still the default: this re-runs on every server
-    // change, and a moved default must not show this stage's graph.
+    // A bare URL reads the stage-less entry; write it only while this stage is
+    // still the default, as this re-runs on every server change.
     const layout = { nodes: args.nodes, edges: args.edges };
     localStore.setQuery(
       api.canvas.getByProject,
