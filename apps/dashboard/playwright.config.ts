@@ -12,12 +12,12 @@
  *
  * The signed-in suites need E2E_EMAIL and E2E_PASSWORD, and run against
  * E2E_BASE_URL: a deployment, or a local server on the self-hosted backend
- * (default http://localhost:3000, E2E_DEV_PORT moves it, started here when not already running;
+ * (default http://localhost:3000, PORT moves it, started here when not already running;
  * E2E_SERVER_COMMAND swaps `next dev` for another server, which is how CI
  * runs the standalone build). They skip without the account.
  */
 import { defineConfig, devices } from "@playwright/test";
-import { BASE_URL, DEV_PORT, DEV_URL, STORAGE_STATE } from "./e2e/lib/session";
+import { BASE_URL, DEV_URL, STORAGE_STATE } from "./e2e/lib/session";
 
 export default defineConfig({
   testDir: "e2e",
@@ -58,8 +58,7 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command:
-          process.env.E2E_SERVER_COMMAND || `bun run dev -- --port ${DEV_PORT}`,
+        command: process.env.E2E_SERVER_COMMAND || "bun run dev",
         url: `${DEV_URL}/healthz`,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

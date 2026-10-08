@@ -37,7 +37,6 @@ import {
 } from "@broods/convex/model/modelProviders";
 import {
   readAgentBranch,
-  readAgentPolicies,
   readModelReasoning,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
@@ -119,7 +118,6 @@ export function DetailsTab({
   onUpdateModelReasoning,
   onUpdatePublicAccess,
   onUpdateBrowser,
-  onUpdatePolicyConfig,
 }: {
   agentConfig: Doc<"agentConfigs"> | null | undefined;
   projectId: Id<"projects"> | undefined;
@@ -153,7 +151,6 @@ export function DetailsTab({
   }) => Promise<void>;
   onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
   onUpdateBrowser?: (enabled: boolean) => Promise<void>;
-  onUpdatePolicyConfig?: (policies: string[] | null) => Promise<void>;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const [showApiKey, setShowApiKey] = useState(false);
@@ -230,15 +227,6 @@ export function DetailsTab({
   const browserEnabled =
     readAgentBranch<{ enabled?: boolean }>(agentConfig, "browser").enabled ===
     true;
-  const policyOptions = useQuery(
-    api.agent.policies.listForStage,
-    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
-  ) as Doc<"agentPolicies">[] | undefined;
-  // Attachment is only the list. Whether a policy blocks or just records is
-  // carried by the policy document, and edited with it.
-  const assignedPolicyIds = readAgentPolicies(
-    agentConfig as unknown as FlatAgentConfig,
-  );
 
   const outputFormat =
     agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
@@ -392,15 +380,6 @@ export function DetailsTab({
       modelId: trimmed,
       ...(provider === "custom" ? { customBaseUrl: trimmedBaseUrl } : {}),
     });
-  }
-
-  function togglePolicyId(policyId: string): void {
-    const nextIds = assignedPolicyIds.includes(policyId)
-      ? assignedPolicyIds.filter((entry) => entry !== policyId)
-      : [...assignedPolicyIds, policyId];
-
-    // Nothing attached means nothing to evaluate: clear the field.
-    void onUpdatePolicyConfig?.(nextIds.length === 0 ? null : nextIds);
   }
 
   return (
@@ -593,44 +572,6 @@ export function DetailsTab({
       )}
 
       <Separator />
-
-      {onUpdatePolicyConfig && (
-        <>
-          <div className="flex flex-col gap-3">
-            <SectionHeader>Runtime Policy</SectionHeader>
-            <p className="text-2xs text-muted-foreground">
-              Each policy carries its own mode: audit records decisions without
-              blocking, enforce blocks the tool calls it denies. Set it on the
-              policy in Settings.
-            </p>
-            <div className="flex flex-col gap-1.5">
-              {(policyOptions ?? []).map((policy) => {
-                const selected = assignedPolicyIds.includes(policy._id);
-
-                return (
-                  <Button
-                    key={policy._id}
-                    type="button"
-                    variant={selected ? "secondary" : "outline"}
-                    size="sm"
-                    className="h-8 justify-start truncate text-xs"
-                    onClick={() => togglePolicyId(policy._id)}
-                  >
-                    {policy.name}
-                  </Button>
-                );
-              })}
-              {policyOptions && policyOptions.length === 0 && (
-                <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-                  No policies in this stage.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <Separator />
-        </>
-      )}
 
       {/* Public access controls */}
       <div className="flex flex-col gap-3">

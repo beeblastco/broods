@@ -24,6 +24,7 @@ import {
   getActiveOrgForUser,
   getOrgMembership,
   orgRoleMeets,
+  userByAuthId,
 } from "../model/ownership/org";
 import { ClientError } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
@@ -169,7 +170,7 @@ export const createOnboardingOrg = internalMutation({
     const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
     if (!resolved) return null;
     const { token } = resolved;
-    const user = await userForAuthId(ctx, token.authId);
+    const user = await userByAuthId(ctx, token.authId);
     if (!user) throw new Error("CLI token user was not found");
     const name = args.name.trim();
     if (!name) throw new Error("Organization name is required");
@@ -412,7 +413,7 @@ export const selectOnboardingOrg = internalMutation({
     const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
     if (!resolved) return null;
     const { token } = resolved;
-    const user = await userForAuthId(ctx, token.authId);
+    const user = await userByAuthId(ctx, token.authId);
     if (!user) throw new Error("CLI token user was not found");
     const membership = await ctx.db
       .query("orgMembers")
@@ -466,7 +467,7 @@ async function onboardingContext(
   authId: string,
   currentOrgId: Id<"orgs">,
 ): Promise<Infer<typeof onboardingContextValidator>> {
-  const user = await userForAuthId(ctx, authId);
+  const user = await userByAuthId(ctx, authId);
   if (!user) throw new Error("CLI token user was not found");
   const memberships = await ctx.db
     .query("orgMembers")
@@ -549,7 +550,7 @@ async function resolveActiveCliToken(
 
   // A token is minted for an owner/admin; it must stop working the moment
   // that membership is removed or demoted, not when it expires.
-  const user = await userForAuthId(ctx, token.authId);
+  const user = await userByAuthId(ctx, token.authId);
   const membership = user
     ? await getOrgMembership(ctx, token.orgId, user._id)
     : null;
@@ -580,16 +581,4 @@ async function uniqueOrgSlug(
     if (!existing) return candidate;
     suffix += 1;
   }
-}
-
-async function userForAuthId(
-  ctx: MutationCtx,
-  authId: string,
-): Promise<Doc<"users"> | null> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-
-  return user ?? null;
 }

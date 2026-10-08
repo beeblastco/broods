@@ -21,6 +21,7 @@ import {
   type QueryCtx,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { actorsOf, actorValidator } from "../model/actor";
 import { accountIdForProject } from "../model/auditEvents";
 import {
   normalizeCreateCronInput,
@@ -55,9 +56,7 @@ const cronDoc = v.object({
 // the creator comes resolved so the list can draw a name and an avatar.
 const projectCronDoc = v.object({
   ...cronDoc.omit("lastRunId").fields,
-  creator: v.optional(
-    v.object({ name: v.string(), avatarUrl: v.optional(v.string()) }),
-  ),
+  creator: v.optional(actorValidator),
 });
 type ProjectCron = Infer<typeof projectCronDoc>;
 
@@ -325,21 +324,15 @@ export const listForProject = query({
     if (!accountId) return [];
 
     const crons = await cronsInProject(ctx, args.projectId, accountId);
-
-    return await Promise.all(
-      crons.map(async ({ lastRunId: _lastRunId, ...cron }) => {
-        const creator = cron.createdBy
-          ? await ctx.db.get(cron.createdBy)
-          : null;
-
-        return {
-          ...cron,
-          creator: creator
-            ? { name: creator.name, avatarUrl: creator.avatarUrl }
-            : undefined,
-        };
-      }),
+    const creators = await actorsOf(
+      ctx,
+      crons.map((cron) => cron.createdBy),
     );
+
+    return crons.map(({ lastRunId: _lastRunId, ...cron }) => ({
+      ...cron,
+      creator: cron.createdBy ? creators.get(cron.createdBy) : undefined,
+    }));
   },
 });
 

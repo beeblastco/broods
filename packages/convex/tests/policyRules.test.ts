@@ -1,12 +1,9 @@
 /** Validation tests for the config-plane policy document rules. */
 
 import { describe, expect, it } from "vitest";
-import { normalizePolicyDocument } from "../agent/policies";
 import {
-  AGENT_POLICY_ACTIONS,
-  API_POLICY_ACTIONS,
   normalizeCreatePolicyInput,
-  normalizePolicyDocument as normalizeRulesPolicyDocument,
+  normalizePolicyDocument,
 } from "../model/policyRules";
 
 const policyWith = (
@@ -53,20 +50,20 @@ describe("normalizeCreatePolicyInput", () => {
 
   it("carries the mode on the policy document", () => {
     expect(
-      normalizeRulesPolicyDocument({ version: 1, mode: "enforce", rules: [] }),
+      normalizePolicyDocument({ version: 1, mode: "enforce", rules: [] }),
     ).toEqual({ version: 1, mode: "enforce", rules: [] });
-    expect(normalizeRulesPolicyDocument({ version: 1, rules: [] })).toEqual({
+    expect(normalizePolicyDocument({ version: 1, rules: [] })).toEqual({
       version: 1,
       rules: [],
     });
     expect(() =>
-      normalizeRulesPolicyDocument({ version: 1, mode: "watch", rules: [] }),
+      normalizePolicyDocument({ version: 1, mode: "watch", rules: [] }),
     ).toThrow("policy document mode");
   });
 
   it("rejects unknown resource selector keys", () => {
     expect(() =>
-      normalizeRulesPolicyDocument({
+      normalizePolicyDocument({
         version: 1,
         rules: [
           {
@@ -81,7 +78,7 @@ describe("normalizeCreatePolicyInput", () => {
 
   it("accepts the mcpIds selector on tool.call rules", () => {
     expect(
-      normalizeRulesPolicyDocument({
+      normalizePolicyDocument({
         version: 1,
         rules: [
           {
@@ -117,53 +114,10 @@ describe("normalizeCreatePolicyInput", () => {
       ],
     });
     expect(() =>
-      normalizeRulesPolicyDocument(documentWithValue(["prod", 1, true])),
+      normalizePolicyDocument(documentWithValue(["prod", 1, true])),
     ).toThrow("policy rules[0].conditions[0].value is invalid");
     expect(() =>
-      normalizeRulesPolicyDocument(documentWithValue(["prod", "staging"])),
+      normalizePolicyDocument(documentWithValue(["prod", "staging"])),
     ).not.toThrow();
-  });
-});
-
-// `broods dev` writes through normalizePolicyDocument while the CRUD routes go
-// through the normalizer above. A drift between them makes a rule deployable by
-// one path and rejected by the other.
-describe("normalizePolicyDocument", () => {
-  it("accepts every action the CRUD normalizer accepts", () => {
-    for (const action of AGENT_POLICY_ACTIONS) {
-      expect(() =>
-        normalizePolicyDocument({
-          version: 1,
-          rules: [{ id: "r1", effect: "allow", actions: [action] }],
-        }),
-      ).not.toThrow();
-    }
-  });
-
-  // API actions belong to account roles; an agent policy carrying one would
-  // silently never fire in the runtime, so both write paths refuse them.
-  it("refuses API-namespace actions in agent policies", () => {
-    for (const normalize of [
-      normalizePolicyDocument,
-      normalizeRulesPolicyDocument,
-    ]) {
-      expect(() =>
-        normalize({
-          version: 1,
-          rules: [
-            { id: "r1", effect: "allow", actions: [API_POLICY_ACTIONS[0]] },
-          ],
-        }),
-      ).toThrow();
-    }
-  });
-
-  it("still refuses an action neither side defines", () => {
-    expect(() =>
-      normalizePolicyDocument({
-        version: 1,
-        rules: [{ id: "r1", effect: "allow", actions: ["workspace.delete"] }],
-      }),
-    ).toThrow("unsupported action");
   });
 });

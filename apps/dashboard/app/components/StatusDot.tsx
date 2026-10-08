@@ -77,7 +77,10 @@ export function StatusWord({
 }): React.JSX.Element {
   return (
     <span className={cn("inline-flex items-center gap-1.5", className)}>
-      <StatusDot tone={tone} label={children} />
+      <span
+        aria-hidden
+        className={cn("size-2 shrink-0 rounded-full", STATUS_TONE_BG[tone])}
+      />
       {children}
     </span>
   );

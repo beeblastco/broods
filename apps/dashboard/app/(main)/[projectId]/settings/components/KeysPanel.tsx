@@ -8,6 +8,7 @@
  * sees a lock.
  */
 
+import { ConfirmDialog } from "@/app/components/ConfirmDialog";
 import { CopyButton } from "@/app/components/CopyButton";
 import {
   DataTable,
@@ -17,10 +18,15 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadSort,
+  TIME_WORDS,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
-import { EmptyState, NoPermission } from "@/app/components/EmptyState";
+import {
+  EmptyState,
+  LockedValue,
+  NoPermission,
+} from "@/app/components/EmptyState";
+import { RevealSecretDialog } from "@/app/components/RevealSecretDialog";
 import { SearchInput } from "@/app/components/SearchInput";
 import { Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
@@ -41,19 +47,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { Who, type Actor } from "@/app/components/Who";
+import { PLATFORM, Who } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
+import { usePermissions } from "@/app/hooks/usePermissions";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
-import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
-import { parseQuery } from "@/app/lib/queryTokens";
-import { sortRows, type SortKey, type SortState } from "@/app/lib/tableState";
+import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { relativeTime } from "../../sandbox/components/sandboxFormat";
 
 type ProjectKeys = NonNullable<
@@ -69,18 +76,19 @@ type ApiColumn =
   | "lastUsed"
   | "createdAt"
   | "createdBy";
+type ApiField = (typeof API_QUERY_FIELDS)[number];
 
 // The `field:value` tokens the API key search box understands.
 const API_QUERY_FIELDS = ["stage"] as const;
 
-// Sort words for the time columns.
-const TIME_WORDS: [string, string] = ["Oldest first", "Newest first"];
+// The runtime list has no search box.
+const NO_FIELDS: readonly never[] = [];
 
 const RUNTIME_SORT: Record<RuntimeColumn, (key: RuntimeKey) => SortKey> = {
   stage: (key) => key.stageName,
   lastUsed: (key) => key.lastUsedAt ?? null,
   rotatedAt: (key) => key.rotatedAt ?? null,
-  rotatedBy: (key) => key.rotatedBy?.name ?? key.rotatedByName ?? null,
+  rotatedBy: (key) => key.rotatedBy?.name ?? null,
 };
 
 const API_SORT: Record<ApiColumn, (key: ApiKey) => SortKey> = {
@@ -98,6 +106,7 @@ interface Props {
 }
 
 export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
+  const { can } = usePermissions(projectId);
   const keys = useQuery(api.apiKeys.listForProject, { projectId: projectId });
   const stages = useQuery(api.stage.list, { projectId: projectId });
 
@@ -110,12 +119,17 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
 
   return (
     <div className="grid gap-6">
-      <RuntimeKeysTable projectId={projectId} keys={keys.runtime} />
+      <RuntimeKeysTable
+        projectId={projectId}
+        keys={keys.runtime}
+        canWrite={can("keys:write")}
+      />
       <ApiKeysTable
         projectId={projectId}
         keys={keys.api}
         stages={stages}
         defaultStageId={stageId}
+        canWrite={can("keys:write")}
       />
     </div>
   );
@@ -125,37 +139,31 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
 function RuntimeKeysTable({
   projectId,
   keys,
+  canWrite,
 }: {
   projectId: Id<"projects">;
   keys: RuntimeKey[];
+  canWrite: boolean;
 }): React.JSX.Element {
   const now = useNow();
   const rotate = useMutation(api.agent.deployments.rotate);
-  const [sort, setSort] = useState<SortState<RuntimeColumn>>({
-    column: "stage",
-    dir: "asc",
-  });
   const [rotating, setRotating] = useState<RuntimeKey | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const shown = sortRows(keys, RUNTIME_SORT[sort.column], sort.dir);
-  const sortFor = (column: RuntimeColumn): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
+  const { pending, error, run } = useSubmit();
+  const list = useListState({
+    rows: keys,
+    fields: NO_FIELDS,
+    initialSort: { column: "stage", dir: "asc" },
+    sortKey: RUNTIME_SORT,
   });
 
   async function confirmRotate(): Promise<void> {
     if (!rotating) return;
-    setPending(true);
-    setError(null);
-    try {
-      await rotate({ projectId: projectId, stageId: rotating.stageId });
-      setRotating(null);
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+    const done = await run(() =>
+      rotate({ projectId: projectId, stageId: rotating.stageId }).then(
+        () => undefined,
+      ),
+    );
+    if (done) setRotating(null);
   }
 
   return (
@@ -170,27 +178,23 @@ function RuntimeKeysTable({
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("stage")}>Stage</DataTableHead>
+              <DataTableHead sort={list.sortFor("stage")}>Stage</DataTableHead>
               <DataTableHead>Policies</DataTableHead>
               <DataTableHead>Key</DataTableHead>
-              <DataTableHead
-                sort={{ ...sortFor("lastUsed"), words: TIME_WORDS }}
-              >
+              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
                 Last used
               </DataTableHead>
-              <DataTableHead
-                sort={{ ...sortFor("rotatedAt"), words: TIME_WORDS }}
-              >
+              <DataTableHead sort={list.sortFor("rotatedAt", TIME_WORDS)}>
                 Rotated at
               </DataTableHead>
-              <DataTableHead sort={sortFor("rotatedBy")}>
+              <DataTableHead sort={list.sortFor("rotatedBy")}>
                 Rotated by
               </DataTableHead>
               <DataTableHead align="right" />
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((key) => (
+            {list.shown.map((key) => (
               <DataTableRow key={key.stageId}>
                 <DataTableCell className="font-medium">
                   {key.stageName}
@@ -210,18 +214,24 @@ function RuntimeKeysTable({
                   {key.rotatedAt ? formatDate(key.rotatedAt) : "—"}
                 </DataTableCell>
                 <DataTableCell>
-                  <Who actor={rotatedBy(key)} />
+                  <Who actor={key.rotatedBy ?? PLATFORM} />
                 </DataTableCell>
                 <DataTableCell align="right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    tone="muted"
-                    className="cursor-pointer"
-                    onClick={() => setRotating(key)}
-                  >
-                    Rotate
-                  </Button>
+                  {canWrite ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      tone="muted"
+                      className="cursor-pointer"
+                      onClick={() => setRotating(key)}
+                    >
+                      Rotate
+                    </Button>
+                  ) : (
+                    <LockedValue reason="No permission to rotate keys">
+                      Rotate
+                    </LockedValue>
+                  )}
                 </DataTableCell>
               </DataTableRow>
             ))}
@@ -233,48 +243,23 @@ function RuntimeKeysTable({
             detail="A stage mints its key on the first deploy, or from the Runtime key tab."
           />
         )}
-        <DataTableFooter>
-          {keys.length} {keys.length === 1 ? "stage" : "stages"}
-        </DataTableFooter>
+        <DataTableFooter
+          total={keys.length}
+          noun={keys.length === 1 ? "stage" : "stages"}
+        />
       </div>
 
-      <Dialog
-        open={rotating !== null}
-        onOpenChange={(open) => !open && !pending && setRotating(null)}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              Rotate the {rotating?.stageName} runtime key?
-            </DialogTitle>
-            <DialogDescription>
-              The current key stops working at once. Anything running with it
-              needs the new one.
-            </DialogDescription>
-          </DialogHeader>
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="cursor-pointer"
-              disabled={pending}
-              onClick={() => setRotating(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="cursor-pointer"
-              disabled={pending}
-              onClick={confirmRotate}
-            >
-              {pending ? "Rotating…" : "Rotate"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {rotating && (
+        <ConfirmDialog
+          title={`Rotate the ${rotating.stageName} runtime key?`}
+          description="The current key stops working at once. Anything running with it needs the new one."
+          verb="Rotate"
+          pending={pending}
+          error={error}
+          onConfirm={confirmRotate}
+          onClose={() => setRotating(null)}
+        />
+      )}
     </section>
   );
 }
@@ -285,19 +270,16 @@ function ApiKeysTable({
   keys,
   stages,
   defaultStageId,
+  canWrite,
 }: {
   projectId: Id<"projects">;
   keys: ApiKey[];
   stages: Doc<"stages">[];
   defaultStageId: Id<"stages"> | null;
+  canWrite: boolean;
 }): React.JSX.Element {
   const now = useNow();
   const remove = useMutation(api.deployKeys.remove);
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<SortState<ApiColumn>>({
-    column: "lastUsed",
-    dir: "desc",
-  });
   const [creating, setCreating] = useState(false);
   const [revealed, setRevealed] = useState<{
     token: string;
@@ -305,26 +287,13 @@ function ApiKeysTable({
   } | null>(null);
   const [deleting, setDeleting] = useState<ApiKey | null>(null);
   const [removing, setRemoving] = useState(false);
-
-  const query = useMemo(() => parseQuery(filter, API_QUERY_FIELDS), [filter]);
-  const shown = useMemo(() => {
-    const matching = keys.filter((key) => {
-      const stagePass = query.fields.every(
-        ({ value }) => key.stageName.toLowerCase() === value,
-      );
-      if (!stagePass) return false;
-      if (!query.text) return true;
-
-      return `${key.name} ${key.description ?? ""}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(matching, API_SORT[sort.column], sort.dir);
-  }, [keys, query, sort]);
-  const sortFor = (column: ApiColumn): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir) => setSort({ column: column, dir: dir }),
+  const list = useListState({
+    rows: keys,
+    fields: API_QUERY_FIELDS,
+    initialSort: { column: "lastUsed", dir: "desc" },
+    sortKey: API_SORT,
+    matches: matchesStage,
+    text: apiKeyText,
   });
 
   async function confirmDelete(): Promise<void> {
@@ -349,14 +318,16 @@ function ApiKeysTable({
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <Toolbar>
           <SearchInput
-            value={filter}
-            onChange={setFilter}
+            value={list.query}
+            onChange={list.setQuery}
             fields={API_QUERY_FIELDS}
             placeholder="Search API keys"
           />
           <Button
             size="sm"
             className="cursor-pointer"
+            disabled={!canWrite}
+            title={canWrite ? undefined : "No permission to create keys"}
             onClick={() => setCreating(true)}
           >
             <Plus className="size-4" />
@@ -366,31 +337,27 @@ function ApiKeysTable({
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
-              <DataTableHead sort={sortFor("description")}>
+              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead sort={sortFor("stage")}>Stage</DataTableHead>
+              <DataTableHead sort={list.sortFor("stage")}>Stage</DataTableHead>
               <DataTableHead>Policies</DataTableHead>
               <DataTableHead>Key</DataTableHead>
-              <DataTableHead
-                sort={{ ...sortFor("lastUsed"), words: TIME_WORDS }}
-              >
+              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
                 Last used
               </DataTableHead>
-              <DataTableHead
-                sort={{ ...sortFor("createdAt"), words: TIME_WORDS }}
-              >
+              <DataTableHead sort={list.sortFor("createdAt", TIME_WORDS)}>
                 Created at
               </DataTableHead>
-              <DataTableHead sort={sortFor("createdBy")}>
+              <DataTableHead sort={list.sortFor("createdBy")}>
                 Created by
               </DataTableHead>
               <DataTableHead align="right" />
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((key) => (
+            {list.shown.map((key) => (
               <DataTableRow key={key._id}>
                 <DataTableCell className="font-medium">
                   {key.name}
@@ -417,27 +384,29 @@ function ApiKeysTable({
                 <DataTableCell muted>{formatDate(key.createdAt)}</DataTableCell>
                 <DataTableCell>
                   {key.createdBy ? (
-                    <Who actor={{ kind: "person", ...key.createdBy }} />
+                    <Who actor={key.createdBy} />
                   ) : (
                     <span className="text-muted-foreground">API</span>
                   )}
                 </DataTableCell>
                 <DataTableCell align="right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    tone="muted-destructive"
-                    className="cursor-pointer"
-                    onClick={() => setDeleting(key)}
-                  >
-                    Revoke
-                  </Button>
+                  {canWrite && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      tone="muted-destructive"
+                      className="cursor-pointer"
+                      onClick={() => setDeleting(key)}
+                    >
+                      Revoke
+                    </Button>
+                  )}
                 </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState
             title={
               keys.length === 0
@@ -446,11 +415,11 @@ function ApiKeysTable({
             }
           />
         )}
-        <DataTableFooter>
-          {shown.length === keys.length
-            ? `${keys.length} ${keys.length === 1 ? "key" : "keys"}`
-            : `${shown.length} of ${keys.length} keys`}
-        </DataTableFooter>
+        <DataTableFooter
+          shown={list.shown.length}
+          total={keys.length}
+          noun={keys.length === 1 ? "key" : "keys"}
+        />
       </div>
 
       {creating && (
@@ -504,33 +473,23 @@ function NewKeyDialog({
   const create = useMutation(api.deployKeys.create);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [stageId, setStageId] = useState<string>(
-    defaultStageId ?? stages[0]?._id ?? "",
+  const [stage, setStage] = useState<Doc<"stages"> | null>(
+    stages.find((entry) => entry._id === defaultStageId) ?? stages[0] ?? null,
   );
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const canSubmit = name.trim().length > 0 && stageId.length > 0 && !pending;
+  const { pending, error, run } = useSubmit();
+  const canSubmit = name.trim().length > 0 && stage !== null && !pending;
 
   async function submit(): Promise<void> {
-    if (!canSubmit) return;
-    setPending(true);
-    setError(null);
-    try {
+    if (!stage || !canSubmit) return;
+    await run(async () => {
       const result = await create({
         projectId: projectId,
-        stageId: stageId as Id<"stages">,
+        stageId: stage._id,
         name: name.trim(),
         description: description.trim() || undefined,
       });
-      onCreated(
-        result.token,
-        stages.find((stage) => stage._id === stageId)?.name ?? "",
-      );
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+      onCreated(result.token, stage.name);
+    });
   }
 
   return (
@@ -574,24 +533,26 @@ function NewKeyDialog({
               Stage
             </Label>
             <Select
-              items={stages.map((stage) => ({
-                label: stage.name,
-                value: stage._id,
+              items={stages.map((entry) => ({
+                label: entry.name,
+                value: entry._id,
               }))}
-              value={stageId}
-              onValueChange={(value) => value !== null && setStageId(value)}
+              value={stage?._id ?? ""}
+              onValueChange={(value) =>
+                setStage(stages.find((entry) => entry._id === value) ?? null)
+              }
             >
               <SelectTrigger id="key-stage" className="w-full cursor-pointer">
                 <SelectValue placeholder="Pick a stage" />
               </SelectTrigger>
               <SelectContent>
-                {stages.map((stage) => (
+                {stages.map((entry) => (
                   <SelectItem
-                    key={stage._id}
-                    value={stage._id}
+                    key={entry._id}
+                    value={entry._id}
                     className="cursor-pointer"
                   >
-                    {stage.name}
+                    {entry.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -639,47 +600,33 @@ function RevealedKeyDialog({
     : null;
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Save your new API key</DialogTitle>
-          <DialogDescription>
-            Copy it now. It will not be shown again.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-3 py-2">
-          <div className="flex items-center gap-1">
-            <Input readOnly value={token} className="font-mono text-xs" />
-            <CopyButton value={token} label="API key" />
+    <RevealSecretDialog
+      title="Save your new API key"
+      label="API key"
+      secret={token}
+      onClose={onClose}
+    >
+      {command && (
+        <div className="grid gap-1">
+          <span className="text-2xs text-muted-foreground">
+            Deploy from CI or a shell with it
+          </span>
+          <div className="flex items-start gap-1">
+            <code className="min-w-0 flex-1 rounded-md bg-muted px-2 py-1 font-mono text-xs break-all">
+              {command}
+            </code>
+            <CopyButton value={command} label="deploy command" />
           </div>
-          {command && (
-            <div className="grid gap-1">
-              <span className="text-2xs text-muted-foreground">
-                Deploy from CI or a shell with it
-              </span>
-              <div className="flex items-start gap-1">
-                <code className="min-w-0 flex-1 rounded-md bg-muted px-2 py-1 font-mono text-xs break-all">
-                  {command}
-                </code>
-                <CopyButton value={command} label="deploy command" />
-              </div>
-            </div>
-          )}
         </div>
-        <DialogFooter>
-          <Button size="sm" className="cursor-pointer" onClick={onClose}>
-            Done
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      )}
+    </RevealSecretDialog>
   );
 }
 
-/** Who rotated a runtime key: a member with an avatar, the CLI's name, or the platform. */
-function rotatedBy(key: RuntimeKey): Actor {
-  if (key.rotatedBy) return { kind: "person", ...key.rotatedBy };
-  if (key.rotatedByName) return { kind: "person", name: key.rotatedByName };
+function apiKeyText(key: ApiKey): string {
+  return `${key.name} ${key.description ?? ""}`;
+}
 
-  return { kind: "platform" };
+function matchesStage(key: ApiKey, _field: ApiField, value: string): boolean {
+  return key.stageName.toLowerCase() === value;
 }

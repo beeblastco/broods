@@ -1,6 +1,11 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
-import { getOrgMembership, orgRoleMeets, type OrgRole } from "./org";
+import {
+  getOrgMembership,
+  orgRoleMeets,
+  userByAuthId,
+  type OrgRole,
+} from "./org";
 
 export async function getProjectForRole(
   ctx: QueryCtx | MutationCtx,
@@ -17,10 +22,7 @@ export async function getProjectForRole(
   if (!org) return null;
   if (org.ownerAuthId === authId) return project;
 
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
+  const user = await userByAuthId(ctx, authId);
   if (!user) return null;
 
   const membership = await getOrgMembership(ctx, project.orgId, user._id);

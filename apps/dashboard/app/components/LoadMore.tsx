@@ -10,23 +10,21 @@ import { Button } from "@/app/components/ui/button";
 export function LoadMore({
   shown,
   total,
+  noun,
   pageSize,
   remaining,
   onLoad,
 }: {
   shown: number;
   total: number;
+  /** The rows' plural name: "lines", "tasks". */
+  noun: string;
   pageSize: number;
   remaining: number;
   onLoad: () => void;
 }): React.JSX.Element {
   return (
-    <DataTableFooter className="flex items-center justify-between gap-2">
-      <span>
-        {shown === total
-          ? total.toLocaleString()
-          : `${shown.toLocaleString()} of ${total.toLocaleString()}`}
-      </span>
+    <DataTableFooter shown={shown} total={total} noun={noun}>
       {remaining > 0 && (
         <Button
           type="button"

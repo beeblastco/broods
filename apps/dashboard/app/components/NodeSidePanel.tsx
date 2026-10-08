@@ -27,6 +27,7 @@ import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { SkillFilesTab } from "@/app/components/side-panel/SkillFilesTab";
 import { McpDetailsTab } from "@/app/components/side-panel/McpDetailsTab";
+import { PoliciesTab } from "@/app/components/side-panel/PoliciesTab";
 import { McpTab } from "@/app/components/side-panel/McpTab";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Badge } from "@/app/components/ui/badge";
@@ -53,6 +54,7 @@ import {
   applyModelReasoning,
   fromNestedAgentConfig,
   readAgentBranch,
+  readAgentPolicies,
   toNestedAgentConfig,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
@@ -704,6 +706,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         ? [{ label: "Config", value: "config" }]
         : []),
       ...(isMcp ? [{ label: "Tools", value: "tools", warms: true }] : []),
+      ...(isAgent ? [{ label: "Policies", value: "policies" }] : []),
       ...(isAgent ? [{ label: "Test", value: "test", warms: true }] : []),
       ...(canWrite ? [{ label: "Settings", value: "settings" }] : []),
     ];
@@ -817,7 +820,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                     enabled ? { enabled: true } : undefined,
                   )
                 }
-                onUpdatePolicyConfig={handleUpdatePolicyConfig}
               />
             ) : isMcp && node ? (
               <McpDetailsTab
@@ -969,6 +971,20 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               />
             </TabsContent>
           )}
+          {isAgent && (
+            <TabsContent
+              value="policies"
+              className="flex flex-col overflow-y-auto"
+            >
+              <PoliciesTab
+                assignedPolicyIds={readAgentPolicies(agentConfig?.extraConfig)}
+                onUpdatePolicyConfig={
+                  canWrite ? handleUpdatePolicyConfig : undefined
+                }
+              />
+            </TabsContent>
+          )}
+
           {isAgent && (
             <TabsContent value="test" className="flex flex-col overflow-hidden">
               <TestTab

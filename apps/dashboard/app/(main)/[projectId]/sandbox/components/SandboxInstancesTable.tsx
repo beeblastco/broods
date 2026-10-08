@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/app/components/ConfirmDialog";
 import {
   DataTable,
   DataTableBody,
@@ -7,8 +8,7 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadFilter,
-  type HeadSort,
+  TIME_WORDS,
 } from "@/app/components/DataTable";
 import { DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
@@ -17,36 +17,20 @@ import { SearchInput } from "@/app/components/SearchInput";
 import { StatusWord } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/app/components/ui/dialog";
 import { Switch } from "@/app/components/ui/switch";
 import { Who } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
-import { useRemembered } from "@/app/hooks/useRemembered";
 import { toErrorMessage } from "@/app/lib/errors";
 import {
   MACHINE_STATE_LABEL,
   MACHINE_TONE,
   machineState,
   type MachineConnection,
+  type MachineState,
 } from "@/app/lib/machineConnection";
-import { parseQuery } from "@/app/lib/queryTokens";
-import {
-  clearField,
-  sortRows,
-  toggleToken,
-  tokenValues,
-  type SortDir,
-  type SortKey,
-  type SortState,
-} from "@/app/lib/tableState";
+import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
@@ -74,7 +58,8 @@ const PAGE_SIZE = 50;
 const TABLE_MIN_WIDTH = 760;
 
 type Instance = Doc<"sandboxInstances">;
-type QueryField = (typeof QUERY_FIELDS)[number];
+type Agent = Pick<Doc<"agents">, "_id" | "name">;
+type Field = (typeof QUERY_FIELDS)[number];
 type Column =
   | "name"
   | "status"
@@ -85,17 +70,49 @@ type Column =
   | "created"
   | "running";
 
-/** One row of the table: a connected computer, or a cloud instance. */
+/** One row of the table: a connected computer, or a cloud instance, with the facts the list sorts and filters by derived once. */
 type TableRow =
-  | { kind: "machine"; machine: MachineConnection }
-  | { kind: "instance"; instance: Instance };
+  | {
+      kind: "machine";
+      id: Id<"machineConnections">;
+      machine: MachineConnection;
+      state: MachineState;
+      status: string;
+      agent: null;
+    }
+  | {
+      kind: "instance";
+      id: Id<"sandboxInstances">;
+      instance: Instance;
+      status: string;
+      /** The agent it ran, when that agent still exists in the project. */
+      agent: Agent | null;
+    };
+
+const SORT_KEY: Record<Column, (row: TableRow) => SortKey> = {
+  name: (row) =>
+    row.kind === "machine" ? row.machine.name : row.instance.name,
+  status: (row) => row.status,
+  provider: (row) => providerOf(row),
+  size: (row) =>
+    row.kind === "machine"
+      ? (row.machine.specs?.memoryMb ?? null)
+      : row.instance.specs.memoryMb,
+  agent: (row) => row.agent?.name ?? null,
+  lastUsed: (row) =>
+    row.kind === "machine" ? row.machine.lastSeenAt : row.instance.lastUsedAt,
+  created: (row) =>
+    row.kind === "machine" ? row.machine.connectedAt : row.instance.createdAt,
+  running: (row) =>
+    row.kind === "instance" && row.instance.status === "running" ? 1 : 0,
+};
 
 interface Props {
   instances: Instance[];
   /** The stage's computers that connected through `broods machine`. */
   machines: MachineConnection[];
   /** The project's agents, so an instance's agent reads as a name. */
-  agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
+  agents: Agent[];
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
   /** Stage-scoped observability WS inputs, handed to the panel's Logs tab. */
@@ -122,63 +139,56 @@ export function SandboxInstancesTable({
 
   // Only the id is held, so the open panel follows the live row instead of a
   // stale copy once a refresh or suspend moves its status.
-  const [selectedId, setSelectedId] = useState<Id<"sandboxInstances"> | null>(
-    null,
-  );
-  const selected = instances.find((instance) => instance._id === selectedId);
-  const [selectedMachineId, setSelectedMachineId] =
-    useState<Id<"machineConnections"> | null>(null);
-  const selectedMachine = machines.find(
-    (machine) => machine._id === selectedMachineId,
-  );
+  const [selectedId, setSelectedId] = useState<TableRow["id"] | null>(null);
   const [confirming, setConfirming] = useState<Instance | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useRemembered("sandbox.filter", "");
-  const [sort, setSort] = useRemembered<SortState<Column>>("sandbox.sort", {
-    column: "lastUsed",
-    dir: "desc",
-  });
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const refreshedPages = useRef(new Set<string>());
-
-  const agentNameById = useMemo(
-    () => new Map(agents.map((agent) => [agent._id as string, agent.name])),
-    [agents],
-  );
-  const query = useMemo(() => parseQuery(filter, QUERY_FIELDS), [filter]);
 
   // Computers and instances filter and sort as one list, so the count under
   // the table matches what is on screen.
   const rows = useMemo((): TableRow[] => {
-    const all: TableRow[] = [
-      ...machines.map((machine): TableRow => ({
-        kind: "machine",
-        machine: machine,
-      })),
+    const agentById = new Map<string, Agent>(
+      agents.map((agent) => [agent._id, agent]),
+    );
+
+    return [
+      ...machines.map((machine): TableRow => {
+        const state = machineState(machine, now);
+
+        return {
+          kind: "machine",
+          id: machine._id,
+          machine: machine,
+          state: state,
+          status: MACHINE_STATE_LABEL[state].toLowerCase(),
+          agent: null,
+        };
+      }),
       ...instances.map((instance): TableRow => ({
         kind: "instance",
+        id: instance._id,
         instance: instance,
+        status: instance.status,
+        agent: instance.agentId
+          ? (agentById.get(instance.agentId) ?? null)
+          : null,
       })),
     ];
-    const matching = all.filter((row) => {
-      const fieldsPass = query.fields.every(({ field, value }) =>
-        matchesField(field, value, row, agentNameById, now),
-      );
-      if (!fieldsPass) return false;
-      if (!query.text) return true;
-
-      return searchText(row).includes(query.text);
-    });
-
-    return sortRows(
-      matching,
-      (row) => sortKey(sort.column, row, agentNameById, now),
-      sort.dir,
-    );
-  }, [machines, instances, query, sort, agentNameById, now]);
-  const visible = rows.slice(0, visibleCount);
+  }, [machines, instances, agents, now]);
+  const list = useListState({
+    rows: rows,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "lastUsed", dir: "desc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
+    remember: `sandbox:${projectId}`,
+  });
+  const visible = list.shown.slice(0, visibleCount);
+  const selected = rows.find((row) => row.id === selectedId) ?? null;
   const visibleInstances = useMemo(
     () =>
       visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
@@ -188,39 +198,17 @@ export function SandboxInstancesTable({
     .filter(controllable)
     .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
     .join("|");
-
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir: SortDir) => setSort({ column: column, dir: dir }),
-  });
-  const filterFor = (field: QueryField, values: string[]): HeadFilter => ({
-    field: field,
-    values: values.map((value) => ({ value: value, label: value })),
-    active: tokenValues(filter, field),
-    onToggle: (value) => setFilter(toggleToken(filter, field, value)),
-    onClear: () => setFilter(clearField(filter, field)),
-  });
   const filters = {
-    provider: filterFor("provider", [
-      ...new Set([
-        ...(machines.length > 0 ? [formatProvider("machine")] : []),
-        ...instances.map((instance) => formatProvider(instance.provider)),
-      ]),
+    provider: list.filterFor("provider", [
+      ...new Set(rows.map((row) => providerOf(row).toLowerCase())),
     ]),
-    status: filterFor("status", [
-      ...new Set([
-        ...machines.map((machine) =>
-          MACHINE_STATE_LABEL[machineState(machine, now)].toLowerCase(),
-        ),
-        ...instances.map((instance) => instance.status),
-      ]),
+    status: list.filterFor("status", [
+      ...new Set(rows.map((row) => row.status.toLowerCase())),
     ]),
-    agent: filterFor("agent", [
+    agent: list.filterFor("agent", [
       ...new Set(
-        instances.flatMap((instance) =>
-          instance.agentId
-            ? [agentName(agentNameById, instance.agentId).toLowerCase()]
-            : [],
+        rows.flatMap((row) =>
+          row.agent ? [row.agent.name.toLowerCase()] : [],
         ),
       ),
     ]),
@@ -289,8 +277,8 @@ export function SandboxInstancesTable({
     <div className="flex min-h-0 flex-1 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
+          value={list.query}
+          onChange={list.setQuery}
           fields={QUERY_FIELDS}
           placeholder="Search sandboxes"
         />
@@ -317,22 +305,22 @@ export function SandboxInstancesTable({
       <DetailSplit
         tableMinWidth={TABLE_MIN_WIDTH}
         detail={
-          selected ? (
+          selected?.kind === "instance" ? (
             <SandboxInstancePanel
-              key={selected._id}
-              instance={selected}
+              key={selected.id}
+              instance={selected.instance}
               projectId={projectId}
               observability={observability}
               now={now}
               onClose={() => setSelectedId(null)}
             />
           ) : (
-            selectedMachine && (
+            selected && (
               <MachinePanel
-                key={selectedMachine._id}
-                machine={selectedMachine}
+                key={selected.id}
+                machine={selected.machine}
                 now={now}
-                onClose={() => setSelectedMachineId(null)}
+                onClose={() => setSelectedId(null)}
               />
             )
           )
@@ -341,31 +329,33 @@ export function SandboxInstancesTable({
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
-              <DataTableHead sort={sortFor("status")} filter={filters.status}>
+              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+              <DataTableHead
+                sort={list.sortFor("status")}
+                filter={filters.status}
+              >
                 Status
               </DataTableHead>
               <DataTableHead
-                sort={sortFor("provider")}
+                sort={list.sortFor("provider")}
                 filter={filters.provider}
               >
                 Provider
               </DataTableHead>
-              <DataTableHead sort={sortFor("size")}>Size</DataTableHead>
-              <DataTableHead sort={sortFor("agent")} filter={filters.agent}>
+              <DataTableHead sort={list.sortFor("size")}>Size</DataTableHead>
+              <DataTableHead
+                sort={list.sortFor("agent")}
+                filter={filters.agent}
+              >
                 Agent
               </DataTableHead>
-              <DataTableHead
-                sort={{ ...sortFor("lastUsed"), words: TIME_WORDS }}
-              >
+              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
                 Last used
               </DataTableHead>
-              <DataTableHead
-                sort={{ ...sortFor("created"), words: TIME_WORDS }}
-              >
+              <DataTableHead sort={list.sortFor("created", TIME_WORDS)}>
                 Created
               </DataTableHead>
-              <DataTableHead align="right" sort={sortFor("running")}>
+              <DataTableHead align="right" sort={list.sortFor("running")}>
                 Running
               </DataTableHead>
             </tr>
@@ -374,28 +364,21 @@ export function SandboxInstancesTable({
             {visible.map((row) =>
               row.kind === "machine" ? (
                 <MachineRow
-                  key={row.machine._id}
-                  machine={row.machine}
+                  key={row.id}
+                  row={row}
                   now={now}
-                  selected={selectedMachineId === row.machine._id}
-                  onSelect={() => {
-                    setSelectedId(null);
-                    setSelectedMachineId(row.machine._id);
-                  }}
+                  selected={selectedId === row.id}
+                  onSelect={() => setSelectedId(row.id)}
                 />
               ) : (
                 <InstanceRow
-                  key={row.instance._id}
-                  instance={row.instance}
-                  agentNameById={agentNameById}
+                  key={row.id}
+                  row={row}
                   projectId={projectId}
                   now={now}
-                  selected={selectedId === row.instance._id}
-                  canToggle={canWrite && pendingId !== row.instance._id}
-                  onSelect={() => {
-                    setSelectedMachineId(null);
-                    setSelectedId(row.instance._id);
-                  }}
+                  selected={selectedId === row.id}
+                  canToggle={canWrite && pendingId !== row.id}
+                  onSelect={() => setSelectedId(row.id)}
                   onToggle={(next) =>
                     next
                       ? toggle(row.instance, true)
@@ -406,69 +389,41 @@ export function SandboxInstancesTable({
             )}
           </DataTableBody>
         </DataTable>
-        {rows.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState title="Nothing matches the current filters." />
         )}
         <LoadMore
           shown={visible.length}
-          total={rows.length}
+          total={list.shown.length}
+          noun="sandboxes"
           pageSize={PAGE_SIZE}
-          remaining={rows.length - visible.length}
+          remaining={list.shown.length - visible.length}
           onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
         />
       </DetailSplit>
 
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      {error && !confirming && (
+        <p className="mt-2 text-xs text-destructive">{error}</p>
+      )}
 
-      <Dialog
-        open={confirming !== null}
-        onOpenChange={(open) => {
-          if (!open && pendingId === null) setConfirming(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Suspend {confirming?.name}?</DialogTitle>
-            <DialogDescription>
-              Suspending frees the sandbox&apos;s compute. Running processes
-              stop, anything in flight on it is dropped, and it comes back
-              reset. Files on the workspace disk are kept.
-            </DialogDescription>
-          </DialogHeader>
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="cursor-pointer"
-              disabled={pendingId !== null}
-              onClick={() => setConfirming(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="cursor-pointer"
-              disabled={pendingId !== null}
-              onClick={() => confirming && toggle(confirming, false)}
-            >
-              {pendingId === confirming?._id ? "Suspending…" : "Suspend"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {confirming && (
+        <ConfirmDialog
+          title={`Suspend ${confirming.name}?`}
+          description="Suspending frees the sandbox's compute. Running processes stop, anything in flight on it is dropped, and it comes back reset. Files on the workspace disk are kept."
+          verb="Suspend"
+          pending={pendingId === confirming._id}
+          error={error}
+          onConfirm={() => toggle(confirming, false)}
+          onClose={() => setConfirming(null)}
+        />
+      )}
     </div>
   );
 }
 
-// Sort words for the two time columns.
-const TIME_WORDS: [string, string] = ["Oldest first", "Newest first"];
-
 /** A cloud instance: its facts, a trace link on hover, and the running switch. */
 function InstanceRow({
-  instance,
-  agentNameById,
+  row,
   projectId,
   now,
   selected,
@@ -476,8 +431,7 @@ function InstanceRow({
   onSelect,
   onToggle,
 }: {
-  instance: Instance;
-  agentNameById: Map<string, string>;
+  row: Extract<TableRow, { kind: "instance" }>;
   projectId: Id<"projects">;
   now: number;
   selected: boolean;
@@ -486,6 +440,7 @@ function InstanceRow({
   onToggle: (next: boolean) => void;
 }): React.JSX.Element {
   const searchParams = useSearchParams();
+  const { instance, agent } = row;
   const running = instance.status === "running";
   const toggleable =
     canToggle &&
@@ -525,17 +480,15 @@ function InstanceRow({
         />
       </DataTableCell>
       <DataTableCell>
-        {instance.agentId ? (
+        {agent ? (
           <Who
-            actor={{
-              kind: "agent",
-              name: agentName(agentNameById, instance.agentId),
-              agentId: instance.agentId as Id<"agents">,
-            }}
+            actor={{ kind: "agent", name: agent.name, agentId: agent._id }}
             projectId={projectId}
           />
         ) : (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground">
+            {instance.agentId ? "(unknown)" : "—"}
+          </span>
         )}
       </DataTableCell>
       <DataTableCell muted>
@@ -575,17 +528,17 @@ function InstanceRow({
 
 /** A computer: its reported size and when it was seen; it has no agent, trace or switch. */
 function MachineRow({
-  machine,
+  row,
   now,
   selected,
   onSelect,
 }: {
-  machine: MachineConnection;
+  row: Extract<TableRow, { kind: "machine" }>;
   now: number;
   selected: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
-  const state = machineState(machine, now);
+  const { machine, state } = row;
 
   return (
     <DataTableRow selected={selected} onClick={onSelect}>
@@ -593,9 +546,7 @@ function MachineRow({
         {machine.name}
       </DataTableCell>
       <DataTableCell>
-        <StatusWord tone={MACHINE_TONE[state]}>
-          {MACHINE_STATE_LABEL[state].toLowerCase()}
-        </StatusWord>
+        <StatusWord tone={MACHINE_TONE[state]}>{row.status}</StatusWord>
       </DataTableCell>
       <DataTableCell>{formatProvider("machine")}</DataTableCell>
       <DataTableCell muted>
@@ -622,66 +573,12 @@ function controllable(
   return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
 }
 
-/** The free text a row answers to: name, ids, conversation and trace. */
-function searchText(row: TableRow): string {
-  if (row.kind === "machine") {
-    return `${row.machine.name} ${row.machine.hostname ?? ""}`.toLowerCase();
-  }
-  const instance = row.instance;
-
-  return `${instance.name} ${instance.externalId} ${instance.conversationKey ?? ""} ${instance.lastUsedTraceId ?? ""}`.toLowerCase();
-}
-
 /** Whether a `field:value` token matches the row. A computer has no agent. */
-function matchesField(
-  field: QueryField,
-  value: string,
-  row: TableRow,
-  names: Map<string, string>,
-  now: number,
-): boolean {
+function matchesField(row: TableRow, field: Field, value: string): boolean {
   if (field === "provider") return providerOf(row).toLowerCase() === value;
-  if (field === "status") return statusOf(row, now).toLowerCase() === value;
-  if (row.kind === "machine" || !row.instance.agentId) return false;
+  if (field === "status") return row.status.toLowerCase() === value;
 
-  return agentName(names, row.instance.agentId).toLowerCase() === value;
-}
-
-/** What a column sorts a row by. */
-function sortKey(
-  column: Column,
-  row: TableRow,
-  names: Map<string, string>,
-  now: number,
-): SortKey {
-  switch (column) {
-    case "name":
-      return row.kind === "machine" ? row.machine.name : row.instance.name;
-    case "status":
-      return statusOf(row, now);
-    case "provider":
-      return providerOf(row);
-    case "size":
-      return row.kind === "machine"
-        ? (row.machine.specs?.memoryMb ?? null)
-        : row.instance.specs.memoryMb;
-    case "agent":
-      return row.kind === "instance" && row.instance.agentId
-        ? agentName(names, row.instance.agentId)
-        : null;
-    case "lastUsed":
-      return row.kind === "machine"
-        ? row.machine.lastSeenAt
-        : row.instance.lastUsedAt;
-    case "created":
-      return row.kind === "machine"
-        ? row.machine.connectedAt
-        : row.instance.createdAt;
-    case "running":
-      return row.kind === "instance" && row.instance.status === "running"
-        ? 1
-        : 0;
-  }
+  return row.agent?.name.toLowerCase() === value;
 }
 
 function providerOf(row: TableRow): string {
@@ -690,13 +587,12 @@ function providerOf(row: TableRow): string {
     : formatProvider(row.instance.provider);
 }
 
-function statusOf(row: TableRow, now: number): string {
-  return row.kind === "machine"
-    ? MACHINE_STATE_LABEL[machineState(row.machine, now)]
-    : row.instance.status;
-}
+/** The free text a row answers to: name, ids, conversation and trace. */
+function searchText(row: TableRow): string {
+  if (row.kind === "machine") {
+    return `${row.machine.name} ${row.machine.hostname ?? ""}`;
+  }
+  const instance = row.instance;
 
-/** The name of the agent an instance ran; a deleted agent reads as unknown. */
-function agentName(names: Map<string, string>, agentId: string): string {
-  return names.get(agentId) ?? "(unknown)";
+  return `${instance.name} ${instance.externalId} ${instance.conversationKey ?? ""} ${instance.lastUsedTraceId ?? ""}`;
 }

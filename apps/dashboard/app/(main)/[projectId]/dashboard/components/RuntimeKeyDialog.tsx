@@ -88,7 +88,7 @@ export function RuntimeKeyDialog({
           <DialogDescription>{DESCRIPTION}</DialogDescription>
         </DialogHeader>
         <KeyRow key={apiKey} apiKey={apiKey} />
-        <ConnectSnippet apiKey={apiKey} />
+        <ConnectSnippet key={apiKey} apiKey={apiKey} />
       </DialogContent>
     </Dialog>
   );
@@ -162,7 +162,7 @@ export function RuntimeKeyView({
       </SettingsRow>
 
       <SettingsRow title="Connect" description="Three lines to a first run.">
-        <ConnectSnippet apiKey={apiKey} gatewayUrl={gatewayUrl} />
+        <ConnectSnippet key={apiKey} apiKey={apiKey} gatewayUrl={gatewayUrl} />
       </SettingsRow>
     </div>
   );
@@ -255,7 +255,7 @@ function ConnectSnippet({
     [
       `npm install broods`,
       `BROODS_API_KEY="${key}"${baseUrl}`,
-      `await new BroodsClient().stream(api.agents.myAgent, { input: "Hello" })`,
+      `await new BroodsClient().run(api.agents.myAgent, { input: "Hello" })`,
     ].join("\n");
 
   return (

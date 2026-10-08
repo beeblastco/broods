@@ -10,14 +10,25 @@ describe("toggleToken", () => {
   test("adds a chip with a trailing space so the next word is free text", () => {
     expect(toggleToken("", "agent", "billing")).toBe("agent:billing ");
     expect(toggleToken("timeout", "agent", "billing")).toBe(
-      "timeout agent:billing ",
+      "agent:billing timeout",
     );
   });
 
   test("removes the chip when it is already there, case apart", () => {
     expect(toggleToken("Agent:Billing timeout", "agent", "billing")).toBe(
-      "timeout",
+      "timeout ",
     );
+    expect(toggleToken("agent:ops agent:billing ", "agent", "ops")).toBe(
+      "agent:billing ",
+    );
+  });
+
+  test("quotes a value with spaces and reads it back as one chip", () => {
+    const query = toggleToken("", "status", "not connected yet");
+    expect(query).toBe('status:"not connected yet" ');
+    expect(tokenValues(query, "status")).toEqual(["not connected yet"]);
+    expect(toggleToken(query, "status", "not connected yet")).toBe("");
+    expect(clearField(`${query}agent:ops`, "status")).toBe("agent:ops");
   });
 });
 

@@ -3,11 +3,12 @@
 /**
  * Organization › API access: the keys whose home is the organization. Today
  * that is the account key. Its plaintext is shown exactly once after
- * provision or rotate; only its hash is stored. Admins only; a member sees a
- * lock.
+ * provision or rotate; only its hash is stored. Needs `keys:read`; anyone
+ * else sees a lock.
  */
 
-import { CopyButton } from "@/app/components/CopyButton";
+import { ConfirmDialog } from "@/app/components/ConfirmDialog";
+import { CopyRow } from "@/app/components/CopyButton";
 import {
   DataTable,
   DataTableBody,
@@ -18,19 +19,12 @@ import {
   DataTableRow,
 } from "@/app/components/DataTable";
 import { EmptyState, NoPermission } from "@/app/components/EmptyState";
+import { RevealSecretDialog } from "@/app/components/RevealSecretDialog";
 import { Button } from "@/app/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/app/components/ui/dialog";
-import { Input } from "@/app/components/ui/input";
-import { Who } from "@/app/components/Who";
+import { PLATFORM, Who } from "@/app/components/Who";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
-import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
@@ -42,29 +36,26 @@ interface Props {
 }
 
 export function ApiAccessPanel({ org }: Props): React.JSX.Element {
+  // The account key is the whole account API, so only the admin tier mints
+  // or rotates it; a role with `keys:read` still sees the list.
+  const { canWrite } = useOrgRole();
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const keys = useQuery(api.apiKeys.listForOrg, {});
   const provision = useAction(api.org.lifecycle.provision);
   const rotate = useAction(api.org.lifecycle.rotateSecret);
   const endpoint = resolveCoreEndpoint();
-
   const [revealed, setRevealed] = useState<string | null>(null);
   const [rotateOpen, setRotateOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useSubmit();
 
-  async function run(action: () => Promise<{ secret: string }>): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
+  async function mint(
+    action: () => Promise<{ secret: string }>,
+  ): Promise<void> {
+    const done = await run(async () => {
       const result = await action();
       setRevealed(result.secret);
-      setRotateOpen(false);
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+    });
+    if (done) setRotateOpen(false);
   }
 
   if (account === undefined || keys === undefined) {
@@ -87,25 +78,25 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
         {account && (
           <dl className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-xs">
             <dt className="text-muted-foreground">Account ID</dt>
-            <dd className="flex min-w-0 items-center gap-1">
-              <Input
-                readOnly
+            <dd className="min-w-0">
+              <CopyRow
                 value={account.accountId}
-                className="font-mono text-xs"
-              />
-              <CopyButton value={account.accountId} label="account ID" />
+                className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+              >
+                <span className="flex-1 truncate">{account.accountId}</span>
+              </CopyRow>
             </dd>
             <dt className="text-muted-foreground">Base URL</dt>
-            <dd className="flex min-w-0 items-center gap-1">
+            <dd className="min-w-0">
               {endpoint.ok ? (
-                <>
-                  <Input
-                    readOnly
-                    value={endpoint.httpBaseUrl}
-                    className="font-mono text-xs"
-                  />
-                  <CopyButton value={endpoint.httpBaseUrl} label="base URL" />
-                </>
+                <CopyRow
+                  value={endpoint.httpBaseUrl}
+                  className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+                >
+                  <span className="flex-1 truncate">
+                    {endpoint.httpBaseUrl}
+                  </span>
+                </CopyRow>
               ) : (
                 <span className="text-warning">{endpoint.message}</span>
               )}
@@ -143,25 +134,21 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
                     {formatDate(key.createdAt)}
                   </DataTableCell>
                   <DataTableCell>
-                    <Who
-                      actor={
-                        key.createdBy
-                          ? { kind: "person", ...key.createdBy }
-                          : { kind: "platform" }
-                      }
-                    />
+                    <Who actor={key.createdBy ?? PLATFORM} />
                   </DataTableCell>
                   <DataTableCell align="right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      tone="muted"
-                      className="cursor-pointer"
-                      disabled={pending}
-                      onClick={() => setRotateOpen(true)}
-                    >
-                      Rotate
-                    </Button>
+                    {canWrite && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        tone="muted"
+                        className="cursor-pointer"
+                        disabled={pending}
+                        onClick={() => setRotateOpen(true)}
+                      >
+                        Rotate
+                      </Button>
+                    )}
                   </DataTableCell>
                 </DataTableRow>
               ))}
@@ -172,88 +159,47 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             title="This organization has no API account yet."
             detail="Provisioning creates the backend tenant and issues a one-time account key."
             action={
-              <Button
-                size="sm"
-                className="cursor-pointer"
-                disabled={pending}
-                onClick={() => run(() => provision({ orgId: org._id }))}
-              >
-                {pending ? "Provisioning…" : "Provision account"}
-              </Button>
+              canWrite && (
+                <Button
+                  size="sm"
+                  className="cursor-pointer"
+                  disabled={pending}
+                  onClick={() => mint(() => provision({ orgId: org._id }))}
+                >
+                  {pending ? "Provisioning…" : "Provision account"}
+                </Button>
+              )
             }
           />
         )}
-        <DataTableFooter>
-          {account ? `${keys.length} key` : "No account"}
-        </DataTableFooter>
+        <DataTableFooter
+          total={account ? keys.length : 0}
+          noun={account ? (keys.length === 1 ? "key" : "keys") : "account"}
+        />
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && !rotateOpen && (
+        <p className="text-xs text-destructive">{error}</p>
+      )}
 
-      <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Rotate the account key?</DialogTitle>
-            <DialogDescription>
-              The current key stops working at once. Anything using it needs the
-              new one.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="cursor-pointer"
-              onClick={() => setRotateOpen(false)}
-              disabled={pending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="cursor-pointer"
-              onClick={() => run(() => rotate({ orgId: org._id }))}
-              disabled={pending}
-            >
-              {pending ? "Rotating…" : "Rotate"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
+      {rotateOpen && (
+        <ConfirmDialog
+          title="Rotate the account key?"
+          description="The current key stops working at once. Anything using it needs the new one."
+          verb="Rotate"
+          pending={pending}
+          error={error}
+          onConfirm={() => mint(() => rotate({ orgId: org._id }))}
+          onClose={() => setRotateOpen(false)}
+        />
+      )}
       {revealed && (
-        <NewSecretDialog secret={revealed} onClose={() => setRevealed(null)} />
+        <RevealSecretDialog
+          title="Save your new account key"
+          label="account key"
+          secret={revealed}
+          onClose={() => setRevealed(null)}
+        />
       )}
     </div>
-  );
-}
-
-function NewSecretDialog({
-  secret,
-  onClose,
-}: {
-  secret: string;
-  onClose: () => void;
-}): React.JSX.Element {
-  return (
-    <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Save your new account key</DialogTitle>
-          <DialogDescription>
-            Copy it now. It will not be shown again.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex items-center gap-1 py-2">
-          <Input readOnly value={secret} className="font-mono text-xs" />
-          <CopyButton value={secret} label="account key" />
-        </div>
-        <DialogFooter>
-          <Button size="sm" className="cursor-pointer" onClick={onClose}>
-            Done
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

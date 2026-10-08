@@ -9,8 +9,7 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  type HeadFilter,
-  type HeadSort,
+  TIME_WORDS,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
@@ -20,27 +19,18 @@ import { StatusWord, type StatusTone } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
 import { Switch } from "@/app/components/ui/switch";
-import { Who, type Actor } from "@/app/components/Who";
+import { Who } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
-import { useRemembered } from "@/app/hooks/useRemembered";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import {
   describeSchedule,
   nextFireAt,
   untilLabel,
 } from "@/app/lib/cronSchedule";
-import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate, formatDateTime } from "@/app/lib/formatTime";
-import { parseQuery } from "@/app/lib/queryTokens";
-import {
-  clearField,
-  sortRows,
-  toggleToken,
-  tokenValues,
-  type SortDir,
-  type SortKey,
-  type SortState,
-} from "@/app/lib/tableState";
+import type { SortKey } from "@/app/lib/tableState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
@@ -56,20 +46,23 @@ import {
 import { CronDialog, eventsToText } from "./CronDialog";
 
 // The `field:value` tokens the search box understands.
-const CRON_QUERY_FIELDS = ["agent", "status", "timezone"] as const;
+const QUERY_FIELDS = ["agent", "status", "timezone"] as const;
 
 // Eight columns of short text; below this the detail panel would wrap them.
-const CRON_TABLE_MIN_WIDTH = 760;
+const TABLE_MIN_WIDTH = 760;
 
 // A job with no zone of its own runs in UTC, so that is what the row says.
 const DEFAULT_TIMEZONE = "UTC";
+
+// Sort words for the next-run column; the last-run column reads oldest and newest.
+const NEXT_WORDS: [string, string] = ["Soonest first", "Latest first"];
 
 type Cron = FunctionReturnType<typeof api.agent.crons.listForProject>[number];
 type CronRun = FunctionReturnType<
   typeof api.agent.crons.listRunsForProject
 >[number];
 type RunStatus = NonNullable<Cron["lastStatus"]>;
-type QueryField = (typeof CRON_QUERY_FIELDS)[number];
+type Field = (typeof QUERY_FIELDS)[number];
 type Column =
   | "name"
   | "description"
@@ -79,6 +72,15 @@ type Column =
   | "next"
   | "last"
   | "active";
+
+/** A job with the facts the list derives once per tick: its agent's name and its next fire. */
+interface CronRow {
+  cron: Cron;
+  agentName: string;
+  zone: string;
+  /** When it fires next, paused or not; null once a one-shot has fired. */
+  next: number | null;
+}
 
 // The last run as a word and a dot; never run reads as nothing.
 const RUN_WORD: Record<RunStatus, string> = {
@@ -100,6 +102,18 @@ const STATUS_WORDS: Record<string, (cron: Cron) => boolean> = {
   running: (cron) => cron.lastStatus === "started",
   ok: (cron) => cron.lastStatus === "completed",
   failed: (cron) => cron.lastStatus === "failed",
+};
+
+const SORT_KEY: Record<Column, (row: CronRow) => SortKey> = {
+  name: (row) => row.cron.name,
+  description: (row) => row.cron.description ?? null,
+  agent: (row) => row.agentName,
+  schedule: (row) =>
+    describeSchedule(row.cron.scheduleExpression, row.cron.timezone),
+  timezone: (row) => row.zone,
+  next: (row) => row.next,
+  last: (row) => row.cron.lastInvokedAt ?? null,
+  active: (row) => (row.cron.status === "active" ? 1 : 0),
 };
 
 interface Props {
@@ -124,88 +138,47 @@ export function CronsTable({
   const { canWrite } = useOrgRole();
   const update = useMutation(api.agent.cronsPublic.update);
   const now = useNow();
-  const [filter, setFilter] = useRemembered("scheduler.filter", "");
-  const [sort, setSort] = useRemembered<SortState<Column>>("scheduler.sort", {
-    column: "next",
-    dir: "asc",
-  });
   const [selectedId, setSelectedId] = useState<Id<"crons"> | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { error, run } = useSubmit();
 
-  const agentNameById = useMemo(
-    () => new Map(agents.map((agent) => [agent._id, agent.name])),
-    [agents],
-  );
+  const rows = useMemo((): CronRow[] => {
+    const names = new Map(agents.map((agent) => [agent._id, agent.name]));
 
-  const query = useMemo(() => parseQuery(filter, CRON_QUERY_FIELDS), [filter]);
-  const shown = useMemo(() => {
-    const matching = crons.filter((cron) => {
-      const fieldsPass = query.fields.every(({ field, value }) =>
-        matchesField(field, value, cron, agentNameById),
-      );
-      if (!fieldsPass) return false;
-      if (!query.text) return true;
-
-      return `${cron.name} ${cron.description ?? ""}`
-        .toLowerCase()
-        .includes(query.text);
-    });
-
-    return sortRows(
-      matching,
-      (cron) => sortKey(sort.column, cron, agentNameById, now),
-      sort.dir,
-    );
-  }, [crons, query, agentNameById, sort, now]);
-  const selected = crons.find((cron) => cron._id === selectedId) ?? null;
+    return crons.map((cron) => ({
+      cron: cron,
+      agentName: names.get(cron.agentId) ?? "(unknown)",
+      zone: cron.timezone ?? DEFAULT_TIMEZONE,
+      next: nextFireAt(cron, now),
+    }));
+  }, [crons, agents, now]);
+  const list = useListState({
+    rows: rows,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "next", dir: "asc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
+    remember: `scheduler:${projectId}`,
+  });
+  const selected = rows.find((row) => row.cron._id === selectedId) ?? null;
   const activeCount = crons.filter((cron) => cron.status === "active").length;
-
-  const sortFor = (column: Column): HeadSort => ({
-    dir: sort.column === column ? sort.dir : null,
-    onSort: (dir: SortDir) => setSort({ column: column, dir: dir }),
-  });
-  const filterFor = (field: QueryField, values: string[]): HeadFilter => ({
-    field: field,
-    values: values.map((value) => ({ value: value, label: value })),
-    active: tokenValues(filter, field),
-    onToggle: (value) => setFilter(toggleToken(filter, field, value)),
-    onClear: () => setFilter(clearField(filter, field)),
-  });
   const filters = {
-    agent: filterFor(
-      "agent",
-      [...new Set(crons.map((cron) => agentName(agentNameById, cron)))].map(
-        (name) => name.toLowerCase(),
-      ),
-    ),
-    status: filterFor("status", Object.keys(STATUS_WORDS)),
-    timezone: filterFor(
-      "timezone",
-      [...new Set(crons.map((cron) => zoneOf(cron)))].map((zone) =>
-        zone.toLowerCase(),
-      ),
-    ),
-  };
-
-  const setActive = async (cron: Cron, active: boolean): Promise<void> => {
-    setError(null);
-    try {
-      await update({
-        cronId: cron._id,
-        status: active ? "active" : "paused",
-      });
-    } catch (err) {
-      setError(toErrorMessage(err));
-    }
+    agent: list.filterFor("agent", [
+      ...new Set(rows.map((row) => row.agentName.toLowerCase())),
+    ]),
+    status: list.filterFor("status", Object.keys(STATUS_WORDS)),
+    timezone: list.filterFor("timezone", [
+      ...new Set(rows.map((row) => row.zone.toLowerCase())),
+    ]),
   };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Toolbar className="border-b-0 px-0">
         <SearchInput
-          value={filter}
-          onChange={setFilter}
-          fields={CRON_QUERY_FIELDS}
+          value={list.query}
+          onChange={list.setQuery}
+          fields={QUERY_FIELDS}
           placeholder="Search jobs"
         />
         <FilterButton
@@ -225,14 +198,13 @@ export function CronsTable({
       {error && <p className="pb-2 text-xs text-destructive">{error}</p>}
 
       <DetailSplit
-        tableMinWidth={CRON_TABLE_MIN_WIDTH}
+        tableMinWidth={TABLE_MIN_WIDTH}
         detail={
           selected && (
             <CronPanel
               projectId={projectId}
-              cron={selected}
+              row={selected}
               agents={agents}
-              agentName={agentName(agentNameById, selected)}
               now={now}
               onClose={() => setSelectedId(null)}
             />
@@ -242,36 +214,41 @@ export function CronsTable({
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={sortFor("name")}>Name</DataTableHead>
-              <DataTableHead sort={sortFor("description")}>
+              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead sort={sortFor("agent")} filter={filters.agent}>
+              <DataTableHead
+                sort={list.sortFor("agent")}
+                filter={filters.agent}
+              >
                 Agent
               </DataTableHead>
-              <DataTableHead sort={sortFor("schedule")}>Schedule</DataTableHead>
+              <DataTableHead sort={list.sortFor("schedule")}>
+                Schedule
+              </DataTableHead>
               <DataTableHead
-                sort={sortFor("timezone")}
+                sort={list.sortFor("timezone")}
                 filter={filters.timezone}
               >
                 Timezone
               </DataTableHead>
-              <DataTableHead sort={{ ...sortFor("next"), words: TIME_WORDS }}>
+              <DataTableHead sort={list.sortFor("next", NEXT_WORDS)}>
                 Next run
               </DataTableHead>
               <DataTableHead
-                sort={{ ...sortFor("last"), words: TIME_WORDS }}
+                sort={list.sortFor("last", TIME_WORDS)}
                 filter={filters.status}
               >
                 Last run
               </DataTableHead>
-              <DataTableHead align="right" sort={sortFor("active")}>
+              <DataTableHead align="right" sort={list.sortFor("active")}>
                 Active
               </DataTableHead>
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {shown.map((cron) => (
+            {list.shown.map(({ cron, agentName, zone, next }) => (
               <DataTableRow
                 key={cron._id}
                 selected={selectedId === cron._id}
@@ -289,16 +266,20 @@ export function CronsTable({
                 </DataTableCell>
                 <DataTableCell>
                   <Who
-                    actor={agentActor(agentNameById, cron)}
+                    actor={{
+                      kind: "agent",
+                      name: agentName,
+                      agentId: cron.agentId,
+                    }}
                     projectId={projectId}
                   />
                 </DataTableCell>
                 <DataTableCell>
                   {describeSchedule(cron.scheduleExpression, cron.timezone)}
                 </DataTableCell>
-                <DataTableCell>{zoneOf(cron)}</DataTableCell>
+                <DataTableCell>{zone}</DataTableCell>
                 <DataTableCell>
-                  <NextRun cron={cron} now={now} />
+                  <NextRun cron={cron} next={next} now={now} />
                 </DataTableCell>
                 <DataTableCell>
                   {cron.lastStatus ? (
@@ -322,38 +303,45 @@ export function CronsTable({
                     checked={cron.status === "active"}
                     disabled={!canWrite}
                     aria-label={`${cron.name} active`}
-                    onCheckedChange={(checked) => setActive(cron, checked)}
+                    onCheckedChange={(checked) =>
+                      run(() =>
+                        update({
+                          cronId: cron._id,
+                          status: checked ? "active" : "paused",
+                        }),
+                      )
+                    }
                   />
                 </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
         </DataTable>
-        {shown.length === 0 && (
+        {list.shown.length === 0 && (
           <EmptyState title="No jobs match the current filters." />
         )}
-        <DataTableFooter>
-          {shown.length === crons.length
-            ? `${crons.length} jobs, ${activeCount} active`
-            : `${shown.length} of ${crons.length} jobs, ${activeCount} active`}
+        <DataTableFooter
+          shown={list.shown.length}
+          total={crons.length}
+          noun="jobs"
+        >
+          {`, ${activeCount} active`}
         </DataTableFooter>
       </DetailSplit>
     </div>
   );
 }
 
-// Sort words for the two time columns.
-const TIME_WORDS: [string, string] = ["Soonest first", "Latest first"];
-
 /** When the job fires next; a paused job still says when it would. */
 function NextRun({
   cron,
+  next,
   now,
 }: {
   cron: Cron;
+  next: number | null;
   now: number;
 }): React.JSX.Element {
-  const next = nextFireAt(cron, now);
   if (next === null) {
     return <span className="text-muted-foreground">fired</span>;
   }
@@ -372,21 +360,20 @@ function NextRun({
 /** The selected job: every fact as a row, the prompt, and its newest runs. */
 function CronPanel({
   projectId,
-  cron,
+  row,
   agents,
-  agentName,
   now,
   onClose,
 }: {
   projectId: Id<"projects">;
-  cron: Cron;
+  row: CronRow;
   agents: Props["agents"];
-  agentName: string;
   now: number;
   onClose: () => void;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const remove = useMutation(api.agent.cronsPublic.remove);
+  const { cron, agentName, zone, next } = row;
   const runs = useQuery(api.agent.crons.listRunsForProject, {
     projectId: projectId,
     cronId: cron._id,
@@ -394,7 +381,6 @@ function CronPanel({
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [pending, setPending] = useState(false);
-  const next = nextFireAt(cron, now);
 
   async function handleDelete(): Promise<void> {
     setPending(true);
@@ -452,7 +438,7 @@ function CronPanel({
         <Field label="Expression">
           <span className="font-mono">{cron.scheduleExpression}</span>
         </Field>
-        <Field label="Timezone">{zoneOf(cron)}</Field>
+        <Field label="Timezone">{zone}</Field>
         <Field label="Next run">
           {next === null
             ? "fired"
@@ -481,7 +467,7 @@ function CronPanel({
         </Field>
         <Field label="Created by">
           {cron.creator ? (
-            <Who actor={{ kind: "person", ...cron.creator }} />
+            <Who actor={cron.creator} />
           ) : (
             <span className="text-muted-foreground">API</span>
           )}
@@ -610,56 +596,13 @@ function RunsTable({
 }
 
 /** Whether a `field:value` token matches the job. */
-function matchesField(
-  field: QueryField,
-  value: string,
-  cron: Cron,
-  names: Map<Id<"agents">, string>,
-): boolean {
-  if (field === "agent") {
-    return agentName(names, cron).toLowerCase().startsWith(value);
-  }
-  if (field === "timezone") return zoneOf(cron).toLowerCase() === value;
+function matchesField(row: CronRow, field: Field, value: string): boolean {
+  if (field === "agent") return row.agentName.toLowerCase().startsWith(value);
+  if (field === "timezone") return row.zone.toLowerCase() === value;
 
-  return STATUS_WORDS[value]?.(cron) ?? false;
+  return STATUS_WORDS[value]?.(row.cron) ?? false;
 }
 
-/** What a column sorts a job by. */
-function sortKey(
-  column: Column,
-  cron: Cron,
-  names: Map<Id<"agents">, string>,
-  now: number,
-): SortKey {
-  switch (column) {
-    case "name":
-      return cron.name;
-    case "description":
-      return cron.description ?? null;
-    case "agent":
-      return agentName(names, cron);
-    case "schedule":
-      return describeSchedule(cron.scheduleExpression, cron.timezone);
-    case "timezone":
-      return zoneOf(cron);
-    case "next":
-      return nextFireAt(cron, now);
-    case "last":
-      return cron.lastInvokedAt ?? null;
-    case "active":
-      return cron.status === "active" ? 1 : 0;
-  }
-}
-
-/** The name of the agent a job runs; a deleted agent reads as unknown. */
-function agentName(names: Map<Id<"agents">, string>, cron: Cron): string {
-  return names.get(cron.agentId) ?? "(unknown)";
-}
-
-function agentActor(names: Map<Id<"agents">, string>, cron: Cron): Actor {
-  return { kind: "agent", name: agentName(names, cron), agentId: cron.agentId };
-}
-
-function zoneOf(cron: Cron): string {
-  return cron.timezone ?? DEFAULT_TIMEZONE;
+function searchText(row: CronRow): string {
+  return `${row.cron.name} ${row.cron.description ?? ""}`;
 }

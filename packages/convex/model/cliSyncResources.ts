@@ -7,8 +7,8 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { normalizePolicyDocument } from "../agent/policies";
 import { accountCipherForWrite } from "./accountKeys";
+import { normalizePolicyDocument } from "./policyRules";
 import {
   collectEnvPlaceholderNames,
   fromNestedAgentConfig,

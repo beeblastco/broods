@@ -818,7 +818,8 @@ export function TracingPanel({
             )}
             <LoadMore
               shown={groups.length}
-              total={points.length}
+              total={allGroups.length}
+              noun="tasks"
               pageSize={PAGE_SIZE}
               remaining={remaining}
               onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
