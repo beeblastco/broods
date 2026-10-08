@@ -38,6 +38,22 @@ describe("stage runtime key on create", () => {
     expect(keyed).toContain(stageId);
   });
 
+  test("a cloned stage gets no key, so its bot tokens stay unconnected", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = stageKeyTest();
+    await seedOrg(t, { provisioned: true });
+
+    const projectId = await t.mutation(api.project.create, { name: "Shop" });
+    const [developmentId] = await activeKeyStages(t);
+    const cloneId = await t.mutation(api.stage.create, {
+      projectId: projectId,
+      name: "staging",
+      duplicateFromId: developmentId,
+    });
+
+    expect(await activeKeyStages(t)).not.toContain(cloneId);
+  });
+
   test("creation still succeeds before the org has an API account", async () => {
     const t = stageKeyTest();
     await seedOrg(t, { provisioned: false });

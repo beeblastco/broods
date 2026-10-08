@@ -60,7 +60,7 @@ export const SHORTCUTS = [
   {
     combos: ["a"],
     id: "canvas.addAgent",
-    keywords: ["github", "template", "import", "config"],
+    keywords: ["config"],
     label: "Add agent",
     scope: "canvas",
   },

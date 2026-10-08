@@ -11,7 +11,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { readyStageDeployment } from "./agent/deployments";
-import { authKit } from "./auth";
+import { authKit, type AuthUser } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
 import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
@@ -377,7 +377,7 @@ async function deepLinkTarget(
  */
 async function defaultProjectId(
   ctx: MutationCtx,
-  user: NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>,
+  user: AuthUser,
   orgId: Id<"orgs">,
   projects: Doc<"projects">[],
 ): Promise<Id<"projects"> | null> {
@@ -465,9 +465,7 @@ function randomProjectName(): string {
   return `${adj}-${noun}`;
 }
 
-async function requireAuth(
-  ctx: Ctx,
-): Promise<NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>> {
+async function requireAuth(ctx: Ctx): Promise<AuthUser> {
   const authUser = await authKit.getAuthUser(ctx);
   if (!authUser) throw new Error("User not found or not authenticated");
 

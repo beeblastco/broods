@@ -2,8 +2,9 @@
  * Project + stage scoped runtime keys (`bsk_…`).
  *
  * One key per stage invokes any deployed agent in it; the agent is chosen
- * per request by id. The dashboard surfaces the key/URLs; the CLI mints it on
- * `deploy`. The SHA-256 hash authenticates runtime calls (`getByApiKeyHash` in
+ * per request by id. An empty stage gets its key when it is created; a cloned
+ * or older stage gets it from the CLI's `deploy` or the dashboard's "Generate
+ * key". The SHA-256 hash authenticates runtime calls (`getByApiKeyHash` in
  * `core`); the plaintext is also stored AES-GCM encrypted so the owner can
  * recover it for dashboard streaming and CLI reconnect without rotating.
  */
@@ -18,7 +19,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
-import { authKit, deriveName } from "../auth";
+import { authKit, type AuthUser, deriveName } from "../auth";
 import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   auditDetailsJson,
@@ -42,8 +43,6 @@ import {
 
 const PROVISION_ACCOUNT_FIRST =
   "Provision your organization's API account first (Settings → API Access).";
-
-type AuthUser = NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>;
 
 /** A minted stage ticket plus the slugs the gateway's observability path uses. */
 export const stageSessionValidator = v.object({

@@ -12,7 +12,9 @@ const KEY_READY_MS = 8_000;
 
 // The project the create dialog just made, read once by its canvas. Module
 // state, so it lives through the client-side navigation and not a reload.
-let createdProjectId: string | null = null;
+// It expires so a canvas opened much later never shows a stale notice.
+const CREATED_MARKER_MS = 60_000;
+let createdProject: { at: number; projectId: string } | null = null;
 
 /**
  * Says the new project's runtime key exists, once, on the canvas the create
@@ -26,7 +28,11 @@ export function CanvasKeyReady({
   projectId: Id<"projects">;
   stageId: Id<"stages"> | null;
 }): React.JSX.Element | null {
-  const [armed, setArmed] = useState(() => createdProjectId === projectId);
+  const [armed, setArmed] = useState(
+    () =>
+      createdProject?.projectId === projectId &&
+      Date.now() - createdProject.at < CREATED_MARKER_MS,
+  );
   const deployment = useQuery(
     api.agent.deployments.getForStage,
     armed && stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -35,14 +41,14 @@ export function CanvasKeyReady({
 
   // No key on this stage (org not provisioned): drop the marker for good.
   useEffect(() => {
-    if (armed && deployment === null) createdProjectId = null;
+    if (armed && deployment === null) createdProject = null;
   }, [armed, deployment]);
 
   // Consumed only once the pill is on screen: the canvas remounts when its
   // stage loads, and a slow key lookup must not eat the display time.
   useEffect(() => {
     if (!visible) return;
-    createdProjectId = null;
+    createdProject = null;
     const timer = setTimeout(() => setArmed(false), KEY_READY_MS);
 
     return () => clearTimeout(timer);
@@ -65,5 +71,5 @@ export function CanvasKeyReady({
 
 /** Called by the create dialog right before it opens the new project. */
 export function markProjectCreated(projectId: string): void {
-  createdProjectId = projectId;
+  createdProject = { at: Date.now(), projectId: projectId };
 }

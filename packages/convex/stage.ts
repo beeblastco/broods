@@ -89,8 +89,11 @@ export const create = mutation({
         stageId,
         now,
       );
+    } else {
+      // Only an empty stage gets its key here: a clone's agents carry bot
+      // tokens, and a deployment would connect them beside the source's.
+      await readyStageDeployment(ctx, authUser, projectId, stageId);
     }
-    await readyStageDeployment(ctx, authUser, projectId, stageId);
 
     await ctx.db.patch(projectId, { updatedAt: now });
 
@@ -235,9 +238,6 @@ export const initializeProduction = mutation({
         entry.kind !== "development",
     )) {
       await ctx.db.patch(stage._id, { isDefault: false, updatedAt: now });
-    }
-    if (!production) {
-      await readyStageDeployment(ctx, authUser, projectId, productionId);
     }
     await ctx.db.patch(projectId, { updatedAt: now });
 
