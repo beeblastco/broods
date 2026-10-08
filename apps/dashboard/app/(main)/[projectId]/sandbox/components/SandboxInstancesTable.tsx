@@ -275,22 +275,19 @@ export function SandboxInstancesTable({
     }
   }
 
+  // A background sync; the rows keep their last known status when the
+  // provider does not answer, so a failure here has nothing to tell the user.
   const refreshVisible = useCallback(async (): Promise<void> => {
     const targets = visibleInstances.filter(controllable);
     if (targets.length === 0) return;
-    setError(null);
-    try {
-      await Promise.all(
-        targets.map((instance) =>
-          refresh({
-            sandboxId: instance.sandboxConfigId,
-            reservationKey: instance.reservationKey,
-          }),
-        ),
-      );
-    } catch (err) {
-      setError(toErrorMessage(err));
-    }
+    await Promise.allSettled(
+      targets.map((instance) =>
+        refresh({
+          sandboxId: instance.sandboxConfigId,
+          reservationKey: instance.reservationKey,
+        }),
+      ),
+    );
   }, [visibleInstances, refresh]);
 
   useEffect(() => {
