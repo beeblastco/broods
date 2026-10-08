@@ -6,7 +6,7 @@
  */
 
 import { v } from "convex/values";
-import { api, internal } from "../_generated/api";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { action, type ActionCtx } from "../_generated/server";
 import {
@@ -27,7 +27,7 @@ export const provision = action({
     ctx,
     args,
   ): Promise<{ accountId: Id<"accounts">; secret: string }> => {
-    const org = await ctx.runQuery(api.org.orgs.getByIdForKeyWriter, {
+    const org = await ctx.runQuery(internal.org.orgs.getByIdForKeyWriter, {
       orgId: args.orgId,
     });
     if (!org) {
@@ -69,7 +69,7 @@ export const rotateSecret = action({
   args: { orgId: v.id("orgs") },
   returns: v.object({ secret: v.string() }),
   handler: async (ctx, args): Promise<{ secret: string }> => {
-    const org = await ctx.runQuery(api.org.orgs.getByIdForKeyWriter, {
+    const org = await ctx.runQuery(internal.org.orgs.getByIdForKeyWriter, {
       orgId: args.orgId,
     });
     if (!org) {

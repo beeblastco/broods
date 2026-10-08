@@ -8,7 +8,7 @@
  */
 
 import { v, type Infer } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import {
@@ -36,8 +36,6 @@ const runtimeKeyValidator = v.object({
   rotatedAt: v.optional(v.number()),
   /** The member who minted or rotated it, or the CLI's name for them. */
   rotatedBy: v.optional(actorValidator),
-  /** Whether the viewer may rotate it: `keys:write` on this stage. */
-  canWrite: v.boolean(),
 });
 
 const apiKeyValidator = v.object({
@@ -50,15 +48,13 @@ const apiKeyValidator = v.object({
   lastUsedAt: v.optional(v.number()),
   createdAt: v.number(),
   createdBy: v.optional(actorValidator),
-  /** Whether the viewer may revoke it: `keys:write` on its stage. */
-  canWrite: v.boolean(),
 });
 
 const projectKeysValidator = v.object({
   runtime: v.array(runtimeKeyValidator),
   api: v.array(apiKeyValidator),
-  /** The stages the viewer may make keys on. Each stage answers for itself. */
-  writable: v.array(v.id("stages")),
+  /** The stages the viewer may rotate, revoke and make keys on: `keys:write` on each. */
+  writable: v.array(v.object({ _id: v.id("stages"), name: v.string() })),
 });
 
 type OrgKey = Infer<typeof orgKeyValidator>;
@@ -112,24 +108,26 @@ export const listForProject = query({
     if (!project || !user) return null;
     const access = await memberAccess(ctx, project.orgId, user);
     if (!access) return null;
-    const allows = (
-      action: "keys:read" | "keys:write",
-      stageId: Id<"stages">,
-    ): boolean =>
-      policiesAllowOrTier(access, action, {
-        projectId: args.projectId,
-        stageId: stageId,
-      });
     const stages = (
       await ctx.db
         .query("stages")
         .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
         .collect()
-    ).filter((stage) => allows("keys:read", stage._id));
+    ).filter((stage) =>
+      policiesAllowOrTier(access, "keys:read", {
+        projectId: args.projectId,
+        stageId: stage._id,
+      }),
+    );
     if (stages.length === 0) return null;
     const writable = stages
-      .filter((stage) => allows("keys:write", stage._id))
-      .map((stage) => stage._id);
+      .filter((stage) =>
+        policiesAllowOrTier(access, "keys:write", {
+          projectId: args.projectId,
+          stageId: stage._id,
+        }),
+      )
+      .map((stage) => ({ _id: stage._id, name: stage.name }));
     const perStage = await Promise.all(
       stages.map((stage) => stageKeys(ctx, stage)),
     );
@@ -156,7 +154,6 @@ export const listForProject = query({
             (deployment.createdByUserId &&
               people.get(deployment.createdByUserId)) ||
             (deployment.createdBy ? { name: deployment.createdBy } : undefined),
-          canWrite: writable.includes(stage._id),
         });
       }
       for (const key of keys) {
@@ -170,7 +167,6 @@ export const listForProject = query({
           lastUsedAt: key.lastUsedAt,
           createdAt: key.createdAt,
           createdBy: key.createdBy ? people.get(key.createdBy) : undefined,
-          canWrite: writable.includes(stage._id),
         });
       }
     }

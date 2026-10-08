@@ -270,7 +270,7 @@ export const userIdByAuthId = internalQuery({
 });
 
 /** One org by id when the caller holds `keys:write` for it, so may mint or rotate its account key; null otherwise. */
-export const getByIdForKeyWriter = query({
+export const getByIdForKeyWriter = internalQuery({
   args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {

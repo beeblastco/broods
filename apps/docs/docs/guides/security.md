@@ -52,9 +52,9 @@ The runtime key is the one key meant to sit in a frontend, so it is limited:
 - `continue` with it only reopens conversations the direct API started, never a channel conversation.
 - It cannot open logs, traces or the machine socket.
 
-The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access; that takes `keys:write` for the organization, which admins hold and a role can be granted. The account key is the whole account API, so give organization-wide `keys:write` as you would admin. A project's Keys page asks `keys:write` per stage, so a grant on one stage rotates or revokes only that stage's keys; `keys:write` also sees the keys it may change. Rotation breaks everything holding the old one.
+The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access; that takes `keys:write` for the organization, which admins hold and a role can be granted. The account key is the whole account API, so give organization-wide `keys:write` as you would admin. Rotation breaks everything holding the old one.
 
-A project key is an API key created for one stage under Project settings, Keys, and shown once. See [Deploying from CI](deploying.md#deploying-from-ci).
+A project key is an API key created for one stage under Project settings, Keys, and shown once. That page asks `keys:write` per stage, so a grant on one stage rotates or revokes only that stage's keys; `keys:write` also sees the keys it may change. See [Deploying from CI](deploying.md#deploying-from-ci).
 
 ## Roles
 

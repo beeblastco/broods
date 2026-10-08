@@ -43,16 +43,13 @@ export function tierPermissions(tier: OrgRole): DashboardPolicyAction[] {
   return tier === "member" ? [] : [...DASHBOARD_POLICY_ACTIONS];
 }
 
-/** Whether the enforce-mode policies allow one action in one scope: a matching deny wins, else a matching allow. Without a rule on `keys:read`, a granted `keys:write` reads, so a writer sees the list. */
+/** Whether the enforce-mode policies allow one action in one scope: a matching deny wins, else a matching allow. */
 export function policiesAllow(
   policies: readonly ScopedPolicy[],
   action: string,
   scope: DashboardScope = {},
 ): boolean {
-  const verdict = ruleVerdict(policies, action, scope);
-  if (verdict) return verdict === "allow";
-
-  return action === "keys:read" && policiesAllow(policies, "keys:write", scope);
+  return ruleVerdict(policies, action, scope) === "allow";
 }
 
 /** The tier's permissions plus what the policies allow in the scope. */
@@ -60,12 +57,9 @@ export function dashboardPermissions(
   access: MemberAccess,
   scope: DashboardScope = {},
 ): DashboardPolicyAction[] {
-  const held = new Set(tierPermissions(access.tier));
-  for (const action of DASHBOARD_POLICY_ACTIONS) {
-    if (policiesAllow(access.policies, action, scope)) held.add(action);
-  }
-
-  return [...held];
+  return DASHBOARD_POLICY_ACTIONS.filter((action) =>
+    policiesAllowOrTier(access, action, scope),
+  );
 }
 
 /** One member's tier and policies in one org; null when they are not a member. */
@@ -162,15 +156,19 @@ export async function activePolicies(
     }));
 }
 
-/** Whether the tier holds the action, or the policies allow it in the scope. */
+/** Whether the tier holds the action, or the policies allow it in the scope. Without a rule on `keys:read`, a granted `keys:write` reads, so a writer sees the list. */
 export function policiesAllowOrTier(
   access: MemberAccess,
   action: DashboardPolicyAction,
   scope: DashboardScope,
 ): boolean {
+  if (tierPermissions(access.tier).includes(action)) return true;
+  const verdict = ruleVerdict(access.policies, action, scope);
+  if (verdict) return verdict === "allow";
+
   return (
-    tierPermissions(access.tier).includes(action) ||
-    policiesAllow(access.policies, action, scope)
+    action === "keys:read" &&
+    policiesAllow(access.policies, "keys:write", scope)
   );
 }
 
