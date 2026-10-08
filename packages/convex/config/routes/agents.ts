@@ -26,6 +26,7 @@ import type { StageScopedRef } from "../../model/projectScope";
 import {
   accountCipherForAction,
   assertRefsInPin,
+  assertRoleMayReadEnv,
   json,
   jsonError,
   methodNotAllowed,
@@ -363,6 +364,7 @@ async function patchAgentConfigRoute(
       );
     }
   }
+  assertRoleMayReadEnv(role, existingConfig, patch.config);
   // Before encryption: canonicalization must land in the persisted config.
   canonicalizeAgentSkillPaths(accountId, patch.config);
   const config = await prepareAccountAgentConfig(

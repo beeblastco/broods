@@ -15,7 +15,12 @@ import {
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../../model/accountSecrets";
-import type { RolePrincipal } from "../../model/apiAuthorization";
+import {
+  authorize,
+  rolePrincipal,
+  type RolePrincipal,
+} from "../../model/apiAuthorization";
+import { collectEnvPlaceholderNames } from "../../model/agentConfigCodec";
 import type { StageScopedRef } from "../../model/projectScope";
 import type { AuditActor, AuditResource } from "../../model/auditEvents";
 import { RUN_TOKEN_PREFIX } from "../../model/principal";
@@ -583,6 +588,32 @@ function parsePageLimit(raw: string): number | null {
   const limit = Number(raw);
 
   return limit >= 1 && limit <= MAX_PAGE_SIZE ? limit : null;
+}
+
+/**
+ * Refuse a role's write that names an account env var as `${NAME}` the role
+ * may not read. The config plane resolves those names into the stored config,
+ * so naming one would hand its value to whatever the config sends it to.
+ * Names the config already carried were set by someone who could read them.
+ */
+export function assertRoleMayReadEnv(
+  role: RolePrincipal | undefined,
+  before: unknown,
+  after: unknown,
+): void {
+  if (!role) return;
+  const known = collectEnvPlaceholderNames(before);
+  const refused = [...collectEnvPlaceholderNames(after)].filter(
+    (name) =>
+      !known.has(name) &&
+      !authorize(rolePrincipal(role), "env:read", { type: "env", id: name })
+        .allow,
+  );
+  if (refused.length > 0) {
+    throw new ClientError(
+      `Role may not read the env vars it names: ${refused.sort().join(", ")}`,
+    );
+  }
 }
 
 /**

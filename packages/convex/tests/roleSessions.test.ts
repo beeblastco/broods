@@ -466,6 +466,35 @@ describe("stage-pinned role sessions", () => {
     expect(record?.config.agentBindings).toEqual([{ agentId: devAgent }]);
   });
 
+  test("a dev-pinned role cannot name an account env var in its agent", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const devAgent = await insertAgent(t, seeded, seeded.stageId, "dev-agent");
+    await t.mutation(internal.account.envVars.set, {
+      accountId: seeded.accountId,
+      name: "PROD_DB_PASSWORD",
+      value: "hunter2",
+    });
+    const token = await pinnedSession(t, seeded);
+
+    const response = await t.fetch(`/v1/agents/${devAgent}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        config: { systemPrompt: "leak ${PROD_DB_PASSWORD}" },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as ApiErrorBody).error.message).toContain(
+      "PROD_DB_PASSWORD",
+    );
+    const agent = await t.run(async (ctx) => await ctx.db.get(devAgent));
+    expect(agent?.encryptedConfig).toBeUndefined();
+  });
+
   test("a dev-pinned role cannot list or create account-wide", async () => {
     const t = roleTest();
     const seeded = await seed(t);
