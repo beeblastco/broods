@@ -14,8 +14,7 @@ import { authKit } from "./auth";
 import {
   hasDashboardPermission,
   memberAccess,
-  policiesAllow,
-  tierPermissions,
+  policiesAllowOrTier,
 } from "./model/access";
 import { actorOf, actorsOf, actorValidator } from "./model/actor";
 import { getActiveOrgForUser, userByAuthId } from "./model/ownership/org";
@@ -117,8 +116,7 @@ export const listForProject = query({
       action: "keys:read" | "keys:write",
       stageId: Id<"stages">,
     ): boolean =>
-      tierPermissions(access.tier).includes(action) ||
-      policiesAllow(access.policies, action, {
+      policiesAllowOrTier(access, action, {
         projectId: args.projectId,
         stageId: stageId,
       });

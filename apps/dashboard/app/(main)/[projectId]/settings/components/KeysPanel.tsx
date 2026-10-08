@@ -4,8 +4,9 @@
  * Project › Settings › Keys: two lists with two purposes. Runtime keys are
  * minted with the stage, one each; the only actions are rotate and reveal
  * (on the Runtime key tab). API keys are made by people for deploys and
- * integrations and carry a name and a description. Admins only; a member
- * sees a lock.
+ * integrations and carry a name and a description. Each stage answers for
+ * itself: `keys:read` shows its rows, `keys:write` unlocks Rotate, Revoke and
+ * New key for it; a member without either sees a lock.
  */
 
 import { ConfirmDialog } from "@/app/components/ConfirmDialog";

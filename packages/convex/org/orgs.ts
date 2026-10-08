@@ -24,10 +24,6 @@ import {
   userByAuthId,
   type OrgRole,
 } from "../model/ownership/org";
-import {
-  DASHBOARD_POLICY_ACTIONS,
-  type DashboardPolicyAction,
-} from "../model/policyRules";
 import { orgsFields } from "../schema";
 
 /**
@@ -273,14 +269,9 @@ export const userIdByAuthId = internalQuery({
   },
 });
 
-/** One org by id when the caller holds the permission there org-wide; null otherwise. */
-export const getByIdForPermission = query({
-  args: {
-    orgId: v.id("orgs"),
-    permission: v.union(
-      ...DASHBOARD_POLICY_ACTIONS.map((action) => v.literal(action)),
-    ),
-  },
+/** One org by id when the caller holds `keys:write` for it, so may mint or rotate its account key; null otherwise. */
+export const getByIdForKeyWriter = query({
+  args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {
     // Check authenticated user
@@ -292,8 +283,7 @@ export const getByIdForPermission = query({
     if (!user) {
       return null;
     }
-    const permission: DashboardPolicyAction = args.permission;
-    if (!(await hasDashboardPermission(ctx, args.orgId, user, permission))) {
+    if (!(await hasDashboardPermission(ctx, args.orgId, user, "keys:write"))) {
       return null;
     }
 

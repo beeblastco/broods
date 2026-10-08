@@ -248,6 +248,37 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
   });
   expect(keys?.writable).toEqual([stageId]);
 
+  // Each stage answers for itself: a grant on one of projectB's two stages
+  // writes there and nowhere else in the project.
+  const stagesB = await t.run(async (ctx): Promise<Id<"stages">[]> => {
+    const ids: Id<"stages">[] = [];
+    for (const name of ["Production", "Staging"]) {
+      ids.push(
+        await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectB,
+          name: name,
+          kind: name === "Production" ? "production" : "custom",
+          isDefault: name === "Staging",
+          updatedAt: Date.now(),
+        }),
+      );
+    }
+
+    return ids;
+  });
+  currentAuthId = "auth_owner";
+  await t.mutation(api.access.addRule, {
+    policyId: policyId,
+    permission: "keys:write",
+    scope: { projectId: projectB, stageId: stagesB[0] },
+  });
+  currentAuthId = "auth_member";
+  expect(
+    (await t.query(api.apiKeys.listForProject, { projectId: projectB }))
+      ?.writable,
+  ).toEqual([stagesB[0]]);
+
   // Holding members:write is not a way up: no admin tier, no role beyond one's own.
   currentAuthId = "auth_owner";
   await t.mutation(api.access.addRule, {

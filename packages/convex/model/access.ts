@@ -162,7 +162,8 @@ export async function activePolicies(
     }));
 }
 
-function policiesAllowOrTier(
+/** Whether the tier holds the action, or the policies allow it in the scope. */
+export function policiesAllowOrTier(
   access: MemberAccess,
   action: DashboardPolicyAction,
   scope: DashboardScope,
