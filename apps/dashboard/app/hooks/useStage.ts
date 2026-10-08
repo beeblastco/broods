@@ -14,9 +14,13 @@ import { useQuery } from "convex/react";
 import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
+/** Arguments for a stage-scoped query that resolves a missing `stageId` to the project's default. */
+type StageArgs = { projectId: Id<"projects">; stageId?: Id<"stages"> } | "skip";
+
 /** Setting null removes the stage param, so the default stage applies. */
 export function useStage(): {
   stageId: Id<"stages"> | null;
+  stageArgs: StageArgs;
   setStageId: (id: Id<"stages"> | null) => void;
 } {
   const searchParams = useSearchParams();
@@ -29,11 +33,13 @@ export function useStage(): {
   ) as Doc<"stages">[] | undefined;
 
   const stageParam = searchParams.get("stage");
+  const defaultStageId = defaultStage(stages ?? [])?._id ?? null;
   const stageId =
-    (
-      stages?.find((stage) => stage._id === stageParam) ??
-      defaultStage(stages ?? [])
-    )?._id ?? null;
+    stages?.find((stage) => stage._id === stageParam)?._id ?? defaultStageId;
+  // The default stage keeps one query key whether or not the URL names it, so
+  // picking the stage already on screen does not refetch it.
+  const readsDefault =
+    stageParam === null || (stageId !== null && stageId === defaultStageId);
 
   const setStageId = useCallback(
     (id: Id<"stages"> | null) => {
@@ -56,5 +62,25 @@ export function useStage(): {
     [searchParams, pathname],
   );
 
-  return { stageId: stageId, setStageId: setStageId };
+  return {
+    stageId: stageId,
+    stageArgs: stageQueryArgs(projectId, readsDefault, stageId),
+    setStageId: setStageId,
+  };
+}
+
+/**
+ * The default stage leaves `stageId` out, so the query reads it on the server
+ * and a bare URL starts it alongside the stage list. Another stage waits for
+ * the list.
+ */
+function stageQueryArgs(
+  projectId: Id<"projects"> | undefined,
+  readsDefault: boolean,
+  stageId: Id<"stages"> | null,
+): StageArgs {
+  if (!projectId) return "skip";
+  if (readsDefault) return { projectId: projectId };
+
+  return stageId ? { projectId: projectId, stageId: stageId } : "skip";
 }
