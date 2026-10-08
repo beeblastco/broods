@@ -72,6 +72,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  configuredSandboxSpecs,
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
@@ -181,6 +182,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       externalId,
       request.metadata,
+      { specs: configuredSandboxSpecs(this.#config) },
     );
     request.abortSignal?.throwIfAborted();
 
@@ -207,6 +209,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           "sandbox",
           sandbox.id,
           request.metadata,
+          () => configuredSandboxSpecs(this.#config),
         );
 
     try {
@@ -706,6 +709,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           externalId,
           "metadata" in request ? request.metadata : undefined,
+          { specs: configuredSandboxSpecs(this.#config) },
         );
 
         return { sandbox: sandbox, isFirstCreate: false };
@@ -739,6 +743,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           ns,
           created.id,
           "metadata" in request ? request.metadata : undefined,
+          { specs: configuredSandboxSpecs(this.#config) },
         );
 
         return { sandbox: created, isFirstCreate: true };

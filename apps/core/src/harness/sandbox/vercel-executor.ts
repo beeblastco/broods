@@ -83,7 +83,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           "vercel",
           sandbox.name,
           request.metadata,
-          vercelSpecs(sandbox),
+          () => vercelSpecs(sandbox),
         );
     const cwd = persistent
       ? this.#workDir(sandboxReservationKey(request)!)

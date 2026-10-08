@@ -35,6 +35,7 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import {
+  configuredSandboxSpecs,
   execRunResult,
   mergeSandboxEnv,
   meterEphemeralSandbox,
@@ -104,7 +105,13 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     const id = reserved ?? `fp-e-${crypto.randomUUID()}`;
     const endMeter = reserved
       ? undefined
-      : meterEphemeralSandbox(controlPlane, "cloudflare", id, request.metadata);
+      : meterEphemeralSandbox(
+          controlPlane,
+          "cloudflare",
+          id,
+          request.metadata,
+          () => configuredSandboxSpecs(this.#config),
+        );
     try {
       const response = await this.#exec(
         id,
@@ -267,6 +274,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
         key,
         id,
         metadata,
+        { specs: configuredSandboxSpecs(this.#config) },
       ),
     );
   }

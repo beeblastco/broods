@@ -1,32 +1,42 @@
 import { describe, expect, it } from "bun:test";
+import { configuredSandboxSpecs } from "../src/harness/sandbox/utils.ts";
 import {
-  knownSandboxSpecs,
-  rememberReportedSpecs,
   resolveSandboxSpecs,
   workdirSizeResources,
   SANDBOX_SIZES,
 } from "../src/shared/sandbox-sizes.ts";
 
-describe("knownSandboxSpecs", () => {
-  const config = SANDBOX_SIZES.xsmall;
+describe("configuredSandboxSpecs", () => {
+  const controlPlane = {
+    accountId: "acct_1",
+    name: "box",
+    specs: SANDBOX_SIZES.xsmall,
+  };
 
-  it("names no size for a self-sized provider until it reports one", () => {
-    expect(knownSandboxSpecs("vercel", "key-v", config)).toBeUndefined();
-    rememberReportedSpecs("key-v", { vcpu: 2, memoryMb: 4096 });
-    expect(knownSandboxSpecs("vercel", "key-v", config)).toEqual({
-      vcpu: 2,
-      memoryMb: 4096,
-    });
-    rememberReportedSpecs("key-v", undefined);
-    expect(knownSandboxSpecs("vercel", "key-v", config)).toBeUndefined();
-  });
-
-  it("keeps the derived size only where it is the machine's real size", () => {
-    expect(knownSandboxSpecs("sandbox", "key-s", config)).toEqual(config);
-    expect(knownSandboxSpecs("lambda", "key-l", config)).toEqual(config);
-    // A guess is never stated: these machines are sized outside the config.
-    expect(knownSandboxSpecs("machine", "key-m", config)).toBeUndefined();
-    expect(knownSandboxSpecs("custom", undefined, config)).toBeUndefined();
+  it("states the size only where Broods sets it", () => {
+    for (const provider of ["sandbox", "lambda", "cloudflare"] as const) {
+      expect(
+        configuredSandboxSpecs({
+          provider: provider,
+          controlPlane: controlPlane,
+        }),
+      ).toEqual(SANDBOX_SIZES.xsmall);
+    }
+    // These size machines themselves or run on hardware Broods cannot see.
+    for (const provider of [
+      "daytona",
+      "e2b",
+      "vercel",
+      "machine",
+      "custom",
+    ] as const) {
+      expect(
+        configuredSandboxSpecs({
+          provider: provider,
+          controlPlane: controlPlane,
+        }),
+      ).toBeUndefined();
+    }
   });
 });
 

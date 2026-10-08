@@ -99,7 +99,7 @@ import {
   sandboxNeighbours,
   type SandboxUsage,
 } from "./sandbox/live-status.ts";
-import { configString } from "./sandbox/utils.ts";
+import { configString, configuredSandboxSpecs } from "./sandbox/utils.ts";
 import { shouldAutoCompact } from "./compaction.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
@@ -135,10 +135,7 @@ import {
 } from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
-import {
-  knownSandboxSpecs,
-  type SandboxRunMetadata,
-} from "../shared/sandbox-sizes.ts";
+import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import {
   parseToolResultOutput,
@@ -2122,11 +2119,7 @@ export async function runAgentLoop(
         formatSandboxStatus({
           name: sandboxes[0]!.name,
           provider: compute.provider,
-          specs: knownSandboxSpecs(
-            compute.provider,
-            reservationKey,
-            compute.controlPlane?.specs,
-          ),
+          specs: configuredSandboxSpecs(compute),
           state: "running",
           shared: shared,
           usage: usage,

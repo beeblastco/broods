@@ -706,6 +706,8 @@ describe("createSandboxExecutor", () => {
     expect(upsertSandboxInstanceMock.mock.calls[0]?.[5]).toEqual({
       ephemeral: true,
       logStream: expect.stringMatching(logStreamPattern("account-1", "-", "-")),
+      // A MicroVM's size is the one Broods knows, so the row is verified.
+      specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
     });
     expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 
@@ -3348,15 +3350,11 @@ describe("classifyVercelError", () => {
 });
 
 describe("persistent acquire teardown", () => {
-  // workdir and microvm already tear down on a failed claim; these three did
-  // not, so a rejected persistence call left a live sandbox nobody could reach
-  // and no reservation row pointing at it.
+  // workdir and microvm already tear down on a failed claim; these did not, so
+  // a rejected persistence call left a live sandbox nobody could reach and no
+  // reservation row pointing at it. e2b writes its row off the acquire path
+  // (beside its size read), so a failed row write no longer fails the claim.
   const cases = [
-    {
-      provider: "e2b",
-      destroy: e2bKillMock,
-      options: { workspaceRoot: "/workspace", template: "mounted-template" },
-    },
     {
       provider: "daytona",
       destroy: daytonaDeleteMock,

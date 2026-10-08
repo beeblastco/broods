@@ -32,6 +32,7 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
+  queueMirrorWrite,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -39,10 +40,6 @@ import {
 
 // How long a size read may take before the size is left unknown.
 const SPECS_READ_TIMEOUT_MS = 3_000;
-
-// What E2B reported for each reserved sandbox. Its template fixes the size, so
-// one read covers every reconnect; release drops the entry.
-const RESERVED_SPECS = new Map<string, SandboxSpecs>();
 
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -55,19 +52,14 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
-    const controlPlane = this.#config.controlPlane;
-    // Only a metered call reads the size, since its row is the one place it
-    // shows, and the read runs beside the command rather than ahead of it.
     const endMeter = persistent
       ? undefined
       : meterEphemeralSandbox(
-          controlPlane,
+          this.#config.controlPlane,
           "e2b",
           sandbox.sandboxId,
           request.metadata,
-          controlPlane && !controlPlane.ownCredentials
-            ? e2bSpecs(sandbox)
-            : undefined,
+          () => e2bSpecs(sandbox),
         );
 
     try {
@@ -140,13 +132,14 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
+    // A create's row write may still be queued; let it land before the removal.
+    await queueMirrorWrite(externalId, async (): Promise<void> => {});
     await deleteSandboxInstance(
       "e2b",
       key,
       this.#config.controlPlane?.accountId,
       externalId,
     ).catch(() => {});
-    RESERVED_SPECS.delete(externalId);
   }
 
   #persistent(request: {
@@ -186,13 +179,13 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
+        // No size: the row keeps the one E2B reported when this sandbox was made.
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "e2b",
           ns,
           externalId,
           request.metadata,
-          { specs: await reservedSpecs(sandbox) },
         );
 
         return sandbox;
@@ -219,13 +212,17 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "e2b",
-          ns,
-          created.sandboxId,
-          request.metadata,
-          { specs: await reservedSpecs(created) },
+        // The size is read once, here, beside the row write rather than ahead
+        // of the command. Release waits for this write, so it cannot land after.
+        void queueMirrorWrite(created.sandboxId, async (): Promise<void> =>
+          upsertSandboxInstance(
+            this.#config.controlPlane,
+            "e2b",
+            ns,
+            created.sandboxId,
+            request.metadata,
+            { specs: await e2bSpecs(created) },
+          ),
         );
 
         return created;
@@ -333,16 +330,4 @@ async function e2bSpecs(sandbox: Sandbox): Promise<SandboxSpecs | undefined> {
   } catch {
     return undefined;
   }
-}
-
-// A reserved sandbox's size, read from E2B once and then kept.
-async function reservedSpecs(
-  sandbox: Sandbox,
-): Promise<SandboxSpecs | undefined> {
-  const known = RESERVED_SPECS.get(sandbox.sandboxId);
-  if (known) return known;
-  const specs = await e2bSpecs(sandbox);
-  if (specs) RESERVED_SPECS.set(sandbox.sandboxId, specs);
-
-  return specs;
 }

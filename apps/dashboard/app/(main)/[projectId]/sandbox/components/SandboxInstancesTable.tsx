@@ -425,9 +425,8 @@ export function SandboxInstancesTable({
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
                     <SpecsValue
-                      specs={
-                        instance.specsVerified ? instance.specs : undefined
-                      }
+                      specs={instance.specs}
+                      verified={instance.specsVerified === true}
                       provider={instance.provider}
                     />
                   </td>
@@ -626,7 +625,7 @@ function MachineRow({
         {machineStatusDot(machineState(machine, now))}
       </td>
       <td className="px-4 py-2.5 text-xs text-muted-foreground">
-        <SpecsValue specs={machine.specs} provider="machine" />
+        <SpecsValue specs={machine.specs} verified provider="machine" />
       </td>
       <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
       <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>

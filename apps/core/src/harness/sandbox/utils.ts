@@ -18,11 +18,19 @@ import type {
   SandboxSpecs,
 } from "../../shared/sandbox-sizes.ts";
 import type {
+  SandboxExecutorConfig,
   SandboxProvider,
   SandboxRunPrincipal,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
+
+// Providers whose machine is the size derived from the config; see configuredSandboxSpecs.
+const CONFIGURED_SIZE_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
+  "cloudflare",
+  "lambda",
+  "sandbox",
+]);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -146,6 +154,21 @@ export function configString(value: unknown): string | undefined {
  * (capacity, or a region-pinned/non-general snapshot). Capacity is the provider's
  * to resolve; the executor only surfaces a clearer message.
  */
+/**
+ * The machine size Broods itself sets from a config: workdir creates the VM with
+ * those resources, every MicroVM is one size, and cloudflare starts that instance
+ * type. Undefined for providers that size machines themselves, whose real size
+ * is known only once they report it. Those three executors mirror it, and the
+ * agent's status line states it.
+ */
+export function configuredSandboxSpecs(
+  config: Pick<SandboxExecutorConfig, "provider" | "controlPlane">,
+): SandboxSpecs | undefined {
+  return CONFIGURED_SIZE_PROVIDERS.has(config.provider)
+    ? config.controlPlane?.specs
+    : undefined;
+}
+
 export function isNoRunnersError(error: unknown): boolean {
   const message =
     isPlainObject(error) && typeof error.message === "string"
@@ -207,21 +230,25 @@ export function mergeSandboxEnv(
  * the sandbox id now, and return the call that removes it, which bills the time
  * in between. Call it only once the provider confirms the sandbox is gone, so a
  * failed teardown keeps billing until the stale-row sweep. The account's own
- * credentials, or no account, get no row. `specs` is the size the provider
- * reported, or a read of it still running; the row waits for that read, which
- * runs beside the command and so never holds it up.
+ * credentials, or no account, get no row. `readSpecs` returns the machine's real
+ * size, or a read of it; it is called only for a metered call, and the row waits
+ * for the read, which runs beside the command and so never holds it up.
  */
 export function meterEphemeralSandbox(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
   sandboxId: string,
   metadata: SandboxRunMetadata | undefined,
-  specs?: SandboxSpecs | Promise<SandboxSpecs | undefined>,
+  readSpecs?: () =>
+    | SandboxSpecs
+    | Promise<SandboxSpecs | undefined>
+    | undefined,
 ): () => void {
   const accountId = controlPlane?.ownCredentials
     ? undefined
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
+  const specs = readSpecs?.();
   void queueMirrorWrite(sandboxId, async (): Promise<void> =>
     upsertSandboxInstance(
       controlPlane,

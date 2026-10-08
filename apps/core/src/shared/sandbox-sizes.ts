@@ -124,60 +124,11 @@ export const CLOUDFLARE_INSTANCE_TYPES: Record<
 // the platform default, a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk.
 const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
 
-/**
- * Providers whose machine is the size resolveSandboxSpecs derives: workdir creates
- * the VM with those resources, a MicroVM is one fixed size, and cloudflare starts
- * that instance type. Anywhere else the derived size is only a guess (it is what
- * the meter bills when a provider reports nothing), so it is never shown as fact.
- */
-export const KNOWN_SIZE_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
-  "cloudflare",
-  "lambda",
-  "sandbox",
-]);
-
 /** The size used for the mirror specs when a config pins no explicit size or resources. */
 const DEFAULT_SIZE: SandboxSize = "xsmall";
 
 /** vcpu values workdir accepts; the catalog's `tiny` (0.25) clamps up to 0.5. */
 const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
-
-// The size each reserved sandbox's provider last reported, by reservation key, so
-// the agent's status line names the same size as the dashboard row.
-const REPORTED_SPECS = new Map<string, SandboxSpecs>();
-
-/**
- * The size a reserved sandbox really has, for the agent's status line: what its
- * provider reported, else the derived size where that is what the machine gets.
- * Undefined whenever the size is not known to be true.
- */
-export function knownSandboxSpecs(
-  provider: SandboxProvider,
-  reservationKey: string | undefined,
-  configSpecs: SandboxSpecs | undefined,
-): SandboxSpecs | undefined {
-  const reported = reservationKey
-    ? REPORTED_SPECS.get(reservationKey)
-    : undefined;
-  if (reported) return reported;
-
-  return KNOWN_SIZE_PROVIDERS.has(provider) ? configSpecs : undefined;
-}
-
-/**
- * Remembers what a reserved sandbox's provider reported, or with no specs forgets
- * it. The instance mirror calls it on reserve and on remove.
- */
-export function rememberReportedSpecs(
-  reservationKey: string,
-  specs: SandboxSpecs | undefined,
-): void {
-  if (specs) {
-    REPORTED_SPECS.set(reservationKey, specs);
-  } else {
-    REPORTED_SPECS.delete(reservationKey);
-  }
-}
 
 /**
  * Resolve the specs to mirror (and bill) for a sandbox config. A workdir (`sandbox`)

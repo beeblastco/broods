@@ -2,11 +2,7 @@
 
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/app/components/ui/tooltip";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import {
   MACHINE_LABEL,
   MACHINE_STATE_LABEL,
@@ -190,18 +186,20 @@ export function snapshotStatusDot(
 }
 
 /**
- * Footprint as the provider reports it, e.g. "1 vCPU · 2 GB · 8 GB". What it
- * does not report is a "?" whose tooltip says why. Pass `specs` only when the
- * size is known to be true (a verified instance row, or a daemon's report). Sizes the table rows and the instance and computer panels.
+ * Footprint, e.g. "1 vCPU · 2 GB · 8 GB", shown only when `verified` says it is
+ * the machine's real size. Anything unknown is a "?" whose tooltip says why.
+ * Sizes the table rows and the instance and computer panels.
  */
 export function SpecsValue({
   specs,
+  verified,
   provider,
 }: {
   specs: Doc<"sandboxInstances">["specs"] | undefined;
+  verified: boolean;
   provider: string;
 }): React.JSX.Element {
-  if (!specs) {
+  if (!specs || !verified) {
     return <UnknownSize reason={UNKNOWN_SIZE[provider] ?? UNVERIFIED_SIZE} />;
   }
   const memory =
@@ -230,16 +228,14 @@ export function SpecsValue({
 // stays here so it does not also open the row it sits in.
 function UnknownSize({ reason }: { reason: string }): React.JSX.Element {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button type="button" aria-label={reason} className="cursor-help" />
-        }
+    <IconTooltip label={reason}>
+      <button
+        type="button"
+        className="cursor-help"
         onClick={(event) => event.stopPropagation()}
       >
         ?
-      </TooltipTrigger>
-      <TooltipContent className="max-w-64">{reason}</TooltipContent>
-    </Tooltip>
+      </button>
+    </IconTooltip>
   );
 }

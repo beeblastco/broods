@@ -82,7 +82,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           "daytona",
           sandbox.id,
           request.metadata,
-          daytonaSpecs(sandbox),
+          () => daytonaSpecs(sandbox),
         );
 
     try {

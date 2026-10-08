@@ -59,7 +59,9 @@ export function MachinePanel({
         />
         <DetailField
           label="Size"
-          value={<SpecsValue specs={machine.specs} provider="machine" />}
+          value={
+            <SpecsValue specs={machine.specs} verified provider="machine" />
+          }
         />
         <DetailField label="Serves" value={serves.join(", ")} />
         <DetailField

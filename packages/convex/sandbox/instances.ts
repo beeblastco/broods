@@ -344,6 +344,11 @@ export const upsert = internalMutation({
           : {}),
         // A new machine's burst totals start again at zero.
         ...(replaced ? { burstBilled: undefined } : {}),
+        // A write that knows no size (an e2b reconnect) keeps the size this
+        // same machine already reported; a new machine starts unverified.
+        ...(!replaced && existing.specsVerified && !args.specsVerified
+          ? { specs: existing.specs, specsVerified: true }
+          : {}),
       };
       await ctx.db.patch(existing._id, patch);
       const action = replaced
@@ -539,9 +544,7 @@ function upsertRefreshFields(
     externalId: args.externalId,
     name: args.name,
     specs: args.specs,
-    // Unset rather than kept, so a write with only a guess never keeps a mark
-    // an earlier verified size left.
-    specsVerified: args.specsVerified === true ? true : undefined,
+    specsVerified: args.specsVerified,
     status: "running" as const,
     // A reconnect only mirrors once the provider handed back a usable sandbox,
     // so the reason goes with the status: `undefined` unsets it on patch and is

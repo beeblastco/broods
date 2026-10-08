@@ -291,17 +291,26 @@ const subscribeNever = (): (() => void) => () => {};
 
 /**
  * Size cells: fully reported, reported without a disk, a row written before
- * sizes were verified (no `specsVerified`, so no specs are passed), and a
- * computer whose daemon reported none.
+ * sizes were verified (its specs are only the config's guess), and a computer
+ * whose daemon reported none.
  */
 const SIZE_ROWS: Array<{
   provider: string;
   specs: Doc<"sandboxInstances">["specs"] | undefined;
+  verified: boolean;
 }> = [
-  { provider: "daytona", specs: { vcpu: 2, memoryMb: 4096, storageGb: 10 } },
-  { provider: "e2b", specs: { vcpu: 2, memoryMb: 512 } },
-  { provider: "lambda", specs: undefined },
-  { provider: "machine", specs: undefined },
+  {
+    provider: "daytona",
+    specs: { vcpu: 2, memoryMb: 4096, storageGb: 10 },
+    verified: true,
+  },
+  { provider: "e2b", specs: { vcpu: 2, memoryMb: 512 }, verified: true },
+  {
+    provider: "lambda",
+    specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+    verified: false,
+  },
+  { provider: "machine", specs: undefined, verified: true },
 ];
 
 /** The account's ChatGPT plan, signed in; the gallery also renders none. */
@@ -325,7 +334,6 @@ export function UiGallery(): React.JSX.Element {
   const [pressCount, setPressCount] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
-  const [sizeRowOpened, setSizeRowOpened] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   // False in the server HTML, true once React owns the page: a spec waits on
   // it so its first interaction lands on a listener, not on static markup.
@@ -594,28 +602,27 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="sandbox-size" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Sandbox size</h2>
-        {/* The instances table's Size cell, one row per SIZE_ROWS case. The
-            row opens a panel on click, which the "?" must not do. */}
+        {/* The instances table's Size cell, one row per SIZE_ROWS case. */}
         <table className="w-fit text-xs whitespace-nowrap">
           <tbody>
             {SIZE_ROWS.map((row) => (
               <tr
                 key={row.provider}
                 data-provider={row.provider}
-                className="cursor-pointer border-t border-border"
-                onClick={() => setSizeRowOpened(row.provider)}
+                className="border-t border-border"
               >
                 <td className="px-4 py-2.5">{row.provider}</td>
                 <td className="px-4 py-2.5 text-muted-foreground">
-                  <SpecsValue specs={row.specs} provider={row.provider} />
+                  <SpecsValue
+                    specs={row.specs}
+                    verified={row.verified}
+                    provider={row.provider}
+                  />
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <p data-testid="size-row-opened" className="text-xs">
-          {sizeRowOpened ?? "none"}
-        </p>
       </section>
 
       <section data-fixture="onboarding" className="flex flex-col gap-2">
