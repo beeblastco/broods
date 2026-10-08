@@ -1732,7 +1732,7 @@ paths:
                     snapshot:
                       {
                         type: string,
-                        description: "Prebuilt image/snapshot to launch from: a workdir image id/name, or on lambda a platform MicroVM image ARN in the same AWS account and region as the default image (any other ARN fails the run). Unset boots the provider's default base image. Consumed by the self-hosted backends (sandbox/lambda); advisory on daytona/e2b/vercel, which pick images via their own options. The launched-from id is mirrored onto the dashboard instance row.",
+                        description: "What the sandbox boots from, in its provider's own format (see the Sandboxes guide, Images). On lambda, a MicroVM image ARN in the same AWS account and region as the default image; any other ARN fails the run. Rejected on cloudflare, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row.",
                       }
                     persistent:
                       {
@@ -1782,7 +1782,7 @@ paths:
                     options:
                       {
                         type: object,
-                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers).",
+                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers). The image is picked by `snapshot`, so daytona `snapshot`, e2b `template` and `templateId`, and vercel `image` and `runtime` are rejected here.",
                       }
             examples:
               lambda:
@@ -1999,7 +1999,7 @@ paths:
     post:
       tags: [Sandboxes]
       summary: Snapshot sandbox instance
-      description: Creates a reusable image from a persistent sandbox reservation when the provider supports snapshots. The self-hosted workdir `sandbox` provider captures the instance and answers `active`. The AWS MicroVM `lambda` provider builds a new image from the files the VM changed since it started and answers `building`; the snapshot turns `active` or `build_failed` once the build lands, usually within minutes.
+      description: Creates a reusable image from a persistent sandbox reservation, saved under `name`, that any sandbox config of the same provider can pin with `snapshot`. The self-hosted workdir `sandbox` provider captures the instance and answers `active`. Daytona, E2B and Vercel capture the sandbox as their own snapshot and answer `active`; E2B pauses the sandbox while it captures, and Vercel stops it, so its next call resumes it. The AWS MicroVM `lambda` provider builds a new image from the files the VM changed since it started and answers `building`; the snapshot turns `active` or `build_failed` once the build lands, usually within minutes. Cloudflare, machine and custom sandboxes answer 409.
       security: [{ BearerAuth: [] }]
       parameters:
         - {
@@ -2024,7 +2024,10 @@ paths:
           {
             description: Reservation does not belong to this account or sandbox config,
           }
-        "409": { description: Provider does not support snapshot }
+        "409":
+          {
+            description: "Provider does not support snapshot, or the name is already another provider's snapshot",
+          }
 
   /v1/sandboxes/{sandboxId}/terminal:
     post:

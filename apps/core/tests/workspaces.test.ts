@@ -226,6 +226,24 @@ describe("agentSandboxReservation", () => {
 });
 
 describe("resolveAgentRuntime", () => {
+  it("refuses a stored sandbox config that still picks its image through a removed option", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: id,
+          config: { provider: "e2b", options: { template: "old-template" } },
+        }),
+      },
+    } as never);
+
+    await expect(
+      resolveAgentRuntime({ sandboxes: ["sb_old"] }, { accountId: "acct_1" }),
+    ).rejects.toThrow(
+      "config.options.template was removed; set config.snapshot",
+    );
+  });
+
   it("marks only sandboxes on the account's own credentials as unmetered", async () => {
     const configs: Record<string, Record<string, unknown>> = {
       own_daytona: { provider: "daytona", options: { apiKey: "dtn_own" } },

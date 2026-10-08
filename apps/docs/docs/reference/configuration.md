@@ -238,7 +238,7 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `timeout`              | 30         | Seconds per call, max 600                                                                                                                 |
 | `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                              |
 | `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. With `snapshot`, the variant it was built from. Not with `fallbackProvider` |
-| `snapshot`             | provider   | Image or snapshot to boot from. On `lambda`, a MicroVM image ARN in the default image's account and region                                |
+| `snapshot`             | provider   | Image or snapshot to boot from, in the provider's format. See [Images](../guides/sandboxes/index.md#images)                               |
 | `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                                        |
 | `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                               |
 | `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                                                                                 |
