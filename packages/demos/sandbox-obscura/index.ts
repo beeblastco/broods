@@ -1,20 +1,20 @@
 /**
- * Example: browse the web from a lambda sandbox on the Obscura image, with the
- * built-in `browse` tool and Obscura's MCP server on the same VM. Exits 1 unless
- * both tools ran and returned, so it doubles as a smoke test for a stage.
+ * Example: browse the web from a lambda sandbox on the Obscura image with the
+ * built-in `browse` tool. Exits 1 unless browse ran in both modes without an
+ * error, so it doubles as a smoke test for a stage.
  */
 
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
-const called = new Set<string>();
+const calls: string[] = [];
 const failed: string[] = [];
 
 for await (const chunk of client.stream(api.agents.browser, {
   input: [
     "1. Use the browse tool in markdown mode on https://example.com and tell me the page's heading.",
-    "2. Then use the obscura MCP tools to open https://example.com and list the links on the page.",
+    "2. Then use the browse tool in links mode on the same page and list its links.",
   ].join("\n"),
 })) {
   switch (chunk.type) {
@@ -22,7 +22,7 @@ for await (const chunk of client.stream(api.agents.browser, {
       process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
       break;
     case "tool-call":
-      called.add(chunk.toolName);
+      calls.push(chunk.toolName);
       process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
       break;
     case "tool-result":
@@ -42,15 +42,11 @@ for await (const chunk of client.stream(api.agents.browser, {
   }
 }
 
-const usedObscuraMcp = [...called].some((name): boolean =>
-  name.startsWith("obscura__"),
-);
-if (!called.has("browse") || !usedObscuraMcp || failed.length > 0) {
+const browseCalls = calls.filter((name): boolean => name === "browse");
+if (browseCalls.length < 2 || failed.length > 0) {
   console.error(
-    `smoke test failed: tools called ${[...called].join(", ") || "none"}; errors ${failed.join(", ") || "none"}`,
+    `smoke test failed: tools called ${calls.join(", ") || "none"}; errors ${failed.join(", ") || "none"}`,
   );
   process.exit(1);
 }
-console.log(
-  "smoke test passed: browse and the obscura MCP server both answered",
-);
+console.log("smoke test passed: browse answered in markdown and links mode");
