@@ -14,9 +14,14 @@ import { DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
 import { LoadMore } from "@/app/components/LoadMore";
 import { SearchInput } from "@/app/components/SearchInput";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { StatusWord } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
-import { Button } from "@/app/components/ui/button";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/app/components/ui/resizable";
 import { Switch } from "@/app/components/ui/switch";
 import { Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
@@ -38,6 +43,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MachinePanel } from "./MachinePanel";
+import { type DockTab, hasTerminal, SandboxDock } from "./SandboxDock";
 import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   dashboardHref,
@@ -56,6 +62,10 @@ const PAGE_SIZE = 50;
 
 // Eight columns of short text; below this the detail panel would wrap them.
 const TABLE_MIN_WIDTH = 760;
+
+// The dock's height when it opens, and the least it can be dragged to.
+const DOCK_DEFAULT_HEIGHT = 300;
+const DOCK_MIN_HEIGHT = 160;
 
 type Instance = Doc<"sandboxInstances">;
 type Agent = Pick<Doc<"agents">, "_id" | "name">;
@@ -89,6 +99,12 @@ type TableRow =
       agent: Agent | null;
     };
 
+/** The dock under the table: which instance it shows and on which tab. */
+interface Dock {
+  id: Id<"sandboxInstances">;
+  tab: DockTab;
+}
+
 const SORT_KEY: Record<Column, (row: TableRow) => SortKey> = {
   name: (row) =>
     row.kind === "machine" ? row.machine.name : row.instance.name,
@@ -113,21 +129,26 @@ interface Props {
   machines: MachineConnection[];
   /** The project's agents, so an instance's agent reads as a name. */
   agents: Agent[];
+  /** The account's snapshots, so an instance's snapshot reads as a name. */
+  snapshots: Doc<"sandboxSnapshots">[];
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
-  /** Stage-scoped observability WS inputs, handed to the panel's Logs tab. */
+  /** Stage-scoped observability WS inputs, handed to the dock's Logs tab. */
   observability: SandboxObservabilityScope | null;
 }
 
 /**
- * The stage's sandboxes and computers as one list: a search box with sort
- * and filter on every header, one column per fact, a running switch, and a
- * detail panel for the selected row.
+ * The stage's sandboxes and computers as one list, laid out like Monitoring:
+ * a search box, a flush table whose headers sort on click, a running switch,
+ * a detail panel for the selected row, and a dock under it all for the
+ * selected instance's shell and logs. The visible instances refresh from the
+ * provider on their own as they scroll in.
  */
 export function SandboxInstancesTable({
   instances,
   machines,
   agents,
+  snapshots,
   projectId,
   observability,
 }: Props): React.JSX.Element {
@@ -140,9 +161,9 @@ export function SandboxInstancesTable({
   // Only the id is held, so the open panel follows the live row instead of a
   // stale copy once a refresh or suspend moves its status.
   const [selectedId, setSelectedId] = useState<TableRow["id"] | null>(null);
+  const [dock, setDock] = useState<Dock | null>(null);
   const [confirming, setConfirming] = useState<Instance | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const refreshedPages = useRef(new Set<string>());
@@ -189,6 +210,10 @@ export function SandboxInstancesTable({
   });
   const visible = list.shown.slice(0, visibleCount);
   const selected = rows.find((row) => row.id === selectedId) ?? null;
+  // The dock follows the live instance too, and closes once the row is gone.
+  const docked = dock
+    ? instances.find((instance) => instance._id === dock.id)
+    : undefined;
   const visibleInstances = useMemo(
     () =>
       visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
@@ -213,6 +238,19 @@ export function SandboxInstancesTable({
       ),
     ]),
   };
+
+  // The backtick toggles the dock for the selected instance, like an
+  // editor's terminal; with the dock open it closes it whatever is selected.
+  useShortcut("sandbox.terminal", () => {
+    if (dock) {
+      setDock(null);
+    } else if (
+      selected?.kind === "instance" &&
+      hasTerminal(selected.instance)
+    ) {
+      setDock({ id: selected.id, tab: "terminal" });
+    }
+  });
 
   // Resuming is cheap and reversible, so it runs straight from the toggle; suspending
   // discards the instance's live state and goes through `confirming` first.
@@ -240,7 +278,6 @@ export function SandboxInstancesTable({
   const refreshVisible = useCallback(async (): Promise<void> => {
     const targets = visibleInstances.filter(controllable);
     if (targets.length === 0) return;
-    setRefreshing(true);
     setError(null);
     try {
       await Promise.all(
@@ -253,8 +290,6 @@ export function SandboxInstancesTable({
       );
     } catch (err) {
       setError(toErrorMessage(err));
-    } finally {
-      setRefreshing(false);
     }
   }, [visibleInstances, refresh]);
 
@@ -273,125 +308,98 @@ export function SandboxInstancesTable({
     );
   }
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <Toolbar className="border-b-0 px-0">
-        <SearchInput
-          value={list.query}
-          onChange={list.setQuery}
-          fields={QUERY_FIELDS}
-          placeholder="Search sandboxes"
-        />
-        <FilterButton
-          columns={[
-            { label: "Provider", filter: filters.provider },
-            { label: "Status", filter: filters.status },
-            { label: "Agent", filter: filters.agent },
-          ]}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          tone="muted"
-          onClick={refreshVisible}
-          disabled={refreshing || !visibleInstances.some(controllable)}
-          className="cursor-pointer"
-        >
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </Button>
-      </Toolbar>
-
-      <DetailSplit
-        tableMinWidth={TABLE_MIN_WIDTH}
-        detail={
-          selected?.kind === "instance" ? (
-            <SandboxInstancePanel
+  const split = (
+    <DetailSplit
+      flush
+      tableMinWidth={TABLE_MIN_WIDTH}
+      detail={
+        selected?.kind === "instance" ? (
+          <SandboxInstancePanel
+            key={selected.id}
+            instance={selected.instance}
+            snapshots={snapshots}
+            projectId={projectId}
+            onOpenDock={(tab) => setDock({ id: selected.id, tab: tab })}
+            onClose={() => setSelectedId(null)}
+          />
+        ) : (
+          selected && (
+            <MachinePanel
               key={selected.id}
-              instance={selected.instance}
-              projectId={projectId}
-              observability={observability}
+              machine={selected.machine}
               now={now}
               onClose={() => setSelectedId(null)}
             />
-          ) : (
-            selected && (
-              <MachinePanel
-                key={selected.id}
-                machine={selected.machine}
-                now={now}
-                onClose={() => setSelectedId(null)}
-              />
-            )
           )
-        }
-      >
-        <DataTable>
-          <DataTableHeader>
-            <tr>
-              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
-              <DataTableHead
-                sort={list.sortFor("status")}
-                filter={filters.status}
-              >
-                Status
-              </DataTableHead>
-              <DataTableHead
-                sort={list.sortFor("provider")}
-                filter={filters.provider}
-              >
-                Provider
-              </DataTableHead>
-              <DataTableHead sort={list.sortFor("size")}>Size</DataTableHead>
-              <DataTableHead
-                sort={list.sortFor("agent")}
-                filter={filters.agent}
-              >
-                Agent
-              </DataTableHead>
-              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
-                Last used
-              </DataTableHead>
-              <DataTableHead sort={list.sortFor("created", TIME_WORDS)}>
-                Created
-              </DataTableHead>
-              <DataTableHead align="right" sort={list.sortFor("running")}>
-                Running
-              </DataTableHead>
-            </tr>
-          </DataTableHeader>
-          <DataTableBody>
-            {visible.map((row) =>
-              row.kind === "machine" ? (
-                <MachineRow
-                  key={row.id}
-                  row={row}
-                  now={now}
-                  selected={selectedId === row.id}
-                  onSelect={() => setSelectedId(row.id)}
-                />
-              ) : (
-                <InstanceRow
-                  key={row.id}
-                  row={row}
-                  projectId={projectId}
-                  now={now}
-                  selected={selectedId === row.id}
-                  canToggle={canWrite && pendingId !== row.id}
-                  onSelect={() => setSelectedId(row.id)}
-                  onToggle={(next) =>
-                    next
-                      ? toggle(row.instance, true)
-                      : setConfirming(row.instance)
-                  }
-                />
-              ),
-            )}
-          </DataTableBody>
-        </DataTable>
-        {list.shown.length === 0 && (
-          <EmptyState title="Nothing matches the current filters." />
-        )}
+        )
+      }
+    >
+      <DataTable>
+        <DataTableHeader>
+          <tr>
+            <DataTableHead plain sort={list.sortFor("name")}>
+              Name
+            </DataTableHead>
+            <DataTableHead plain sort={list.sortFor("status")}>
+              Status
+            </DataTableHead>
+            <DataTableHead plain sort={list.sortFor("provider")}>
+              Provider
+            </DataTableHead>
+            <DataTableHead plain sort={list.sortFor("size")}>
+              Size
+            </DataTableHead>
+            <DataTableHead plain sort={list.sortFor("agent")}>
+              Agent
+            </DataTableHead>
+            <DataTableHead plain sort={list.sortFor("lastUsed", TIME_WORDS)}>
+              Last used
+            </DataTableHead>
+            <DataTableHead plain sort={list.sortFor("created", TIME_WORDS)}>
+              Created
+            </DataTableHead>
+            <DataTableHead plain align="right" sort={list.sortFor("running")}>
+              Running
+            </DataTableHead>
+          </tr>
+        </DataTableHeader>
+        <DataTableBody>
+          {visible.map((row) =>
+            row.kind === "machine" ? (
+              <MachineRow
+                key={row.id}
+                row={row}
+                now={now}
+                selected={selectedId === row.id}
+                onSelect={() =>
+                  setSelectedId(selectedId === row.id ? null : row.id)
+                }
+              />
+            ) : (
+              <InstanceRow
+                key={row.id}
+                row={row}
+                projectId={projectId}
+                now={now}
+                selected={selectedId === row.id}
+                canToggle={canWrite && pendingId !== row.id}
+                onSelect={() =>
+                  setSelectedId(selectedId === row.id ? null : row.id)
+                }
+                onToggle={(next) =>
+                  next
+                    ? toggle(row.instance, true)
+                    : setConfirming(row.instance)
+                }
+              />
+            ),
+          )}
+        </DataTableBody>
+      </DataTable>
+      {list.shown.length === 0 && (
+        <EmptyState title="Nothing matches the current filters." />
+      )}
+      {visible.length < list.shown.length && (
         <LoadMore
           shown={visible.length}
           total={list.shown.length}
@@ -400,10 +408,59 @@ export function SandboxInstancesTable({
           remaining={list.shown.length - visible.length}
           onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
         />
-      </DetailSplit>
+      )}
+    </DetailSplit>
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <Toolbar>
+        <SearchInput
+          value={list.query}
+          onChange={list.setQuery}
+          fields={QUERY_FIELDS}
+          placeholder="Search sandboxes · provider: status: agent:"
+        />
+        <FilterButton
+          columns={[
+            { label: "Provider", filter: filters.provider },
+            { label: "Status", filter: filters.status },
+            { label: "Agent", filter: filters.agent },
+          ]}
+        />
+      </Toolbar>
+
+      {dock && docked ? (
+        <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
+          <ResizablePanel
+            minSize={DOCK_MIN_HEIGHT}
+            className="flex min-h-0 flex-col"
+          >
+            {split}
+          </ResizablePanel>
+          <ResizableHandle className="cursor-row-resize" />
+          <ResizablePanel
+            defaultSize={DOCK_DEFAULT_HEIGHT}
+            minSize={DOCK_MIN_HEIGHT}
+            className="flex min-h-0 flex-col"
+          >
+            <SandboxDock
+              key={docked._id}
+              instance={docked}
+              projectId={projectId}
+              observability={observability}
+              tab={dock.tab}
+              onTab={(tab) => setDock({ id: dock.id, tab: tab })}
+              onClose={() => setDock(null)}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        split
+      )}
 
       {error && !confirming && (
-        <p className="mt-2 text-xs text-destructive">{error}</p>
+        <p className="px-3 py-2 text-xs text-destructive">{error}</p>
       )}
 
       {confirming && (
@@ -491,7 +548,7 @@ function InstanceRow({
           </span>
         )}
       </DataTableCell>
-      <DataTableCell muted>
+      <DataTableCell muted className="tabular-nums">
         <span className="inline-flex items-center gap-2">
           {relativeTime(instance.lastUsedAt, now)}
           {traceId && (
@@ -510,7 +567,7 @@ function InstanceRow({
           )}
         </span>
       </DataTableCell>
-      <DataTableCell muted>
+      <DataTableCell muted className="tabular-nums">
         {relativeTime(instance.createdAt, now)}
       </DataTableCell>
       <DataTableCell align="right" onClick={(event) => event.stopPropagation()}>
@@ -553,10 +610,10 @@ function MachineRow({
         <SpecsValue specs={machine.specs} verified provider="machine" />
       </DataTableCell>
       <DataTableCell muted>—</DataTableCell>
-      <DataTableCell muted>
+      <DataTableCell muted className="tabular-nums">
         {relativeTime(machine.lastSeenAt, now)}
       </DataTableCell>
-      <DataTableCell muted>
+      <DataTableCell muted className="tabular-nums">
         {relativeTime(machine.connectedAt, now)}
       </DataTableCell>
       <DataTableCell align="right" muted>

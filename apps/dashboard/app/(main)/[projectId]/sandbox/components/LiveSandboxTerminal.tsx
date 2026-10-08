@@ -9,6 +9,7 @@ import { CONNECTION_TONE, StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import "@xterm/xterm/css/xterm.css";
@@ -24,12 +25,15 @@ interface Props {
   reservationKey: string;
   /** Blocks connecting, e.g. while the instance is terminating. */
   disabled: boolean;
+  /** Layout of the whole block; the terminal grid fills whatever height it gets. */
+  className?: string;
 }
 
 export function LiveSandboxTerminal({
   sandboxId,
   reservationKey,
   disabled,
+  className,
 }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const openTerminal = useAction(api.sandbox.public.openTerminal);
@@ -145,7 +149,7 @@ export function LiveSandboxTerminal({
   const connected = status === "live" || status === "connecting";
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className={cn("flex flex-col gap-2", className)}>
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
           Interactive shell inside the sandbox (a real in-guest TTY). Connecting
@@ -168,8 +172,8 @@ export function LiveSandboxTerminal({
           </Button>
         )}
       </div>
-      <div className="overflow-hidden rounded-lg border border-border bg-terminal-background p-2">
-        <div ref={containerRef} className="h-80 w-full" />
+      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-terminal-background p-2">
+        <div ref={containerRef} className="h-full min-h-40 w-full" />
       </div>
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <StatusDot tone={CONNECTION_TONE[status]} label={status} />

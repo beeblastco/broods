@@ -22,6 +22,8 @@ import type { ReactNode } from "react";
 interface DetailPanelProps {
   title: ReactNode;
   meta?: ReactNode;
+  /** Buttons on the title line, between the title and the close button. */
+  actions?: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }
@@ -37,20 +39,33 @@ interface DetailSplitProps {
   tableMinWidth?: number;
 }
 
-/** The detail column's header with a close button, then a scrollable body. */
+/**
+ * The detail column's header with a close button, then a scrollable body.
+ * With `actions` and no `meta` the header is one centered line, the same
+ * height as the toolbar over the table.
+ */
 export function DetailPanel({
   title,
   meta,
+  actions,
   onClose,
   children,
 }: DetailPanelProps): React.JSX.Element {
   return (
     <>
-      <div className="flex items-start justify-between gap-2 border-b border-border/60 px-3 py-2">
-        <div className="min-w-0">
+      <div
+        className={cn(
+          "flex justify-between gap-2 border-b border-border/60 px-3 py-2",
+          actions && !meta ? "items-center" : "items-start",
+        )}
+      >
+        <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium">{title}</div>
           {meta}
         </div>
+        {actions && (
+          <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
+        )}
         <button
           type="button"
           onClick={onClose}

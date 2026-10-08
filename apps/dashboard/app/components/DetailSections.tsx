@@ -17,6 +17,8 @@ export interface DetailRow {
   label: string;
   value: string;
   words?: true;
+  /** Red for an error message. */
+  tone?: "error";
 }
 
 /**
@@ -35,26 +37,40 @@ export function DetailFields({
   return (
     <details className="group/detail">
       <SectionSummary label={label} summary={summary} />
-      <div className="grid px-1 pb-2 text-xs">
-        {rows.map((row) => (
-          <CopyRow
-            key={row.key}
-            value={row.value}
-            className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
-          >
-            <span className="truncate text-muted-foreground">{row.label}</span>
-            <span
-              className={cn(
-                "truncate text-foreground/80",
-                !row.words && "font-mono",
-              )}
-            >
-              {row.value}
-            </span>
-          </CopyRow>
-        ))}
-      </div>
+      <DetailRows rows={rows} className="px-1 pb-2" />
     </details>
+  );
+}
+
+/** The labeled rows alone, each copying its value on click, for a panel with no section to fold. */
+export function DetailRows({
+  rows,
+  className,
+}: {
+  rows: DetailRow[];
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <div className={cn("grid text-xs", className)}>
+      {rows.map((row) => (
+        <CopyRow
+          key={row.key}
+          value={row.value}
+          className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
+        >
+          <span className="truncate text-muted-foreground">{row.label}</span>
+          <span
+            className={cn(
+              "truncate",
+              row.tone === "error" ? "text-destructive" : "text-foreground/80",
+              !row.words && "font-mono",
+            )}
+          >
+            {row.value}
+          </span>
+        </CopyRow>
+      ))}
+    </div>
   );
 }
 

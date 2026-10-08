@@ -41,9 +41,6 @@ export default function SandboxPage(): React.JSX.Element {
   const searchParams = useSearchParams();
   const tab = pickTab(SANDBOX_TABS, searchParams.get("tab"));
   const view = tab.id;
-  // The instances view carries a detail column beside a wide table, so it
-  // gets the full width the observability tabs get; the rest stay readable.
-  const contentWidth = view === "instances" ? "max-w-none" : "max-w-7xl";
 
   const loading =
     stages === undefined ||
@@ -51,14 +48,22 @@ export default function SandboxPage(): React.JSX.Element {
     machines === undefined ||
     snapshots === undefined ||
     account === undefined;
+  // The instances view is a flush list with a detail column and a dock, like
+  // Monitoring, and scrolls inside itself; the rest keep the usual margins.
+  const flush = view === "instances" && !loading && Boolean(account);
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-auto">
+    <div
+      className={cn(
+        "flex h-full min-w-0 flex-col",
+        flush ? "overflow-hidden" : "overflow-auto",
+      )}
+    >
       <h1 className="sr-only">{tab.label}</h1>
       <div
         className={cn(
-          "mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-6 pt-6 pb-12",
-          contentWidth,
+          "mx-auto flex min-h-0 w-full flex-1 flex-col",
+          flush ? "max-w-none" : "max-w-7xl gap-3 px-6 pt-6 pb-12",
         )}
       >
         {loading ? (
@@ -75,6 +80,7 @@ export default function SandboxPage(): React.JSX.Element {
             instances={instances}
             machines={machines}
             agents={agents ?? []}
+            snapshots={snapshots}
             projectId={projectId}
             observability={observability}
           />
