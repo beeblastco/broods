@@ -27,6 +27,19 @@ describe("resolveSandboxSpecs", () => {
     expect(resolveSandboxSpecs({})).toEqual(SANDBOX_SIZES.xsmall);
   });
 
+  it("reports a lambda MicroVM's real size whatever the config asks for", () => {
+    const real = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
+    expect(resolveSandboxSpecs({ provider: "lambda" })).toEqual(real);
+    expect(
+      resolveSandboxSpecs({
+        provider: "lambda",
+        size: "tiny",
+        options: { cpu: 1 },
+        memoryLimit: 1024,
+      }),
+    ).toEqual(real);
+  });
+
   it("bills a workdir sandbox the resources its VM is created with", () => {
     // Explicit options win over the size, and the size's vcpu clamps like the VM's.
     expect(

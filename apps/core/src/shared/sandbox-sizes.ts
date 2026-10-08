@@ -5,8 +5,8 @@
  * reconciles issue #78's tiers with each backend's real limits.
  *
  * The specs are advisory: workdir applies them as create-time resources (clamping
- * vcpu to its allowed set), MicroVM bakes size into the image so they are
- * display-only, daytona/e2b/vercel size natively. The control-plane mirror type
+ * vcpu to its allowed set), a lambda MicroVM always reports the one size AWS
+ * gives it, daytona/e2b/vercel size natively. The control-plane mirror type
  * lives here too so the Convex writer and the executors share one shape without
  * importing across the shared/harness boundary.
  */
@@ -85,6 +85,10 @@ export const SANDBOX_SIZE_NAMES: readonly SandboxSize[] = [
   "large",
 ];
 
+// What every lambda MicroVM runs as: the images ask AWS for no size, so each gets
+// the platform default, a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk.
+const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
+
 /** The size used for the mirror specs when a config pins no explicit size or resources. */
 const DEFAULT_SIZE: SandboxSize = "xsmall";
 
@@ -93,7 +97,8 @@ const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
 
 /**
  * Resolve the specs to mirror (and bill) for a sandbox config. A workdir (`sandbox`)
- * config bills exactly the resources its VM is created with (see workdirResources).
+ * config bills exactly the resources its VM is created with (see workdirResources),
+ * and a lambda config reports the MicroVM's real size whatever it asks for.
  * Elsewhere a pinned `size` wins; otherwise the explicit resource options
  * (`cpu`/`memoryMb`/`diskGb`) and `memoryLimit` fill in. Each missing dimension
  * defaults from the `xsmall` row.
@@ -115,6 +120,9 @@ export function resolveSandboxSpecs(input: {
       memoryMb: resources?.memoryMb ?? base.memoryMb,
       storageGb: resources?.diskGb ?? base.storageGb,
     };
+  }
+  if (input.provider === "lambda") {
+    return MICROVM_SPECS;
   }
   if (input.size) {
     return SANDBOX_SIZES[input.size];

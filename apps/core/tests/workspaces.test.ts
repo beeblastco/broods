@@ -331,7 +331,7 @@ describe("resolveAgentRuntime", () => {
             accountId: "acct_1",
             sandboxConfigId: "sb_1",
             name: "primary",
-            specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+            specs: { vcpu: 4, memoryMb: 8192, storageGb: 8 },
             snapshotId: "img_primary",
             permissionMode: "ask",
             idleTimeoutSeconds: 900,

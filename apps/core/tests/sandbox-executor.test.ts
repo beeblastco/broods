@@ -3224,7 +3224,6 @@ describe("MicroVM capacity refusal", () => {
   it("meters a capacity fallback on the platform with the specs it creates", async () => {
     const { runSandbox } =
       await import("../src/harness/tools/filesystem-utils.ts");
-    const { SANDBOX_SIZES } = await import("../src/shared/sandbox-sizes.ts");
     daytonaCreateMock.mockImplementationOnce(async () => {
       throw new Error("No available runners");
     });
@@ -3252,7 +3251,8 @@ describe("MicroVM capacity refusal", () => {
     expect(controlPlane).toMatchObject({
       accountId: "acct_1",
       ownCredentials: undefined,
-      specs: SANDBOX_SIZES.large,
+      // A lambda MicroVM is one fixed size, whatever the primary config asked for.
+      specs: { vcpu: 4, memoryMb: 8192, storageGb: 8 },
     });
   });
 
