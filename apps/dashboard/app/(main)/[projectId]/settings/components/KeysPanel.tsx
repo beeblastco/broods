@@ -241,10 +241,7 @@ function RuntimeKeysTable({
             detail="A stage mints its key on the first deploy, or from the Runtime key tab."
           />
         )}
-        <DataTableFooter
-          total={keys.length}
-          noun={keys.length === 1 ? "stage" : "stages"}
-        />
+        <DataTableFooter total={keys.length} noun={["stage", "stages"]} />
       </div>
 
       {rotating && (
@@ -417,7 +414,7 @@ function ApiKeysTable({
         <DataTableFooter
           shown={list.shown.length}
           total={keys.length}
-          noun={keys.length === 1 ? "key" : "keys"}
+          noun={["key", "keys"]}
         />
       </div>
 

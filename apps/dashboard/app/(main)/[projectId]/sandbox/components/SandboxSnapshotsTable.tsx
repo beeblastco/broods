@@ -155,7 +155,7 @@ export function SandboxSnapshotsTable({
         <DataTableFooter
           shown={list.shown.length}
           total={snapshots.length}
-          noun="snapshots"
+          noun={["snapshot", "snapshots"]}
         />
       </div>
 

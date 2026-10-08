@@ -175,7 +175,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
         )}
         <DataTableFooter
           total={account ? keys.length : 0}
-          noun={account ? (keys.length === 1 ? "key" : "keys") : "account"}
+          noun={account ? ["key", "keys"] : ["account", "accounts"]}
         />
       </div>
       {error && !rotateOpen && (

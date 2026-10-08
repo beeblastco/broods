@@ -286,7 +286,7 @@ export function MonitoringPanel({
         <LoadMore
           shown={filtered.length}
           total={entries.length}
-          noun="lines"
+          noun={["line", "lines"]}
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}

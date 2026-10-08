@@ -186,7 +186,7 @@ export function PermissionsPanel(): React.JSX.Element {
         <DataTableFooter
           shown={list.shown.length}
           total={permissions.length}
-          noun="permissions"
+          noun={["permission", "permissions"]}
         >
           {`, ${customCount} custom`}
         </DataTableFooter>
