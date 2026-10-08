@@ -10,7 +10,7 @@ import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import {
   activePolicies,
-  dashboardPermissions,
+  assertGrantsWithinReach,
   memberAccess,
   requireDashboardPermission,
 } from "../model/access";
@@ -291,13 +291,10 @@ export const remove = mutation({
 });
 
 /**
- * Owner memberships can delete the org, so only an owner may grant one, or
- * change or remove one. Without this an admin could promote themselves.
- */
-/**
  * A caller grants and touches no more than they hold: the admin tier only
- * from the admin tier, a custom role only when every permission it grants
- * is one the caller has. Otherwise `members:write` would be a way up.
+ * from the admin tier, a custom role only when every permission it grants,
+ * in every scope it names, is one the caller has. Otherwise `members:write`
+ * would be a way up.
  */
 async function assertWithinReach(
   ctx: Parameters<typeof getOrgMembership>[0],
@@ -317,18 +314,18 @@ async function assertWithinReach(
   if (!role || role.orgId !== orgId) {
     throw new ClientError("Role not found");
   }
-  const held = dashboardPermissions(access);
-  const beyond = dashboardPermissions({
-    tier: "member",
-    policies: await activePolicies(ctx, role.policyIds),
-  }).filter((permission) => !held.includes(permission));
-  if (beyond.length > 0) {
-    throw new ClientError(
-      `That role grants ${beyond.join(", ")}, which you do not hold`,
-    );
-  }
+  await assertGrantsWithinReach(
+    ctx,
+    orgId,
+    caller,
+    await activePolicies(ctx, role.policyIds),
+  );
 }
 
+/**
+ * Owner memberships can delete the org, so only an owner may grant one, or
+ * change or remove one. Without this an admin could promote themselves.
+ */
 function assertCanTouchOwnerRole(
   caller: Doc<"orgMembers">,
   role: Doc<"orgMembers">["role"] | undefined,

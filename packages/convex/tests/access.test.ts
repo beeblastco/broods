@@ -261,12 +261,37 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
       roleId: bossRole,
     }),
   ).rejects.toThrow(/which you do not hold/);
+  // Nor is access:write: a rule or a role may not grant what the caller lacks.
+  currentAuthId = "auth_owner";
+  await t.mutation(api.access.addRule, {
+    policyId: policyId,
+    permission: "access:write",
+    scope: {},
+  });
+  currentAuthId = "auth_member";
+  await expect(
+    t.mutation(api.access.addRule, {
+      policyId: policyId,
+      permission: "keys:write",
+      scope: {},
+    }),
+  ).rejects.toThrow(/which you do not hold/);
+  await expect(
+    t.mutation(api.access.createRole, {
+      name: "Boss too",
+      policyIds: [bossPolicy],
+    }),
+  ).resolves.toBeDefined();
 
   currentAuthId = "auth_owner";
   const roles = await t.query(api.access.listRoles, {});
   const engineer = roles.find((role) => role.name === "Engineer");
   expect(engineer?.members).toEqual([{ name: "Ada", avatarUrl: undefined }]);
-  expect(engineer?.permissions).toEqual(["keys:read", "members:write"]);
+  expect(engineer?.permissions).toEqual([
+    "keys:read",
+    "members:write",
+    "access:write",
+  ]);
   await expect(
     t.mutation(api.access.removeRole, { roleId: roleId }),
   ).rejects.toThrow(/holds this role/);

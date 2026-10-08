@@ -111,7 +111,7 @@ export function CronDialog({
           input: prompt.trim(),
           conversationKey: conversationKey.trim() || undefined,
           scheduleExpression: scheduleExpression.trim(),
-          timezone: timezone.trim(),
+          timezone: timezoneToSave(cron?.timezone, timezone),
           status: status,
           description: description.trim() || undefined,
         });
@@ -123,7 +123,7 @@ export function CronDialog({
           input: prompt.trim(),
           conversationKey: conversationKey.trim() || undefined,
           scheduleExpression: scheduleExpression.trim(),
-          timezone: timezone.trim(),
+          timezone: timezoneToSave(cron?.timezone, timezone),
           status: status,
           description: description.trim() || undefined,
         });
@@ -355,4 +355,18 @@ export function eventsToText(
   }
 
   return "";
+}
+
+/**
+ * The zone to store. A job saved without one runs in UTC and shows "UTC";
+ * leaving that untouched keeps the stored value, so an edit to another field
+ * does not re-register the schedule.
+ */
+function timezoneToSave(
+  stored: string | undefined,
+  typed: string,
+): string | undefined {
+  const next = typed.trim();
+
+  return stored === undefined && next === "UTC" ? undefined : next;
 }

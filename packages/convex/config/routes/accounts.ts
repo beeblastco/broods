@@ -6,7 +6,12 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
-import { createAccountSecret, sha256Hex } from "../../model/accountSecrets";
+import {
+  ACCOUNT_KEY_PREFIX,
+  createAccountSecret,
+  keyHint,
+  sha256Hex,
+} from "../../model/accountSecrets";
 import { roleDenial, rolePrincipal } from "../../model/apiAuthorization";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
@@ -282,6 +287,7 @@ async function rotateAccountSecretResponse(
   await ctx.runMutation(internal.account.accounts.update, {
     accountId: existing._id,
     secretHash: await sha256Hex(secret),
+    secretHint: keyHint(ACCOUNT_KEY_PREFIX, secret),
   });
   const updated: Doc<"accounts"> | null = await ctx.runQuery(
     internal.account.accounts.getById,

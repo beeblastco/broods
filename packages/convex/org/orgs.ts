@@ -15,7 +15,6 @@ import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
 import { ClientError } from "../model/clientError";
-import { hasDashboardPermission } from "../model/access";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -24,10 +23,6 @@ import {
   userByAuthId,
   type OrgRole,
 } from "../model/ownership/org";
-import {
-  DASHBOARD_POLICY_ACTIONS,
-  type DashboardPolicyAction,
-} from "../model/policyRules";
 import { orgsFields } from "../schema";
 
 /**
@@ -273,14 +268,9 @@ export const userIdByAuthId = internalQuery({
   },
 });
 
-/** One org by id when the caller holds the permission there; null otherwise. */
-export const getByIdForPermission = query({
-  args: {
-    orgId: v.id("orgs"),
-    permission: v.union(
-      ...DASHBOARD_POLICY_ACTIONS.map((action) => v.literal(action)),
-    ),
-  },
+/** One org by id when the caller is an admin or owner there; null otherwise. */
+export const getByIdForAdmin = query({
+  args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {
     // Check authenticated user
@@ -292,10 +282,7 @@ export const getByIdForPermission = query({
     if (!user) {
       return null;
     }
-    const permission: DashboardPolicyAction = args.permission;
-    if (!(await hasDashboardPermission(ctx, args.orgId, user, permission))) {
-      return null;
-    }
+    await requireOrgMember(ctx, args.orgId, user._id, "admin");
 
     return await ctx.db.get(args.orgId);
   },

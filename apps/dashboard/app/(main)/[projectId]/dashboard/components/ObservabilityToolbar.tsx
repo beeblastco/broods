@@ -82,14 +82,20 @@ export function ObservabilityToolbar({
 }: Props): React.JSX.Element {
   // The clock the strip ends at. It freezes while a selection is on the strip,
   // so the selection does not slide off the left edge as time passes.
-  const [frozenNow, setFrozenNow] = useState<number | null>(null);
-  const stripNow = frozenNow ?? now;
+  // The clock the strip was frozen at, bound to the window picked on it: a
+  // window the parent sets or clears (a trace link) thaws it on its own.
+  const [frozen, setFrozen] = useState<{
+    window: TimeWindow;
+    now: number;
+  } | null>(null);
+  const stripNow =
+    frozen !== null && frozen.window === window ? frozen.now : now;
   const rangeWindow = useMemo(
     () => ({ from: stripNow - rangeMs(range), to: stripNow }),
     [stripNow, range],
   );
   const selectWindow = (selection: TimeWindow | null): void => {
-    setFrozenNow(selection === null ? null : stripNow);
+    setFrozen(selection === null ? null : { window: selection, now: stripNow });
     onWindowChange(selection);
   };
   const bins = useMemo(

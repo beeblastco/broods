@@ -9,6 +9,7 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
+  TIME_WORDS,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
@@ -53,8 +54,8 @@ const TABLE_MIN_WIDTH = 760;
 // A job with no zone of its own runs in UTC, so that is what the row says.
 const DEFAULT_TIMEZONE = "UTC";
 
-// Sort words for the two time columns.
-const TIME_WORDS: [string, string] = ["Soonest first", "Latest first"];
+// Sort words for the next-run column; the last-run column reads oldest and newest.
+const NEXT_WORDS: [string, string] = ["Soonest first", "Latest first"];
 
 type Cron = FunctionReturnType<typeof api.agent.crons.listForProject>[number];
 type CronRun = FunctionReturnType<
@@ -232,7 +233,7 @@ export function CronsTable({
               >
                 Timezone
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("next", TIME_WORDS)}>
+              <DataTableHead sort={list.sortFor("next", NEXT_WORDS)}>
                 Next run
               </DataTableHead>
               <DataTableHead

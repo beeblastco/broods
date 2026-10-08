@@ -18,9 +18,8 @@ import {
   tierPermissions,
 } from "./model/access";
 import { actorOf, actorsOf, actorValidator } from "./model/actor";
-import { orgIdOf, userByAuthId } from "./model/ownership/org";
+import { getActiveOrgForUser, userByAuthId } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
-import { getActiveCaller } from "./org/orgs";
 
 const orgKeyValidator = v.object({
   name: v.string(),
@@ -60,21 +59,27 @@ const projectKeysValidator = v.object({
 type OrgKey = Infer<typeof orgKeyValidator>;
 type ProjectKeys = Infer<typeof projectKeysValidator>;
 
-/** The org's own keys. Today that is the account key; null without `keys:read`. */
+/** The org's own keys: the account key, or an empty list before the org has an account. Null without `keys:read`. */
 export const listForOrg = query({
   args: {},
   returns: v.union(v.array(orgKeyValidator), v.null()),
   handler: async (ctx): Promise<OrgKey[] | null> => {
-    const caller = await getActiveCaller(ctx);
-    if (!caller) return null;
-    const orgId = orgIdOf(ctx, caller.account);
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) return null;
+    const user = await userByAuthId(ctx, authUser.id);
+    if (!user) return null;
+    const org = await getActiveOrgForUser(ctx, user._id);
     if (
-      !orgId ||
-      !(await hasDashboardPermission(ctx, orgId, caller.user, "keys:read"))
+      !org ||
+      !(await hasDashboardPermission(ctx, org._id, user, "keys:read"))
     ) {
       return null;
     }
-    const account = caller.account;
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+      .unique();
+    if (!account) return [];
 
     return [
       {

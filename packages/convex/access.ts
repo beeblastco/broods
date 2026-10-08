@@ -19,10 +19,12 @@ import {
 } from "./_generated/server";
 import {
   activePolicies,
+  assertGrantsWithinReach,
   dashboardPermissions,
   memberAccess,
   requireDashboardPermission,
   tierPermissions,
+  type ScopedPolicy,
 } from "./model/access";
 import { randomToken } from "./model/accountSecrets";
 import { actorsOf, actorValidator, type Actor } from "./model/actor";
@@ -336,7 +338,7 @@ export const updatePolicy = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
-    const policy = await ownedPolicy(ctx, caller.account._id, args.policyId);
+    const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
     await ctx.db.patch(policy._id, {
       ...(args.name !== undefined ? { name: args.name.trim() } : {}),
       ...(args.description !== undefined
@@ -364,10 +366,20 @@ export const addRule = mutation({
   returns: v.string(),
   handler: async (ctx, args): Promise<string> => {
     const caller = await requireAccessWriter(ctx);
-    const policy = await ownedPolicy(ctx, caller.account._id, args.policyId);
+    const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
     const known = await permissionNames(ctx, caller.account._id);
     if (!known.has(args.permission)) {
       throw new ClientError(`${args.permission} is not a permission`);
+    }
+    const dashboardAction = DASHBOARD_POLICY_ACTIONS.find(
+      (action) => action === args.permission,
+    );
+    // The dashboard evaluator reads only the scope, so a condition on any
+    // other attribute could neither grant nor refuse anything there.
+    if (dashboardAction && args.condition) {
+      throw new ClientError(
+        "A dashboard permission takes only a project or stage scope",
+      );
     }
     const conditions: PolicyCondition[] = [];
     if (args.scope.projectId) {
@@ -402,11 +414,18 @@ export const addRule = mutation({
       actions: [args.permission],
       ...(conditions.length > 0 ? { conditions: conditions } : {}),
     };
+    const document = {
+      ...policy.document,
+      rules: [...policy.document.rules, rule],
+    };
+    const orgId = orgIdOf(ctx, caller.account);
+    if (orgId && dashboardAction && rule.effect === "allow") {
+      await assertGrantsWithinReach(ctx, orgId, caller.user, [
+        scoped(policy, document),
+      ]);
+    }
     await ctx.db.patch(policy._id, {
-      document: {
-        ...policy.document,
-        rules: [...policy.document.rules, rule],
-      },
+      document: document,
       updatedAt: Date.now(),
     });
 
@@ -419,7 +438,7 @@ export const removeRule = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
-    const policy = await ownedPolicy(ctx, caller.account._id, args.policyId);
+    const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
     await ctx.db.patch(policy._id, {
       document: {
         ...policy.document,
@@ -438,12 +457,7 @@ export const removePolicy = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
-    const policy = await ownedPolicy(ctx, caller.account._id, args.policyId);
-    if (policy.managedBy === "cli") {
-      throw new ClientError(
-        "This policy is managed by code. Remove it from your project and run `broods deploy --prune`.",
-      );
-    }
+    const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
     const orgId = orgIdOf(ctx, caller.account);
     const roles = orgId ? await orgRoles(ctx, orgId) : [];
     const holder = roles.find((role) => role.policyIds.includes(policy._id));
@@ -559,6 +573,12 @@ export const createRole = mutation({
       throw new ClientError(`${name} is a built-in role`);
     }
     await assertOwnedPolicies(ctx, caller.account._id, args.policyIds);
+    await assertGrantsWithinReach(
+      ctx,
+      orgId,
+      caller.user,
+      await activePolicies(ctx, args.policyIds),
+    );
     const now = Date.now();
 
     return await ctx.db.insert("orgRoles", {
@@ -586,6 +606,12 @@ export const updateRole = mutation({
     const role = await ownedRole(ctx, caller.account, args.roleId);
     if (args.policyIds) {
       await assertOwnedPolicies(ctx, caller.account._id, args.policyIds);
+      await assertGrantsWithinReach(
+        ctx,
+        role.orgId,
+        caller.user,
+        await activePolicies(ctx, args.policyIds),
+      );
     }
     await ctx.db.patch(role._id, {
       ...(args.name !== undefined ? { name: args.name.trim() } : {}),
@@ -658,6 +684,34 @@ async function ownedPolicy(
   }
 
   return policy;
+}
+
+/** An owned policy the dashboard may change: one it made, not one `broods deploy` owns. */
+async function editablePolicy(
+  ctx: Ctx,
+  accountId: Id<"accounts">,
+  policyId: Id<"agentPolicies">,
+): Promise<Doc<"agentPolicies">> {
+  const policy = await ownedPolicy(ctx, accountId, policyId);
+  if (policy.managedBy === "cli") {
+    throw new ClientError(
+      "This policy is managed by code. Change it in your project and run `broods deploy`.",
+    );
+  }
+
+  return policy;
+}
+
+/** A policy row with the document it would hold, as the evaluator reads it. */
+function scoped(
+  policy: Doc<"agentPolicies">,
+  document: PolicyDocument,
+): ScopedPolicy {
+  return {
+    document: document,
+    projectId: policy.projectId,
+    stageId: policy.stageId,
+  };
 }
 
 async function assertOwnedPolicies(

@@ -25,9 +25,11 @@ export function toggleToken(
   const token = chipFor(field, value);
   const words = splitTokens(query);
   const kept = words.filter((word) => word.toLowerCase() !== token);
-  if (kept.length !== words.length) return kept.join(" ");
+  if (kept.length !== words.length) {
+    return kept.length === 0 ? "" : `${kept.join(" ")} `;
+  }
 
-  return `${query.trim()} ${token} `.trimStart();
+  return `${token} ${query.trimStart()}`;
 }
 
 /** Removes every `field:` token from the query. */

@@ -69,9 +69,15 @@ export function useListState<Row, Column extends string, Field extends string>(
   );
   const parsed = useMemo(() => parseQuery(query, fields), [query, fields]);
   const shown = useMemo(() => {
+    // Two chips on one field widen it (either value); chips on different
+    // fields narrow (every field must hold).
+    const byField = new Map<Field, string[]>();
+    for (const { field, value } of parsed.fields) {
+      byField.set(field, [...(byField.get(field) ?? []), value]);
+    }
     const matching = rows.filter((row) => {
-      const chipsPass = parsed.fields.every(({ field, value }) =>
-        matches(row, field, value),
+      const chipsPass = [...byField].every(([field, values]) =>
+        values.some((value) => matches(row, field, value)),
       );
       if (!chipsPass) return false;
 

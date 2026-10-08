@@ -34,7 +34,7 @@ export interface ScopedPolicy extends DashboardScope {
 /** A member's tier in the org and the policies their role grants. */
 export interface MemberAccess {
   tier: OrgRole;
-  policies: ScopedPolicy[];
+  policies: readonly ScopedPolicy[];
 }
 
 /** The permissions a tier holds before any role: admins everything, members nothing gated. */
@@ -120,6 +120,34 @@ export async function requireDashboardPermission(
   }
 }
 
+/**
+ * A caller hands out no permission they lack, in any scope the policies name:
+ * what the policies would grant a member is compared with what the caller
+ * holds, org-wide and in each project and stage a policy or rule points at.
+ * Otherwise `access:write` or `members:write` would be a way up.
+ */
+export async function assertGrantsWithinReach(
+  ctx: Ctx,
+  orgId: Id<"orgs">,
+  caller: Doc<"users">,
+  policies: readonly ScopedPolicy[],
+): Promise<void> {
+  const access = await memberAccess(ctx, orgId, caller);
+  if (!access) throw new ClientError("No permission for this", "unauthorized");
+  for (const scope of scopesNamed(ctx, policies)) {
+    const held = dashboardPermissions(access, scope);
+    const beyond = dashboardPermissions(
+      { tier: "member", policies: policies },
+      scope,
+    ).filter((permission) => !held.includes(permission));
+    if (beyond.length > 0) {
+      throw new ClientError(
+        `That grants ${beyond.join(", ")}, which you do not hold`,
+      );
+    }
+  }
+}
+
 /** The policies that still exist and are active, with the scope their row carries. */
 export async function activePolicies(
   ctx: Ctx,
@@ -146,6 +174,43 @@ function policiesAllowOrTier(
     tierPermissions(access.tier).includes(action) ||
     policiesAllow(access.policies, action, scope)
   );
+}
+
+/** The org, plus every project and stage the policies or their rules name, each once. */
+function scopesNamed(
+  ctx: Ctx,
+  policies: readonly ScopedPolicy[],
+): DashboardScope[] {
+  const scopes = new Map<string, DashboardScope>([["", {}]]);
+  for (const policy of policies) {
+    for (const rule of policy.document.rules) {
+      const scope: DashboardScope = {
+        projectId:
+          policy.projectId ?? idCondition(ctx, rule, "project.id", "projects"),
+        stageId: policy.stageId ?? idCondition(ctx, rule, "stage.id", "stages"),
+      };
+      scopes.set(`${scope.projectId ?? ""}:${scope.stageId ?? ""}`, scope);
+    }
+  }
+
+  return [...scopes.values()];
+}
+
+/** The id an equals-condition on `attribute` names, read as the table's id. */
+function idCondition<T extends "projects" | "stages">(
+  ctx: Ctx,
+  rule: PolicyRule,
+  attribute: string,
+  table: T,
+): Id<T> | undefined {
+  const match = (rule.conditions ?? []).find(
+    (condition) =>
+      condition.attribute === attribute && condition.operator === "equals",
+  );
+
+  return typeof match?.value === "string"
+    ? (ctx.db.normalizeId(table, match.value) ?? undefined)
+    : undefined;
 }
 
 /** A policy row made for one project or stage applies only there. */
