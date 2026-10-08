@@ -1315,11 +1315,14 @@ function CanvasInner({
   const onOpenSourcePicker = useCallback(() => {
     // The empty canvas already shows the source list: point at it, don't
     // stack the same list in a dialog over it. A frame later, so a closing
-    // context menu has already handed focus back.
+    // context menu has already handed focus back; focusVisible so the ring
+    // shows after a mouse pick too.
     const emptyGuide = emptyGuideRef.current;
     if (emptyGuide) {
       requestAnimationFrame(() =>
-        emptyGuide.querySelector<HTMLButtonElement>("button:enabled")?.focus(),
+        emptyGuide
+          .querySelector<HTMLButtonElement>("button:enabled")
+          ?.focus({ focusVisible: true }),
       );
 
       return;
