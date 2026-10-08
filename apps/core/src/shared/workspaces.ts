@@ -526,7 +526,6 @@ function sandboxControlPlane(
       provider: record.config.provider,
       size: record.config.size,
       options: record.config.options,
-      memoryLimit: record.config.memoryLimit,
     }),
     ...(record.config.snapshot ? { snapshotId: record.config.snapshot } : {}),
     ...(record.config.network ? { egress: record.config.network.mode } : {}),

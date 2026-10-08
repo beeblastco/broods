@@ -245,7 +245,6 @@ Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes
 | `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                                                                         |
 | `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                                                                      |
 | `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                                                                           |
-| `memoryLimit`          |            | MB, informational                                                                                                                         |
 | `outputLimitBytes`     | 65536      | Output kept per call                                                                                                                      |
 | `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey`            |
 

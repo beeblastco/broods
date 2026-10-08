@@ -1776,11 +1776,6 @@ paths:
                         type: integer,
                         description: "per-call seconds (max 600 for every provider)",
                       }
-                    memoryLimit:
-                      {
-                        type: integer,
-                        description: "MB; bounded for lambda MicroVM (max 8192), operator-sized for other providers",
-                      }
                     outputLimitBytes: { type: integer }
                     envVars:
                       { type: object, additionalProperties: { type: string } }

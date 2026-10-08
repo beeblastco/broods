@@ -36,6 +36,32 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `machine`    | Your own computer            | no              | no                    | no                      | `allow-all` only               |
 | `custom`     | Your own server over HTTP    | no              | no                    | no                      | `allow-all` only               |
 
+Pick by where the code should run, then by whether files must outlive a call:
+
+```mermaid
+flowchart TD
+  A([Agent needs to run code]) --> B{Where should it run?}
+  B -->|Broods cloud, the default| L["lambda<br/>AWS Lambda MicroVM"]
+  B -->|Self-hosted Broods| S["sandbox<br/>Firecracker VM"]
+  B -->|A vendor you already use| V{Which vendor?}
+  V --> D[daytona]
+  V --> E[e2b]
+  V --> VC[vercel]
+  V --> CF[cloudflare]
+  B -->|Your laptop or screen| M["machine<br/>broods machine"]
+  B -->|Your own server| C["custom<br/>POST /exec"]
+  L --> W{Files must survive?}
+  S --> W
+  D --> W
+  W -->|yes| WS["attach a workspace<br/>mounted on every run"]
+  W -->|no| NB[bash only, scratch disk]
+  E -.->|no workspace| NB
+  VC -.->|no workspace| NB
+  CF -.->|no workspace| NB
+  M -.->|no workspace| NB
+  C -.->|no workspace| NB
+```
+
 `lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and `cloudflare` has [Cloudflare Containers](cloudflare.md). The `machine` provider has its own page, [Your computer](machine.md), and so does `custom`, [Your own server](custom.md).
 
 ## Configuration
@@ -51,7 +77,6 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
 | `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary       |
 | `timeout`              | 30                     | Seconds per call. Maximum 600                                                                                     |
-| `memoryLimit`          | none                   | MB. Validated, maximum 8192 on `lambda`, but executors do not resize to it                                        |
 | `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                              |
 | `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                       |
 | `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey` |
@@ -131,9 +156,28 @@ Set `snapshot` to boot a prebuilt image instead of the provider default. Bake he
 
 The Snapshot action runs on a running instance of a persistent sandbox and saves it under a name you pick. Any sandbox of the same provider in the account can then pin it, with the Snapshot select on its node or `snapshot` in code. On `lambda`, workspace files stay in the workspace, and deleted files are not carried over.
 
-A snapshot boots only on the provider that made it. A MicroVM image, a workdir image, a Daytona snapshot, an E2B template and a Vercel snapshot are different formats held by different clouds, and none of them imports another, so there is no snapshot that moves between providers. Put setup you need everywhere in `onCreate`, or bake it into each provider's image. Daytona, E2B and Vercel keep snapshots in the provider account behind the sandbox's credentials, so only a sandbox using the same credentials can boot one.
+A snapshot boots only on the provider that made it. A MicroVM image, a workdir image, a Daytona snapshot, an E2B template and a Vercel snapshot are different formats held by different clouds, and none of them imports another, so there is no snapshot that moves between providers. Put setup you need everywhere in `onCreate`, or bake it into each provider's image. Daytona, E2B and Vercel keep snapshots in the provider account behind the sandbox's credentials, so only a sandbox using the same credentials can boot one. Broods does not delete them, so remove ones you no longer need in the provider console.
 
 On `daytona`, `options.image` builds the sandbox from a Docker image when it is created, instead of booting a snapshot. Set one or the other.
+
+On `lambda`, a snapshot starts from a running instance and comes back as the image the next machine boots:
+
+```mermaid
+flowchart LR
+  subgraph Pick["1. Pick an image"]
+    D0["default<br/>bash, python3, node, uv, rg"]
+    O["image: obscura<br/>adds obscura"]
+    BR["image: browser<br/>adds chromium"]
+  end
+  D0 --> RUN[2. Running instance]
+  O --> RUN
+  BR --> RUN
+  RUN -->|agent installs, edits files| RUN
+  RUN -->|3. Dashboard Snapshot| BLD["building<br/>a few minutes"]
+  BLD --> ACT[active snapshot]
+  ACT -->|"4. Snapshot select,<br/>or snapshot: ARN"| PIN["boots the snapshot,<br/>keeps the image variant"]
+  PIN --> RUN
+```
 
 The dashboard Snapshots view shows which image each running instance booted from.
 
