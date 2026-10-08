@@ -2863,8 +2863,11 @@ paths:
       description: >-
         Create a scoped API role. The policy uses the API action namespace
         (`agents:read`, `crons:write`, ...). Provide `projectId` and `stageId`
-        together; they bind which runtime keys may assume the role. Role
-        management accepts only the account key, never a session token.
+        together; they bind which runtime keys may assume the role and hold
+        its sessions to that stage: a pinned session reaches only resources
+        on its stage, and collections and account-wide resources answer
+        `403`. Role management accepts only the account key, never a session
+        token.
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true

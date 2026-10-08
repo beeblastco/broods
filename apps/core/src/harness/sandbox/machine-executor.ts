@@ -84,7 +84,7 @@ export interface MachineSocketData {
   key?: string;
   /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
-  /** Set for a stage ticket, which claims only its own stage's records. */
+  /** Set for a stage ticket or a stage-pinned role, which claim only their own stage's records. */
   stage?: { projectId: string; stageId: string };
 }
 
@@ -307,7 +307,15 @@ export async function upgradeMachineSocket(
   if (auth?.kind === "account") {
     data = { accountId: auth.account.accountId };
   } else if (auth?.kind === "role") {
-    data = { accountId: auth.account.accountId, role: auth.role };
+    const { projectId, stageId } = auth.role;
+    data = {
+      accountId: auth.account.accountId,
+      role: auth.role,
+      // A stage-pinned role claims like a ticket for its stage.
+      ...(projectId && stageId
+        ? { stage: { projectId: projectId, stageId: stageId } }
+        : {}),
+    };
   } else if (
     auth?.kind === "deployment" &&
     auth.stageTicket?.sandboxWrite === true
@@ -357,6 +365,8 @@ async function claimSandbox(
     !authorize(rolePrincipal(socket.data.role), "sandboxes:write", {
       type: "sandboxes",
       id: record.sandboxId,
+      projectId: record.projectId,
+      stageId: record.stageId,
     }).allow;
   if (denied) {
     logWarn("Machine sandbox claim refused", {
