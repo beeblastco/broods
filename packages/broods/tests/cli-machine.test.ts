@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { cpus, hostname } from "node:os";
+import { hostname } from "node:os";
 import type { MachineExecFrame } from "../../../apps/core/src/shared/machine-socket.ts";
 import { runExec, runMachineDaemon } from "../src/cli/machine.ts";
 import { StageSessionRefusedError } from "../src/observability-client.ts";
@@ -105,8 +105,6 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
     type: "hello",
     sandbox: "my-mac",
     hostname: hostname(),
-    arch: process.arch,
-    specs: { vcpu: cpus().length, memoryMb: expect.any(Number) },
   });
   expect(core.received[1]).toMatchObject({
     type: "result",

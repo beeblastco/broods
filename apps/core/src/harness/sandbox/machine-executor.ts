@@ -406,7 +406,6 @@ async function claimSandbox(
   mirrorConnection(() =>
     getStorage().machineConnections.connected({
       ...ref,
-      arch: hello.arch,
       computer: hello.computer === true,
       hostname: hello.hostname,
       mcp: hello.mcp ?? [],

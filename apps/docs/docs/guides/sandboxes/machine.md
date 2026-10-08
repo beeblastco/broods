@@ -26,7 +26,7 @@ export const helper = defineAgent({
 });
 ```
 
-`persistent`, `size`, `snapshot` and `memoryLimit` are rejected, and `network.mode` must be `allow-all`.
+`persistent`, `size` and `snapshot` are rejected, and `network.mode` must be `allow-all`.
 
 The daemon strips every `BROODS_*` variable from the environment of agent commands and MCP servers, so an agent shell cannot read `BROODS_API_KEY` or `BROODS_TOKEN`.
 
@@ -117,4 +117,4 @@ The daemon starts a server on its first call and keeps it running. The platform 
 
 - No workspaces. The file tools need the workspace mount, which a computer does not have. A run is refused when a workspace would inherit a machine, so give that workspace its own sandbox or `sandbox: null`. Use `bash` for files.
 - No background jobs, snapshots, suspend or resume.
-- The dashboard lists a connected computer under Sandboxes, Instances with its connection state, its size (CPUs, memory and the home volume, as the daemon reported them on connect), connect time, last seen time and the command that starts it. It has no image, trace or lifecycle controls.
+- The dashboard lists a connected computer under Sandboxes, Instances with its connection state, size, connect time, last seen time and the command that starts it. The size is the CPU count, memory and home disk the daemon reports when it connects; a daemon from an older CLI reports none, and the size shows `?` until you update and restart it. It has no image, trace or lifecycle controls.

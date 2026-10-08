@@ -323,7 +323,6 @@ export async function runSandbox(
                 specs: resolveSandboxSpecs({
                   provider: fallbackProvider,
                   size: primary.size,
-                  memoryLimit: primary.memoryLimit,
                 }),
               },
             }

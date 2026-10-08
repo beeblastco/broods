@@ -108,6 +108,7 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
   recordSandboxBurst: mock(async () => true),
   removeSandboxInstance: removeSandboxInstanceMock,
   sandboxInstanceIsControllable: mock(async () => true),

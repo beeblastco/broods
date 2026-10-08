@@ -7,7 +7,7 @@
 
 import { spawn } from "node:child_process";
 import { statfsSync } from "node:fs";
-import { cpus, homedir, hostname, totalmem } from "node:os";
+import { availableParallelism, homedir, hostname, totalmem } from "node:os";
 import { performance } from "node:perf_hooks";
 import {
   MACHINE_CLOSE,
@@ -217,26 +217,6 @@ class OutputBuffer {
   }
 }
 
-/**
- * The computer's size in the units sandbox instances report, so the dashboard
- * lists it like one. Disk is the home directory's volume; 0 when unreadable.
- */
-function machineSpecs(): NonNullable<MachineHelloFrame["specs"]> {
-  let storageGb = 0;
-  try {
-    const volume = statfsSync(homedir());
-    storageGb = Math.round((volume.blocks * volume.bsize) / 1024 ** 3);
-  } catch {
-    // Not every runtime exposes statfs; the size reads without disk then.
-  }
-
-  return {
-    vcpu: cpus().length,
-    memoryMb: Math.round(totalmem() / 1024 ** 2),
-    storageGb: storageGb,
-  };
-}
-
 function describeComputerFrame(frame: MachineComputerFrame): string {
   const parts: string[] = [frame.action];
   if (frame.coordinate) parts.push(`at ${frame.coordinate.join(",")}`);
@@ -244,6 +224,28 @@ function describeComputerFrame(frame: MachineComputerFrame): string {
   if (frame.region) parts.push(`region ${frame.region.join(",")}`);
 
   return parts.join(" ");
+}
+
+// This computer's CPUs, memory and home disk, so the dashboard can show its size.
+function hardwareSpecs(): MachineHelloFrame["specs"] {
+  const storageGb = homeDiskGb();
+
+  return {
+    vcpu: availableParallelism(),
+    memoryMb: Math.round(totalmem() / 1024 ** 2),
+    ...(storageGb ? { storageGb: storageGb } : {}),
+  };
+}
+
+// Size of the disk holding the home folder, or undefined when the OS will not say.
+function homeDiskGb(): number | undefined {
+  try {
+    const disk = statfsSync(homedir());
+
+    return Math.round((disk.blocks * disk.bsize) / 1024 ** 3);
+  } catch {
+    return undefined;
+  }
 }
 
 function oneLine(text: string): string {
@@ -344,12 +346,11 @@ function serveOnce(
         sandbox: options.sandbox,
         hostname: hostname(),
         platform: process.platform,
-        arch: process.arch,
-        specs: machineSpecs(),
         computer: desktop !== null,
         mcp: mcp?.names(),
         instance: instance,
         force: options.force,
+        specs: hardwareSpecs(),
       });
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);

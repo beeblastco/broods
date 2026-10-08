@@ -10,6 +10,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { getActiveAccountForUser } from "../org/orgs";
+import { ClientError } from "../model/clientError";
 import { sandboxSnapshotsFields } from "../schema";
 
 const sandboxSnapshotDoc = v.object({
@@ -97,6 +98,14 @@ export const upsert = internalMutation({
       )
       .unique();
 
+    // Pinned configs name the provider image, so repointing a name at another
+    // provider's image would strand every sandbox booting the old one.
+    if (existing && existing.provider !== args.provider) {
+      throw new ClientError(
+        `snapshot name "${args.name}" is already a ${existing.provider} snapshot; pick another name`,
+        "conflict",
+      );
+    }
     const now = Date.now();
     const status = args.status ?? "active";
     if (existing) {

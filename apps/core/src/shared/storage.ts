@@ -23,6 +23,7 @@ import type {
   UpdateCronInput,
 } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
+import type { SandboxSpecs } from "./sandbox-sizes.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
 
 /** Safe deployment scope returned by Convex without stored credentials. */
@@ -94,13 +95,12 @@ export interface MachineConnectionRef {
 }
 
 export interface MachineConnectionRecord extends MachineConnectionRef {
-  arch?: string;
   computer: boolean;
   hostname?: string;
   mcp: string[];
   platform?: string;
-  /** The computer's size in the sandbox instances' units. */
-  specs?: { vcpu: number; memoryMb: number; storageGb: number };
+  /** The hardware the daemon reported; absent from a daemon older than the report. */
+  specs?: SandboxSpecs;
 }
 
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
@@ -133,6 +133,12 @@ interface AgentStore {
   listForEndpoint(
     accountId: string,
     endpointId: string,
+  ): Promise<AgentRecord[]>;
+  /** Agents of one stage, deployed or not, for the MCP explorer. */
+  listForStage(
+    accountId: string,
+    projectId: string,
+    stageId: string,
   ): Promise<AgentRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }

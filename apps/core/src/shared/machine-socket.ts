@@ -127,21 +127,11 @@ const execFrame = z.object({
   outputLimitBytes: z.number().positive(),
 });
 
-// The computer's size in the sandbox instances' units, so the dashboard lists
-// a machine like any other sandbox. A field the daemon could not read is 0.
-const machineSpecs = z.object({
-  vcpu: z.number().int().nonnegative(),
-  memoryMb: z.number().int().nonnegative(),
-  storageGb: z.number().int().nonnegative(),
-});
-
 const helloFrame = z.object({
   type: z.literal("hello"),
   sandbox: z.string().min(1),
   hostname: z.string().optional(),
   platform: z.string().optional(),
-  arch: z.string().optional(),
-  specs: machineSpecs.optional(),
   computer: z.boolean().optional(),
   // Names of the MCP servers in the daemon's --mcp file.
   mcp: z.array(z.string()).optional(),
@@ -150,6 +140,16 @@ const helloFrame = z.object({
   instance: z.string().optional(),
   // Take the record over from another daemon.
   force: z.boolean().optional(),
+  // The computer's own CPU count, memory and disk, shown as its size. Display
+  // only, so a malformed one reads as absent instead of refusing the daemon.
+  specs: z
+    .object({
+      vcpu: z.number().positive(),
+      memoryMb: z.number().positive(),
+      storageGb: z.number().positive().optional(),
+    })
+    .optional()
+    .catch(undefined),
 });
 
 const mcpCallFrame = z.object({

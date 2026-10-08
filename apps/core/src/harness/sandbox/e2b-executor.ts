@@ -2,15 +2,21 @@
  * E2B-backed sandbox executor.
  * Keep E2B SDK adaptation here. Commands run in E2B's native sandbox filesystem.
  * Persistent mode reserves one sandbox per key, reconnecting by stored id (E2B
- * auto-pauses it on idle and connect resumes it).
+ * auto-pauses it on idle and connect resumes it). `config.snapshot` names the
+ * template or snapshot it boots, and the Snapshot action captures a reserved
+ * sandbox into a new snapshot.
  */
 
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
+import {
+  setSandboxInstanceSpecs,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
+import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
@@ -23,8 +29,10 @@ import type {
   SandboxExecutorConfig,
   SandboxJobHandle,
   SandboxReleaseRequest,
+  SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
+  SandboxSnapshotResult,
 } from "./types.ts";
 import {
   configString,
@@ -35,6 +43,9 @@ import {
   shellQuote,
   truncateText,
 } from "./utils.ts";
+
+// How long a size read may take before the size is left unknown.
+const SPECS_READ_TIMEOUT_MS = 3_000;
 
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -54,6 +65,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           "e2b",
           sandbox.sandboxId,
           request.metadata,
+          () => e2bSpecs(sandbox),
         );
 
     try {
@@ -134,6 +146,28 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
+  /**
+   * Captures the reserved sandbox as an E2B snapshot, which any e2b sandbox of
+   * the account can then boot through `config.snapshot`. E2B pauses the sandbox
+   * while it captures.
+   */
+  async snapshot(
+    request: SandboxReservationRef,
+  ): Promise<SandboxSnapshotResult> {
+    const key = sandboxReservationKey(request);
+    const externalId = key ? await getSandboxExternalId("e2b", key) : null;
+    if (!externalId) {
+      throw new Error("no reserved e2b sandbox to snapshot for this sandbox");
+    }
+    const Sandbox = await e2bSandboxApi();
+    const snapshot = await Sandbox.createSnapshot(
+      externalId,
+      e2bApiOptions(this.#config),
+    );
+
+    return { snapshotId: snapshot.snapshotId };
+  }
+
   #persistent(request: {
     namespace?: string;
     reservationKey?: string;
@@ -171,6 +205,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
+        // No size: the row keeps the one E2B reported when this sandbox was made.
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "e2b",
@@ -210,6 +245,21 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           created.sandboxId,
           request.metadata,
         );
+        // The size is read once, now, off the acquire path, and patched onto
+        // the row; reconnects send none and the row keeps it.
+        const accountId = this.#config.controlPlane?.accountId;
+        if (accountId) {
+          void e2bSpecs(created).then((specs): void => {
+            if (specs) {
+              void setSandboxInstanceSpecs(
+                accountId,
+                ns,
+                created.sandboxId,
+                specs,
+              );
+            }
+          });
+        }
 
         return created;
       }
@@ -279,12 +329,10 @@ function e2bCreateOptions(
 ): Record<string, unknown> {
   const options = isPlainObject(config.options) ? config.options : {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
-  const template =
-    configString(options.template) ?? configString(options.templateId);
 
   return {
     ...(apiKey ? { apiKey: apiKey } : {}),
-    ...(template ? { template: template } : {}),
+    ...(config.snapshot ? { template: config.snapshot } : {}),
     // Auto-pause on idle (instead of kill) so a reserved sandbox can be resumed.
     ...(persistent
       ? {
@@ -302,4 +350,18 @@ async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
   const { Sandbox } = await import("e2b");
 
   return Sandbox;
+}
+
+// The vCPUs and memory E2B gave the sandbox. E2B reports no disk size. A slow or
+// failed read leaves the size unknown rather than holding up or failing the call.
+async function e2bSpecs(sandbox: Sandbox): Promise<SandboxSpecs | undefined> {
+  try {
+    const info = await sandbox.getInfo({
+      requestTimeoutMs: SPECS_READ_TIMEOUT_MS,
+    });
+
+    return { vcpu: info.cpuCount, memoryMb: info.memoryMB };
+  } catch {
+    return undefined;
+  }
 }

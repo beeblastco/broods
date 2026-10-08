@@ -49,18 +49,20 @@ export function DetailFields({
   );
 }
 
-/** Collapsible payload: the header row over the value, pre-wrapped. */
+/** Collapsible payload: the header row over the value, pre-wrapped. Starts expanded when `open`. */
 export function DetailPayload({
   label,
+  open,
   summary,
   value,
 }: {
   label: string;
+  open?: boolean;
   summary: string;
   value: string;
 }): React.JSX.Element {
   return (
-    <details className="group/detail">
+    <details className="group/detail" open={open}>
       <SectionSummary label={label} summary={summary} />
       {/* wrap-anywhere, unlike wrap-break-word, also lowers the min-content width. */}
       <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere px-3 pb-3 text-xs leading-relaxed text-foreground/90">

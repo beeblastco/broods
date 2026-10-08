@@ -543,6 +543,16 @@ export const sandboxProviderValidator = v.union(
 );
 
 /**
+ * A machine's size as its provider reports it. `storageGb` is absent when the
+ * provider does not report a disk (e2b, vercel).
+ */
+export const sandboxSpecsValidator = v.object({
+  vcpu: v.number(),
+  memoryMb: v.number(),
+  storageGb: v.optional(v.number()),
+});
+
+/**
  * Live persistent-sandbox registry, mirrored from broods so the dashboard can
  * show running/suspended instances and drive suspend/resume/terminate through
  * Convex live queries. broods (the runtime) is authoritative. It owns the
@@ -551,14 +561,6 @@ export const sandboxProviderValidator = v.union(
  * One row per reserved sandbox, keyed by `reservationKey` (the broods
  * reconnection key, globally unique since it embeds the account + workspace).
  */
-
-/** A sandbox's footprint; a connected machine reports its own in the same units. */
-const sandboxSpecs = v.object({
-  vcpu: v.number(),
-  memoryMb: v.number(),
-  storageGb: v.number(),
-});
-
 export const sandboxInstancesFields = {
   accountId: v.id("accounts"),
   /** Stage scope; unset for account-scoped sandboxes, like `sandboxConfigsFields`. */
@@ -600,7 +602,14 @@ export const sandboxInstancesFields = {
   permissionMode: v.optional(
     v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
   ),
-  specs: sandboxSpecs,
+  /** What the meter bills: the size the provider reported, else the config's. */
+  specs: sandboxSpecsValidator,
+  /**
+   * `specs` is known to be the machine's real size: reported by the provider, or
+   * one Broods sets itself (workdir, the fixed MicroVM, a cloudflare instance
+   * type). Unset, `specs` is only the config's guess and the dashboard shows `?`.
+   */
+  specsVerified: v.optional(v.boolean()),
   createdAt: v.number(),
   lastUsedAt: v.number(),
   createdByTraceId: v.optional(v.string()),
@@ -649,13 +658,12 @@ export const machineConnectionsFields = {
   connectionId: v.string(),
   hostname: v.optional(v.string()),
   platform: v.optional(v.string()),
-  arch: v.optional(v.string()),
-  /** The computer's size, in the units sandbox instances use; absent from an older daemon. */
-  specs: v.optional(sandboxSpecs),
   /** The daemon started with --computer. */
   computer: v.boolean(),
   /** Server names from the daemon's --mcp file. */
   mcp: v.array(v.string()),
+  /** The computer's hardware as the daemon reported it; absent from an older daemon. */
+  specs: v.optional(sandboxSpecsValidator),
   connectedAt: v.number(),
   lastSeenAt: v.number(),
   disconnectedAt: v.optional(v.number()),

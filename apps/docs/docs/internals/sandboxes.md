@@ -23,7 +23,7 @@ Every sandbox tool (`bash`, `read`, `write`, `edit`, `glob`, `grep`) compiles to
 
 One file plus one line. Write `src/harness/sandbox/<name>-executor.ts` implementing `SandboxExecutor` from `types.ts` (`run` is the only required method; reservation, jobs and lifecycle are optional and feature-detected), add the name to `SANDBOX_PROVIDERS`, then in `index.ts` import the file and add `<name>: (config) => new YourExecutor(config)` to `EXECUTORS`; the build fails until you do. The explicit import is what pulls the file into the compiled binary. A provider Broods never reserves also goes in `STATELESS_SANDBOX_PROVIDERS`. Validation for the provider's options goes in `sandboxRules.ts` beside the others, and `runsOnOwnCredentials` in `src/shared/workspaces.ts` says whether the platform meters it.
 
-Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 30 s and caps at 600 s, set by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`. `outputLimitBytes` defaults to 64 KiB and caps at 256 KiB, set by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. Every executor truncates stdout and stderr to it. `memoryLimit` caps at 8192 MB on `lambda`. A blocking call also stays inside the request budget, `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`, 10 minutes by default. Background jobs are bound by neither.
+Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 30 s and caps at 600 s, set by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`. `outputLimitBytes` defaults to 64 KiB and caps at 256 KiB, set by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. Every executor truncates stdout and stderr to it. A blocking call also stays inside the request budget, `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`, 10 minutes by default. Background jobs are bound by neither.
 
 ### Capability matrix
 
@@ -38,7 +38,24 @@ Limits come from `packages/convex/model/sandboxRules.ts`. `timeout` defaults to 
 | `machine`    | not supported, rejected                             | no                                            | no                                               |
 | `custom`     | not supported, rejected                             | no                                            | no                                               |
 
-`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. The fallback always runs on the platform's credentials, so it is metered, with the specs the fallback provider creates from `size` and `memoryLimit`. Validation refuses a fallback equal to `provider`, a `machine` or `custom` fallback, and any fallback on a `persistent` config.
+`fallbackProvider` is handled in `runSandbox()` in `src/harness/tools/filesystem-utils.ts`. When the primary executor throws `SandboxCapacityError`, the same run goes to the fallback once and a warning is logged. The MicroVM executor throws it for `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException` and `TooManyRequestsException`; workdir and Daytona throw it for their own admission refusals. `options` and `snapshot` belong to the primary and are dropped. The fallback always runs on the platform's credentials, so it is metered, with the specs the fallback provider creates from `size`. Validation refuses a fallback equal to `provider`, a `machine` or `custom` fallback, and any fallback on a `persistent` config.
+
+One tool call from dispatch to result. Runs on the platform's credentials pass the account's sandbox budget check first:
+
+```mermaid
+flowchart TD
+  T["sandbox tool<br/>bash, read, write, edit, glob, grep"] --> RS["runSandbox()"]
+  RS --> ON["runSandboxOn(config)"]
+  ON --> CE["createSandboxExecutor()<br/>EXECUTORS by provider"]
+  CE -->|platform credentials| BUD["assertSandboxBudget()"]
+  CE -->|ownCredentials| EX
+  BUD --> EX["executor.run()<br/>namespace or reservationKey"]
+  EX -->|result| T
+  EX -.->|SandboxCapacityError| FB{"fallbackProvider set?"}
+  FB -->|no| ERR[tool error]
+  FB -->|yes, once| ON2["runSandboxOn(fallback)<br/>options and snapshot dropped,<br/>platform credentials"]
+  ON2 --> CE
+```
 
 Per-call `envVars` go through `mergeSandboxEnv()` in `utils.ts`, which drops the `RESERVED_SANDBOX_ENV_KEYS`. Those are `BASH_ENV`, `ENV`, `HOME`, `LD_AUDIT`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `LOGNAME`, `NODE_OPTIONS`, `PATH`, `PROMPT_COMMAND`, `PYTHONHOME`, `PYTHONPATH`, `PYTHONSTARTUP`, `SHELL`, `TMPDIR`, `USER` and the `__CB_*` job-callback slots. Account `config.envVars` is not filtered.
 
@@ -68,6 +85,20 @@ A reserved VM's endpoint is cached for 3 minutes, so a repeat call skips the res
 
 `RunMicrovm` gets `maximumDurationInSeconds` of the call timeout plus 60 s for an ephemeral VM, and `min(lifecycle.maxLifetimeSeconds, 28800)` for a persistent one. A persistent VM also gets an `idlePolicy`, with `maxIdleDurationSeconds` from `lifecycle.idleTimeoutSeconds`, `suspendedDurationSeconds` from `maxLifetimeSeconds` or 7 days, and auto-resume on.
 
+A persistent VM as the control plane sees it. Core never extends a VM: once it is terminal, the next call on the same key gets a fresh VM and runs `onCreate` again, so local disk and processes are gone while the workspace stays.
+
+```mermaid
+stateDiagram-v2
+  [*] --> RUNNING: RunMicrovm
+  RUNNING --> SUSPENDED: idle for maxIdleDurationSeconds
+  SUSPENDED --> RUNNING: auto-resume on a request, or ResumeMicrovm in reconnect
+  RUNNING --> terminal: maximumDurationInSeconds, at most 8 h
+  SUSPENDED --> terminal: suspendedDurationSeconds, maxLifetime or 7 days
+  RUNNING --> terminal: image changed, terminate or sweep
+  SUSPENDED --> terminal: image changed, terminate or sweep
+  terminal --> [*]: next call reads MicrovmGoneError and creates a new VM
+```
+
 The exec response is `{ ok, runtime, exit_code, timed_out, duration_ms, stdout, stderr, cpu_usec, burst }`. `burst` is the VM's vCPU-seconds and GiB-seconds above its baseline since boot, which the image samples once a second from `/proc/stat` and `/proc/meminfo`. Core forwards it to `sandbox.instances.recordBurst` whenever it grows, and the meter bills the growth at the baseline rates, since Lambda bills burst for the active time above the baseline.
 
 ### Lifecycle hooks
@@ -82,7 +113,28 @@ The image serves hooks on port 9000 under `/aws/lambda-microvms/runtime/v1/<hook
 | `/suspend`            | before snapshot | `sync(2)`                                          |
 | `/terminate`          | teardown        | unmount and final `sync`                           |
 
-For a workspace run, core resolves the mount with `resolveS3Mount()` and puts `{ workspace: { namespace, root, mount: { bucket, prefix, region, endpoint, env } } }` in the `runHookPayload`. `env` holds one-hour STS credentials scoped to the prefix. The harness's own credentials never enter the VM. A persistent VM outlives that hour, so core pushes fresh credentials to `/workspace/credentials` in the guest every 30 minutes, where mountpoint-s3 re-reads them. After launch core checks the mount for up to 30 s, the `/run` hook's own budget. Stateless runs skip the mount and work in `/tmp`.
+For a workspace run, core resolves the mount with `resolveS3Mount()` and puts `{ workspace: { namespace, root, mount: { bucket, prefix, region, endpoint, env } } }` in the `runHookPayload`. `env` holds one-hour STS credentials scoped to the prefix. The harness's own credentials never enter the VM. A persistent VM outlives that hour, so on a later call to it core pushes fresh credentials to `/workspace/credentials` in the guest, at most every 30 minutes, where mountpoint-s3 re-reads them. Nothing refreshes an idle VM, so its credentials can lapse until the next call. After launch core checks the mount for up to 30 s, the `/run` hook's own budget. Stateless runs skip the mount and work in `/tmp`.
+
+```mermaid
+sequenceDiagram
+  participant E as microvm-executor
+  participant STS as STS
+  participant CP as MicroVM control plane
+  participant VM as guest image
+  participant S3 as workspace bucket
+
+  E->>STS: resolveS3Mount, AssumeRole scoped to bucket/prefix, 1 h
+  E->>CP: RunMicrovm with runHookPayload
+  CP->>VM: /run hook
+  VM->>S3: mount-s3 the prefix under the workspace root
+  E->>VM: check the mount, up to 30 s
+  Note over E,VM: a failed check releases the reservation
+  loop on a later call, at most every 30 min, never while idle
+    E->>STS: fresh scoped credentials
+    E->>VM: POST /workspace/credentials
+  end
+  VM->>S3: mountpoint-s3 re-reads the credentials
+```
 
 Mountpoint for S3 was chosen over S3 Files (`mount -t s3files`). S3 Files allows in-place edits and keeps credentials out of the VM, but needs a NAT gateway on restricted networks and adds per-GB cache and transfer charges. Mountpoint works on every network mode for the managed bucket and is the same code path workdir and Daytona use. S3 Files stays a possible opt-in for write-heavy or strict-isolation sandboxes.
 
@@ -100,6 +152,35 @@ AWS builds the image from an S3 zip of a Dockerfile and sources with `create-mic
 Account config cannot override the image version, roles, log group or size catalog. Validation accepts only `options.workspaceRoot` and `options.reservationKey` on `lambda`; core reads role and log group only from `MICROVM_EXECUTION_ROLE_ARN` and `MICROVM_LOG_GROUP_NAME`.
 
 There is no API to promote a running VM into a new image, so a lambda snapshot is an image build. `MicrovmSandboxExecutor.snapshot` reads the VM's image and version from `GetMicrovm`, then the source version's code artifact, base image, build role, hooks and capabilities from `GetMicrovmImageVersion`. It copies the source zip to `sandbox-snapshots/<id>/` in the filesystem bucket, the one bucket a VM reaches under every network mode. The VM then runs the script in `src/harness/sandbox/microvm-snapshot.ts`: it tars every file whose mtime or ctime is after `startedAt` (less 60 s), skipping `/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/mnt` and the workspace root, appends `ADD broods-snapshot-<id>.tar /` to the Dockerfile and uploads the zip through a presigned PUT. Each capture works in its own temp directory and removes it however it ends. It refuses a VM whose clock is more than 5 minutes off, changes over 4 GiB and a zip over 5 GiB. The tar only adds files, so a file deleted from the VM comes back from the source image, and the walk runs while the VM is live, so a file written during capture may be caught half-written. Core copies the result to `microvm-images/broods-snapshots/<id>.zip` in the artifact bucket, the prefix the build role reads, and calls `CreateMicrovmImage` with the source version's settings, deleting the zip if that call fails. The row is `building` until the watcher in `src/shared/sandbox-snapshot-builds.ts`, every 60 s (`SANDBOX_SNAPSHOT_POLL_SECONDS`), sees `GetMicrovmImage` report an active or failed version. A snapshot's `baseImage` is the variant the sandbox ran (its `image`, else the `baseImage` of the snapshot it booted from), and a config may carry both `snapshot` and that `image`: the VM boots the snapshot, and the browse tool and dashboard read the image.
+
+The capture, from the dashboard's Snapshot action to an active image:
+
+```mermaid
+sequenceDiagram
+  participant D as dashboard
+  participant C as core snapshot verb
+  participant CP as MicroVM control plane
+  participant FS as filesystem bucket
+  participant VM as guest
+  participant A as artifact bucket
+  participant DB as Convex sandboxSnapshots
+  participant W as build watcher
+
+  D->>C: POST /v1/sandboxes/:id/snapshot
+  C->>CP: GetMicrovm, GetMicrovmImageVersion
+  C->>FS: copy source zip to sandbox-snapshots/:id/
+  C->>VM: capture script, presigned GET and PUT
+  VM->>VM: tar files changed since startedAt, ADD it in the Dockerfile
+  VM->>FS: PUT image.zip
+  C->>A: copy to microvm-images/broods-snapshots/:id.zip
+  C->>FS: delete the staged zips
+  C->>CP: CreateMicrovmImage with the source version's settings
+  C->>DB: row building
+  loop every 60 s
+    W->>CP: GetMicrovmImage
+  end
+  W->>DB: active or build_failed
+```
 
 ### Network
 
@@ -172,6 +253,7 @@ Credentials fall back to deployment env when a config omits them. Daytona reads 
 
 - Daytona needs a snapshot with `mount-s3`. Build it with `bun run daytona:s3-snapshot`, from `apps/core/scripts/daytona-s3-snapshot.ts`, which reads `DAYTONA_S3_SNAPSHOT_BASE_IMAGE` and `DAYTONA_S3_SNAPSHOT_NAME`. The executor assumes the `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN` and injects prefix-scoped credentials. Without the role it needs `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `envVars`. The skills bucket is no longer mounted. `load_skill` stages skills into the workspace, and a configured skills bucket only logs a warning. `lifecycle.idleTimeoutSeconds` maps to `autoStopInterval`, and `maxLifetimeSeconds`, or 7 days, to `autoDeleteInterval`, both in minutes. `network` maps to `networkBlockAll`, and domain allowlists are ignored with a warning.
 - E2B maps `lifecycle.idleTimeoutSeconds` to the sandbox timeout with `lifecycle.onTimeout: "pause"`. Background jobs use `commands.run` with `background: true` and disconnect from the handle, so there are no `.fp-jobs` markers and no live logs or stop. E2B cannot enforce egress, so validation requires `allow-all`.
+- `config.snapshot` maps to Daytona's `snapshot`, E2B's `template`, and Vercel's `source: { type: "snapshot" }` for a `snap_` id or `image` for anything else. The `snapshot` verb calls Daytona `sandbox.createSnapshot` under a generated `broods-<uuid>` name, E2B `Sandbox.createSnapshot`, and Vercel `sandbox.snapshot({ expiration: 0 })`. Each finishes before it answers, so the row is `active` at once and the build watcher never sees it.
 - Vercel creates a persistent sandbox with `Sandbox.create()` under a new name, a prefix derived from the reservation key plus a random generation, stored as the reservation's `externalId`. The generation keeps a sweeper that took a row from deleting a machine a new run just created under the same key. `onCreate` and `onResume` run as one script guarded by a `.fp-lifecycle-created` marker in the work dir, so `onCreate` runs the first time and `onResume` after that. The Vercel timeout counts from start, not last activity, so the executor maps `idleTimeoutSeconds` onto it and a persistent sandbox stops that long after each wake. `maxLifetimeSeconds` is not enforced.
 
 ## Cloudflare
@@ -194,7 +276,7 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 - `network.mode: "allow-all"` starts the Container with `enableInternet: true`; anything else starts it without internet. `restricted` is rejected. Internet and instance type are fixed at `start()`, so the Durable Object stores what the running Container started with and replaces it when a run asks for another.
 - `setInactivityTimeout` refuses more than six hours, so the config plane caps cloudflare's `idleTimeoutSeconds` there. An ephemeral Container idles only a minute past its command, so one whose `DELETE` failed stops soon.
 - 124 and 137 count as a timeout only once the deadline passed; earlier they are the command's own exit or an OOM kill.
-- `size` maps to the nearest named instance type, `standard-1` to `standard-4`. Custom types need a whole vCPU.
+- `size` maps to the nearest named instance type, `standard-1` to `standard-4`. Custom types need a whole vCPU. `CLOUDFLARE_INSTANCE_TYPES` in `apps/core/src/shared/sandbox-sizes.ts` holds each type's documented size, which the instance row mirrors and the meter bills.
 - There are no background jobs, snapshots or suspend. Harness adapters refuse the provider.
 
 ## Machine
@@ -205,13 +287,35 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 - One daemon holds a record. A second is closed with `4423` and a reason naming the holder's host; `--force` replaces the holder, which gets `4409`. Bad credentials close with `4401`, an unknown sandbox name with `4404`, a malformed frame with `4400`.
 - The socket accepts a login-derived stage ticket, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key.
 - Frames are capped at 4 MiB. A computer action has 30 s, an MCP call 60 s, and a `bash` call its timeout plus 5 s.
-- Validation rejects `persistent`, `size`, `snapshot`, `memoryLimit` and any network mode other than `allow-all`, and a machine cannot back a workspace.
+- Validation rejects `persistent`, `size`, `snapshot` and any network mode other than `allow-all`, and a machine cannot back a workspace.
 
 ## Reservations
 
 A `persistent: true` config reserves one instance per workspace namespace, or per `accountId:agentId:sandboxId` when no workspace is mounted, or per `options.reservationKey` when set. Keys are hashed and account-scoped in `src/shared/workspaces.ts` before they reach the registry, so no key an author writes can name another account's machine.
 
-- Every provider, workdir included, records the provider id in the Convex `sandboxReservations` table through `instance-store.ts`, and mirrors a row into `sandboxInstances` for the dashboard. A platform-paid ephemeral sandbox on any provider (`lambda`, workdir, Daytona, e2b, Vercel) also gets a row, keyed by its provider id, for the length of the call. Removing it at teardown bills the time from the row's upsert to its removal, so boot time is not billed. The row is removed only once the provider confirms the sandbox is gone, so a failed teardown keeps billing. Core retries a failed remove a few times. A row whose remove was still lost is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`), and `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it once that has passed. No lifecycle verb (suspend, resume, terminate, refresh, exec) accepts an ephemeral row, and the orphan sweep never lists one. A sandbox on the account's own credentials (its own key, token or workdir node) gets no row. A workdir row bills the resources its VM was created with, so explicit options and the vCPU clamp apply to the bill too.
+Where the key comes from. `resolveAgentRuntime` writes the agent-level key into `options.reservationKey`, and a run with a workspace ignores it:
+
+```mermaid
+flowchart TD
+  CFG["agent sandbox, persistent: true"] --> AR["agentSandboxReservation()"]
+  AR -->|options.reservationKey set| PIN["pinnedSandboxReservationKey()<br/>accountId:pinned:key"]
+  AR -->|unset| AGT["agentSandboxReservationKey()<br/>accountId:agentId:sandboxId"]
+  PIN --> OPT["options.reservationKey"]
+  AGT --> OPT
+  RUN["runSandboxOn()"] --> HAS{"workspace namespace?"}
+  HAS -->|yes| NSK["request.namespace<br/>isolatedWorkspaceNamespace()"]
+  HAS -->|no| RK["request.reservationKey"]
+  OPT --> RK
+  MCPR["lambda MCP row"] -->|same target as bash| HAS
+  NSK --> KEY["sandboxReservationKey()<br/>reservationKey, else namespace"]
+  RK --> KEY
+  KEY --> REG[("sandboxReservations<br/>provider and key")]
+```
+
+Harness adapters pick their own key with `harnessReservationKey`, see [Harness adapters](#harness-adapters).
+
+- Every provider, workdir included, records the provider id in the Convex `sandboxReservations` table through `instance-store.ts`, and mirrors a row into `sandboxInstances` for the dashboard. A platform-paid ephemeral sandbox on any provider (`lambda`, workdir, Daytona, e2b, Vercel) also gets a row, keyed by its provider id, for the length of the call. Removing it at teardown bills the time from the row's upsert to its removal, so boot time is not billed, except on Cloudflare: its row is written before the exec request that starts the Container, so the Container's start is billed too. The row is removed only once the provider confirms the sandbox is gone, so a failed teardown keeps billing. Core retries a failed remove a few times. A row whose remove was still lost is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`), and `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it once that has passed. No lifecycle verb (suspend, resume, terminate, refresh, exec) accepts an ephemeral row, and the orphan sweep never lists one. A sandbox on the account's own credentials (its own key, token or workdir node) gets no row. A workdir row bills the resources its VM was created with, so explicit options and the vCPU clamp apply to the bill too.
+- Sizes: a row's `specs` is what the meter bills. `specsVerified` is set only when the executor passed the machine's real size (a provider report, or the size Broods sets on workdir, lambda and cloudflare); without it the dashboard shows `?`. An e2b size is read once, at create, and patched onto the existing row with `setSandboxInstanceSpecs`, which never recreates one; reconnects send no size and the upsert keeps the verified one. Details are in `upsertSandboxInstance` and `configuredSandboxSpecs`.
 - `claimSandboxReservation` is conditional, so a concurrent first create has one winner. The loser deletes its duplicate and reconnects to the winner's id. Deletes are conditional on the expected id too, so a stale caller never removes a machine another run replaced.
 - A reservation expires 7 days after its last use, per `SANDBOX_RESERVATION_TTL_SECONDS` in `packages/convex/runtime.ts`.
 - `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`), first after a random delay under 30 s, under a 5 minute lease so one replica sweeps at a time. It pages 100 expired reservations, plus mirror rows no reservation names any more, through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`. That takes the row first, only while it is still expired and still names the same machine, then deletes the sandbox at the provider. If the provider delete fails, it claims the row back, which pushes its expiry out by the 7-day reservation TTL, so a later sweep retries instead of every hourly pass.

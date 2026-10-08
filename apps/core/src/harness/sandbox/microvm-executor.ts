@@ -100,6 +100,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  configuredSandboxSpecs,
   configString,
   EXEC_GRACE_MS,
   execRunResult,
@@ -351,6 +352,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.reservationKey,
       reservation.microvmId,
       request.metadata,
+      { specs: configuredSandboxSpecs(this.#config) },
     );
     request.abortSignal?.throwIfAborted();
 
@@ -939,7 +941,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           created.microvmId,
           created.microvmId,
           request.metadata,
-          { ephemeral: true, logStream: created.logStream },
+          {
+            ephemeral: true,
+            logStream: created.logStream,
+            specs: configuredSandboxSpecs(this.#config),
+          },
         ),
       );
 
@@ -969,6 +975,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           existing,
           request.metadata,
+          { specs: configuredSandboxSpecs(this.#config) },
         );
 
         return {
@@ -1007,7 +1014,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
             key,
             created.microvmId,
             request.metadata,
-            { logStream: created.logStream },
+            {
+              logStream: created.logStream,
+              specs: configuredSandboxSpecs(this.#config),
+            },
           ),
         );
 
@@ -1130,6 +1140,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       sandboxReservationKey(request) ?? target.microvmId,
       target.microvmId,
       request.metadata,
+      { specs: configuredSandboxSpecs(this.#config) },
     );
     try {
       await this.#runLifecycle(
