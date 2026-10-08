@@ -266,16 +266,7 @@ export function Canvas({
 }: {
   projectId: Id<"projects">;
 }): React.JSX.Element {
-  const { stageId } = useStage();
-  // A bare project URL asks for the default stage's data at once, alongside
-  // the stage list instead of after it. A named stage waits for that list.
-  const stageParam = useSearchParams().get("stage");
-  const stageArgs =
-    stageParam === null
-      ? { projectId: projectId }
-      : stageId
-        ? { projectId: projectId, stageId: stageId }
-        : ("skip" as const);
+  const { stageId, stageArgs } = useStage();
   const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
   const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
   const machineConnections = useQuery(

@@ -14,9 +14,13 @@ import { useQuery } from "convex/react";
 import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
+/** Arguments for a stage-scoped query that resolves a missing `stageId` to the project's default. */
+type StageArgs = { projectId: Id<"projects">; stageId?: Id<"stages"> } | "skip";
+
 /** Setting null removes the stage param, so the default stage applies. */
 export function useStage(): {
   stageId: Id<"stages"> | null;
+  stageArgs: StageArgs;
   setStageId: (id: Id<"stages"> | null) => void;
 } {
   const searchParams = useSearchParams();
@@ -56,5 +60,16 @@ export function useStage(): {
     [searchParams, pathname],
   );
 
-  return { stageId: stageId, setStageId: setStageId };
+  // A bare project URL asks for the default stage by leaving `stageId` out, so
+  // queries that take it start alongside the stage list instead of after it.
+  // A named stage waits for the list to confirm it.
+  const stageArgs: StageArgs = !projectId
+    ? "skip"
+    : stageParam === null
+      ? { projectId: projectId }
+      : stageId
+        ? { projectId: projectId, stageId: stageId }
+        : "skip";
+
+  return { stageId: stageId, stageArgs: stageArgs, setStageId: setStageId };
 }
