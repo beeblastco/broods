@@ -1,7 +1,7 @@
-import { defineAgent, defineMcp, defineSandbox, env } from "broods";
+import { defineAgent, defineSandbox, env } from "broods";
 
-// One persistent VM on the Obscura image: `browse` and the Obscura MCP server
-// both run here, so the MCP server's browser session lasts between calls.
+// One persistent VM on the Obscura image. `browse` runs a fresh `obscura fetch`
+// there for each call, so no page state carries between calls.
 export const web = defineSandbox({
   name: "obscura-web",
   provider: "lambda",
@@ -10,14 +10,6 @@ export const web = defineSandbox({
   network: { mode: "allow-all" },
   permissionMode: "bypass",
   timeout: 120,
-});
-
-// Obscura's own MCP server, spawned inside the VM on first use.
-export const obscura = defineMcp({
-  name: "obscura",
-  description: "Headless browser tools: navigate, click, fill, screenshot.",
-  sandbox: web,
-  command: ["obscura", "mcp"],
 });
 
 export const browser = defineAgent({
@@ -31,10 +23,9 @@ export const browser = defineAgent({
   },
   agent: {
     system:
-      "You read the web for the user. Use the browse tool to read a page, and the obscura tools when you need to act on a page. Answer in one short paragraph.",
+      "You read the web for the user with the browse tool. Answer in one short paragraph.",
   },
   sandboxes: [web],
   browser: { enabled: true },
-  mcp: { [obscura.name]: { enabled: true } },
   publicAccess: true,
 });
