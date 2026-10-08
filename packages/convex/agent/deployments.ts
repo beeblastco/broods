@@ -40,6 +40,11 @@ import {
   STAGE_SESSION_TICKET_TTL_MS,
 } from "../model/stageSessionTicket";
 
+const PROVISION_ACCOUNT_FIRST =
+  "Provision your organization's API account first (Settings → API Access).";
+
+type AuthUser = NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>;
+
 /** A minted stage ticket plus the slugs the gateway's observability path uses. */
 export const stageSessionValidator = v.object({
   token: v.string(),
@@ -114,24 +119,13 @@ export const ensureForStage = mutation({
       "admin",
     );
     if (!project) throw new Error("Project not found.");
-    const context = await resolveStageContext(ctx, projectId, stageId);
-    const result = await ensureStageDeployment(ctx, {
-      authId: context.authId,
-      accountId: context.account._id,
-      projectId: projectId,
-      stageId: stageId,
-      projectSlug: context.projectSlug,
-      stageSlug: context.stageSlug,
-      createdBy: deriveName(authUser),
-    });
-    await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
-      accountId: context.account._id,
-      projectId: projectId,
-      stageId: stageId,
-      action: "ready",
-      endpointId: result.endpointId,
-      summary: "Stage runtime deployment is ready",
-    });
+    const result = await readyStageDeployment(
+      ctx,
+      authUser,
+      projectId,
+      stageId,
+    );
+    if (!result) throw new Error(PROVISION_ACCOUNT_FIRST);
 
     return toEnsureReturn(result);
   },
@@ -390,6 +384,7 @@ export const rotate = mutation({
     );
     if (!project) throw new Error("Project not found.");
     const context = await resolveStageContext(ctx, projectId, stageId);
+    if (!context) throw new Error(PROVISION_ACCOUNT_FIRST);
     const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
       accountId: context.account._id,
@@ -412,6 +407,41 @@ export const rotate = mutation({
     return toEnsureReturn(result);
   },
 });
+
+/**
+ * Mints a stage's runtime key and audits it, so Monitoring and Tracing stream
+ * from the first visit. Project and stage creation call it right after the
+ * insert; `ensureForStage` calls it on demand. Returns null while the org has
+ * no API account yet.
+ */
+export async function readyStageDeployment(
+  ctx: MutationCtx,
+  user: AuthUser,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+): Promise<EnsureResult | null> {
+  const context = await resolveStageContext(ctx, projectId, stageId);
+  if (!context) return null;
+  const result = await ensureStageDeployment(ctx, {
+    authId: context.authId,
+    accountId: context.account._id,
+    projectId: projectId,
+    stageId: stageId,
+    projectSlug: context.projectSlug,
+    stageSlug: context.stageSlug,
+    createdBy: deriveName(user),
+  });
+  await recordDeploymentAudit(ctx, dashboardAuditActor(user), {
+    accountId: context.account._id,
+    projectId: projectId,
+    stageId: stageId,
+    action: "ready",
+    endpointId: result.endpointId,
+    summary: "Stage runtime deployment is ready",
+  });
+
+  return result;
+}
 
 /**
  * Find the stage's active deployment, creating one (with a fresh key) when
@@ -614,7 +644,7 @@ async function resolveStageContext(
   projectSlug: string;
   stageSlug: string;
   authId: string;
-}> {
+} | null> {
   const project = await ctx.db.get(projectId);
   if (!project) throw new Error("Project not found.");
   const stage = await ctx.db.get(stageId);
@@ -625,11 +655,7 @@ async function resolveStageContext(
     .query("accounts")
     .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
-  if (!account) {
-    throw new Error(
-      "Provision your organization's API account first (Settings → API Access).",
-    );
-  }
+  if (!account) return null;
 
   return {
     account: account,

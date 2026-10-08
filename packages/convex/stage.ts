@@ -7,6 +7,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { readyStageDeployment } from "./agent/deployments";
 import { authKit } from "./auth";
 import {
   deleteAgentRow,
@@ -89,6 +90,7 @@ export const create = mutation({
         now,
       );
     }
+    await readyStageDeployment(ctx, authUser, projectId, stageId);
 
     await ctx.db.patch(projectId, { updatedAt: now });
 
@@ -150,6 +152,9 @@ export const ensureDefault = mutation({
         });
         changed = true;
       }
+    }
+    if (!development) {
+      await readyStageDeployment(ctx, authUser, projectId, developmentId);
     }
     if (changed) await ctx.db.patch(projectId, { updatedAt: now });
 
@@ -230,6 +235,9 @@ export const initializeProduction = mutation({
         entry.kind !== "development",
     )) {
       await ctx.db.patch(stage._id, { isDefault: false, updatedAt: now });
+    }
+    if (!production) {
+      await readyStageDeployment(ctx, authUser, projectId, productionId);
     }
     await ctx.db.patch(projectId, { updatedAt: now });
 
