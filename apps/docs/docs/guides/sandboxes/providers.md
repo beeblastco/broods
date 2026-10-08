@@ -38,7 +38,7 @@ export const box = defineSandbox({
 });
 ```
 
-- MicroVM images come in sizes from 0.5 GB with 0.25 vCPU up to 8 GB with 4 vCPU. The image sets the machine, so `size` only changes what the dashboard shows.
+- Every MicroVM is the same machine: a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk. `size` and resource options do not change it, and the dashboard shows that machine.
 - A MicroVM lives at most 8 hours. A persistent reservation is recreated after that.
 - `restricted` behaves like `deny-all`, and `allowDomains` or `allowCidrs` are rejected. Under `deny-all` the managed workspace bucket stays reachable.
 - A workspace that brings its own bucket cannot be reached under `deny-all`, so the run is refused. Pair it with `allow-all`.
