@@ -53,6 +53,7 @@ export type OrgBootstrap = Infer<typeof orgBootstrapValidator>;
 interface ActiveAccount {
   account: Doc<"accounts">;
   role: OrgRole;
+  user: Doc<"users">;
 }
 
 /**
@@ -444,6 +445,14 @@ export async function getActiveAccountForUser(
   return active ? active.account : null;
 }
 
+/** The caller's account and user row together, for writes that record who made them. */
+export async function getActiveCaller(
+  ctx: QueryCtx,
+  requiredRole?: OrgRole,
+): Promise<ActiveAccount | null> {
+  return await activeAccountForCaller(ctx, requiredRole);
+}
+
 /**
  * The user's active org, created as "<name>'s Workspace" with an owner
  * membership on first sign-in, and whether its API account is still missing.
@@ -506,7 +515,7 @@ export async function resolveActiveAccount(
     .unique();
   if (!account) return null;
 
-  return { account: account, role: role };
+  return { account: account, role: role, user: user };
 }
 
 async function activeAccountForCaller(

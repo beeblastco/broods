@@ -8,7 +8,7 @@
  * `crons.ts`, which is the Convex platform cron registry.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -51,8 +51,15 @@ const cronDoc = v.object({
   _creationTime: v.number(),
 });
 
-// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it.
-const projectCronDoc = cronDoc.omit("lastRunId");
+// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it, and
+// the creator comes resolved so the list can draw a name and an avatar.
+const projectCronDoc = v.object({
+  ...cronDoc.omit("lastRunId").fields,
+  creator: v.optional(
+    v.object({ name: v.string(), avatarUrl: v.optional(v.string()) }),
+  ),
+});
+type ProjectCron = Infer<typeof projectCronDoc>;
 
 const cronRunDoc = v.object({
   ...cronRunsFields,
@@ -84,7 +91,11 @@ export const completeRun = internalMutation({
  * @returns the public cron record
  */
 export const create = internalMutation({
-  args: { accountId: v.id("accounts"), input: v.record(v.string(), v.any()) },
+  args: {
+    accountId: v.id("accounts"),
+    input: v.record(v.string(), v.any()),
+    createdBy: v.optional(v.id("users")),
+  },
   returns: v.any(),
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     const normalized = normalizeCreateCronInput(args.input);
@@ -101,6 +112,7 @@ export const create = internalMutation({
       scheduleExpression: normalized.scheduleExpression,
       timezone: normalized.timezone,
       status: normalized.status ?? "active",
+      createdBy: args.createdBy,
       createdAt: now,
       updatedAt: now,
     });
@@ -299,7 +311,7 @@ export const listPage = internalQuery({
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.array(projectCronDoc),
-  handler: async (ctx, args): Promise<Omit<Doc<"crons">, "lastRunId">[]> => {
+  handler: async (ctx, args): Promise<ProjectCron[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -314,7 +326,20 @@ export const listForProject = query({
 
     const crons = await cronsInProject(ctx, args.projectId, accountId);
 
-    return crons.map(({ lastRunId: _lastRunId, ...cron }) => cron);
+    return await Promise.all(
+      crons.map(async ({ lastRunId: _lastRunId, ...cron }) => {
+        const creator = cron.createdBy
+          ? await ctx.db.get(cron.createdBy)
+          : null;
+
+        return {
+          ...cron,
+          creator: creator
+            ? { name: creator.name, avatarUrl: creator.avatarUrl }
+            : undefined,
+        };
+      }),
+    );
   },
 });
 

@@ -40,9 +40,10 @@ interface Scheduled {
 }
 
 /**
- * The schedule in plain words: "Every hour", "Every day 09:00 UTC",
- * "Mondays 09:00 Europe/Amsterdam", "Once at Oct 9, 09:00". Anything the
- * words cannot carry falls back to the expression itself.
+ * The schedule in plain words: "Every hour", "Every day 09:00",
+ * "Mondays 09:00", "Once at Oct 9, 09:00". The zone is its own fact beside
+ * it, so the words never carry one. Anything the words cannot carry falls
+ * back to the expression itself.
  */
 export function describeSchedule(
   expression: string,
@@ -81,14 +82,14 @@ export function describeSchedule(
       timeZone: zone,
     });
 
-    return `Once at ${day}, ${clock} ${zone}`;
+    return `Once at ${day}, ${clock}`;
   }
   const [minute, hour, dayOfMonth, month, dayOfWeek] =
     schedule.cronspec.split(" ");
   if (!/^\d+$/.test(minute ?? "") || !/^\d+$/.test(hour ?? "")) {
     return expression;
   }
-  const clock = `${hour!.padStart(2, "0")}:${minute!.padStart(2, "0")} ${zone}`;
+  const clock = `${hour!.padStart(2, "0")}:${minute!.padStart(2, "0")}`;
   if (dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
     return `Every day ${clock}`;
   }
@@ -100,13 +101,20 @@ export function describeSchedule(
 
 /**
  * When the job fires next, or null while paused, after a one-time fire, or
- * for an expression the scheduler would reject. An interval counts from the
- * last fire, as the scheduler does, or from creation before the first. A
- * one-time job whose time passed while it was paused dispatches on resume,
- * so until its fire lands it reads as due now.
+ * for an expression the scheduler would reject.
  */
 export function nextRunAt(cron: Scheduled, now: number): number | null {
-  if (cron.status !== "active") return null;
+  return cron.status === "active" ? nextFireAt(cron, now) : null;
+}
+
+/**
+ * When the schedule would fire next if the job were active, so a paused job
+ * can still say when it would run. An interval counts from the last fire, as
+ * the scheduler does, or from creation before the first. A one-time job
+ * whose time passed unfired dispatches on resume, so it reads as due now;
+ * once fired it has no next time.
+ */
+export function nextFireAt(cron: Scheduled, now: number): number | null {
   let schedule: ReturnType<typeof translateScheduleExpression>;
   try {
     schedule = translateScheduleExpression(

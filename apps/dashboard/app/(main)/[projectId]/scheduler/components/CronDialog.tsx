@@ -75,7 +75,7 @@ export function CronDialog({
   const [scheduleExpression, setScheduleExpression] = useState(
     cron?.scheduleExpression ?? "",
   );
-  const [timezone, setTimezone] = useState(cron?.timezone ?? "");
+  const [timezone, setTimezone] = useState(cron?.timezone ?? "UTC");
   const [status, setStatus] = useState<"active" | "paused">(
     cron?.status ?? "active",
   );
@@ -89,6 +89,7 @@ export function CronDialog({
     name.trim().length > 0 &&
     agentId.length > 0 &&
     prompt.trim().length > 0 &&
+    timezone.trim().length > 0 &&
     scheduleValid &&
     !pending;
 
@@ -110,7 +111,7 @@ export function CronDialog({
           input: prompt.trim(),
           conversationKey: conversationKey.trim() || undefined,
           scheduleExpression: scheduleExpression.trim(),
-          timezone: timezone.trim() || undefined,
+          timezone: timezone.trim(),
           status: status,
           description: description.trim() || undefined,
         });
@@ -122,7 +123,7 @@ export function CronDialog({
           input: prompt.trim(),
           conversationKey: conversationKey.trim() || undefined,
           scheduleExpression: scheduleExpression.trim(),
-          timezone: timezone.trim() || undefined,
+          timezone: timezone.trim(),
           status: status,
           description: description.trim() || undefined,
         });
@@ -272,13 +273,13 @@ export function CronDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1">
               <Label htmlFor="cj-tz" variant="muted" className="text-xs">
-                Timezone (optional)
+                Timezone
               </Label>
               <Input
                 id="cj-tz"
                 value={timezone}
                 onChange={(e) => setTimezone(e.target.value)}
-                placeholder="Europe/Amsterdam"
+                placeholder="UTC"
               />
             </div>
 
