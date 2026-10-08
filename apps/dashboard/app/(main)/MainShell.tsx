@@ -116,7 +116,10 @@ export function MainShell({
   // The reporter is the first child of both fragments, one tree position, so
   // it survives the auth flip instead of registering every observer twice.
   // Mounted before the gates: LCP usually lands while this is still loading.
-  if (isLoading) {
+  // The proxy already checked the session AuthKit mounts with, and Convex
+  // holds every query until it has the token, so the shell need not wait for
+  // Convex to confirm it: that is a round trip off every cold load.
+  if (isLoading && !user) {
     return (
       <>
         <PerfReporter />
@@ -127,7 +130,7 @@ export function MainShell({
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isLoading && !isAuthenticated) {
     return null;
   }
 
