@@ -285,7 +285,7 @@ The Container API only answers inside a Durable Object, so `cloudflare-executor.
 
 - Live daemons are held in memory in core, keyed per record, and mirrored to Convex for the dashboard Instances list. A heartbeat every 60 s marks a quiet computer offline.
 - One daemon holds a record. A second is closed with `4423` and a reason naming the holder's host; `--force` replaces the holder, which gets `4409`. Bad credentials close with `4401`, an unknown sandbox name with `4404`, a malformed frame with `4400`.
-- The socket accepts a login-derived stage ticket, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key.
+- The socket accepts a stage ticket minted from a `broods login` token, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key, and never the ticket the dashboard mints for any org member: only a login-minted ticket carries `sandboxWrite`, because `broods login` requires an org owner or admin. A ticket claims its own stage's record of that name, else an account-level one, never another stage's.
 - Frames are capped at 4 MiB. A computer action has 30 s, an MCP call 60 s, and a `bash` call its timeout plus 5 s.
 - Validation rejects `persistent`, `size`, `snapshot` and any network mode other than `allow-all`, and a machine cannot back a workspace.
 
