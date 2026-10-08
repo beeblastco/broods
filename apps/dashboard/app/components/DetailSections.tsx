@@ -1,6 +1,8 @@
-import { CopyRow } from "@/app/components/CopyButton";
+import { CopyButton, CopyRow } from "@/app/components/CopyButton";
+import { JsonView, type JsonValue } from "@/app/components/JsonView";
 import { cn } from "@/app/lib/utils";
 import { ChevronRight } from "lucide-react";
+import { useMemo } from "react";
 
 /** One line in a Details section. Values read in mono (ids, counts) unless `words`. */
 export interface DetailRow {
@@ -49,7 +51,11 @@ export function DetailFields({
   );
 }
 
-/** Collapsible payload: the header row over the value, pre-wrapped. Starts expanded when `open`. */
+/**
+ * Collapsible payload: the header row over the value, JSON as a folding code
+ * view and anything else pre-wrapped, with a copy button in the corner. Starts
+ * expanded when `open`.
+ */
 export function DetailPayload({
   label,
   open,
@@ -61,13 +67,28 @@ export function DetailPayload({
   summary: string;
   value: string;
 }): React.JSX.Element {
+  // Parsing a large payload is the expensive part; the parent re-renders on
+  // every stream message while a run is live.
+  const json = useMemo(() => parseJson(value), [value]);
+
   return (
     <details className="group/detail" open={open}>
       <SectionSummary label={label} summary={summary} />
-      {/* wrap-anywhere, unlike wrap-break-word, also lowers the min-content width. */}
-      <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere px-3 pb-3 text-xs leading-relaxed text-foreground/90">
-        {value}
-      </pre>
+      <div className="relative mx-2 mb-2">
+        {json === undefined ? (
+          // wrap-anywhere, unlike wrap-break-word, also lowers the min-content width.
+          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere py-1 pl-1 pr-8 text-xs leading-relaxed text-foreground/90">
+            {value}
+          </pre>
+        ) : (
+          <div className="max-h-[50vh] overflow-auto rounded-md bg-code-background py-2 pl-1 pr-8 text-xs leading-relaxed">
+            <JsonView value={json} />
+          </div>
+        )}
+        <div className="absolute right-1 top-1">
+          <CopyButton value={value} label={label.toLowerCase()} />
+        </div>
+      </div>
     </details>
   );
 }
@@ -88,4 +109,16 @@ function SectionSummary({
       </span>
     </summary>
   );
+}
+
+/** The payload as JSON when it is an object or array, otherwise undefined. */
+function parseJson(text: string): JsonValue | undefined {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    const parsed: JsonValue = JSON.parse(trimmed);
+    return parsed;
+  } catch {
+    return undefined;
+  }
 }
