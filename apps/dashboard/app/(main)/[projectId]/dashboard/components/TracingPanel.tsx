@@ -738,6 +738,7 @@ export function TracingPanel({
         window={timeWindow}
         onWindowChange={setTimeWindow}
         points={points}
+        marker={selectedGroup?.root.startTimeMs ?? null}
         now={now}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
