@@ -9,12 +9,9 @@ const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 
 // Per-call ceilings differ by provider. The lambda provider runs an AWS Lambda
 // MicroVM: a single blocking (synchronous) exec is bounded by the harness request
-// budget (harness-processing timeout, ~10 min), and memory is the MicroVM size,
-// capped at the 8 GB largest size. Detached background jobs are not bounded here.
-// They run inside the long-lived VM (up to its 8 h max lifetime). The other
-// persistent providers (sandbox/e2b/daytona) are operator-sized (no memory max here).
+// budget (harness-processing timeout, ~10 min). Detached background jobs are not
+// bounded here. They run inside the long-lived VM (up to its 8 h max lifetime).
 const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
-const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
 const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 
 // Reserved (long-lived) sandbox lifecycle defaults. A reserved sandbox stays
@@ -41,8 +38,6 @@ export interface WorkspaceSandboxLimits {
   defaultTimeoutSeconds: number;
   defaultOutputLimitBytes: number;
   maxTimeoutSeconds: number;
-  // Undefined => no harness-imposed memory ceiling (operator-sized providers).
-  maxMemoryLimitMb?: number;
   maxOutputLimitBytes: number;
 }
 
@@ -77,10 +72,9 @@ export function workspaceNamespacePrefix(namespace: string): string {
 
 /**
  * Per-call sandbox limits for a provider. Defaults and output caps are universal
- * (they protect the harness runtime); the timeout/memory *maxima* are provider-aware
- * because lambda (MicroVM) caps memory at the 8 GB largest size, while the other
- * persistent providers are operator-sized. Output truncation always applies (output
- * is read back into the harness regardless of provider).
+ * (they protect the harness runtime); the timeout maximum is provider-aware. Output
+ * truncation always applies (output is read back into the harness regardless of
+ * provider).
  */
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
@@ -105,14 +99,6 @@ export function workspaceSandboxLimits(
           "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
           PERSISTENT_MAX_TIMEOUT_SECONDS,
         ),
-    ...(isLambda
-      ? {
-          maxMemoryLimitMb: positiveIntegerEnv(
-            "WORKSPACE_SANDBOX_LAMBDA_MAX_MEMORY_LIMIT_MB",
-            LAMBDA_MAX_MEMORY_LIMIT_MB,
-          ),
-        }
-      : {}),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,

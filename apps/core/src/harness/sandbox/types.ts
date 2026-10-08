@@ -61,7 +61,6 @@ export interface SandboxExecutorConfig {
   runtimes?: SandboxRuntime[];
   network?: SandboxNetworkConfig;
   timeout?: number;
-  memoryLimit?: number;
   outputLimitBytes?: number;
   // Reserve a long-lived sandbox instead of create-and-destroy per call.
   // Persistent runs must pass a stable request.reservationKey, or request.namespace

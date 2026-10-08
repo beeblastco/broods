@@ -50,7 +50,6 @@ export const DEFAULT_TIMEOUT_SECONDS = 30;
 export const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 export const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
-export const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
@@ -110,7 +109,6 @@ export interface SandboxConfig {
   onCreate?: string[];
   onResume?: string[];
   timeout?: number;
-  memoryLimit?: number;
   outputLimitBytes?: number;
   envVars?: Record<string, undefined | string>;
   // Provider knobs; `docker: boolean` is the sandbox provider's only typed one.
@@ -119,7 +117,6 @@ export interface SandboxConfig {
 
 export interface WorkspaceSandboxLimits {
   maxTimeoutSeconds: number;
-  maxMemoryLimitMb?: number;
   maxOutputLimitBytes: number;
 }
 
@@ -143,14 +140,6 @@ export function workspaceSandboxLimits(
           "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
           PERSISTENT_MAX_TIMEOUT_SECONDS,
         ),
-    ...(isLambda
-      ? {
-          maxMemoryLimitMb: positiveIntegerEnv(
-            "WORKSPACE_SANDBOX_LAMBDA_MAX_MEMORY_LIMIT_MB",
-            LAMBDA_MAX_MEMORY_LIMIT_MB,
-          ),
-        }
-      : {}),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,
@@ -459,11 +448,6 @@ function assertResourceLimits(
     limits.maxTimeoutSeconds,
   );
   assertOptionalPositiveInteger(
-    config.memoryLimit,
-    "config.memoryLimit",
-    limits.maxMemoryLimitMb,
-  );
-  assertOptionalPositiveInteger(
     config.outputLimitBytes,
     "config.outputLimitBytes",
     limits.maxOutputLimitBytes,
@@ -493,7 +477,7 @@ function assertStatelessProviderFields(
   provider: SandboxProvider,
 ): void {
   if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
-  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+  for (const field of ["persistent", "size", "snapshot"]) {
     if (config[field] !== undefined) {
       throw new ClientError(
         `config.${field} does not apply to the ${provider} provider`,
@@ -529,9 +513,6 @@ function buildNormalizedConfig(
       : {}),
     ...(config.timeout !== undefined
       ? { timeout: config.timeout as number }
-      : {}),
-    ...(config.memoryLimit !== undefined
-      ? { memoryLimit: config.memoryLimit as number }
       : {}),
     ...(config.outputLimitBytes !== undefined
       ? { outputLimitBytes: config.outputLimitBytes as number }
