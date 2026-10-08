@@ -31,6 +31,7 @@ export const create = mutation({
     projectId: v.id("projects"),
     stageId: v.id("stages"),
     name: v.string(),
+    description: v.optional(v.string()),
   },
   returns: v.object({
     _id: v.id("deployKeys"),
@@ -39,7 +40,7 @@ export const create = mutation({
   }),
   handler: async (
     ctx,
-    { projectId, stageId, name },
+    { projectId, stageId, name, description },
   ): Promise<{ _id: Id<"deployKeys">; token: string; keyHint: string }> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
@@ -74,10 +75,17 @@ export const create = mutation({
       accountId: account._id,
       projectId: projectId,
       stageId: stageId,
-      name: name.trim() || "Project key",
+      name: name.trim() || "API key",
+      description: description?.trim() || undefined,
       keyHash: keyHash,
       keyHint: deployKeyHint(token),
       status: "active",
+      createdBy: (
+        await ctx.db
+          .query("users")
+          .withIndex("by_authId", (q) => q.eq("authId", user.id))
+          .unique()
+      )?._id,
       createdAt: now,
       updatedAt: now,
     });

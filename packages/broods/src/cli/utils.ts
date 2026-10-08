@@ -26,7 +26,7 @@ const DASHBOARD_LOGIN_TIMEOUT =
   "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
   "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
   "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
-  "cliAuth Convex functions or no active API account (Settings -> API Access).";
+  "cliAuth Convex functions or no active API account (Organization settings -> API access).";
 
 /** Options whose value is a separate token, so both have to leave a prompt. */
 const VALUE_OPTIONS = new Set([

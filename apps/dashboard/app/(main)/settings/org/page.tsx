@@ -1,6 +1,7 @@
 "use client";
 
 import { ORG_TABS, pickTab } from "@/app/lib/navigation";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { useSearchParams } from "next/navigation";
@@ -33,7 +34,12 @@ export default function OrgSettingsPage(): React.JSX.Element {
   return (
     <div className="flex h-full min-w-0 flex-col overflow-auto">
       <h1 className="sr-only">{tab.label}</h1>
-      <div className="mx-auto w-full max-w-2xl px-6 pt-6 pb-12">
+      <div
+        className={cn(
+          "mx-auto w-full px-6 pt-6 pb-12",
+          tab.id === "api-access" ? "max-w-6xl" : "max-w-2xl",
+        )}
+      >
         {org === undefined ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : org === null ? (

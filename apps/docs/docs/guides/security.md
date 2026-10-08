@@ -50,9 +50,9 @@ The runtime key is the one key meant to sit in a frontend, so it is limited:
 - `continue` with it only reopens conversations the direct API started, never a channel conversation.
 - It cannot open logs, traces or the machine socket.
 
-The account key is shown once when your organization's API account is provisioned. Rotate it under Org Settings, API Access. Rotation breaks everything holding the old one.
+The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access. Rotation breaks everything holding the old one.
 
-A project key is created per stage under Project Settings, Deploy, and shown once. See [Deploying from CI](deploying.md#deploying-from-ci).
+A project key is an API key created for one stage under Project settings, Keys, and shown once. See [Deploying from CI](deploying.md#deploying-from-ci).
 
 ## Roles
 
