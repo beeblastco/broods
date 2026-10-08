@@ -339,14 +339,19 @@ export const updatePolicy = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
+    const document =
+      args.mode !== undefined ? { ...policy.document, mode: args.mode } : null;
+    // An audit policy grants nothing, so its rules passed the ceiling for free;
+    // switching it to enforce is where they would start to count.
+    if (document?.mode === "enforce" && policy.document.mode !== "enforce") {
+      await assertPolicyWithinReach(ctx, caller, policy, document);
+    }
     await ctx.db.patch(policy._id, {
       ...(args.name !== undefined ? { name: args.name.trim() } : {}),
       ...(args.description !== undefined
         ? { description: args.description?.trim() || undefined }
         : {}),
-      ...(args.mode !== undefined
-        ? { document: { ...policy.document, mode: args.mode } }
-        : {}),
+      ...(document ? { document: document } : {}),
       updatedAt: Date.now(),
     });
 
@@ -418,11 +423,8 @@ export const addRule = mutation({
       ...policy.document,
       rules: [...policy.document.rules, rule],
     };
-    const orgId = orgIdOf(ctx, caller.account);
-    if (orgId && dashboardAction && rule.effect === "allow") {
-      await assertGrantsWithinReach(ctx, orgId, caller.user, [
-        scoped(policy, document),
-      ]);
+    if (dashboardAction && rule.effect === "allow") {
+      await assertPolicyWithinReach(ctx, caller, policy, document);
     }
     await ctx.db.patch(policy._id, {
       document: document,
@@ -439,11 +441,19 @@ export const removeRule = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
+    const document = {
+      ...policy.document,
+      rules: policy.document.rules.filter((rule) => rule.id !== args.ruleId),
+    };
+    // Dropping a deny can let an allow the deny was masking through.
+    const dropped = policy.document.rules.find(
+      (rule) => rule.id === args.ruleId,
+    );
+    if (dropped?.effect === "deny") {
+      await assertPolicyWithinReach(ctx, caller, policy, document);
+    }
     await ctx.db.patch(policy._id, {
-      document: {
-        ...policy.document,
-        rules: policy.document.rules.filter((rule) => rule.id !== args.ruleId),
-      },
+      document: document,
       updatedAt: Date.now(),
     });
 
@@ -702,16 +712,46 @@ async function editablePolicy(
   return policy;
 }
 
-/** A policy row with the document it would hold, as the evaluator reads it. */
-function scoped(
+/**
+ * The document a policy would hold grants nothing new the caller lacks, alone
+ * or in any role that holds it: a deny here can mask another policy's allow.
+ */
+async function assertPolicyWithinReach(
+  ctx: MutationCtx,
+  caller: ActiveAccount,
   policy: Doc<"agentPolicies">,
   document: PolicyDocument,
-): ScopedPolicy {
-  return {
+): Promise<void> {
+  const orgId = orgIdOf(ctx, caller.account);
+  if (!orgId) return;
+  const edited: ScopedPolicy = {
     document: document,
     projectId: policy.projectId,
     stageId: policy.stageId,
   };
+  const holders = (await orgRoles(ctx, orgId)).filter((role) =>
+    role.policyIds.includes(policy._id),
+  );
+  const alongside = [
+    [],
+    ...(await Promise.all(
+      holders.map((role) =>
+        activePolicies(
+          ctx,
+          role.policyIds.filter((id) => id !== policy._id),
+        ),
+      ),
+    )),
+  ];
+  for (const others of alongside) {
+    await assertGrantsWithinReach(
+      ctx,
+      orgId,
+      caller.user,
+      [...others, edited],
+      [...others, policy],
+    );
+  }
 }
 
 async function assertOwnedPolicies(

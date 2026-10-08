@@ -238,7 +238,10 @@ export const mintSessionByAccount = internalMutation({
     );
     if (!stage) return null;
 
-    return await mintStageSessionTicket(ctx, projectDoc._id, stage._id);
+    // A `broods login` token resolves only while its user is an org owner or
+    // admin, the role the dashboard requires to control sandboxes, so this
+    // ticket may claim the stage's machine sandboxes.
+    return await mintStageSessionTicket(ctx, projectDoc._id, stage._id, true);
   },
 });
 

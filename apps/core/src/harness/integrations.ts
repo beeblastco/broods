@@ -792,7 +792,7 @@ async function handleHttpRequest(
   // the client. Only a member's stage ticket qualifies: the embeddable runtime
   // key sits in frontends, and logs carry every user's chats and tool payloads.
   if (isObservabilityScopePath(request.path)) {
-    if (auth?.kind !== "deployment" || auth.stageTicket !== true) {
+    if (auth?.kind !== "deployment" || !auth.stageTicket) {
       return unauthorizedResponse();
     }
 
@@ -2325,7 +2325,7 @@ function admitStageCredential(
   }
   // publicAccess opens an agent to the frontend key. A member's ticket
   // already reads every trace in the stage, so it runs private agents too.
-  if (auth.stageTicket === true) return false;
+  if (auth.stageTicket) return false;
   if (agent.config.publicAccess !== true) {
     throw new DirectForbiddenError(
       `Agent ${agent.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,

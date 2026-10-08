@@ -133,3 +133,42 @@ describe("authorize", () => {
     );
   });
 });
+
+describe("authorize with a stage-pinned role", () => {
+  const pinned: ApiPrincipal = {
+    ...principalWith({
+      version: 1,
+      rules: [{ id: "all", effect: "allow", actions: ["agents:write"] }],
+    }),
+    projectId: "project-1",
+    stageId: "stage-dev",
+  };
+
+  test("allows a resource on its own stage", () => {
+    expect(
+      authorize(pinned, "agents:write", {
+        type: "agents",
+        id: "agent-dev",
+        projectId: "project-1",
+        stageId: "stage-dev",
+      }).allow,
+    ).toBe(true);
+  });
+
+  test("denies another stage, another project, and unscoped resources", () => {
+    const outside = [
+      { projectId: "project-1", stageId: "stage-prod" },
+      { projectId: "project-2", stageId: "stage-dev" },
+      {},
+    ];
+    for (const scope of outside) {
+      const decision = authorize(pinned, "agents:write", {
+        type: "agents",
+        id: "agent-1",
+        ...scope,
+      });
+      expect(decision.allow).toBe(false);
+      expect(decision.matchedRuleIds).toEqual([]);
+    }
+  });
+});
