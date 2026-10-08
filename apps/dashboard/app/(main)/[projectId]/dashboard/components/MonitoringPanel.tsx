@@ -1,5 +1,6 @@
 "use client";
 
+import { CopyButton } from "@/app/components/CopyButton";
 import {
   DetailFields,
   DetailPayload,
@@ -91,6 +92,10 @@ export function MonitoringPanel({
     // Debug lines stay on the server until the debug filter asks for them.
     minLevel: level === "DEBUG" ? "DEBUG" : "INFO",
   });
+
+  // The CLI line that sends a first run to this stage, shown while it has no
+  // logs. AGENT stands in for the agent name; <agent> would be a shell redirect.
+  const firstRunCommand = `broods run AGENT "hello"${stageSlug ? ` --stage ${stageSlug}` : ""}`;
 
   const fromMs = toEpochMs(fromTime);
   const toMs = toEpochMs(toTime);
@@ -228,6 +233,15 @@ export function MonitoringPanel({
                   {entries.length === 0
                     ? emptyStreamMessage(history, error, "logs", "30 days")
                     : "No logs match the current filters."}
+                  {entries.length === 0 && history === "loaded" && (
+                    <div className="mt-2 flex items-center justify-center gap-1">
+                      <code className="font-mono text-foreground">
+                        {firstRunCommand}
+                      </code>
+                      <CopyButton value={firstRunCommand} label="command" />
+                      <span>Replace AGENT with your agent&apos;s name.</span>
+                    </div>
+                  )}
                 </td>
               </tr>
             )}

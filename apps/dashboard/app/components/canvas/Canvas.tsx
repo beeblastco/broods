@@ -14,6 +14,7 @@ import {
   type CanvasNodeMenuEntries,
 } from "@/app/components/canvas/CanvasNodeMenu";
 import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
+import { CanvasKeyReady } from "@/app/components/canvas/CanvasKeyReady";
 import { CanvasNoticeStrip } from "@/app/components/canvas/CanvasNotice";
 import {
   CanvasRefusal,
@@ -1659,8 +1660,10 @@ function CanvasInner({
           <CanvasControls onTidy={tidyLayout} />
         </Panel>
         {/* One strip at the top centre for everything the canvas raises: a
-            refused connection, a refused drop, a save that failed. */}
+            refused connection, a refused drop, a save that failed, a new
+            project's key. */}
         <CanvasNoticeStrip>
+          <CanvasKeyReady projectId={projectId} stageId={stageId} />
           <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
           <CanvasDropPreview drop={drop} />
           <CanvasSaveStatus
