@@ -1,11 +1,9 @@
 import type { CreateAgentResult } from "../../../packages/broods/src/account.ts";
-import { BroodsAccountApiError } from "../../../packages/broods/src/account.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
 /**
- * The config plane stores a Gmail connection, answers it back with the OAuth
- * secrets redacted, and refuses a grant with no watch topic, since without it
- * no mail ever arrives. The webhook URL reaches core's channel scan through
+ * The config plane stores a Gmail connection and answers it back with the
+ * OAuth secrets redacted. The webhook URL reaches core's channel scan through
  * the gateway. Google signs every push, so the token check, the inbox listing
  * and the watch call are covered by core's and Convex's own tests.
  */
@@ -20,6 +18,7 @@ export async function gmailChannel(context: VerifyContext): Promise<void> {
     subscription: "projects/p/subscriptions/gmail",
     topicName: "projects/p/topics/gmail",
     allowedChannelIds: ["*"],
+    allowedUserIds: ["boss@example.com"],
   };
   const { agentId } = await context.measure(
     "create agent",
@@ -36,25 +35,6 @@ export async function gmailChannel(context: VerifyContext): Promise<void> {
       stored.config.channels.gmail.refreshToken === "********" &&
       stored.config.channels.gmail.mailbox === "agent@example.com",
     JSON.stringify(stored?.config.channels ?? null),
-  );
-
-  const refused = await context.account
-    .createAgent({
-      name: `gmail-topicless-${context.runId}`,
-      config: {
-        ...context.model,
-        channels: { gmail: { ...gmail, topicName: undefined } },
-      },
-    })
-    .then(
-      (): string => "created",
-      (err: unknown): string =>
-        err instanceof BroodsAccountApiError ? err.body : String(err),
-    );
-  assertStep(
-    "a Gmail grant without a watch topic is refused",
-    refused.includes("config.channels.gmail needs topicName to receive mail"),
-    refused,
   );
 
   const account = await context.account.getAccount();

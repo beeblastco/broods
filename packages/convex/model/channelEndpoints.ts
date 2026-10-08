@@ -1,10 +1,10 @@
 /**
  * Single writer for the `channelEndpoints` projection: one small row per
- * (agent, channel, deployment) that configures a bot token, so the forwarder's
- * standing `listConnections` subscription reads a few rows keyed by platform
- * instead of every deployment plus every agent's encrypted config blob. A
- * Gmail channel has a row too, its refresh token in the bot token's place, so
- * `channel/gmail.ts` can start and renew its watch.
+ * (agent, channel, deployment) that configures a channel's credentials, so the
+ * forwarder's standing `listConnections` subscription reads a few rows keyed by
+ * platform instead of every deployment plus every agent's encrypted config
+ * blob. Most channels project their bot token; Gmail projects what
+ * `channel/gmail.ts` needs to start and renew its watch.
  *
  * Every seam that changes an agent's channels, its deployment, or its stage
  * calls `refreshAccountChannelEndpoints`; the hourly reconcile in
@@ -12,95 +12,53 @@
  * instead of leaving a bot silently connected or absent.
  */
 
-import { makeFunctionReference } from "convex/server";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
 import type { AccountCipher } from "./envelope";
 import { agentsInStage } from "./projectScope";
 
-// Named by path rather than through `internal`: the forwarders typecheck this
-// file, and the generated api would drag every Convex module in with it.
-const watchGmail = makeFunctionReference<
-  "action",
-  { rowId: Id<"channelEndpoints"> },
-  null
->("channel/gmail:watch");
+/** The config fields a channel projects, all required; every other channel projects its bot token. */
+const PROJECTED_KEYS: Record<string, readonly string[] | undefined> = {
+  gmail: ["clientId", "clientSecret", "mailbox", "refreshToken", "topicName"],
+};
+const BOT_TOKEN_KEYS = ["botToken"] as const;
 
-/**
- * What a forwarder needs to connect as one channel: its token, and for Matrix
- * the homeserver. A Gmail channel's token is its refresh token, and `gmail`
- * carries the rest of what renewing its watch needs.
- */
-type ChannelCredentials = Pick<
-  DesiredEndpoint,
-  "apiUrl" | "botToken" | "gmail"
->;
+/** What a forwarder needs to connect as one channel: its secrets, and for Matrix the homeserver. */
+type ChannelCredentials = Pick<DesiredEndpoint, "apiUrl" | "secrets">;
 
 /** The slice of a decrypted agent config the projection reads. */
 interface ChannelsConfigView {
-  channels?: Record<string, ChannelConfigView | undefined>;
-}
-
-interface ChannelConfigView {
-  apiUrl?: unknown;
-  botToken?: unknown;
-  clientId?: unknown;
-  clientSecret?: unknown;
-  mailbox?: unknown;
-  refreshToken?: unknown;
-  topicName?: unknown;
+  channels?: Record<string, Record<string, unknown> | undefined>;
 }
 
 interface DesiredEndpoint {
   agentId: string;
   agentName: string;
   apiUrl?: string;
-  botToken: string;
   endpointId: string;
-  gmail?: GmailWatchTarget;
   platform: string;
+  secrets: Record<string, string>;
   webhookPath: string;
 }
 
-/** The Gmail watch fields a channel stores beside its refresh token. */
-export interface GmailWatchTarget {
-  clientId: string;
-  clientSecret: string;
-  mailbox: string;
-  topicName: string;
-}
-
-export async function channelEndpointBotToken(
+/** A projection row's decrypted secrets: `botToken`, or the fields in `PROJECTED_KEYS`. */
+export async function channelEndpointSecrets(
   row: Doc<"channelEndpoints">,
   cipher: AccountCipher,
-): Promise<string | null> {
+): Promise<Record<string, string>> {
   const decrypted = await cipher.decrypt("channelEndpoints:tokenCiphertext", {
     ciphertext: row.tokenCiphertext,
     iv: row.tokenIv,
     tag: row.tokenTag,
   });
-  const botToken = decrypted?.botToken;
+  const secrets: Record<string, string> = {};
+  for (const [key, value] of Object.entries(decrypted ?? {})) {
+    if (typeof value === "string" && value) secrets[key] = value;
+  }
 
-  return typeof botToken === "string" && botToken ? botToken : null;
-}
-
-/** A Gmail row's watch target with its refresh token, or null when it has none. */
-export async function channelEndpointGmailWatch(
-  row: Doc<"channelEndpoints">,
-  cipher: AccountCipher,
-): Promise<(GmailWatchTarget & { refreshToken: string }) | null> {
-  const decrypted = await cipher.decrypt("channelEndpoints:tokenCiphertext", {
-    ciphertext: row.tokenCiphertext,
-    iv: row.tokenIv,
-    tag: row.tokenTag,
-  });
-  const target = gmailWatchTarget(decrypted ?? {});
-  const refreshToken = decrypted?.botToken;
-
-  return target && typeof refreshToken === "string" && refreshToken
-    ? { ...target, refreshToken: refreshToken }
-    : null;
+  return secrets;
 }
 
 /**
@@ -132,10 +90,10 @@ export async function refreshAccountChannelEndpoints(
     const current = existingByKey.get(endpointKey(entry));
     existingByKey.delete(endpointKey(entry));
     if (current?.digest === digest) continue;
-    const encrypted = await cipher.encrypt("channelEndpoints:tokenCiphertext", {
-      botToken: entry.botToken,
-      ...entry.gmail,
-    });
+    const encrypted = await cipher.encrypt(
+      "channelEndpoints:tokenCiphertext",
+      entry.secrets,
+    );
     const fields = {
       accountId: accountId,
       agentId: entry.agentId,
@@ -157,8 +115,8 @@ export async function refreshAccountChannelEndpoints(
       rowId = await ctx.db.insert("channelEndpoints", fields);
     }
     // A new or changed mailbox starts its watch now; the daily cron renews it.
-    if (entry.gmail) {
-      await ctx.scheduler.runAfter(0, watchGmail, {
+    if (entry.platform === "gmail") {
+      await ctx.scheduler.runAfter(0, internal.channel.gmail.watch, {
         rowId: rowId,
       });
     }
@@ -192,7 +150,7 @@ export function webhookPath(
   return `/v1/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
 }
 
-/** Every channel with a bot token in one agent's decrypted config, keyed by channel. */
+/** Every channel with all its projected secrets in one agent's decrypted config, keyed by channel. */
 async function agentChannelCredentials(
   agent: Doc<"agents">,
   cipher: AccountCipher,
@@ -208,15 +166,13 @@ async function agentChannelCredentials(
     tag: agent.encryptionTag,
   })) as ChannelsConfigView | null;
   for (const [platform, channel] of Object.entries(config?.channels ?? {})) {
-    const gmail =
-      platform === "gmail" && channel ? gmailWatchTarget(channel) : null;
-    const botToken = gmail ? channel?.refreshToken : channel?.botToken;
-    if (typeof botToken !== "string" || !botToken) continue;
-    const apiUrl = channel?.apiUrl;
+    if (!channel) continue;
+    const secrets = projectedSecrets(platform, channel);
+    if (!secrets) continue;
+    const apiUrl = channel.apiUrl;
     credentials.set(platform, {
       apiUrl: typeof apiUrl === "string" && apiUrl ? apiUrl : undefined,
-      botToken: botToken,
-      ...(gmail ? { gmail: gmail } : {}),
+      secrets: secrets,
     });
   }
 
@@ -246,15 +202,14 @@ async function desiredEndpoints(
     );
     for (const agent of agents) {
       const credentials = await agentChannelCredentials(agent, cipher);
-      for (const [platform, { apiUrl, botToken, gmail }] of credentials) {
+      for (const [platform, { apiUrl, secrets }] of credentials) {
         const entry: DesiredEndpoint = {
           agentId: agent._id,
           agentName: agent.name,
           apiUrl: apiUrl,
-          botToken: botToken,
           endpointId: deployment.endpointId,
-          ...(gmail ? { gmail: gmail } : {}),
           platform: platform,
+          secrets: secrets,
           webhookPath: webhookPath(
             accountId,
             deployment.endpointId,
@@ -276,9 +231,8 @@ async function endpointDigest(entry: DesiredEndpoint): Promise<string> {
     entry.agentId,
     entry.agentName,
     entry.apiUrl ?? null,
-    entry.botToken,
+    ...Object.values(entry.secrets),
     entry.endpointId,
-    entry.gmail ?? null,
     entry.platform,
     entry.webhookPath,
   ]);
@@ -292,33 +246,25 @@ async function endpointDigest(entry: DesiredEndpoint): Promise<string> {
     .join("");
 }
 
-function gmailWatchTarget(channel: ChannelConfigView): GmailWatchTarget | null {
-  const { clientId, clientSecret, mailbox, topicName } = channel;
-  if (
-    typeof clientId !== "string" ||
-    typeof clientSecret !== "string" ||
-    typeof mailbox !== "string" ||
-    typeof topicName !== "string" ||
-    !clientId ||
-    !clientSecret ||
-    !mailbox ||
-    !topicName
-  ) {
-    return null;
-  }
-
-  return {
-    clientId: clientId,
-    clientSecret: clientSecret,
-    mailbox: mailbox,
-    topicName: topicName,
-  };
-}
-
 function endpointKey(entry: {
   agentId: string;
   endpointId: string;
   platform: string;
 }): string {
   return `${entry.agentId}\u0000${entry.platform}\u0000${entry.endpointId}`;
+}
+
+/** The channel's projected secrets, or null when any is missing or empty. */
+function projectedSecrets(
+  platform: string,
+  channel: Record<string, unknown>,
+): Record<string, string> | null {
+  const secrets: Record<string, string> = {};
+  for (const key of PROJECTED_KEYS[platform] ?? BOT_TOKEN_KEYS) {
+    const value = channel[key];
+    if (typeof value !== "string" || !value) return null;
+    secrets[key] = value;
+  }
+
+  return secrets;
 }

@@ -64,10 +64,7 @@ describe("gmail channel adapter", () => {
     expect(String(first?.content)).toContain("Subject: Re: plan\nDate:");
     expect(String(first?.content)).toContain("First");
     expect(second?.eventId).toBe("gmail:m2");
-    const listing = calls.find((call) => call.url.includes("/messages?"));
-    expect(new URL(listing?.url ?? BASE_URL).searchParams.get("q")).toStartWith(
-      "in:inbox -from:me after:",
-    );
+    expect(listingQuery(calls)).toStartWith("in:inbox -from:me after:");
   });
 
   it("skips the mailbox's own mail and senders off the allow list", async (): Promise<void> => {
@@ -83,38 +80,30 @@ describe("gmail channel adapter", () => {
   });
 
   it("holds an allow list only for senders Gmail authenticated", async (): Promise<void> => {
-    stubGoogle([
-      mail(
-        "m1",
-        "t1",
-        "Alice <alice@example.com>",
-        "Real",
-        "mx.google.com; dkim=pass header.i=@example.com; spf=pass; dmarc=pass (p=NONE) header.from=example.com",
-      ),
+    const calls = stubGoogle([
+      mail("m1", "t1", "Alice <alice@example.com>", "Real", [
+        `Authentication-Results: mx.google.com; dkim=pass header.i=@example.com; spf=pass; dmarc=pass (p=NONE) header.from=example.com`,
+      ]),
       // Claims Alice, but Gmail saw the mail fail DMARC for her domain.
-      mail(
-        "m2",
-        "t2",
-        "Alice <alice@example.com>",
-        "Forged",
-        "mx.google.com; spf=fail; dmarc=fail (p=NONE) header.from=example.com",
-      ),
+      mail("m2", "t2", "Alice <alice@example.com>", "Forged", [
+        `Authentication-Results: mx.google.com; spf=fail; dmarc=fail (p=NONE) header.from=example.com`,
+      ]),
       // A verdict a sender wrote under a host that only starts like Gmail's.
-      mail(
-        "m4",
-        "t4",
-        "Alice <alice@example.com>",
-        "Spoofed verdict",
-        "mx.google.com.evil.example; dmarc=pass (p=NONE) header.from=example.com",
-      ),
+      mail("m4", "t4", "Alice <alice@example.com>", "Spoofed verdict", [
+        `Authentication-Results: mx.google.com.evil.example; dmarc=pass (p=NONE) header.from=example.com`,
+      ]),
       // Passes, but for a domain that only starts like hers.
-      mail(
-        "m3",
-        "t3",
-        "Alice <alice@example.co>",
-        "Lookalike",
-        "mx.google.com; dmarc=pass (p=NONE) header.from=example.com",
-      ),
+      mail("m3", "t3", "Alice <alice@example.co>", "Lookalike", [
+        `Authentication-Results: mx.google.com; dmarc=pass (p=NONE) header.from=example.com`,
+      ]),
+      // Fails DMARC, but the SPF mail-from it chose reads like a pass.
+      mail("m5", "t5", "Alice <alice@example.com>", "Mail-from trick", [
+        "Authentication-Results: mx.google.com; spf=pass (google.com: domain of dmarc=pass.header.from=example.com@evil.example designates 1.2.3.4 as permitted sender) smtp.mailfrom=dmarc=pass.header.from=example.com@evil.example; dmarc=fail (p=NONE) header.from=example.com",
+      ]),
+      // A quoted mail-from that smuggles a whole result of its own.
+      mail("m6", "t6", "Alice <alice@example.com>", "Quoted trick", [
+        'Authentication-Results: mx.google.com; spf=pass smtp.mailfrom="x; dmarc=pass header.from=example.com ;y"@evil.example; dmarc=fail header.from=example.com',
+      ]),
     ]);
     const parsed = await channel({
       allowedUserIds: new Set(["alice@example.com", "alice@example.co"]),
@@ -124,6 +113,9 @@ describe("gmail channel adapter", () => {
     expect(parsed.results.map((result) => result.message.eventId)).toEqual([
       "gmail:m1",
     ]);
+    expect(listingQuery(calls)).toEndWith(
+      " {from:alice@example.com from:alice@example.co}",
+    );
   });
 
   it("skips a message deleted before it was read and keeps the rest", async (): Promise<void> => {
@@ -177,6 +169,27 @@ describe("gmail channel adapter", () => {
       expect(reply?.url).toEndWith(autoSend ? "/messages/send" : "/drafts");
       expect(reply?.body).toContain('"threadId":"t1"');
     }
+  });
+
+  it("replies to the sender it checked, not to a Reply-To", async (): Promise<void> => {
+    const calls = stubGoogle([
+      mail("m1", "t1", "Alice <alice@example.com>", "Hi", [
+        "Reply-To: eve@evil.example",
+      ]),
+    ]);
+    const adapter = channel({ clientId: "reply-to" });
+    const parsed = await adapter.parse(push(MAILBOX, ""));
+    if (parsed.kind !== "batch" || !parsed.results[0]) {
+      throw new Error("expected a batch");
+    }
+
+    await adapter.actions(parsed.results[0].message).sendText("On it.");
+
+    const draft = calls.find((call) => call.url.endsWith("/drafts"));
+    const raw = JSON.parse(draft?.body ?? "{}").message?.raw ?? "";
+    const mime = Buffer.from(raw, "base64url").toString();
+    expect(mime).toMatch(/^To: .*alice@example\.com/m);
+    expect(mime).not.toContain("eve@evil.example");
   });
 });
 
@@ -235,17 +248,17 @@ function google(
   );
 }
 
-// One stored message. `verdict` is the Authentication-Results header Gmail
-// prepends on receipt, when it has one.
+// One stored message. `headers` go first, the way Gmail prepends its
+// Authentication-Results on receipt.
 function mail(
   id: string,
   threadId: string,
   from: string,
   text: string,
-  verdict?: string,
+  headers: string[] = [],
 ): Record<string, string> {
   const mime = [
-    ...(verdict ? [`Authentication-Results: ${verdict}`] : []),
+    ...headers,
     `From: ${from}`,
     `To: ${MAILBOX}`,
     "Subject: Re: plan",
@@ -262,6 +275,12 @@ function mail(
     internalDate: "1791460800000",
     raw: base64url(mime),
   };
+}
+
+function listingQuery(calls: Call[]): string | null {
+  const listing = calls.find((call) => call.url.includes("/messages?"));
+
+  return new URL(listing?.url ?? BASE_URL).searchParams.get("q");
 }
 
 function push(emailAddress: string, token: string): ChannelRequest {

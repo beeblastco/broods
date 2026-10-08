@@ -797,7 +797,7 @@ describe("agent rules", () => {
         },
       }),
     ).toThrow(
-      "config.channels.gmail needs serviceAccountEmail, subscription, topicName to receive mail",
+      "config.channels.gmail needs clientId, clientSecret, serviceAccountEmail, subscription, topicName, allowedUserIds to receive mail",
     );
     expect(() =>
       normalizeAgentConfig({
@@ -805,6 +805,15 @@ describe("agent rules", () => {
       }),
     ).toThrow(
       "config.channels.gmail.topicName must be projects/{project}/topics/{name}",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          gmail: { id: "gmail", autoSend: true, allowedUserIds: ["*"] },
+        },
+      }),
+    ).toThrow(
+      "config.channels.gmail.autoSend needs allowedUserIds that name senders, not *",
     );
   });
 

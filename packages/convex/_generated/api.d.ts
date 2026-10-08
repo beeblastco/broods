@@ -86,6 +86,7 @@ import type * as model_canvasEdgeRoutes from "../model/canvasEdgeRoutes.js";
 import type * as model_canvasFrames from "../model/canvasFrames.js";
 import type * as model_canvasLayout from "../model/canvasLayout.js";
 import type * as model_cascade from "../model/cascade.js";
+import type * as model_channelConnection from "../model/channelConnection.js";
 import type * as model_channelEndpoints from "../model/channelEndpoints.js";
 import type * as model_channelRules from "../model/channelRules.js";
 import type * as model_cliSync from "../model/cliSync.js";
@@ -247,6 +248,7 @@ declare const fullApi: ApiFromModules<{
   "model/canvasFrames": typeof model_canvasFrames;
   "model/canvasLayout": typeof model_canvasLayout;
   "model/cascade": typeof model_cascade;
+  "model/channelConnection": typeof model_channelConnection;
   "model/channelEndpoints": typeof model_channelEndpoints;
   "model/channelRules": typeof model_channelRules;
   "model/cliSync": typeof model_cliSync;

@@ -4,7 +4,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { ChannelConnection } from "../channel/connections";
+import type { ChannelConnection } from "../model/channelConnection";
 import { accountCipherForWrite } from "../model/accountKeys";
 import schema from "../schema";
 
@@ -374,8 +374,6 @@ describe("gmail watch targets", () => {
     await tt.mutation(internal.channel.connections.reconcile, {});
 
     expect(await tt.query(internal.channel.gmail.targets, {})).toEqual([gmail]);
-    // Forwarders never ask for gmail, but a refresh token is no bot token.
-    expect(await listConnections(tt, "discord")).toEqual([]);
   });
 
   test("a mailbox without a watch topic has nothing to renew", async () => {

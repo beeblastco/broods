@@ -6543,7 +6543,7 @@ components:
             autoSend:
               type: boolean
               default: false
-              description: Send replies instead of leaving them as drafts.
+              description: Send replies instead of leaving them as drafts. Needs `allowedUserIds` that name senders, not ["*"].
             allowedChannelIds:
               type: array
               items:
@@ -6553,7 +6553,7 @@ components:
               type: array
               items:
                 type: string
-              description: Sender addresses allowed to trigger the agent. Everyone when omitted or set to ["*"].
+              description: Sender addresses allowed to trigger the agent. Required; ["*"] lets anyone in. A named sender also needs Gmail to have authenticated their domain.
             trace:
               type: string
               enum: [enabled, disabled]

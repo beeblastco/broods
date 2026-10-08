@@ -785,6 +785,7 @@ export const gmail = defineGmailConnection({
   subscription: "projects/p/subscriptions/gmail",
   topicName: "projects/p/topics/gmail",
   allowedChannelIds: ["*"],
+  allowedUserIds: ["boss@example.com"],
 });
 export const teams = defineTeamsConnection({
   appId: env("TEAMS_APP_ID"),
@@ -879,6 +880,7 @@ export const support = defineAgent({
         mailbox: "agent@example.com",
         topicName: "projects/p/topics/gmail",
         allowedChannelIds: ["*"],
+        allowedUserIds: ["boss@example.com"],
       },
       teams: {
         appTenantId: "tenant-1",
@@ -2761,6 +2763,7 @@ test("defineGmailChannel refuses a mailbox its connection does not read", () => 
     serviceAccountEmail: "push@project.iam.gserviceaccount.com",
     subscription: "projects/p/subscriptions/gmail",
     topicName: "projects/p/topics/gmail",
+    allowedUserIds: ["*"],
   });
 
   expect(

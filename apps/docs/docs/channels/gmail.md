@@ -66,21 +66,21 @@ The push token's audience defaults to the push endpoint, which is what Broods ch
 
 ## Configuration
 
-| Field                 | Required | Description                                                            |
-| --------------------- | -------- | ---------------------------------------------------------------------- |
-| `mailbox`             | yes      | the address the refresh token was granted for                          |
-| `clientId`            | yes      | the OAuth client id                                                    |
-| `clientSecret`        | yes      | the OAuth client secret                                                |
-| `refreshToken`        | yes      | the mailbox's refresh token, with `gmail.readonly` and `gmail.compose` |
-| `topicName`           | yes      | `projects/{project}/topics/{name}`, where the watch publishes          |
-| `subscription`        | yes      | `projects/{project}/subscriptions/{name}`, the push subscription       |
-| `serviceAccountEmail` | yes      | the service account the push subscription signs as                     |
-| `audience`            | no       | the push token audience, when it is not the webhook URL                |
-| `autoSend`            | no       | `true` sends replies instead of leaving drafts. Off by default         |
-| `allowedChannelIds`   | no       | the mailbox, or `["*"]`                                                |
-| `allowedUserIds`      | no       | sender addresses allowed to trigger the agent                          |
-| `trace`               | no       | `"enabled"` adds the dashboard trace link to replies                   |
-| `partition`           | no       | workspace folder split. See [Workspaces](../guides/workspaces.md)      |
+| Field                 | Required | Description                                                                          |
+| --------------------- | -------- | ------------------------------------------------------------------------------------ |
+| `mailbox`             | yes      | the address the refresh token was granted for                                        |
+| `clientId`            | yes      | the OAuth client id                                                                  |
+| `clientSecret`        | yes      | the OAuth client secret                                                              |
+| `refreshToken`        | yes      | the mailbox's refresh token, with `gmail.readonly` and `gmail.compose`               |
+| `topicName`           | yes      | `projects/{project}/topics/{name}`, where the watch publishes                        |
+| `subscription`        | yes      | `projects/{project}/subscriptions/{name}`, the push subscription                     |
+| `serviceAccountEmail` | yes      | the service account the push subscription signs as                                   |
+| `audience`            | no       | the push token audience, when it is not the webhook URL                              |
+| `autoSend`            | no       | `true` sends replies instead of leaving drafts. Needs a list of senders, not `["*"]` |
+| `allowedChannelIds`   | no       | the mailbox, or `["*"]`                                                              |
+| `allowedUserIds`      | yes      | sender addresses allowed to trigger the agent, or `["*"]` for anyone                 |
+| `trace`               | no       | `"enabled"` adds the dashboard trace link to replies                                 |
+| `partition`           | no       | workspace folder split. See [Workspaces](../guides/workspaces.md)                    |
 
 Rules for the mailbox go on a channel:
 
@@ -97,15 +97,16 @@ export const inbox = defineGmailChannel({
 - New inbox mail from anyone on `allowedUserIds`. Mail the mailbox sent itself is skipped. A `From` header is easy to forge, so with a list other than `["*"]` a sender also needs Gmail to have authenticated their domain: DMARC passing for it, or a DKIM signature from it. Mail from a domain with neither, including your own Workspace domain until DKIM is set up for it, is skipped.
 - Each Gmail thread is its own conversation, so a reply in the thread continues it.
 - The agent reads the sender, subject, date and plain-text body, with long bodies cut at 20,000 characters.
-- Replies go into the thread as drafts, or as sent mail with `autoSend: true`. Each reply the agent posts is its own draft.
+- Replies go into the thread as drafts, or as sent mail with `autoSend: true`. Each reply the agent posts is its own draft. A reply goes to the sender the allow list checked, never to a `Reply-To` address.
+- With a list of senders, the inbox search only asks Gmail for their mail, so mail from anyone else is never read.
 
 What does not:
 
 - No attachments in either direction. The agent is told how many arrived.
 - No typing indicator, reactions or chat commands.
-- A push reads mail from ten minutes before Gmail published it. One Pub/Sub redelivers more than a day late reads only the last day. One push reads at most 20 new messages; a larger burst logs a warning and the rest are left unread.
+- A push reads mail from ten minutes before Gmail published it. A push that Pub/Sub redelivers more than a day late reads only the last day. One push reads at most 20 new messages; a larger burst logs a warning and the rest are left unread.
 - One mailbox holds one watch, on one topic. Stages that share a mailbox share that topic, with one push subscription per stage's webhook URL. A mailbox removed from every agent keeps publishing until its watch lapses, within seven days.
 
-Email is untrusted input: anyone who can reach the mailbox can write to the agent. Keep `allowedUserIds` narrow, and leave `autoSend` off unless replies need no review.
+Email is untrusted input: anyone who can reach the mailbox can write to the agent. Keep `allowedUserIds` narrow, and leave `autoSend` off unless replies need no review. Broods refuses `autoSend` with `["*"]`, since the agent would then answer anyone automatically.
 
 See [Channels](index.md) for channel tools and records.

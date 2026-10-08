@@ -347,7 +347,10 @@ export type GmailConnectionInput = EnvRefString<
     | "topicName"
   >
 > &
-  ConnectionIdentityInput;
+  ConnectionIdentityInput & {
+    /** Sender addresses allowed to trigger the agent. `["*"]` lets anyone in. */
+    allowedUserIds: readonly string[];
+  };
 
 export type GitHubConnectionInput = EnvRefString<
   RequiredChannelKeys<

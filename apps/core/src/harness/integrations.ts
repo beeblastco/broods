@@ -2760,6 +2760,30 @@ function createGoogleChatChannelFromConfig(
   });
 }
 
+function createGitHubChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.github;
+  if (!channel?.webhookSecret || !channel.appId || !channel.privateKey) {
+    return null;
+  }
+
+  return createGitHubChannel(
+    channel.webhookSecret,
+    channel.appId,
+    channel.privateKey,
+    reachSet(channel.allowedChannelIds),
+    reachSet(channel.allowedUserIds),
+    channel.apiUrl,
+    channel.botUserName,
+    channel.botUserId,
+    {
+      triggerOnIssueOpen: channel.triggerOnIssueOpen,
+      triggerOnPROpen: channel.triggerOnPROpen,
+    },
+  );
+}
+
 function createGmailChannelFromConfig(
   config: AgentConfig,
 ): ChannelAdapter | null {
@@ -2792,30 +2816,6 @@ function createGmailChannelFromConfig(
     serviceAccountEmail: channel.serviceAccountEmail,
     subscription: channel.subscription,
   });
-}
-
-function createGitHubChannelFromConfig(
-  config: AgentConfig,
-): ChannelAdapter | null {
-  const channel = config.channels?.github;
-  if (!channel?.webhookSecret || !channel.appId || !channel.privateKey) {
-    return null;
-  }
-
-  return createGitHubChannel(
-    channel.webhookSecret,
-    channel.appId,
-    channel.privateKey,
-    reachSet(channel.allowedChannelIds),
-    reachSet(channel.allowedUserIds),
-    channel.apiUrl,
-    channel.botUserName,
-    channel.botUserId,
-    {
-      triggerOnIssueOpen: channel.triggerOnIssueOpen,
-      triggerOnPROpen: channel.triggerOnPROpen,
-    },
-  );
 }
 
 function createLinearChannelFromConfig(

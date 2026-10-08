@@ -30,14 +30,13 @@ import {
   GmailWebhookError,
   parseGmailNotification,
 } from "@chat-adapter/gmail/webhook";
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { cacheDigest } from "./cache-digest.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
   ChannelIdentity,
   ChannelParseResult,
-  ChannelRequest,
   ParsedChannelMessage,
 } from "./channels.ts";
 import { CHANNEL_REACH_WILDCARD, isAllowedId } from "./channels.ts";
@@ -59,19 +58,11 @@ const MAX_TEXT_CHARS = 20_000;
 const TRANSPORT_CACHE_MAX = 100;
 const transports = new Map<string, GmailTransport>();
 
-const ADDRESS = z.object({ address: z.string(), name: z.string().optional() });
+// The adapter validates the continuation itself when it composes a reply.
 const SOURCE = z.object({
-  continuation: z.object({
-    mailbox: z.string(),
-    threadId: z.string(),
-    messageId: z.string(),
-    subject: z.string(),
-    inReplyTo: z.string(),
-    references: z.array(z.string()),
-    to: z.array(ADDRESS),
-    cc: z.array(ADDRESS).optional(),
-  }),
-  gmailMessageId: z.string(),
+  continuation: z.custom<GmailContinuation>(
+    (value) => typeof value === "object" && value !== null,
+  ),
 });
 
 export interface GmailChannelOptions {
@@ -90,10 +81,7 @@ export interface GmailChannelOptions {
   subscription: string;
 }
 
-export interface GmailSource {
-  continuation: GmailContinuation;
-  gmailMessageId: string;
-}
+export type GmailSource = z.infer<typeof SOURCE>;
 
 interface GmailTransport {
   token: () => Promise<string>;
@@ -119,7 +107,9 @@ export function createGmailChannel(
     },
 
     authenticate: async function (req): Promise<boolean> {
-      const audience = options.audience ?? webhookUrl(options, req);
+      const audience =
+        options.audience ??
+        (options.publicBaseUrl && `${options.publicBaseUrl}${req.rawPath}`);
       if (!audience) {
         logWarn(
           "Gmail webhook cannot be verified: set audience or PUBLIC_BASE_URL",
@@ -177,7 +167,7 @@ export function createGmailChannel(
       try {
         const listing = await listGmailMessages(
           {
-            q: `in:inbox -from:me after:${Math.floor(since / 1000)}`,
+            q: `in:inbox -from:me after:${Math.floor(since / 1000)}${senderQuery(options.allowedUserIds)}`,
             maxResults: MAX_MESSAGES,
           },
           api,
@@ -270,15 +260,13 @@ function emailText(email: GmailEmail): string {
 // One token provider and the verifiers built for it, least recently used
 // dropped past the cap. The key hashes the OAuth client and grant.
 function gmailTransport(options: GmailChannelOptions): GmailTransport {
-  const key = createHash("sha256")
-    .update(
-      JSON.stringify([
-        options.clientId,
-        options.clientSecret,
-        options.refreshToken,
-      ]),
-    )
-    .digest("hex");
+  const key = cacheDigest(
+    JSON.stringify([
+      options.clientId,
+      options.clientSecret,
+      options.refreshToken,
+    ]),
+  );
   const cached = transports.get(key);
   if (cached) {
     transports.delete(key);
@@ -306,8 +294,9 @@ function gmailTransport(options: GmailChannelOptions): GmailTransport {
 }
 
 // Whether Gmail authenticated the sender's domain: its own Authentication-Results
-// header shows DMARC passing for that domain, or a DKIM signature from it. The
-// first header with Gmail's id is Gmail's; a sender can only add ones below it.
+// header holds a result that is exactly `dmarc=pass` with `header.from=<domain>`,
+// or `dkim=pass` with `header.i=@<domain>`. The first header with Gmail's id is
+// Gmail's; a sender can only add ones below it.
 function isAuthenticatedSender(email: GmailEmail, sender: string): boolean {
   const domain = sender.slice(sender.lastIndexOf("@") + 1);
   const verdict = email.email.headers.find(
@@ -316,18 +305,68 @@ function isAuthenticatedSender(email: GmailEmail, sender: string): boolean {
       header.value.trim().split(/[\s;]/, 1)[0] === GMAIL_AUTHSERV_ID,
   )?.value;
   if (!verdict) return false;
-  const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const dmarc = new RegExp(
-    `\\bdmarc=pass\\b.*\\bheader\\.from=${escaped}(?![\\w.-])`,
-  );
-  const dkim = new RegExp(
-    `\\bdkim=pass\\b.*\\bheader\\.i=@${escaped}(?![\\w.-])`,
-  );
 
-  return verdict
-    .toLowerCase()
-    .split(";")
-    .some((result) => dmarc.test(result) || dkim.test(result));
+  return resultTokens(verdict.toLowerCase()).some(
+    ([method, ...properties]) =>
+      (method === "dmarc=pass" &&
+        properties.includes(`header.from=${domain}`)) ||
+      (method === "dkim=pass" && properties.includes(`header.i=@${domain}`)),
+  );
+}
+
+// Whether the allow list names senders, rather than letting anyone in.
+function isRestricted(
+  allowed: ReadonlySet<string> | null,
+): allowed is ReadonlySet<string> {
+  return allowed !== null && !allowed.has(CHANNEL_REACH_WILDCARD);
+}
+
+// An Authentication-Results value split into its `;` results, each a list of
+// whitespace-separated tokens. Comments are dropped and quoted strings kept
+// whole, so text a sender controls, like an SPF mail-from, never reads as a
+// result of its own.
+function resultTokens(value: string): string[][] {
+  const results: string[][] = [];
+  let result: string[] = [];
+  let token = "";
+  let depth = 0;
+  let quoted = false;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index] ?? "";
+    if (quoted) {
+      token += char;
+      if (char === "\\") token += value[++index] ?? "";
+      else if (char === '"') quoted = false;
+    } else if (depth > 0) {
+      if (char === "\\") index++;
+      else if (char === "(") depth++;
+      else if (char === ")") depth--;
+    } else if (char === "(") {
+      depth++;
+    } else if (char === ";" || /\s/.test(char)) {
+      if (token) result.push(token);
+      token = "";
+      if (char === ";") {
+        results.push(result);
+        result = [];
+      }
+    } else {
+      quoted = char === '"';
+      token += char;
+    }
+  }
+  if (token) result.push(token);
+  results.push(result);
+
+  return results;
+}
+
+// A search clause that lists only allowed senders' mail, so mail from anyone
+// else is never fetched and cannot crowd theirs out of the listing.
+function senderQuery(allowed: ReadonlySet<string> | null): string {
+  return isRestricted(allowed)
+    ? ` {${[...allowed].map((id): string => `from:${id}`).join(" ")}}`
+    : "";
 }
 
 // Reads one listed message into a turn, or null when it is not one to answer:
@@ -350,10 +389,11 @@ async function toMessageResult(
 
     return null;
   }
-  const sender = email.email.from?.address?.toLowerCase();
-  if (!sender || sender === mailbox) {
-    return null;
-  }
+  const from = email.email.from;
+  const address = from?.address;
+  if (!from || !address) return null;
+  const sender = address.toLowerCase();
+  if (sender === mailbox) return null;
   if (!isAllowedId(options.allowedUserIds, sender)) {
     logWarn("Gmail sender not in allow list", { sender: sender });
 
@@ -362,8 +402,7 @@ async function toMessageResult(
   // A From header is forgeable, so an allow list holds only for senders Gmail
   // authenticated.
   if (
-    options.allowedUserIds &&
-    !options.allowedUserIds.has(CHANNEL_REACH_WILDCARD) &&
+    isRestricted(options.allowedUserIds) &&
     !isAuthenticatedSender(email, sender)
   ) {
     logWarn("Gmail sender not authenticated", { sender: sender });
@@ -375,11 +414,14 @@ async function toMessageResult(
     channelId: mailbox,
     threadId: threadId,
     userId: sender,
-    ...(email.email.from?.name ? { userName: email.email.from.name } : {}),
+    ...(from.name ? { userName: from.name } : {}),
   };
+  // Replies go to the sender that was checked, never to a Reply-To.
   const source: GmailSource = {
-    continuation: extractGmailContinuation(email, mailbox),
-    gmailMessageId: email.message.id,
+    continuation: {
+      ...extractGmailContinuation(email, mailbox),
+      to: [{ address: address, ...(from.name ? { name: from.name } : {}) }],
+    },
   };
 
   return {
@@ -416,13 +458,4 @@ function verifier(
   transport.verifiers.set(key, created);
 
   return created;
-}
-
-function webhookUrl(
-  options: GmailChannelOptions,
-  req: ChannelRequest,
-): string | undefined {
-  return options.publicBaseUrl
-    ? `${options.publicBaseUrl}${req.rawPath}`
-    : undefined;
 }

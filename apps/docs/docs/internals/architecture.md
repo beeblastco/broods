@@ -333,7 +333,7 @@ The doc id of `accounts` is the `accountId` every other table carries. Config ro
 | Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                                           |
 | Audit and usage       | `auditEvents`, `auditChainHeads`, `auditSinks`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`                                                                                                                                                 |
 
-`packages/convex/schema.ts` is the source of truth. Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). `channelEndpoints` holds each connection's encrypted bot token so the forwarders' `listConnections` subscription reads one small table.
+`packages/convex/schema.ts` is the source of truth. Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). `channelEndpoints` holds each connection's encrypted bot token so the forwarders' `listConnections` subscription reads one small table. A Gmail channel's row holds the OAuth grant and topic that `channel/gmail.ts` renews its watch with.
 
 ### Bytes and streams
 

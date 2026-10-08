@@ -8,9 +8,11 @@
 
 import { v, type Infer } from "convex/values";
 import { internal } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
 import { internalAction, internalQuery } from "../_generated/server";
 import { accountCipher, encryptionSecrets } from "../model/accountKeys";
-import { channelEndpointGmailWatch } from "../model/channelEndpoints";
+import { channelEndpointSecrets } from "../model/channelEndpoints";
+import type { AccountCipher } from "../model/envelope";
 
 const GMAIL_API_URL = "https://gmail.googleapis.com/gmail/v1/users";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -26,6 +28,36 @@ const watchTargetValidator = v.object({
 
 type WatchTarget = Infer<typeof watchTargetValidator>;
 
+/**
+ * Renews every Gmail watch, once per distinct setup: stages and agents that
+ * share a mailbox and topic share its one watch.
+ */
+export const renewAll = internalAction({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const all = await ctx.runQuery(internal.channel.gmail.targets, {});
+    const distinct = new Map(
+      all.map((target) => [JSON.stringify(target), target] as const),
+    );
+    await Promise.all([...distinct.values()].map(watchMailbox));
+
+    return null;
+  },
+});
+
+/** One projection row's watch target, or null once the row is gone. */
+export const target = internalQuery({
+  args: { rowId: v.id("channelEndpoints") },
+  returns: v.union(watchTargetValidator, v.null()),
+  handler: async (ctx, args): Promise<WatchTarget | null> => {
+    const row = await ctx.db.get(args.rowId);
+    if (!row) return null;
+
+    return await rowWatchTarget(row, await accountCipher(ctx, row.accountId));
+  },
+});
+
 /** Every deployed Gmail channel's watch target. */
 export const targets = internalQuery({
   args: {},
@@ -38,7 +70,7 @@ export const targets = internalQuery({
       .collect();
     const found: WatchTarget[] = [];
     for (const row of rows) {
-      const target = await channelEndpointGmailWatch(
+      const target = await rowWatchTarget(
         row,
         await accountCipher(ctx, row.accountId),
       );
@@ -46,42 +78,6 @@ export const targets = internalQuery({
     }
 
     return found;
-  },
-});
-
-/** One projection row's watch target, or null once the row is gone. */
-export const target = internalQuery({
-  args: { rowId: v.id("channelEndpoints") },
-  returns: v.union(watchTargetValidator, v.null()),
-  handler: async (ctx, args): Promise<WatchTarget | null> => {
-    const row = await ctx.db.get(args.rowId);
-    if (!row) return null;
-
-    return await channelEndpointGmailWatch(
-      row,
-      await accountCipher(ctx, row.accountId),
-    );
-  },
-});
-
-/**
- * Renews every Gmail watch, once per distinct setup: stages and agents that
- * share a mailbox and topic share its one watch. Returns how many renewed.
- */
-export const renewAll = internalAction({
-  args: {},
-  returns: v.number(),
-  handler: async (ctx): Promise<number> => {
-    const all = await ctx.runQuery(internal.channel.gmail.targets, {});
-    const distinct = new Map(
-      all.map((target) => [JSON.stringify(target), target] as const),
-    );
-    let renewed = 0;
-    for (const watch of distinct.values()) {
-      if (await watchMailbox(watch)) renewed += 1;
-    }
-
-    return renewed;
   },
 });
 
@@ -97,12 +93,51 @@ export const watch = internalAction({
   },
 });
 
+// POSTs to Google and answers the parsed JSON body; a non-2xx status throws
+// with Google's error body, which names the reason and never echoes a secret.
+async function googlePost(
+  url: string,
+  init: { body: string | URLSearchParams; headers?: Record<string, string> },
+): Promise<Record<string, unknown>> {
+  const response = await fetch(url, {
+    method: "POST",
+    body: init.body,
+    headers: init.headers,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${await response.text()}`);
+  }
+
+  return await response.json();
+}
+
+// A Gmail row's watch target, or null when its projected secrets are incomplete.
+async function rowWatchTarget(
+  row: Doc<"channelEndpoints">,
+  cipher: AccountCipher,
+): Promise<WatchTarget | null> {
+  const { clientId, clientSecret, mailbox, refreshToken, topicName } =
+    await channelEndpointSecrets(row, cipher);
+  if (!clientId || !clientSecret || !mailbox || !refreshToken || !topicName) {
+    return null;
+  }
+
+  return {
+    clientId: clientId,
+    clientSecret: clientSecret,
+    mailbox: mailbox,
+    refreshToken: refreshToken,
+    topicName: topicName,
+  };
+}
+
 // One mailbox's watch on its inbox: a refresh-token grant, then `watch`. A
 // failure is logged and left to the next renewal, so one revoked grant never
 // stops the others.
-async function watchMailbox(target: WatchTarget): Promise<boolean> {
+async function watchMailbox(target: WatchTarget): Promise<void> {
   try {
-    const grant = await googlePost(GOOGLE_TOKEN_URL, {
+    const { access_token: accessToken } = await googlePost(GOOGLE_TOKEN_URL, {
       body: new URLSearchParams({
         client_id: target.clientId,
         client_secret: target.clientSecret,
@@ -110,10 +145,6 @@ async function watchMailbox(target: WatchTarget): Promise<boolean> {
         refresh_token: target.refreshToken,
       }),
     });
-    const accessToken =
-      typeof grant === "object" && grant !== null && "access_token" in grant
-        ? grant.access_token
-        : undefined;
     if (typeof accessToken !== "string" || !accessToken) {
       throw new Error("token response carried no access_token");
     }
@@ -130,33 +161,10 @@ async function watchMailbox(target: WatchTarget): Promise<boolean> {
         },
       },
     );
-
-    return true;
   } catch (error) {
     console.error("Gmail watch failed", {
       mailbox: target.mailbox,
       error: error instanceof Error ? error.message : String(error),
     });
-
-    return false;
   }
-}
-
-// POSTs to Google and answers the parsed JSON body; a non-2xx status throws
-// with Google's error body, which names the reason and never echoes a secret.
-async function googlePost(
-  url: string,
-  init: { body: string | URLSearchParams; headers?: Record<string, string> },
-): Promise<unknown> {
-  const response = await fetch(url, {
-    method: "POST",
-    body: init.body,
-    headers: init.headers,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${await response.text()}`);
-  }
-
-  return await response.json();
 }
