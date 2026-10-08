@@ -1,5 +1,6 @@
 "use client";
 
+import { CopyButton } from "@/app/components/CopyButton";
 import {
   DetailFields,
   DetailPayload,
@@ -142,6 +143,10 @@ export function MonitoringPanel({
     [timeWindow, range, now],
   );
 
+  // The CLI line that sends a first run to this stage, shown while it has no
+  // logs. AGENT stands in for the agent name; <agent> would be a shell redirect.
+  const firstRunCommand = `broods run AGENT "hello"${stageSlug ? ` --stage ${stageSlug}` : ""}`;
+
   const filtered = useMemo(
     () =>
       entries.filter(
@@ -200,6 +205,7 @@ export function MonitoringPanel({
         detail={
           selected && (
             <DetailPanel
+              key={entryKey(selected)}
               title={selectedSummary}
               meta={
                 <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
@@ -263,6 +269,15 @@ export function MonitoringPanel({
                   {entries.length === 0
                     ? emptyStreamMessage(history, error, "logs", "30 days")
                     : "No logs match the current filters."}
+                  {entries.length === 0 && history === "loaded" && (
+                    <div className="mt-2 flex items-center justify-center gap-1">
+                      <code className="font-mono text-foreground">
+                        {firstRunCommand}
+                      </code>
+                      <CopyButton value={firstRunCommand} label="command" />
+                      <span>Replace AGENT with your agent&apos;s name.</span>
+                    </div>
+                  )}
                 </td>
               </tr>
             )}
