@@ -67,10 +67,11 @@ test("a field inside that chrome still selects its own text", async ({
   await openGallery(page);
   const search = page
     .locator('[data-fixture="observability-toolbar"]')
-    .getByPlaceholder("Search logs…");
+    .getByRole("textbox", { name: "Search" });
 
+  // The icon sits in the box around the field, so the field itself starts at its edge.
   await search.fill("timeout");
-  await sweep(page, search, 34);
+  await sweep(page, search);
 
   // A field keeps its selection in `selectionStart`/`selectionEnd`, not in the
   // document selection, so read it off the element.

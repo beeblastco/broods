@@ -20,6 +20,11 @@ export function createAccountSecret(): string {
   return randomToken(ACCOUNT_KEY_PREFIX);
 }
 
+/** The masked label a key list shows: the prefix and the last four characters. */
+export function keyHint(prefix: string, token: string): string {
+  return `${prefix}…${token.slice(-4)}`;
+}
+
 /**
  * Generate a prefixed random bearer credential (base64url payload).
  * @param prefix public token prefix, e.g. "bsts_"

@@ -27,13 +27,16 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "../model/auditEvents";
-import { accountDoc } from "../account/accounts";
+import { accountDoc } from "../model/accountDoc";
+import { requireDashboardPermission } from "../model/access";
 import {
+  keyHint,
   randomToken,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
+import { userByAuthId } from "../model/ownership/org";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import {
@@ -111,13 +114,14 @@ export const ensureForStage = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
+    const member = await userByAuthId(ctx, authUser.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: projectId,
+      stageId: stageId,
+    });
     const result = await readyStageDeployment(
       ctx,
       authUser,
@@ -375,13 +379,14 @@ export const rotate = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
+    const member = await userByAuthId(ctx, authUser.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: projectId,
+      stageId: stageId,
+    });
     const context = await resolveStageContext(ctx, projectId, stageId);
     if (!context) throw new Error(PROVISION_ACCOUNT_FIRST);
     const result = await ensureStageDeployment(ctx, {
@@ -392,6 +397,7 @@ export const rotate = mutation({
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
       createdBy: deriveName(authUser),
+      createdByUserId: member._id,
       rotate: true,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
@@ -429,6 +435,7 @@ export async function readyStageDeployment(
     projectSlug: context.projectSlug,
     stageSlug: context.stageSlug,
     createdBy: deriveName(user),
+    createdByUserId: (await userByAuthId(ctx, user.id))?._id,
   });
   await recordDeploymentAudit(ctx, dashboardAuditActor(user), {
     accountId: context.account._id,
@@ -458,6 +465,8 @@ export async function ensureStageDeployment(
     stageSlug: string;
     /** Display name stamped on a newly minted or rotated key. */
     createdBy?: string;
+    /** The member behind it, when the dashboard minted or rotated. */
+    createdByUserId?: Id<"users">;
     rotate?: boolean;
   },
 ): Promise<EnsureResult> {
@@ -508,6 +517,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       createdAt: now,
       createdBy: args.createdBy,
+      createdByUserId: args.createdByUserId,
       lastUsedAt: undefined,
       updatedAt: now,
     });
@@ -535,6 +545,7 @@ export async function ensureStageDeployment(
     ...keyFields,
     createdAt: now,
     createdBy: args.createdBy,
+    createdByUserId: args.createdByUserId,
     updatedAt: now,
   });
   await refreshAccountChannelEndpoints(ctx, args.accountId);
@@ -594,7 +605,7 @@ async function runtimeKeyFields(
 
   return {
     apiKeyHash: await sha256Hex(rawApiKey),
-    keyHint: `${RUNTIME_KEY_PREFIX}…${rawApiKey.slice(-4)}`,
+    keyHint: keyHint(RUNTIME_KEY_PREFIX, rawApiKey),
     apiKeyCiphertext: blob.ciphertext,
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,

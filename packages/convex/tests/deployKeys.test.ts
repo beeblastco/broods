@@ -36,6 +36,13 @@ test("a project key is minted as bpdk_ and resolves scoped to its stage", async 
       plan: "free",
       createdAt: now,
     });
+    await ctx.db.insert("users", {
+      authId: "auth_owner",
+      email: "owner@example.com",
+      name: "Owner",
+      plan: "free",
+      activeOrgId: orgId,
+    });
     const accountId = await ctx.db.insert("accounts", {
       orgId: orgId,
       username: "beeblast",

@@ -12,7 +12,7 @@
  *
  * The signed-in suites need E2E_EMAIL and E2E_PASSWORD, and run against
  * E2E_BASE_URL: a deployment, or a local server on the self-hosted backend
- * (default http://localhost:3000, started here when not already running;
+ * (default http://localhost:3000, PORT moves it, started here when not already running;
  * E2E_SERVER_COMMAND swaps `next dev` for another server, which is how CI
  * runs the standalone build). They skip without the account.
  */

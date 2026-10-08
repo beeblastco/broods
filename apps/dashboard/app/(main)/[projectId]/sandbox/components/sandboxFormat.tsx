@@ -14,7 +14,10 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 // Same four tones as the tracing panel: sky while the provider is still moving
 // (suspending, terminating, building), grey once nothing runs. Tables and
 // titles show the dot only; the detail view spells the word out.
-const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
+export const INSTANCE_TONE: Record<
+  Doc<"sandboxInstances">["status"],
+  StatusTone
+> = {
   running: "ok",
   suspending: "running",
   suspended: "ended",
@@ -54,7 +57,10 @@ const UNKNOWN_SIZE: Record<string, string> = {
 const UNVERIFIED_SIZE =
   "Recorded before Broods checked sandbox sizes. The real size shows the next time this sandbox is used.";
 
-const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
+export const SNAPSHOT_TONE: Record<
+  Doc<"sandboxSnapshots">["status"],
+  StatusTone
+> = {
   pending: "running",
   building: "running",
   pulling: "running",

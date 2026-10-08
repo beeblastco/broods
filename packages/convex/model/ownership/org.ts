@@ -13,6 +13,25 @@ export function orgRoleMeets(role: OrgRole, requiredRole?: OrgRole): boolean {
   return !requiredRole || ROLE_RANK[role] >= ROLE_RANK[requiredRole];
 }
 
+/** The user row behind an auth id, or null before the WorkOS webhook has synced it. */
+export async function userByAuthId(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+): Promise<Doc<"users"> | null> {
+  return await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+}
+
+/** The org behind an account; null for a service account bound to no org. */
+export function orgIdOf(
+  ctx: QueryCtx | MutationCtx,
+  account: Doc<"accounts">,
+): Id<"orgs"> | null {
+  return ctx.db.normalizeId("orgs", account.orgId);
+}
+
 export async function getOrgMembership(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<"orgs">,

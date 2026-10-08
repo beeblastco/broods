@@ -6,6 +6,8 @@ Who can see and change what, which credential to use where, and how your data is
 
 Access follows organization membership. A member reads, an admin or owner writes. Removing or demoting someone takes effect on their next request, and their `broods login` stops working.
 
+A custom role, made under Organization settings, Roles, sits on the member tier and adds what its policies allow: seeing or changing keys, changing members, changing access. A policy or a rule scoped to a project or a stage counts only there, and only an enforce-mode policy counts. A member grants no more than they hold: `members:write` cannot hand out the admin tier or a role with a permission the caller lacks, and `access:write` can still attach any policy to any role, including one's own, so give it as you would admin. Policies and permissions are the organization's, under the tabs beside it, so one policy can serve a role, an agent or a key. Roles and policies are read with the same deny-wins order OPA uses for agents at run time.
+
 | Operation                                                                    | Member | Admin, owner |
 | ---------------------------------------------------------------------------- | ------ | ------------ |
 | Read agents, stages, canvas, files, logs, traces, usage                      | yes    | yes          |
@@ -50,9 +52,9 @@ The runtime key is the one key meant to sit in a frontend, so it is limited:
 - `continue` with it only reopens conversations the direct API started, never a channel conversation.
 - It cannot open logs, traces or the machine socket.
 
-The account key is shown once when your organization's API account is provisioned. Rotate it under Org Settings, API Access. Rotation breaks everything holding the old one.
+The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access. Rotation breaks everything holding the old one.
 
-A project key is created per stage under Project Settings, Deploy, and shown once. See [Deploying from CI](deploying.md#deploying-from-ci).
+A project key is an API key created for one stage under Project settings, Keys, and shown once. See [Deploying from CI](deploying.md#deploying-from-ci).
 
 ## Roles
 
