@@ -43,8 +43,9 @@ function JsonNode({
     </>
   );
   if (value === null || typeof value !== "object") {
+    // Hanging indent, so a long value that wraps stays under its key.
     return (
-      <div className="pl-4">
+      <div className="pl-8 -indent-4">
         {label}
         <JsonScalar value={value} />
         {comma}
@@ -123,7 +124,7 @@ function JsonScalar({
 }): React.JSX.Element {
   if (typeof value === "string" && value.includes("\n")) {
     return (
-      <span className="block whitespace-pre-wrap border-l border-code-string/40 pl-2 text-code-string">
+      <span className="block indent-0 whitespace-pre-wrap border-l border-code-string/40 pl-2 text-code-string">
         {value}
       </span>
     );

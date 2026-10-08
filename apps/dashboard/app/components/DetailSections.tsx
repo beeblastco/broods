@@ -81,7 +81,7 @@ export function DetailPayload({
             {value}
           </pre>
         ) : (
-          <div className="max-h-[50vh] overflow-auto rounded-md bg-code-background py-2 pl-1 pr-8 text-xs leading-relaxed">
+          <div className="max-h-[50vh] overflow-auto rounded-md border border-border bg-code-background py-2 pl-1 pr-8 text-xs leading-relaxed">
             <JsonView value={json} />
           </div>
         )}
