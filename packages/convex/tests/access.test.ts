@@ -56,6 +56,7 @@ test("policies grant and refuse in the same order core's OPA uses, where they ar
   };
   expect(policiesAllow([write], "keys:read")).toBe(true);
   expect(policiesAllow([write, refuseWrite], "keys:read")).toBe(false);
+  expect(policiesAllow([write, refuse], "keys:read")).toBe(false);
   expect(
     policiesAllow([{ document: { ...allow, mode: "audit" } }], "keys:read"),
   ).toBe(false);

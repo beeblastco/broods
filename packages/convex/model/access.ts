@@ -15,6 +15,7 @@ import {
   DASHBOARD_POLICY_ACTIONS,
   type DashboardPolicyAction,
   type PolicyDocument,
+  type PolicyEffect,
   type PolicyRule,
 } from "./policyRules";
 
@@ -42,28 +43,16 @@ export function tierPermissions(tier: OrgRole): DashboardPolicyAction[] {
   return tier === "member" ? [] : [...DASHBOARD_POLICY_ACTIONS];
 }
 
-/** Whether the enforce-mode policies allow one action in one scope: a matching deny wins, else a matching allow. `keys:write` also reads, so a writer sees the list. */
+/** Whether the enforce-mode policies allow one action in one scope: a matching deny wins, else a matching allow. Without a rule on `keys:read`, a granted `keys:write` reads, so a writer sees the list. */
 export function policiesAllow(
   policies: readonly ScopedPolicy[],
   action: string,
   scope: DashboardScope = {},
 ): boolean {
-  if (action === "keys:read" && policiesAllow(policies, "keys:write", scope)) {
-    return true;
-  }
-  let allowed = false;
-  for (const policy of policies) {
-    if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {
-      continue;
-    }
-    for (const rule of policy.document.rules) {
-      if (!rule.actions.includes(action) || !ruleApplies(rule, scope)) continue;
-      if (rule.effect === "deny") return false;
-      allowed = true;
-    }
-  }
+  const verdict = ruleVerdict(policies, action, scope);
+  if (verdict) return verdict === "allow";
 
-  return allowed;
+  return action === "keys:read" && policiesAllow(policies, "keys:write", scope);
 }
 
 /** The tier's permissions plus what the policies allow in the scope. */
@@ -227,6 +216,27 @@ function idCondition<T extends "projects" | "stages">(
   return typeof match?.value === "string"
     ? (ctx.db.normalizeId(table, match.value) ?? undefined)
     : undefined;
+}
+
+/** What the rules on one action say in one scope: a matching deny, else a matching allow, else nothing. */
+function ruleVerdict(
+  policies: readonly ScopedPolicy[],
+  action: string,
+  scope: DashboardScope,
+): PolicyEffect | null {
+  let verdict: PolicyEffect | null = null;
+  for (const policy of policies) {
+    if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {
+      continue;
+    }
+    for (const rule of policy.document.rules) {
+      if (!rule.actions.includes(action) || !ruleApplies(rule, scope)) continue;
+      if (rule.effect === "deny") return "deny";
+      verdict = "allow";
+    }
+  }
+
+  return verdict;
 }
 
 /** A policy row made for one project or stage applies only there. */
