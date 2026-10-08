@@ -14,7 +14,9 @@ import {
   TooltipTrigger,
 } from "@/app/components/ui/tooltip";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { navHref } from "@/app/lib/navigation";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 /** How many avatars a group shows before folding the rest into a count. */
 const GROUP_MAX = 3;
@@ -40,12 +42,14 @@ export function Who({
   /** Where an agent name links; a cell outside a project shows it plain. */
   projectId?: Id<"projects">;
 }): React.JSX.Element {
+  const stage = useSearchParams().get("stage");
+
   return (
     <span className="inline-flex items-center gap-1.5">
       <ActorAvatar actor={actor} />
       {actor.kind === "agent" && projectId ? (
         <Link
-          href={`/${projectId}?node=${actor.agentId}`}
+          href={`${navHref(projectId, "", stage)}${stage ? "&" : "?"}node=${actor.agentId}`}
           onClick={(event) => event.stopPropagation()}
           className="cursor-pointer text-foreground underline-offset-3 hover:underline"
         >

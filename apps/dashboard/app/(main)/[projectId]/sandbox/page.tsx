@@ -35,6 +35,9 @@ export default function SandboxPage(): React.JSX.Element {
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
   const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
+  const agents = useQuery(api.agent.agents.listForProject, {
+    projectId: projectId,
+  });
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const observability = useObservabilityScope(projectId, activeStageId);
 
@@ -50,6 +53,7 @@ export default function SandboxPage(): React.JSX.Element {
     instances === undefined ||
     machines === undefined ||
     snapshots === undefined ||
+    agents === undefined ||
     account === undefined;
 
   return (
@@ -74,6 +78,7 @@ export default function SandboxPage(): React.JSX.Element {
           <SandboxInstancesTable
             instances={instances}
             machines={machines}
+            agents={agents}
             projectId={projectId}
             observability={observability}
           />
