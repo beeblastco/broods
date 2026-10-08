@@ -133,6 +133,7 @@ import type * as model_sandboxDisplayConfig from "../model/sandboxDisplayConfig.
 import type * as model_sandboxProviders from "../model/sandboxProviders.js";
 import type * as model_sandboxRules from "../model/sandboxRules.js";
 import type * as model_secretNames from "../model/secretNames.js";
+import type * as model_selfHostAuth from "../model/selfHostAuth.js";
 import type * as model_serviceBridge from "../model/serviceBridge.js";
 import type * as model_skillRules from "../model/skillRules.js";
 import type * as model_skills from "../model/skills.js";
@@ -300,6 +301,7 @@ declare const fullApi: ApiFromModules<{
   "model/sandboxProviders": typeof model_sandboxProviders;
   "model/sandboxRules": typeof model_sandboxRules;
   "model/secretNames": typeof model_secretNames;
+  "model/selfHostAuth": typeof model_selfHostAuth;
   "model/serviceBridge": typeof model_serviceBridge;
   "model/skillRules": typeof model_skillRules;
   "model/skills": typeof model_skills;
