@@ -379,8 +379,9 @@ jobs:
           if-no-files-found: ignore
 
   docs:
-    # Builds the docs on a pull request that touches them, so a broken link
-    # (`onBrokenLinks: "throw"`) fails here and not in the promote to main.
+    # Builds the docs on a pull request that touches them or the dependencies,
+    # so a broken link (`onBrokenLinks: "throw"`) or a duplicated Docusaurus
+    # package fails here and not in the promote to main.
     # Not a required check: on a pull request without docs changes it skips
     # the build and still reports.
     if: github.event_name == 'pull_request'
@@ -398,7 +399,7 @@ jobs:
       - name: Check for docs changes
         id: changed
         run: |
-          if git diff --quiet HEAD^1 HEAD -- apps/docs; then
+          if git diff --quiet HEAD^1 HEAD -- apps/docs package.json bun.lock .bun-version; then
             echo "docs=false" >> "$GITHUB_OUTPUT"
           else
             echo "docs=true" >> "$GITHUB_OUTPUT"
