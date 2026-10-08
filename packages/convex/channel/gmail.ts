@@ -64,14 +64,20 @@ export const target = internalQuery({
   },
 });
 
-/** Renews every Gmail watch. Returns how many renewed. */
+/**
+ * Renews every Gmail watch, once per distinct setup: stages and agents that
+ * share a mailbox and topic share its one watch. Returns how many renewed.
+ */
 export const renewAll = internalAction({
   args: {},
   returns: v.number(),
   handler: async (ctx): Promise<number> => {
     const all = await ctx.runQuery(internal.channel.gmail.targets, {});
+    const distinct = new Map(
+      all.map((target) => [JSON.stringify(target), target] as const),
+    );
     let renewed = 0;
-    for (const watch of all) {
+    for (const watch of distinct.values()) {
       if (await watchMailbox(watch)) renewed += 1;
     }
 
@@ -96,7 +102,7 @@ export const watch = internalAction({
 // stops the others.
 async function watchMailbox(target: WatchTarget): Promise<boolean> {
   try {
-    const token = await googleJson<{ access_token: string }>(GOOGLE_TOKEN_URL, {
+    const grant = await googlePost(GOOGLE_TOKEN_URL, {
       body: new URLSearchParams({
         client_id: target.clientId,
         client_secret: target.clientSecret,
@@ -104,7 +110,14 @@ async function watchMailbox(target: WatchTarget): Promise<boolean> {
         refresh_token: target.refreshToken,
       }),
     });
-    await googleJson(
+    const accessToken =
+      typeof grant === "object" && grant !== null && "access_token" in grant
+        ? grant.access_token
+        : undefined;
+    if (typeof accessToken !== "string" || !accessToken) {
+      throw new Error("token response carried no access_token");
+    }
+    await googlePost(
       `${GMAIL_API_URL}/${encodeURIComponent(target.mailbox)}/watch`,
       {
         body: JSON.stringify({
@@ -112,7 +125,7 @@ async function watchMailbox(target: WatchTarget): Promise<boolean> {
           topicName: target.topicName,
         }),
         headers: {
-          Authorization: `Bearer ${token.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
       },
@@ -129,10 +142,12 @@ async function watchMailbox(target: WatchTarget): Promise<boolean> {
   }
 }
 
-async function googleJson<T>(
+// POSTs to Google and answers the parsed JSON body; a non-2xx status throws
+// with Google's error body, which names the reason and never echoes a secret.
+async function googlePost(
   url: string,
   init: { body: string | URLSearchParams; headers?: Record<string, string> },
-): Promise<T> {
+): Promise<unknown> {
   const response = await fetch(url, {
     method: "POST",
     body: init.body,
@@ -143,5 +158,5 @@ async function googleJson<T>(
     throw new Error(`${response.status} ${await response.text()}`);
   }
 
-  return (await response.json()) as T;
+  return await response.json();
 }

@@ -40,7 +40,7 @@ import type {
   ChannelRequest,
   ParsedChannelMessage,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import { CHANNEL_REACH_WILDCARD, isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { GMAIL_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -50,6 +50,8 @@ const LOOKBACK_MS = 10 * 60 * 1000;
 // The event claim holds for a day; mail older than that would run again.
 const MAX_LOOKBACK_MS = 23 * 60 * 60 * 1000;
 const MAX_MESSAGES = 20;
+// Gmail's own verdict on a received message; it prepends this header itself.
+const GMAIL_AUTHSERV_ID = "mx.google.com";
 // A long thread quotes itself; the model needs the new part at the top.
 const MAX_TEXT_CHARS = 20_000;
 // Token providers cache the access token and verifiers cache Google's keys, so
@@ -180,17 +182,24 @@ export function createGmailChannel(
           },
           api,
         );
-        const results: ParsedChannelMessage[] = [];
-        // Gmail lists newest first; turns run in arrival order.
-        for (const pointer of listing.messages.toReversed()) {
-          const result = await toMessageResult(
-            pointer.id,
-            mailbox,
-            options,
-            api,
-          );
-          if (result) results.push(result);
+        if (listing.nextPageToken) {
+          logWarn("Gmail listing cut at its first page", {
+            mailbox: mailbox,
+            limit: MAX_MESSAGES,
+          });
         }
+        // Fetched together, so the push is acknowledged inside Pub/Sub's
+        // deadline. Gmail lists newest first; turns run in arrival order.
+        const fetched = await Promise.all(
+          listing.messages
+            .toReversed()
+            .map((pointer) =>
+              toMessageResult(pointer.id, mailbox, options, api),
+            ),
+        );
+        const results = fetched.filter(
+          (result): result is ParsedChannelMessage => result !== null,
+        );
 
         return results.length > 0
           ? { kind: "batch", results: results }
@@ -296,8 +305,34 @@ function gmailTransport(options: GmailChannelOptions): GmailTransport {
   return transport;
 }
 
+// Whether Gmail authenticated the sender's domain: its own Authentication-Results
+// header shows DMARC passing for that domain, or a DKIM signature from it. The
+// first header with Gmail's id is Gmail's; a sender can only add ones below it.
+function isAuthenticatedSender(email: GmailEmail, sender: string): boolean {
+  const domain = sender.slice(sender.lastIndexOf("@") + 1);
+  const verdict = email.email.headers.find(
+    (header) =>
+      header.key === "authentication-results" &&
+      header.value.trimStart().startsWith(GMAIL_AUTHSERV_ID),
+  )?.value;
+  if (!verdict) return false;
+  const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const dmarc = new RegExp(
+    `\\bdmarc=pass\\b.*\\bheader\\.from=${escaped}(?![\\w.-])`,
+  );
+  const dkim = new RegExp(
+    `\\bdkim=pass\\b.*\\bheader\\.i=@${escaped}(?![\\w.-])`,
+  );
+
+  return verdict
+    .toLowerCase()
+    .split(";")
+    .some((result) => dmarc.test(result) || dkim.test(result));
+}
+
 // Reads one listed message into a turn, or null when it is not one to answer:
-// unparseable, sent by the mailbox itself, or from a sender off the allow list.
+// gone or unparseable, sent by the mailbox itself, or from a sender off the
+// allow list or one Gmail could not authenticate.
 async function toMessageResult(
   id: string,
   mailbox: string,
@@ -308,6 +343,8 @@ async function toMessageResult(
   try {
     email = await parseGmailMessage(await getGmailMessage(id, api));
   } catch (error) {
+    // Deleted between the listing and the read.
+    if (error instanceof GmailApiError && error.status === 404) return null;
     if (!(error instanceof GmailContentError)) throw error;
     logWarn("Gmail message skipped", { messageId: id, reason: error.reason });
 
@@ -319,6 +356,17 @@ async function toMessageResult(
   }
   if (!isAllowedId(options.allowedUserIds, sender)) {
     logWarn("Gmail sender not in allow list", { sender: sender });
+
+    return null;
+  }
+  // A From header is forgeable, so an allow list holds only for senders Gmail
+  // authenticated.
+  if (
+    options.allowedUserIds &&
+    !options.allowedUserIds.has(CHANNEL_REACH_WILDCARD) &&
+    !isAuthenticatedSender(email, sender)
+  ) {
+    logWarn("Gmail sender not authenticated", { sender: sender });
 
     return null;
   }
