@@ -437,4 +437,73 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     mode: "enforce",
   });
   await t.mutation(api.access.removeRule, { policyId: masked, ruleId: denyId });
+
+  // A deny that masks nothing comes off a policy that already grants more
+  // than the caller holds: the edit answers only for what it adds.
+  const wide = await t.mutation(api.access.createPolicy, {
+    name: "Wide",
+    mode: "enforce",
+  });
+  await t.mutation(api.access.addRule, {
+    policyId: wide,
+    permission: "keys:write",
+    scope: {},
+  });
+  const unrelated = await t.mutation(api.access.addRule, {
+    policyId: wide,
+    permission: "members:write",
+    effect: "deny",
+    scope: {},
+  });
+  currentAuthId = "auth_member";
+  await t.mutation(api.access.removeRule, {
+    policyId: wide,
+    ruleId: unrelated,
+  });
+
+  // A stage rule is weighed with its project, so keys:write held across the
+  // project covers turning on a keys:write rule for one of its stages.
+  const { projectId, stageId } = await t.run(
+    async (
+      ctx,
+    ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> }> => {
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: (await ctx.db.query("orgs").first())!._id,
+        name: "a",
+        slug: "a",
+        updatedAt: Date.now(),
+      });
+      const stageId = await ctx.db.insert("stages", {
+        authId: "auth_owner",
+        projectId: projectId,
+        name: "Production",
+        kind: "production",
+        isDefault: false,
+        updatedAt: Date.now(),
+      });
+
+      return { projectId: projectId, stageId: stageId };
+    },
+  );
+  currentAuthId = "auth_owner";
+  await t.mutation(api.access.addRule, {
+    policyId: accessPolicy,
+    permission: "keys:write",
+    scope: { projectId: projectId },
+  });
+  currentAuthId = "auth_member";
+  const staged = await t.mutation(api.access.createPolicy, {
+    name: "Stage keys",
+    mode: "audit",
+  });
+  await t.mutation(api.access.addRule, {
+    policyId: staged,
+    permission: "keys:write",
+    scope: { stageId: stageId },
+  });
+  await t.mutation(api.access.updatePolicy, {
+    policyId: staged,
+    mode: "enforce",
+  });
 });

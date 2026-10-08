@@ -711,7 +711,7 @@ async function editablePolicy(
   return policy;
 }
 
-/** The document a policy would hold grants nothing the caller lacks. */
+/** The document a policy would hold grants nothing new the caller lacks. */
 async function assertPolicyWithinReach(
   ctx: MutationCtx,
   caller: ActiveAccount,
@@ -720,13 +720,19 @@ async function assertPolicyWithinReach(
 ): Promise<void> {
   const orgId = orgIdOf(ctx, caller.account);
   if (!orgId) return;
-  await assertGrantsWithinReach(ctx, orgId, caller.user, [
-    {
-      document: document,
-      projectId: policy.projectId,
-      stageId: policy.stageId,
-    },
-  ]);
+  await assertGrantsWithinReach(
+    ctx,
+    orgId,
+    caller.user,
+    [
+      {
+        document: document,
+        projectId: policy.projectId,
+        stageId: policy.stageId,
+      },
+    ],
+    [policy],
+  );
 }
 
 async function assertOwnedPolicies(
