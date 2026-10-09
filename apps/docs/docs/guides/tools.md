@@ -116,11 +116,41 @@ Install `@modelcontextprotocol/server` in your project. The CLI bundles the file
 - Bundles are capped at 50 MB. The calls from one model step to one server run as a batch, and the batch shares a 30 second deadline and 16 MB of output.
 - Hosted servers run outside the Broods core: in a Workers isolate per bundle, or one Lambda child process per bundle. Accounts can share a warm runner environment today, so keep secrets out of module-level state. The first call after an idle period is a cold start.
 - Module-level state, such as a memoized client, survives between calls of the same bundle.
-- By default (`runtime: "auto"`) Broods runs a server on [Cloudflare Dynamic Workers](cloudflare-mcp.md) when its bundle can run there, and on AWS Lambda otherwise. Set `runtime: "lambda"` to always run it on Lambda.
+- By default (`runtime: "auto"`) Broods runs a server on Cloudflare Dynamic Workers when its bundle can run there, and on AWS Lambda otherwise. See [Where a hosted server runs](#where-a-hosted-server-runs).
 
-See the runnable [`mcp-connect` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect).
+See the runnable [`mcp-connect` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect), and [Cloudflare Browser Run](sandboxes/browsing.md#cloudflare-browser-run) for a worked hosted server.
 
-For a worked hosted server, see [Cloudflare Browser Run](cloudflare-browser.md).
+#### Where a hosted server runs
+
+```mermaid
+flowchart LR
+  S([broods deploy]) --> R{runtime}
+  R -->|lambda| L["AWS Lambda<br/>Node build"]
+  R -->|auto| W{"Workers build passes the scan,<br/>10 MB or less,<br/>deployment runs Cloudflare?"}
+  W -->|yes| CF["Cloudflare Dynamic Workers"]
+  W -->|no| L
+  CF -.->|bundle fails to load,<br/>or runtime unreachable| L
+```
+
+| Runtime    | Picked when                                                       | Bundle cap         | Per call                      |
+| ---------- | ----------------------------------------------------------------- | ------------------ | ----------------------------- |
+| Cloudflare | `auto`, and the bundle builds for Workers and needs nothing below | 10 MB, sent inline | 30 s, 5 s CPU, 50 subrequests |
+| Lambda     | `lambda`, or anything else                                        | 50 MB              | 30 s shared by the batch      |
+
+For a server that mostly does `fetch` calls and JSON, Workers costs about a quarter of Lambda per call and starts in milliseconds. Both runtimes take up to 6 MiB in and 16 MiB out per batch, and both bill one request per batch plus its wall time. The Compute panel shows no CPU figure for Cloudflare calls.
+
+A server goes to Lambda when it uses:
+
+- Node builtins (`node:child_process`, `node:fs`, ...), `require()`, `process`, `Buffer`, `__dirname`, native modules or a filesystem.
+- `eval` or `new Function`, which Workers forbid.
+
+The CLI tries a Workers build first (browser and `workerd` package exports) and ships it when it passes the same static scan Broods runs on every upload. The scan leans toward Lambda.
+
+- If the bundle fails to load on Cloudflare, or the runtime cannot be reached, nothing has run yet, so that batch runs on Lambda and logs a warning. Any other runtime error fails the call. A call that started on Cloudflare is never retried, because a tool may already have acted.
+- A server that loads on Workers but fails while serving a call stays there until its code changes.
+- Each agent's copy of a server runs in its own isolate with no bindings and no platform secrets. Pass credentials through `headers` with `${NAME}` refs, as on Lambda.
+- Outbound `fetch` reaches the public internet. Raw TCP sockets (`connect()`) are not available.
+- A self-hosted Broods runs every server on Lambda until it deploys the Cloudflare runtime, see [Self-hosting](../internals/self-hosting.md#cloudflare-mcp-runtime-optional). How the runtimes work is in [Tools and MCP internals](../internals/tools-and-mcp.md#hosted-servers).
 
 ### Run a server on your computer
 
@@ -186,43 +216,7 @@ Each question has an `id`, a short `header`, the `question`, and two to four `op
 
 ## Web browsing
 
-`browse` opens a public web page in [Obscura](https://github.com/h4ckf0r0day/obscura), a headless browser on the agent's first sandbox, and returns it to the model. Turn it on with `browser` and give the agent a sandbox with the Obscura image and internet access:
-
-```ts title="broods/index.ts"
-import { defineAgent, defineSandbox, defineWorkspace } from "broods";
-
-export const web = defineSandbox({
-  name: "web",
-  provider: "lambda",
-  image: "obscura",
-  network: { mode: "allow-all" },
-});
-
-export const workspace = defineWorkspace({
-  name: "workspace",
-  storage: { provider: "s3" },
-});
-
-export const researcher = defineAgent({
-  name: "researcher",
-  sandboxes: [web], // the first sandbox runs browse
-  workspaces: [workspace], // screenshots are saved here
-  browser: { enabled: true },
-});
-```
-
-| `mode`               | Returns                                                                                 |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `markdown` (default) | The rendered page as markdown, usually 3 to 17x smaller than its HTML                   |
-| `text`               | Plain text                                                                              |
-| `links`              | Every link on the page, one per line                                                    |
-| `eval`               | The result of a JavaScript expression run in the page, passed as `script`               |
-| `screenshot`         | An image of the viewport, saved under `.broods/browse/` so `send-images` can send it on |
-
-- The first sandbox must be `lambda` with `image: "obscura"` and `network.mode: "allow-all"`, or a [machine](sandboxes/machine.md) with `obscura` installed. Anything else fails the run with a message saying what to change.
-- `screenshot` needs a workspace on that sandbox. The image reaches the model on the turn it was taken, when it is 6 MB or less. Later turns keep the file path.
-- Private and internal addresses are refused, even when the sandbox sets `OBSCURA_ALLOW_PRIVATE_NETWORK`. Layout can differ from Chrome on JavaScript-heavy pages. For pixel-exact screenshots, run Chromium through `bash` on a sandbox with `image: "browser"`.
-- Reading needs no approval. `eval` runs the model's own JavaScript in the page, so it asks like `bash` unless the sandbox uses `permissionMode: "bypass"`.
+`browser: { enabled: true }` gives the agent `browse`, which reads a page as markdown, text or links, runs JavaScript in it, or screenshots it, on a sandbox with the Obscura image. See [Web browsing](sandboxes/browsing.md), which also covers Chromium images and Cloudflare Browser Run.
 
 ## Background tools
 
@@ -232,7 +226,7 @@ export const researcher = defineAgent({
 
 | Tool                                                                      | Enabled by                          | Guide                                         |
 | ------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
-| `browse`                                                                  | `browser`                           | [Web browsing](#web-browsing)                 |
+| `browse`                                                                  | `browser`                           | [Web browsing](sandboxes/browsing.md)         |
 | `load_skill`                                                              | `skills`                            | [Skills](skills.md)                           |
 | `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent`                          | [Subagents](subagents.md)                     |
 | `ask_parent`                                                              | the run being a persistent subagent | [Subagents](subagents.md)                     |
