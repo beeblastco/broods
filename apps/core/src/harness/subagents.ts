@@ -67,6 +67,7 @@ import {
   VIRTUAL_AGENT_PREFIX,
 } from "./tools/utils.ts";
 
+const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 // How long a child's ask_parent waits for the parent's answer.
@@ -511,13 +512,24 @@ export class SubagentCoordinator {
         "Subagent conversationKey is only supported in persistent mode",
       );
     }
+    // The key comes from the model, and it shares the child agent's direct-API
+    // namespace, so only a key this runtime minted for a child may be resumed:
+    // anything else could name another caller's conversation with that agent.
+    if (
+      task.conversationKey !== undefined &&
+      !task.conversationKey.startsWith(PERSISTENT_SUBAGENT_KEY_PREFIX)
+    ) {
+      throw new Error(
+        `Subagent conversationKey must be one returned by run_subagent (${PERSISTENT_SUBAGENT_KEY_PREFIX}...)`,
+      );
+    }
     const taskId = createSubagentTaskId(this.parentSession.eventId);
     const runId = createRunId();
     const resuming = persistent && task.conversationKey !== undefined;
     const publicConversationKey =
       task.conversationKey ??
       (persistent
-        ? `subagent-persistent-${crypto.randomUUID()}`
+        ? `${PERSISTENT_SUBAGENT_KEY_PREFIX}${crypto.randomUUID()}`
         : `subagent-${taskId}`);
     const inheritedContext =
       this.parentAgentConfig.subagent?.context === "inherited";

@@ -143,6 +143,7 @@ import {
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   admitRun,
+  refundRun,
   planRefusalResponse,
   type PlanRefusal,
 } from "./plan-limits.ts";
@@ -171,6 +172,13 @@ const AGENT_PROCESSING_FAILED = "Agent processing failed";
 // in the tool results of the cut-off step.
 const CONTINUE_TURN_TEXT =
   "Your previous turn was cut off before it finished. Continue the task from where you left off.";
+// Channel admissions that start no run, so they give back their rate count.
+const NO_RUN_OUTCOMES: ReadonlySet<IngressAdmission["outcome"]> = new Set([
+  "duplicate",
+  "rejected",
+  "capacity",
+  "conflict",
+]);
 const CONVERSATION_BUSY =
   "Conversation is already processing another turn. Try again when the current turn finishes.";
 const CHANNEL_APPROVAL_DENIAL_REASON =
@@ -1629,6 +1637,9 @@ export async function handleChannelRequest(
     stageSlug: event.stageSlug,
   };
   await dispatchRecoveredIngress(scope, admission);
+  // Only a new envelope starts a run; a redelivery or a refusal gives its
+  // count back, so a provider's retries cannot spend the per-minute limit.
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(event.accountId);
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
 

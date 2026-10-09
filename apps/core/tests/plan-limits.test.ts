@@ -17,6 +17,7 @@ import {
   BudgetExhaustedError,
   planRefusalResponse,
   recordUsage,
+  refundRun,
   resetPlanLimitsForTests,
 } from "../src/harness/plan-limits.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
@@ -121,6 +122,14 @@ describe("admitRun", () => {
 
     expect(refusal?.kind).toBe("rate");
     expect(refusal?.retryAfterSeconds).toBe(60);
+  });
+
+  it("gives back a run the intake refunds, within the same window", async () => {
+    await admitMany(budget.runsPerMinute);
+    refundRun(ACCOUNT_ID);
+
+    expect((await admitRun(ACCOUNT_ID)).refusal).toBeNull();
+    expect((await admitRun(ACCOUNT_ID)).refusal?.kind).toBe("rate");
   });
 
   it("limits nothing on a self-hosted install", async () => {

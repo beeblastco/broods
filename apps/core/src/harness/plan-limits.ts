@@ -98,6 +98,18 @@ export async function admitRun(
   };
 }
 
+/**
+ * Give back a run `admitRun` counted when the intake started nothing after all:
+ * a provider redelivery deduplicated by ingress, or a refused admission. A
+ * window that already turned over is left alone.
+ */
+export function refundRun(accountId: string): void {
+  const window = windows.get(accountId);
+  if (window && window.runs > 0 && Date.now() - window.startedAt < WINDOW_MS) {
+    window.runs -= 1;
+  }
+}
+
 /** Throws `BudgetExhaustedError` when the account may not start compute. */
 export async function assertSandboxBudget(accountId: string): Promise<void> {
   const status = await budgetFor(accountId);

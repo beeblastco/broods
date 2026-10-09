@@ -869,6 +869,16 @@ describe("SubagentCoordinator", () => {
     );
     expect(resumed.persistent).toBe(true);
     expect(resumed.resuming).toBe(true);
+
+    // A key the runtime never minted could name another caller's direct-API
+    // conversation with the child agent.
+    await expect(
+      internals.resolveTask(
+        { prompt: "recount", conversationKey: "user-123" },
+        [],
+        [],
+      ),
+    ).rejects.toThrow("must be one returned by run_subagent");
   });
 
   it("admits a persistent child conversation to own a fencing generation", async () => {
