@@ -51,14 +51,6 @@ jobs:
           # Through env, not ${{ }} in the script: a branch name can carry shell.
           REF_NAME: ${{ github.ref_name }}
         run: |
-          # The backends this workflow deploys sign in with WorkOS. The deploy
-          # evaluates auth.config.ts on the backend and fails on any unset
-          # variable it reads, so the provider is pinned before every deploy
-          # rather than left to a hand-set variable.
-          deploy() {
-            bunx convex env set BROODS_AUTH_PROVIDER workos
-            bun run deploy
-          }
           # Self-hosted backends authenticate with an admin key against an
           # explicit URL; there is no deploy key. The environment provides one
           # scheme or the other.
@@ -74,17 +66,16 @@ jobs:
               exit 1
             fi
             unset CONVEX_DEPLOY_KEY
-            deploy
-            exit 0
-          fi
-          if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
+          elif [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
             echo "Missing environment secret: CONVEX_DEPLOY_KEY (or CONVEX_SELF_HOSTED_URL)" >&2
             exit 1
-          fi
           # Convex deploy keys encode their target deployment. Refuse to ship a
           # main deploy that would push functions to a non-production deployment.
-          if [[ "$REF_NAME" == "main" && "$CONVEX_DEPLOY_KEY" != prod:* ]]; then
+          elif [[ "$REF_NAME" == "main" && "$CONVEX_DEPLOY_KEY" != prod:* ]]; then
             echo "main requires a production Convex deploy key (prod:...) in the 'production' environment secret CONVEX_DEPLOY_KEY" >&2
             exit 1
           fi
-          deploy
+          # The backends this workflow deploys sign in with WorkOS; the deploy
+          # fails on an auth config that reads an unset variable, so pin it.
+          bunx convex env set BROODS_AUTH_PROVIDER workos
+          bun run deploy

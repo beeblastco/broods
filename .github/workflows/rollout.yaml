@@ -65,22 +65,27 @@ jobs:
           # anyway is the failure this gate exists to stop.
           DEADLINE=120
 
+          # "<status> <conclusion>" of the newest run a query matches; "absent
+          # none" when nothing matches.
+          run_state() {
+            gh api "$1" --jq '"\(.workflow_runs[0].status // "absent") \(.workflow_runs[0].conclusion // "none")"'
+          }
+
           for AWAIT in $AWAIT_WORKFLOWS; do
-            RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?head_sha=$SHA&per_page=1"
+            WORKFLOW_RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs"
+            RUNS="$WORKFLOW_RUNS?head_sha=$SHA&per_page=1"
             TARGET="$SHA"
 
             # GitHub creates a run for every workflow a push triggers before any
             # job starts, and this job only runs after the image build. So by
             # now the answer is settled: no run means this commit did not touch
-            # what $AWAIT watches. It still needs the backend the branch last
-            # deployed, so the branch's newest push run stands in: a core image
-            # once rolled behind six failed Convex deploys this way and called a
-            # function the backend did not have yet. Push runs only: a manual
-            # run can name another stage and would vouch for the wrong one.
-            if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
-              RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?branch=$GITHUB_REF_NAME&event=push&per_page=1"
+            # what $AWAIT watches. The image still needs what the branch last
+            # deployed, so the branch's newest push run stands in. Push runs
+            # only: a manual run can name another stage.
+            if [[ "$(run_state "$RUNS")" == "absent none" ]]; then
+              RUNS="$WORKFLOW_RUNS?branch=$GITHUB_REF_NAME&event=push&per_page=1"
               TARGET="the newest $GITHUB_REF_NAME push"
-              if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
+              if [[ "$(run_state "$RUNS")" == "absent none" ]]; then
                 echo "$AWAIT never ran on $GITHUB_REF_NAME; nothing to wait for."
                 continue
               fi
@@ -88,17 +93,15 @@ jobs:
 
             echo "Waiting for $AWAIT to settle for $TARGET"
             for _ in $(seq 1 "$DEADLINE"); do
-              STATUS=$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')
+              read -r STATUS CONCLUSION <<<"$(run_state "$RUNS")"
               if [[ "$STATUS" == "completed" ]]; then
                 break
               fi
               sleep 10
             done
 
-            # Still in_progress at the deadline leaves conclusion null, which
-            # lands here as "none" and fails. A stuck prerequisite is not a
-            # reason to roll.
-            CONCLUSION=$(gh api "$RUNS" --jq '.workflow_runs[0].conclusion // "none"')
+            # Still in_progress at the deadline leaves conclusion "none", which
+            # fails. A stuck prerequisite is not a reason to roll.
             if [[ "$CONCLUSION" != "success" ]]; then
               echo "$AWAIT for $TARGET concluded '$CONCLUSION'." >&2
               echo "Refusing to roll an image ahead of the backend it expects." >&2
