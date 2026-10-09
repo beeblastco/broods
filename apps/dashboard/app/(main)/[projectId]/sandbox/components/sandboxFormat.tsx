@@ -2,7 +2,7 @@
 
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
-import { IconTooltip } from "@/app/components/IconTooltip";
+import { HelpMark } from "@/app/components/HelpMark";
 import {
   MACHINE_LABEL,
   MACHINE_STATE_LABEL,
@@ -218,7 +218,7 @@ export function SpecsValue({
   provider: string;
 }): React.JSX.Element {
   if (!specs || !verified) {
-    return <UnknownSize reason={UNKNOWN_SIZE[provider] ?? UNVERIFIED_SIZE} />;
+    return <HelpMark text={UNKNOWN_SIZE[provider] ?? UNVERIFIED_SIZE} />;
   }
   const memory =
     specs.memoryMb >= 1024
@@ -229,8 +229,8 @@ export function SpecsValue({
     <span>
       {specs.vcpu} vCPU · {memory} ·{" "}
       {specs.storageGb === undefined ? (
-        <UnknownSize
-          reason={
+        <HelpMark
+          text={
             UNKNOWN_DISK[provider] ??
             "The provider does not report its disk size."
           }
@@ -239,22 +239,6 @@ export function SpecsValue({
         `${specs.storageGb} GB`
       )}
     </span>
-  );
-}
-
-// A "?" for a size Broods cannot know; hover or focus it to read why. The click
-// stays here so it does not also open the row it sits in.
-function UnknownSize({ reason }: { reason: string }): React.JSX.Element {
-  return (
-    <IconTooltip label={reason}>
-      <button
-        type="button"
-        className="cursor-help"
-        onClick={(event) => event.stopPropagation()}
-      >
-        ?
-      </button>
-    </IconTooltip>
   );
 }
 
