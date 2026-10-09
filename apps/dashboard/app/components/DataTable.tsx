@@ -62,13 +62,15 @@ export function DataTable({
 /**
  * The column header cell. With `sort` or `filter` it opens one menu: sort
  * either way, then the column's values with a check on the ones in effect.
- * The sorted column reads in foreground with an arrow. `align="right"` for
- * numbers and switches.
+ * With `sort` and `plain` a click sorts the column and a second click flips
+ * it, no menu. The sorted column reads in foreground with an arrow.
+ * `align="right"` for numbers and switches.
  */
 export function DataTableHead({
   align = "left",
   sort,
   filter,
+  plain = false,
   className,
   children,
   ...props
@@ -76,20 +78,23 @@ export function DataTableHead({
   align?: "left" | "right";
   sort?: HeadSort;
   filter?: HeadFilter;
+  plain?: boolean;
 }): React.JSX.Element {
-  const menu = sort !== undefined || filter !== undefined;
+  const button = sort !== undefined || filter !== undefined;
 
   return (
     <th
       className={cn(
         "font-medium",
-        menu ? "px-1 py-1" : "px-3 py-2",
+        button ? "px-1 py-1" : "px-3 py-2",
         align === "right" ? "text-right" : "text-left",
         className,
       )}
       {...props}
     >
-      {menu ? (
+      {sort && plain && filter === undefined ? (
+        <SortButton sort={sort}>{children}</SortButton>
+      ) : button ? (
         <HeadMenu sort={sort} filter={filter} align={align}>
           {children}
         </HeadMenu>
@@ -97,6 +102,31 @@ export function DataTableHead({
         children
       )}
     </th>
+  );
+}
+
+/** The header as one button: a click sorts ascending, another flips it. */
+function SortButton({
+  sort,
+  children,
+}: {
+  sort: HeadSort;
+  children: ReactNode;
+}): React.JSX.Element {
+  const sorted = sort.dir ?? null;
+
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      tone={sorted !== null ? "default" : "muted"}
+      className="cursor-pointer font-medium"
+      onClick={() => sort.onSort(sorted === "asc" ? "desc" : "asc")}
+    >
+      {children}
+      {sorted === "asc" && <ArrowUp className="size-3" />}
+      {sorted === "desc" && <ArrowDown className="size-3" />}
+    </Button>
   );
 }
 

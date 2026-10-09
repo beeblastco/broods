@@ -142,7 +142,7 @@ export function CronDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {mode === "create" ? "New cron job" : "Edit cron job"}
+            {mode === "create" ? "New scheduler" : "Edit scheduler"}
           </DialogTitle>
           <DialogDescription>
             Runs an agent on a recurring schedule.

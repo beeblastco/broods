@@ -11,6 +11,8 @@ import {
 } from "@/app/lib/machineConnection";
 import { tabHref } from "@/app/lib/navigation";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { ExternalLink } from "lucide-react";
+import Link from "next/link";
 
 // Same four tones as the tracing panel: sky while the provider is still moving
 // (suspending, terminating, building), grey once nothing runs. Tables and
@@ -71,6 +73,19 @@ export const SNAPSHOT_TONE: Record<
   build_failed: "error",
 };
 
+/**
+ * Whether the dashboard can act on the instance: suspend, resume, shell in,
+ * snapshot, terminate. An ephemeral instance lives only for the call that
+ * created it, and one without a config link predates the actions.
+ */
+export function controllable(
+  instance: Doc<"sandboxInstances">,
+): instance is Doc<"sandboxInstances"> & {
+  sandboxConfigId: Id<"sandboxConfigs">;
+} {
+  return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
+}
+
 /** Deep link into the project dashboard, keeping the stage the page is on. */
 export function dashboardHref(
   projectId: Id<"projects">,
@@ -129,12 +144,6 @@ export function egressBadge(
 
 export function formatProvider(provider: string): string {
   return PROVIDER_LABEL[provider] ?? provider;
-}
-
-export function instanceStatusDot(
-  status: Doc<"sandboxInstances">["status"],
-): React.JSX.Element {
-  return <StatusDot tone={INSTANCE_TONE[status]} label={status} />;
 }
 
 export function machineStatusDot(state: MachineState): React.JSX.Element {
@@ -246,5 +255,26 @@ function UnknownSize({ reason }: { reason: string }): React.JSX.Element {
         ?
       </button>
     </IconTooltip>
+  );
+}
+
+/** Opens the Tracing tab focused on one trace. `children` is the link text. */
+export function TraceLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <Link
+      href={href}
+      draggable={false}
+      onClick={(event) => event.stopPropagation()}
+      className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap text-foreground/80 transition-colors hover:text-foreground hover:underline"
+    >
+      {children}
+      <ExternalLink className="size-3 shrink-0" />
+    </Link>
   );
 }

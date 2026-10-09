@@ -5,21 +5,21 @@ import {
   DataTable,
   DataTableBody,
   DataTableCell,
-  DataTableFooter,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  TIME_WORDS,
+  DataTableSub,
 } from "@/app/components/DataTable";
+import { DangerZone } from "@/app/components/DangerZone";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
 import { StatusWord, type StatusTone } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
-import { Switch } from "@/app/components/ui/switch";
-import { Who } from "@/app/components/Who";
+import { actorName, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -32,35 +32,36 @@ import {
 import { formatDate, formatDateTime } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import Link from "next/link";
 import { useQueryState } from "nuqs";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   dashboardHref,
   relativeTime,
+  TraceLink,
 } from "../../sandbox/components/sandboxFormat";
 import { CronDialog, eventsToText } from "./CronDialog";
 
 // The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["agent", "status", "timezone"] as const;
 
-// Eight columns of short text; below this the detail panel would wrap them.
-const TABLE_MIN_WIDTH = 760;
+// Six columns of short text; below this the detail panel would wrap them.
+const TABLE_MIN_WIDTH = 640;
 
 // The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const CRON_ID = parseAsId<"crons">();
 
-// A job with no zone of its own runs in UTC, so that is what the row says.
+// A job with no zone of its own runs in UTC, so that is what the panel says.
 const DEFAULT_TIMEZONE = "UTC";
 
-// Sort words for the next-run column; the last-run column reads oldest and newest.
-const NEXT_WORDS: [string, string] = ["Soonest first", "Latest first"];
+// The tallest bar of the run histogram stops here, so its label stays readable.
+const BAR_MAX_PERCENT = 70;
 
 type Cron = FunctionReturnType<typeof api.agent.crons.listForProject>[number];
 type CronRun = FunctionReturnType<
@@ -68,15 +69,7 @@ type CronRun = FunctionReturnType<
 >[number];
 type RunStatus = NonNullable<Cron["lastStatus"]>;
 type Field = (typeof QUERY_FIELDS)[number];
-type Column =
-  | "name"
-  | "description"
-  | "agent"
-  | "schedule"
-  | "timezone"
-  | "next"
-  | "last"
-  | "active";
+type Column = "name" | "agent" | "schedule" | "status" | "next" | "last";
 
 /** A job with the facts the list derives once per tick: its agent's name and its next fire. */
 interface CronRow {
@@ -100,6 +93,13 @@ const RUN_TONE: Record<RunStatus, StatusTone> = {
   failed: "error",
 };
 
+// One bar per run in the histogram, the color saying how it ended.
+const RUN_BAR: Record<RunStatus, string> = {
+  started: "bg-info/70",
+  completed: "bg-muted",
+  failed: "bg-destructive/70",
+};
+
 // What a `status:` token may name: the job's own state, or its last run's.
 const STATUS_WORDS: Record<string, (cron: Cron) => boolean> = {
   active: (cron) => cron.status === "active",
@@ -111,14 +111,12 @@ const STATUS_WORDS: Record<string, (cron: Cron) => boolean> = {
 
 const SORT_KEY: Record<Column, (row: CronRow) => SortKey> = {
   name: (row) => row.cron.name,
-  description: (row) => row.cron.description ?? null,
   agent: (row) => row.agentName,
   schedule: (row) =>
     describeSchedule(row.cron.scheduleExpression, row.cron.timezone),
-  timezone: (row) => row.zone,
+  status: (row) => (row.cron.status === "active" ? 0 : 1),
   next: (row) => row.next,
   last: (row) => row.cron.lastInvokedAt ?? null,
-  active: (row) => (row.cron.status === "active" ? 1 : 0),
 };
 
 interface Props {
@@ -130,9 +128,9 @@ interface Props {
 }
 
 /**
- * The scheduler: a search bar with sort and filter on every header, one
- * column per fact about a job, an active switch, and a detail panel for
- * the selected job with its prompt and recent runs.
+ * The scheduler, laid out like Monitoring: a search bar, a flush table whose
+ * headers sort on click, and a detail panel for the selected job with what
+ * the row does not show: its zone, prompt, run history, and the danger zone.
  */
 export function CronsTable({
   projectId,
@@ -140,11 +138,8 @@ export function CronsTable({
   agents,
   onCreate,
 }: Props): React.JSX.Element {
-  const { canWrite } = useOrgRole();
-  const update = useMutation(api.agent.cronsPublic.update);
   const now = useNow();
   const [selectedId, setSelectedId] = useQueryState("sel", CRON_ID);
-  const { error, run } = useSubmit();
 
   const rows = useMemo((): CronRow[] => {
     const names = new Map(agents.map((agent) => [agent._id, agent.name]));
@@ -166,7 +161,6 @@ export function CronsTable({
     remember: `scheduler:${projectId}`,
   });
   const selected = rows.find((row) => row.cron._id === selectedId) ?? null;
-  const activeCount = crons.filter((cron) => cron.status === "active").length;
   const filters = {
     agent: list.filterFor("agent", [
       ...new Set(rows.map((row) => row.agentName.toLowerCase())),
@@ -179,12 +173,12 @@ export function CronsTable({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Toolbar className="border-b-0 px-0">
+      <Toolbar>
         <SearchInput
           value={list.query}
           onChange={list.setQuery}
           fields={QUERY_FIELDS}
-          placeholder="Search jobs"
+          placeholder="Search schedulers · agent: status: timezone:"
         />
         <FilterButton
           columns={[
@@ -196,13 +190,13 @@ export function CronsTable({
         {onCreate && (
           <Button size="sm" className="cursor-pointer" onClick={onCreate}>
             <Plus className="size-4" />
-            New cron job
+            New scheduler
           </Button>
         )}
       </Toolbar>
-      {error && <p className="pb-2 text-xs text-destructive">{error}</p>}
 
       <DetailSplit
+        flush
         tableMinWidth={TABLE_MIN_WIDTH}
         detail={
           selected && (
@@ -219,55 +213,42 @@ export function CronsTable({
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
-              <DataTableHead sort={list.sortFor("description")}>
-                Description
+              <DataTableHead plain sort={list.sortFor("name")}>
+                Name
               </DataTableHead>
-              <DataTableHead
-                sort={list.sortFor("agent")}
-                filter={filters.agent}
-              >
+              <DataTableHead plain sort={list.sortFor("agent")}>
                 Agent
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("schedule")}>
+              <DataTableHead plain sort={list.sortFor("schedule")}>
                 Schedule
               </DataTableHead>
-              <DataTableHead
-                sort={list.sortFor("timezone")}
-                filter={filters.timezone}
-              >
-                Timezone
+              <DataTableHead plain sort={list.sortFor("status")}>
+                Status
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("next", NEXT_WORDS)}>
-                Next run
-              </DataTableHead>
-              <DataTableHead
-                sort={list.sortFor("last", TIME_WORDS)}
-                filter={filters.status}
-              >
+              <DataTableHead plain sort={list.sortFor("last")}>
                 Last run
               </DataTableHead>
-              <DataTableHead align="right" sort={list.sortFor("active")}>
-                Active
+              <DataTableHead plain align="right" sort={list.sortFor("next")}>
+                Next run
               </DataTableHead>
             </tr>
           </DataTableHeader>
           <DataTableBody>
-            {list.shown.map(({ cron, agentName, zone, next }) => (
+            {list.shown.map(({ cron, agentName, next }) => (
               <DataTableRow
                 key={cron._id}
                 selected={selectedId === cron._id}
-                onClick={() => setSelectedId(cron._id)}
+                onClick={() =>
+                  setSelectedId(selectedId === cron._id ? null : cron._id)
+                }
               >
-                <DataTableCell className="max-w-56 truncate font-medium">
-                  {cron.name}
-                </DataTableCell>
-                <DataTableCell
-                  muted
-                  className="max-w-72 truncate"
-                  title={cron.description}
-                >
-                  {cron.description || "—"}
+                <DataTableCell className="max-w-64 font-medium">
+                  <div className="truncate">{cron.name}</div>
+                  {cron.description && (
+                    <DataTableSub title={cron.description}>
+                      {cron.description}
+                    </DataTableSub>
+                  )}
                 </DataTableCell>
                 <DataTableCell>
                   <Who
@@ -280,11 +261,15 @@ export function CronsTable({
                   />
                 </DataTableCell>
                 <DataTableCell>
-                  {describeSchedule(cron.scheduleExpression, cron.timezone)}
+                  <span className="font-mono">{cron.scheduleExpression}</span>
+                  <span className="ml-2.5 text-muted-foreground">
+                    {describeSchedule(cron.scheduleExpression, cron.timezone)}
+                  </span>
                 </DataTableCell>
-                <DataTableCell>{zone}</DataTableCell>
                 <DataTableCell>
-                  <NextRun cron={cron} next={next} now={now} />
+                  <StatusWord tone={cron.status === "active" ? "ok" : "ended"}>
+                    {cron.status}
+                  </StatusWord>
                 </DataTableCell>
                 <DataTableCell>
                   {cron.lastStatus ? (
@@ -292,7 +277,7 @@ export function CronsTable({
                       <StatusWord tone={RUN_TONE[cron.lastStatus]}>
                         {RUN_WORD[cron.lastStatus]}
                       </StatusWord>
-                      <span className="text-muted-foreground">
+                      <span className="text-muted-foreground tabular-nums">
                         {relativeTime(cron.lastInvokedAt, now)}
                       </span>
                     </span>
@@ -300,38 +285,16 @@ export function CronsTable({
                     <span className="text-muted-foreground">never</span>
                   )}
                 </DataTableCell>
-                <DataTableCell
-                  align="right"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Switch
-                    checked={cron.status === "active"}
-                    disabled={!canWrite}
-                    aria-label={`${cron.name} active`}
-                    onCheckedChange={(checked) =>
-                      run(() =>
-                        update({
-                          cronId: cron._id,
-                          status: checked ? "active" : "paused",
-                        }),
-                      )
-                    }
-                  />
+                <DataTableCell align="right" muted className="tabular-nums">
+                  <NextRun cron={cron} next={next} now={now} />
                 </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
         </DataTable>
         {list.shown.length === 0 && (
-          <EmptyState title="No jobs match the current filters." />
+          <EmptyState title="No schedulers match the current filters." />
         )}
-        <DataTableFooter
-          shown={list.shown.length}
-          total={crons.length}
-          noun={["job", "jobs"]}
-        >
-          {`, ${activeCount} active`}
-        </DataTableFooter>
       </DetailSplit>
     </div>
   );
@@ -347,22 +310,19 @@ function NextRun({
   next: number | null;
   now: number;
 }): React.JSX.Element {
-  if (next === null) {
-    return <span className="text-muted-foreground">fired</span>;
-  }
+  if (next === null) return <span>fired</span>;
   if (cron.status !== "active") {
-    return (
-      <span>
-        {formatDateTime(next)}{" "}
-        <span className="text-muted-foreground">paused</span>
-      </span>
-    );
+    return <span title={formatDateTime(next)}>paused</span>;
   }
 
   return <span title={formatDateTime(next)}>{untilLabel(next, now)}</span>;
 }
 
-/** The selected job: every fact as a row, the prompt, and its newest runs. */
+/**
+ * The selected job. Edit and Pause sit on the title line; the body holds
+ * only what the row does not: zone, conversation, who made it, the prompt,
+ * the run history, and the danger zone.
+ */
 function CronPanel({
   projectId,
   row,
@@ -373,12 +333,15 @@ function CronPanel({
   projectId: Id<"projects">;
   row: CronRow;
   agents: Props["agents"];
+  /** The table's clock, so a running run's bar grows with it. */
   now: number;
   onClose: () => void;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
+  const update = useMutation(api.agent.cronsPublic.update);
   const remove = useMutation(api.agent.cronsPublic.remove);
-  const { cron, agentName, zone, next } = row;
+  const { error, pending: switching, run } = useSubmit();
+  const { cron, zone } = row;
   const runs = useQuery(api.agent.crons.listRunsForProject, {
     projectId: projectId,
     cronId: cron._id,
@@ -386,6 +349,41 @@ function CronPanel({
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [pending, setPending] = useState(false);
+
+  const newest = runs?.[0];
+  const facts: DetailRow[] = [
+    { key: "timezone", label: "Timezone", value: zone, words: true },
+  ];
+  if (cron.conversationKey) {
+    facts.push({
+      key: "conversation",
+      label: "Conversation",
+      value: cron.conversationKey,
+    });
+  }
+  facts.push(
+    {
+      key: "creator",
+      label: "Created by",
+      value: cron.creator ? actorName(cron.creator) : "API",
+      words: true,
+    },
+    {
+      key: "created",
+      label: "Created",
+      value: formatDate(cron.createdAt),
+      words: true,
+    },
+  );
+  if (newest?.status === "failed" && newest.error) {
+    facts.push({
+      key: "error",
+      label: "Last error",
+      value: newest.error,
+      words: true,
+      tone: "error",
+    });
+  }
 
   async function handleDelete(): Promise<void> {
     setPending(true);
@@ -400,99 +398,69 @@ function CronPanel({
   return (
     <DetailPanel
       title={cron.name}
-      meta={
+      actions={
         canWrite && (
-          <div className="mt-1 flex gap-1">
+          <>
             <Button
               variant="outline"
               size="sm"
+              tone="muted"
               className="cursor-pointer"
               onClick={() => setEditing(true)}
             >
               Edit
             </Button>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              tone="muted-destructive"
+              tone="muted"
               className="cursor-pointer"
-              onClick={() => setDeleting(true)}
+              disabled={switching}
+              onClick={() =>
+                run(() =>
+                  update({
+                    cronId: cron._id,
+                    status: cron.status === "active" ? "paused" : "active",
+                  }),
+                )
+              }
             >
-              Delete
+              {cron.status === "active" ? "Pause" : "Resume"}
             </Button>
-          </div>
+          </>
         )
       }
       onClose={onClose}
     >
-      <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-2 gap-y-1.5 text-xs">
-        <Field label="Status">
-          <StatusWord tone={cron.status === "active" ? "ok" : "ended"}>
-            {cron.status === "active" ? "Active" : "Paused"}
-          </StatusWord>
-        </Field>
-        <Field label="Agent">
-          <Who
-            actor={{ kind: "agent", name: agentName, agentId: cron.agentId }}
-            projectId={projectId}
-          />
-        </Field>
-        <Field label="Schedule">
-          {describeSchedule(cron.scheduleExpression, cron.timezone)}
-        </Field>
-        <Field label="Expression">
-          <span className="font-mono">{cron.scheduleExpression}</span>
-        </Field>
-        <Field label="Timezone">{zone}</Field>
-        <Field label="Next run">
-          {next === null
-            ? "fired"
-            : cron.status === "active"
-              ? `${formatDateTime(next)} (${untilLabel(next, now)})`
-              : `${formatDateTime(next)} paused`}
-        </Field>
-        <Field label="Last run">
-          {cron.lastStatus && cron.lastInvokedAt ? (
-            <span className="inline-flex items-center gap-2">
-              <StatusWord tone={RUN_TONE[cron.lastStatus]}>
-                {RUN_WORD[cron.lastStatus]}
-              </StatusWord>
-              {formatDateTime(cron.lastInvokedAt)}
-            </span>
-          ) : (
-            "never"
-          )}
-        </Field>
-        <Field label="Conversation key">
-          {cron.conversationKey ? (
-            <span className="font-mono">{cron.conversationKey}</span>
-          ) : (
-            <span className="text-muted-foreground">none</span>
-          )}
-        </Field>
-        <Field label="Created by">
-          {cron.creator ? (
-            <Who actor={cron.creator} />
-          ) : (
-            <span className="text-muted-foreground">API</span>
-          )}
-        </Field>
-        <Field label="Created at">{formatDate(cron.createdAt)}</Field>
-      </dl>
-      <p className="mt-2 text-2xs text-muted-foreground">
-        Runs share this conversation. Empty means each run starts fresh.
-      </p>
+      <DetailRows rows={facts} />
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
-      <h4 className="mt-4 mb-1.5 text-xs font-semibold">Prompt</h4>
+      <h4 className="mt-5 mb-1.5 text-sm font-medium">Prompt</h4>
       <CopyTextarea value={eventsToText(cron.events)} label="prompt" />
 
-      <h4 className="mt-4 mb-1.5 text-xs font-semibold">Runs</h4>
+      <h4 className="mt-5 mb-1.5 text-sm font-medium">Runs</h4>
       {runs === undefined ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : runs.length === 0 ? (
         <p className="text-xs text-muted-foreground">No runs yet.</p>
       ) : (
-        <RunsTable projectId={projectId} runs={runs} />
+        <>
+          <RunHistogram runs={runs} now={now} />
+          <RunsTable projectId={projectId} runs={runs} />
+        </>
+      )}
+
+      {canWrite && (
+        <DangerZone description="Delete the scheduler. Its past runs stay in Tracing.">
+          <Button
+            variant="destructive"
+            size="sm"
+            className="cursor-pointer"
+            onClick={() => setDeleting(true)}
+          >
+            Delete
+          </Button>
+        </DangerZone>
       )}
 
       {editing && (
@@ -508,7 +476,7 @@ function CronPanel({
           open
           onOpenChange={(open) => !open && setDeleting(false)}
           resourceName={cron.name}
-          resourceType="cron job"
+          resourceType="scheduler"
           critical={false}
           onConfirm={handleDelete}
           isDeleting={pending}
@@ -518,19 +486,51 @@ function CronPanel({
   );
 }
 
-/** One label and value row of the panel. */
-function Field({
-  label,
-  children,
+/**
+ * One bar per run, oldest at the left, as tall as the run was long; red
+ * when it failed, sky while it still runs. The same strip Monitoring draws
+ * under its toolbar, so a glance says how the job has been doing.
+ */
+function RunHistogram({
+  runs,
+  now,
 }: {
-  label: string;
-  children: React.ReactNode;
+  runs: CronRun[];
+  now: number;
 }): React.JSX.Element {
+  // `runs` is newest first; the bars read oldest to newest. A run still going
+  // sets no scale: one stuck in `started` would flatten every finished bar.
+  const bars = runs
+    .toReversed()
+    .map((run) => ({ run: run, ms: durationMs(run, now) }));
+  const max = Math.max(
+    1,
+    ...bars.flatMap((bar) =>
+      bar.run.completedAt === undefined ? [] : [bar.ms],
+    ),
+  );
+  const oldest = formatDate(runs[runs.length - 1].startedAt);
+  const newest = formatDate(runs[0].startedAt);
+
   return (
-    <>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 truncate text-foreground">{children}</dd>
-    </>
+    <div className="relative flex h-9 shrink-0 items-end gap-px border-b border-border pt-1 select-none">
+      {bars.map(({ run, ms }) => (
+        <span
+          key={run._id}
+          title={`${formatDateTime(run.startedAt)} · ${RUN_WORD[run.status]} · ${durationLabel(run)}`}
+          style={{
+            "--bar-height": `${Math.min(1, ms / max) * BAR_MAX_PERCENT}%`,
+          }}
+          className={cn(
+            "h-(--bar-height) min-h-px flex-1",
+            RUN_BAR[run.status],
+          )}
+        />
+      ))}
+      <span className="pointer-events-none absolute top-0 right-0 font-mono text-3xs text-muted-foreground">
+        {runs.length === 1 ? newest : `${oldest} → ${newest}`}
+      </span>
+    </div>
   );
 }
 
@@ -547,57 +547,55 @@ function RunsTable({
 
   return (
     <DataTable>
-      <DataTableHeader className="static">
+      <DataTableHeader className="static bg-transparent">
         <tr>
           <DataTableHead>Started</DataTableHead>
           <DataTableHead>Status</DataTableHead>
-          <DataTableHead>Duration</DataTableHead>
+          <DataTableHead align="right">Duration</DataTableHead>
           <DataTableHead align="right" />
         </tr>
       </DataTableHeader>
       <DataTableBody>
-        {runs.map((run) => {
-          const duration =
-            run.completedAt === undefined
-              ? "—"
-              : `${Math.max(1, Math.round((run.completedAt - run.startedAt) / 1000))}s`;
-
-          return (
-            <DataTableRow key={run._id}>
-              <DataTableCell>
-                {formatDateTime(run.startedAt)}
-                {run.error && (
-                  <div
-                    className="max-w-56 truncate text-2xs text-muted-foreground"
-                    title={run.error}
-                  >
-                    {run.error}
-                  </div>
-                )}
-              </DataTableCell>
-              <DataTableCell>
-                <StatusWord tone={RUN_TONE[run.status]}>
-                  {RUN_WORD[run.status]}
-                </StatusWord>
-              </DataTableCell>
-              <DataTableCell muted>{duration}</DataTableCell>
-              <DataTableCell align="right">
-                <Link
-                  href={dashboardHref(projectId, stage, {
-                    tab: "tracing",
-                    q: `conv:${run.conversationKey}`,
-                  })}
-                  className="cursor-pointer text-foreground underline-offset-3 hover:underline"
-                >
-                  Traces
-                </Link>
-              </DataTableCell>
-            </DataTableRow>
-          );
-        })}
+        {runs.map((run) => (
+          <DataTableRow key={run._id}>
+            <DataTableCell className="font-mono tabular-nums" muted>
+              {formatDateTime(run.startedAt)}
+            </DataTableCell>
+            <DataTableCell title={run.error}>
+              <StatusWord tone={RUN_TONE[run.status]}>
+                {RUN_WORD[run.status]}
+              </StatusWord>
+            </DataTableCell>
+            <DataTableCell align="right" muted className="tabular-nums">
+              {durationLabel(run)}
+            </DataTableCell>
+            <DataTableCell align="right">
+              <TraceLink
+                href={dashboardHref(projectId, stage, {
+                  tab: "tracing",
+                  q: `conv:${run.conversationKey}`,
+                })}
+              >
+                Trace
+              </TraceLink>
+            </DataTableCell>
+          </DataTableRow>
+        ))}
       </DataTableBody>
     </DataTable>
   );
+}
+
+/** How long a run took, or how long it has been running as of `now`. */
+function durationMs(run: CronRun, now: number): number {
+  return Math.max(0, (run.completedAt ?? now) - run.startedAt);
+}
+
+/** The run's length in whole seconds, or a dash while it still runs. */
+function durationLabel(run: CronRun): string {
+  if (run.completedAt === undefined) return "—";
+
+  return `${Math.max(1, Math.round(durationMs(run, run.completedAt) / 1000))}s`;
 }
 
 /** Whether a `field:value` token matches the job. */
@@ -609,5 +607,5 @@ function matchesField(row: CronRow, field: Field, value: string): boolean {
 }
 
 function searchText(row: CronRow): string {
-  return `${row.cron.name} ${row.cron.description ?? ""}`;
+  return `${row.cron.name} ${row.cron.description ?? ""} ${row.cron.scheduleExpression}`;
 }

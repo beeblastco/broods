@@ -105,6 +105,7 @@ import {
 } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import type { RangePreset, TimeWindow } from "@/app/lib/queryTokens";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
+import { SandboxInstancesStandIn } from "./SandboxInstancesStandIn";
 import { DataTableStandIn } from "./DataTableStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
@@ -389,6 +390,11 @@ export function UiGallery(): React.JSX.Element {
         <RuntimeKeyView apiKey="clipboard fixture" />
       </main>
     );
+  }
+
+  // The sandbox list with its panel and dock, with no provider behind it.
+  if (dashboardTab === "sandbox") {
+    return <SandboxInstancesStandIn />;
   }
 
   // A trace link keeps the path and swaps ?tab=, so the dashboard stand-in

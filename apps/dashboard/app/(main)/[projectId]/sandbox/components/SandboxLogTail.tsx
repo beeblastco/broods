@@ -46,9 +46,12 @@ interface Props {
  * The id a tail subscribes with, read out of the stream name core wrote at
  * launch: `<accountId>/<project>/<stage>/<uuid>/<mac>`. Undefined when the run
  * had no deployment scope, since the gateway scopes every query on project and
- * stage and such a VM's lines can never match.
+ * stage and such a VM's lines can never match. Undefined for no stream.
  */
-export function sandboxLogId(logStream: string): SandboxLogId | undefined {
+export function sandboxLogId(
+  logStream: string | undefined,
+): SandboxLogId | undefined {
+  if (logStream === undefined) return undefined;
   const [, project, stage, id] = logStream.split("/");
   const scoped = project !== UNSCOPED && stage !== UNSCOPED;
 

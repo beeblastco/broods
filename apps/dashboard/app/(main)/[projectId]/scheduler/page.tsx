@@ -47,15 +47,19 @@ export default function CronsPage({
   const loading =
     crons === undefined || agents === undefined || account === undefined;
 
+  // The list fills the page edge to edge like Monitoring; the states before
+  // it have one line or card to show and keep the usual margins.
   const body = (): React.JSX.Element => {
     if (loading) {
-      return <p className="text-sm text-muted-foreground">Loading…</p>;
+      return (
+        <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>
+      );
     }
     if (!account) {
       return (
         <EmptyState
           title="Your organization is not provisioned yet."
-          detail="Provision the broods account in settings before creating cron jobs."
+          detail="Provision the broods account in settings before creating schedulers."
         />
       );
     }
@@ -70,7 +74,7 @@ export default function CronsPage({
     if (crons.length === 0) {
       return (
         <EmptyState
-          title="No scheduled jobs yet."
+          title="No schedulers yet."
           detail="Create one to run an agent on a recurring schedule."
           action={
             canCreate && (
@@ -80,7 +84,7 @@ export default function CronsPage({
                 onClick={() => setCreateOpen(true)}
               >
                 <Plus className="size-4" />
-                New cron job
+                New scheduler
               </Button>
             )
           }
@@ -99,7 +103,7 @@ export default function CronsPage({
   };
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-7xl flex-col px-6 pt-6 pb-6">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
       <h1 className="sr-only">Scheduler</h1>
       {body()}
 
