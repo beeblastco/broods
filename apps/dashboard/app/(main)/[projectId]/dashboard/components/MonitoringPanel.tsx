@@ -196,6 +196,7 @@ export function MonitoringPanel({
         window={timeWindow}
         onWindowChange={setTimeWindow}
         points={points}
+        marker={selected?.ts}
         now={now}
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
