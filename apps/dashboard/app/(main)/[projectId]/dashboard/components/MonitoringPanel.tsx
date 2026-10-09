@@ -17,14 +17,11 @@ import {
 } from "@/app/hooks/useObservabilityStream";
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
+import { useObservabilityView } from "@/app/hooks/useObservabilityView";
 import { formatDateTimeMillis } from "@/app/lib/formatTime";
-import {
-  effectiveWindow,
-  parseQuery,
-  type Query,
-  type RangePreset,
-  type TimeWindow,
-} from "@/app/lib/queryTokens";
+import { tabHref } from "@/app/lib/navigation";
+import { effectiveWindow, parseQuery, type Query } from "@/app/lib/queryTokens";
+import { LOG_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -101,10 +98,14 @@ export function MonitoringPanel({
   // The entry object itself, not an index: indices drift as new logs stream in
   // and would silently repoint the open panel at a different line.
   const [selected, setSelected] = useState<ObservabilityLogEntry | null>(null);
-  const [filter, setFilter] = useState("");
-  // The backfill reaches 30 days back, so the widest preset shows all of it.
-  const [range, setRange] = useState<RangePreset>("30d");
-  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
+  const {
+    query: filter,
+    setQuery: setFilter,
+    range,
+    setRange,
+    window: timeWindow,
+    setWindow: setTimeWindow,
+  } = useObservabilityView(LOG_VIEW);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const now = useNow();
 
@@ -114,12 +115,14 @@ export function MonitoringPanel({
     [selected],
   );
 
-  const viewTrace = (traceId: string): void => {
-    const next = new URLSearchParams(searchParams.toString());
-    next.set("tab", "tracing");
-    next.set("trace", traceId);
-    router.push(`${pathname}?${next.toString()}`);
-  };
+  // Only the stage and the trace travel: the logs' search and range mean
+  // nothing on Tracing.
+  const viewTrace = (traceId: string): void =>
+    router.push(
+      tabHref(pathname, "tracing", searchParams.toString(), {
+        trace: traceId,
+      }),
+    );
 
   const query = useMemo(() => parseQuery(filter, LOG_QUERY_FIELDS), [filter]);
   const wantsDebug = query.fields.some(

@@ -17,7 +17,7 @@ interface Props {
   selection: TimeWindow | null;
   onSelect: (selection: TimeWindow | null) => void;
   /** A time to mark with a red line, such as the selected trace's start. */
-  marker?: number | null;
+  marker?: number;
 }
 
 /**
@@ -31,7 +31,7 @@ export function VolumeStrip({
   window,
   selection,
   onSelect,
-  marker = null,
+  marker,
 }: Props): React.JSX.Element {
   const strip = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
@@ -123,7 +123,7 @@ export function VolumeStrip({
           className="pointer-events-none absolute inset-y-0 left-(--sel-left) right-(--sel-right) border-x border-info bg-info/10"
         />
       )}
-      {marker !== null && marker >= window.from && marker <= window.to && (
+      {marker !== undefined && marker >= window.from && marker <= window.to && (
         <span
           style={{
             "--marker-left": `${((marker - window.from) / span) * 100}%`,

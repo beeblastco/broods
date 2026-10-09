@@ -53,8 +53,10 @@ const nextConfig: NextConfig = {
             value: "DENY",
           },
           {
+            // View state rides in the URL (search text, ids): send other
+            // sites the origin only, and nothing on an https→http downgrade.
             key: "Referrer-Policy",
-            value: "origin-when-cross-origin",
+            value: "strict-origin-when-cross-origin",
           },
           {
             key: "Permissions-Policy",

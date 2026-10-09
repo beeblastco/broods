@@ -36,10 +36,12 @@ import {
   type MachineState,
 } from "@/app/lib/machineConnection";
 import type { SortKey } from "@/app/lib/tableState";
+import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import Link from "next/link";
+import { useQueryState } from "nuqs";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MachinePanel } from "./MachinePanel";
@@ -66,6 +68,9 @@ const TABLE_MIN_WIDTH = 760;
 // The dock's height when it opens, and the least it can be dragged to.
 const DOCK_DEFAULT_HEIGHT = 300;
 const DOCK_MIN_HEIGHT = 160;
+
+// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
+const ROW_ID = parseAsId<"machineConnections" | "sandboxInstances">();
 
 type Instance = Doc<"sandboxInstances">;
 type Agent = Pick<Doc<"agents">, "_id" | "name">;
@@ -160,7 +165,7 @@ export function SandboxInstancesTable({
 
   // Only the id is held, so the open panel follows the live row instead of a
   // stale copy once a refresh or suspend moves its status.
-  const [selectedId, setSelectedId] = useState<TableRow["id"] | null>(null);
+  const [selectedId, setSelectedId] = useQueryState("sel", ROW_ID);
   const [dock, setDock] = useState<Dock | null>(null);
   const [confirming, setConfirming] = useState<Instance | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);

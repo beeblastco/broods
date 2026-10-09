@@ -46,11 +46,13 @@ import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
+import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
+import { useQueryState } from "nuqs";
 import { useState } from "react";
 
 type Member = FunctionReturnType<typeof api.org.members.list>[number];
@@ -70,6 +72,9 @@ const QUERY_FIELDS = ["role"] as const;
 
 // Six columns of short text; below this the panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
+
+// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
+const MEMBER_ID = parseAsId<"orgMembers">();
 
 const NO_ROWS: Member[] = [];
 
@@ -96,7 +101,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   const canChange = can("members:write");
   const members = useQuery(api.org.members.list, { orgId: org._id });
   const roles = useQuery(api.access.listRoles, {});
-  const [selectedId, setSelectedId] = useState<Id<"orgMembers"> | null>(null);
+  const [selectedId, setSelectedId] = useQueryState("sel", MEMBER_ID);
   const [inviting, setInviting] = useState(false);
   const list = useListState({
     rows: members ?? NO_ROWS,

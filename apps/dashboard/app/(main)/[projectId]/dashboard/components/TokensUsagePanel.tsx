@@ -21,6 +21,7 @@ import {
   formatAxisNumber,
   tokenParts,
 } from "@/app/lib/usageChart";
+import { parseAsEpochMs, parseAsModelKeys } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -28,6 +29,7 @@ import { estimateModelTokenCost } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FunctionReturnType } from "convex/server";
+import { parseAsStringLiteral, useQueryStates } from "nuqs";
 import { useMemo, useState } from "react";
 import {
   formatBucketLabel,
@@ -103,6 +105,17 @@ const RANGES: Array<{ id: Range }> = [
   { id: "1y" },
 ];
 
+// The panel's view in the URL, so a link opens it: the `range`, the
+// `models` filter (null shows every model) and the clicked `bin`, keyed by
+// its start so it survives the window sliding.
+const USAGE_VIEW = {
+  range: parseAsStringLiteral(RANGES.map((option) => option.id)).withDefault(
+    "1h",
+  ),
+  models: parseAsModelKeys,
+  bin: parseAsEpochMs,
+};
+
 const COUNTER_KEYS: CounterKey[] = [
   "inputTokens",
   "outputTokens",
@@ -152,11 +165,10 @@ export function TokensUsagePanel({
   stageSlug,
   apiKey,
 }: Props): React.JSX.Element {
-  const [range, setRange] = useState<Range>("1h");
-  // Model keys to show; null shows every model.
-  const [modelFilter, setModelFilter] = useState<string[] | null>(null);
-  // Keyed by bin start, not index, so the selection survives the window sliding.
-  const [selectedStart, setSelectedStart] = useState<number | null>(null);
+  const [view, setView] = useQueryStates(USAGE_VIEW);
+  const { range, models: modelFilter, bin: selectedStart } = view;
+  const setSelectedStart = (bin: number | null): void =>
+    void setView({ bin: bin });
 
   // Reactive subscription: usage totals update live as the harness meters tokens.
   const data = useQuery(api.logs.fetchUsageStats, {
@@ -269,9 +281,11 @@ export function TokensUsagePanel({
   // Checkbox semantics: a click adds or removes one model.
   const toggleModel = (key: string): void => {
     const shown = activeFilter ?? [...modelColors.keys()];
-    setModelFilter(
-      shown.includes(key) ? shown.filter((k) => k !== key) : [...shown, key],
-    );
+    void setView({
+      models: shown.includes(key)
+        ? shown.filter((k) => k !== key)
+        : [...shown, key],
+    });
   };
 
   return (
@@ -281,17 +295,14 @@ export function TokensUsagePanel({
         <h2 className="text-sm font-semibold text-foreground">Tokens</h2>
         <UsageToolbar
           range={range}
-          onRangeChange={(id) => {
-            setRange(id);
-            setSelectedStart(null);
-          }}
+          onRangeChange={(id) => void setView({ range: id, bin: null })}
           modelMenu={
             <ModelMenu
               modelColors={modelColors}
               allShown={activeFilter === null}
               isShown={isShown}
               onToggle={toggleModel}
-              onShowAll={() => setModelFilter(null)}
+              onShowAll={() => void setView({ models: null })}
             />
           }
           // Only while that bin is still on the chart; the live window slides.

@@ -44,6 +44,9 @@ export function useStage(): {
   const setStageId = useCallback(
     (id: Id<"stages"> | null) => {
       const next = new URLSearchParams(searchParams.toString());
+      // A run or row id belongs to the stage it came from.
+      next.delete("trace");
+      next.delete("sel");
       if (id) {
         next.set("stage", id);
       } else {

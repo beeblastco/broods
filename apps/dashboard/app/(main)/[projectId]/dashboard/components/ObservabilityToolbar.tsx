@@ -39,7 +39,7 @@ interface Props {
   /** Every entry held, before filters; the strip draws their volume. */
   points: VolumePoint[];
   /** A time the strip marks with a red line, such as the selected trace. */
-  marker?: number | null;
+  marker?: number;
   /** The strip's right edge; the panels pass the same clock their filters use. */
   now: number;
   onRefresh: () => void;
@@ -87,17 +87,27 @@ export function ObservabilityToolbar({
   // so the selection does not slide off the left edge as time passes.
   // The clock the strip was frozen at, bound to the window picked on it: a
   // window the parent sets or clears (a trace link) thaws it on its own.
+  // Compared by value, since the parent rebuilds the window from the URL.
   const [frozen, setFrozen] = useState<{
     window: TimeWindow;
     now: number;
   } | null>(null);
   const stripNow =
-    frozen !== null && frozen.window === window ? frozen.now : now;
+    frozen !== null &&
+    frozen.window.from === window?.from &&
+    frozen.window.to === window.to
+      ? frozen.now
+      : now;
   const rangeWindow = useMemo(
     () => ({ from: stripNow - rangeMs(range), to: stripNow }),
     [stripNow, range],
   );
-  const selectWindow = (selection: TimeWindow | null): void => {
+  // Whole ms, the precision the URL keeps, so the frozen window matches it.
+  const selectWindow = (drag: TimeWindow | null): void => {
+    const selection =
+      drag === null
+        ? null
+        : { from: Math.round(drag.from), to: Math.round(drag.to) };
     setFrozen(selection === null ? null : { window: selection, now: stripNow });
     onWindowChange(selection);
   };

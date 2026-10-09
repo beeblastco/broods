@@ -8,6 +8,8 @@ import {
   type SortKey,
   type SortState,
 } from "@/app/lib/tableState";
+import { parseAsSearch, parseAsSort } from "@/app/lib/urlState";
+import { useQueryStates } from "nuqs";
 import { useMemo } from "react";
 import { useRemembered } from "./useRemembered";
 
@@ -29,6 +31,8 @@ export interface ListSpec<Row, Column extends string, Field extends string> {
   text?: (row: Row) => string;
   /** Keep the query and sort across reloads under this id; absent keeps them in memory. */
   remember?: string;
+  /** False keeps the query and sort out of the URL, for a second list on the same page. */
+  url?: boolean;
 }
 
 export interface ListState<Row, Column extends string, Field extends string> {
@@ -46,7 +50,9 @@ export interface ListState<Row, Column extends string, Field extends string> {
 /**
  * The state every list on the kit shares: the search box with its
  * `field:value` chips, one sorted column, and the header menus that change
- * them. Pages describe their rows once and render the result.
+ * them. Pages describe their rows once and render the result. The query and
+ * sort live in the URL (`q`, `sort` as `column.dir`) so a link opens the same
+ * view; a link's values win over the remembered ones.
  */
 export function useListState<Row, Column extends string, Field extends string>(
   spec: ListSpec<Row, Column, Field>,
@@ -58,15 +64,36 @@ export function useListState<Row, Column extends string, Field extends string>(
     matches = noMatch,
     text = noText,
     remember,
+    url = true,
   } = spec;
-  const [query, setQuery] = useRemembered(
+  const [remembered, rememberQuery] = useRemembered(
     remember ? `${remember}.filter` : null,
     "",
   );
-  const [sort, setSort] = useRemembered<SortState<Column>>(
+  const [rememberedSort, rememberSort] = useRemembered<SortState<Column>>(
     remember ? `${remember}.sort` : null,
     spec.initialSort,
   );
+  // Only a column the list sorts by parses. sortKey is a module constant, so the memo holds.
+  const parsers = useMemo(
+    () => ({
+      q: parseAsSearch,
+      sort: parseAsSort(sortKey),
+    }),
+    [sortKey],
+  );
+  const [linked, setLinked] = useQueryStates(parsers);
+  // A link's `q`, even an empty one, wins over this viewer's remembered search.
+  const query = url && linked.q !== null ? linked.q : remembered;
+  const sort = (url && linked.sort) || rememberedSort;
+  const setQuery = (next: string): void => {
+    rememberQuery(next);
+    if (url) void setLinked({ q: next });
+  };
+  const setSort = (next: SortState<Column>): void => {
+    rememberSort(next);
+    if (url) void setLinked({ sort: next });
+  };
   const parsed = useMemo(() => parseQuery(query, fields), [query, fields]);
   const shown = useMemo(() => {
     // Two chips on one field widen it (either value); chips on different
