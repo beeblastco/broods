@@ -44,7 +44,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { actorName, PLATFORM, Who } from "@/app/components/Who";
+import { PLATFORM, Who } from "@/app/components/Who";
+import { createdRows } from "./createdRows";
 import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
@@ -235,21 +236,8 @@ function PermissionPanel({
       words: true,
     },
     { key: "kind", label: "Kind", value: permission.kind, words: true },
+    ...createdRows(custom?.createdAt, custom?.createdBy),
   ];
-  if (custom) {
-    facts.push({
-      key: "created",
-      label: "Created",
-      value: formatDate(custom.createdAt),
-      words: true,
-    });
-  }
-  facts.push({
-    key: "creator",
-    label: "Created by",
-    value: actorName(custom?.createdBy ?? PLATFORM),
-    words: true,
-  });
 
   async function confirmDelete(): Promise<void> {
     if (!custom) return;

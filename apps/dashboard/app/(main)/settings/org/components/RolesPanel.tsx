@@ -46,6 +46,7 @@ import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Switch } from "@/app/components/ui/switch";
 import { actorName, PLATFORM, Who, WhoGroup } from "@/app/components/Who";
+import { createdRows } from "./createdRows";
 import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
@@ -268,21 +269,8 @@ function RolePanel({
           : role.members.map(actorName).join(", "),
       words: true,
     },
+    ...createdRows(custom?.createdAt, custom?.createdBy),
   ];
-  if (custom) {
-    facts.push({
-      key: "created",
-      label: "Created",
-      value: formatDate(custom.createdAt),
-      words: true,
-    });
-  }
-  facts.push({
-    key: "creator",
-    label: "Created by",
-    value: actorName(custom?.createdBy ?? PLATFORM),
-    words: true,
-  });
 
   function setPolicies(policyIds: Id<"agentPolicies">[]): void {
     if (custom)
@@ -338,24 +326,23 @@ function RolePanel({
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger
-                disabled={attachable.length === 0}
                 render={
                   <Button
                     variant="outline"
                     size="sm"
                     tone="muted"
                     className="cursor-pointer"
-                    title={
-                      attachable.length === 0
-                        ? "Every policy is attached"
-                        : undefined
-                    }
                   />
                 }
               >
                 Attach policy
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {attachable.length === 0 && (
+                  <DropdownMenuItem disabled>
+                    Every policy is attached
+                  </DropdownMenuItem>
+                )}
                 {attachable.map((policy) => (
                   <DropdownMenuItem
                     key={policy._id}

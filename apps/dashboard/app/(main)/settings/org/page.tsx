@@ -48,6 +48,7 @@ export default function OrgSettingsPage(): React.JSX.Element {
   };
 
   const flush = FLUSH_TABS.has(tab.id);
+  const list = flush || WIDE_TABS.has(tab.id);
 
   return (
     <div
@@ -60,11 +61,8 @@ export default function OrgSettingsPage(): React.JSX.Element {
       <div
         className={cn(
           "mx-auto w-full",
-          flush
-            ? "flex min-h-0 flex-1 flex-col"
-            : WIDE_TABS.has(tab.id)
-              ? "flex min-h-0 flex-1 flex-col px-6 pt-6 pb-12"
-              : "max-w-2xl px-6 pt-6 pb-12",
+          list ? "flex min-h-0 flex-1 flex-col" : "max-w-2xl",
+          !flush && "px-6 pt-6 pb-12",
         )}
       >
         {org === undefined ? (

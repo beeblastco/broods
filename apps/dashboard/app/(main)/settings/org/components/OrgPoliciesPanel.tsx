@@ -45,7 +45,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { actorName, PLATFORM, Who } from "@/app/components/Who";
+import { PLATFORM, Who } from "@/app/components/Who";
+import { createdRows } from "./createdRows";
 import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
@@ -278,18 +279,7 @@ function PolicyPanel({
     },
     { key: "scope", label: "Scope", value: policy.scope, words: true },
     { key: "mode", label: "Mode", value: policy.mode, words: true },
-    {
-      key: "created",
-      label: "Created",
-      value: formatDate(policy.createdAt),
-      words: true,
-    },
-    {
-      key: "creator",
-      label: "Created by",
-      value: actorName(policy.createdBy ?? PLATFORM),
-      words: true,
-    },
+    ...createdRows(policy.createdAt, policy.createdBy),
   ];
 
   async function confirmDelete(): Promise<void> {
@@ -396,7 +386,7 @@ function PolicyPanel({
       )}
 
       {editable && (
-        <DangerZone description="Delete the policy. Roles and keys that hold it lose what it allowed.">
+        <DangerZone description="Delete the policy. Detach it from every role, agent and channel record that lists it first.">
           <Button
             variant="destructive"
             size="sm"
@@ -799,7 +789,7 @@ function AddRuleDialog({
 
 function matchesField(policy: Policy, field: Field, value: string): boolean {
   return field === "scope"
-    ? policy.scope.toLowerCase().startsWith(value)
+    ? policy.scope.toLowerCase() === value
     : policy.mode === value;
 }
 
