@@ -132,10 +132,10 @@ flowchart LR
   CF -.->|bundle fails to load,<br/>or runtime unreachable| L
 ```
 
-| Runtime    | Picked when                                                       | Bundle cap         | Per call                      |
-| ---------- | ----------------------------------------------------------------- | ------------------ | ----------------------------- |
-| Cloudflare | `auto`, and the bundle builds for Workers and needs nothing below | 10 MB, sent inline | 30 s, 5 s CPU, 50 subrequests |
-| Lambda     | `lambda`, or anything else                                        | 50 MB              | 30 s shared by the batch      |
+| Runtime    | Picked when                                                       | Bundle cap | Per call                      |
+| ---------- | ----------------------------------------------------------------- | ---------- | ----------------------------- |
+| Cloudflare | `auto`, and the bundle builds for Workers and needs nothing below | 10 MB      | 30 s, 5 s CPU, 50 subrequests |
+| Lambda     | `lambda`, or anything else                                        | 50 MB      | 30 s shared by the batch      |
 
 For a server that mostly does `fetch` calls and JSON, Workers costs about a quarter of Lambda per call and starts in milliseconds. Both runtimes take up to 6 MiB in and 16 MiB out per batch, and both bill one request per batch plus its wall time. The Compute panel shows no CPU figure for Cloudflare calls.
 

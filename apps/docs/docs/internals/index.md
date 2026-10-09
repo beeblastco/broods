@@ -14,75 +14,49 @@ One Bun workspaces monorepo, one product. Traefik is the door, the gateway owns 
 ### Service architecture
 
 ```mermaid
-flowchart LR
-  subgraph Clients
-    SDK["SDK, HTTP clients"]
-    CLI["broods CLI<br/>packages/broods"]
-    Dash["dashboard<br/>apps/dashboard"]
-    Daemon["broods machine<br/>daemon"]
+flowchart TB
+  subgraph In["Callers"]
+    direction LR
+    Clients["SDK, CLI, dashboard,<br/>broods machine daemon"]
+    Hooks["Chat webhooks<br/>Slack, Telegram, GitHub, ..."]
+    Socks["Discord Gateway,<br/>Matrix homeservers"]
+  end
+  subgraph Door["Front door"]
+    direction LR
+    Edge["Traefik<br/>apps/edge"]
+    Fwd["discord-forwarder,<br/>matrix-forwarder"]
+  end
+  subgraph Services
+    direction LR
+    GW["gateway<br/>apps/gateway"]
+    Core["core<br/>apps/core"]
+    Convex[("Convex<br/>packages/convex")]
+  end
+  subgraph Back["Backing services"]
+    direction LR
+    NATS[("NATS JetStream")]
+    S3[("S3 buckets")]
+    Obs[("OTel collector,<br/>Loki, Tempo")]
+    OPA["OPA"]
+    Models["model providers"]
+  end
+  subgraph Compute["Untrusted compute"]
+    direction LR
+    MCP["hosted MCP<br/>Lambda, Cloudflare Worker"]
+    SB["sandboxes<br/>MicroVM, Cloudflare bridge,<br/>workdir, E2B, Daytona, Vercel, custom"]
   end
 
-  subgraph Chat["Chat providers"]
-    Hooks["Slack, Telegram, GitHub,<br/>other webhooks"]
-    Discord["Discord Gateway"]
-    Matrix["Matrix homeservers"]
-  end
-
-  Edge["Traefik<br/>routes from apps/edge"]
-  GW["gateway<br/>apps/gateway"]
-  Core["core<br/>apps/core"]
-  Convex[("Convex<br/>packages/convex")]
-  DF["discord-forwarder"]
-  MF["matrix-forwarder"]
-  NATS[("NATS JetStream")]
-  OPA["OPA"]
-  Obs[("OTel collector,<br/>Loki, Tempo")]
-  S3[("S3 buckets")]
-  Models["model providers"]
-
-  subgraph Untrusted["Untrusted compute"]
-    MCPL["hosted MCP Lambda<br/>apps/lambda"]
-    MCPW["hosted MCP Worker<br/>apps/cloudflare-mcp"]
-    VM["Lambda MicroVM<br/>../lambda-sanbdox"]
-    CFS["sandbox bridge Worker<br/>apps/cloudflare-sandbox"]
-    Ext["workdir, E2B, Daytona,<br/>Vercel, custom"]
-  end
-
-  LF["sandbox-log-forwarder<br/>apps/lambda"]
-
-  SDK --> Edge
-  CLI --> Edge
-  Daemon --> Edge
+  Clients --> Edge
   Hooks --> Edge
-  Dash -->|"queries, mutations"| Convex
-  Dash -->|"sockets"| Edge
-  Discord --> DF
-  Matrix <--> MF
-  DF -->|"channel webhook"| Edge
-  MF -->|"channel webhook"| Edge
-  DF -.->|"listConnections"| Convex
-  MF -.->|"listConnections"| Convex
-
+  Socks <--> Fwd
+  Fwd -->|"channel webhook"| Edge
   Edge -->|"config paths"| Convex
   Edge -->|"runtime paths"| Core
   Edge -->|"WebSockets"| GW
-  GW -->|"scope, socket runs,<br/>machine relay"| Core
-  GW <-->|"replay, tail"| NATS
-  GW -->|"history"| Obs
-  GW -->|"terminal relay"| Untrusted
-
-  Core -->|"deploy key"| Convex
-  Convex -->|"service token"| Core
-  Core -->|"publish"| NATS
-  Core --> OPA
-  Core --> Obs
-  Core --> Models
-  Core -->|"Matrix send"| MF
-  Core --> Untrusted
-  Core --> S3
-  Convex --> S3
-  VM --> S3
-  VM -->|"CloudWatch"| LF --> Obs
+  GW -->|"socket runs, relay"| Core
+  Core <-->|"deploy key,<br/>service token"| Convex
+  Core --> Back
+  Core --> Compute
 ```
 
 | Path                      | Package                      | Job                                                                                   |
@@ -107,57 +81,32 @@ Sibling repos next to the checkout: `../infra` (k8s cluster and VMs, keep `sst.c
 ## Deployment
 
 ```mermaid
-flowchart TB
-  subgraph GH["GitHub"]
-    Actions["Actions workflows"]
-    GHCR[("ghcr.io/beeblastco/broods-*")]
+flowchart LR
+  Actions["GitHub Actions"]
+  subgraph K3s["Hetzner k3s cluster"]
+    direction TB
+    K1["Traefik, gateway, core,<br/>dashboard, forwarders, OPA"]
+    K2[("Convex backends,<br/>NATS JetStream,<br/>OTel, Loki, Tempo")]
   end
-
-  subgraph K3s["Hetzner k3s cluster, ../infra"]
-    Traefik["Traefik<br/>node 80/443"]
-    subgraph NsApp["namespace beeblast"]
-      Core["core, core-dev"]
-      GW["gateway, gateway-dev"]
-      Fwd["discord-forwarder,<br/>matrix-forwarder"]
-    end
-    Dash["dashboard, dashboard-dev"]
-    OPA["OPA"]
-    subgraph NsCvx["namespace convex"]
-      CVX["convex-prod-backend,<br/>convex-dev-backend"]
-    end
-    NATS[("namespace nats<br/>NATS JetStream")]
-    Obs[("namespace observability<br/>OTel, Loki, Tempo")]
+  subgraph AWS["AWS, one SST stage each"]
+    direction TB
+    A1[("S3 buckets")]
+    A2["hosted MCP Lambda,<br/>Lambda MicroVMs,<br/>log forwarder"]
   end
-
-  subgraph AWS["AWS, one SST stage each: dev, production-eu-west-1"]
-    S3[("S3: Filesystem, Skills,<br/>ToolBundles, MicrovmArtifacts")]
-    MCPR["mcp-runner Lambda"]
-    VM["Lambda MicroVMs,<br/>sandbox VPC"]
-    LF["MicroVM log group,<br/>sandbox-log-forwarder"]
-    IAM["core-runtime user,<br/>Convex S3 role"]
-  end
-
   subgraph CF["Cloudflare"]
-    MCPW["hosted MCP Worker<br/>non-production stages, R2 cache"]
-    CFS["sandbox bridge Worker,<br/>Durable Objects, Containers"]
+    direction TB
+    C1["hosted MCP Worker"]
+    C2["sandbox bridge Worker"]
   end
-
   Docs["docs site<br/>S3 + CloudFront"]
 
-  Actions -->|"build-*.yaml"| GHCR
-  Actions -->|"rollout.yaml dispatches<br/>an ../infra workflow"| K3s
-  Actions -->|"deploy-convex.yaml"| CVX
+  Actions -->|"images, rollout.yaml"| K1
+  Actions -->|"deploy-convex.yaml"| K2
   Actions -->|"deploy.yaml: sst deploy"| AWS
-  Actions -->|"deploy.yaml: wrangler"| MCPW
+  Actions -->|"deploy.yaml: wrangler"| C1
   Actions -->|"deploy-docs.yaml"| Docs
-  GHCR --> K3s
-  Traefik --> Core
-  Traefik --> GW
-  Traefik --> CVX
-  Traefik --> Dash
-  Core --> AWS
-  Core --> CF
-  LF -->|"OTLP"| Traefik
+  K1 -->|"tool calls, sandboxes"| AWS
+  K1 -->|"tool calls, sandboxes"| CF
 ```
 
 | Where              | What runs there                                                                 | Shipped by                                             |
@@ -173,7 +122,7 @@ flowchart TB
 - Production hosted MCP stays on Lambda; only non-production stages get the Workers runtime.
 - MicroVM images are built by `../lambda-sanbdox` CI, not SST.
 
-How a commit reaches each box: [CI/CD](ci-cd.md). Running the same shape yourself: [self-hosting](self-hosting.md).
+Pods, namespaces and replicas: [Operations](operations.md#runtime-topology). How a commit reaches each box: [CI/CD](ci-cd.md). Running the same shape yourself: [self-hosting](self-hosting.md).
 
 ## Where to start reading
 

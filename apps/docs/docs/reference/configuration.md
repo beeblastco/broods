@@ -304,7 +304,7 @@ An MCP server whose tools the agent sees as `<name>__<tool>`. Give exactly one o
 | `handler`      | Hosted server built with `createMcpHandler` from `@modelcontextprotocol/server`, bundled by the CLI                                                                                         |
 | `sandbox`      | A `machine` sandbox whose daemon runs the stdio server of the same name, or a persistent `lambda` sandbox                                                                                   |
 | `command`      | Argv of the stdio server, such as `["obscura", "mcp"]`. Required on a `lambda` sandbox                                                                                                      |
-| `headers`      | Request headers. Credentials must be `"Bearer ${NAME}"` refs                                                                                                                                |
+| `headers`      | Request headers. A credential header must be a `${NAME}` ref, optionally after a scheme: `"Bearer ${NAME}"`, `"${NAME}"`                                                                    |
 | `oauth`        | `{ clientId, clientSecret, refreshToken, tokenUrl? }` for expiring tokens. No Authorization header alongside                                                                                |
 | `allowedTools` | Tools to register. Omit for all                                                                                                                                                             |
 | `runtime`      | `handler` only. `"auto"` (default) runs it on Cloudflare Workers when it builds for them; `"lambda"` never. See [Where a hosted server runs](../guides/tools.md#where-a-hosted-server-runs) |

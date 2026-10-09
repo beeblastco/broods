@@ -1,40 +1,90 @@
 # Tools and MCP
 
-This page covers how core builds an agent's tool set for a run, how async tools settle, how hosted MCP servers execute, and how to add a built-in tool. What users configure is in the [tools guide](../guides/tools.md). Paths are relative to `apps/core/`.
+How core builds a run's tool set, how a tool call executes, and where MCP servers run. What users configure is in the [tools guide](../guides/tools.md). Paths are relative to `apps/core/`.
 
 ## Registry
 
-`harness.ts` resolves the model, then calls `createTools()` in `src/harness/tools/index.ts`. The tool set is assembled in this order:
+`harness.ts` calls `createTools()` in `src/harness/tools/index.ts` once per run, then wraps the result before it reaches `streamText()`:
 
-1. Sandbox tools from the agent's `sandboxes` and `workspaces`. `bash` when there is any sandbox or sandbox-backed workspace. `computer` for every machine sandbox. `browse` when `config.browser.enabled`, after `assertBrowseSandbox` checks that the first sandbox is lambda with `image: "obscura"` and `allow-all`, or a machine; it runs `obscura fetch` there with `OBSCURA_ALLOW_PRIVATE_NETWORK` unset, so an inherited value cannot turn off Obscura's private-address guard, and reads screenshots back from the workspace with `workspaceMediaBytes` (`tools/browse.tool.ts`). `read` and `glob` for every workspace, through the mount when it has a sandbox and through S3 or a read-only mount when it does not. `write`, `edit` and `grep` only when a workspace has a sandbox. `memory_save` when a sandbox-backed workspace keeps the memory harness on.
-2. Channel tools (`send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update`) on channel turns, each gated on the adapter's capabilities, and `send-message` when the agent has channels and the request can dispatch to another session. See [channels](channels.md).
-3. `run_subagent` when `config.subagent.enabled` and the request has a dispatcher, plus `get_subagent_status`, `update_subagent` and `stop_subagent` in persistent mode. A persistent subagent run also gets `ask_parent`, whatever its own `subagent` config says.
-4. `load_skill` when `config.skills.enabled` and `allowed` has paths.
-5. `schedule`, `list_schedules`, `update_schedule` and `cancel_schedule` when `config.scheduler.enabled`, except on a cron-fired run.
-6. Every `config.tools` key, resolved against the configured provider's `tools` namespace. A key that is not a provider tool name throws `config.tools.<name> is not a supported tool`. `enabled: false` skips it. Keys other than `enabled`, `needsApproval` and `async` pass through as the tool's arguments.
-7. `ask_questions` when the session has a delivery to resume on, meaning a channel or WebSocket turn, and the run is not cron-fired. Subagent sessions carry no delivery, so they never get it.
-8. MCP server tools from `config.mcp`, as `<server>__<tool>`.
-9. `async_status` when any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. Its `logs` and `stop` actions exist only when a workspace's provider exposes live job controls.
-10. `withholdTools(tools, config.denyTools)` last, so a channel record's deny list covers sandbox and MCP tools too.
-11. `needsApproval` is applied before the tools reach `streamText()`, and `async: true` tools are wrapped by the `AsyncToolCoordinator`.
+```mermaid
+flowchart TD
+  subgraph Create["createTools()"]
+    direction TB
+    Sbx["sandbox tools"]
+    Ch["channel tools"]
+    Sub["subagent tools"]
+    Sk["load_skill"]
+    Sch["schedule tools"]
+    Prov["config.tools<br/>provider-defined"]
+    Ask["ask_questions"]
+    Mcp["MCP tools<br/>server__tool"]
+    As["async_status"]
+  end
+  Create --> Deny["withholdTools<br/>config.denyTools"]
+  Deny --> Async["AsyncToolCoordinator<br/>wraps async: true tools"]
+  Async --> Hooks["wrapToolsWithHooks<br/>tool.call.started, tool.result"]
+  Hooks --> Fence["wrapToolsWithOwnerFence<br/>lease still ours?"]
+  Fence --> ST["streamText<br/>+ toolApproval"]
+```
 
-## Provider-defined tools
+| Group     | Tools                                                                                          | Registered when                                                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Sandbox   | `bash`                                                                                         | any sandbox or sandbox-backed workspace                                                                                         |
+|           | `computer`                                                                                     | a machine sandbox                                                                                                               |
+|           | `browse`                                                                                       | `browser.enabled`; `assertBrowseSandbox` fails the run unless the first sandbox can run Obscura                                 |
+|           | `read`, `glob`                                                                                 | any workspace (mount when it has a sandbox, else S3 or a read-only mount)                                                       |
+|           | `write`, `edit`, `grep`                                                                        | a workspace with a sandbox                                                                                                      |
+|           | `memory_save`                                                                                  | a sandbox-backed workspace with the memory harness on                                                                           |
+| Channel   | `send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update`                   | a channel turn, each gated on adapter capabilities. See [channels](channels.md)                                                 |
+|           | `send-message`                                                                                 | the agent has channels and the request can dispatch to another session                                                          |
+| Subagent  | `run_subagent`; persistent mode adds `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent.enabled` and a dispatcher                                                                                             |
+|           | `ask_parent`                                                                                   | a persistent subagent run                                                                                                       |
+| Skills    | `load_skill`                                                                                   | `skills.enabled` with `allowed` paths                                                                                           |
+| Scheduler | `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`                             | `scheduler.enabled`, not on a cron-fired run                                                                                    |
+| Provider  | every `config.tools` key                                                                       | the key names a tool in the provider's `tools` namespace, else the run fails with `config.tools.<name> is not a supported tool` |
+| Questions | `ask_questions`                                                                                | the session has a delivery (channel or WebSocket) and is not cron-fired                                                         |
+| MCP       | `<server>__<tool>`                                                                             | each enabled `config.mcp` server                                                                                                |
+| Async     | `async_status`                                                                                 | any `async: true` tool or a workspace with background jobs; `logs` and `stop` only with live job controls                       |
 
-A provider tool built by the AI SDK serializes to a plain descriptor, `{ type: "provider", id: "google.google_search", args: {...} }`. Its lazy input and output schemas do not survive JSON, so `provider-tool.ts` rebuilds the tool by calling the same provider factory with the descriptor's `args`. The dashboard writes a flat shape (`googleSearch: { enabled: true, searchTypes: {...} }`), which core also accepts.
+`withholdTools` runs after every group is registered, so a channel record's `denyTools` also covers sandbox and MCP tools.
 
-Core keeps no list of tool names. It reads the live provider's `tools` namespace at registry build, so any provider-executed tool the AI SDK ships works without a core change. A name the provider does not expose fails the run with the available names in the error.
+### Provider-defined tools
 
-Provider tools have no local `execute`, so `async: true` cannot wrap them. Core logs a warning and leaves the tool as a normal provider tool.
+A provider tool serializes to `{ type: "provider", id: "google.google_search", args }`, which loses its schemas, so `provider-tool.ts` rebuilds it from the live provider factory with those `args`. Core keeps no list of names. Provider tools have no local `execute`, so `async: true` on one only logs a warning.
 
-## Async tools
+## A tool call
 
-The async subsystem (`async-tools.ts`, `async-tool-result.ts`) creates `runtimeAsyncToolResults` rows, exposes `async_status`, waits for in-process pending work, and injects completed results into the same active agent loop.
+A sync tool runs inside the model step:
 
-- The continuation loop waits only for in-memory pending work.
-- Detached work, currently `bash` background jobs, settles through the token-authenticated `POST /v1/sandbox-jobs/{resultId}/complete`, which resumes the conversation. See [architecture](architecture.md).
-- The original background-run status row settles through `asyncResultEventId`. The internal continuation uses a separate event id for dedup.
+```mermaid
+sequenceDiagram
+  participant M as model
+  participant ST as streamText
+  participant AP as toolApproval
+  participant W as wrappers
+  participant T as tool execute
 
-An in-process `async: true` tool, from call to injection:
+  M->>ST: tool call
+  ST->>AP: needsApproval, sandbox rules, OPA policy
+  alt user-approval
+    AP-->>ST: user-approval
+    ST-->>M: run ends waiting on the person
+    Note over ST: direct API resumes with tool-approval-response.<br/>Channel turns deny it.
+  else denied
+    AP-->>ST: denied
+    ST-->>M: tool denied
+  else approved or not applicable
+    ST->>W: execute
+    W->>W: owner fence, tool.call.started hook
+    W->>T: input, maybe rewritten by the hook
+    T-->>W: output
+    W->>W: tool.result hook
+    W-->>ST: output
+    ST-->>M: tool result, next step
+  end
+```
+
+An `async: true` tool returns a status id at once and its result joins the conversation later (`async-tools.ts`, `async-tool-result.ts`):
 
 ```mermaid
 sequenceDiagram
@@ -45,7 +95,7 @@ sequenceDiagram
   participant L as runParentContinuationLoop
 
   M->>A: call the wrapped tool
-  A->>CV: createPendingAsyncToolResult, processing
+  A->>CV: createPendingAsyncToolResult
   A->>T: start execute, not awaited
   A-->>M: resultId, status running
   opt model checks early
@@ -61,22 +111,32 @@ sequenceDiagram
   L->>M: next parent pass
 ```
 
-A call still pending near the request or worker deadline goes through `drainCompletionsAndTimeoutsToParent` instead, which marks it `failed` and injects a timeout notice beside the finished results. `async_status` marks a settled row `observed`, so the detached resume path does not inject the same answer again.
-
-Approval requests on a sync direct API run stream as SSE and persist in the conversation. The caller resumes with a `tool-approval-response`. Channel turns cannot complete approval, so they deny tools with `needsApproval`.
+- A call still pending at the request deadline goes through `drainCompletionsAndTimeoutsToParent`, which marks it `failed` and injects a timeout notice.
+- `async_status` marks a settled row `observed`, so it is not injected twice.
+- Detached `bash` background jobs settle through `POST /v1/sandbox-jobs/:resultId/complete` instead, which resumes the conversation. See [sandboxes](sandboxes.md#background-jobs).
 
 ## MCP servers
 
-Core is the MCP client, spec 2026-07-28, stateless Streamable HTTP only. At agent registration it connects to each enabled server, lists tools, caches them for the listing's own `ttlMs`, and registers each as `<server>__<tool>`. `tools/call` is one POST per call with no session. `callMcpTool` returns `structuredContent` or the text of the content blocks, except when a block is an image: then the whole result goes back as AI SDK content parts with `image-data`, so the model sees the picture. Stored history drops the image data and keeps the text. A hosted server's listing is cached per agent, because it comes from that agent's own child.
+Core is a stateless MCP client, spec 2026-07-28, Streamable HTTP only (`src/harness/mcp/client.ts`). Each run lists tools (cached per row for the listing's `ttlMs`) and registers them as `<server>__<tool>`. Every `tools/call` is one POST with no session. The row's transport decides where that POST goes:
 
-- The `url` host is resolved before connecting. Private, loopback, link-local and metadata addresses are refused, and so are redirects. The OAuth `tokenUrl` gets the same check.
-- Credential-bearing headers must reference an account env var (`Bearer ${NAME}`). Inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
-- OAuth rows mint access tokens with the refresh-token grant, cache them per config, re-mint before expiry, and send `Authorization: Bearer` themselves.
-- `subscriptions/listen` is not supported. Tool lists refresh when `ttlMs` expires. MRTR `input_required` results surface as tool errors.
-- A `sandbox` row routes calls over the machine socket to the `broods machine --mcp` daemon on the user's computer. When the named sandbox is a persistent `lambda` one, `src/harness/mcp/sandbox.ts` instead reserves its MicroVM and POSTs each JSON-RPC request with the row's `command` to the image's `/mcp` on port 8080, which spawns the stdio server once and keeps it for the VM's lifetime. It reserves on the key `bash` uses (the workspace namespace when a workspace mounts the agent's first sandbox) and reuses this pod's cached endpoint for up to 3 minutes. Before each request it polls the guest's `GET /healthz` until the VM serves, then sends the request once: it is resent only when the connection never opened, because a 502 or 503 after that may be a lost answer to a tool that already ran. The body carries the sandbox's env vars without the `BROODS_*` run identity, and the image restarts the server when they change. A call gets the sandbox's `timeout`, or 120 s capped by the operator's maximum. The guest's answer is refused past 16 MB. Its listings use the remote listing cache, keyed on the row's `updatedAt` and a digest of the sandbox's image, snapshot, `onCreate`, `onResume` and env vars, so every conversation shares them and a sandbox edit refetches. `sandboxMcpTarget` resolves the row for agent runs and for the dashboard explorer alike. The explorer runs the row on an agent's VM of that sandbox when it can, and on a VM of its own (`mcp-explorer`) otherwise; `explorerSandboxTarget` in `src/accounts/mcp-service.ts` holds the order.
-- An image in a tool result reaches the model only when its bytes are base64 that sniffs as PNG, JPEG, GIF or WebP, with a whole header naming at most 8000 pixels a side, and only while the result stays within 8 images and 6 MB together (`withImageLimits` in `tools/utils.ts`). Any other image becomes a text note saying why. `browse` applies the same limit and refuses a screenshot over 6 MB, or one S3 gives no size for, before reading it.
+```mermaid
+flowchart LR
+  Call["server__tool call<br/>client.ts"] --> T{"row transport"}
+  T -->|http| Ext["external URL<br/>publicHostFetch"]
+  T -->|hosted| Hosted["hosted.ts<br/>Workers or Lambda"]
+  T -->|"sandbox on a machine"| Mach["machine socket<br/>broods machine --mcp"]
+  T -->|"sandbox on persistent lambda"| VM["mcp/sandbox.ts<br/>MicroVM POST /mcp"]
+```
 
-One call to a server on a persistent `lambda` sandbox:
+- External URLs: the host is resolved first and private, loopback, link-local and metadata addresses are refused, as are redirects. The OAuth `tokenUrl` gets the same check (`oauth.ts` mints and caches refresh-grant tokens).
+- Headers: a credential-bearing header must be a `${NAME}` env ref. Inline secrets and URL userinfo are refused at registration.
+- Every remote request carries `X-Broods-Agent-Id` and, when the chain is known, `X-Broods-Principal`. See [security](security.md#agent-principal-and-run-tokens).
+- Results: `structuredContent`, or the text blocks. Images reach the model only within `withImageLimits` in `tools/utils.ts` (PNG, JPEG, GIF or WebP, at most 8000 px a side, 8 images and 6 MB per result). Stored history keeps the text only.
+- Not supported: `subscriptions/listen`. MRTR `input_required` surfaces as a tool error.
+
+### Server on a lambda sandbox
+
+When a `sandbox` row names a persistent `lambda` sandbox, the VM's image runs the stdio server and keeps it for the VM's lifetime:
 
 ```mermaid
 sequenceDiagram
@@ -88,7 +148,7 @@ sequenceDiagram
 
   M->>SB: server__tool call
   SB->>E: postReserved /mcp on the key bash uses
-  E->>E: cached endpoint, else acquire, then onCreate if new and onResume
+  E->>E: cached endpoint up to 3 min, else acquire
   E->>VM: poll GET /healthz until it serves
   E->>VM: POST /mcp once, with command, env and message
   alt first call, or env changed
@@ -96,70 +156,152 @@ sequenceDiagram
   end
   VM->>S: JSON-RPC request
   S-->>VM: result
-  VM-->>E: JSON-RPC reply, burst header
+  VM-->>E: JSON-RPC reply, refused past 16 MB
   E-->>SB: JSON-RPC reply
   SB-->>M: result, or a tool error
 ```
 
+The POST is resent only when the connection never opened, because a later 502 may hide a tool that already ran. The body carries the sandbox env without the `BROODS_*` run identity. A call gets the sandbox `timeout`, default 120 s. `sandboxMcpTarget` resolves the row for runs and for the dashboard explorer; `explorerSandboxTarget` in `src/accounts/mcp-service.ts` picks the explorer's VM.
+
 ### Hosted servers
 
-A hosted row with `transport: "hosted"` stores a bundle under the `account-mcp/` prefix of the tool-bundles bucket. `MAX_MCP_BUNDLE_BYTES` caps it at 50 MB, checked by the CLI and again in `packages/convex/aws/bundles.ts`. The CLI bundles the module that calls `defineMcp({ handler })` and imports the build before upload, failing the deploy if the handler is missing or not fetch-style. Bundles over 10 MB, set by `INLINE_MCP_BUNDLE_BYTES`, go through a storage upload URL from `POST /v1/mcp/uploads` instead of the request body.
+A `hosted` row runs an account-uploaded bundle on one of two runtimes. Both take the same `McpHostPayload` and answer with the same NDJSON frames (`src/harness/frames.ts`), so `hosted.ts` reads either one the same way.
 
-The handler factory must build a fresh server on every call. The stateless transport connects one per request, and the parallel calls of a model step run concurrently in one process, where a shared instance would have every in-flight handler aborted when one request's transport closes.
+```mermaid
+flowchart LR
+  subgraph Plane["config plane"]
+    CLI["broods deploy"] --> Put["putMcpBundle<br/>convex/aws/bundles.ts"]
+  end
+  Put --> S3[("S3 ToolBundles<br/>account-mcp/<br/>source of truth")]
+  subgraph Core["core pod"]
+    H["mcp/hosted.ts"]
+  end
+  subgraph AWS["AWS Lambda tool-runner, no VPC"]
+    LH["handler.mjs"] --> Child["child-runner.mjs<br/>one child per tenantId:sha256"]
+  end
+  subgraph CF["Cloudflare Worker, apps/cloudflare-mcp"]
+    WK["src/index.ts"] --> Iso["Dynamic Worker isolate<br/>per tenantId:sha256"]
+    WK --> R2[("R2 BUNDLES<br/>sha256.mjs, 30 day expiry")]
+    Iso --> Out["TenantOutbound<br/>egress gate"]
+  end
+  H -->|"InvokeWithResponseStream"| LH
+  H -->|"POST /mcp, bearer"| WK
+  LH -->|"presigned GET, 120 s"| S3
+  WK -->|"presigned GET on R2 miss"| S3
+  Child --> Net(("public internet"))
+  Out --> Net
+```
 
-The tool-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the bundle. `src/harness/mcp/hosted.ts` is the core side:
+| Limit        | Lambda (`apps/lambda`)                       | Cloudflare (`apps/cloudflare-mcp`)        |
+| ------------ | -------------------------------------------- | ----------------------------------------- |
+| Bundle       | 50 MB (`MAX_MCP_BUNDLE_BYTES`)               | 10 MB                                     |
+| Batch in     | 6 MiB invoke payload                         | 6 MiB                                     |
+| Batch out    | 16 MiB of frames                             | 16 MiB of frames                          |
+| Deadline     | 30 s for the batch, child aborts 2 s earlier | 30 s per request, 5 s CPU, 50 subrequests |
+| Core timeout | 45 s request timeout                         | 45 s                                      |
+| CPU reported | yes, split evenly across the batch's calls   | no                                        |
+| Warm unit    | one child process per `tenantId:sha256`      | one isolate per `tenantId:sha256`         |
 
-- Batching. The parallel calls of one model step reach core together, so core holds a call for `MCP_BATCH_WINDOW_MS`, default 10 ms, and sends every call for the same account, agent and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX`, default 8. Setting it to `1` disables batching. The child runs them concurrently and answers each on its own frame.
-- A batch shares one 30 s deadline and one 16 MB output cap. `RUN_TIMEOUT_MS` in `apps/lambda/handler.mjs` sets the deadline, with a 2 s grace for the child to abort itself. Its CPU is split evenly across its calls.
-- Warm reuse. Repeat invokes for the same account, agent and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A different agent of the same account gets its own child. A child serves at most `MCP_CHILD_MAX_CALLS` invokes, default 64, each one batch, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
-- Metering. Each call's span carries `tool.compute.type: "mcp-sandbox"` and `tool.compute.cpu_usec`, billed into the account's tool-sandbox CPU usage.
-- With `MCP_TENANT_ISOLATION=true`, every invoke carries `accountId:agentId` as its Lambda tenant id. See [security](security.md).
-- The bundle reaches the runner as a pre-signed URL valid for 120 s, so the function holds no S3 access.
+`tenantId` is `accountId:agentId` (the account alone for a probe), so two agents never share a child or isolate. Both runtimes are metered on wall time at the Lambda memory size (`HOSTED_MCP_MEMORY_GB`), one request per batch.
 
-The S3 bundle writer marks a row `workersCompatible` when its bundle is at most 10 MB and passes the Workers scan (`isWorkersSafeBundle`). When core has `CLOUDFLARE_MCP_URL` and the owner left `runtime` on `auto`, such a row sends the same batch payload to the Dynamic Workers runtime in `apps/cloudflare-mcp` instead, over HTTPS with the `CLOUDFLARE_MCP_API_KEY` bearer, and reads the same NDJSON frames back. The Worker loads each bundle into its own isolate, keyed by `tenantId` and sha256 like the Lambda's warm child, after checking the bytes against the row's hash. It reads them from its own R2 bucket (`BUNDLES`, keyed by sha256) and only on a miss downloads them from S3, keeping a copy that expires after 30 days. The isolate gets no bindings, no Node compatibility flag and an egress gateway that refuses the runtime itself and the bundle store. The Worker loads the bundle before it answers, and tags its own refusal (a 422 when the bundle cannot load, a 504 when loading timed out) with `x-broods-nothing-ran`. That tag, or a request that never connected, means no tool ran: core then runs the same batch on Lambda and logs `hosted MCP batch fell back to Lambda`. Any other error status, from the Worker or from Cloudflare, fails the call, because it cannot prove nothing ran. A bundle the Worker cannot load (a 422) goes straight to Lambda for the next 10 minutes. A timeout, abort or broken stream after the Worker answered is never retried. It reports no CPU, so these calls carry no `tool.compute.cpu_usec`; usage is still metered per batch on wall time, at the Lambda rate. See [Where a hosted server runs](../guides/tools.md#where-a-hosted-server-runs).
+#### Which runtime a row uses
 
-Two parallel calls from one model step, end to end:
+```mermaid
+flowchart TD
+  Dep["broods deploy"] --> RT{"runtime"}
+  RT -->|lambda| Node["ship Node build"]
+  RT -->|auto| WB["try Workers build"]
+  WB --> Ok{"10 MB or less,<br/>passes isWorkersSafeBundle,<br/>loads as a handler?"}
+  Ok -->|yes| WShip["ship Workers build"]
+  Ok -->|no| Node
+  WShip --> Up["putMcpBundle"]
+  Node --> Up
+  Up --> Mark["workersCompatible =<br/>10 MB or less and scan passes"]
+  Mark --> Call(["each batch: workersUrl()"])
+  Call --> Recent{"Worker 422'd this<br/>bundle in the last 10 min?"}
+  Recent -->|yes| Lam["Lambda"]
+  Recent -->|no| Cond{"runtime is not lambda,<br/>workersCompatible,<br/>CLOUDFLARE_MCP_URL and<br/>CLOUDFLARE_MCP_API_KEY set?"}
+  Cond -->|yes| Wk["Cloudflare Worker"]
+  Cond -->|no| Lam
+```
+
+The scan in `packages/convex/model/isolateSafety.ts` refuses `require`, `node:` imports, `process` and `Buffer` members, `setImmediate`, `__dirname`, bare package imports, `eval` and `new Function`. Every upload path goes through `putMcpBundle`, so a row's flag never depends on which client uploaded it. Bundles over 10 MB upload through `POST /v1/mcp/uploads` instead of the request body. A self-hosted stack without the Worker runs everything on Lambda, see [self-hosting](self-hosting.md#cloudflare-mcp-runtime-optional).
+
+#### One batch
+
+The parallel calls of one model step reach `hosted.ts` together. `enqueueCall` parks them under `tenantId:runtime:sha256` for `MCP_BATCH_WINDOW_MS` (10 ms) or until `MCP_BATCH_MAX` (8) calls, then `flushBatch` sends one invoke. `MCP_BATCH_MAX=1` turns batching off.
 
 ```mermaid
 sequenceDiagram
   participant M as model step
   participant H as hosted.ts
-  participant L as tool-runner handler.mjs
-  participant S3 as ToolBundles bucket
-  participant C as child-runner.mjs
+  participant W as Cloudflare Worker
+  participant R2 as R2 BUNDLES
+  participant S3 as S3 ToolBundles
+  participant L as Lambda handler.mjs
 
-  M->>H: call A
-  M->>H: call B
-  Note over H: enqueueCall parks both under accountId:agentId:sha256<br/>until MCP_BATCH_WINDOW_MS or MCP_BATCH_MAX
-  H->>H: flushBatch, presign bundleUrl for 120 s
-  H->>L: InvokeWithResponseStream, mode mcp, requests A and B
-  alt warm child matches accountId, agentId and sha256
-    L->>C: reuse the warm child
-  else no match
-    L->>S3: fetch bundleUrl while spawning
-    L->>C: spawn, bundle on fd 3
-    C->>C: check sha256, import from memory
+  M->>H: calls A and B
+  H->>H: batch, presign bundleUrl for 120 s
+  alt row routes to Workers
+    H->>W: POST /mcp, bearer, batch
+    W->>W: bearer, schema, bundleUrl origin
+    W->>R2: get sha256.mjs
+    opt miss or R2 error
+      W->>S3: GET bundleUrl
+      W->>R2: keep a copy
+    end
+    W->>W: sha256 check, ensureLoaded
+    alt bundle failed to load
+      W-->>H: 422, or 504 on load timeout,<br/>x-broods-nothing-ran
+      H->>H: 422 marks bundle Lambda-only for 10 min
+      H->>L: same batch on Lambda
+    else Worker unreachable
+      H->>L: same batch on Lambda
+    else other non-200, such as 401 or 503
+      H-->>M: A and B fail
+    else loaded
+      W-->>H: 200, one frame per request as it settles, then end
+    end
+  else row routes to Lambda
+    H->>L: InvokeWithResponseStream, mode mcp
   end
-  C->>C: run A and B concurrently
-  C-->>L: final frame for A, final frame for B
-  C-->>L: end frame with batch CPU
-  L-->>H: NDJSON frames as they arrive
-  H-->>M: resolve A and B by id, CPU split evenly
+  opt batch ran on Lambda
+    L-->>H: frames, end frame with batch CPU
+  end
+  H-->>M: resolve A and B by id
 ```
 
-A batch that ends on an `error` frame, or on no terminal frame at all, retires the child, and core fails every call it has no answer for.
+- Only the Worker's own `x-broods-nothing-ran` tag, or a connection that never opened, proves no tool ran. Fallback logs `hosted MCP batch fell back to Lambda`.
+- A timeout, an abort, or a broken stream after a 200 fails the batch and is never retried, because a tool may already have acted.
+- A batch that ends on a batch-level `error` frame, or without a terminal frame, fails every call it has no answer for.
+- The handler factory must build a fresh server per request. One process or isolate serves a batch's calls concurrently, and a shared instance would be aborted when one request's transport closes.
 
-Because the transport is stateless, per-invoke hosting is a complete implementation, and agents use hosted and external servers the same way. `defineTool` and `POST /v1/tools` are retired; hosted MCP servers replace them.
+#### Lambda warm child
+
+```mermaid
+stateDiagram-v2
+  [*] --> Spawning: no warm child for this tenant and sha256
+  Spawning --> Serving: bundle on fd 3, sha256 checked, imported from memory
+  Serving --> Warm: clean end frame
+  Warm --> Serving: same key, under 64 batches,<br/>idle under 300 s
+  Warm --> Retired: other key, or a bound reached
+  Serving --> Retired: error frame, timeout, crash,<br/>output over 16 MiB
+  Retired --> [*]: process group SIGKILLed
+```
+
+Before every spawn the handler also kills every other process of its user (`reapStrays`), so a bundle that escaped its group never sits next to the next child. `MCP_CHILD_MAX_CALLS` and `MCP_CHILD_IDLE_SECONDS` set the bounds, and `MCP_CHILD_REUSE=0` makes every child one-shot. The isolation model is in [security](security.md#hosted-mcp-servers).
+
+`defineTool` and `POST /v1/tools` are retired; hosted MCP servers replace them.
 
 ## Add a built-in tool
 
-Most integrations should not be built-in tools. A service with its own API belongs in an MCP server, external or hosted. Add a built-in tool only for behavior that needs core internals, such as the session, a sandbox or a channel.
+Most integrations belong in an MCP server, external or hosted. Add a built-in tool only for behavior that needs core internals: the session, a sandbox or a channel.
 
-1. Create `src/harness/tools/<name>.tool.ts` with a file header comment, the model-facing schema and the execution logic.
+1. Create `src/harness/tools/<name>.tool.ts` with a header comment, the model-facing schema and the execution logic.
 2. Export a factory that takes only the context it needs and returns a `ToolSet`.
-3. Import it in `src/harness/tools/index.ts` and register it in `createTools()` behind the config or session condition that enables it. `config.tools` is only for provider-defined tools; do not route a built-in through it.
-4. If users can configure it, add the field to `AgentConfig` in `src/shared/domain/agent-config.ts`, validate it in `packages/convex/model/agentRules.ts`, expose it in `packages/broods/src/resources.ts`, and run Convex codegen.
-5. Update the [API reference](/api-reference), the [tools guide](../guides/tools.md), and focused tests.
+3. Register it in `createTools()` behind the config or session condition that enables it. `config.tools` is only for provider-defined tools.
+4. If users configure it: add the field to `AgentConfig` in `src/shared/domain/agent-config.ts`, validate it in `packages/convex/model/agentRules.ts`, expose it in `packages/broods/src/resources.ts`, run Convex codegen.
+5. Update the [API reference](/api-reference), the [tools guide](../guides/tools.md) and focused tests.
 
 ```ts
 /**
@@ -200,13 +342,11 @@ export default function exampleLookupTool(
 }
 ```
 
-### Design rules
+Rules:
 
-- Keep each tool's schema and external call in its own `<name>.tool.ts`. Leave orchestration to `harness.ts`.
-- Do not add a Lambda, queue or worker for an ordinary external-service tool. Use an MCP server.
-- Use `async: true` only for tools with a local `execute`.
-- Do not expose request lifecycle choices in agent config. The platform picks the wait behavior from the tool type and request path.
-- Reuse provider or service SDK types instead of new interfaces when they model the same options.
-- Per-account credentials live in encrypted agent config or account env vars. SST secrets are only for service-wide fallbacks.
-- Return structured data from `execute`, not pre-formatted prose.
-- Add approval through `needsApproval`, as in [AI SDK tool approval](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval), never by asking inside the tool.
+- One tool per `<name>.tool.ts`. Orchestration stays in `harness.ts`.
+- No new Lambda, queue or worker for an ordinary external-service tool. Use an MCP server.
+- `async: true` only for tools with a local `execute`. The platform picks wait behavior; agent config does not.
+- Reuse provider or service SDK types. Return structured data, not prose.
+- Per-account credentials live in encrypted agent config or account env vars. SST secrets are only service-wide fallbacks.
+- Approval goes through `needsApproval` ([AI SDK tool approval](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval)), never a question inside the tool.

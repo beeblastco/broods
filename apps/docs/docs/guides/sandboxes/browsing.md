@@ -203,7 +203,7 @@ Run `broods deploy`. The agent gets `browser__markdown`. Add other quick actions
 
 - Secrets reach a hosted server only as request headers. It has no `process.env`.
 - Calls from one model step share a 30 second deadline and 16 MB of output.
-- Only text results reach the model. An image, such as a `screenshot` quick action, arrives as `[image content (image/png) omitted]`.
+- Return a screenshot as an MCP `image` block and the model sees it, within the [image limits](../tools.md#mcp-servers). The quick actions above return text.
 - Drop `?browser=kitesurf` to run the same actions on Browser Run's default Chromium.
 
 ## Other routes
