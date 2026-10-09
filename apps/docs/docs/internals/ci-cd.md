@@ -147,7 +147,7 @@ Environment-scoped values resolve from `development` or `production` by branch.
 | `CONVEX_URL`, `CONVEX_DEPLOY_KEY`                                                                     | secret, per env           | `deploy`, `drift-cleanup`; the key also `deploy-convex`                              |
 | `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY`                                              | secret, per env           | `deploy-convex`, instead of a deploy key                                             |
 | `OTEL_EXPORTER_OTLP_HEADERS`                                                                          | secret                    | `deploy`, `drift-cleanup`. Unset skips the sandbox log forwarder                     |
-| `SANDBOX_IMAGE_READY_DEV`, `SANDBOX_IMAGE_READY_PRODUCTION[_<REGION>]`, `SANDBOX_IMAGE_SOURCE_REGION` | variable                  | `deploy`                                                                             |
+| `SANDBOX_IMAGE_READY_DEV`, `SANDBOX_IMAGE_READY_PRODUCTION[_<REGION>]`, `SANDBOX_IMAGE_SOURCE_REGION` | variable                  | `deploy`; the readiness flags also `drift-cleanup`                                   |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`                                                       | secret, variable, per env | `deploy`. Unset skips the Cloudflare MCP Worker                                      |
 | `INFRA_DISPATCH_TOKEN`                                                                                | secret                    | every build workflow. Fine-grained PAT on `beeblastco/infra`, Actions read and write |
 | `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, `NEXT_PUBLIC_BROODS_BASE_URL`            | variable, per env         | `build-dashboard`; the Convex URL also `ci`                                          |
@@ -199,5 +199,5 @@ flowchart TD
 - The job resolves `SANDBOX_IMAGE_READY` per stage the way `deploy.yaml` does, so `sst.config.ts` imports the sandbox ECR repo in both. SST ignores tag changes on an imported resource; a plan without the import reports the repo's tags as drift every night.
 - Each job takes the same `sst-<stage>` lock as `deploy.yaml`. A lock left by a crashed run fails the job; clear it by hand after checking nothing runs.
 - The plan stays in the job log, with the AWS account id masked. The repo is public, so there is no artifact.
-- It sees only resources in Pulumi state, and never bootstraps sandbox images (`SANDBOX_IMAGE_READY_*` is not passed).
+- It sees only resources in Pulumi state and never bootstraps sandbox images; the mirror step lives in `deploy.yaml` alone.
 - A new stage must be added to `STAGES` in the workflow and to its dispatch options, or drift cleanup never sees it.
