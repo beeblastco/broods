@@ -18,8 +18,7 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DangerZone } from "@/app/components/DangerZone";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DeleteZone } from "@/app/components/DangerZone";
 import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
@@ -266,8 +265,6 @@ function PolicyPanel({
   const removePolicy = useMutation(api.access.removePolicy);
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deletePending, setDeletePending] = useState(false);
   const { error, run } = useSubmit();
   const editable = canChange && policy.managedBy !== "cli";
   const facts: DetailRow[] = [
@@ -281,16 +278,6 @@ function PolicyPanel({
     { key: "mode", label: "Mode", value: policy.mode, words: true },
     ...createdRows(policy.createdAt, policy.createdBy),
   ];
-
-  async function confirmDelete(): Promise<void> {
-    setDeletePending(true);
-    try {
-      await removePolicy({ policyId: policy._id });
-      onClose();
-    } finally {
-      setDeletePending(false);
-    }
-  }
 
   return (
     <DetailPanel
@@ -386,16 +373,13 @@ function PolicyPanel({
       )}
 
       {editable && (
-        <DangerZone description="Delete the policy. Detach it from every role, agent and channel record that lists it first.">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="cursor-pointer"
-            onClick={() => setDeleting(true)}
-          >
-            Delete
-          </Button>
-        </DangerZone>
+        <DeleteZone
+          description="Delete the policy. Detach it from every role, agent and channel record that lists it first."
+          resourceName={policy.name}
+          resourceType="policy"
+          onDelete={() => removePolicy({ policyId: policy._id })}
+          onDeleted={onClose}
+        />
       )}
 
       {editing && (
@@ -403,17 +387,6 @@ function PolicyPanel({
       )}
       {adding && (
         <AddRuleDialog policyId={policy._id} onClose={() => setAdding(false)} />
-      )}
-      {deleting && (
-        <DeleteConfirmDialog
-          open
-          onOpenChange={(open) => !open && setDeleting(false)}
-          resourceName={policy.name}
-          resourceType="policy"
-          critical={false}
-          onConfirm={confirmDelete}
-          isDeleting={deletePending}
-        />
       )}
     </DetailPanel>
   );

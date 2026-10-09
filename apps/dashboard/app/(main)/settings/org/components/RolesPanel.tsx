@@ -18,8 +18,7 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DangerZone } from "@/app/components/DangerZone";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DeleteZone } from "@/app/components/DangerZone";
 import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
@@ -238,11 +237,7 @@ function RolePanel({
 }): React.JSX.Element {
   const update = useMutation(api.access.updateRole);
   const remove = useMutation(api.access.removeRole);
-  const pathname = usePathname();
-  const search = useSearchParams().toString();
   const [editing, setEditing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deletePending, setDeletePending] = useState(false);
   const { error, run } = useSubmit();
   const attached = policies.filter((policy) =>
     role.policyIds.includes(policy._id),
@@ -277,17 +272,6 @@ function RolePanel({
       void run(() => update({ roleId: custom._id, policyIds: policyIds }));
   }
 
-  async function confirmDelete(): Promise<void> {
-    if (!custom) return;
-    setDeletePending(true);
-    try {
-      await remove({ roleId: custom._id });
-      onClose();
-    } finally {
-      setDeletePending(false);
-    }
-  }
-
   return (
     <DetailPanel
       title={role.name}
@@ -311,49 +295,13 @@ function RolePanel({
 
       <div className="mt-5 mb-1.5 flex items-center justify-between gap-2">
         <h4 className="text-sm font-medium">Policies</h4>
-        {editable &&
-          (policies.length === 0 ? (
-            <Button
-              variant="outline"
-              size="sm"
-              tone="muted"
-              className="cursor-pointer"
-              nativeButton={false}
-              render={<Link href={tabHref(pathname, "policies", search)} />}
-            >
-              New policy
-            </Button>
-          ) : (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    tone="muted"
-                    className="cursor-pointer"
-                  />
-                }
-              >
-                Attach policy
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {attachable.length === 0 && (
-                  <DropdownMenuItem disabled>
-                    Every policy is attached
-                  </DropdownMenuItem>
-                )}
-                {attachable.map((policy) => (
-                  <DropdownMenuItem
-                    key={policy._id}
-                    onClick={() => setPolicies([...role.policyIds, policy._id])}
-                  >
-                    {policy.name}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ))}
+        {editable && (
+          <AttachPolicy
+            policies={policies}
+            attachable={attachable}
+            onAttach={(policy) => setPolicies([...role.policyIds, policy._id])}
+          />
+        )}
       </div>
       {role.kind === "built-in" ? (
         <p className="text-xs text-muted-foreground">
@@ -435,17 +383,14 @@ function RolePanel({
         </DataTableBody>
       </DataTable>
 
-      {editable && (
-        <DangerZone description="Delete the role. A member who holds it has to be given another role first.">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="cursor-pointer"
-            onClick={() => setDeleting(true)}
-          >
-            Delete
-          </Button>
-        </DangerZone>
+      {custom && canChange && (
+        <DeleteZone
+          description="Delete the role. A member who holds it has to be given another role first."
+          resourceName={custom.name}
+          resourceType="role"
+          onDelete={() => remove({ roleId: custom._id })}
+          onDeleted={onClose}
+        />
       )}
 
       {editing && custom && (
@@ -455,18 +400,64 @@ function RolePanel({
           onClose={() => setEditing(false)}
         />
       )}
-      {deleting && (
-        <DeleteConfirmDialog
-          open
-          onOpenChange={(open) => !open && setDeleting(false)}
-          resourceName={role.name}
-          resourceType="role"
-          critical={false}
-          onConfirm={confirmDelete}
-          isDeleting={deletePending}
-        />
-      )}
     </DetailPanel>
+  );
+}
+
+/**
+ * The Policies section's one control. With no policy in the org it links to
+ * the Policies tab, since there is nothing to attach yet; otherwise it lists
+ * the policies the role does not hold, or says every one is attached.
+ */
+function AttachPolicy({
+  policies,
+  attachable,
+  onAttach,
+}: {
+  policies: Policy[];
+  attachable: Policy[];
+  onAttach: (policy: Policy) => void;
+}): React.JSX.Element {
+  const pathname = usePathname();
+  const search = useSearchParams().toString();
+  const button = (
+    <Button
+      variant="outline"
+      size="sm"
+      tone="muted"
+      className="cursor-pointer"
+    />
+  );
+
+  if (policies.length === 0) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        tone="muted"
+        className="cursor-pointer"
+        nativeButton={false}
+        render={<Link href={tabHref(pathname, "policies", search)} />}
+      >
+        New policy
+      </Button>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={button}>Attach policy</DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {attachable.length === 0 && (
+          <DropdownMenuItem disabled>Every policy is attached</DropdownMenuItem>
+        )}
+        {attachable.map((policy) => (
+          <DropdownMenuItem key={policy._id} onClick={() => onAttach(policy)}>
+            {policy.name}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 /** New or edit: name, description and the policies the role holds. */

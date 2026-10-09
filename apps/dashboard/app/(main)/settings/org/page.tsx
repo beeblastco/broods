@@ -13,12 +13,18 @@ import { OrgPoliciesPanel } from "./components/OrgPoliciesPanel";
 import { PermissionsPanel } from "./components/PermissionsPanel";
 import { RolesPanel } from "./components/RolesPanel";
 
-// The list tabs carry a table and a side panel, so they take the full width.
-const WIDE_TABS = new Set<string>(["members", "api-access"]);
+// The key list takes the full width but keeps the card frame and margins.
+const WIDE_TABS = new Set<string>(["api-access"]);
 
-// The access lists are laid out like Monitoring: the toolbar, the table and
-// the detail panel fill the page edge to edge, nothing scrolls but the table.
-const FLUSH_TABS = new Set<string>(["roles", "policies", "permissions"]);
+// The member and access lists are laid out like Monitoring: the toolbar, the
+// table and the detail panel fill the page edge to edge, nothing scrolls but
+// the table.
+const FLUSH_TABS = new Set<string>([
+  "members",
+  "roles",
+  "policies",
+  "permissions",
+]);
 
 export default function OrgSettingsPage(): React.JSX.Element {
   const org = useQuery(api.org.orgs.getActive, {});
@@ -48,7 +54,40 @@ export default function OrgSettingsPage(): React.JSX.Element {
   };
 
   const flush = FLUSH_TABS.has(tab.id);
-  const list = flush || WIDE_TABS.has(tab.id);
+
+  // The states before a panel have one line or card to show and keep the
+  // usual margins whatever the tab; only the panel slot follows the tab.
+  const body = (): React.JSX.Element | null => {
+    if (org === undefined) {
+      return (
+        <p className="px-6 pt-6 text-sm text-muted-foreground">Loading...</p>
+      );
+    }
+    if (org === null) {
+      return (
+        <div className="mx-6 mt-6 rounded-lg border border-border bg-card px-4 py-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            You do not have an organization yet.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={cn(
+          "mx-auto w-full",
+          flush
+            ? "flex min-h-0 flex-1 flex-col"
+            : WIDE_TABS.has(tab.id)
+              ? "flex min-h-0 flex-1 flex-col px-6 pt-6 pb-12"
+              : "max-w-2xl px-6 pt-6 pb-12",
+        )}
+      >
+        {renderPanel()}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -58,37 +97,7 @@ export default function OrgSettingsPage(): React.JSX.Element {
       )}
     >
       <h1 className="sr-only">{tab.label}</h1>
-      <div
-        className={cn(
-          "mx-auto w-full",
-          list ? "flex min-h-0 flex-1 flex-col" : "max-w-2xl",
-          !flush && "px-6 pt-6 pb-12",
-        )}
-      >
-        {org === undefined ? (
-          <p
-            className={cn(
-              "text-sm text-muted-foreground",
-              flush && "px-6 pt-6",
-            )}
-          >
-            Loading...
-          </p>
-        ) : org === null ? (
-          <div
-            className={cn(
-              "rounded-lg border border-border bg-card px-4 py-8 text-center",
-              flush && "mx-6 mt-6",
-            )}
-          >
-            <p className="text-sm text-muted-foreground">
-              You do not have an organization yet.
-            </p>
-          </div>
-        ) : (
-          renderPanel()
-        )}
-      </div>
+      {body()}
     </div>
   );
 }

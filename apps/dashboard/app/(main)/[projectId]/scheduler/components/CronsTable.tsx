@@ -11,8 +11,7 @@ import {
   DataTableRow,
   DataTableSub,
 } from "@/app/components/DataTable";
-import { DangerZone } from "@/app/components/DangerZone";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DeleteZone } from "@/app/components/DangerZone";
 import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
@@ -344,8 +343,6 @@ function CronPanel({
     cronId: cron._id,
   });
   const [editing, setEditing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [pending, setPending] = useState(false);
 
   const newest = runs?.[0];
   const facts: DetailRow[] = [
@@ -380,16 +377,6 @@ function CronPanel({
       words: true,
       tone: "error",
     });
-  }
-
-  async function handleDelete(): Promise<void> {
-    setPending(true);
-    try {
-      await remove({ cronId: cron._id });
-      onClose();
-    } finally {
-      setPending(false);
-    }
   }
 
   return (
@@ -448,16 +435,13 @@ function CronPanel({
       )}
 
       {canWrite && (
-        <DangerZone description="Delete the scheduler. Its past runs stay in Tracing.">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="cursor-pointer"
-            onClick={() => setDeleting(true)}
-          >
-            Delete
-          </Button>
-        </DangerZone>
+        <DeleteZone
+          description="Delete the scheduler. Its past runs stay in Tracing."
+          resourceName={cron.name}
+          resourceType="scheduler"
+          onDelete={() => remove({ cronId: cron._id })}
+          onDeleted={onClose}
+        />
       )}
 
       {editing && (
@@ -466,17 +450,6 @@ function CronPanel({
           cron={cron}
           agents={agents}
           onClose={() => setEditing(false)}
-        />
-      )}
-      {deleting && (
-        <DeleteConfirmDialog
-          open
-          onOpenChange={(open) => !open && setDeleting(false)}
-          resourceName={cron.name}
-          resourceType="scheduler"
-          critical={false}
-          onConfirm={handleDelete}
-          isDeleting={pending}
         />
       )}
     </DetailPanel>

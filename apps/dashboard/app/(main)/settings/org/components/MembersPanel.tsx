@@ -5,23 +5,28 @@
  * for the selected one. Role is a Select for anyone holding `members:write`;
  * for everyone else it reads plain with a lock. The owner's row never
  * changes here.
+ *
+ * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
+ * click, and a detail panel with the facts, the role control, and the
+ * danger zone at the end.
  */
 
 import {
   DataTable,
   DataTableBody,
   DataTableCell,
-  DataTableFooter,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DeleteZone } from "@/app/components/DangerZone";
+import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState, LockedValue } from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { StatusWord } from "@/app/components/StatusDot";
-import { Toolbar } from "@/app/components/Toolbar";
+import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -40,7 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { Who } from "@/app/components/Who";
+import { actorName, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
@@ -117,20 +122,30 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   const customRoles = (roles ?? []).filter(
     (role): role is CustomRole => role.kind === "custom",
   );
+  const filters = {
+    role: list.filterFor("role", [
+      ...new Set(
+        (members ?? []).map((member) => roleName(member).toLowerCase()),
+      ),
+    ]),
+  };
+
+  useShortcut("table.create", () => canChange && setInviting(true));
 
   if (members === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Toolbar className="border-b-0 px-0">
+      <Toolbar>
         <SearchInput
           value={list.query}
           onChange={list.setQuery}
           fields={QUERY_FIELDS}
-          placeholder="Search members"
+          placeholder="Search members · role:"
         />
+        <FilterButton columns={[{ label: "Role", filter: filters.role }]} />
         {canChange && (
           <Button
             size="sm"
@@ -143,10 +158,12 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         )}
       </Toolbar>
       <DetailSplit
+        flush
         tableMinWidth={TABLE_MIN_WIDTH}
         detail={
           selected && (
-            <MemberDetail
+            <MemberPanel
+              key={selected.membershipId}
               member={selected}
               customRoles={customRoles}
               canChange={canChange}
@@ -175,7 +192,13 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
               <DataTableRow
                 key={member.membershipId}
                 selected={selectedId === member.membershipId}
-                onClick={() => setSelectedId(member.membershipId)}
+                onClick={() =>
+                  setSelectedId(
+                    selectedId === member.membershipId
+                      ? null
+                      : member.membershipId,
+                  )
+                }
               >
                 <DataTableCell>
                   <Who actor={member} />
@@ -202,11 +225,6 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         {list.shown.length === 0 && (
           <EmptyState title="No members match the current filters." />
         )}
-        <DataTableFooter
-          shown={list.shown.length}
-          total={members.length}
-          noun={["member", "members"]}
-        />
       </DetailSplit>
       {inviting && (
         <InviteDialog
@@ -219,8 +237,12 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   );
 }
 
-/** The selected member: their facts, the role control, and Remove. */
-function MemberDetail({
+/**
+ * The selected member: their facts, the role control, and the danger zone.
+ * The role is a Select for anyone holding `members:write`; the owner's role
+ * never changes here.
+ */
+function MemberPanel({
   member,
   customRoles,
   canChange,
@@ -233,116 +255,86 @@ function MemberDetail({
 }): React.JSX.Element {
   const updateRole = useMutation(api.org.members.updateRole);
   const remove = useMutation(api.org.members.remove);
-  const [removing, setRemoving] = useState(false);
-  const [removePending, setRemovePending] = useState(false);
   const { error, run } = useSubmit();
   const editable = canChange && !member.isOwner;
   const items = roleItems(customRoles);
-
-  async function confirmRemove(): Promise<void> {
-    setRemovePending(true);
-    try {
-      await remove({ membershipId: member.membershipId });
-      onClose();
-    } finally {
-      setRemovePending(false);
-    }
-  }
+  const facts: DetailRow[] = [
+    { key: "email", label: "Email", value: member.email },
+    { key: "status", label: "Status", value: "active", words: true },
+    {
+      key: "joined",
+      label: "Joined",
+      value: formatDate(member.createdAt),
+      words: true,
+    },
+    {
+      key: "invitedBy",
+      label: "Invited by",
+      value: member.invitedBy ? actorName(member.invitedBy) : "—",
+      words: true,
+    },
+  ];
 
   return (
     <DetailPanel title={member.name} onClose={onClose}>
-      <dl className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-xs">
-        <dt className="text-muted-foreground">Member</dt>
-        <dd>
-          <Who actor={member} />
-        </dd>
-        <dt className="text-muted-foreground">Email</dt>
-        <dd className="truncate">{member.email}</dd>
-        <dt className="text-muted-foreground">Role</dt>
-        <dd>
-          {editable ? (
-            <Select
-              items={items}
-              value={member.roleId ?? member.role}
-              onValueChange={(value: string | null) => {
-                const pick =
-                  value === null ? null : rolePick(value, customRoles);
-                if (pick) {
-                  void run(() =>
-                    updateRole({
-                      membershipId: member.membershipId,
-                      role: pick.tier,
-                      roleId: pick.roleId,
-                    }),
-                  );
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-44 cursor-pointer">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {items.map((item) => (
-                  <SelectItem
-                    key={item.value}
-                    value={item.value}
-                    className="cursor-pointer"
-                  >
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <LockedValue
-              reason={
-                member.isOwner
-                  ? "The owner's role cannot change"
-                  : "No permission to change roles"
-              }
-            >
-              {roleName(member)}
-            </LockedValue>
-          )}
-        </dd>
-        <dt className="text-muted-foreground">Status</dt>
-        <dd>
-          <StatusWord tone="ok">active</StatusWord>
-        </dd>
-        <dt className="text-muted-foreground">Joined</dt>
-        <dd>{formatDate(member.createdAt)}</dd>
-        <dt className="text-muted-foreground">Invited by</dt>
-        <dd>
-          {member.invitedBy ? (
-            <Who actor={member.invitedBy} />
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          )}
-        </dd>
-      </dl>
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-      {editable && (
-        <div className="mt-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            tone="muted-destructive"
-            className="cursor-pointer"
-            onClick={() => setRemoving(true)}
+      <DetailRows rows={facts} />
+
+      <h4 className="mt-5 mb-1.5 text-sm font-medium">Role</h4>
+      {editable ? (
+        <Select
+          items={items}
+          value={member.roleId ?? member.role}
+          onValueChange={(value: string | null) => {
+            const pick = value === null ? null : rolePick(value, customRoles);
+            if (pick) {
+              void run(() =>
+                updateRole({
+                  membershipId: member.membershipId,
+                  role: pick.tier,
+                  roleId: pick.roleId,
+                }),
+              );
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-44 cursor-pointer">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {items.map((item) => (
+              <SelectItem
+                key={item.value}
+                value={item.value}
+                className="cursor-pointer"
+              >
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <p className="text-xs">
+          <LockedValue
+            reason={
+              member.isOwner
+                ? "The owner's role cannot change"
+                : "No permission to change roles"
+            }
           >
-            Remove from organization
-          </Button>
-        </div>
+            {roleName(member)}
+          </LockedValue>
+        </p>
       )}
-      {removing && (
-        <DeleteConfirmDialog
-          open
-          onOpenChange={(open) => !open && setRemoving(false)}
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+
+      {editable && (
+        <DeleteZone
+          description="Remove the member from the organization. They keep their account and can be invited again."
+          label="Remove"
           resourceName={member.name}
           resourceType="member"
-          critical={false}
-          onConfirm={confirmRemove}
-          isDeleting={removePending}
+          onDelete={() => remove({ membershipId: member.membershipId })}
+          onDeleted={onClose}
         />
       )}
     </DetailPanel>

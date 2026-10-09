@@ -10,22 +10,21 @@ export function createdRows(
   createdAt: number | undefined,
   createdBy: Actor | null | undefined,
 ): DetailRow[] {
-  return [
-    ...(createdAt === undefined
-      ? []
-      : [
-          {
-            key: "created",
-            label: "Created",
-            value: formatDate(createdAt),
-            words: true as const,
-          },
-        ]),
-    {
-      key: "creator",
-      label: "Created by",
-      value: actorName(createdBy ?? PLATFORM),
+  const rows: DetailRow[] = [];
+  if (createdAt !== undefined) {
+    rows.push({
+      key: "created",
+      label: "Created",
+      value: formatDate(createdAt),
       words: true,
-    },
-  ];
+    });
+  }
+  rows.push({
+    key: "creator",
+    label: "Created by",
+    value: actorName(createdBy ?? PLATFORM),
+    words: true,
+  });
+
+  return rows;
 }

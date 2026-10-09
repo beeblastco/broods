@@ -18,8 +18,7 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DangerZone } from "@/app/components/DangerZone";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DeleteZone } from "@/app/components/DangerZone";
 import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
@@ -218,11 +217,8 @@ function PermissionPanel({
   onClose: () => void;
 }): React.JSX.Element {
   const remove = useMutation(api.access.removePermission);
-  const [deleting, setDeleting] = useState(false);
-  const [deletePending, setDeletePending] = useState(false);
   const custom = permission.kind === "custom" ? permission : null;
   const facts: DetailRow[] = [
-    { key: "name", label: "Name", value: permission.name },
     {
       key: "description",
       label: "Description",
@@ -239,17 +235,6 @@ function PermissionPanel({
     ...createdRows(custom?.createdAt, custom?.createdBy),
   ];
 
-  async function confirmDelete(): Promise<void> {
-    if (!custom) return;
-    setDeletePending(true);
-    try {
-      await remove({ permissionId: custom._id });
-      onClose();
-    } finally {
-      setDeletePending(false);
-    }
-  }
-
   return (
     <DetailPanel title={permission.name} onClose={onClose}>
       <DetailRows rows={facts} />
@@ -261,27 +246,12 @@ function PermissionPanel({
       )}
 
       {canChange && custom && (
-        <DangerZone description="Delete the permission. A policy whose rule names it has to drop that rule first.">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="cursor-pointer"
-            onClick={() => setDeleting(true)}
-          >
-            Delete
-          </Button>
-        </DangerZone>
-      )}
-
-      {deleting && custom && (
-        <DeleteConfirmDialog
-          open
-          onOpenChange={(open) => !open && setDeleting(false)}
+        <DeleteZone
+          description="Delete the permission. A policy whose rule names it has to drop that rule first."
           resourceName={custom.name}
           resourceType="permission"
-          critical={false}
-          onConfirm={confirmDelete}
-          isDeleting={deletePending}
+          onDelete={() => remove({ permissionId: custom._id })}
+          onDeleted={onClose}
         />
       )}
     </DetailPanel>
