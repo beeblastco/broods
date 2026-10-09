@@ -1664,11 +1664,13 @@ describe("runtime ingress", () => {
       ownerGeneration: 1,
     });
 
-    const recovered = await t.mutation(internal.runtimeIngress.recoverQueued, {
-      leaseTtlMs: 60_000,
-    });
+    const { recovered, continueAfter } = await t.mutation(
+      internal.runtimeIngress.recoverQueued,
+      { leaseTtlMs: 60_000 },
+    );
 
     // The busy conversation's owner is alive, so its queue is left to it.
+    expect(continueAfter).toBeNull();
     expect(recovered).toEqual([
       {
         accountId: accountId,
@@ -1685,7 +1687,60 @@ describe("runtime ingress", () => {
       await t.mutation(internal.runtimeIngress.recoverQueued, {
         leaseTtlMs: 60_000,
       }),
-    ).toEqual([]);
+    ).toEqual({ recovered: [], continueAfter: null });
+  });
+
+  test("a long queue behind a live owner does not hide a released one", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const keyFor = (name: string): string =>
+      `acct:${accountId}:agent:test-agent:api:${name}`;
+    // 120 queued envelopes ahead of the released one, in both expiry and key
+    // order: more than one recovery page used to read.
+    for (const name of ["busy-a", "busy-b"]) {
+      for (let index = 0; index <= 60; index += 1) {
+        await t.mutation(internal.runtimeIngress.accept, {
+          ...admission({
+            accountId: accountId,
+            conversationKey: keyFor(name),
+            eventId: `${name}-${index}`,
+            mode: index === 0 ? "reject" : "followup",
+          }),
+        });
+      }
+    }
+    for (const role of ["owner", "queued"]) {
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: keyFor("released"),
+          eventId: `released-${role}`,
+          mode: "followup",
+        }),
+      );
+    }
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: keyFor("released"),
+      ownerEventId: "released-owner",
+      ownerGeneration: 1,
+      status: "failed",
+      error: "interrupted",
+    });
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: keyFor("released"),
+      ownerEventId: "released-owner",
+      ownerGeneration: 1,
+    });
+
+    const page = await t.mutation(internal.runtimeIngress.recoverQueued, {
+      leaseTtlMs: 60_000,
+    });
+
+    expect(page.continueAfter).toBeNull();
+    expect(page.recovered.map((entry) => entry.conversationKey)).toEqual([
+      keyFor("released"),
+    ]);
   });
 
   test("returns the queued envelope's own execution context on takeNext", async () => {

@@ -14,6 +14,8 @@ import type { IngressDispatchScope } from "./integrations.ts";
 
 // A lease handed back at shutdown is picked up within this, or on boot.
 const RECOVERY_INTERVAL_MS = 30_000;
+// Pages of queued conversations one sweep walks; the next sweep starts over.
+const MAX_RECOVERY_PAGES = 50;
 
 let recovery: ReturnType<typeof setInterval> | undefined;
 let sweeping = false;
@@ -63,30 +65,35 @@ function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
 }
 
 /**
- * One pass: promote every orphaned queue and dispatch what it returns. Each
- * entry is its own conversation, so they dispatch together. A dispatch that
- * fails settles its envelope and drains on, like any other.
+ * One pass: promote every orphaned queue and dispatch what it returns, a page
+ * of queued conversations at a time. Each entry is its own conversation, so a
+ * page dispatches together. A dispatch that fails settles its envelope and
+ * drains on, like any other.
  */
 async function sweepQueuedIngress(): Promise<void> {
   if (sweeping) return;
   sweeping = true;
+  let count = 0;
   try {
-    const recovered = await recoverQueuedIngress();
-    await Promise.all(
-      recovered.map((entry): Promise<void> =>
-        dispatchAppliedIngress(recoveryScope(entry), entry.applied).catch(
-          (err: unknown): void => {
-            logError("Recovered ingress dispatch failed", {
-              conversationKey: entry.conversationKey,
-              eventId: entry.applied.eventId,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          },
+    let after: string | undefined;
+    for (let page = 0; page < MAX_RECOVERY_PAGES; page += 1) {
+      const { recovered, continueAfter } = await recoverQueuedIngress(after);
+      count += recovered.length;
+      await Promise.all(
+        recovered.map((entry): Promise<void> =>
+          dispatchAppliedIngress(recoveryScope(entry), entry.applied).catch(
+            (err: unknown): void => {
+              logError("Recovered ingress dispatch failed", {
+                conversationKey: entry.conversationKey,
+                eventId: entry.applied.eventId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            },
+          ),
         ),
-      ),
-    );
-    if (recovered.length > 0) {
-      logInfo("Recovered queued ingress", { count: recovered.length });
+      );
+      if (continueAfter === null) break;
+      after = continueAfter;
     }
   } catch (err) {
     logError("Queued ingress recovery failed", {
@@ -94,5 +101,8 @@ async function sweepQueuedIngress(): Promise<void> {
     });
   } finally {
     sweeping = false;
+    if (count > 0) {
+      logInfo("Recovered queued ingress", { count: count });
+    }
   }
 }

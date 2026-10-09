@@ -82,7 +82,7 @@ Acceptance is atomic. The coordinator either inserts the envelope with its statu
 
 Every lease acquisition or recovery increments a per-conversation `ownerGeneration` and returns it as a fencing token. The generation survives lease deletion. Dequeue, history writes, status changes, result commits and lease release all carry the token, and Convex refuses any of them once the generation has moved on. Core checks the token again right before it starts a tool, publishes to the stream or posts a channel reply. A call already in flight when ownership changes cannot be revoked, but its result and later writes are refused. Channel delivery stays best effort and uses the provider's idempotency metadata where one exists.
 
-After a crash, maintenance marks elapsed work `expired`. When a new event reaches a conversation whose lease expired with work still queued, admission first promotes the oldest queued group to the new generation and schedules it, and the newcomer queues behind it. A stale worker cannot apply an envelope or commit output after that. Core also calls `recoverQueued` on boot and on a timer, for queues nobody writes to again.
+After a crash, maintenance marks elapsed work `expired`. When a new event reaches a conversation whose lease expired with work still queued, admission first promotes the oldest queued group to the new generation and schedules it, and the newcomer queues behind it. A stale worker cannot apply an envelope or commit output after that. Core also calls `recoverQueued` on boot and on a timer, for queues nobody writes to again. It steps through queued conversations one at a time, a page per call, so a long queue behind a live owner does not hide the others.
 
 How the fencing token shuts out a stale owner:
 
