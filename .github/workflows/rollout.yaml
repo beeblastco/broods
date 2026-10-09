@@ -67,17 +67,25 @@ jobs:
 
           for AWAIT in $AWAIT_WORKFLOWS; do
             RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?head_sha=$SHA&per_page=1"
+            TARGET="$SHA"
 
             # GitHub creates a run for every workflow a push triggers before any
             # job starts, and this job only runs after the image build. So by
             # now the answer is settled: no run means this commit did not touch
-            # what $AWAIT watches, and there is nothing to wait for.
+            # what $AWAIT watches. It still needs the backend the branch last
+            # deployed, so the branch's newest run stands in: a core image once
+            # rolled behind six failed Convex deploys this way and called a
+            # function the backend did not have yet.
             if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
-              echo "$AWAIT did not run for $SHA; nothing to wait for."
-              continue
+              RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?branch=$GITHUB_REF_NAME&per_page=1"
+              TARGET="the newest $GITHUB_REF_NAME push"
+              if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
+                echo "$AWAIT never ran on $GITHUB_REF_NAME; nothing to wait for."
+                continue
+              fi
             fi
 
-            echo "Waiting for $AWAIT to settle for $SHA"
+            echo "Waiting for $AWAIT to settle for $TARGET"
             for _ in $(seq 1 "$DEADLINE"); do
               STATUS=$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')
               if [[ "$STATUS" == "completed" ]]; then
@@ -91,12 +99,12 @@ jobs:
             # reason to roll.
             CONCLUSION=$(gh api "$RUNS" --jq '.workflow_runs[0].conclusion // "none"')
             if [[ "$CONCLUSION" != "success" ]]; then
-              echo "$AWAIT for $SHA concluded '$CONCLUSION'." >&2
+              echo "$AWAIT for $TARGET concluded '$CONCLUSION'." >&2
               echo "Refusing to roll an image ahead of the backend it expects." >&2
               exit 1
             fi
 
-            echo "$AWAIT succeeded for $SHA."
+            echo "$AWAIT succeeded for $TARGET."
           done
 
       - name: Roll the pod and wait for the rollout

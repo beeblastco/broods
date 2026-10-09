@@ -10,6 +10,7 @@ export default defineConfig({
     // a module importing ./auth constructs AuthKit, which validates these at
     // import time. Dummy values only, nothing here authenticates.
     env: {
+      BROODS_AUTH_PROVIDER: "workos",
       WORKOS_CLIENT_ID: "client_test",
       WORKOS_API_KEY: "sk_test",
       WORKOS_WEBHOOK_SECRET: "whsec_test",

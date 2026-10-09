@@ -27,10 +27,27 @@ export function publicJwk<Jwk extends { d?: string }>(
   return publicKey;
 }
 
+export type AuthProvider = "self-host" | "workos";
+
 /**
- * The key set Convex trusts on a self-hosted deployment, or undefined on the
- * managed service. Read through here so every check agrees on what "set" is.
+ * Which sign-in this deployment trusts, from BROODS_AUTH_PROVIDER. Every
+ * deployment sets it: the deploy evaluates auth.config.ts on the backend,
+ * where reading an unset variable fails the deploy, so the config cannot
+ * probe for an optional variable and branch on it. Each branch then reads
+ * only its own variables.
  */
-export function selfHostJwks(): string | undefined {
-  return process.env.BROODS_SESSION_JWKS || undefined;
+export function authProvider(): AuthProvider {
+  const value = process.env.BROODS_AUTH_PROVIDER;
+  if (value === "self-host" || value === "workos") return value;
+  throw new Error(
+    `BROODS_AUTH_PROVIDER must be "workos" or "self-host", got ${JSON.stringify(value)}`,
+  );
+}
+
+/** The key set a self-hosted deployment trusts: the public half of the dashboard's BROODS_SESSION_SIGNING_KEY. */
+export function selfHostJwks(): string {
+  const jwks = process.env.BROODS_SESSION_JWKS;
+  if (!jwks) throw new Error("BROODS_SESSION_JWKS is not set");
+
+  return jwks;
 }
