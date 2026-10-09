@@ -50,8 +50,10 @@ export function Who({
 }): React.JSX.Element {
   const stage = useSearchParams().get("stage");
 
+  // A flex row, not inline: even middle-aligned, a 16px inline box sits on
+  // the line box and lifts the row by a pixel or two.
   return (
-    <span className="inline-flex items-center gap-1.5 align-middle">
+    <span className="flex items-center gap-1.5">
       <ActorAvatar actor={actor} />
       {"kind" in actor && actor.kind === "agent" && projectId ? (
         <Link

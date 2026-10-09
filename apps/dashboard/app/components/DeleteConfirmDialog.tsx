@@ -29,6 +29,8 @@ interface Props {
   /** Called only when all required inputs match. A rejection shows under the input. */
   onConfirm: () => Promise<void>;
   isDeleting?: boolean;
+  /** The verb the title, the phrase and the button use when it is not Delete: "Remove" for a member. */
+  verb?: string;
 }
 
 /** Typed-confirm delete dialog. Shows 'Delete <resourceType>' as title; requires typing
@@ -41,12 +43,13 @@ export function DeleteConfirmDialog({
   critical = false,
   onConfirm,
   isDeleting = false,
+  verb = "Delete",
 }: Props): React.JSX.Element {
   const [phrase, setPhrase] = useState("");
   const [error, setError] = useState<string | null>(null);
   const deletePhrase = critical
-    ? `delete ${resourceName}, ${CRITICAL_SAFETY_PHRASE}`
-    : `delete ${resourceName}`;
+    ? `${verb.toLowerCase()} ${resourceName}, ${CRITICAL_SAFETY_PHRASE}`
+    : `${verb.toLowerCase()} ${resourceName}`;
   const canConfirm = phrase === deletePhrase && !isDeleting;
 
   function handleOpenChange(next: boolean): void {
@@ -75,7 +78,9 @@ export function DeleteConfirmDialog({
       <DialogContent className="sm:max-w-md">
         <form className="grid gap-4" onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Delete {resourceType}</DialogTitle>
+            <DialogTitle>
+              {verb} {resourceType}
+            </DialogTitle>
             <DialogDescription>
               This action cannot be undone. Type the following to confirm.
             </DialogDescription>
@@ -120,7 +125,7 @@ export function DeleteConfirmDialog({
               className="cursor-pointer"
               disabled={!canConfirm}
             >
-              {isDeleting ? "Deleting…" : "Delete"}
+              {isDeleting ? `${verb.replace(/e$/, "")}ing…` : verb}
             </Button>
           </DialogFooter>
         </form>

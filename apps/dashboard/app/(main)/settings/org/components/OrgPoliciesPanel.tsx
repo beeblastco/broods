@@ -4,23 +4,28 @@
  * Organization › Policies: a policy is named rules, each one permission in
  * one scope, optionally narrowed by a condition. Policies are the org's, so
  * one serves any agent, role or key in it.
+ *
+ * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
+ * click, and a detail panel with Edit on its title line, the rules in the
+ * body, and the danger zone at the end.
  */
 
 import {
   DataTable,
   DataTableBody,
   DataTableCell,
-  DataTableFooter,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DeleteZone } from "@/app/components/DangerZone";
+import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { StatusWord } from "@/app/components/StatusDot";
-import { Toolbar } from "@/app/components/Toolbar";
+import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -40,6 +45,7 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { PLATFORM, Who } from "@/app/components/Who";
+import { createdRows } from "./createdRows";
 import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
@@ -59,7 +65,13 @@ import { useQueryState } from "nuqs";
 import { useState } from "react";
 
 type Policy = FunctionReturnType<typeof api.access.listPolicies>[number];
-type Column = "name" | "description" | "permissions" | "scope" | "createdAt";
+type Column =
+  | "name"
+  | "description"
+  | "permissions"
+  | "scope"
+  | "mode"
+  | "createdAt";
 type Field = (typeof QUERY_FIELDS)[number];
 type Mode = Policy["mode"];
 
@@ -71,8 +83,10 @@ interface ScopeItem {
   stageId?: Id<"stages">;
 }
 
+// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["scope", "mode"] as const;
 
+// Seven columns of short text; below this the detail panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
 
 // The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
@@ -95,6 +109,7 @@ const SORT_KEY: Record<Column, (policy: Policy) => SortKey> = {
   description: (policy) => policy.description ?? null,
   permissions: (policy) => policy.permissions.length,
   scope: (policy) => policy.scope,
+  mode: (policy) => policy.mode,
   createdAt: (policy) => policy.createdAt,
 };
 
@@ -113,19 +128,33 @@ export function OrgPoliciesPanel(): React.JSX.Element {
     text: searchText,
   });
   const selected = policies?.find((policy) => policy._id === selectedId);
+  const filters = {
+    scope: list.filterFor("scope", [
+      ...new Set((policies ?? []).map((policy) => policy.scope.toLowerCase())),
+    ]),
+    mode: list.filterFor("mode", ["audit", "enforce"]),
+  };
+
+  useShortcut("table.create", () => canChange && setCreating(true));
 
   if (policies === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Toolbar className="border-b-0 px-0">
+      <Toolbar>
         <SearchInput
           value={list.query}
           onChange={list.setQuery}
           fields={QUERY_FIELDS}
-          placeholder="Search policies"
+          placeholder="Search policies · scope: mode:"
+        />
+        <FilterButton
+          columns={[
+            { label: "Scope", filter: filters.scope },
+            { label: "Mode", filter: filters.mode },
+          ]}
         />
         {canChange && (
           <Button
@@ -139,10 +168,12 @@ export function OrgPoliciesPanel(): React.JSX.Element {
         )}
       </Toolbar>
       <DetailSplit
+        flush
         tableMinWidth={TABLE_MIN_WIDTH}
         detail={
           selected && (
-            <PolicyDetail
+            <PolicyPanel
+              key={selected._id}
               policy={selected}
               canChange={canChange}
               onClose={() => setSelectedId(null)}
@@ -161,9 +192,9 @@ export function OrgPoliciesPanel(): React.JSX.Element {
                 Permissions
               </DataTableHead>
               <DataTableHead sort={list.sortFor("scope")}>Scope</DataTableHead>
-              <DataTableHead>Mode</DataTableHead>
+              <DataTableHead sort={list.sortFor("mode")}>Mode</DataTableHead>
               <DataTableHead sort={list.sortFor("createdAt")}>
-                Created at
+                Created
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>
             </tr>
@@ -173,7 +204,9 @@ export function OrgPoliciesPanel(): React.JSX.Element {
               <DataTableRow
                 key={policy._id}
                 selected={selectedId === policy._id}
-                onClick={() => setSelectedId(policy._id)}
+                onClick={() =>
+                  setSelectedId(selectedId === policy._id ? null : policy._id)
+                }
               >
                 <DataTableCell className="font-medium">
                   {policy.name}
@@ -181,7 +214,9 @@ export function OrgPoliciesPanel(): React.JSX.Element {
                 <DataTableCell muted className="max-w-72 truncate">
                   {policy.description || "—"}
                 </DataTableCell>
-                <DataTableCell>{policy.permissions.length}</DataTableCell>
+                <DataTableCell className="tabular-nums">
+                  {policy.permissions.length}
+                </DataTableCell>
                 <DataTableCell muted>{policy.scope}</DataTableCell>
                 <DataTableCell>
                   <StatusWord tone={policy.mode === "enforce" ? "ok" : "ended"}>
@@ -207,19 +242,17 @@ export function OrgPoliciesPanel(): React.JSX.Element {
             }
           />
         )}
-        <DataTableFooter
-          shown={list.shown.length}
-          total={policies.length}
-          noun={["policy", "policies"]}
-        />
       </DetailSplit>
       {creating && <PolicyDialog onClose={() => setCreating(false)} />}
     </div>
   );
 }
 
-/** The selected policy: its facts, its rules with add and remove, and delete. */
-function PolicyDetail({
+/**
+ * The selected policy. Edit sits on the title line; the body holds its
+ * facts, its rules with add and remove, and the danger zone.
+ */
+function PolicyPanel({
   policy,
   canChange,
   onClose,
@@ -232,69 +265,39 @@ function PolicyDetail({
   const removePolicy = useMutation(api.access.removePolicy);
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deletePending, setDeletePending] = useState(false);
   const { error, run } = useSubmit();
   const editable = canChange && policy.managedBy !== "cli";
-
-  async function confirmDelete(): Promise<void> {
-    setDeletePending(true);
-    try {
-      await removePolicy({ policyId: policy._id });
-      onClose();
-    } finally {
-      setDeletePending(false);
-    }
-  }
+  const facts: DetailRow[] = [
+    {
+      key: "description",
+      label: "Description",
+      value: policy.description || "—",
+      words: true,
+    },
+    { key: "scope", label: "Scope", value: policy.scope, words: true },
+    { key: "mode", label: "Mode", value: policy.mode, words: true },
+    ...createdRows(policy.createdAt, policy.createdBy),
+  ];
 
   return (
     <DetailPanel
       title={policy.name}
-      meta={
+      actions={
         editable && (
-          <div className="mt-1 flex gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              className="cursor-pointer"
-              onClick={() => setEditing(true)}
-            >
-              Edit
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              tone="muted-destructive"
-              className="cursor-pointer"
-              onClick={() => setDeleting(true)}
-            >
-              Delete
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            tone="muted"
+            className="cursor-pointer"
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </Button>
         )
       }
       onClose={onClose}
     >
-      <dl className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-xs">
-        <dt className="text-muted-foreground">Name</dt>
-        <dd>{policy.name}</dd>
-        <dt className="text-muted-foreground">Description</dt>
-        <dd className="truncate">{policy.description || "—"}</dd>
-        <dt className="text-muted-foreground">Scope</dt>
-        <dd>{policy.scope}</dd>
-        <dt className="text-muted-foreground">Mode</dt>
-        <dd>
-          <StatusWord tone={policy.mode === "enforce" ? "ok" : "ended"}>
-            {policy.mode}
-          </StatusWord>
-        </dd>
-        <dt className="text-muted-foreground">Created at</dt>
-        <dd>{formatDate(policy.createdAt)}</dd>
-        <dt className="text-muted-foreground">Created by</dt>
-        <dd>
-          <Who actor={policy.createdBy ?? PLATFORM} />
-        </dd>
-      </dl>
+      <DetailRows rows={facts} />
       {policy.managedBy === "cli" && (
         <p className="mt-2 text-xs text-muted-foreground">
           Managed by code. Change it in the project and deploy.
@@ -302,12 +305,13 @@ function PolicyDetail({
       )}
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
-      <div className="mt-4 flex items-center justify-between">
-        <h4 className="text-xs font-semibold">Rules</h4>
+      <div className="mt-5 mb-1.5 flex items-center justify-between gap-2">
+        <h4 className="text-sm font-medium">Rules</h4>
         {editable && (
           <Button
             variant="outline"
             size="sm"
+            tone="muted"
             className="cursor-pointer"
             onClick={() => setAdding(true)}
           >
@@ -316,10 +320,12 @@ function PolicyDetail({
         )}
       </div>
       {policy.rules.length === 0 ? (
-        <p className="mt-1 text-xs text-muted-foreground">No rules yet.</p>
+        <p className="text-xs text-muted-foreground">
+          No rules yet. A rule is one permission in one scope.
+        </p>
       ) : (
-        <DataTable className="mt-1">
-          <DataTableHeader className="static">
+        <DataTable>
+          <DataTableHeader className="static bg-transparent">
             <tr>
               <DataTableHead>Permission</DataTableHead>
               <DataTableHead>Effect</DataTableHead>
@@ -334,8 +340,10 @@ function PolicyDetail({
                 <DataTableCell className="font-mono">
                   {rule.permissions.join(", ")}
                 </DataTableCell>
-                <DataTableCell muted={rule.effect === "allow"}>
-                  {rule.effect}
+                <DataTableCell>
+                  <StatusWord tone={rule.effect === "allow" ? "ok" : "error"}>
+                    {rule.effect}
+                  </StatusWord>
                 </DataTableCell>
                 <DataTableCell muted>{rule.scope}</DataTableCell>
                 <DataTableCell muted className="font-mono">
@@ -345,7 +353,7 @@ function PolicyDetail({
                   {editable && (
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="xs"
                       tone="muted"
                       className="cursor-pointer"
                       onClick={() =>
@@ -364,22 +372,21 @@ function PolicyDetail({
         </DataTable>
       )}
 
+      {editable && (
+        <DeleteZone
+          description="Delete the policy. Detach it from every role, agent and channel record that lists it first."
+          resourceName={policy.name}
+          resourceType="policy"
+          onDelete={() => removePolicy({ policyId: policy._id })}
+          onDeleted={onClose}
+        />
+      )}
+
       {editing && (
         <PolicyDialog policy={policy} onClose={() => setEditing(false)} />
       )}
       {adding && (
         <AddRuleDialog policyId={policy._id} onClose={() => setAdding(false)} />
-      )}
-      {deleting && (
-        <DeleteConfirmDialog
-          open
-          onOpenChange={(open) => !open && setDeleting(false)}
-          resourceName={policy.name}
-          resourceType="policy"
-          critical={false}
-          onConfirm={confirmDelete}
-          isDeleting={deletePending}
-        />
       )}
     </DetailPanel>
   );

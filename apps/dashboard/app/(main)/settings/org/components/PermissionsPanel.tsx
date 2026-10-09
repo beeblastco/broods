@@ -4,20 +4,26 @@
  * Organization › Permissions: every name a rule may use. Built-in ones are
  * the action vocabulary and cannot change; custom ones name something only
  * this org knows, such as a tool an agent may call.
+ *
+ * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
+ * click, and a detail panel with the permission's facts and, for a custom
+ * one, the danger zone.
  */
 
 import {
   DataTable,
   DataTableBody,
   DataTableCell,
-  DataTableFooter,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { DeleteZone } from "@/app/components/DangerZone";
+import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
+import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { EmptyState } from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -38,23 +44,29 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { PLATFORM, Who } from "@/app/components/Who";
+import { createdRows } from "./createdRows";
 import { useListState } from "@/app/hooks/useListState";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
+import { parseAsName } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
+import { useQueryState } from "nuqs";
 import { useState } from "react";
 
 type Permission = FunctionReturnType<typeof api.access.listPermissions>[number];
-type Custom = Extract<Permission, { kind: "custom" }>;
 type Column = "name" | "description" | "resource" | "kind" | "createdAt";
 type Field = (typeof QUERY_FIELDS)[number];
 
+// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["resource", "kind"] as const;
+
+// Six columns of short text; below this the detail panel would wrap them.
+const TABLE_MIN_WIDTH = 640;
 
 const RESOURCES = ["tool", "agent", "stage", "key", "custom"] as const;
 
@@ -72,8 +84,8 @@ export function PermissionsPanel(): React.JSX.Element {
   const { can } = usePermissions();
   const canChange = can("access:write");
   const permissions = useQuery(api.access.listPermissions, {});
+  const [selectedName, setSelectedName] = useQueryState("sel", parseAsName);
   const [creating, setCreating] = useState(false);
-  const [removing, setRemoving] = useState<Custom | null>(null);
   const list = useListState({
     rows: permissions ?? NO_ROWS,
     fields: QUERY_FIELDS,
@@ -88,20 +100,22 @@ export function PermissionsPanel(): React.JSX.Element {
     ]),
     kind: list.filterFor("kind", ["built-in", "custom"]),
   };
+  const selected = permissions?.find((row) => row.name === selectedName);
+
+  useShortcut("table.create", () => canChange && setCreating(true));
 
   if (permissions === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>;
   }
-  const customCount = permissions.filter((row) => row.kind === "custom").length;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Toolbar className="border-b-0 px-0">
+      <Toolbar>
         <SearchInput
           value={list.query}
           onChange={list.setQuery}
           fields={QUERY_FIELDS}
-          placeholder="Search permissions"
+          placeholder="Search permissions · resource: kind:"
         />
         <FilterButton
           columns={[
@@ -120,7 +134,20 @@ export function PermissionsPanel(): React.JSX.Element {
           </Button>
         )}
       </Toolbar>
-      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-card">
+      <DetailSplit
+        flush
+        tableMinWidth={TABLE_MIN_WIDTH}
+        detail={
+          selected && (
+            <PermissionPanel
+              key={selected.name}
+              permission={selected}
+              canChange={canChange}
+              onClose={() => setSelectedName(null)}
+            />
+          )
+        }
+      >
         <DataTable>
           <DataTableHeader>
             <tr>
@@ -130,25 +157,25 @@ export function PermissionsPanel(): React.JSX.Element {
               <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead
-                sort={list.sortFor("resource")}
-                filter={filters.resource}
-              >
+              <DataTableHead sort={list.sortFor("resource")}>
                 Resource
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("kind")} filter={filters.kind}>
-                Kind
-              </DataTableHead>
+              <DataTableHead sort={list.sortFor("kind")}>Kind</DataTableHead>
               <DataTableHead sort={list.sortFor("createdAt")}>
-                Created at
+                Created
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>
-              <DataTableHead align="right" />
             </tr>
           </DataTableHeader>
           <DataTableBody>
             {list.shown.map((row) => (
-              <DataTableRow key={row.name}>
+              <DataTableRow
+                key={row.name}
+                selected={selectedName === row.name}
+                onClick={() =>
+                  setSelectedName(selectedName === row.name ? null : row.name)
+                }
+              >
                 <DataTableCell className="font-mono">{row.name}</DataTableCell>
                 <DataTableCell muted className="max-w-72 truncate">
                   {row.description}
@@ -163,19 +190,6 @@ export function PermissionsPanel(): React.JSX.Element {
                     actor={(row.kind === "custom" && row.createdBy) || PLATFORM}
                   />
                 </DataTableCell>
-                <DataTableCell align="right">
-                  {canChange && row.kind === "custom" && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      tone="muted-destructive"
-                      className="cursor-pointer"
-                      onClick={() => setRemoving(row)}
-                    >
-                      Delete
-                    </Button>
-                  )}
-                </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
@@ -183,22 +197,64 @@ export function PermissionsPanel(): React.JSX.Element {
         {list.shown.length === 0 && (
           <EmptyState title="No permissions match the current filters." />
         )}
-        <DataTableFooter
-          shown={list.shown.length}
-          total={permissions.length}
-          noun={["permission", "permissions"]}
-        >
-          {`, ${customCount} custom`}
-        </DataTableFooter>
-      </div>
+      </DetailSplit>
       {creating && <NewPermissionDialog onClose={() => setCreating(false)} />}
-      {removing && (
-        <RemovePermissionDialog
-          permission={removing}
-          onClose={() => setRemoving(null)}
+    </div>
+  );
+}
+
+/**
+ * The selected permission: its facts, and for a custom one the danger zone.
+ * A built-in one is the vocabulary itself and has nothing to change.
+ */
+function PermissionPanel({
+  permission,
+  canChange,
+  onClose,
+}: {
+  permission: Permission;
+  canChange: boolean;
+  onClose: () => void;
+}): React.JSX.Element {
+  const remove = useMutation(api.access.removePermission);
+  const custom = permission.kind === "custom" ? permission : null;
+  const facts: DetailRow[] = [
+    {
+      key: "description",
+      label: "Description",
+      value: permission.description || "—",
+      words: true,
+    },
+    {
+      key: "resource",
+      label: "Resource",
+      value: permission.resource,
+      words: true,
+    },
+    { key: "kind", label: "Kind", value: permission.kind, words: true },
+    ...createdRows(custom?.createdAt, custom?.createdBy),
+  ];
+
+  return (
+    <DetailPanel title={permission.name} onClose={onClose}>
+      <DetailRows rows={facts} />
+      {custom === null && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          A built-in permission is part of the action vocabulary and cannot
+          change.
+        </p>
+      )}
+
+      {canChange && custom && (
+        <DeleteZone
+          description="Delete the permission. A policy whose rule names it has to drop that rule first."
+          resourceName={custom.name}
+          resourceType="permission"
+          onDelete={() => remove({ permissionId: custom._id })}
+          onDeleted={onClose}
         />
       )}
-    </div>
+    </DetailPanel>
   );
 }
 
@@ -312,40 +368,6 @@ function NewPermissionDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** The typed-confirm delete; the mutation's rejection shows under its input. */
-function RemovePermissionDialog({
-  permission,
-  onClose,
-}: {
-  permission: Custom;
-  onClose: () => void;
-}): React.JSX.Element {
-  const remove = useMutation(api.access.removePermission);
-  const [pending, setPending] = useState(false);
-
-  async function confirm(): Promise<void> {
-    setPending(true);
-    try {
-      await remove({ permissionId: permission._id });
-      onClose();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <DeleteConfirmDialog
-      open
-      onOpenChange={(open) => !open && onClose()}
-      resourceName={permission.name}
-      resourceType="permission"
-      critical={false}
-      onConfirm={confirm}
-      isDeleting={pending}
-    />
   );
 }
 
