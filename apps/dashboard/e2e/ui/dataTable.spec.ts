@@ -68,3 +68,15 @@ test("two chips on one field keep rows matching either", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(names).toHaveText(["Invoice sweep"]);
 });
+
+// An avatar in a cell is one text line tall, so a row with a Who is no
+// taller than one with only words: 12px text on its 16px line plus the cell's
+// padding, and the columns stay where they are from row to row.
+test("a row with an avatar is one text line tall", async ({ page }) => {
+  await openGallery(page);
+  const table = page.locator('[data-fixture="data-table"]');
+  const row = table.locator("tbody tr").first();
+  await expect(row.locator('[data-slot="avatar"]')).toBeVisible();
+  const box = await row.boundingBox();
+  expect(box?.height).toBeLessThanOrEqual(33);
+});

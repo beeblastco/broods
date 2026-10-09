@@ -50,8 +50,9 @@ export function Who({
 }): React.JSX.Element {
   const stage = useSearchParams().get("stage");
 
+  // A flex row, not inline: on the baseline a 16px box pushes the line taller.
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="flex items-center gap-1.5">
       <ActorAvatar actor={actor} />
       {"kind" in actor && actor.kind === "agent" && projectId ? (
         <Link
@@ -89,18 +90,22 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
   );
 }
 
-/** The small avatar alone: a person's picture or initials, an agent's dither, the Broods mark. */
+/**
+ * The small avatar alone: a person's picture or initials, an agent's dither,
+ * the Broods mark. One text line tall (16px), so a cell or a row with an
+ * avatar is no taller than one with only words.
+ */
 export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   if ("kind" in actor && actor.kind === "agent") {
     return (
-      <Avatar size="sm">
-        <DitherAvatarSVG seed={actor.name} size={24} className="rounded-md" />
+      <Avatar size="xs">
+        <DitherAvatarSVG seed={actor.name} size={16} className="rounded-sm" />
       </Avatar>
     );
   }
   if ("kind" in actor) {
     return (
-      <Avatar size="sm">
+      <Avatar size="xs">
         <svg viewBox="0 0 64 64" aria-hidden="true" className="size-full">
           <circle
             cx="32"
@@ -114,7 +119,7 @@ export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   }
 
   return (
-    <Avatar size="sm">
+    <Avatar size="xs">
       {actor.avatarUrl && <AvatarImage src={actor.avatarUrl} alt="" />}
       <AvatarFallback className="text-3xs font-medium">
         {initials(actor.name)}
