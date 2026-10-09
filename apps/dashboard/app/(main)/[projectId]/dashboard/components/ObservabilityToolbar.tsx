@@ -38,7 +38,7 @@ interface Props {
   onWindowChange: (window: TimeWindow | null) => void;
   /** Every entry held, before filters; the strip draws their volume. */
   points: VolumePoint[];
-  /** A time the strip marks with a red line: the selected trace or log line. */
+  /** A time the strip marks with a red line, such as the selected trace or log line. */
   marker?: number;
   /** The strip's right edge; the panels pass the same clock their filters use. */
   now: number;

@@ -95,9 +95,17 @@ export function MonitoringPanel({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  // The entry object itself, not an index: indices drift as new logs stream in
-  // and would silently repoint the open panel at a different line.
-  const [selected, setSelected] = useState<ObservabilityLogEntry | null>(null);
+  // The open line's key, not an index (indices drift as logs stream in) or the
+  // object (a refresh swaps it). It resolves against the filtered list below,
+  // so the panel and strip marker close when the line leaves the view.
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // A key carries no stage, so a stage switch closes the line. Render-time
+  // adjustment, not an effect.
+  const [prevStageSlug, setPrevStageSlug] = useState(stageSlug);
+  if (stageSlug !== prevStageSlug) {
+    setPrevStageSlug(stageSlug);
+    setSelectedKey(null);
+  }
   const {
     query: filter,
     setQuery: setFilter,
@@ -108,12 +116,6 @@ export function MonitoringPanel({
   } = useObservabilityView(LOG_VIEW);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const now = useNow();
-
-  // Memoized so the streaming re-renders don't re-parse the open payload.
-  const selectedSummary = useMemo(
-    () => (selected ? parseLogMessage(selected.message).summary : null),
-    [selected],
-  );
 
   // Only the stage and the trace travel: the logs' search and range mean
   // nothing on Tracing.
@@ -159,6 +161,15 @@ export function MonitoringPanel({
           matchesLogQuery(entry, query),
       ),
     [entries, query, bounds],
+  );
+  const selected = useMemo(
+    () => filtered.find((entry) => entryKey(entry) === selectedKey) ?? null,
+    [filtered, selectedKey],
+  );
+  // Memoized so the streaming re-renders don't re-parse the open payload.
+  const selectedSummary = useMemo(
+    () => (selected ? parseLogMessage(selected.message).summary : null),
+    [selected],
   );
   const points = useMemo<VolumePoint[]>(
     () =>
@@ -233,7 +244,7 @@ export function MonitoringPanel({
                   )}
                 </div>
               }
-              onClose={() => setSelected(null)}
+              onClose={() => setSelectedKey(null)}
             >
               <LogDetails entry={selected} />
             </DetailPanel>
@@ -260,8 +271,8 @@ export function MonitoringPanel({
               <LogRow
                 key={entryKey(entry)}
                 entry={entry}
-                isSelected={selected === entry}
-                onSelect={() => setSelected(entry)}
+                isSelected={entryKey(entry) === selectedKey}
+                onSelect={() => setSelectedKey(entryKey(entry))}
               />
             ))}
             {filtered.length === 0 && (

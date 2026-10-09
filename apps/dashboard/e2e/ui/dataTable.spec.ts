@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// A header menu sorts the column either way and filters by its values; the
-// filter lands as a chip in the search box, the same one typing would make.
-test("the header menu sorts and filters, and the filter is a search chip", async ({
+// A sort-only header flips on a click; a filterable one opens a menu that
+// sorts either way and filters by its values, and the filter lands as a chip
+// in the search box, the same one typing would make.
+test("a header click sorts, the header menu filters, and the filter is a search chip", async ({
   page,
 }) => {
   await openGallery(page);
@@ -16,8 +17,8 @@ test("the header menu sorts and filters, and the filter is a search chip", async
     "Weekly digest",
   ]);
 
+  // Already sorted by name ascending, so one click flips it.
   await table.getByRole("button", { name: "Name" }).click();
-  await page.getByRole("menuitem", { name: "Sort Z to A" }).click();
   await expect(names.first()).toHaveText("Weekly digest");
 
   await table.getByRole("button", { name: "Agent" }).click();
