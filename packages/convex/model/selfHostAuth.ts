@@ -33,7 +33,7 @@ export function authProvider(): "self-host" | "workos" {
   const value = process.env.BROODS_AUTH_PROVIDER;
   if (value === "self-host" || value === "workos") return value;
   throw new Error(
-    `BROODS_AUTH_PROVIDER must be "workos" or "self-host", got ${JSON.stringify(value)}`,
+    `BROODS_AUTH_PROVIDER must be "workos" or "self-host", got ${JSON.stringify(value)}. Set it on the deployment: npx convex env set BROODS_AUTH_PROVIDER workos`,
   );
 }
 

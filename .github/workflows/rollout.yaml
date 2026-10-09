@@ -19,8 +19,9 @@ on:
       awaitWorkflows:
         description: >-
           Space-separated workflow files in this repo that must have succeeded
-          for this sha before the image is allowed onto the cluster. Each is
-          skipped when it did not run for this commit.
+          for this sha before the image is allowed onto the cluster. One that
+          did not run for this commit is judged by the branch's newest push run
+          of it instead, and skipped only when it never ran on the branch.
         required: false
         default: ""
         type: string
@@ -65,16 +66,16 @@ jobs:
           # anyway is the failure this gate exists to stop.
           DEADLINE=120
 
-          # "<status> <conclusion>" of the newest run a query matches; "absent
-          # none" when nothing matches.
-          run_state() {
-            gh api "$1" --jq '"\(.workflow_runs[0].status // "absent") \(.workflow_runs[0].conclusion // "none")"'
+          # Id of the newest run a query matches, empty when none does. Plain
+          # assignments below so a failing gh call stops the step under set -e.
+          newest_run() {
+            gh api "$1" --jq '.workflow_runs[0].id // empty'
           }
 
           for AWAIT in $AWAIT_WORKFLOWS; do
             WORKFLOW_RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs"
-            RUNS="$WORKFLOW_RUNS?head_sha=$SHA&per_page=1"
             TARGET="$SHA"
+            RUN_ID=$(newest_run "$WORKFLOW_RUNS?head_sha=$SHA&per_page=1")
 
             # GitHub creates a run for every workflow a push triggers before any
             # job starts, and this job only runs after the image build. So by
@@ -82,18 +83,21 @@ jobs:
             # what $AWAIT watches. The image still needs what the branch last
             # deployed, so the branch's newest push run stands in. Push runs
             # only: a manual run can name another stage.
-            if [[ "$(run_state "$RUNS")" == "absent none" ]]; then
-              RUNS="$WORKFLOW_RUNS?branch=$GITHUB_REF_NAME&event=push&per_page=1"
+            if [[ -z "$RUN_ID" ]]; then
               TARGET="the newest $GITHUB_REF_NAME push"
-              if [[ "$(run_state "$RUNS")" == "absent none" ]]; then
+              RUN_ID=$(newest_run "$WORKFLOW_RUNS?branch=$GITHUB_REF_NAME&event=push&per_page=1")
+              if [[ -z "$RUN_ID" ]]; then
                 echo "$AWAIT never ran on $GITHUB_REF_NAME; nothing to wait for."
                 continue
               fi
             fi
 
-            echo "Waiting for $AWAIT to settle for $TARGET"
+            # The run is pinned by id, so a newer push during the wait does not
+            # move the target.
+            echo "Waiting for $AWAIT run $RUN_ID to settle for $TARGET"
             for _ in $(seq 1 "$DEADLINE"); do
-              read -r STATUS CONCLUSION <<<"$(run_state "$RUNS")"
+              STATE=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '"\(.status) \(.conclusion // "none")"')
+              read -r STATUS CONCLUSION <<<"$STATE"
               if [[ "$STATUS" == "completed" ]]; then
                 break
               fi

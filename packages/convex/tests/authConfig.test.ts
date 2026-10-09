@@ -20,7 +20,7 @@ async function evaluateAuthConfig(
       },
     },
   );
-  vi.stubGlobal("process", { env: env });
+  vi.stubGlobal("process", { ...process, env: env });
   vi.resetModules();
   const { default: authConfig } = await import("../auth.config");
 
