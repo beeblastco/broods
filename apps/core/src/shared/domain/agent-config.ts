@@ -12,6 +12,7 @@ import type { GoogleChatAdapterBaseConfig } from "@chat-adapter/gchat";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
 import type { InstagramAdapterConfig } from "@chat-adapter/instagram";
 import type { LinearAdapterAPIKeyConfig } from "@chat-adapter/linear";
+import type { NotionAdapterConfig } from "@chat-adapter/notion";
 import type { MessengerAdapterConfig } from "@chat-adapter/messenger";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TeamsAdapterConfig } from "@chat-adapter/teams";
@@ -346,6 +347,7 @@ export interface AgentChannelsConfig {
   gchat?: AgentGoogleChatChannelConfig;
   github?: AgentGitHubChannelConfig;
   linear?: AgentLinearChannelConfig;
+  notion?: AgentNotionChannelConfig;
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
@@ -408,6 +410,18 @@ type ChannelCredentialDrift = AssertAllExact<
     Exactly<LinearAdapterAPIKeyConfig["apiUrl"], string | undefined>,
     Exactly<LinearAdapterAPIKeyConfig["userName"], string | undefined>,
     Exactly<LinearAdapterAPIKeyConfig["webhookSecret"], string | undefined>,
+    Exactly<NotionAdapterConfig["apiBaseUrl"], string | undefined>,
+    Exactly<NotionAdapterConfig["keywords"], string[] | undefined>,
+    Exactly<
+      NotionAdapterConfig["mentionMode"],
+      AgentNotionChannelConfig["mentionMode"]
+    >,
+    Exactly<
+      SerializedCredential<NotionAdapterConfig["token"]>,
+      string | undefined
+    >,
+    Exactly<NotionAdapterConfig["userName"], string | undefined>,
+    Exactly<NotionAdapterConfig["verificationToken"], string | undefined>,
     Exactly<SlackAdapterConfig["apiUrl"], string | undefined>,
     Exactly<SlackAdapterConfig["signingSecret"], string | undefined>,
     Exactly<DiscordAdapterConfig["apiUrl"], string | undefined>,
@@ -524,6 +538,29 @@ export interface AgentLinearChannelConfig {
   /** The member's display name, e.g. `acme-agent`. `@acme-agent` addresses the agent. */
   userName?: string;
   webhookSecret?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Notion integration the agent comments as. `token` reads comments and
+ * replies; `verificationToken` is the key Notion signs every event with, sent
+ * once in the subscription handshake.
+ */
+export interface AgentNotionChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  apiBaseUrl?: string;
+  /** Words that address the agent when `mentionMode` is `keyword`. */
+  keywords?: string[];
+  /** `mention` (default) answers `@userName`, `all-comments` every comment, `keyword` the `keywords`. */
+  mentionMode?: "mention" | "all-comments" | "keyword";
+  token?: string;
+  /** Plain-text name comments address, e.g. `@acme-agent`. Defaults to `notion-bot`. */
+  userName?: string;
+  verificationToken?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

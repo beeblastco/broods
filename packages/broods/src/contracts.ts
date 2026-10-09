@@ -19,6 +19,7 @@ import type {
   AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentMessengerChannelConfig,
+  AgentNotionChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
@@ -54,6 +55,7 @@ export type { TelegramSource } from "../../../apps/core/src/shared/telegram-chan
 export type { GoogleChatSource } from "../../../apps/core/src/shared/gchat-channel.ts";
 export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
 export type { LinearSource } from "../../../apps/core/src/shared/linear-channel.ts";
+export type { NotionSource } from "../../../apps/core/src/shared/notion-channel.ts";
 export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
 export type { DiscordSource } from "../../../apps/core/src/shared/discord-channel.ts";
 export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
@@ -88,6 +90,7 @@ export type {
   AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentMessengerChannelConfig,
+  AgentNotionChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,

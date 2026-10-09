@@ -168,6 +168,35 @@ describe("agent rules", () => {
     });
   });
 
+  it("holds Notion to its URL and mention settings", () => {
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { notion: { id: "no", apiBaseUrl: "http://api.notion.com" } },
+      }),
+    ).toThrow("config.channels.notion.apiBaseUrl must use https");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { notion: { id: "no", mentionMode: "keyword" } },
+      }),
+    ).toThrow("config.channels.notion.keywords must list at least one word");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { notion: { id: "no", mentionMode: "everything" } },
+      }),
+    ).toThrow("config.channels.notion.mentionMode must be one of");
+    expect(
+      redactConfigSecrets({
+        channels: {
+          notion: { token: "ntn-token", verificationToken: "ntn-verify" },
+        },
+      }),
+    ).toEqual({
+      channels: {
+        notion: { token: "********", verificationToken: "********" },
+      },
+    });
+  });
+
   it("holds Twilio to its URL and identity settings", () => {
     for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"]) {
       expect(() =>

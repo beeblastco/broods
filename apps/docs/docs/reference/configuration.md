@@ -385,6 +385,7 @@ A connection holds one app's credentials. A channel names one room on that conne
 | Discord     | `defineDiscordConnection`    | `defineDiscordChannel`    | `channelId`      |
 | GitHub      | `defineGitHubConnection`     | `defineGitHubChannel`     | `repo`           |
 | Linear      | `defineLinearConnection`     | `defineLinearChannel`     | `team`           |
+| Notion      | `defineNotionConnection`     | `defineNotionChannel`     | `pageId`         |
 | Matrix      | `defineMatrixConnection`     | `defineMatrixChannel`     | `channelId`      |
 | Pancake     | `definePancakeConnection`    | `definePancakeChannel`    | `conversationId` |
 | Zalo        | `defineZaloConnection`       | `defineZaloChannel`       | `chatId`         |

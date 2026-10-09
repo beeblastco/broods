@@ -558,7 +558,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, linear, notion, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -575,6 +575,7 @@ paths:
                 telegram,
                 github,
                 linear,
+                notion,
                 slack,
                 discord,
                 matrix,
@@ -652,6 +653,7 @@ paths:
                 telegram,
                 github,
                 linear,
+                notion,
                 slack,
                 discord,
                 matrix,
@@ -4931,7 +4933,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, notion, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -5966,6 +5968,62 @@ components:
               items:
                 type: string
               description: Team keys this connection answers in, such as ENG. Every team when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        notion:
+          type: object
+          description: Notion page comments that address the agent, as the integration `token` belongs to. Every `comment.created` event must carry a valid `X-Notion-Signature`, made with `verificationToken`. Until `verificationToken` is set, the connection accepts only Notion's unsigned one-time verification request and writes the token to the agent's logs.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            token:
+              type: string
+              description: Internal integration secret. Reads the comment each event names and posts replies.
+            verificationToken:
+              type: string
+              description: The token from Notion's subscription verification request, which Notion signs every event with.
+            userName:
+              type: string
+              description: Plain-text name that addresses the agent as `@userName`. Defaults to `notion-bot`.
+            mentionMode:
+              type: string
+              enum: [mention, all-comments, keyword]
+              default: mention
+              description: "`mention` answers `@userName`, `all-comments` every comment not written by an integration, `keyword` any of `keywords`."
+            keywords:
+              type: array
+              items:
+                type: string
+              description: Words that address the agent. Required when mentionMode is keyword.
+            apiBaseUrl:
+              type: string
+              description: Notion API base URL. Public https only. Defaults to https://api.notion.com/v1.
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Page ids this connection answers on, hyphenated or not. Every page shared with the integration when omitted or set to ["*"], none when empty.
             allowedUserIds:
               type: array
               items:
