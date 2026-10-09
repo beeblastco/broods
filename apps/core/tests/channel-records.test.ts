@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { SlackAdapter } from "@chat-adapter/slack";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { createHmac } from "node:crypto";
 import {
   createIncomingEventRouter,
@@ -20,7 +21,12 @@ import { coreRequest, requestBodyText, requestUrl } from "./helpers/http.ts";
 // The invoke gate reads assigned policy documents; without a stub the routing
 // tests would reach the real Convex client. Scoped to this file, because bun shares the
 // module registry across test files, so a module-scope override would leak.
+// The Slack mention looks its sender up with users.info through the adapter's
+// axios WebClient, which no fetch stub sees and which retries a refused socket
+// past the test timeout, so the lookup answers "unknown user" here.
+const getSlackUser = spyOn(SlackAdapter.prototype, "getUser");
 beforeAll(() => {
+  getSlackUser.mockResolvedValue(null);
   setStorageForTests({
     agentPolicies: {
       getById: async (_accountId: string, policyId: string) => ({
@@ -37,6 +43,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  getSlackUser.mockRestore();
   setStorageForTests(null);
 });
 
