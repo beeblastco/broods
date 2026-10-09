@@ -595,14 +595,23 @@ export async function prepareSessionMessage(options: {
 /**
  * Promotes queued work whose conversation has no live owner: its owner handed
  * the lease back at shutdown, or died and let it expire. The caller must
- * dispatch every returned application; it now holds each lease.
+ * dispatch every returned application; it now holds each lease. One page of
+ * queued conversations after `afterConversationKey`; `continueAfter` names the
+ * next page, or is null once every queued conversation was looked at.
  */
-export async function recoverQueuedIngress(): Promise<RecoveredIngress[]> {
-  const recovered = await runtime.mutate<RecoveredIngress[]>(
-    "recoverQueuedIngress",
-    { leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS },
-  );
-  for (const entry of recovered) {
+export async function recoverQueuedIngress(
+  afterConversationKey?: string,
+): Promise<{ recovered: RecoveredIngress[]; continueAfter: string | null }> {
+  const page = await runtime.mutate<{
+    recovered: RecoveredIngress[];
+    continueAfter: string | null;
+  }>("recoverQueuedIngress", {
+    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+    ...(afterConversationKey === undefined
+      ? {}
+      : { afterConversationKey: afterConversationKey }),
+  });
+  for (const entry of page.recovered) {
     trackOwner({
       conversationKey: entry.conversationKey,
       ownerEventId: entry.applied.eventId,
@@ -610,7 +619,7 @@ export async function recoverQueuedIngress(): Promise<RecoveredIngress[]> {
     });
   }
 
-  return recovered;
+  return page;
 }
 
 /** Gives the lease back, only while the caller still holds that generation. */

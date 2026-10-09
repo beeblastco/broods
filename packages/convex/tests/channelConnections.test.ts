@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { convexTest, type TestConvex } from "convex-test";
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ChannelConnection } from "../channel/connections";
@@ -139,7 +139,13 @@ async function listConnections(
   tt: T,
   channel: string,
 ): Promise<ChannelConnection[]> {
-  await tt.mutation(internal.channel.connections.reconcile, {});
+  vi.useFakeTimers();
+  try {
+    await tt.mutation(internal.channel.endpointReconcile.reconcile, {});
+    await tt.finishAllScheduledFunctions(vi.runAllTimers);
+  } finally {
+    vi.useRealTimers();
+  }
 
   return await tt.query(internal.channel.connections.listConnections, {
     channel: channel,
@@ -249,6 +255,40 @@ describe("listConnections", () => {
     });
 
     expect(await listConnections(tt, "discord")).toEqual([]);
+  });
+
+  test("a revoked deployment's rows leave the projection on reconcile", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
+    await seedDeployment(tt, scope, "endpoint-1");
+    expect(await listConnections(tt, "discord")).toHaveLength(1);
+
+    // No active deployment names the account now, so only the pass over
+    // stored rows reaches it.
+    await tt.run(async (ctx) => {
+      const deployment = await ctx.db.query("agentDeployments").first();
+      await ctx.db.patch(deployment!._id, { status: "revoked" });
+    });
+
+    expect(await listConnections(tt, "discord")).toEqual([]);
+  });
+
+  test("reconciles each account with an active deployment", async () => {
+    const tt = t();
+    const first = await seedScope(tt);
+    const second = await seedScope(tt);
+    await seedAgent(tt, first, "tracy", discordConfig("bot-token-1"));
+    await seedAgent(tt, second, "triage", discordConfig("bot-token-2"));
+    await seedDeployment(tt, first, "endpoint-1");
+    await seedDeployment(tt, second, "endpoint-2");
+
+    const connections = await listConnections(tt, "discord");
+
+    expect(connections.map((entry) => entry.botToken).sort()).toEqual([
+      "bot-token-1",
+      "bot-token-2",
+    ]);
   });
 
   test("returns one row per agent when two share a bot token", async () => {
