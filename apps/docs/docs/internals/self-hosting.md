@@ -155,6 +155,7 @@ From `packages/convex`, set each with `bunx convex env set NAME value`:
 | `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                                |
 | `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                  | no        | Refused as a workspace's own bucket or role                                                  |
 | `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core   |
+| `BROODS_AUTH_PROVIDER`                                                     | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login                |
 | `BROODS_SESSION_JWKS`                                                      | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                     |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | no        | The managed service's login. Leave unset                                                     |
 | `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs                                                        |

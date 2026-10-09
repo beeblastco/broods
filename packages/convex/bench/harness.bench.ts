@@ -123,6 +123,7 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 // convex-test loads every module in the deployment, and `auth.ts` constructs
 // AuthKit at import time, which validates these. Dummy values, the same ones
 // vitest.config.ts sets; nothing here authenticates.
+process.env.BROODS_AUTH_PROVIDER ??= "workos";
 process.env.WORKOS_CLIENT_ID ??= "client_test";
 process.env.WORKOS_API_KEY ??= "sk_test";
 process.env.WORKOS_WEBHOOK_SECRET ??= "whsec_test";

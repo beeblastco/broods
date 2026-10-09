@@ -81,7 +81,7 @@ sequenceDiagram
   B->>B: build and push image, tag = sha
   B->>R: workflow, tag, awaitWorkflows
   loop each awaited workflow, 20 min in all
-    R->>GH: run for this sha?
+    R->>GH: run for this sha, else the branch's newest push run?
     alt no run
       GH-->>R: skip it
     else run
@@ -101,6 +101,7 @@ sequenceDiagram
 | discord-forwarder | `deploy-discord-forwarder.yaml`, `main` or ticked only | nothing                             |
 | matrix-forwarder  | `deploy-matrix-forwarder.yaml`, `main` or ticked only  | nothing                             |
 
+- A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
 - Images are `ghcr.io/beeblastco/broods-*`, tagged with the commit sha plus a floating `dev` or `main` tag.
 - The rollout job has a 40 minute budget: 20 for prerequisites, 20 for the roll. It needs `INFRA_DISPATCH_TOKEN`.
 
