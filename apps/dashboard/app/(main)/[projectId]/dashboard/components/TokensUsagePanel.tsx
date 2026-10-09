@@ -492,9 +492,10 @@ function Sparkline({
 /**
  * The numbers row for the range or the clicked bin: four evenly spaced
  * columns, each a large value over a trend line in the chart's colours and
- * one detail line. A column whose number is not what its label suggests
- * carries a "?" with what it counts. Laid out by its own width, not the window's; values count
- * to their new number here, so only this row repaints during the tween.
+ * one detail line. Laid out by its own width, not the window's; values count
+ * to their new number here, so only this row repaints during the tween. A
+ * column whose number is not what its label suggests carries a "?" with
+ * what it counts.
  */
 function UsageStats({
   bins,
@@ -573,7 +574,7 @@ function UsageStats({
             key={column.label}
             className="grid min-w-0 gap-1 border-border px-4 py-3 @2xl:border-l @2xl:first:border-l-0"
           >
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               {column.label}
               {column.help && <HelpMark text={column.help} />}
             </div>

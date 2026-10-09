@@ -218,6 +218,8 @@ function AllowanceTableRow({
       className="cursor-pointer"
       onClick={onPick}
       onKeyDown={(event) => {
+        // A press on a control inside the row, like its help mark, is that control's.
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onPick();

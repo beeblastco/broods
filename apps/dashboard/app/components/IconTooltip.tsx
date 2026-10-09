@@ -8,8 +8,8 @@ import {
 
 /**
  * Wraps an icon-only button: `label` is both its accessible name and its
- * tooltip, as on the canvas controls and the sandbox size "?". The (main) layout's TooltipProvider sets
- * the delay.
+ * tooltip, as on the canvas controls and HelpMark's "?". The (main) layout's
+ * TooltipProvider sets the delay.
  */
 export function IconTooltip({
   children,
