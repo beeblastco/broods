@@ -555,7 +555,7 @@ function UsageStats({
           : "No runs",
       trend: bins.map((b) => b.invocations),
       color: "var(--color-usage-tasks)",
-      help: "Agent runs that finished in this window, a subagent's run counted on its own. A run still going is added from the live trace for its first 20 minutes.",
+      help: "Agent runs that finished in this window, a subagent's run counted on its own. With all models shown, a run still going is added from the live trace for its first 20 minutes.",
     },
     {
       label: "Model calls",
@@ -574,7 +574,7 @@ function UsageStats({
             key={column.label}
             className="grid min-w-0 gap-1 border-border px-4 py-3 @2xl:border-l @2xl:first:border-l-0"
           >
-            <div className="text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {column.label}
               {column.help && <HelpMark text={column.help} />}
             </div>
