@@ -68,6 +68,8 @@ import {
 } from "./tools/utils.ts";
 
 const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
+const PERSISTENT_SUBAGENT_KEY =
+  /^subagent-persistent-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 // How long a child's ask_parent waits for the parent's answer.
@@ -513,12 +515,12 @@ export class SubagentCoordinator {
       );
     }
     // The key comes from the model, and it shares the child agent's direct-API
-    // namespace, so only a key in the form this runtime mints for a child may
-    // be resumed: anything else could name another caller's conversation with
-    // that agent. The minted suffix is a random UUID.
+    // namespace, so only a key in the form this runtime mints for a child (the
+    // prefix and a random UUID) may be resumed: anything else could name
+    // another caller's guessable conversation with that agent.
     if (
       task.conversationKey !== undefined &&
-      !task.conversationKey.startsWith(PERSISTENT_SUBAGENT_KEY_PREFIX)
+      !PERSISTENT_SUBAGENT_KEY.test(task.conversationKey)
     ) {
       throw new Error(
         `Subagent conversationKey must be a ${PERSISTENT_SUBAGENT_KEY_PREFIX}... key from run_subagent`,

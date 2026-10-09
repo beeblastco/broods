@@ -858,14 +858,17 @@ describe("SubagentCoordinator", () => {
     const resumed = await internals.resolveTask(
       {
         prompt: "continue",
-        conversationKey: "subagent-persistent-existing",
+        conversationKey:
+          "subagent-persistent-0b9f6a52-3c1e-4d7a-9e2b-5f8c1d4a7e30",
       },
       [],
       [],
     );
-    expect(resumed.publicConversationKey).toBe("subagent-persistent-existing");
+    expect(resumed.publicConversationKey).toBe(
+      "subagent-persistent-0b9f6a52-3c1e-4d7a-9e2b-5f8c1d4a7e30",
+    );
     expect(resumed.conversationKey).toContain(
-      "api:subagent-persistent-existing",
+      "api:subagent-persistent-0b9f6a52-3c1e-4d7a-9e2b-5f8c1d4a7e30",
     );
     expect(resumed.persistent).toBe(true);
     expect(resumed.resuming).toBe(true);
@@ -875,6 +878,14 @@ describe("SubagentCoordinator", () => {
     await expect(
       internals.resolveTask(
         { prompt: "recount", conversationKey: "user-123" },
+        [],
+        [],
+      ),
+    ).rejects.toThrow("must be a subagent-persistent-... key");
+    // The prefix alone is a name any direct-API caller can pick.
+    await expect(
+      internals.resolveTask(
+        { prompt: "recount", conversationKey: "subagent-persistent-alice" },
         [],
         [],
       ),
