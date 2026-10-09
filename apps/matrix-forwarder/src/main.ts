@@ -61,8 +61,10 @@ if (import.meta.main) {
     stopping = true;
     try {
       await watch.close();
-      await forwarder.stop();
+      // Stop taking /v1/send and /v1/typing first, so none lands on an account
+      // the forwarder has already dropped and answers 401.
       await server.stop();
+      await forwarder.stop();
     } finally {
       // A store that fails to close must not leave the process up, half stopped.
       process.exit(exitCode);

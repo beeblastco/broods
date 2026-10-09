@@ -75,9 +75,10 @@ if (import.meta.main) {
   let stopped: Promise<void> | undefined;
   const shutdown = (): Promise<void> => {
     if (!stopped) {
-      void watch.close();
       forwarder.stop();
-      stopped = server.stop();
+      stopped = Promise.all([watch.close(), server.stop()]).then(
+        (): void => undefined,
+      );
     }
 
     return stopped;
