@@ -102,7 +102,7 @@ Gateway, dashboard, docs and both forwarders are dispatched in the same parallel
 
 Production deploys only to `eu-west-1`. `production_targets()` in `deploy.yaml` lists it alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM prerequisites in `ap-southeast-1`.
 
-`deploy.yaml` also deploys the [Cloudflare MCP runtime](../guides/cloudflare-mcp.md) per target with wrangler, right after that target's SST deploy, named by its `cloudflareMcpWorkerName` output and pointed at its tool-bundles bucket. It ships code only and skips production. The infra repo holds the Worker's key and writes it to both the Worker's `MCP_API_KEY` and core's `CLOUDFLARE_MCP_API_KEY`, so rotating it is one secret and one infra deploy.
+`deploy.yaml` also deploys the [Cloudflare MCP runtime](../guides/tools.md#where-a-hosted-server-runs) per target with wrangler, right after that target's SST deploy, named by its `cloudflareMcpWorkerName` output and pointed at its tool-bundles bucket. It ships code only and skips production. The infra repo holds the Worker's key and writes it to both the Worker's `MCP_API_KEY` and core's `CLOUDFLARE_MCP_API_KEY`, so rotating it is one secret and one infra deploy.
 
 `deploy.yaml` also handles the regional sandbox image. When a target's `SANDBOX_IMAGE_READY_*` variable is `true` and the region's ECR repo has no `latest-arm64` image, it runs one deploy without sandbox functions to create the repo, copies the image from `SANDBOX_IMAGE_SOURCE_REGION` with `crane`, then deploys again.
 

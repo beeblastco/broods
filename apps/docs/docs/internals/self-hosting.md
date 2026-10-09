@@ -156,7 +156,7 @@ Refuses to start without the four service secrets. Keep it cluster-internal; Tra
 | `MICROVM_IMAGE_IDENTIFIER`, `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_LOG_GROUP_NAME`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`                              | for `lambda` sandboxes | Without the connector, `deny-all` MicroVMs fail to launch                                            |
 | `WORKDIR_URL`, `WORKDIR_API_KEY`                                                                                                                        | for `sandbox`          | The workdir control plane                                                                            |
 | `CLOUDFLARE_SANDBOX_URL`, `CLOUDFLARE_SANDBOX_API_KEY`                                                                                                  | for `cloudflare`       | The `apps/cloudflare-sandbox` bridge Worker and its `SANDBOX_API_KEY` secret                         |
-| `CLOUDFLARE_MCP_URL`, `CLOUDFLARE_MCP_API_KEY`                                                                                                          | for Cloudflare MCP     | The [Dynamic Workers runtime](../guides/cloudflare-mcp.md) for hosted MCP. Unset keeps all on Lambda |
+| `CLOUDFLARE_MCP_URL`, `CLOUDFLARE_MCP_API_KEY`                                                                                                          | for Cloudflare MCP     | The [Dynamic Workers runtime](../guides/tools.md#where-a-hosted-server-runs) for hosted MCP. Unset keeps all on Lambda |
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | no                     | Fallbacks for sandbox configs that omit their own                                                    |
 | `ENABLE_WEBSOCKET`, `NATS_URL`, `NATS_TOKEN`                                                                                                            | for WebSocket          | `ENABLE_WEBSOCKET=true` needs `NATS_URL`                                                             |
 | `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                                                                         | for policies           | Default `http://127.0.0.1:8181`                                                                      |
@@ -228,7 +228,7 @@ Run each with one replica and `strategy: Recreate`.
 
 ### Cloudflare MCP runtime (optional)
 
-Runs [hosted MCP servers on Cloudflare Workers](../guides/cloudflare-mcp.md). The runtime is `apps/cloudflare-mcp`, a Worker with a `LOADER` [Worker Loader](https://developers.cloudflare.com/dynamic-workers/) binding. Dynamic Workers needs a Workers Paid plan.
+Runs [hosted MCP servers on Cloudflare Workers](../guides/tools.md#where-a-hosted-server-runs). The runtime is `apps/cloudflare-mcp`, a Worker with a `LOADER` [Worker Loader](https://developers.cloudflare.com/dynamic-workers/) binding. Dynamic Workers needs a Workers Paid plan.
 
 1. Create the R2 bucket `broods-mcp-bundles` (the `BUNDLES` binding), ideally with a 30-day expiry rule.
 2. Set the Worker secret `MCP_API_KEY` and the var `BUNDLE_ORIGIN`: the exact `https://` origin of your tool-bundles S3 bucket's presigned URLs.
