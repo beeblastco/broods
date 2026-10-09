@@ -44,6 +44,7 @@ import {
   type PolicyRule,
 } from "./model/policyRules";
 import { getActiveCaller, type ActiveAccount } from "./org/orgs";
+import { orgMembersFields } from "./schema";
 
 const AGENT_DESCRIPTIONS: Record<
   (typeof AGENT_POLICY_ACTIONS)[number],
@@ -155,7 +156,11 @@ const roleFields = {
 };
 
 const roleRowValidator = v.union(
-  v.object({ kind: v.literal("built-in"), ...roleFields }),
+  v.object({
+    kind: v.literal("built-in"),
+    tier: orgMembersFields.role,
+    ...roleFields,
+  }),
   v.object({
     kind: v.literal("custom"),
     _id: v.id("orgRoles"),
@@ -511,6 +516,7 @@ export const listRoles = query({
     const builtIn: RoleRow[] = [
       {
         kind: "built-in",
+        tier: "owner",
         name: "Owner",
         description: "Everything, including deleting the organization",
         policyIds: [],
@@ -519,6 +525,7 @@ export const listRoles = query({
       },
       {
         kind: "built-in",
+        tier: "admin",
         name: "Admin",
         description: "Everything but deleting the organization",
         policyIds: [],
@@ -527,6 +534,7 @@ export const listRoles = query({
       },
       {
         kind: "built-in",
+        tier: "member",
         name: "Member",
         description: "Reads everything, changes nothing",
         policyIds: [],
