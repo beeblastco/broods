@@ -19,7 +19,6 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  TIME_WORDS,
 } from "@/app/components/DataTable";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import {
@@ -181,10 +180,10 @@ function RuntimeKeysTable({
               <DataTableHead sort={list.sortFor("stage")}>Stage</DataTableHead>
               <DataTableHead>Policies</DataTableHead>
               <DataTableHead>Key</DataTableHead>
-              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
+              <DataTableHead sort={list.sortFor("lastUsed")}>
                 Last used
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("rotatedAt", TIME_WORDS)}>
+              <DataTableHead sort={list.sortFor("rotatedAt")}>
                 Rotated at
               </DataTableHead>
               <DataTableHead sort={list.sortFor("rotatedBy")}>
@@ -342,10 +341,10 @@ function ApiKeysTable({
               <DataTableHead sort={list.sortFor("stage")}>Stage</DataTableHead>
               <DataTableHead>Policies</DataTableHead>
               <DataTableHead>Key</DataTableHead>
-              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
+              <DataTableHead sort={list.sortFor("lastUsed")}>
                 Last used
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("createdAt", TIME_WORDS)}>
+              <DataTableHead sort={list.sortFor("createdAt")}>
                 Created at
               </DataTableHead>
               <DataTableHead sort={list.sortFor("createdBy")}>
