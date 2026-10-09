@@ -51,7 +51,7 @@ export function Who({
   const stage = useSearchParams().get("stage");
 
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1.5 align-middle">
       <ActorAvatar actor={actor} />
       {"kind" in actor && actor.kind === "agent" && projectId ? (
         <Link
@@ -89,18 +89,22 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
   );
 }
 
-/** The small avatar alone: a person's picture or initials, an agent's dither, the Broods mark. */
+/**
+ * The cell avatar alone: a person's picture or initials, an agent's dither,
+ * the Broods mark. The height of its text line, so a row with one stays the
+ * height of a row without.
+ */
 export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   if ("kind" in actor && actor.kind === "agent") {
     return (
-      <Avatar size="sm">
-        <DitherAvatarSVG seed={actor.name} size={24} className="rounded-md" />
+      <Avatar size="xs">
+        <DitherAvatarSVG seed={actor.name} size={16} className="rounded-sm" />
       </Avatar>
     );
   }
   if ("kind" in actor) {
     return (
-      <Avatar size="sm">
+      <Avatar size="xs">
         <svg viewBox="0 0 64 64" aria-hidden="true" className="size-full">
           <circle
             cx="32"
@@ -114,7 +118,7 @@ export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   }
 
   return (
-    <Avatar size="sm">
+    <Avatar size="xs">
       {actor.avatarUrl && <AvatarImage src={actor.avatarUrl} alt="" />}
       <AvatarFallback className="text-3xs font-medium">
         {initials(actor.name)}
