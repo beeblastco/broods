@@ -38,6 +38,8 @@ export interface Admission {
   refusal: PlanRefusal | null;
   /** This month's 80% notice, for the one channel run that claimed it. */
   warning: string | null;
+  /** When the run was counted: the start of the window it was counted in. */
+  countedIn?: number;
 }
 
 /** A sandbox launch refused because a monthly cap is used up. */
@@ -92,6 +94,7 @@ export async function admitRun(
 
   return {
     refusal: null,
+    countedIn: window.startedAt,
     warning: options.claimWarning
       ? await claimWarning(accountId, status)
       : null,
@@ -100,12 +103,12 @@ export async function admitRun(
 
 /**
  * Give back a run `admitRun` counted when the intake started nothing after all:
- * a provider redelivery deduplicated by ingress, or a refused admission. A
- * window that already turned over is left alone.
+ * a provider redelivery deduplicated by ingress, or a refused admission. Only
+ * the window it was counted in gives it back; a later one is left alone.
  */
-export function refundRun(accountId: string): void {
+export function refundRun(admission: Admission, accountId: string): void {
   const window = windows.get(accountId);
-  if (window && window.runs > 0 && Date.now() - window.startedAt < WINDOW_MS) {
+  if (window && window.startedAt === admission.countedIn && window.runs > 0) {
     window.runs -= 1;
   }
 }

@@ -878,7 +878,7 @@ describe("SubagentCoordinator", () => {
         [],
         [],
       ),
-    ).rejects.toThrow("must be one returned by run_subagent");
+    ).rejects.toThrow("must be a subagent-persistent-... key");
   });
 
   it("admits a persistent child conversation to own a fencing generation", async () => {

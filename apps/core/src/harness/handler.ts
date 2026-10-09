@@ -1639,7 +1639,7 @@ export async function handleChannelRequest(
   await dispatchRecoveredIngress(scope, admission);
   // Only a new envelope starts a run; a redelivery or a refusal gives its
   // count back, so a provider's retries cannot spend the per-minute limit.
-  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(event.accountId);
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
 

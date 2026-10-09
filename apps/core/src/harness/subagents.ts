@@ -513,14 +513,15 @@ export class SubagentCoordinator {
       );
     }
     // The key comes from the model, and it shares the child agent's direct-API
-    // namespace, so only a key this runtime minted for a child may be resumed:
-    // anything else could name another caller's conversation with that agent.
+    // namespace, so only a key in the form this runtime mints for a child may
+    // be resumed: anything else could name another caller's conversation with
+    // that agent. The minted suffix is a random UUID.
     if (
       task.conversationKey !== undefined &&
       !task.conversationKey.startsWith(PERSISTENT_SUBAGENT_KEY_PREFIX)
     ) {
       throw new Error(
-        `Subagent conversationKey must be one returned by run_subagent (${PERSISTENT_SUBAGENT_KEY_PREFIX}...)`,
+        `Subagent conversationKey must be a ${PERSISTENT_SUBAGENT_KEY_PREFIX}... key from run_subagent`,
       );
     }
     const taskId = createSubagentTaskId(this.parentSession.eventId);

@@ -125,10 +125,20 @@ describe("admitRun", () => {
   });
 
   it("gives back a run the intake refunds, within the same window", async () => {
-    await admitMany(budget.runsPerMinute);
-    refundRun(ACCOUNT_ID);
+    await admitMany(budget.runsPerMinute - 1);
+    refundRun(await admitRun(ACCOUNT_ID), ACCOUNT_ID);
 
     expect((await admitRun(ACCOUNT_ID)).refusal).toBeNull();
+    expect((await admitRun(ACCOUNT_ID)).refusal?.kind).toBe("rate");
+  });
+
+  it("does not refund into a window the run was not counted in", async () => {
+    setSystemTime(new Date("2026-09-15T00:00:00Z"));
+    const stale = await admitRun(ACCOUNT_ID);
+    setSystemTime(new Date("2026-09-15T00:01:01Z"));
+    await admitMany(budget.runsPerMinute);
+    refundRun(stale, ACCOUNT_ID);
+
     expect((await admitRun(ACCOUNT_ID)).refusal?.kind).toBe("rate");
   });
 
@@ -164,7 +174,7 @@ describe("admitRun", () => {
 
     const admission = await admitRun(ACCOUNT_ID, { claimWarning: true });
 
-    expect(admission).toEqual({ refusal: null, warning: null });
+    expect(admission).toMatchObject({ refusal: null, warning: null });
   });
 });
 
