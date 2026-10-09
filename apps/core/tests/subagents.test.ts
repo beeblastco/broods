@@ -9,6 +9,8 @@ const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+  // Persistent child keys are tagged with a key derived from it.
+  process.env.STAGE_TICKET_SECRET = "stage-secret";
 });
 
 interface TestCompletion {
@@ -858,17 +860,42 @@ describe("SubagentCoordinator", () => {
     const resumed = await internals.resolveTask(
       {
         prompt: "continue",
-        conversationKey: "subagent-persistent-existing",
+        conversationKey: created.publicConversationKey,
       },
       [],
       [],
     );
-    expect(resumed.publicConversationKey).toBe("subagent-persistent-existing");
+    expect(resumed.publicConversationKey).toBe(created.publicConversationKey);
     expect(resumed.conversationKey).toContain(
-      "api:subagent-persistent-existing",
+      `api:${created.publicConversationKey}`,
     );
     expect(resumed.persistent).toBe(true);
     expect(resumed.resuming).toBe(true);
+
+    // A key the runtime never minted could name another caller's direct-API
+    // conversation with the child agent.
+    await expect(
+      internals.resolveTask(
+        { prompt: "recount", conversationKey: "user-123" },
+        [],
+        [],
+      ),
+    ).rejects.toThrow("must be one run_subagent returned to this agent");
+    // The minted form alone is a name any direct-API caller can pick: only
+    // core's tag over this account and parent makes it resumable.
+    const forged = created.publicConversationKey.replace(
+      /-[0-9a-f]{32}$/,
+      `-${"0".repeat(32)}`,
+    );
+    for (const conversationKey of ["subagent-persistent-alice", forged]) {
+      await expect(
+        internals.resolveTask(
+          { prompt: "recount", conversationKey: conversationKey },
+          [],
+          [],
+        ),
+      ).rejects.toThrow("must be one run_subagent returned to this agent");
+    }
   });
 
   it("admits a persistent child conversation to own a fencing generation", async () => {
