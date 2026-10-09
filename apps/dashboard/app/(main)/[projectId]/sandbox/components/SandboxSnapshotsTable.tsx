@@ -13,7 +13,6 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-  TIME_WORDS,
 } from "@/app/components/DataTable";
 import { EmptyState } from "@/app/components/EmptyState";
 import { SearchInput } from "@/app/components/SearchInput";
@@ -115,10 +114,10 @@ export function SandboxSnapshotsTable({
               <DataTableHead align="right" sort={list.sortFor("pulled")}>
                 Pulled
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("created", TIME_WORDS)}>
+              <DataTableHead sort={list.sortFor("created")}>
                 Created
               </DataTableHead>
-              <DataTableHead sort={list.sortFor("lastUsed", TIME_WORDS)}>
+              <DataTableHead sort={list.sortFor("lastUsed")}>
                 Last used
               </DataTableHead>
             </tr>

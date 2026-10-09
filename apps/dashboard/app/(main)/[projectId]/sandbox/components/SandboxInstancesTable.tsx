@@ -381,32 +381,28 @@ export function SandboxInstancesTable({
             <DataTable>
               <DataTableHeader>
                 <tr>
-                  <DataTableHead plain sort={list.sortFor("name")}>
+                  <DataTableHead sort={list.sortFor("name")}>
                     Name
                   </DataTableHead>
-                  <DataTableHead plain sort={list.sortFor("status")}>
+                  <DataTableHead sort={list.sortFor("status")}>
                     Status
                   </DataTableHead>
-                  <DataTableHead plain sort={list.sortFor("provider")}>
+                  <DataTableHead sort={list.sortFor("provider")}>
                     Provider
                   </DataTableHead>
-                  <DataTableHead plain sort={list.sortFor("size")}>
+                  <DataTableHead sort={list.sortFor("size")}>
                     Size
                   </DataTableHead>
-                  <DataTableHead plain sort={list.sortFor("agent")}>
+                  <DataTableHead sort={list.sortFor("agent")}>
                     Agent
                   </DataTableHead>
-                  <DataTableHead plain sort={list.sortFor("lastUsed")}>
+                  <DataTableHead sort={list.sortFor("lastUsed")}>
                     Last used
                   </DataTableHead>
-                  <DataTableHead plain sort={list.sortFor("created")}>
+                  <DataTableHead sort={list.sortFor("created")}>
                     Created
                   </DataTableHead>
-                  <DataTableHead
-                    plain
-                    align="right"
-                    sort={list.sortFor("running")}
-                  >
+                  <DataTableHead align="right" sort={list.sortFor("running")}>
                     Running
                   </DataTableHead>
                 </tr>

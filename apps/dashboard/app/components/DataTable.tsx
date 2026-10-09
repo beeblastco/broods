@@ -30,9 +30,6 @@ export interface HeadSort {
   words?: [string, string];
 }
 
-/** The sort words for a time column, in place of A to Z. */
-export const TIME_WORDS: [string, string] = ["Oldest first", "Newest first"];
-
 /** The filter half of a header menu: the column's values and the ones in effect. */
 export interface HeadFilter {
   field: string;
@@ -60,17 +57,16 @@ export function DataTable({
 }
 
 /**
- * The column header cell. With `sort` or `filter` it opens one menu: sort
+ * The column header cell. With `sort` alone a click sorts the column and a
+ * second click flips it. With `filter` it opens one menu instead: sort
  * either way, then the column's values with a check on the ones in effect.
- * With `sort` and `plain` a click sorts the column and a second click flips
- * it, no menu. The sorted column reads in foreground with an arrow.
- * `align="right"` for numbers and switches.
+ * The sorted column reads in foreground with an arrow. `align="right"` for
+ * numbers and switches.
  */
 export function DataTableHead({
   align = "left",
   sort,
   filter,
-  plain = false,
   className,
   children,
   ...props
@@ -78,7 +74,6 @@ export function DataTableHead({
   align?: "left" | "right";
   sort?: HeadSort;
   filter?: HeadFilter;
-  plain?: boolean;
 }): React.JSX.Element {
   const button = sort !== undefined || filter !== undefined;
 
@@ -92,12 +87,12 @@ export function DataTableHead({
       )}
       {...props}
     >
-      {sort && plain && filter === undefined ? (
-        <SortButton sort={sort}>{children}</SortButton>
-      ) : button ? (
+      {filter ? (
         <HeadMenu sort={sort} filter={filter} align={align}>
           {children}
         </HeadMenu>
+      ) : sort ? (
+        <SortButton sort={sort}>{children}</SortButton>
       ) : (
         children
       )}
@@ -130,7 +125,7 @@ function SortButton({
   );
 }
 
-/** The header's menu: the sort pair, a rule, then the filter values. */
+/** The header's menu for a filterable column: the sort pair, a rule, then the filter values. */
 function HeadMenu({
   sort,
   filter,

@@ -1,13 +1,11 @@
 "use client";
 
+import { BarStrip, type StripBar } from "@/app/components/BarStrip";
 import { formatDateTime, formatTime } from "@/app/lib/formatTime";
 import type { TimeWindow, VolumeBin } from "@/app/lib/queryTokens";
-import { cn } from "@/app/lib/utils";
 import { useRef, useState } from "react";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// The tallest bar stops here, so the window label above it stays readable.
-const BAR_MAX_PERCENT = 70;
 
 interface Props {
   bins: VolumeBin[];
@@ -78,42 +76,37 @@ export function VolumeStrip({
   const labelled = shown ?? window;
   const label = `${formatEdge(labelled.from)} → ${formatEdge(labelled.to)}`;
 
+  const bars = bins.map((bin): StripBar => {
+    const inSelection =
+      shown !== null &&
+      bin.start + span / bins.length > shown.from &&
+      bin.start < shown.to;
+
+    return {
+      key: bin.start,
+      height: bin.total / max,
+      tone:
+        bin.error > 0
+          ? "bg-destructive/70"
+          : bin.warn > 0
+            ? "bg-warning/60"
+            : "bg-muted",
+      dimmed: shown !== null && !inSelection,
+    };
+  });
+
   return (
-    <div
+    <BarStrip
       ref={strip}
-      className="relative flex h-9 shrink-0 cursor-crosshair items-end gap-px border-b border-border pt-1 select-none"
+      bars={bars}
+      label={`${label}${selection && !drag ? " · click to reset" : ""}`}
+      className="cursor-crosshair"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={() => setDrag(null)}
       title="Drag to narrow the time window"
     >
-      {bins.map((bin) => {
-        const inSelection =
-          shown !== null &&
-          bin.start + span / bins.length > shown.from &&
-          bin.start < shown.to;
-        const tone =
-          bin.error > 0
-            ? "bg-destructive/70"
-            : bin.warn > 0
-              ? "bg-warning/60"
-              : "bg-muted";
-
-        return (
-          <span
-            key={bin.start}
-            style={{
-              "--bar-height": `${(bin.total / max) * BAR_MAX_PERCENT}%`,
-            }}
-            className={cn(
-              "h-(--bar-height) min-h-px flex-1",
-              tone,
-              shown !== null && !inSelection && "opacity-30",
-            )}
-          />
-        );
-      })}
       {shown && (
         <span
           style={{
@@ -131,14 +124,6 @@ export function VolumeStrip({
           className="pointer-events-none absolute inset-y-0 left-(--marker-left) w-px bg-destructive"
         />
       )}
-      {/* The window ends at the client's clock, which the server render cannot know. */}
-      <span
-        suppressHydrationWarning
-        className="pointer-events-none absolute top-0 right-3 font-mono text-3xs text-muted-foreground"
-      >
-        {label}
-        {selection && !drag && " · click to reset"}
-      </span>
-    </div>
+    </BarStrip>
   );
 }
