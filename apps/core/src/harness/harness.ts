@@ -12,6 +12,7 @@ import {
   context as otelContextApi,
   trace as otelTraceApi,
   SpanStatusCode,
+  TraceFlags,
   type Context as OtelContext,
   type Span,
 } from "@opentelemetry/api";
@@ -2332,6 +2333,70 @@ export async function runAgentLoop(
     hasStructuredOutput: (): boolean => Boolean(modelOutput),
     finalResponse: (): JSONValue | undefined => finalResponse,
     traceId: (): string => traceId,
+  });
+}
+
+/**
+ * Records a turn that failed before runAgentLoop could open its root span, as
+ * the failed task it is: one root span on the trace id the turn's log lines
+ * already carry, so the task list shows it and "View trace" on those lines
+ * finds it instead of "Trace not found".
+ */
+export function recordFailedTurn(
+  session: Session,
+  startedAt: number,
+  error: unknown,
+): void {
+  const context = getObservabilityContext();
+  const traceId = context?.traceId ?? mintTraceId();
+  const scope = {
+    accountId: session.accountId ?? "",
+    project: session.projectSlug ?? "",
+    stage: session.stageSlug ?? "",
+    endpointId: session.endpointId ?? "",
+    agentId: session.agentId ?? "",
+    conversationKey: session.conversationKey,
+  };
+  const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
+  const name = `agent.${kind}`;
+  const message = redactSensitiveText(
+    errorMessage(error),
+    context?.secretValues,
+  );
+  const endTimeMs = Date.now();
+  // Started under a span context that only carries the trace id, so the OTel
+  // span lands on the trace the log lines name rather than on a fresh one.
+  const otelSpan = getTracer().startSpan(
+    name,
+    {
+      startTime: startedAt,
+      attributes: { ...observabilityAttributes(scope), "task.state": "failed" },
+    },
+    otelTraceApi.setSpanContext(otelContextApi.active(), {
+      traceId: traceId,
+      spanId: mintSpanId(),
+      traceFlags: TraceFlags.SAMPLED,
+    }),
+  );
+  otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: message });
+  otelSpan.end(endTimeMs);
+  const spanId = otelSpan.spanContext().spanId;
+  // Best-effort and off the turn's path: a NATS outage must not hold up the
+  // failure's settlement.
+  void publishSpan({
+    traceId: traceId,
+    spanId: /[^0]/.test(spanId) ? spanId : mintSpanId(),
+    name: name,
+    kind: kind,
+    startTimeMs: startedAt,
+    endTimeMs: endTimeMs,
+    durationMs: endTimeMs - startedAt,
+    status: "error",
+    endpointId: session.endpointId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    attributes: { "task.state": "failed" },
+    error: message,
   });
 }
 

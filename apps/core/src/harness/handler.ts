@@ -97,6 +97,7 @@ import {
 } from "./async-tools.ts";
 import {
   readAgentFullStream,
+  recordFailedTurn,
   runAgentLoop,
   USER_STOP_MESSAGE,
   type AgentLoopStream,
@@ -1780,10 +1781,13 @@ async function runChannelTurns(
             await commandOutcome(session, command),
           );
         } else {
-          const turnContext = await session.createTurnContext(
-            incomingEphemeral,
-            incoming,
-          );
+          const turnStartedAt = Date.now();
+          const turnContext = await session
+            .createTurnContext(incomingEphemeral, incoming)
+            .catch((err: unknown) => {
+              recordFailedTurn(session, turnStartedAt, err);
+              throw err;
+            });
           if (!isRunnableModelInput(turnContext.messages.at(-1))) {
             settlement = {
               status: "failed",
@@ -2119,6 +2123,7 @@ async function prepareDirectTurn(
   event: DirectInboundEvent,
 ): Promise<DirectTurn | null> {
   const session = directSession(event);
+  const turnStartedAt = Date.now();
   try {
     const turnContext = await session.createTurnContext(
       event.ephemeralSystem,
@@ -2127,6 +2132,7 @@ async function prepareDirectTurn(
 
     return { session: session, turnContext: turnContext };
   } catch (err) {
+    recordFailedTurn(session, turnStartedAt, err);
     await settleFailedIngressAndDrain(
       session,
       err instanceof Error ? err.message : "Direct turn preparation failed",

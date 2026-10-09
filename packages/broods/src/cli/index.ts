@@ -2424,11 +2424,10 @@ async function openStageSession(
     return session.token;
   };
 
+  // The socket must open on the server that issued the ticket; prod rejects a
+  // dev-minted stage session.
   return {
-    baseUrl:
-      process.env.BROODS_BASE_URL ??
-      process.env.BROODS_HOST ??
-      DEFAULT_CORE_BASE_URL,
+    baseUrl: auth.baseUrl,
     credential: credential,
     project: session.projectSlug,
     stage: session.stageSlug,
