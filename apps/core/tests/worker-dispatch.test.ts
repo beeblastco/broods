@@ -5,6 +5,11 @@ const { dispatchInProcessWorker, drainInProcessWorkers } =
   await import("../src/harness/handler.ts");
 const QUEUED_LEASE_RENEW_INTERVAL_MS = 5 * 60 * 1000;
 
+/** Lets settled renewals run their continuations; fake timers also fake Bun.sleep. */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
+
 describe("in-process worker dispatch", () => {
   it("runs payloads with a synthesized invocation context", async () => {
     let seenContext: { requestId: string; deadlineMs: number } | undefined;
@@ -98,6 +103,92 @@ describe("in-process worker dispatch", () => {
       await drainInProcessWorkers();
       jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS * 2);
       expect(mutate).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+      mutate.mockRestore();
+    }
+  });
+
+  it("stops renewing a queued lease that came back stale", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue("stale");
+    const releases: (() => void)[] = [];
+    const lease = {
+      conversationKey: "acct:a:agent:b:api:c",
+      ownerEventId: "event-9",
+      ownerGeneration: 3,
+    };
+    jest.useFakeTimers();
+    try {
+      for (let i = 0; i < 8; i += 1) {
+        dispatchInProcessWorker(
+          "test-worker",
+          (): Promise<void> =>
+            new Promise<void>((resolve) => {
+              releases.push(resolve);
+            }),
+        );
+      }
+      dispatchInProcessWorker(
+        "test-worker",
+        async (): Promise<void> => {},
+        lease,
+      );
+      jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS);
+      await flushMicrotasks();
+      jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS * 2);
+      await flushMicrotasks();
+
+      expect(mutate).toHaveBeenCalledTimes(1);
+      for (const release of releases) release();
+      await drainInProcessWorkers();
+    } finally {
+      jest.useRealTimers();
+      mutate.mockRestore();
+    }
+  });
+
+  it("renews a full queue's leases a few at a time", async () => {
+    const pending: ((value: "renewed") => void)[] = [];
+    const mutate = spyOn(runtime, "mutate").mockImplementation(
+      <T>(): Promise<T> =>
+        new Promise<T>((resolve) => {
+          pending.push((value) => resolve(value as T));
+        }),
+    );
+    const releases: (() => void)[] = [];
+    jest.useFakeTimers();
+    try {
+      for (let i = 0; i < 8; i += 1) {
+        dispatchInProcessWorker(
+          "test-worker",
+          (): Promise<void> =>
+            new Promise<void>((resolve) => {
+              releases.push(resolve);
+            }),
+        );
+      }
+      for (let i = 0; i < 20; i += 1) {
+        dispatchInProcessWorker("test-worker", async (): Promise<void> => {}, {
+          conversationKey: `acct:a:agent:b:api:${i}`,
+          ownerEventId: `event-${i}`,
+          ownerGeneration: 1,
+        });
+      }
+      jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS);
+      expect(mutate).toHaveBeenCalledTimes(16);
+
+      // A sweep still in flight is not started over by the next tick.
+      jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS);
+      expect(mutate).toHaveBeenCalledTimes(16);
+
+      for (const resolve of pending.splice(0)) resolve("renewed");
+      await flushMicrotasks();
+      expect(mutate).toHaveBeenCalledTimes(20);
+      for (const resolve of pending.splice(0)) resolve("renewed");
+      await flushMicrotasks();
+
+      for (const release of releases) release();
+      await drainInProcessWorkers();
     } finally {
       jest.useRealTimers();
       mutate.mockRestore();

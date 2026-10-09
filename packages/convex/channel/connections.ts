@@ -22,12 +22,9 @@
  */
 
 import { v, type Infer } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
+import { internalQuery } from "../_generated/server";
 import { accountCipher, encryptionSecrets } from "../model/accountKeys";
-import {
-  channelEndpointBotToken,
-  refreshAccountChannelEndpoints,
-} from "../model/channelEndpoints";
+import { channelEndpointBotToken } from "../model/channelEndpoints";
 
 const channelConnectionValidator = v.object({
   agentId: v.string(),
@@ -76,32 +73,5 @@ export const listConnections = internalQuery({
     }
 
     return connections;
-  },
-});
-
-/**
- * Rebuilds the projection for every account that has an active deployment or a
- * stored row. The write seams keep the projection live; this hourly sweep is
- * the self-healing pass that repairs any seam a future writer forgets, so a
- * missed seam costs an hour of staleness, not a silent drift forever.
- */
-export const reconcile = internalMutation({
-  args: {},
-  returns: v.number(),
-  handler: async (ctx): Promise<number> => {
-    const deployments = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_status", (q) => q.eq("status", "active"))
-      .collect();
-    const stored = await ctx.db.query("channelEndpoints").collect();
-    const accountIds = new Set([
-      ...deployments.map((deployment) => deployment.accountId),
-      ...stored.map((row) => row.accountId),
-    ]);
-    for (const accountId of accountIds) {
-      await refreshAccountChannelEndpoints(ctx, accountId);
-    }
-
-    return accountIds.size;
   },
 });

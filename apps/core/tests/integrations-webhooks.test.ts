@@ -1,6 +1,6 @@
 /** Channel routing fixtures use credentials generated for this test process. */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import {
@@ -8,6 +8,7 @@ import {
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type IntegrationRoutingOptions,
+  resetChannelAgentListsForTests,
 } from "../src/harness/integrations.ts";
 import {
   getObservabilityContext,
@@ -170,6 +171,132 @@ describe("account webhook ingress", () => {
         code: "unauthorized",
       },
     });
+  });
+
+  it("serves unsigned traffic from a cached listing, signed traffic from a fresh one", async () => {
+    resetChannelAgentListsForTests();
+    // A fixed clock, so the cached listing never ages into a reload here.
+    const clock = spyOn(Date, "now").mockReturnValue(Date.now());
+    let listings = 0;
+    let current: AgentRecord[] = [TEST_AGENT];
+    const handled: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
+      agentLister: async () => {
+        listings += 1;
+
+        return current;
+      },
+      cacheAgentLists: true,
+    });
+    const handlers = createHandlers({
+      handleChannelRequest: async (event) => {
+        handled.push(event);
+      },
+    });
+    const unsignedEvent = (): ReturnType<typeof createTelegramEvent> =>
+      createTelegramEvent(undefined, {
+        "x-telegram-bot-api-secret-token": "wrong",
+      });
+
+    expect(
+      (await routeIncomingEvent(unsignedEvent(), handlers)).statusCode,
+    ).toBe(401);
+    expect(
+      (await routeIncomingEvent(unsignedEvent(), handlers)).statusCode,
+    ).toBe(401);
+    expect(listings).toBe(1);
+
+    const signed = await routeIncomingEvent(createTelegramEvent(), handlers);
+    await signed.afterResponse;
+
+    expect(signed.statusCode).toBe(200);
+    expect(listings).toBe(2);
+    expect(handled).toHaveLength(1);
+
+    // After the listing was cached, the secret rotated, then the deployment
+    // was revoked: neither runs a turn on what the cache still holds.
+    current = [
+      {
+        ...TEST_AGENT,
+        config: {
+          channels: {
+            telegram: {
+              ...TEST_ACCOUNT.config.channels.telegram,
+              webhookSecret: crypto.randomUUID(),
+            },
+          },
+        },
+      },
+    ];
+    const rotated = await routeIncomingEvent(createTelegramEvent(), handlers);
+    current = [];
+    const revoked = await routeIncomingEvent(createTelegramEvent(), handlers);
+
+    expect(rotated.statusCode).toBe(401);
+    expect(revoked.statusCode).toBe(401);
+    expect(handled).toHaveLength(1);
+    clock.mockRestore();
+    resetChannelAgentListsForTests();
+  });
+
+  it("reloads an aged cached listing for a request it cannot verify", async () => {
+    resetChannelAgentListsForTests();
+    const rotatedSecret = crypto.randomUUID();
+    let current: AgentRecord[] = [TEST_AGENT];
+    let listings = 0;
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
+      agentLister: async () => {
+        listings += 1;
+
+        return current;
+      },
+      cacheAgentLists: true,
+    });
+    const rotatedEvent = (): ReturnType<typeof createTelegramEvent> =>
+      createTelegramEvent(undefined, {
+        "x-telegram-bot-api-secret-token": rotatedSecret,
+      });
+    const now = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      expect(
+        (await routeIncomingEvent(rotatedEvent(), createHandlers())).statusCode,
+      ).toBe(401);
+      current = [
+        {
+          ...TEST_AGENT,
+          config: {
+            channels: {
+              telegram: {
+                ...TEST_ACCOUNT.config.channels.telegram,
+                webhookSecret: rotatedSecret,
+              },
+            },
+          },
+        },
+      ];
+      // Inside a second the cache answers alone, so a flood stays one read.
+      expect(
+        (await routeIncomingEvent(rotatedEvent(), createHandlers())).statusCode,
+      ).toBe(401);
+      expect(listings).toBe(1);
+
+      clock.mockReturnValue(now + 1_500);
+      const rotated = await routeIncomingEvent(
+        rotatedEvent(),
+        createHandlers(),
+      );
+      await rotated.afterResponse;
+
+      expect(rotated.statusCode).toBe(200);
+    } finally {
+      clock.mockRestore();
+      resetChannelAgentListsForTests();
+    }
   });
 
   it("returns 401 when Zalo webhook authentication is missing or wrong", async () => {

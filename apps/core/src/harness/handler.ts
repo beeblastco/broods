@@ -190,6 +190,7 @@ const MAX_PENDING_WORKER_RUNS = 1000;
 // A queued run holds its lease from admission, so the queue renews it well
 // inside the TTL until a slot starts the run.
 const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
+const QUEUED_LEASE_RENEW_CONCURRENCY = 16;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on the session's OWNER_CHECK_INTERVAL_MS clock. A frame the client
 // acts on checks exactly: a stale run must not land one in a stream the next
@@ -205,14 +206,16 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
 ]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerRuns: [
+type PendingWorkerRun = [
   kind: string,
   run: InProcessWorkerRun,
   lease: LiveOwner | undefined,
-][] = [];
+];
+const pendingWorkerRuns: PendingWorkerRun[] = [];
 
 let activeInProcessWorkers = 0;
 let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
+let renewingQueuedLeases = false;
 
 type ContinuationOutcome =
   | { kind: "ready"; invoked: boolean; publicEventId: string }
@@ -273,7 +276,7 @@ export function dispatchInProcessWorker(
     pendingWorkerRuns.push([kind, run, lease]);
     if (!queuedLeaseTimer) {
       queuedLeaseTimer = setInterval(
-        renewQueuedLeases,
+        () => void renewQueuedLeases(),
         QUEUED_LEASE_RENEW_INTERVAL_MS,
       );
       queuedLeaseTimer.unref();
@@ -461,6 +464,7 @@ async function handleRequest(
     },
     {
       directApiEnabled: ENABLE_DIRECT_API,
+      cacheAgentLists: true,
       ...(context?.waitUntil
         ? { waitUntil: context.waitUntil.bind(context) }
         : {}),
@@ -2612,28 +2616,52 @@ async function invokeHarnessWorker(
   );
 }
 
-/** The queue's timer: renews every waiting run's lease, so a long wait does not hand its conversation to `maintain`. */
-function renewQueuedLeases(): void {
-  for (const [kind, , lease] of pendingWorkerRuns) {
-    if (!lease) continue;
-    renewIngressOwner(lease).then(
-      (renewal): void => {
-        if (renewal !== "renewed") {
-          logWarn("Queued worker lease was not renewed", {
-            kind: kind,
-            conversationKey: lease.conversationKey,
-            renewal: renewal,
-          });
-        }
-      },
-      (err: unknown): void => {
-        logError("Queued worker lease renewal failed", {
-          kind: kind,
-          conversationKey: lease.conversationKey,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      },
-    );
+/**
+ * The queue's timer: renews every waiting run's lease, so a long wait does not
+ * hand its conversation to `maintain`. A few renewals at a time, so a full
+ * queue does not fire a thousand mutations at once, and one sweep at a time. A
+ * lease that comes back stale or stopped is no longer renewed: the run finds
+ * that out on its own first renewal once a slot starts it.
+ */
+async function renewQueuedLeases(): Promise<void> {
+  if (renewingQueuedLeases) return;
+  renewingQueuedLeases = true;
+  try {
+    const waiting = pendingWorkerRuns.filter((entry) => entry[2]);
+    for (
+      let offset = 0;
+      offset < waiting.length;
+      offset += QUEUED_LEASE_RENEW_CONCURRENCY
+    ) {
+      await Promise.all(
+        waiting
+          .slice(offset, offset + QUEUED_LEASE_RENEW_CONCURRENCY)
+          .map(renewQueuedLease),
+      );
+    }
+  } finally {
+    renewingQueuedLeases = false;
+  }
+}
+
+async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
+  const [kind, , lease] = entry;
+  if (!lease) return;
+  try {
+    const renewal = await renewIngressOwner(lease);
+    if (renewal === "renewed") return;
+    entry[2] = undefined;
+    logWarn("Queued worker lease was not renewed", {
+      kind: kind,
+      conversationKey: lease.conversationKey,
+      renewal: renewal,
+    });
+  } catch (err) {
+    logError("Queued worker lease renewal failed", {
+      kind: kind,
+      conversationKey: lease.conversationKey,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

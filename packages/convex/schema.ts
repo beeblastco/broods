@@ -1703,7 +1703,10 @@ export default defineSchema({
     // keep their stale expiresAt for the whole status retention window, and a
     // bare expiresAt index would re-read every one of them each sweep.
     .index("by_status_and_expiresAt", ["status", "expiresAt"])
-    .index("by_status_and_statusExpiresAt", ["status", "statusExpiresAt"]),
+    .index("by_status_and_statusExpiresAt", ["status", "statusExpiresAt"])
+    // Recovery steps one queued conversation at a time, so a long queue costs
+    // one read rather than a page of its own envelopes.
+    .index("by_status_and_conversationKey", ["status", "conversationKey"]),
   runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)
     .index("by_conversationKey_and_createdAt", ["conversationKey", "createdAt"])
     .index("by_accountId", ["accountId"])

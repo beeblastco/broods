@@ -154,6 +154,15 @@ import type { ConversationIngressEvent } from "./session.ts";
 const CHANNEL_ACK_BUDGET_MS = 2_000;
 // Bound so one inbound webhook cannot fan out into an unbounded credential scan.
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
+// A webhook lists and decrypts its URL's agents before any signature is
+// checked. With `cacheAgentLists`, unsigned traffic reuses one listing per
+// account or stage URL for this long, so a flood costs one read per window; a
+// request that verifies lists again before it runs.
+const CHANNEL_AGENT_LIST_TTL_MS = 10_000;
+// A request no cached agent verifies may reload a listing this old, at most.
+const CHANNEL_AGENT_LIST_RELOAD_AFTER_MS = 1_000;
+// Listings hold decrypted configs, so few are kept and expired ones go first.
+const CHANNEL_AGENT_LIST_CACHE_LIMIT = 256;
 // The single runtime entry point; sync or background is a body field.
 const RUN_PATH = "/v1/runs";
 const RUN_PATH_PREFIX = `${RUN_PATH}/`;
@@ -414,6 +423,12 @@ export interface IntegrationRoutingOptions {
     eventId: string;
   }) => Promise<IngressStatusRecord | null>;
   directApiEnabled?: boolean;
+  /**
+   * Reuse a channel webhook's agent listing across requests for a few seconds.
+   * A request that verifies lists again and verifies again before it runs, so
+   * only rejecting unsigned traffic is cached, never what a turn runs with.
+   */
+  cacheAgentLists?: boolean;
   /** Registers post-response background work (channel ack-then-process). */
   waitUntil?: (promise: Promise<unknown>) => void;
 }
@@ -449,6 +464,7 @@ interface HttpRoutingContext {
     eventId: string;
   }): Promise<IngressStatusRecord | null>;
   directApiEnabled: boolean;
+  cacheAgentLists: boolean;
   waitUntil(promise: Promise<unknown>): void;
 }
 
@@ -468,6 +484,11 @@ class DirectForbiddenError extends Error {
     this.init = init;
   }
 }
+
+const channelAgentLists = new Map<
+  string,
+  { agents: Promise<AgentRecord[]>; loadedAt: number; expiresAt: number }
+>();
 
 class DirectNotFoundError extends Error {}
 
@@ -545,6 +566,7 @@ export function createIncomingEventRouter(
       ingressStatusLoader: ingressStatusLoader,
       ingressStatusByEventIdLoader: ingressStatusByEventIdLoader,
       directApiEnabled: directApiEnabled,
+      cacheAgentLists: options.cacheAgentLists ?? false,
       waitUntil: waitUntil,
     });
 }
@@ -916,11 +938,49 @@ async function handleHttpRequest(
 }
 
 /**
- * Find the agent whose channel credentials verify this request. Only agents
- * that configure the channel are tried, signature checks are cheap, and the
- * scan is capped so a large account cannot turn one webhook into unbounded work.
+ * Find the agent whose channel credentials verify this request. A request no
+ * cached agent verifies tries once more on a fresh listing when the cached one
+ * is over a second old, so a new agent or a rotated secret is picked up within
+ * a second while unsigned traffic still reads at most once a second.
  */
 async function findChannelCredentialHolder(
+  context: HttpRoutingContext,
+  accountId: string,
+  channelName: string,
+  request: ChannelRequest,
+  endpointId?: string,
+): Promise<ChannelCredentialHolder> {
+  const holder = await scanChannelCredentialHolder(
+    context,
+    accountId,
+    channelName,
+    request,
+    endpointId,
+  );
+  if (
+    !context.cacheAgentLists ||
+    holder.kind === "holder" ||
+    holder.kind === "unavailable" ||
+    !dropAgedChannelAgentList(channelAgentListKey(accountId, endpointId))
+  ) {
+    return holder;
+  }
+
+  return scanChannelCredentialHolder(
+    context,
+    accountId,
+    channelName,
+    request,
+    endpointId,
+  );
+}
+
+/**
+ * One pass of `findChannelCredentialHolder`. Only agents that configure the
+ * channel are tried, signature checks are cheap, and the scan is capped so a
+ * large account cannot turn one webhook into unbounded work.
+ */
+async function scanChannelCredentialHolder(
   context: HttpRoutingContext,
   accountId: string,
   channelName: string,
@@ -932,9 +992,7 @@ async function findChannelCredentialHolder(
     // Each URL scans only its own stage: the stage URL that stage's agents, the
     // bare URL the production stages' agents. A sibling stage holding the same
     // provider credentials is never a candidate.
-    listed = endpointId
-      ? await context.stageAgentLister(accountId, endpointId)
-      : await context.agentLister(accountId);
+    listed = await listWebhookAgents(context, accountId, endpointId);
   } catch (err) {
     logWarn("Channel credential holder lookup failed", {
       accountId: accountId,
@@ -1008,12 +1066,150 @@ async function findChannelCredentialHolder(
     });
   }
   if (receivers.length > 0) {
-    return { kind: "holder", receivers: receivers };
+    return context.cacheAgentLists
+      ? await reverifyReceivers(
+          context,
+          {
+            accountId: accountId,
+            channelName: channelName,
+            endpointId: endpointId,
+          },
+          request,
+          receivers,
+        )
+      : { kind: "holder", receivers: receivers };
   }
 
   return candidates.length > 0
     ? { kind: "unverified" }
     : { kind: "unconfigured", configured: configured };
+}
+
+/** The agents a webhook URL can reach, from the cache when the router keeps one and `fresh` is not set. */
+function listWebhookAgents(
+  context: HttpRoutingContext,
+  accountId: string,
+  endpointId: string | undefined,
+  fresh = false,
+): Promise<AgentRecord[]> {
+  const list = (): Promise<AgentRecord[]> =>
+    endpointId
+      ? context.stageAgentLister(accountId, endpointId)
+      : context.agentLister(accountId);
+  if (fresh || !context.cacheAgentLists) return list();
+
+  return cachedChannelAgentList(
+    channelAgentListKey(accountId, endpointId),
+    list,
+  );
+}
+
+function channelAgentListKey(
+  accountId: string,
+  endpointId: string | undefined,
+): string {
+  return endpointId ? `${accountId}\u0000${endpointId}` : accountId;
+}
+
+/** Drops the listing under `key` when it is old enough to load again; whether it did. */
+function dropAgedChannelAgentList(key: string): boolean {
+  const cached = channelAgentLists.get(key);
+  if (
+    !cached ||
+    Date.now() - cached.loadedAt < CHANNEL_AGENT_LIST_RELOAD_AFTER_MS
+  ) {
+    return false;
+  }
+  channelAgentLists.delete(key);
+
+  return true;
+}
+
+/**
+ * A cached listing found these receivers; run them only as the URL reaches
+ * them now. A signed request lists again, uncached, and keeps a receiver only
+ * while it is still listed and its current credentials still verify, so a
+ * revoked deployment, a changed policy or a rotated secret applies at once.
+ * Only unsigned traffic is served from the cache.
+ */
+async function reverifyReceivers(
+  context: HttpRoutingContext,
+  route: { accountId: string; channelName: string; endpointId?: string },
+  request: ChannelRequest,
+  receivers: ChannelReceiver[],
+): Promise<ChannelCredentialHolder> {
+  const current: ChannelReceiver[] = [];
+  try {
+    const listed = new Map(
+      (
+        await listWebhookAgents(
+          context,
+          route.accountId,
+          route.endpointId,
+          true,
+        )
+      ).map((agent) => [agent.agentId, agent] as const),
+    );
+    for (const receiver of receivers) {
+      const agent = listed.get(receiver.agent.agentId);
+      if (!agent?.config.channels?.[route.channelName]) continue;
+      const adapter = createChannelRegistry(agent.config).webhookChannels.find(
+        (channel) =>
+          channel.name === route.channelName && channel.canHandle(request),
+      );
+      if (!adapter || !(await adapter.authenticate(request))) continue;
+      current.push({ agent: agent, adapter: adapter });
+    }
+  } catch (err) {
+    logWarn("Channel receiver reload failed", {
+      accountId: route.accountId,
+      channel: route.channelName,
+      endpointId: route.endpointId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return { kind: "unavailable" };
+  }
+
+  return current.length > 0
+    ? { kind: "holder", receivers: current }
+    : { kind: "unverified" };
+}
+
+/** One listing per key for `CHANNEL_AGENT_LIST_TTL_MS`; concurrent misses share a load, and a failed load is not kept. */
+function cachedChannelAgentList(
+  key: string,
+  load: () => Promise<AgentRecord[]>,
+): Promise<AgentRecord[]> {
+  const now = Date.now();
+  const cached = channelAgentLists.get(key);
+  if (cached && cached.expiresAt > now) return cached.agents;
+  for (const [stale, entry] of channelAgentLists) {
+    if (entry.expiresAt <= now) channelAgentLists.delete(stale);
+  }
+  const oldest = channelAgentLists.keys().next();
+  if (
+    channelAgentLists.size >= CHANNEL_AGENT_LIST_CACHE_LIMIT &&
+    !oldest.done
+  ) {
+    channelAgentLists.delete(oldest.value);
+  }
+  const entry = {
+    agents: load(),
+    loadedAt: now,
+    expiresAt: now + CHANNEL_AGENT_LIST_TTL_MS,
+  };
+  channelAgentLists.set(key, entry);
+  entry.agents.catch((): void => {
+    if (channelAgentLists.get(key) === entry) channelAgentLists.delete(key);
+  });
+
+  return entry.agents;
+}
+
+/** Drops every cached listing. */
+export function resetChannelAgentListsForTests(): void {
+  channelAgentLists.clear();
 }
 
 /**
