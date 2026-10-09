@@ -774,6 +774,7 @@ export class Session {
     bytes: number;
   }> {
     const loaded = await loadConfiguredSkillPrompt(
+      this.accountId,
       allowedSkillPaths,
       skillPath,
       resourcePaths,

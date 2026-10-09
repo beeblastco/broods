@@ -17,6 +17,7 @@ import {
   BudgetExhaustedError,
   planRefusalResponse,
   recordUsage,
+  refundRun,
   resetPlanLimitsForTests,
 } from "../src/harness/plan-limits.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
@@ -123,6 +124,24 @@ describe("admitRun", () => {
     expect(refusal?.retryAfterSeconds).toBe(60);
   });
 
+  it("gives back a run the intake refunds, within the same window", async () => {
+    await admitMany(budget.runsPerMinute - 1);
+    refundRun(await admitRun(ACCOUNT_ID), ACCOUNT_ID);
+
+    expect((await admitRun(ACCOUNT_ID)).refusal).toBeNull();
+    expect((await admitRun(ACCOUNT_ID)).refusal?.kind).toBe("rate");
+  });
+
+  it("does not refund into a window the run was not counted in", async () => {
+    setSystemTime(new Date("2026-09-15T00:00:00Z"));
+    const stale = await admitRun(ACCOUNT_ID);
+    setSystemTime(new Date("2026-09-15T00:01:01Z"));
+    await admitMany(budget.runsPerMinute);
+    refundRun(stale, ACCOUNT_ID);
+
+    expect((await admitRun(ACCOUNT_ID)).refusal?.kind).toBe("rate");
+  });
+
   it("limits nothing on a self-hosted install", async () => {
     budget.enforced = false;
     budget.usedPercent = 1000;
@@ -155,7 +174,7 @@ describe("admitRun", () => {
 
     const admission = await admitRun(ACCOUNT_ID, { claimWarning: true });
 
-    expect(admission).toEqual({ refusal: null, warning: null });
+    expect(admission).toMatchObject({ refusal: null, warning: null });
   });
 });
 

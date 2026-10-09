@@ -3,6 +3,7 @@
  * Keep parent/child orchestration here; the model-facing schema stays in tools.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import type {
   JSONValue,
   ModelMessage,
@@ -27,6 +28,7 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
+import { subagentKeyTag } from "../shared/run-token.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
@@ -67,6 +69,10 @@ import {
   VIRTUAL_AGENT_PREFIX,
 } from "./tools/utils.ts";
 
+const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
+// The prefix, a random UUID, and the tag core signs over it (`subagentKeyTag`).
+const PERSISTENT_SUBAGENT_KEY =
+  /^subagent-persistent-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-([0-9a-f]{32})$/;
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 // How long a child's ask_parent waits for the parent's answer.
@@ -511,13 +517,25 @@ export class SubagentCoordinator {
         "Subagent conversationKey is only supported in persistent mode",
       );
     }
+    // The key comes from the model, and it shares the child agent's direct-API
+    // namespace, so only a key this runtime minted for this parent may be
+    // resumed: anything else could name another caller's conversation with
+    // that agent, whatever form that caller gave its key.
+    if (
+      task.conversationKey !== undefined &&
+      !this.mintedChildKey(accountId, task.conversationKey)
+    ) {
+      throw new Error(
+        "Subagent conversationKey must be one run_subagent returned to this agent",
+      );
+    }
     const taskId = createSubagentTaskId(this.parentSession.eventId);
     const runId = createRunId();
     const resuming = persistent && task.conversationKey !== undefined;
     const publicConversationKey =
       task.conversationKey ??
       (persistent
-        ? `subagent-persistent-${crypto.randomUUID()}`
+        ? this.mintChildKey(accountId, crypto.randomUUID())
         : `subagent-${taskId}`);
     const inheritedContext =
       this.parentAgentConfig.subagent?.context === "inherited";
@@ -572,6 +590,22 @@ export class SubagentCoordinator {
       resuming: resuming,
       isolatedSandbox: task.isolated === true,
     };
+  }
+
+  /** A persistent child's public key, tagged for this account and parent agent. */
+  private mintChildKey(accountId: string, uuid: string): string {
+    const scope = `${accountId}:${this.parentSession.agentId ?? ""}:${uuid}`;
+
+    return `${PERSISTENT_SUBAGENT_KEY_PREFIX}${uuid}-${subagentKeyTag(scope)}`;
+  }
+
+  private mintedChildKey(accountId: string, key: string): boolean {
+    const uuid = PERSISTENT_SUBAGENT_KEY.exec(key)?.[1];
+    if (!uuid) return false;
+    const expected = Buffer.from(this.mintChildKey(accountId, uuid));
+    const given = Buffer.from(key);
+
+    return given.length === expected.length && timingSafeEqual(given, expected);
   }
 
   private async resolveAllowedAgent(

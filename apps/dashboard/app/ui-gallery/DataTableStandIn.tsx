@@ -86,11 +86,7 @@ export function DataTableStandIn(): React.JSX.Element {
             >
               Status
             </DataTableHead>
-            <DataTableHead
-              sort={list.sortFor("at", ["Oldest first", "Newest first"])}
-            >
-              Last run
-            </DataTableHead>
+            <DataTableHead sort={list.sortFor("at")}>Last run</DataTableHead>
           </tr>
         </DataTableHeader>
         <DataTableBody>
