@@ -73,11 +73,12 @@ jobs:
             # job starts, and this job only runs after the image build. So by
             # now the answer is settled: no run means this commit did not touch
             # what $AWAIT watches. It still needs the backend the branch last
-            # deployed, so the branch's newest run stands in: a core image once
-            # rolled behind six failed Convex deploys this way and called a
-            # function the backend did not have yet.
+            # deployed, so the branch's newest push run stands in: a core image
+            # once rolled behind six failed Convex deploys this way and called a
+            # function the backend did not have yet. Push runs only: a manual
+            # run can name another stage and would vouch for the wrong one.
             if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
-              RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?branch=$GITHUB_REF_NAME&per_page=1"
+              RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?branch=$GITHUB_REF_NAME&event=push&per_page=1"
               TARGET="the newest $GITHUB_REF_NAME push"
               if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
                 echo "$AWAIT never ran on $GITHUB_REF_NAME; nothing to wait for."
