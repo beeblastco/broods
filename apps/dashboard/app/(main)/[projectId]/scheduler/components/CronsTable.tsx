@@ -30,7 +30,11 @@ import {
   nextFireAt,
   untilLabel,
 } from "@/app/lib/cronSchedule";
-import { formatDate, formatDateTime } from "@/app/lib/formatTime";
+import {
+  formatDate,
+  formatDateTime,
+  formatDuration,
+} from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
@@ -575,11 +579,11 @@ function durationMs(run: CronRun, now: number): number {
   return Math.max(0, (run.completedAt ?? now) - run.startedAt);
 }
 
-/** The run's length in whole seconds, or a dash while it still runs. */
+/** The run's length as Tracing prints a span, or a dash while it still runs. */
 function durationLabel(run: CronRun): string {
   if (run.completedAt === undefined) return "—";
 
-  return `${Math.max(1, Math.round(durationMs(run, run.completedAt) / 1000))}s`;
+  return formatDuration(durationMs(run, run.completedAt));
 }
 
 /** Whether a `field:value` token matches the job. */
