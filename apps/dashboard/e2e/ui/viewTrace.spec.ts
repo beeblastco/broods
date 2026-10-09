@@ -64,6 +64,23 @@ test("a Tracing link opens its search, range and task, and ignores a bad param",
   await expect(page).toHaveURL(new RegExp(`trace=${traceId(7)}`));
 });
 
+test("a log line the search hides drops its strip marker and panel", async ({
+  page,
+}) => {
+  await answerObservabilitySocket(page);
+  await page.goto("/ui-gallery?tab=monitoring");
+  const marker = page.locator("span.w-px.bg-destructive");
+
+  await page.getByRole("cell", { name: "run 13" }).click();
+  await expect(marker).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "View trace" })).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Search" }).fill("level:error ");
+  await expect(page.getByRole("cell", { name: "run 13" })).toHaveCount(0);
+  await expect(marker).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "View trace" })).toHaveCount(0);
+});
+
 /** Serve every observability subscription from the fixture data below. */
 async function answerObservabilitySocket(page: Page): Promise<void> {
   await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
