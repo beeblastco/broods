@@ -141,7 +141,7 @@ async function listConnections(
 ): Promise<ChannelConnection[]> {
   vi.useFakeTimers();
   try {
-    await tt.mutation(internal.channel.connections.reconcile, {});
+    await tt.mutation(internal.channel.endpointReconcile.reconcile, {});
     await tt.finishAllScheduledFunctions(vi.runAllTimers);
   } finally {
     vi.useRealTimers();
