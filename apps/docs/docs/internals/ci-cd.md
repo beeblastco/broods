@@ -196,6 +196,7 @@ flowchart TD
 | `production-eu-west-1` | `main`           | `production`  | job fails    |
 
 - A production dispatch from any ref but `main` fails fast. Reconcile production drift through `deploy.yaml` from `main`.
+- The job resolves `SANDBOX_IMAGE_READY` per stage the way `deploy.yaml` does, so `sst.config.ts` imports the sandbox ECR repo in both. SST ignores tag changes on an imported resource; a plan without the import reports the repo's tags as drift every night.
 - Each job takes the same `sst-<stage>` lock as `deploy.yaml`. A lock left by a crashed run fails the job; clear it by hand after checking nothing runs.
 - The plan stays in the job log, with the AWS account id masked. The repo is public, so there is no artifact.
 - It sees only resources in Pulumi state, and never bootstraps sandbox images (`SANDBOX_IMAGE_READY_*` is not passed).

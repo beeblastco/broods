@@ -148,9 +148,14 @@ jobs:
       # Same as deploy.yaml: without it the plan omits the sandbox log forwarder
       # and drift would delete the deployed one.
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
-      # Do NOT pass SANDBOX_IMAGE_READY_* for drift cleanup. Drift should
-      # only reconcile state, not bootstrap sandbox images. The deploy
-      # workflow owns that mirror step.
+      # Same flags as deploy.yaml, resolved per stage below. The flag only
+      # tells sst.config.ts to import the sandbox ECR repo (the mirror step
+      # stays in deploy.yaml). Without it the plan evaluates a different
+      # program from the deploy, and the diff reports the imported repo's tags
+      # as drift every night.
+      SANDBOX_IMAGE_READY_DEV: ${{ vars.SANDBOX_IMAGE_READY_DEV || vars.SANDBOX_IMAGE_READY || 'false' }}
+      SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
+      SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
 
     steps:
       # vars are not masked like secrets; every ARN in the plan carries this id.
@@ -177,6 +182,20 @@ jobs:
         # --ignore-scripts keeps `sst install` from running here; sst is
         # invoked via bunx below.
         run: bun install --ignore-scripts --no-save
+
+      - name: Resolve sandbox image flag
+        env:
+          TARGET_STAGE: ${{ matrix.stage }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$TARGET_STAGE" in
+            production-eu-west-1) ready="${SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1:-false}" ;;
+            production*) ready="${SANDBOX_IMAGE_READY_PRODUCTION:-false}" ;;
+            *) ready="${SANDBOX_IMAGE_READY_DEV:-false}" ;;
+          esac
+          echo "SANDBOX_IMAGE_READY=$ready" >> "$GITHUB_ENV"
+          echo "SANDBOX_IMAGE_READY=$ready for $TARGET_STAGE"
 
       - name: Detect drift (refresh + diff)
         id: detect
