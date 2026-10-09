@@ -2,13 +2,13 @@
 
 /**
  * Organization › Members: one row per member with their role, and a panel
- * for the selected one. Role is a Select for anyone holding `members:write`;
- * for everyone else it reads plain with a lock. The owner's row never
- * changes here.
+ * for the selected one. The role is a menu of every role with what it grants
+ * for anyone holding `members:write`; for everyone else it reads plain with a
+ * lock. The owner's row never changes here.
  *
  * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
- * click, and a detail panel with the facts, the role control, and the
- * danger zone at the end.
+ * click, and a detail panel with the facts, the role picker, and the danger
+ * zone at the end.
  */
 
 import {
@@ -36,6 +36,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import {
@@ -52,28 +61,42 @@ import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
-import { Plus } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Plus } from "lucide-react";
+import Link from "next/link";
 import { useQueryState } from "nuqs";
 import { useState } from "react";
 
 type Member = FunctionReturnType<typeof api.org.members.list>[number];
 type Role = FunctionReturnType<typeof api.access.listRoles>[number];
-type CustomRole = Extract<Role, { kind: "custom" }>;
 type Tier = Member["role"];
 type Column = "name" | "email" | "role" | "joined" | "invitedBy";
 type Field = (typeof QUERY_FIELDS)[number];
 
-/** What the role Select holds: a tier, or a custom role's id. */
+/** What picking a role sets: a tier, or a custom role on the member tier. */
 type RolePick =
   | { tier: "admin" | "member"; roleId?: undefined }
   | { tier: "member"; roleId: Id<"orgRoles"> };
 
+/** One role a member may be given, as the picker and the invite form list it. */
+interface RoleOption {
+  /** The tier, or the custom role's id. */
+  value: string;
+  name: string;
+  description: string;
+  custom: boolean;
+  pick: RolePick;
+}
+
 // The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["role"] as const;
+
+// The tiers a member may be moved to; the owner's is set by the organization.
+const PICKABLE_TIERS = ["admin", "member"] as const;
 
 // Six columns of short text; below this the panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
@@ -82,6 +105,7 @@ const TABLE_MIN_WIDTH = 640;
 const MEMBER_ID = parseAsId<"orgMembers">();
 
 const NO_ROWS: Member[] = [];
+const NO_ROLES: Role[] = [];
 
 const TIER_LABEL: Record<Tier, string> = {
   owner: "Owner",
@@ -119,9 +143,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   const selected = members?.find(
     (member) => member.membershipId === selectedId,
   );
-  const customRoles = (roles ?? []).filter(
-    (role): role is CustomRole => role.kind === "custom",
-  );
+  const options = roleOptions(roles ?? NO_ROLES);
   const filters = {
     role: list.filterFor("role", [
       ...new Set(
@@ -165,7 +187,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
             <MemberPanel
               key={selected.membershipId}
               member={selected}
-              customRoles={customRoles}
+              options={options}
               canChange={canChange}
               onClose={() => setSelectedId(null)}
             />
@@ -229,7 +251,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
       {inviting && (
         <InviteDialog
           orgId={org._id}
-          customRoles={customRoles}
+          options={options}
           onClose={() => setInviting(false)}
         />
       )}
@@ -238,26 +260,25 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
 }
 
 /**
- * The selected member: their facts, the role control, and the danger zone.
- * The role is a Select for anyone holding `members:write`; the owner's role
+ * The selected member: their facts, the role picker, and the danger zone.
+ * The role is a menu for anyone holding `members:write`; the owner's role
  * never changes here.
  */
 function MemberPanel({
   member,
-  customRoles,
+  options,
   canChange,
   onClose,
 }: {
   member: Member;
-  customRoles: CustomRole[];
+  options: RoleOption[];
   canChange: boolean;
   onClose: () => void;
 }): React.JSX.Element {
   const updateRole = useMutation(api.org.members.updateRole);
   const remove = useMutation(api.org.members.remove);
-  const { error, run } = useSubmit();
+  const { pending, error, run } = useSubmit();
   const editable = canChange && !member.isOwner;
-  const items = roleItems(customRoles);
   const facts: DetailRow[] = [
     { key: "email", label: "Email", value: member.email },
     { key: "status", label: "Status", value: "active", words: true },
@@ -275,45 +296,30 @@ function MemberPanel({
     },
   ];
 
+  function pickRole(pick: RolePick): void {
+    void run(() =>
+      updateRole({
+        membershipId: member.membershipId,
+        role: pick.tier,
+        roleId: pick.roleId,
+      }),
+    );
+  }
+
   return (
     <DetailPanel title={member.name} onClose={onClose}>
       <DetailRows rows={facts} />
-
-      <h4 className="mt-5 mb-1.5 text-sm font-medium">Role</h4>
-      {editable ? (
-        <Select
-          items={items}
-          value={member.roleId ?? member.role}
-          onValueChange={(value: string | null) => {
-            const pick = value === null ? null : rolePick(value, customRoles);
-            if (pick) {
-              void run(() =>
-                updateRole({
-                  membershipId: member.membershipId,
-                  role: pick.tier,
-                  roleId: pick.roleId,
-                }),
-              );
-            }
-          }}
-        >
-          <SelectTrigger size="sm" className="w-44 cursor-pointer">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {items.map((item) => (
-              <SelectItem
-                key={item.value}
-                value={item.value}
-                className="cursor-pointer"
-              >
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : (
-        <p className="text-xs">
+      {/* The role row sits on the same grid as the facts above it. */}
+      <div className="-mx-2 grid grid-cols-[7rem_minmax(0,1fr)] items-center px-2 py-1 text-xs">
+        <span className="text-muted-foreground">Role</span>
+        {editable ? (
+          <RolePicker
+            member={member}
+            options={options}
+            pending={pending}
+            onPick={pickRole}
+          />
+        ) : (
           <LockedValue
             reason={
               member.isOwner
@@ -323,8 +329,8 @@ function MemberPanel({
           >
             {roleName(member)}
           </LockedValue>
-        </p>
-      )}
+        )}
+      </div>
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
       {editable && (
@@ -341,24 +347,111 @@ function MemberPanel({
   );
 }
 
+/**
+ * The member's role as a button; its menu lists every role with what it
+ * grants, marks the current one, and links to the Roles tab.
+ */
+function RolePicker({
+  member,
+  options,
+  pending,
+  onPick,
+}: {
+  member: Member;
+  options: RoleOption[];
+  pending: boolean;
+  onPick: (pick: RolePick) => void;
+}): React.JSX.Element {
+  const current = member.roleId ?? member.role;
+  const tiers = options.filter((option) => !option.custom);
+  const custom = options.filter((option) => option.custom);
+
+  function item(option: RoleOption): React.JSX.Element {
+    const active = option.value === current;
+
+    return (
+      <DropdownMenuItem
+        key={option.value}
+        data-active={active}
+        className="items-start"
+        onClick={() => !active && onPick(option.pick)}
+      >
+        <Check className={cn("mt-0.5", !active && "invisible")} />
+        <span className="grid min-w-0">
+          <span>{option.name}</span>
+          <span className="truncate text-2xs text-muted-foreground">
+            {option.description}
+          </span>
+        </span>
+      </DropdownMenuItem>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            size="xs"
+            tone="muted"
+            className="cursor-pointer justify-self-start"
+            disabled={pending}
+          />
+        }
+      >
+        {roleName(member)}
+        <ChevronDown />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-72">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel variant="muted">
+            Role for {member.name}
+          </DropdownMenuLabel>
+          {tiers.map(item)}
+        </DropdownMenuGroup>
+        {custom.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel variant="muted">
+                Custom roles
+              </DropdownMenuLabel>
+              {custom.map(item)}
+            </DropdownMenuGroup>
+          </>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem render={<Link href="/settings/org?tab=roles" />}>
+          Manage roles
+          <ArrowUpRight className="ml-auto" />
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /** Adds an existing user by email with a role. */
 function InviteDialog({
   orgId,
-  customRoles,
+  options,
   onClose,
 }: {
   orgId: Id<"orgs">;
-  customRoles: CustomRole[];
+  options: RoleOption[];
   onClose: () => void;
 }): React.JSX.Element {
   const add = useMutation(api.org.members.add);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const { pending, error, run } = useSubmit();
-  const items = roleItems(customRoles);
+  const items = options.map((option) => ({
+    value: option.value,
+    label: option.name,
+  }));
 
   async function submit(): Promise<void> {
-    const pick = rolePick(role, customRoles);
+    const pick = options.find((option) => option.value === role)?.pick;
     if (!email.trim() || !pick) return;
     const done = await run(() =>
       add({
@@ -444,31 +537,45 @@ function InviteDialog({
   );
 }
 
-/** The roles a member may be given: the two tiers and every custom role. */
-function roleItems(
-  customRoles: CustomRole[],
-): Array<{ value: string; label: string }> {
-  return [
-    { value: "member", label: TIER_LABEL.member },
-    { value: "admin", label: TIER_LABEL.admin },
-    ...customRoles.map((role) => ({ value: role._id, label: role.name })),
-  ];
-}
-
-/** What a Select value means: a tier, or one of the org's custom roles. */
-function rolePick(value: string, customRoles: CustomRole[]): RolePick | null {
-  if (value === "admin" || value === "member") return { tier: value };
-  const custom = customRoles.find((role) => role._id === value);
-
-  return custom ? { tier: "member", roleId: custom._id } : null;
-}
-
 function matchesField(member: Member, _field: Field, value: string): boolean {
   return roleName(member).toLowerCase() === value;
 }
 
 function roleName(member: Member): string {
   return member.roleName ?? TIER_LABEL[member.role];
+}
+
+/**
+ * The roles a member may be given, with what each grants: the two tiers as
+ * the Roles tab describes them, then every custom role.
+ */
+function roleOptions(roles: Role[]): RoleOption[] {
+  const tiers = PICKABLE_TIERS.map((tier): RoleOption => ({
+    value: tier,
+    name: TIER_LABEL[tier],
+    description:
+      roles.find(
+        (role) => role.kind === "built-in" && role.name === TIER_LABEL[tier],
+      )?.description ?? "",
+    custom: false,
+    pick: { tier: tier },
+  }));
+  const custom = roles.flatMap((role): RoleOption[] =>
+    role.kind === "custom"
+      ? [
+          {
+            value: role._id,
+            name: role.name,
+            description:
+              role.description || `${role.permissions.length} permissions`,
+            custom: true,
+            pick: { tier: "member", roleId: role._id },
+          },
+        ]
+      : [],
+  );
+
+  return [...tiers, ...custom];
 }
 
 function searchText(member: Member): string {
