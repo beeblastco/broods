@@ -10,7 +10,7 @@
 import { positiveIntegerEnv } from "../../core/src/shared/env.ts";
 import { forwarderConfigFromEnv } from "./config.ts";
 import { planeConnections, watchChannelConnections } from "./connections.ts";
-import { logInfo } from "./log.ts";
+import { logError, logInfo } from "./log.ts";
 import { Forwarder } from "./supervisor.ts";
 
 if (import.meta.main) {
@@ -72,11 +72,27 @@ if (import.meta.main) {
     },
   );
 
-  const shutdown = (): void => {
-    void watch.close();
-    forwarder.stop();
-    void server.stop();
+  let stopped: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    if (!stopped) {
+      void watch.close();
+      forwarder.stop();
+      stopped = server.stop();
+    }
+
+    return stopped;
   };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", (): void => void shutdown());
+  process.on("SIGINT", (): void => void shutdown());
+  // A stray rejection or throw closes the sockets cleanly and exits non-zero,
+  // so the deployment restarts it with every bot reconnected.
+  for (const event of ["unhandledRejection", "uncaughtException"] as const) {
+    process.on(event, (error: unknown): void => {
+      logError("Discord forwarder crashed", {
+        event: event,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      void shutdown().finally((): never => process.exit(1));
+    });
+  }
 }

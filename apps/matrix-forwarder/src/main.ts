@@ -8,7 +8,11 @@
  */
 
 import { watchChannelConnections } from "../../discord-forwarder/src/connections.ts";
-import { logInfo, setLogService } from "../../discord-forwarder/src/log.ts";
+import {
+  logError,
+  logInfo,
+  setLogService,
+} from "../../discord-forwarder/src/log.ts";
 import { MatrixAccount } from "./account.ts";
 import { forwarderConfigFromEnv } from "./config.ts";
 import { planeMatrixConnections } from "./connections.ts";
@@ -51,12 +55,30 @@ if (import.meta.main) {
 
   // Every account closes its store before the process exits, so a SIGTERM
   // mid-write cannot corrupt it.
-  const shutdown = async (): Promise<void> => {
-    await watch.close();
-    await forwarder.stop();
-    await server.stop();
-    process.exit(0);
+  let stopping = false;
+  const shutdown = async (exitCode = 0): Promise<void> => {
+    if (stopping) return;
+    stopping = true;
+    try {
+      await watch.close();
+      await forwarder.stop();
+      await server.stop();
+    } finally {
+      // A store that fails to close must not leave the process up, half stopped.
+      process.exit(exitCode);
+    }
   };
   process.on("SIGTERM", (): void => void shutdown());
   process.on("SIGINT", (): void => void shutdown());
+  // A stray rejection or throw still closes every crypto store before exiting
+  // non-zero, so the restart finds them intact.
+  for (const event of ["unhandledRejection", "uncaughtException"] as const) {
+    process.on(event, (error: unknown): void => {
+      logError("Matrix forwarder crashed", {
+        event: event,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      void shutdown(1);
+    });
+  }
 }
