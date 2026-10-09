@@ -51,7 +51,7 @@ export function Who({
   const stage = useSearchParams().get("stage");
 
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1.5 align-middle">
       <ActorAvatar actor={actor} />
       {"kind" in actor && actor.kind === "agent" && projectId ? (
         <Link
