@@ -5,11 +5,11 @@
 import { AuthKit } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { selfHostJwks } from "./model/selfHostAuth";
+import { authProvider } from "./model/selfHostAuth";
 
 // A self-hosted stack never calls WorkOS: its admin is seeded into the
 // component's users table by `user.ensureSynced`, so the client needs no keys.
-const selfHosted = selfHostJwks() !== undefined;
+const selfHosted = authProvider() === "self-host";
 
 export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   components.workOSAuthKit,

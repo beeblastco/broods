@@ -19,8 +19,9 @@ on:
       awaitWorkflows:
         description: >-
           Space-separated workflow files in this repo that must have succeeded
-          for this sha before the image is allowed onto the cluster. Each is
-          skipped when it did not run for this commit.
+          for this sha before the image is allowed onto the cluster. One that
+          did not run for this commit is judged by the branch's newest push run
+          of it instead, and skipped only when it never ran on the branch.
         required: false
         default: ""
         type: string
@@ -65,38 +66,53 @@ jobs:
           # anyway is the failure this gate exists to stop.
           DEADLINE=120
 
+          # Id of the newest run a query matches, empty when none does. Plain
+          # assignments below so a failing gh call stops the step under set -e.
+          newest_run() {
+            gh api "$1" --jq '.workflow_runs[0].id // empty'
+          }
+
           for AWAIT in $AWAIT_WORKFLOWS; do
-            RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?head_sha=$SHA&per_page=1"
+            WORKFLOW_RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs"
+            TARGET="$SHA"
+            RUN_ID=$(newest_run "$WORKFLOW_RUNS?head_sha=$SHA&per_page=1")
 
             # GitHub creates a run for every workflow a push triggers before any
             # job starts, and this job only runs after the image build. So by
             # now the answer is settled: no run means this commit did not touch
-            # what $AWAIT watches, and there is nothing to wait for.
-            if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
-              echo "$AWAIT did not run for $SHA; nothing to wait for."
-              continue
+            # what $AWAIT watches. The image still needs what the branch last
+            # deployed, so the branch's newest push run stands in. Push runs
+            # only: a manual run can name another stage.
+            if [[ -z "$RUN_ID" ]]; then
+              TARGET="the newest $GITHUB_REF_NAME push"
+              RUN_ID=$(newest_run "$WORKFLOW_RUNS?branch=$GITHUB_REF_NAME&event=push&per_page=1")
+              if [[ -z "$RUN_ID" ]]; then
+                echo "$AWAIT never ran on $GITHUB_REF_NAME; nothing to wait for."
+                continue
+              fi
             fi
 
-            echo "Waiting for $AWAIT to settle for $SHA"
+            # The run is pinned by id, so a newer push during the wait does not
+            # move the target.
+            echo "Waiting for $AWAIT run $RUN_ID to settle for $TARGET"
             for _ in $(seq 1 "$DEADLINE"); do
-              STATUS=$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')
+              STATE=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '"\(.status) \(.conclusion // "none")"')
+              read -r STATUS CONCLUSION <<<"$STATE"
               if [[ "$STATUS" == "completed" ]]; then
                 break
               fi
               sleep 10
             done
 
-            # Still in_progress at the deadline leaves conclusion null, which
-            # lands here as "none" and fails. A stuck prerequisite is not a
-            # reason to roll.
-            CONCLUSION=$(gh api "$RUNS" --jq '.workflow_runs[0].conclusion // "none"')
+            # Still in_progress at the deadline leaves conclusion "none", which
+            # fails. A stuck prerequisite is not a reason to roll.
             if [[ "$CONCLUSION" != "success" ]]; then
-              echo "$AWAIT for $SHA concluded '$CONCLUSION'." >&2
+              echo "$AWAIT for $TARGET concluded '$CONCLUSION'." >&2
               echo "Refusing to roll an image ahead of the backend it expects." >&2
               exit 1
             fi
 
-            echo "$AWAIT succeeded for $SHA."
+            echo "$AWAIT succeeded for $TARGET."
           done
 
       - name: Roll the pod and wait for the rollout

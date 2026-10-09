@@ -286,7 +286,7 @@ async function up(
     await measureStep(perf, "deployment env", () => {
       configureDeploymentEnv(state, deploymentEnv);
       state.deploymentEnvHash = deploymentEnvHash;
-      // auth.config.ts reads BROODS_SESSION_JWKS at deploy time.
+      // auth.config.ts reads BROODS_AUTH_PROVIDER and BROODS_SESSION_JWKS at deploy time.
       state.convexSourceHash = undefined;
       saveState(state);
     });
@@ -530,8 +530,9 @@ function createManifestAccount(state: InstanceState, runId: string): string {
   return secret;
 }
 
-// A self-hosted deployment: BROODS_SESSION_JWKS makes Convex trust the
-// dashboard's admin session instead of WorkOS, so no WORKOS_* is set.
+// A self-hosted deployment: BROODS_AUTH_PROVIDER makes Convex trust the
+// dashboard's admin session (BROODS_SESSION_JWKS) instead of WorkOS, so no
+// WORKOS_* is set.
 // BROODS_ACCOUNT_MANAGE_URL points at core on the host (the backend runs
 // inside docker).
 function deploymentEnvEntries(state: InstanceState): Record<string, string> {
@@ -543,6 +544,7 @@ function deploymentEnvEntries(state: InstanceState): Record<string, string> {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
     BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
+    BROODS_AUTH_PROVIDER: "self-host",
     BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk(signingKey)] }),
     SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     STAGE_TICKET_SECRET: state.secrets.stageTicket,

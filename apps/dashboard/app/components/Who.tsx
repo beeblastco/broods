@@ -50,7 +50,8 @@ export function Who({
 }): React.JSX.Element {
   const stage = useSearchParams().get("stage");
 
-  // A flex row, not inline: on the baseline a 16px box pushes the line taller.
+  // A flex row, not inline: even middle-aligned, a 16px inline box sits on
+  // the line box and lifts the row by a pixel or two.
   return (
     <span className="flex items-center gap-1.5">
       <ActorAvatar actor={actor} />
@@ -91,9 +92,9 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
 }
 
 /**
- * The small avatar alone: a person's picture or initials, an agent's dither,
- * the Broods mark. One text line tall (16px), so a cell or a row with an
- * avatar is no taller than one with only words.
+ * The cell avatar alone: a person's picture or initials, an agent's dither,
+ * the Broods mark. The height of its text line, so a row with one stays the
+ * height of a row without.
  */
 export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   if ("kind" in actor && actor.kind === "agent") {
