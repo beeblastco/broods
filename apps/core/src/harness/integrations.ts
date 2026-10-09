@@ -156,9 +156,9 @@ const CHANNEL_ACK_BUDGET_MS = 2_000;
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // A webhook lists and decrypts its URL's agents before any signature is
 // checked. With `cacheAgentLists`, unsigned traffic reuses one listing per
-// account or stage URL for this long, so a flood costs one read per window. A
-// newly deployed agent's channel can miss deliveries for up to this long;
-// providers retry those.
+// account or stage URL for this long, so a flood costs one read per window; a
+// request that verifies lists again before it runs. A newly deployed agent's
+// channel can miss deliveries for up to this long; providers retry those.
 const CHANNEL_AGENT_LIST_TTL_MS = 10_000;
 // Listings hold decrypted configs, so few are kept and expired ones go first.
 const CHANNEL_AGENT_LIST_CACHE_LIMIT = 256;
@@ -424,8 +424,8 @@ export interface IntegrationRoutingOptions {
   directApiEnabled?: boolean;
   /**
    * Reuse a channel webhook's agent listing across requests for a few seconds.
-   * Agents that verify are reloaded and verified again before they run, so
-   * only finding a candidate is cached, never what a turn runs with.
+   * A request that verifies lists again and verifies again before it runs, so
+   * only rejecting unsigned traffic is cached, never what a turn runs with.
    */
   cacheAgentLists?: boolean;
   /** Registers post-response background work (channel ack-then-process). */
@@ -1030,8 +1030,11 @@ async function findChannelCredentialHolder(
     return context.cacheAgentLists
       ? await reverifyReceivers(
           context,
-          accountId,
-          channelName,
+          {
+            accountId: accountId,
+            channelName: channelName,
+            endpointId: endpointId,
+          },
           request,
           receivers,
         )
@@ -1043,17 +1046,18 @@ async function findChannelCredentialHolder(
     : { kind: "unconfigured", configured: configured };
 }
 
-/** The agents a webhook URL can reach, from the cache when the router keeps one. */
+/** The agents a webhook URL can reach, from the cache when the router keeps one and `fresh` is not set. */
 function listWebhookAgents(
   context: HttpRoutingContext,
   accountId: string,
   endpointId: string | undefined,
+  fresh = false,
 ): Promise<AgentRecord[]> {
   const list = (): Promise<AgentRecord[]> =>
     endpointId
       ? context.stageAgentLister(accountId, endpointId)
       : context.agentLister(accountId);
-  if (!context.cacheAgentLists) return list();
+  if (fresh || !context.cacheAgentLists) return list();
 
   return cachedChannelAgentList(
     endpointId ? `${accountId}\u0000${endpointId}` : accountId,
@@ -1062,35 +1066,45 @@ function listWebhookAgents(
 }
 
 /**
- * A cached listing found these receivers; run them only as they are now. Each
- * is reloaded, and kept only while its current credentials still verify the
- * request, so a changed policy or a rotated secret applies at once.
+ * A cached listing found these receivers; run them only as the URL reaches
+ * them now. A signed request lists again, uncached, and keeps a receiver only
+ * while it is still listed and its current credentials still verify, so a
+ * revoked deployment, a changed policy or a rotated secret applies at once.
+ * Only unsigned traffic is served from the cache.
  */
 async function reverifyReceivers(
   context: HttpRoutingContext,
-  accountId: string,
-  channelName: string,
+  route: { accountId: string; channelName: string; endpointId?: string },
   request: ChannelRequest,
   receivers: ChannelReceiver[],
 ): Promise<ChannelCredentialHolder> {
   const current: ChannelReceiver[] = [];
   try {
+    const listed = new Map(
+      (
+        await listWebhookAgents(
+          context,
+          route.accountId,
+          route.endpointId,
+          true,
+        )
+      ).map((agent) => [agent.agentId, agent] as const),
+    );
     for (const receiver of receivers) {
-      const agent = await context.agentLoader(
-        accountId,
-        receiver.agent.agentId,
-      );
-      if (!agent?.config.channels?.[channelName]) continue;
+      const agent = listed.get(receiver.agent.agentId);
+      if (!agent?.config.channels?.[route.channelName]) continue;
       const adapter = createChannelRegistry(agent.config).webhookChannels.find(
-        (channel) => channel.name === channelName && channel.canHandle(request),
+        (channel) =>
+          channel.name === route.channelName && channel.canHandle(request),
       );
       if (!adapter || !(await adapter.authenticate(request))) continue;
       current.push({ agent: agent, adapter: adapter });
     }
   } catch (err) {
     logWarn("Channel receiver reload failed", {
-      accountId: accountId,
-      channel: channelName,
+      accountId: route.accountId,
+      channel: route.channelName,
+      endpointId: route.endpointId,
       error: err instanceof Error ? err.message : String(err),
     });
 

@@ -173,18 +173,18 @@ describe("account webhook ingress", () => {
     });
   });
 
-  it("reuses a cached agent listing but runs only what verifies now", async () => {
+  it("serves unsigned traffic from a cached listing, signed traffic from a fresh one", async () => {
     resetChannelAgentListsForTests();
     let listings = 0;
-    let current: AgentRecord | null = TEST_AGENT;
+    let current: AgentRecord[] = [TEST_AGENT];
     const handled: ChannelInboundEvent[] = [];
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
-      agentLoader: async () => current,
+      agentLoader: async () => TEST_AGENT,
       agentLister: async () => {
         listings += 1;
 
-        return [TEST_AGENT];
+        return current;
       },
       cacheAgentLists: true,
     });
@@ -193,41 +193,47 @@ describe("account webhook ingress", () => {
         handled.push(event);
       },
     });
-
-    const unsigned = await routeIncomingEvent(
+    const unsignedEvent = (): ReturnType<typeof createTelegramEvent> =>
       createTelegramEvent(undefined, {
         "x-telegram-bot-api-secret-token": "wrong",
-      }),
-      handlers,
-    );
+      });
+
+    expect(
+      (await routeIncomingEvent(unsignedEvent(), handlers)).statusCode,
+    ).toBe(401);
+    expect(
+      (await routeIncomingEvent(unsignedEvent(), handlers)).statusCode,
+    ).toBe(401);
+    expect(listings).toBe(1);
+
     const signed = await routeIncomingEvent(createTelegramEvent(), handlers);
     await signed.afterResponse;
 
-    expect(unsigned.statusCode).toBe(401);
     expect(signed.statusCode).toBe(200);
-    expect(listings).toBe(1);
+    expect(listings).toBe(2);
     expect(handled).toHaveLength(1);
 
-    // The secret rotated after the listing was cached: the old one no longer
-    // runs a turn, and a deleted agent runs nothing.
-    current = {
-      ...TEST_AGENT,
-      config: {
-        channels: {
-          telegram: {
-            ...TEST_ACCOUNT.config.channels.telegram,
-            webhookSecret: crypto.randomUUID(),
+    // After the listing was cached, the secret rotated, then the deployment
+    // was revoked: neither runs a turn on what the cache still holds.
+    current = [
+      {
+        ...TEST_AGENT,
+        config: {
+          channels: {
+            telegram: {
+              ...TEST_ACCOUNT.config.channels.telegram,
+              webhookSecret: crypto.randomUUID(),
+            },
           },
         },
       },
-    };
+    ];
     const rotated = await routeIncomingEvent(createTelegramEvent(), handlers);
-    current = null;
-    const deleted = await routeIncomingEvent(createTelegramEvent(), handlers);
+    current = [];
+    const revoked = await routeIncomingEvent(createTelegramEvent(), handlers);
 
     expect(rotated.statusCode).toBe(401);
-    expect(deleted.statusCode).toBe(401);
-    expect(listings).toBe(1);
+    expect(revoked.statusCode).toBe(401);
     expect(handled).toHaveLength(1);
     resetChannelAgentListsForTests();
   });

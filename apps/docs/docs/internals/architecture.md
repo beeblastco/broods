@@ -255,7 +255,7 @@ sequenceDiagram
 | Terminal ticket      | sealed  | gateway, `TERMINAL_TICKET_SECRET`; core seals it                                                 | One sandbox terminal, used once within about 2 minutes                  |
 | Per-job token        | none    | core, stored on the `runtimeAsyncToolResults` row                                                | One background job's completion callback                                |
 
-Channel webhooks use each provider's own signature or secret, checked by the adapter. Core reuses an account's (or stage URL's) agent listing for up to 10 seconds to find candidates, then reloads each agent that verifies and checks it again, so a turn always runs on current config and a rotated secret stops verifying at once. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
+Channel webhooks use each provider's own signature or secret, checked by the adapter. Core answers unsigned requests from an account's (or stage URL's) agent listing cached for up to 10 seconds. A request that verifies lists again, uncached, and is checked again, so a turn always runs on current config and a revoked deployment or rotated secret stops it at once. The gateway holds no credential except `TERMINAL_TICKET_SECRET` and never holds the service token. Service secret rotation is in [operations](operations.md).
 
 ## Where state lives
 
