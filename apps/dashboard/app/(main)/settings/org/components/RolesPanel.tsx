@@ -154,19 +154,17 @@ export function RolesPanel(): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead plain sort={list.sortFor("name")}>
-                Role
-              </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("description")}>
+              <DataTableHead sort={list.sortFor("name")}>Role</DataTableHead>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("policies")}>
+              <DataTableHead sort={list.sortFor("policies")}>
                 Policies
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("members")}>
+              <DataTableHead sort={list.sortFor("members")}>
                 Members
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("createdAt")}>
+              <DataTableHead sort={list.sortFor("createdAt")}>
                 Created
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>

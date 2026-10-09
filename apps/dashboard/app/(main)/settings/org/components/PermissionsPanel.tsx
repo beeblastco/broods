@@ -151,19 +151,17 @@ export function PermissionsPanel(): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead plain sort={list.sortFor("name")}>
+              <DataTableHead sort={list.sortFor("name")}>
                 Permission
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("description")}>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("resource")}>
+              <DataTableHead sort={list.sortFor("resource")}>
                 Resource
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("kind")}>
-                Kind
-              </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("createdAt")}>
+              <DataTableHead sort={list.sortFor("kind")}>Kind</DataTableHead>
+              <DataTableHead sort={list.sortFor("createdAt")}>
                 Created
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>

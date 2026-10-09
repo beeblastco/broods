@@ -184,22 +184,16 @@ export function OrgPoliciesPanel(): React.JSX.Element {
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead plain sort={list.sortFor("name")}>
-                Policy
-              </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("description")}>
+              <DataTableHead sort={list.sortFor("name")}>Policy</DataTableHead>
+              <DataTableHead sort={list.sortFor("description")}>
                 Description
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("permissions")}>
+              <DataTableHead sort={list.sortFor("permissions")}>
                 Permissions
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("scope")}>
-                Scope
-              </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("mode")}>
-                Mode
-              </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("createdAt")}>
+              <DataTableHead sort={list.sortFor("scope")}>Scope</DataTableHead>
+              <DataTableHead sort={list.sortFor("mode")}>Mode</DataTableHead>
+              <DataTableHead sort={list.sortFor("createdAt")}>
                 Created
               </DataTableHead>
               <DataTableHead>Created by</DataTableHead>
