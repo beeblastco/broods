@@ -939,6 +939,25 @@ describe("runAgentLoop", () => {
     );
   });
 
+  it("fails the run when the worker pool aborts it", async () => {
+    weatherDelayMs = 900;
+    const slot = new AbortController();
+    const stream = await startTwoStepTurn(undefined, slot.signal);
+    setTimeout(
+      () => slot.abort(new Error("Run exceeded the worker deadline")),
+      100,
+    );
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(true);
+    expect(stream.failureText()).toBe("Run exceeded the worker deadline");
+    // The abort reached the provider call, and the second step never started.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
+    expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(
+      true,
+    );
+  });
+
   it("does not count a slow tool as a silent model", async () => {
     process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
     process.env.MODEL_CHUNK_TIMEOUT_MS = "300";
@@ -3207,6 +3226,7 @@ function installHarnessEnv(): void {
 // Starts the "real-two-step" weather turn on the real SDK loop.
 async function startTwoStepTurn(
   persistModelMessages: () => Promise<string[]> = async () => [],
+  abortSignal?: AbortSignal,
 ): Promise<AgentLoopStream> {
   installHarnessEnv();
   streamTextScenario = "real-two-step";
@@ -3238,6 +3258,7 @@ async function startTwoStepTurn(
       model: { provider: "google", modelId: "gemini-test" },
     },
     { onFinalText: async () => {}, onErrorText: async () => {} },
+    abortSignal ? { abortSignal: abortSignal } : {},
   );
 }
 

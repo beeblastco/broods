@@ -184,6 +184,7 @@ const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
 const WORKER_SLOT_GRACE_MS = 5_000;
+const WORKER_DEADLINE_MESSAGE = "Run exceeded the worker deadline";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
@@ -286,12 +287,14 @@ export function dispatchInProcessWorker(
   }
 
   activeInProcessWorkers += 1;
+  const slotAbort = new AbortController();
   const execution = run({
     requestId: crypto.randomUUID(),
     deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
     // Workers run detached; they never emit an HTTP response, so there is no
     // post-response tail to defer.
     waitUntil: () => {},
+    abortSignal: slotAbort.signal,
   }).then(
     () => undefined,
     (err) => {
@@ -301,9 +304,9 @@ export function dispatchInProcessWorker(
       });
     },
   );
-  // Nothing here kills a hung model stream or tool, so a few
-  // stuck workers would otherwise pin every slot for every tenant on the pod. An
-  // overrun frees the slot but leaves the underlying work running.
+  // A few stuck workers would otherwise pin every slot for every tenant on the
+  // pod. An overrun frees the slot and aborts the run, so the pod never runs
+  // more than MAX_INPROCESS_WORKERS model passes at once.
   let slotTimer: ReturnType<typeof setTimeout> | undefined;
   const guarded = Promise.race([
     execution,
@@ -313,6 +316,7 @@ export function dispatchInProcessWorker(
           kind: kind,
           budgetMs: WORKER_TIMEOUT_BUDGET_MS,
         });
+        slotAbort.abort(new Error(WORKER_DEADLINE_MESSAGE));
         resolve();
       }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);
       slotTimer.unref?.();
@@ -1408,6 +1412,7 @@ async function handleNatsWorkerRequest(
         asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
+        ...(context?.abortSignal ? { abortSignal: context?.abortSignal } : {}),
         consumeStream: (stream) =>
           pipeAgentStream(stream, (chunk): Promise<void> =>
             fencedPublisher.publish(chunk),
@@ -3052,6 +3057,7 @@ async function runAgentLoopUntilSubagentsIdle(
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
     ...(hooks ? { hooks: hooks } : {}),
+    ...(context?.abortSignal ? { abortSignal: context.abortSignal } : {}),
     ...(reply.onQuestionsPending
       ? { onQuestionsPending: reply.onQuestionsPending.bind(reply) }
       : {}),
@@ -3112,6 +3118,8 @@ async function runParentContinuationLoop(options: {
   initialTurnContext: DirectTurn["turnContext"];
   agentConfig: DirectInboundEvent["agentConfig"];
   hooks?: HookDispatcher;
+  // Aborts the model pass and skips the wait on async work it left running.
+  abortSignal?: AbortSignal;
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
@@ -3169,6 +3177,7 @@ async function runParentContinuationLoop(options: {
               ? "tool"
               : undefined,
         hooks: hooks,
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
       },
     );
     traceId = stream.traceId();
@@ -3210,7 +3219,11 @@ async function runParentContinuationLoop(options: {
       };
     }
     // A stop means stop: nothing waits on the work it left running.
-    if (stream.didFail() && stream.failureText() !== USER_STOP_MESSAGE) {
+    if (
+      stream.didFail() &&
+      stream.failureText() !== USER_STOP_MESSAGE &&
+      !options.abortSignal?.aborted
+    ) {
       // Subagents and async tools from earlier steps may still be running or
       // already done. Wait for them and write their results into the history,
       // so the next turn ("try again") sees them instead of redoing the work.

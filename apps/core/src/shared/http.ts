@@ -84,6 +84,8 @@ export interface RequestContext {
   /** Epoch-ms deadline for this request's work budget. */
   deadlineMs: number;
   waitUntil(promise: Promise<unknown>): void;
+  /** Aborted when the pod's worker pool reclaims this run's slot. */
+  abortSignal?: AbortSignal;
 }
 
 /**
