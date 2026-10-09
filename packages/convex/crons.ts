@@ -95,7 +95,7 @@ crons.interval(
 crons.interval(
   "reconcile channel endpoints",
   { hours: 1 },
-  internal.channel.connections.reconcile,
+  internal.channel.endpointReconcile.reconcile,
   {},
 );
 

@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as access from "../access.js";
 import type * as account_accounts from "../account/accounts.js";
 import type * as account_budget from "../account/budget.js";
 import type * as account_connections from "../account/connections.js";
@@ -24,6 +25,7 @@ import type * as agent_crons from "../agent/crons.js";
 import type * as agent_cronsPublic from "../agent/cronsPublic.js";
 import type * as agent_deployments from "../agent/deployments.js";
 import type * as agent_policies from "../agent/policies.js";
+import type * as apiKeys from "../apiKeys.js";
 import type * as audit_ledger from "../audit/ledger.js";
 import type * as audit_sinks from "../audit/sinks.js";
 import type * as auth from "../auth.js";
@@ -33,6 +35,7 @@ import type * as aws_storageMeter from "../aws/storageMeter.js";
 import type * as aws_workspaceFiles from "../aws/workspaceFiles.js";
 import type * as canvas from "../canvas.js";
 import type * as channel_connections from "../channel/connections.js";
+import type * as channel_endpointReconcile from "../channel/endpointReconcile.js";
 import type * as channel_records from "../channel/records.js";
 import type * as cli_auth from "../cli/auth.js";
 import type * as cli_http from "../cli/http.js";
@@ -66,10 +69,13 @@ import type * as http from "../http.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as logs from "../logs.js";
 import type * as mcp from "../mcp.js";
+import type * as model_access from "../model/access.js";
+import type * as model_accountDoc from "../model/accountDoc.js";
 import type * as model_accountHooks from "../model/accountHooks.js";
 import type * as model_accountKeys from "../model/accountKeys.js";
 import type * as model_accountSecrets from "../model/accountSecrets.js";
 import type * as model_activeAccount from "../model/activeAccount.js";
+import type * as model_actor from "../model/actor.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRules from "../model/agentRules.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
@@ -98,6 +104,7 @@ import type * as model_connectionSignIn from "../model/connectionSignIn.js";
 import type * as model_connections from "../model/connections.js";
 import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_cronSchedules from "../model/cronSchedules.js";
+import type * as model_defaultStage from "../model/defaultStage.js";
 import type * as model_envRefs from "../model/envRefs.js";
 import type * as model_envelope from "../model/envelope.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
@@ -111,6 +118,7 @@ import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_ownership_stage from "../model/ownership/stage.js";
 import type * as model_planLimits from "../model/planLimits.js";
+import type * as model_policyDocument from "../model/policyDocument.js";
 import type * as model_policyReferences from "../model/policyReferences.js";
 import type * as model_policyRules from "../model/policyRules.js";
 import type * as model_pricing from "../model/pricing.js";
@@ -126,6 +134,7 @@ import type * as model_sandboxDisplayConfig from "../model/sandboxDisplayConfig.
 import type * as model_sandboxProviders from "../model/sandboxProviders.js";
 import type * as model_sandboxRules from "../model/sandboxRules.js";
 import type * as model_secretNames from "../model/secretNames.js";
+import type * as model_selfHostAuth from "../model/selfHostAuth.js";
 import type * as model_serviceBridge from "../model/serviceBridge.js";
 import type * as model_skillRules from "../model/skillRules.js";
 import type * as model_skills from "../model/skills.js";
@@ -168,6 +177,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  access: typeof access;
   "account/accounts": typeof account_accounts;
   "account/budget": typeof account_budget;
   "account/connections": typeof account_connections;
@@ -184,6 +194,7 @@ declare const fullApi: ApiFromModules<{
   "agent/cronsPublic": typeof agent_cronsPublic;
   "agent/deployments": typeof agent_deployments;
   "agent/policies": typeof agent_policies;
+  apiKeys: typeof apiKeys;
   "audit/ledger": typeof audit_ledger;
   "audit/sinks": typeof audit_sinks;
   auth: typeof auth;
@@ -193,6 +204,7 @@ declare const fullApi: ApiFromModules<{
   "aws/workspaceFiles": typeof aws_workspaceFiles;
   canvas: typeof canvas;
   "channel/connections": typeof channel_connections;
+  "channel/endpointReconcile": typeof channel_endpointReconcile;
   "channel/records": typeof channel_records;
   "cli/auth": typeof cli_auth;
   "cli/http": typeof cli_http;
@@ -226,10 +238,13 @@ declare const fullApi: ApiFromModules<{
   "lib/slug": typeof lib_slug;
   logs: typeof logs;
   mcp: typeof mcp;
+  "model/access": typeof model_access;
+  "model/accountDoc": typeof model_accountDoc;
   "model/accountHooks": typeof model_accountHooks;
   "model/accountKeys": typeof model_accountKeys;
   "model/accountSecrets": typeof model_accountSecrets;
   "model/activeAccount": typeof model_activeAccount;
+  "model/actor": typeof model_actor;
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRules": typeof model_agentRules;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
@@ -258,6 +273,7 @@ declare const fullApi: ApiFromModules<{
   "model/connections": typeof model_connections;
   "model/cronRules": typeof model_cronRules;
   "model/cronSchedules": typeof model_cronSchedules;
+  "model/defaultStage": typeof model_defaultStage;
   "model/envRefs": typeof model_envRefs;
   "model/envelope": typeof model_envelope;
   "model/environmentValues": typeof model_environmentValues;
@@ -271,6 +287,7 @@ declare const fullApi: ApiFromModules<{
   "model/ownership/project": typeof model_ownership_project;
   "model/ownership/stage": typeof model_ownership_stage;
   "model/planLimits": typeof model_planLimits;
+  "model/policyDocument": typeof model_policyDocument;
   "model/policyReferences": typeof model_policyReferences;
   "model/policyRules": typeof model_policyRules;
   "model/pricing": typeof model_pricing;
@@ -286,6 +303,7 @@ declare const fullApi: ApiFromModules<{
   "model/sandboxProviders": typeof model_sandboxProviders;
   "model/sandboxRules": typeof model_sandboxRules;
   "model/secretNames": typeof model_secretNames;
+  "model/selfHostAuth": typeof model_selfHostAuth;
   "model/serviceBridge": typeof model_serviceBridge;
   "model/skillRules": typeof model_skillRules;
   "model/skills": typeof model_skills;

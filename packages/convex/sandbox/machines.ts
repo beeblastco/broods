@@ -13,7 +13,8 @@ import {
   query,
   type MutationCtx,
 } from "../_generated/server";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getProjectStage } from "../model/ownership/stage";
+import { getActiveCaller } from "../org/orgs";
 import { machineConnectionsFields } from "../schema";
 
 const connectionRef = {
@@ -41,6 +42,7 @@ export const connected = internalMutation({
     platform: machineConnectionsFields.platform,
     computer: machineConnectionsFields.computer,
     mcp: machineConnectionsFields.mcp,
+    specs: machineConnectionsFields.specs,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -49,6 +51,9 @@ export const connected = internalMutation({
     const now = Date.now();
     const row = {
       ...args,
+      // The client drops an undefined arg, so a daemon that sent no size must
+      // still unset the size an earlier connection left.
+      specs: args.specs,
       projectId: config.projectId,
       stageId: config.stageId,
       connectedAt: now,
@@ -81,19 +86,28 @@ export const disconnected = internalMutation({
 export const listForActiveOrg = query({
   args: {
     projectId: v.id("projects"),
-    stageId: v.id("stages"),
+    // Absent reads the project's default stage, as canvas.getByProject does.
+    stageId: v.optional(v.id("stages")),
   },
   returns: v.array(namedConnection),
   handler: async (ctx, args): Promise<NamedConnection[]> => {
-    const account = await getActiveAccountForUser(ctx);
-    if (!account) return [];
+    const caller = await getActiveCaller(ctx);
+    if (!caller) return [];
+    const { account, user } = caller;
+    const stage = await getProjectStage(
+      ctx,
+      user.authId,
+      args.projectId,
+      args.stageId,
+    );
+    if (!stage) return [];
     const rows = await ctx.db
       .query("machineConnections")
       .withIndex("by_accountId_projectId_and_stageId", (q) =>
         q
           .eq("accountId", account._id)
           .eq("projectId", args.projectId)
-          .eq("stageId", args.stageId),
+          .eq("stageId", stage._id),
       )
       .take(100);
     const named = await Promise.all(

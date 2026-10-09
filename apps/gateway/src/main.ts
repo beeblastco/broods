@@ -388,12 +388,24 @@ if (import.meta.main) {
   });
 
   // A rollout sends SIGTERM: stop listening, then close every socket with
-  // 1012 (service restart) so clients reconnect to another pod.
-  process.once("SIGTERM", (): void => {
-    const stopped = server.stop();
+  // 1012 (service restart) so clients reconnect to another pod. A stray
+  // rejection or throw does the same and exits non-zero, rather than dropping
+  // every socket without a close frame.
+  let stopping = false;
+  const shutdown = (exitCode: number): void => {
+    if (stopping) return;
+    stopping = true;
+    // Exit is chained before the close, so a throw from it cannot strand us.
+    void server.stop().finally((): never => process.exit(exitCode));
     gateway.closeSockets(1012, "gateway restarting");
-    void stopped.finally((): never => process.exit(0));
-  });
+  };
+  process.once("SIGTERM", (): void => shutdown(0));
+  for (const event of ["unhandledRejection", "uncaughtException"] as const) {
+    process.on(event, (error: unknown): void => {
+      console.error(`gateway ${event}:`, error);
+      shutdown(1);
+    });
+  }
 
   process.stdout.write(
     `gateway listening on ${server.hostname}:${server.port}\n`,

@@ -8,6 +8,19 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+// The params a deep link may hand the canvas (`node`) or the project dashboard.
+const VIEW_PARAMS = [
+  "tab",
+  "trace",
+  "q",
+  "range",
+  "from",
+  "to",
+  "models",
+  "bin",
+  "node",
+] as const;
+
 export default function HomePage(): React.JSX.Element {
   const router = useRouter();
   const openHome = useMutation(api.project.openHome);
@@ -57,15 +70,18 @@ export default function HomePage(): React.JSX.Element {
           return;
         }
 
+        // Only the view params the canvas and project dashboard read carry
+        // over, so nothing else in the link lands in the project URL; the page
+        // parses each one and drops what it rejects.
         const next = new URLSearchParams();
+        for (const key of VIEW_PARAMS) {
+          const value = params.get(key);
+          if (value !== null) next.set(key, value);
+        }
         if (home.stageId) next.set("stage", home.stageId);
-        const tab = params.get("tab");
-        const trace = params.get("trace");
-        if (tab) next.set("tab", tab);
-        if (trace) next.set("trace", trace);
         const query = next.toString();
         router.replace(
-          `/${home.projectId}${tab ? "/dashboard" : ""}${query ? `?${query}` : ""}`,
+          `/${home.projectId}${next.has("tab") ? "/dashboard" : ""}${query ? `?${query}` : ""}`,
         );
       } catch (err) {
         console.error("Failed to open workspace:", err);

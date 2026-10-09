@@ -1,6 +1,6 @@
 "use client";
 
-import { CanvasNotice } from "@/app/components/canvas/CanvasNotice";
+import { CanvasNotice, CanvasPill } from "@/app/components/canvas/CanvasNotice";
 import { useEffect, useState } from "react";
 
 // How long "Saved" stays up before the pill clears. Without it the pill was
@@ -61,12 +61,8 @@ export function CanvasSaveStatus({
   }
 
   return (
-    <div
-      aria-live="polite"
-      data-slot="canvas-save-pill"
-      className="pointer-events-auto rounded-lg border border-border bg-card/80 px-2 py-1 text-xs text-muted-foreground backdrop-blur-md"
-    >
+    <CanvasPill slot="canvas-save-pill">
       {state === "saving" ? "Saving…" : "Saved"}
-    </div>
+    </CanvasPill>
   );
 }

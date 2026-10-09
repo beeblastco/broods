@@ -1,6 +1,15 @@
 # Sandbox providers
 
-Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here. The `machine` provider has its own page, [Your computer](machine.md), and `custom`, a server you run on the sandbox HTTP contract, is on [Your own server](custom.md).
+Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here.
+
+| Provider                   | Runs on                      | Section                                                   |
+| -------------------------- | ---------------------------- | --------------------------------------------------------- |
+| `sandbox`                  | Broods-hosted Firecracker VM | [`sandbox`](#sandbox)                                     |
+| `lambda`                   | AWS Lambda MicroVM           | [`lambda`](#lambda)                                       |
+| `daytona`, `e2b`, `vercel` | A vendor account you bring   | [`daytona`](#daytona), [`e2b`](#e2b), [`vercel`](#vercel) |
+| `cloudflare`               | Cloudflare Container         | [`cloudflare`](#cloudflare)                               |
+| `machine`                  | Your own computer            | [Your computer](machine.md)                               |
+| `custom`                   | Your server over HTTP        | [Your own server](custom.md)                              |
 
 ## `sandbox`
 
@@ -73,6 +82,7 @@ export const box = defineSandbox({
 - The Snapshot action captures a reserved sandbox's filesystem as a new Daytona snapshot, see [Images](index.md#images).
 - `network.mode` maps to Daytona's `networkBlockAll`. `restricted` applies the CIDR allowlist only; domain lists are ignored with a warning.
 - Idle and lifetime map to Daytona's `autoStopInterval` and `autoDeleteInterval`.
+- `size` does nothing here. The dashboard shows the vCPU, memory and disk Daytona reports for the sandbox.
 - TypeScript files are not transpiled. Run compiled JavaScript, and call `python3` explicitly.
 - `options.s3Endpoint` must be a public `https` URL.
 
@@ -97,6 +107,7 @@ export const box = defineSandbox({
 - `network.mode` must be `allow-all`, set explicitly. E2B cannot enforce egress limits, so `deny-all`, the default, and `restricted` are rejected.
 - Workspaces are not supported. Attaching one fails.
 - `onCreate` and `onResume` are rejected. Put setup in the template.
+- The template sets the machine size, and `size` does nothing. The dashboard shows the vCPU and memory E2B reports, and `?` for disk, which E2B does not report.
 - Set your E2B key in `options.apiKey`. A self-hosted deployment can set a fallback for every account, see [Self-hosting](../../internals/self-hosting.md).
 - `snapshot` names the E2B template or snapshot to boot. The Snapshot action captures a reserved sandbox as an E2B snapshot, pausing it while it captures.
 - Persistent mode pauses on idle and keeps files, installs and processes.
@@ -132,12 +143,45 @@ export const box = defineSandbox({
 
 - The Snapshot action captures a reserved sandbox as a Vercel snapshot that does not expire. Vercel stops the sandbox to capture it, and its next call resumes it.
 - All three network modes are enforced natively.
+- `size` does nothing here. The dashboard shows the vCPU and memory once Vercel reports them, and `?` for disk, which Vercel does not report.
 - Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.
 - `onResume` fires only when a stopped sandbox resumes. The idle timeout counts from start, and `maxLifetimeSeconds` is not enforced.
 
 | Symptom                                                | Fix                                                                                                        |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `Vercel Sandbox rejected the request (HTTP 403 / 401)` | The token is invalid, expired, or cannot reach the team and project. Check it at vercel.com/account/tokens |
+
+## `cloudflare`
+
+Runs `bash` in a [Cloudflare Container](https://developers.cloudflare.com/sandbox/) with `bash`, `python3`, Node 24, `git` and `ripgrep`. Use it for compute without a workspace.
+
+```ts
+export const box = defineSandbox({
+  name: "cloudflare",
+  provider: "cloudflare",
+  persistent: true,
+  size: "small",
+  network: { mode: "allow-all" },
+  permissionMode: "ask",
+  lifecycle: { idleTimeoutSeconds: 600 },
+});
+```
+
+| Field                          | Behavior                                                                                                   |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `persistent`                   | `true` keeps one Container per agent while it is warm. `false` uses a new one per call                     |
+| `lifecycle.idleTimeoutSeconds` | How long a warm Container waits for the next command before it sleeps. Default 15 minutes, at most 6 hours |
+| `network.mode`                 | `allow-all` turns internet on, `deny-all` turns it off, `restricted` is rejected                           |
+| `size`                         | The nearest Cloudflare instance type, from `standard-1` for `tiny` to `standard-4` for `large`             |
+| `options`                      | Only `workspaceRoot` and `reservationKey`                                                                  |
+
+- A Container that sleeps loses its files. Persistence keeps installs and files only while it stays warm, so keep setup in a step the agent can rerun.
+- Changing `network.mode` or `size` replaces a warm Container.
+- Workspaces are not supported. Attaching one fails.
+- `onCreate`, `onResume`, `snapshot` and `lifecycle.maxLifetimeSeconds` are rejected. Background jobs, suspend, resume and the Snapshot action are not available.
+- `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
+- The dashboard runs commands through its bounded runner. The API's `terminal` action opens a PTY only on a running Container, so run a command first to wake it.
+- The provider needs the deployment's Cloudflare bridge. Without it every run fails with an error saying the bridge is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).
 
 ## Environment variables in every provider
 

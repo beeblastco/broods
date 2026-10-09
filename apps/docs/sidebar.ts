@@ -26,16 +26,6 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guides/tools", label: "Tools and MCP" },
         { type: "doc", id: "guides/connections", label: "Connections" },
         {
-          type: "doc",
-          id: "guides/cloudflare-mcp",
-          label: "Cloudflare MCP runtime",
-        },
-        {
-          type: "doc",
-          id: "guides/cloudflare-browser",
-          label: "Cloudflare Browser Run",
-        },
-        {
           type: "category",
           label: "Sandboxes",
           link: { type: "doc", id: "guides/sandboxes/index" },
@@ -52,8 +42,8 @@ const sidebars: SidebarsConfig = {
             },
             {
               type: "doc",
-              id: "guides/sandboxes/cloudflare",
-              label: "Cloudflare Containers",
+              id: "guides/sandboxes/browsing",
+              label: "Web browsing",
             },
             {
               type: "doc",
@@ -114,6 +104,7 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guides/hooks", label: "Hooks" },
         { type: "doc", id: "guides/webhooks", label: "Webhooks" },
         { type: "doc", id: "guides/observability", label: "Logs and traces" },
+        { type: "doc", id: "guides/dashboard-links", label: "Dashboard links" },
       ],
     },
     {

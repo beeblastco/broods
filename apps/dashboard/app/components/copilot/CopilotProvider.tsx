@@ -64,7 +64,7 @@ export function CopilotProvider({
   const router = useRouter();
   const registry = useShortcutRegistry();
 
-  const items = useDashboardIndex(projectId, stageId);
+  const items = useDashboardIndex(projectId);
   const crons = useQuery(
     api.agent.crons.listForProject,
     projectId ? { projectId: projectId } : "skip",

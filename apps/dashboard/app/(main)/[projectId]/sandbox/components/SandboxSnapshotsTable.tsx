@@ -5,99 +5,186 @@
  * image pipeline.
  */
 
-import { useNow } from "@/app/hooks/useNow";
-import type { Doc } from "@broods/convex/_generated/dataModel";
-import { useState } from "react";
-import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
 import {
-  formatProvider,
-  relativeTime,
-  snapshotStatusDot,
-} from "./sandboxFormat";
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableFooter,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@/app/components/DataTable";
+import { EmptyState } from "@/app/components/EmptyState";
+import { SearchInput } from "@/app/components/SearchInput";
+import { StatusWord } from "@/app/components/StatusDot";
+import { Toolbar } from "@/app/components/Toolbar";
+import { useListState } from "@/app/hooks/useListState";
+import { useNow } from "@/app/hooks/useNow";
+import type { SortKey } from "@/app/lib/tableState";
+import { parseAsId } from "@/app/lib/urlState";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { useQueryState } from "nuqs";
+import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
+import { formatProvider, relativeTime, SNAPSHOT_TONE } from "./sandboxFormat";
+
+// The `field:value` tokens the search box understands.
+const QUERY_FIELDS = ["provider", "status"] as const;
+
+// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
+const SNAPSHOT_ID = parseAsId<"sandboxSnapshots">();
+
+type Snapshot = Doc<"sandboxSnapshots">;
+type Field = (typeof QUERY_FIELDS)[number];
+type Column =
+  | "name"
+  | "status"
+  | "provider"
+  | "baseImage"
+  | "pulled"
+  | "created"
+  | "lastUsed";
+
+// What a column sorts a snapshot by.
+const SORT_KEY: Record<Column, (snapshot: Snapshot) => SortKey> = {
+  name: (snapshot) => snapshot.name,
+  status: (snapshot) => snapshot.status,
+  provider: (snapshot) => formatProvider(snapshot.provider),
+  baseImage: (snapshot) => snapshot.baseImage,
+  pulled: (snapshot) => snapshot.pulledCount,
+  created: (snapshot) => snapshot.createdAt,
+  lastUsed: (snapshot) => snapshot.lastUsedAt ?? null,
+};
 
 interface Props {
-  snapshots: Array<Doc<"sandboxSnapshots">>;
+  projectId: Id<"projects">;
+  snapshots: Snapshot[];
 }
 
-export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
+export function SandboxSnapshotsTable({
+  projectId,
+  snapshots,
+}: Props): React.JSX.Element {
   const now = useNow();
-  const [selected, setSelected] = useState<Doc<"sandboxSnapshots"> | null>(
-    null,
-  );
+  const [selectedId, setSelectedId] = useQueryState("sel", SNAPSHOT_ID);
+  const selected =
+    snapshots.find((snapshot) => snapshot._id === selectedId) ?? null;
+  const list = useListState({
+    rows: snapshots,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "created", dir: "desc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
+    remember: `snapshots:${projectId}`,
+  });
 
   if (snapshots.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
-        <p className="text-sm text-foreground">No snapshots yet.</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Capture one from a running instance&apos;s detail panel, or publish a
-          curated image.
-        </p>
-      </div>
+      <EmptyState
+        title="No snapshots yet."
+        detail="Capture one from a running instance's detail panel, or publish a curated image."
+      />
     );
   }
 
   return (
-    <>
-      <div className="overflow-x-auto rounded-lg border border-border bg-card">
-        <table className="w-full min-w-190 text-sm">
-          <thead className="bg-muted/40 text-xs text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <Toolbar className="border-b-0 px-0">
+        <SearchInput
+          value={list.query}
+          onChange={list.setQuery}
+          fields={QUERY_FIELDS}
+          placeholder="Search snapshots"
+        />
+      </Toolbar>
+      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-card">
+        <DataTable>
+          <DataTableHeader>
             <tr>
-              <th className="px-4 py-2 text-left font-medium">Name</th>
-              <th className="px-4 py-2 text-left font-medium">Provider</th>
-              <th className="px-4 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-left font-medium">Base image</th>
-              <th className="px-4 py-2 text-right font-medium">Pulled</th>
-              <th className="px-4 py-2 text-left font-medium">Created</th>
-              <th className="px-4 py-2 text-left font-medium">Last used</th>
+              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={list.sortFor("status")}>
+                Status
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("provider")}>
+                Provider
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("baseImage")}>
+                Base image
+              </DataTableHead>
+              <DataTableHead align="right" sort={list.sortFor("pulled")}>
+                Pulled
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("created")}>
+                Created
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("lastUsed")}>
+                Last used
+              </DataTableHead>
             </tr>
-          </thead>
-          <tbody>
-            {snapshots.map((snapshot) => (
-              <tr
+          </DataTableHeader>
+          <DataTableBody>
+            {list.shown.map((snapshot) => (
+              <DataTableRow
                 key={snapshot._id}
-                className="cursor-pointer border-t border-border hover:bg-muted/30"
-                onClick={() => setSelected(snapshot)}
+                selected={selectedId === snapshot._id}
+                onClick={() => void setSelectedId(snapshot._id)}
               >
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-foreground">
-                    {snapshot.name}
-                  </div>
-                  <div className="font-mono text-xs text-muted-foreground">
-                    {snapshot.externalImageId}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-xs">
+                <DataTableCell className="max-w-64 truncate font-medium">
+                  {snapshot.name}
+                </DataTableCell>
+                <DataTableCell>
+                  <StatusWord tone={SNAPSHOT_TONE[snapshot.status]}>
+                    {snapshot.status.replace("_", " ")}
+                  </StatusWord>
+                </DataTableCell>
+                <DataTableCell muted>
                   {formatProvider(snapshot.provider)}
-                </td>
-                <td className="px-4 py-2.5">
-                  {snapshotStatusDot(snapshot.status)}
-                </td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {snapshot.baseImage}
-                </td>
-                <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+                </DataTableCell>
+                <DataTableCell muted>{snapshot.baseImage}</DataTableCell>
+                <DataTableCell align="right" muted>
                   {snapshot.pulledCount}
-                </td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                </DataTableCell>
+                <DataTableCell muted>
                   {relativeTime(snapshot.createdAt, now)}
-                </td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                </DataTableCell>
+                <DataTableCell muted>
                   {relativeTime(snapshot.lastUsedAt, now)}
-                </td>
-              </tr>
+                </DataTableCell>
+              </DataTableRow>
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
+        {list.shown.length === 0 && (
+          <EmptyState title="No snapshots match the current filters." />
+        )}
+        <DataTableFooter
+          shown={list.shown.length}
+          total={snapshots.length}
+          noun={["snapshot", "snapshots"]}
+        />
       </div>
 
       {selected && (
         <SandboxSnapshotSheet
           snapshot={selected}
           now={now}
-          onClose={() => setSelected(null)}
+          onClose={() => void setSelectedId(null)}
         />
       )}
-    </>
+    </div>
   );
+}
+
+function matchesField(
+  snapshot: Snapshot,
+  field: Field,
+  value: string,
+): boolean {
+  return field === "provider"
+    ? formatProvider(snapshot.provider).toLowerCase().startsWith(value)
+    : snapshot.status.startsWith(value);
+}
+
+function searchText(snapshot: Snapshot): string {
+  return `${snapshot.name} ${snapshot.externalImageId} ${snapshot.baseImage}`;
 }

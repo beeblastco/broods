@@ -8,7 +8,7 @@
  * `crons.ts`, which is the Convex platform cron registry.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -21,6 +21,7 @@ import {
   type QueryCtx,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { actorsOf, actorValidator } from "../model/actor";
 import { accountIdForProject } from "../model/auditEvents";
 import {
   normalizeCreateCronInput,
@@ -33,7 +34,11 @@ import {
   unregisterSchedule,
 } from "../model/cronSchedules";
 import { getProjectForRole } from "../model/ownership/project";
-import { cronsInProject } from "../model/projectScope";
+import {
+  agentInProject,
+  cronsInProject,
+  resourceStageScope,
+} from "../model/projectScope";
 import { toCronResponse } from "../model/responses";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
@@ -41,6 +46,8 @@ import { ClientError } from "../model/clientError";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CRON_RUN_PAGE_WINDOW = 1000;
+// Runs the scheduler's detail panel lists for one job.
+const DASHBOARD_RUN_LIMIT = 20;
 const PRUNE_BATCH_SIZE = 100;
 
 const cronDoc = v.object({
@@ -49,8 +56,13 @@ const cronDoc = v.object({
   _creationTime: v.number(),
 });
 
-// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it.
-const projectCronDoc = cronDoc.omit("lastRunId");
+// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it, and
+// the creator comes resolved so the list can draw a name and an avatar.
+const projectCronDoc = v.object({
+  ...cronDoc.omit("lastRunId").fields,
+  creator: v.optional(actorValidator),
+});
+type ProjectCron = Infer<typeof projectCronDoc>;
 
 const cronRunDoc = v.object({
   ...cronRunsFields,
@@ -82,7 +94,11 @@ export const completeRun = internalMutation({
  * @returns the public cron record
  */
 export const create = internalMutation({
-  args: { accountId: v.id("accounts"), input: v.record(v.string(), v.any()) },
+  args: {
+    accountId: v.id("accounts"),
+    input: v.record(v.string(), v.any()),
+    createdBy: v.optional(v.id("users")),
+  },
   returns: v.any(),
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     const normalized = normalizeCreateCronInput(args.input);
@@ -99,6 +115,7 @@ export const create = internalMutation({
       scheduleExpression: normalized.scheduleExpression,
       timezone: normalized.timezone,
       status: normalized.status ?? "active",
+      createdBy: args.createdBy,
       createdAt: now,
       updatedAt: now,
     });
@@ -297,7 +314,7 @@ export const listPage = internalQuery({
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.array(projectCronDoc),
-  handler: async (ctx, args): Promise<Omit<Doc<"crons">, "lastRunId">[]> => {
+  handler: async (ctx, args): Promise<ProjectCron[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -311,8 +328,50 @@ export const listForProject = query({
     if (!accountId) return [];
 
     const crons = await cronsInProject(ctx, args.projectId, accountId);
+    const creators = await actorsOf(
+      ctx,
+      crons.map((cron) => cron.createdBy),
+    );
 
-    return crons.map(({ lastRunId: _lastRunId, ...cron }) => cron);
+    return crons.map(({ lastRunId: _lastRunId, ...cron }) => ({
+      ...cron,
+      creator: cron.createdBy ? creators.get(cron.createdBy) : undefined,
+    }));
+  },
+});
+
+/**
+ * The newest runs of one cron job for the dashboard's scheduler panel, without
+ * the model result each row carries. A cron outside the project, or a project
+ * the viewer has no role in, reads as no runs.
+ * @param projectId the project the cron's agent belongs to
+ * @param cronId the cron job
+ */
+export const listRunsForProject = query({
+  args: { projectId: v.id("projects"), cronId: v.id("crons") },
+  returns: v.array(cronRunDoc.omit("result")),
+  handler: async (ctx, args): Promise<Omit<Doc<"cronRuns">, "result">[]> => {
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+    const project = await getProjectForRole(ctx, user.id, args.projectId);
+    if (!project) return [];
+    const accountId = await accountIdForProject(ctx, args.projectId);
+    if (!accountId) return [];
+    const cron = await getOwned(ctx, accountId, args.cronId);
+    if (!cron) return [];
+    if (!(await agentInProject(ctx, cron.agentId, args.projectId))) return [];
+
+    const runs = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+        q.eq("accountId", accountId).eq("cronId", cron._id),
+      )
+      .order("desc")
+      .take(DASHBOARD_RUN_LIMIT);
+
+    return runs.map(({ result: _result, ...run }) => run);
   },
 });
 
@@ -492,6 +551,8 @@ export const update = internalMutation({
     accountId: v.id("accounts"),
     cronId: v.string(),
     patch: v.record(v.string(), v.any()),
+    /** A stage-pinned role's stage: a new agentId must sit on it too. */
+    pin: v.optional(v.object({ projectId: v.string(), stageId: v.string() })),
   },
   returns: v.any(),
   handler: async (ctx, args): Promise<Record<string, unknown> | null> => {
@@ -500,6 +561,23 @@ export const update = internalMutation({
     const patch = normalizeUpdateCronInput(args.patch);
     if (patch.agentId !== undefined) {
       await getOwnedAgent(ctx, args.accountId, patch.agentId);
+      const scope =
+        args.pin &&
+        (await resourceStageScope(
+          ctx,
+          args.accountId,
+          "agents",
+          patch.agentId,
+        ));
+      if (
+        args.pin &&
+        (scope?.projectId !== args.pin.projectId ||
+          scope.stageId !== args.pin.stageId)
+      ) {
+        throw new ClientError(
+          "Cron job agentId must reference an agent on the role's stage",
+        );
+      }
     }
 
     const defined = Object.fromEntries(

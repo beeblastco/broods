@@ -81,9 +81,13 @@ export interface MachineSocketData {
   /** Unset for a bearer with no account. */
   accountId?: string;
   claimed?: boolean;
+  /** Set once the socket closes, so a claim still awaiting its lookup drops it. */
+  closed?: boolean;
   key?: string;
   /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
+  /** Set for a stage ticket or a stage-pinned role, which claim only their own stage's records. */
+  stage?: { projectId: string; stageId: string };
 }
 
 interface PendingReply {
@@ -186,6 +190,7 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
       });
     },
     close: function (socket): void {
+      socket.data.closed = true;
       const key = socket.data.key;
       const connection = key ? connections.get(key) : undefined;
       // A replaced socket must not tear down its successor's registration.
@@ -297,19 +302,35 @@ export async function upgradeMachineSocket(
   const auth = await resolveBearerAuth({
     authorization: request.headers.get("authorization") ?? "",
   });
-  // The embeddable runtime key is refused: it sits in frontends, and a claim
-  // receives every exec frame, env secrets included, for the sandbox.
-  const allowed =
-    auth?.kind === "account" ||
-    auth?.kind === "role" ||
-    (auth?.kind === "deployment" && auth.stageTicket === true);
-  const data: MachineSocketData =
-    auth && allowed
-      ? {
-          accountId: auth.account.accountId,
-          ...(auth.kind === "role" ? { role: auth.role } : {}),
-        }
-      : {};
+  // A claim receives every exec frame, env secrets included, for the sandbox.
+  // So the embeddable runtime key is refused (it sits in frontends), and so
+  // is a stage ticket any org member can mint in the dashboard: only one
+  // minted for a member who may write the stage's sandboxes gets through.
+  let data: MachineSocketData = {};
+  if (auth?.kind === "account") {
+    data = { accountId: auth.account.accountId };
+  } else if (auth?.kind === "role") {
+    const { projectId, stageId } = auth.role;
+    data = {
+      accountId: auth.account.accountId,
+      role: auth.role,
+      // A stage-pinned role claims like a ticket for its stage.
+      ...(projectId && stageId
+        ? { stage: { projectId: projectId, stageId: stageId } }
+        : {}),
+    };
+  } else if (
+    auth?.kind === "deployment" &&
+    auth.stageTicket?.sandboxWrite === true
+  ) {
+    data = {
+      accountId: auth.account.accountId,
+      stage: {
+        projectId: auth.stageTicket.projectId,
+        stageId: auth.stageTicket.stageId,
+      },
+    };
+  }
 
   return server.upgrade(request, { data: data })
     ? undefined
@@ -321,11 +342,27 @@ async function claimSandbox(
   accountId: string,
   hello: MachineHelloFrame,
 ): Promise<void> {
-  const records = await getStorage().sandboxConfigs.list(accountId);
-  const record = records.find(
+  const stage = socket.data.stage;
+  const named = (await getStorage().sandboxConfigs.list(accountId)).filter(
     (entry) =>
       entry.name === hello.sandbox && entry.config.provider === "machine",
   );
+  // A socket that closed during the lookup already ran its close handler, so
+  // registering it now would leave a dead holder that refuses the next daemon.
+  if (socket.data.closed) return;
+  // A stage ticket reaches its own stage's record, else an account-level one
+  // of that name, never another stage's: a ticket for development must not
+  // take over the production machine that shares its name.
+  const record = stage
+    ? (named.find(
+        (entry) =>
+          entry.projectId === stage.projectId &&
+          entry.stageId === stage.stageId,
+      ) ??
+      named.find(
+        (entry) => entry.projectId === undefined && entry.stageId === undefined,
+      ))
+    : named[0];
   // Claiming a machine is a write on that sandbox, so a role session needs
   // sandboxes:write for it. The name only arrives in the hello, hence here.
   const denied =
@@ -334,6 +371,8 @@ async function claimSandbox(
     !authorize(rolePrincipal(socket.data.role), "sandboxes:write", {
       type: "sandboxes",
       id: record.sandboxId,
+      projectId: record.projectId,
+      stageId: record.stageId,
     }).allow;
   if (denied) {
     logWarn("Machine sandbox claim refused", {
@@ -410,6 +449,7 @@ async function claimSandbox(
       hostname: hello.hostname,
       mcp: hello.mcp ?? [],
       platform: hello.platform,
+      specs: hello.specs,
     }),
   );
   heartbeat ??= setInterval(sendHeartbeats, HEARTBEAT_MS);

@@ -18,6 +18,7 @@ import {
   requireEnv,
   requireSecretsEnv,
 } from "./shared/env.ts";
+import { toErrorMessage } from "./shared/errors.ts";
 import { drainInFlight, waitUntil } from "./shared/in-flight.ts";
 import {
   resolveRequestId,
@@ -228,7 +229,7 @@ if (import.meta.main) {
   logInfo("Core server listening", { port: server.port });
 
   let shuttingDown = false;
-  const shutdown = async (signal: string): Promise<void> => {
+  const shutdown = async (signal: string, exitCode = 0): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     logInfo("Core server shutting down", { signal: signal });
@@ -270,9 +271,21 @@ if (import.meta.main) {
       });
     }
     await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
-    process.exit(0);
+    process.exit(exitCode);
   };
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+  // Left alone, a stray rejection or throw kills the process mid-run and every
+  // live conversation stays locked until its lease runs out. Drain as a rollout
+  // does instead, then exit non-zero so the pod restarts.
+  for (const event of ["unhandledRejection", "uncaughtException"] as const) {
+    process.on(event, (error: unknown): void => {
+      logError("Core server crashed", {
+        event: event,
+        error: toErrorMessage(error),
+      });
+      void shutdown(event, 1);
+    });
+  }
 }

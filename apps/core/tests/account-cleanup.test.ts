@@ -97,8 +97,10 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
 // agent/crons.remove is the mutation that drops the registered schedule and
 // the row in one transaction; assert it is registered at the expected path.
 it("registers agent/crons.remove as an internal mutation", () => {
-  // agent/crons reaches ../auth, which constructs AuthKit and validates these
-  // at import time. Dummy values only, nothing here authenticates.
+  // agent/crons reaches ../auth, which picks the sign-in provider and
+  // constructs AuthKit at import time. Dummy values only, nothing here
+  // authenticates.
+  process.env.BROODS_AUTH_PROVIDER ||= "workos";
   process.env.WORKOS_CLIENT_ID ||= "client_test";
   process.env.WORKOS_API_KEY ||= "sk_test";
   process.env.WORKOS_WEBHOOK_SECRET ||= "whsec_test";

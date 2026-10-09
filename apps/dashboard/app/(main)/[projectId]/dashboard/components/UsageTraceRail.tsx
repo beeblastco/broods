@@ -2,6 +2,7 @@
 
 import { Input } from "@/app/components/ui/input";
 import { formatNumber } from "@/app/lib/formatNumber";
+import { tabHref } from "@/app/lib/navigation";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
@@ -71,13 +72,9 @@ export function UsageTraceRail({
           (t.inputPreview ?? "").toLowerCase().includes(needle),
       )
     : traced;
-  const traceHref = (traceId: string): string => {
-    const next = new URLSearchParams(searchParams.toString());
-    next.set("tab", "tracing");
-    next.set("trace", traceId);
-
-    return `${pathname}?${next.toString()}`;
-  };
+  // Only the stage and the trace travel; the usage range and bin stay here.
+  const traceHref = (traceId: string): string =>
+    tabHref(pathname, "tracing", searchParams.toString(), { trace: traceId });
 
   return (
     <Rail>
@@ -161,7 +158,7 @@ export function UsageTraceRail({
 /** The rail's frame: the chart's height beside it, up to that height when stacked. */
 function Rail({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="max-h-75 overflow-y-auto overscroll-contain border-t border-border lg:h-75 lg:border-t-0 lg:border-l">
+    <div className="max-h-112.5 overflow-y-auto overscroll-contain border-t border-border lg:h-112.5 lg:border-t-0 lg:border-l">
       {children}
     </div>
   );

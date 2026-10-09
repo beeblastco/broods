@@ -8,13 +8,7 @@ import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { deleteAccountContentsBatch } from "../model/cascade";
-import { accountsFields } from "../schema";
-
-export const accountDoc = v.object({
-  ...accountsFields,
-  _id: v.id("accounts"),
-  _creationTime: v.number(),
-});
+import { accountDoc } from "../model/accountDoc";
 
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
@@ -27,6 +21,8 @@ export const create = internalMutation({
     username: v.string(),
     description: v.optional(v.string()),
     secretHash: v.string(),
+    secretHint: v.optional(v.string()),
+    secretRotatedBy: v.optional(v.id("users")),
     status: v.optional(statusValidator),
   },
   returns: accountDoc,
@@ -45,6 +41,9 @@ export const create = internalMutation({
       username: args.username,
       description: args.description,
       secretHash: args.secretHash,
+      secretHint: args.secretHint,
+      secretRotatedAt: args.secretHint ? now : undefined,
+      secretRotatedBy: args.secretRotatedBy,
       status: args.status ?? "active",
       createdAt: now,
       updatedAt: now,
@@ -142,6 +141,8 @@ export const update = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     status: v.optional(statusValidator),
     secretHash: v.optional(v.string()),
+    secretHint: v.optional(v.string()),
+    secretRotatedBy: v.optional(v.id("users")),
     auditRetentionDays: v.optional(v.union(v.number(), v.null())),
   },
   returns: v.union(accountDoc, v.null()),
@@ -156,6 +157,11 @@ export const update = internalMutation({
       ...(patch.username !== undefined && { username: patch.username }),
       ...(patch.description !== undefined && {
         description: patch.description ?? undefined,
+      }),
+      ...(patch.secretHint !== undefined && {
+        secretHint: patch.secretHint,
+        secretRotatedAt: Date.now(),
+        secretRotatedBy: patch.secretRotatedBy,
       }),
       ...(patch.auditRetentionDays !== undefined && {
         auditRetentionDays: patch.auditRetentionDays ?? undefined,

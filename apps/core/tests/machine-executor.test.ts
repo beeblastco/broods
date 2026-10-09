@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
 import type { ToolExecuteFunction } from "ai";
 import {
   callMcpTool,
@@ -22,6 +23,7 @@ import {
   parseDaemonFrame,
   type MachineComputerFrame,
   type MachineExecFrame,
+  type MachineHelloFrame,
   type MachineMcpCallFrame,
   type MachineMcpListFrame,
   type MachineReadyFrame,
@@ -34,6 +36,7 @@ import {
 import type { ResolvedAgentSandbox } from "../src/shared/workspaces.ts";
 import {
   closeOf,
+  DEV_STAGE_SANDBOX_ID,
   MACHINE_ACCOUNT_ID,
   MACHINE_READ_ONLY_ROLE_TOKEN,
   MACHINE_ACCOUNT_SECRET,
@@ -43,6 +46,7 @@ import {
   machineMcpRecord,
   machineStorage,
   otherMachineExecutorConfig,
+  PROD_STAGE_SANDBOX_ID,
   startMachineCore,
   waitFor,
   type MachineConnectionWrite,
@@ -54,9 +58,12 @@ const sockets: WebSocket[] = [];
 /** What a fake daemon says in its hello, and how it answers. */
 interface FakeDaemon {
   force?: boolean;
+  /** The bearer it connects with; the account key when unset. */
+  token?: string;
   hostname?: string;
   instance?: string;
   mcp?: string[];
+  specs?: MachineHelloFrame["specs"];
   onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void;
   onMcp?: (
     frame: MachineMcpCallFrame | MachineMcpListFrame,
@@ -135,6 +142,46 @@ test("a daemon reconnecting reclaims its record, and a dropped daemon fails its 
   expect(await pending).toBe("Replaced by a newer connection");
 });
 
+test("a daemon that hangs up while its claim is looked up leaves the record free", async () => {
+  const storage = machineStorage();
+  const list = storage.sandboxConfigs.list.bind(storage.sandboxConfigs);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve): void => {
+    release = resolve;
+  });
+  let looking: () => void = () => {};
+  const lookedUp = new Promise<void>((resolve): void => {
+    looking = resolve;
+  });
+  storage.sandboxConfigs.list = async (accountId: string) => {
+    looking();
+    await held;
+
+    return await list(accountId);
+  };
+  setStorageForTests(storage);
+  const server = core();
+
+  const gone = openSocket(server);
+  gone.onopen = (): void =>
+    gone.send(
+      JSON.stringify({ type: "hello", sandbox: "my-mac", instance: "gone" }),
+    );
+  await lookedUp;
+  gone.close();
+  await closeOf(gone);
+  // Let core run its close handler before the lookup answers.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  storage.sandboxConfigs.list = list;
+  release();
+
+  // Another daemon, with no --force, gets the record the dead socket never held.
+  const next = await connectDaemon(server, "my-mac", () => {}, {
+    instance: "next",
+  });
+  expect(next.ready.sandboxId).toBe(MACHINE_SANDBOX_ID);
+});
+
 test("another daemon is refused naming the holder, even on the same host, and --force takes over", async () => {
   const server = core();
   const holder = await connectDaemon(server, "my-mac", () => {}, {
@@ -208,6 +255,76 @@ test("the embeddable runtime key cannot claim a machine", async () => {
     );
 
   expect((await closeOf(socket)).code).toBe(4401);
+});
+
+describe("a stage ticket", () => {
+  let previousSecret: string | undefined;
+
+  beforeEach(() => {
+    previousSecret = process.env.STAGE_TICKET_SECRET;
+    process.env.STAGE_TICKET_SECRET = "stage-secret";
+  });
+
+  afterEach(() => {
+    if (previousSecret === undefined) delete process.env.STAGE_TICKET_SECRET;
+    else process.env.STAGE_TICKET_SECRET = previousSecret;
+  });
+
+  const ticket = (stageId: string, sandboxWrite: boolean): Promise<string> =>
+    sealStageSessionTicket(
+      {
+        accountId: MACHINE_ACCOUNT_ID,
+        endpointId: "endpoint",
+        projectId: "proj",
+        projectSlug: "demo",
+        stageId: stageId,
+        stageSlug: stageId === "stage_dev" ? "development" : "production",
+        ...(sandboxWrite ? { sandboxWrite: true as const } : {}),
+        expiresAt: Date.now() + 60_000,
+      },
+      "stage-secret",
+    );
+
+  test("minted in the dashboard by any member cannot claim a machine", async () => {
+    const socket = openSocket(core(), await ticket("stage_prod", false));
+    socket.onopen = (): void =>
+      socket.send(
+        JSON.stringify({ type: "hello", sandbox: "prod-mac", force: true }),
+      );
+
+    expect((await closeOf(socket)).code).toBe(MACHINE_CLOSE.unauthorized.code);
+  });
+
+  test("from broods login claims its own stage's record, never another stage's", async () => {
+    const server = core();
+    const devTicket = await ticket("stage_dev", true);
+    const dev = await connectDaemon(server, "stage-mac", () => {}, {
+      token: devTicket,
+    });
+
+    expect(dev.ready.sandboxId).toBe(DEV_STAGE_SANDBOX_ID);
+
+    const other = openSocket(server, devTicket);
+    other.onopen = (): void =>
+      other.send(
+        JSON.stringify({ type: "hello", sandbox: "prod-mac", force: true }),
+      );
+    expect((await closeOf(other)).code).toBe(MACHINE_CLOSE.unknownSandbox.code);
+
+    const prod = await connectDaemon(server, "stage-mac", () => {}, {
+      token: await ticket("stage_prod", true),
+      instance: "prod-daemon",
+    });
+    expect(prod.ready.sandboxId).toBe(PROD_STAGE_SANDBOX_ID);
+  });
+
+  test("from broods login still claims an account-level record", async () => {
+    const daemon = await connectDaemon(core(), "my-mac", () => {}, {
+      token: await ticket("stage_dev", true),
+    });
+
+    expect(daemon.ready.sandboxId).toBe(MACHINE_SANDBOX_ID);
+  });
 });
 
 test("a bad bearer still upgrades, and its first frame is refused with 4401", async () => {
@@ -401,7 +518,10 @@ test("core records each daemon connection, and a disconnect names that same conn
   const writes: MachineConnectionWrite[] = [];
   setStorageForTests(machineStorage(writes));
   const server = core();
-  await connectDaemon(server, "my-mac", () => {}, { mcp: ["echo"] });
+  await connectDaemon(server, "my-mac", () => {}, {
+    mcp: ["echo"],
+    specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },
+  });
   const replacement = await connectDaemon(server, "my-mac", () => {});
   // An earlier test's socket can still close into `writes`, so match by id.
   const connects = (): MachineConnectionWrite[] =>
@@ -422,6 +542,7 @@ test("core records each daemon connection, and a disconnect names that same conn
     sandboxConfigId: MACHINE_SANDBOX_ID,
     computer: false,
     mcp: ["echo"],
+    specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },
   });
   expect(second?.ref.connectionId).not.toBe(first?.ref.connectionId);
 });
@@ -482,6 +603,23 @@ test("approval follows the computer a call names, not the agent's own", () => {
   // machine that happens to be `bypass`.
   expect(approval()).toBe("user-approval");
   expect(approval("nope")).toBe("user-approval");
+});
+
+test("a hello with a malformed size still connects, with no size", () => {
+  expect(
+    parseDaemonFrame(
+      '{"type":"hello","sandbox":"my-mac","specs":{"vcpu":-1,"memoryMb":"8 GB"}}',
+    ),
+  ).toEqual({ type: "hello", sandbox: "my-mac", specs: undefined });
+  expect(
+    parseDaemonFrame(
+      '{"type":"hello","sandbox":"my-mac","specs":{"vcpu":8,"memoryMb":16384}}',
+    ),
+  ).toEqual({
+    type: "hello",
+    sandbox: "my-mac",
+    specs: { vcpu: 8, memoryMb: 16384 },
+  });
 });
 
 test("each side's parser drops a frame whose fields do not match its type", () => {
@@ -555,7 +693,7 @@ function connectDaemon(
   daemon: FakeDaemon = {},
 ): Promise<{ ready: MachineReadyFrame; socket: WebSocket }> {
   return new Promise((resolve, reject): void => {
-    const socket = openSocket(server);
+    const socket = openSocket(server, daemon.token);
     let ready = false;
     socket.onopen = (): void =>
       socket.send(
@@ -568,6 +706,7 @@ function connectDaemon(
           // One shared instance, so a fake connecting twice is a reconnect.
           instance: daemon.instance ?? "test-daemon",
           force: daemon.force,
+          specs: daemon.specs,
         }),
       );
     socket.onmessage = (event): void => {

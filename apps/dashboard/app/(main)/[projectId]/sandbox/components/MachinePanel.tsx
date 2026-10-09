@@ -13,6 +13,7 @@ import {
   formatProvider,
   machineStatusDot,
   relativeTime,
+  SpecsValue,
 } from "./sandboxFormat";
 
 /** A user's computer: what its daemon last reported, and how to start it. */
@@ -55,6 +56,12 @@ export function MachinePanel({
         <DetailField
           label="Host"
           value={<span className="break-all">{host || "—"}</span>}
+        />
+        <DetailField
+          label="Size"
+          value={
+            <SpecsValue specs={machine.specs} verified provider="machine" />
+          }
         />
         <DetailField label="Serves" value={serves.join(", ")} />
         <DetailField

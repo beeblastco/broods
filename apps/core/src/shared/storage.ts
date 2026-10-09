@@ -23,6 +23,7 @@ import type {
   UpdateCronInput,
 } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
+import type { SandboxSpecs } from "./sandbox-sizes.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
 
 /** Safe deployment scope returned by Convex without stored credentials. */
@@ -98,6 +99,8 @@ export interface MachineConnectionRecord extends MachineConnectionRef {
   hostname?: string;
   mcp: string[];
   platform?: string;
+  /** The hardware the daemon reported; absent from a daemon older than the report. */
+  specs?: SandboxSpecs;
 }
 
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */

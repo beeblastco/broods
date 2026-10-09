@@ -44,6 +44,23 @@ export function formatTime(ms: number): string {
   return TIME.format(ms);
 }
 
+/**
+ * A length of time as a span row or a run row prints it: `812ms`, `4.10s`,
+ * `1m 33s`, `2h 5m`. A wait on a person runs minutes to days, where
+ * seconds stop reading well.
+ */
+export function formatDuration(ms: number): string {
+  if (ms >= 3_600_000) {
+    return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
+  }
+  if (ms >= 60_000) {
+    return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+  }
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+
+  return `${Math.round(ms)}ms`;
+}
+
 /** A `datetime-local` input value as epoch ms, null when empty or unparseable. */
 export function toEpochMs(value: string): number | null {
   if (!value) return null;

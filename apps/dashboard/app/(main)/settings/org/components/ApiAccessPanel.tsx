@@ -1,325 +1,206 @@
 "use client";
 
 /**
- * The plaintext account key is shown exactly once after provision or rotate; only
- * its hash is stored, so it can never be read back.
+ * Organization › API access: the keys whose home is the organization. Today
+ * that is the account key. Its plaintext is shown exactly once after
+ * provision or rotate; only its hash is stored. Needs `keys:read`; anyone
+ * else sees a lock.
  */
 
-import { CopyRow, useCopied } from "@/app/components/CopyButton";
-import { Section } from "@/app/components/Section";
-import { Button } from "@/app/components/ui/button";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { ConfirmDialog } from "@/app/components/ConfirmDialog";
+import { CopyRow } from "@/app/components/CopyButton";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/app/components/ui/dialog";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableFooter,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@/app/components/DataTable";
+import { EmptyState, NoPermission } from "@/app/components/EmptyState";
+import { RevealSecretDialog } from "@/app/components/RevealSecretDialog";
+import { Button } from "@/app/components/ui/button";
+import { PLATFORM, Who } from "@/app/components/Who";
+import { usePermissions } from "@/app/hooks/usePermissions";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { formatDate } from "@/app/lib/formatTime";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
-import { Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   org: Doc<"orgs">;
 }
 
-const MASKED_SECRET = "••••••••••••••••••••••••••••";
-
 export function ApiAccessPanel({ org }: Props): React.JSX.Element {
-  const { canWrite } = useOrgRole();
+  // `keys:write` for the organization mints or rotates the account key: the
+  // admin tier holds it, and a role may be granted it.
+  const { can } = usePermissions();
+  const canWrite = can("keys:write");
   const account = useQuery(api.org.orgs.getActiveAccount, {});
+  const keys = useQuery(api.apiKeys.listForOrg, {});
   const provision = useAction(api.org.lifecycle.provision);
   const rotate = useAction(api.org.lifecycle.rotateSecret);
-
-  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
-  const [showSecret, setShowSecret] = useState(false);
+  const endpoint = resolveCoreEndpoint();
+  const [revealed, setRevealed] = useState<string | null>(null);
   const [rotateOpen, setRotateOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const secretCopy = useCopied(revealedSecret ?? "");
-  const coreEndpoint = resolveCoreEndpoint();
+  const { pending, error, run } = useSubmit();
 
-  async function handleProvision(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      const result = await provision({ orgId: org._id });
-      setRevealedSecret(result.secret);
-      setShowSecret(true);
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+  async function mint(
+    action: () => Promise<{ secret: string }>,
+  ): Promise<void> {
+    const done = await run(async () => {
+      const result = await action();
+      setRevealed(result.secret);
+    });
+    if (done) setRotateOpen(false);
   }
 
-  async function handleRotate(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      const result = await rotate({ orgId: org._id });
-      setRevealedSecret(result.secret);
-      setShowSecret(true);
-      setRotateOpen(false);
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+  if (account === undefined || keys === undefined) {
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  }
+  if (keys === null) {
+    return <NoPermission permission="keys.read" scope="this organization" />;
   }
 
-  if (account === undefined) {
-    return (
-      <Section
-        title="API access"
-        description="Broods service credentials for this org."
-      >
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </Section>
-    );
-  }
-
-  if (account === null) {
-    return (
-      <Section
-        title="API access"
-        description="Broods service credentials for this org."
-      >
-        <div className="rounded-lg border border-border bg-card px-4 py-6">
-          <p className="text-sm text-foreground">
-            This organization is not yet provisioned with a broods account.
+  return (
+    <div className="grid gap-6">
+      <section className="grid gap-2">
+        <div>
+          <h2 className="text-sm font-semibold">API access</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Keys whose home is the organization. Project and stage keys live in
+            the project.
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Provisioning creates the backend tenant and issues a one-time
-            account key. Save it now. It will not be shown again.
-          </p>
-          {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-          {canWrite && (
-            <Button
-              size="sm"
-              className="mt-4 cursor-pointer"
-              disabled={pending}
-              onClick={handleProvision}
-            >
-              {pending ? "Provisioning..." : "Provision broods account"}
-            </Button>
-          )}
         </div>
+        {account && (
+          <dl className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-xs">
+            <dt className="text-muted-foreground">Account ID</dt>
+            <dd className="min-w-0">
+              <CopyRow
+                value={account.accountId}
+                className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+              >
+                <span className="flex-1 truncate">{account.accountId}</span>
+              </CopyRow>
+            </dd>
+            <dt className="text-muted-foreground">Base URL</dt>
+            <dd className="min-w-0">
+              {endpoint.ok ? (
+                <CopyRow
+                  value={endpoint.httpBaseUrl}
+                  className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
+                >
+                  <span className="flex-1 truncate">
+                    {endpoint.httpBaseUrl}
+                  </span>
+                </CopyRow>
+              ) : (
+                <span className="text-warning">{endpoint.message}</span>
+              )}
+            </dd>
+          </dl>
+        )}
+      </section>
 
-        {revealedSecret && (
-          <NewSecretDialog
-            secret={revealedSecret}
-            onClose={() => {
-              setRevealedSecret(null);
-              setShowSecret(false);
-            }}
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <DataTable>
+          <DataTableHeader>
+            <tr>
+              <DataTableHead>Name</DataTableHead>
+              <DataTableHead>Description</DataTableHead>
+              <DataTableHead>Policies</DataTableHead>
+              <DataTableHead>Key</DataTableHead>
+              <DataTableHead>Created at</DataTableHead>
+              <DataTableHead>Created by</DataTableHead>
+              <DataTableHead align="right" />
+            </tr>
+          </DataTableHeader>
+          <DataTableBody>
+            {account &&
+              keys.map((key) => (
+                <DataTableRow key={key.name}>
+                  <DataTableCell className="font-medium">
+                    {key.name}
+                  </DataTableCell>
+                  <DataTableCell muted>{key.description}</DataTableCell>
+                  <DataTableCell>Admin</DataTableCell>
+                  <DataTableCell muted className="font-mono">
+                    {key.keyHint ?? "shown once"}
+                  </DataTableCell>
+                  <DataTableCell muted>
+                    {formatDate(key.createdAt)}
+                  </DataTableCell>
+                  <DataTableCell>
+                    <Who actor={key.createdBy ?? PLATFORM} />
+                  </DataTableCell>
+                  <DataTableCell align="right">
+                    {canWrite && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        tone="muted"
+                        className="cursor-pointer"
+                        disabled={pending}
+                        onClick={() => setRotateOpen(true)}
+                      >
+                        Rotate
+                      </Button>
+                    )}
+                  </DataTableCell>
+                </DataTableRow>
+              ))}
+          </DataTableBody>
+        </DataTable>
+        {!account && (
+          <EmptyState
+            title="This organization has no API account yet."
+            detail="Provisioning creates the backend tenant and issues a one-time account key."
+            action={
+              canWrite && (
+                <Button
+                  size="sm"
+                  className="cursor-pointer"
+                  disabled={pending}
+                  onClick={() => mint(() => provision({ orgId: org._id }))}
+                >
+                  {pending ? "Provisioning…" : "Provision account"}
+                </Button>
+              )
+            }
           />
         )}
-      </Section>
-    );
-  }
-
-  return (
-    <Section
-      title="API access"
-      description="Broods service credentials for this org."
-    >
-      <div className="grid gap-4">
-        <div className="grid gap-1">
-          <Label variant="muted" className="text-xs">
-            Account ID
-          </Label>
-          <CopyRow
-            value={account.accountId}
-            className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
-          >
-            <span className="flex-1 truncate">{account.accountId}</span>
-          </CopyRow>
-        </div>
-
-        <div className="grid gap-1">
-          <Label variant="muted" className="text-xs">
-            Base URL
-          </Label>
-          {coreEndpoint.ok ? (
-            <CopyRow
-              value={coreEndpoint.httpBaseUrl}
-              className="flex w-full rounded-md bg-muted px-3 py-2 font-mono text-xs"
-            >
-              <span className="flex-1 truncate">
-                {coreEndpoint.httpBaseUrl}
-              </span>
-            </CopyRow>
-          ) : (
-            <p className="text-xs text-warning">{coreEndpoint.message}</p>
-          )}
-        </div>
-
-        <div className="grid gap-1">
-          <Label variant="muted" className="text-xs">
-            Account key
-          </Label>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-              {revealedSecret && showSecret ? revealedSecret : MASKED_SECRET}
-            </code>
-            {revealedSecret && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="cursor-pointer"
-                onClick={() => setShowSecret((v) => !v)}
-              >
-                {showSecret ? (
-                  <EyeOff className="size-3.5" />
-                ) : (
-                  <Eye className="size-3.5" />
-                )}
-              </Button>
-            )}
-            {revealedSecret && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="cursor-pointer"
-                onClick={secretCopy.copy}
-              >
-                <Copy className="size-3.5 mr-1" />
-                {secretCopy.copied ? "Copied" : "Copy"}
-              </Button>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            The key is hashed at rest. Rotating issues a new one and invalidates
-            the previous key immediately.
-          </p>
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <div>
-            <p className="text-sm font-medium text-foreground">Rotate key</p>
-            <p className="text-xs text-muted-foreground">
-              The previous account key will stop working.
-            </p>
-          </div>
-          {canWrite && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="cursor-pointer"
-              disabled={pending}
-              onClick={() => setRotateOpen(true)}
-            >
-              <RefreshCw className="size-3.5 mr-1" />
-              Rotate
-            </Button>
-          )}
-        </div>
-
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        <DataTableFooter
+          total={account ? keys.length : 0}
+          noun={account ? ["key", "keys"] : ["account", "accounts"]}
+        />
       </div>
+      {error && !rotateOpen && (
+        <p className="text-xs text-destructive">{error}</p>
+      )}
 
-      <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Rotate account key?</DialogTitle>
-            <DialogDescription>
-              The current account key will stop working immediately. Anything
-              using it (curl scripts, integrations) must be updated.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              className="cursor-pointer"
-              onClick={() => setRotateOpen(false)}
-              disabled={pending}
-            >
-              Cancel
-            </Button>
-            <Button
-              className="cursor-pointer"
-              onClick={handleRotate}
-              disabled={pending}
-            >
-              {pending ? "Rotating..." : "Rotate now"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {revealedSecret && (
-        <NewSecretDialog
-          secret={revealedSecret}
-          onClose={() => {
-            setRevealedSecret(null);
-            setShowSecret(false);
-          }}
+      {rotateOpen && (
+        <ConfirmDialog
+          title="Rotate the account key?"
+          description="The current key stops working at once. Anything using it needs the new one."
+          verb="Rotate"
+          pending={pending}
+          error={error}
+          onConfirm={() => mint(() => rotate({ orgId: org._id }))}
+          onClose={() => setRotateOpen(false)}
         />
       )}
-    </Section>
-  );
-}
-
-function NewSecretDialog({
-  secret,
-  onClose,
-}: {
-  secret: string;
-  onClose: () => void;
-}): React.JSX.Element {
-  const [open, setOpen] = useState(true);
-  const { copied, failed, copy } = useCopied(secret);
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          setOpen(false);
-          onClose();
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Save your new account key</DialogTitle>
-          <DialogDescription>
-            Copy this key now. It will not be shown again.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-3 py-2">
-          <Input readOnly value={secret} className="font-mono text-xs" />
-          {failed ? (
-            <p role="alert" className="text-sm text-destructive">
-              Copy failed. Try again or select and copy the token manually.
-            </p>
-          ) : null}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" className="cursor-pointer" onClick={copy}>
-            <Copy className="size-4 mr-1" />
-            {copied ? "Copied" : "Copy"}
-          </Button>
-          <Button
-            className="cursor-pointer"
-            onClick={() => {
-              setOpen(false);
-              onClose();
-            }}
-          >
-            Done
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {revealed && (
+        <RevealSecretDialog
+          title="Save your new account key"
+          label="account key"
+          secret={revealed}
+          onClose={() => setRevealed(null)}
+        />
+      )}
+    </div>
   );
 }

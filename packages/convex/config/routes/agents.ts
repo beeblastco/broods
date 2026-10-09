@@ -21,8 +21,12 @@ import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { toPublicAgentResponse } from "../../model/responses";
 import { fetchSlackChannelDirectory } from "../../model/slackDirectory";
+import type { RolePrincipal } from "../../model/apiAuthorization";
+import type { StageScopedRef } from "../../model/projectScope";
 import {
   accountCipherForAction,
+  assertRefsInPin,
+  assertRoleMayReadEnv,
   json,
   jsonError,
   methodNotAllowed,
@@ -117,10 +121,11 @@ export async function handleAgentConfigRoute(
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
-  agentId?: string,
+  agentId: string | undefined,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   if (!agentId)
-    return await handleAgentCollectionRoute(ctx, req, accountId, actor);
+    return await handleAgentCollectionRoute(ctx, req, accountId, actor, role);
 
   if (req.method === "GET") {
     const record: Doc<"agents"> | null = await ctx.runQuery(
@@ -144,7 +149,14 @@ export async function handleAgentConfigRoute(
       : jsonError(404, "Agent not found");
   }
   if (req.method === "PATCH") {
-    return await patchAgentConfigRoute(ctx, req, accountId, actor, agentId);
+    return await patchAgentConfigRoute(
+      ctx,
+      req,
+      accountId,
+      actor,
+      agentId,
+      role,
+    );
   }
   if (req.method === "DELETE") {
     const existing: Doc<"agents"> | null = await ctx.runQuery(
@@ -219,6 +231,7 @@ async function handleAgentCollectionRoute(
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   if (req.method === "GET") {
     const cipher = await accountCipherForAction(ctx, accountId, "read");
@@ -256,6 +269,7 @@ async function handleAgentCollectionRoute(
         { code: "agent_name_exists", param: "name" },
       );
     }
+    assertRoleMayReadEnv(role, undefined, input.config);
     // Before encryption: canonicalization must land in the persisted config.
     canonicalizeAgentSkillPaths(accountId, input.config);
     const config = await prepareAccountAgentConfig(
@@ -320,6 +334,7 @@ async function patchAgentConfigRoute(
   accountId: Id<"accounts">,
   actor: AuditActor,
   agentId: string,
+  role: RolePrincipal | undefined,
 ): Promise<Response> {
   const existing: Doc<"agents"> | null = await ctx.runQuery(
     internal.agent.agents.getById,
@@ -351,6 +366,7 @@ async function patchAgentConfigRoute(
       );
     }
   }
+  assertRoleMayReadEnv(role, existingConfig, patch.config);
   // Before encryption: canonicalization must land in the persisted config.
   canonicalizeAgentSkillPaths(accountId, patch.config);
   const config = await prepareAccountAgentConfig(
@@ -360,6 +376,7 @@ async function patchAgentConfigRoute(
     patch.config,
   );
   await validateAgentReferences(ctx, accountId, patch.config);
+  await assertRefsInPin(ctx, accountId, role, agentConfigRefs(patch.config));
   await ctx.runMutation(internal.agent.agents.update, {
     accountId: accountId,
     agentId: agentId,
@@ -455,6 +472,32 @@ async function validateAgentPolicyIds(
     if (!policy)
       throw new ClientError(`Agent policy not found: ${policyId}`, "not_found");
   }
+}
+
+/** The stage-scoped resources an agent config names. */
+function agentConfigRefs(config: AgentConfig | undefined): StageScopedRef[] {
+  return [
+    ...(config?.sandboxes ?? []).map((id) => ({
+      type: "sandboxes" as const,
+      id: id,
+    })),
+    ...(config?.workspaces ?? []).map((workspace) => ({
+      type: "workspaces" as const,
+      id: workspace.workspaceId,
+    })),
+    ...(config?.policies ?? []).map((id) => ({
+      type: "policies" as const,
+      id: id,
+    })),
+    ...(config?.subagent?.allowed ?? []).map((id) => ({
+      type: "agents" as const,
+      id: id,
+    })),
+    ...Object.keys(config?.mcp ?? {}).map((id) => ({
+      type: "mcp" as const,
+      id: id,
+    })),
+  ];
 }
 
 async function validateAgentReferences(

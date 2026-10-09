@@ -9,7 +9,7 @@ import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { action, type ActionCtx } from "../_generated/server";
-import { authKit } from "../auth";
+import { authKit, type AuthUser } from "../auth";
 import {
   deleteWorkspacePath,
   listWorkspaceFiles,
@@ -98,9 +98,7 @@ export const upload = action({
   },
 });
 
-async function requireActionUser(
-  ctx: ActionCtx,
-): Promise<NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>> {
+async function requireActionUser(ctx: ActionCtx): Promise<AuthUser> {
   const user = await authKit.getAuthUser(ctx);
   if (!user) throw new Error("User not found or not authenticated");
 

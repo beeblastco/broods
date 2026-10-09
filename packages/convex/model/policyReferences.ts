@@ -7,6 +7,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
+import { orgRoles } from "./access";
 
 /** Opens the guard's refusal, so the HTTP layer can answer 409 on it. */
 export const POLICY_STILL_REFERENCED = "Policy still referenced:";
@@ -15,11 +16,12 @@ export const POLICY_STILL_REFERENCED = "Policy still referenced:";
 export interface PolicyReferenceRows {
   agents: Doc<"agentConfigs">[];
   records: Doc<"channelRecords">[];
+  roles: Doc<"orgRoles">[];
 }
 
 /**
  * Refuses to remove a policy an agent or a channel record still lists in
- * `policies`. Pass `rows` when checking several policies of one account.
+ * `policies`, or an org role holds: dropping a role's deny would widen it. Pass `rows` when checking several policies of one account.
  * @throws naming the resources that still reference it.
  */
 export async function assertPolicyUnreferenced(
@@ -27,7 +29,7 @@ export async function assertPolicyUnreferenced(
   policy: Doc<"agentPolicies">,
   rows?: PolicyReferenceRows,
 ): Promise<void> {
-  const { agents, records } =
+  const { agents, records, roles } =
     rows ?? (await loadPolicyReferenceRows(ctx, policy.accountId));
   const referencing = [
     ...agents
@@ -36,6 +38,9 @@ export async function assertPolicyUnreferenced(
     ...records
       .filter((entry) => listsPolicy(entry.config, policy._id))
       .map((entry) => `channel record "${entry.name}"`),
+    ...roles
+      .filter((entry) => entry.policyIds.includes(policy._id))
+      .map((entry) => `role "${entry.name}"`),
   ].sort();
   if (referencing.length === 0) return;
 
@@ -81,7 +86,9 @@ export async function loadPolicyReferenceRows(
     )
     .collect();
 
-  return { agents: agents.flat(), records: records };
+  const roles = orgId ? await orgRoles(ctx, orgId) : [];
+
+  return { agents: agents.flat(), records: records, roles: roles };
 }
 
 // Both blobs are `v.any()` columns, so only the one key read here is named.

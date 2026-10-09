@@ -8,8 +8,8 @@ import {
 
 /**
  * Wraps an icon-only button: `label` is both its accessible name and its
- * tooltip, as on the canvas controls. The (main) layout's TooltipProvider sets
- * the delay.
+ * tooltip, as on the canvas controls and HelpMark's "?". The (main) layout's
+ * TooltipProvider sets the delay.
  */
 export function IconTooltip({
   children,
@@ -21,7 +21,8 @@ export function IconTooltip({
   return (
     <Tooltip>
       <TooltipTrigger render={children} aria-label={label} />
-      <TooltipContent>{label}</TooltipContent>
+      {/* Capped so a sentence-long label wraps instead of crossing the page. */}
+      <TooltipContent className="max-w-64">{label}</TooltipContent>
     </Tooltip>
   );
 }

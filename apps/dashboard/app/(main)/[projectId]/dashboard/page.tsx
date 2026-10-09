@@ -62,7 +62,7 @@ export default function DashboardPage(): React.JSX.Element {
   const [keyJustCreated, setKeyJustCreated] = useState(false);
 
   // Streaming runs on a short-lived stage session any member can mint; null
-  // only when the stage has no deployment yet (the prompt then mints one).
+  // only for a cloned or older stage with no key yet (the prompt mints one).
   const stageSession = useStageSession(projectId, activeStageId);
   // The permanent key and its created/last-used metadata; admin-only.
   const revealedKey = useQuery(
@@ -210,6 +210,9 @@ export default function DashboardPage(): React.JSX.Element {
             apiKey={copyableKey}
             revealed={revealedKey}
             onRotate={rotateViewingKey}
+            projectId={projectId}
+            projectSlug={projectSlug}
+            stageSlug={stageSlug}
           />
         ) : observabilityApiKey ? (
           <p className="text-sm text-muted-foreground">

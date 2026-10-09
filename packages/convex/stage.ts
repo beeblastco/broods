@@ -7,6 +7,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { readyStageDeployment } from "./agent/deployments";
 import { authKit } from "./auth";
 import {
   deleteAgentRow,
@@ -15,6 +16,7 @@ import {
 } from "./model/agentSync";
 import { deleteAgentConfig } from "./model/agentRuntimeSecrets";
 import { accountIdForProject } from "./model/auditEvents";
+import { byDefaultThenName } from "./model/defaultStage";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -88,6 +90,10 @@ export const create = mutation({
         stageId,
         now,
       );
+    } else {
+      // Only an empty stage gets its key here: a clone's agents carry bot
+      // tokens, and a deployment would connect them beside the source's.
+      await readyStageDeployment(ctx, authUser, projectId, stageId);
     }
 
     await ctx.db.patch(projectId, { updatedAt: now });
@@ -150,6 +156,9 @@ export const ensureDefault = mutation({
         });
         changed = true;
       }
+    }
+    if (!development) {
+      await readyStageDeployment(ctx, authUser, projectId, developmentId);
     }
     if (changed) await ctx.db.patch(projectId, { updatedAt: now });
 
@@ -608,13 +617,7 @@ export async function listStagesForProject(
     .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
     .collect();
 
-  return stages.sort((a, b) =>
-    a.isDefault !== b.isDefault
-      ? a.isDefault
-        ? -1
-        : 1
-      : a.name.localeCompare(b.name),
-  );
+  return stages.sort(byDefaultThenName);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

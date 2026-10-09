@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import { HelpMark } from "@/app/components/HelpMark";
 import { Separator } from "@/app/components/ui/separator";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import {
@@ -35,7 +36,8 @@ import { UsageChart } from "./UsageChart";
 const DAY_SECONDS = 24 * 60 * 60;
 
 // One row per resource. `share` names the cap it counts toward; ingress is
-// free, so it has none.
+// free, so it has none. `help` says what the amount is counted from, where
+// the label alone does not.
 const ROWS: AllowanceRow[] = [
   {
     key: "sandboxHours",
@@ -43,6 +45,7 @@ const ROWS: AllowanceRow[] = [
     unit: "hours",
     share: "sandboxHours",
     color: "var(--color-usage-agent-sandbox)",
+    help: "Hours your sandboxes spent running, idle time until they stop included, at the default 1 vCPU / 2 GB size. A bigger sandbox, a resume or a kept snapshot uses hours faster. Sandboxes on your own provider account are free.",
   },
   {
     key: "hostedMcpHours",
@@ -50,6 +53,7 @@ const ROWS: AllowanceRow[] = [
     unit: "hours",
     share: "hostedMcpHours",
     color: "var(--color-usage-mcp-sandbox)",
+    help: "Time your hosted MCP servers spent answering tool calls, at the runner's memory size, plus a small share per request. Idle servers cost nothing.",
   },
   {
     key: "storageGb",
@@ -57,6 +61,7 @@ const ROWS: AllowanceRow[] = [
     unit: "gb",
     share: "storageGb",
     color: "var(--color-usage-storage)",
+    help: "What the latest daily snapshot found stored in your workspaces, chat attachments, skills and bundles. A size, not a monthly total.",
   },
   {
     key: "egressGb",
@@ -64,6 +69,7 @@ const ROWS: AllowanceRow[] = [
     unit: "gb",
     share: "egressGb",
     color: "var(--color-usage-egress)",
+    help: "Data served out of Broods storage, such as media your agents sent to channels. Files on your own bucket are not counted.",
   },
   {
     key: "ingressGb",
@@ -80,6 +86,7 @@ interface AllowanceRow {
   unit: AmountUnit;
   share: keyof BudgetUsage["shares"] | null;
   color: string;
+  help?: string;
 }
 
 /**
@@ -211,6 +218,8 @@ function AllowanceTableRow({
       className="cursor-pointer"
       onClick={onPick}
       onKeyDown={(event) => {
+        // A press on a control inside the row, like its help mark, is that control's.
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onPick();
@@ -224,6 +233,7 @@ function AllowanceTableRow({
             style={{ "--series-color": row.color }}
           />
           {row.label}
+          {row.help && <HelpMark text={row.help} />}
         </span>
       </TableCell>
       <TableCell className="text-right">

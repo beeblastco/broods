@@ -1,15 +1,54 @@
 "use client";
 
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
-import { Section } from "@/app/components/Section";
+/**
+ * Organization › Members: one row per member with their role, and a panel
+ * for the selected one. The role is a menu of every role with what it grants
+ * for anyone holding `members:write`; for everyone else it reads plain with a
+ * lock. The owner's row never changes here.
+ *
+ * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
+ * click, and a detail panel with the facts, the role picker, and the danger
+ * zone at the end.
+ */
+
 import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/app/components/ui/avatar";
-import { Badge } from "@/app/components/ui/badge";
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@/app/components/DataTable";
+import { DeleteZone } from "@/app/components/DangerZone";
+import {
+  type ControlRow,
+  type DetailRow,
+  DetailRows,
+} from "@/app/components/DetailSections";
+import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
+import { EmptyState, LockedValue } from "@/app/components/EmptyState";
+import { SearchInput } from "@/app/components/SearchInput";
+import { useShortcut } from "@/app/components/ShortcutProvider";
+import { StatusWord } from "@/app/components/StatusDot";
+import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import {
@@ -19,293 +58,540 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import { actorName, Who } from "@/app/components/Who";
+import { useListState } from "@/app/hooks/useListState";
+import { usePermissions } from "@/app/hooks/usePermissions";
+import { useSubmit } from "@/app/hooks/useSubmit";
+import { formatDate } from "@/app/lib/formatTime";
+import { tabHref } from "@/app/lib/navigation";
+import type { SortKey } from "@/app/lib/tableState";
+import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
-import { Trash2 } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useQueryState } from "nuqs";
 import { useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
 
-type Role = "owner" | "admin" | "member";
+type Member = FunctionReturnType<typeof api.org.members.list>[number];
+type Role = FunctionReturnType<typeof api.access.listRoles>[number];
+type Tier = Member["role"];
+type Column = "name" | "email" | "role" | "joined" | "invitedBy";
+type Field = (typeof QUERY_FIELDS)[number];
 
-interface Props {
-  org: Doc<"orgs">;
+/** What picking a role sets: a tier, or a custom role on the member tier. */
+type RolePick =
+  | { tier: "admin" | "member"; roleId?: undefined }
+  | { tier: "member"; roleId: Id<"orgRoles"> };
+
+/** One role a member may be given, as the picker and the invite form list it. */
+interface RoleOption {
+  /** The tier, or the custom role's id. */
+  value: string;
+  label: string;
+  description: string;
+  pick: RolePick;
 }
 
-const ROLE_LABEL: Record<Role, string> = {
+// The `field:value` tokens the search box understands.
+const QUERY_FIELDS = ["role"] as const;
+
+// Six columns of short text; below this the panel would wrap them.
+const TABLE_MIN_WIDTH = 640;
+
+// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
+const MEMBER_ID = parseAsId<"orgMembers">();
+
+const NO_ROWS: Member[] = [];
+
+const TIER_LABEL: Record<Tier, string> = {
   owner: "Owner",
   admin: "Admin",
   member: "Member",
 };
 
-type MemberRow = {
-  membershipId: Id<"orgMembers">;
-  name: string;
-  email: string;
-  role: Role;
-  isOwner: boolean;
-  avatarUrl?: string;
+const SORT_KEY: Record<Column, (member: Member) => SortKey> = {
+  name: (member) => member.name,
+  email: (member) => member.email,
+  role: (member) => roleName(member),
+  joined: (member) => member.createdAt,
+  invitedBy: (member) => member.invitedBy?.name ?? null,
 };
 
+interface Props {
+  org: Doc<"orgs">;
+}
+
 export function MembersPanel({ org }: Props): React.JSX.Element {
-  const { canWrite } = useOrgRole();
+  const { can } = usePermissions();
+  const canChange = can("members:write");
   const members = useQuery(api.org.members.list, { orgId: org._id });
-  const add = useMutation(api.org.members.add);
-  const updateRole = useMutation(
-    api.org.members.updateRole,
-  ).withOptimisticUpdate((localStore, args) => {
-    const list = localStore.getQuery(api.org.members.list, { orgId: org._id });
-    if (!list) {
-      return;
-    }
-
-    localStore.setQuery(
-      api.org.members.list,
-      { orgId: org._id },
-      list.map((m) =>
-        m.membershipId === args.membershipId
-          ? { ...m, role: args.role ?? m.role }
-          : m,
-      ),
-    );
-  });
-  const remove = useMutation(api.org.members.remove).withOptimisticUpdate(
-    (localStore, args) => {
-      const list = localStore.getQuery(api.org.members.list, {
-        orgId: org._id,
-      });
-      if (!list) {
-        return;
-      }
-
-      localStore.setQuery(
-        api.org.members.list,
-        { orgId: org._id },
-        list.filter((m) => m.membershipId !== args.membershipId),
-      );
-    },
-  );
-
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] =
-    useState<Exclude<Role, "owner">>("member");
+  const roles = useQuery(api.access.listRoles, {});
+  const [selectedId, setSelectedId] = useQueryState("sel", MEMBER_ID);
   const [inviting, setInviting] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const list = useListState({
+    rows: members ?? NO_ROWS,
+    fields: QUERY_FIELDS,
+    initialSort: { column: "name", dir: "asc" },
+    sortKey: SORT_KEY,
+    matches: matchesField,
+    text: searchText,
+  });
+  const selected = members?.find(
+    (member) => member.membershipId === selectedId,
+  );
+  const options = roleOptions(roles ?? []);
+  const filters = {
+    role: list.filterFor("role", [
+      ...new Set(
+        (members ?? []).map((member) => roleName(member).toLowerCase()),
+      ),
+    ]),
+  };
 
-  const [removingMember, setRemovingMember] = useState<MemberRow | null>(null);
-  const [isRemovingMember, setIsRemovingMember] = useState(false);
+  useShortcut("table.create", () => canChange && setInviting(true));
 
-  async function handleInvite(): Promise<void> {
-    const email = inviteEmail.trim();
-    if (!email) return;
-    setInviting(true);
-    setInviteError(null);
-    setInviteNotice(null);
-    try {
-      await add({ orgId: org._id, email: email, role: inviteRole });
-      setInviteEmail("");
-      setInviteNotice(`Added ${email}.`);
-    } catch (err) {
-      setInviteError(toErrorMessage(err));
-    } finally {
-      setInviting(false);
-    }
-  }
-
-  async function handleRoleChange(
-    membershipId: Id<"orgMembers">,
-    role: Role,
-  ): Promise<void> {
-    setActionError(null);
-    try {
-      await updateRole({ membershipId: membershipId, role: role });
-    } catch (err) {
-      setActionError(toErrorMessage(err));
-    }
-  }
-
-  async function handleRemoveMember(): Promise<void> {
-    if (!removingMember) return;
-    setIsRemovingMember(true);
-    setActionError(null);
-    try {
-      await remove({ membershipId: removingMember.membershipId });
-      setRemovingMember(null);
-    } catch (err) {
-      setActionError(toErrorMessage(err));
-    } finally {
-      setIsRemovingMember(false);
-    }
+  if (members === undefined) {
+    return <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>;
   }
 
   return (
-    <>
-      <div className="grid gap-10">
-        <Section
-          title="Invite member"
-          description="Add an existing user to this organization by email."
-        >
-          <div className="grid gap-3">
-            <div className="grid gap-1">
-              <Label htmlFor="invite-email" variant="muted" className="text-xs">
-                Email
-              </Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="invite-email"
-                  type="email"
-                  placeholder="user@example.com"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  className="flex-1"
-                />
-                <Select
-                  items={ROLE_LABEL}
-                  value={inviteRole}
-                  onValueChange={(v) => {
-                    if (v === null) return;
-                    setInviteRole(v as Exclude<Role, "owner">);
-                  }}
-                >
-                  <SelectTrigger className="w-28 cursor-pointer">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="member" className="cursor-pointer">
-                      Member
-                    </SelectItem>
-                    <SelectItem value="admin" className="cursor-pointer">
-                      Admin
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  className="cursor-pointer"
-                  disabled={inviting || !inviteEmail.trim()}
-                  onClick={handleInvite}
-                >
-                  {inviting ? "Adding..." : "Add"}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                The user must have signed in at least once before they can be
-                added.
-              </p>
-              {inviteError && (
-                <p className="text-xs text-destructive">{inviteError}</p>
-              )}
-              {inviteNotice && (
-                <p className="text-xs text-muted-foreground">{inviteNotice}</p>
-              )}
-            </div>
-          </div>
-        </Section>
-
-        <Section
-          title="Members"
-          description="Owners can manage roles and remove members. The owner cannot be removed."
-        >
-          {members === undefined ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : members.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No members yet.</p>
-          ) : (
-            <div className="grid gap-2">
-              {members.map((m) => {
-                const initials = m.name
-                  .split(" ")
-                  .filter(Boolean)
-                  .map((s) => s[0])
-                  .slice(0, 2)
-                  .join("")
-                  .toUpperCase();
-
-                return (
-                  <div
-                    key={m.membershipId}
-                    className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2"
-                  >
-                    <Avatar size="sm">
-                      {m.avatarUrl && (
-                        <AvatarImage src={m.avatarUrl} alt={m.name} />
-                      )}
-                      <AvatarFallback className="text-3xs font-medium">
-                        {initials || "?"}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {m.name}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {m.email}
-                      </p>
-                    </div>
-                    {m.isOwner || !canWrite ? (
-                      <Badge variant="secondary" className="text-xs uppercase">
-                        {ROLE_LABEL[m.role]}
-                      </Badge>
-                    ) : (
-                      <Select
-                        items={ROLE_LABEL}
-                        value={m.role}
-                        onValueChange={(v) => {
-                          if (v === null) return;
-                          void handleRoleChange(m.membershipId, v as Role);
-                        }}
-                      >
-                        <SelectTrigger className="w-28 cursor-pointer">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="member" className="cursor-pointer">
-                            Member
-                          </SelectItem>
-                          <SelectItem value="admin" className="cursor-pointer">
-                            Admin
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    )}
-                    {!m.isOwner && canWrite && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        tone="muted-destructive"
-                        className="cursor-pointer"
-                        onClick={() => setRemovingMember(m as MemberRow)}
-                        aria-label="Remove member"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-              {actionError && (
-                <p className="text-xs text-destructive">{actionError}</p>
-              )}
-            </div>
-          )}
-        </Section>
-      </div>
-
-      {removingMember && (
-        <DeleteConfirmDialog
-          open={removingMember !== null}
-          onOpenChange={(open) => {
-            if (!open) setRemovingMember(null);
-          }}
-          resourceName={removingMember.name}
-          resourceType="member"
-          critical={false}
-          onConfirm={handleRemoveMember}
-          isDeleting={isRemovingMember}
+    <div className="flex h-full min-h-0 flex-col">
+      <Toolbar>
+        <SearchInput
+          value={list.query}
+          onChange={list.setQuery}
+          fields={QUERY_FIELDS}
+          placeholder="Search members · role:"
+        />
+        <FilterButton columns={[{ label: "Role", filter: filters.role }]} />
+        {canChange && (
+          <Button
+            size="sm"
+            className="cursor-pointer"
+            onClick={() => setInviting(true)}
+          >
+            <Plus className="size-4" />
+            Invite
+          </Button>
+        )}
+      </Toolbar>
+      <DetailSplit
+        flush
+        tableMinWidth={TABLE_MIN_WIDTH}
+        detail={
+          selected && (
+            <MemberPanel
+              key={selected.membershipId}
+              member={selected}
+              options={options}
+              canChange={canChange}
+              onClose={() => setSelectedId(null)}
+            />
+          )
+        }
+      >
+        <DataTable>
+          <DataTableHeader>
+            <tr>
+              <DataTableHead sort={list.sortFor("name")}>Member</DataTableHead>
+              <DataTableHead sort={list.sortFor("email")}>Email</DataTableHead>
+              <DataTableHead sort={list.sortFor("role")}>Role</DataTableHead>
+              <DataTableHead>Status</DataTableHead>
+              <DataTableHead sort={list.sortFor("joined")}>
+                Joined
+              </DataTableHead>
+              <DataTableHead sort={list.sortFor("invitedBy")}>
+                Invited by
+              </DataTableHead>
+            </tr>
+          </DataTableHeader>
+          <DataTableBody>
+            {list.shown.map((member) => (
+              <DataTableRow
+                key={member.membershipId}
+                selected={selectedId === member.membershipId}
+                onClick={() =>
+                  setSelectedId(
+                    selectedId === member.membershipId
+                      ? null
+                      : member.membershipId,
+                  )
+                }
+              >
+                <DataTableCell>
+                  <Who actor={member} />
+                </DataTableCell>
+                <DataTableCell muted>{member.email}</DataTableCell>
+                <DataTableCell>{roleName(member)}</DataTableCell>
+                <DataTableCell>
+                  <StatusWord tone="ok">active</StatusWord>
+                </DataTableCell>
+                <DataTableCell muted>
+                  {formatDate(member.createdAt)}
+                </DataTableCell>
+                <DataTableCell>
+                  {member.invitedBy ? (
+                    <Who actor={member.invitedBy} />
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTableBody>
+        </DataTable>
+        {list.shown.length === 0 && (
+          <EmptyState title="No members match the current filters." />
+        )}
+      </DetailSplit>
+      {inviting && (
+        <InviteDialog
+          orgId={org._id}
+          options={options}
+          onClose={() => setInviting(false)}
         />
       )}
-    </>
+    </div>
   );
+}
+
+/**
+ * The selected member: their facts, the role picker, and the danger zone.
+ * The role is a menu for anyone holding `members:write`; the owner's role
+ * never changes here.
+ */
+function MemberPanel({
+  member,
+  options,
+  canChange,
+  onClose,
+}: {
+  member: Member;
+  options: RoleOption[];
+  canChange: boolean;
+  onClose: () => void;
+}): React.JSX.Element {
+  const updateRole = useMutation(api.org.members.updateRole);
+  const remove = useMutation(api.org.members.remove);
+  const { pending, error, run } = useSubmit();
+  const editable = canChange && !member.isOwner;
+  const facts: Array<DetailRow | ControlRow> = [
+    { key: "email", label: "Email", value: member.email },
+    {
+      key: "role",
+      label: "Role",
+      control: editable ? (
+        <RolePicker
+          member={member}
+          options={options}
+          pending={pending}
+          onPick={pickRole}
+        />
+      ) : (
+        <LockedValue
+          reason={
+            member.isOwner
+              ? "The owner's role cannot change"
+              : "No permission to change roles"
+          }
+        >
+          {roleName(member)}
+        </LockedValue>
+      ),
+    },
+    { key: "status", label: "Status", value: "active", words: true },
+    {
+      key: "joined",
+      label: "Joined",
+      value: formatDate(member.createdAt),
+      words: true,
+    },
+    {
+      key: "invitedBy",
+      label: "Invited by",
+      value: member.invitedBy ? actorName(member.invitedBy) : "—",
+      words: true,
+    },
+  ];
+
+  function pickRole(pick: RolePick): void {
+    void run(() =>
+      updateRole({
+        membershipId: member.membershipId,
+        role: pick.tier,
+        roleId: pick.roleId,
+      }),
+    );
+  }
+
+  return (
+    <DetailPanel title={member.name} onClose={onClose}>
+      <DetailRows rows={facts} />
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+
+      {editable && (
+        <DeleteZone
+          description="Remove the member from the organization. They keep their account and can be invited again."
+          verb="Remove"
+          resourceName={member.name}
+          resourceType="member"
+          onDelete={() => remove({ membershipId: member.membershipId })}
+          onDeleted={onClose}
+        />
+      )}
+    </DetailPanel>
+  );
+}
+
+/**
+ * The member's role as a button; its menu lists every role with what it
+ * grants, marks the current one, and links to the Roles tab.
+ */
+function RolePicker({
+  member,
+  options,
+  pending,
+  onPick,
+}: {
+  member: Member;
+  options: RoleOption[];
+  pending: boolean;
+  onPick: (pick: RolePick) => void;
+}): React.JSX.Element {
+  const pathname = usePathname();
+  const search = useSearchParams().toString();
+  const current = member.roleId ?? member.role;
+  const tiers = options.filter((option) => option.pick.roleId === undefined);
+  const custom = options.filter((option) => option.pick.roleId !== undefined);
+
+  function item(option: RoleOption): React.JSX.Element {
+    return (
+      <RoleItem
+        key={option.value}
+        option={option}
+        active={option.value === current}
+        onPick={onPick}
+      />
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            size="xs"
+            tone="muted"
+            className="cursor-pointer justify-self-start"
+            disabled={pending}
+          />
+        }
+      >
+        {roleName(member)}
+        <ChevronDown />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-72">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel variant="muted">
+            Role for {member.name}
+          </DropdownMenuLabel>
+          {tiers.map(item)}
+        </DropdownMenuGroup>
+        {custom.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel variant="muted">
+                Custom roles
+              </DropdownMenuLabel>
+              {custom.map(item)}
+            </DropdownMenuGroup>
+          </>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          render={<Link href={tabHref(pathname, "roles", search)} />}
+        >
+          Manage roles
+          <ArrowUpRight className="ml-auto" />
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** One role in the picker: its name over what it grants; the current one reads active. */
+function RoleItem({
+  option,
+  active,
+  onPick,
+}: {
+  option: RoleOption;
+  active: boolean;
+  onPick: (pick: RolePick) => void;
+}): React.JSX.Element {
+  return (
+    <DropdownMenuItem
+      data-active={active}
+      onClick={() => !active && onPick(option.pick)}
+    >
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate">{option.label}</span>
+        {option.description && (
+          <span className="truncate text-2xs text-muted-foreground">
+            {option.description}
+          </span>
+        )}
+      </span>
+    </DropdownMenuItem>
+  );
+}
+
+/** Adds an existing user by email with a role. */
+function InviteDialog({
+  orgId,
+  options,
+  onClose,
+}: {
+  orgId: Id<"orgs">;
+  options: RoleOption[];
+  onClose: () => void;
+}): React.JSX.Element {
+  const add = useMutation(api.org.members.add);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("member");
+  const { pending, error, run } = useSubmit();
+
+  async function submit(): Promise<void> {
+    const pick = options.find((option) => option.value === role)?.pick;
+    if (!email.trim() || !pick) return;
+    const done = await run(() =>
+      add({
+        orgId: orgId,
+        email: email.trim(),
+        role: pick.tier,
+        roleId: pick.roleId,
+      }),
+    );
+    if (done) onClose();
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Invite member</DialogTitle>
+          <DialogDescription>
+            The person must have signed in once before.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 py-2">
+          <div className="grid gap-1">
+            <Label htmlFor="invite-email" variant="muted" className="text-xs">
+              Email
+            </Label>
+            <Input
+              id="invite-email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="ada@example.com"
+            />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="invite-role" variant="muted" className="text-xs">
+              Role
+            </Label>
+            <Select
+              items={options}
+              value={role}
+              onValueChange={(value) => value !== null && setRole(value)}
+            >
+              <SelectTrigger id="invite-role" className="w-full cursor-pointer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    className="cursor-pointer"
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="cursor-pointer"
+            onClick={onClose}
+            disabled={pending}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="cursor-pointer"
+            onClick={submit}
+            disabled={pending || !email.trim()}
+          >
+            {pending ? "Adding…" : "Add"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function matchesField(member: Member, _field: Field, value: string): boolean {
+  return roleName(member).toLowerCase() === value;
+}
+
+function roleName(member: Member): string {
+  return member.roleName ?? TIER_LABEL[member.role];
+}
+
+/**
+ * The roles a member may be given, with what each grants, in the Roles tab's
+ * order: the admin and member tiers, then every custom role. The owner's
+ * tier is the organization's to set.
+ */
+function roleOptions(roles: Role[]): RoleOption[] {
+  return roles.flatMap((role): RoleOption[] => {
+    if (role.kind === "custom") {
+      return [
+        {
+          value: role._id,
+          label: role.name,
+          description: role.description,
+          pick: { tier: "member", roleId: role._id },
+        },
+      ];
+    }
+    if (role.tier === "owner") return [];
+
+    return [
+      {
+        value: role.tier,
+        label: role.name,
+        description: role.description,
+        pick: { tier: role.tier },
+      },
+    ];
+  });
+}
+
+function searchText(member: Member): string {
+  return `${member.name} ${member.email}`;
 }

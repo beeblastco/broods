@@ -32,6 +32,7 @@ import {
 } from "@/app/components/canvas/CanvasRefusal";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
+import { SpecsValue } from "@/app/(main)/[projectId]/sandbox/components/sandboxFormat";
 import { StatusDot } from "@/app/components/StatusDot";
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
@@ -75,7 +76,7 @@ import {
 } from "@/app/lib/canvasConnections";
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
 import type { MachineConnection } from "@/app/lib/machineConnection";
-import type { Id } from "@broods/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import {
   agreedSandboxOrderNumbers,
   workspaceOnlySandboxIds,
@@ -98,11 +99,18 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
+import {
+  ObservabilityToolbar,
+  type VolumePoint,
+} from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
+import type { RangePreset, TimeWindow } from "@/app/lib/queryTokens";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
+import { SandboxInstancesStandIn } from "./SandboxInstancesStandIn";
+import { DataTableStandIn } from "./DataTableStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
 
+// The press-and-drag fixture's select, a level list like the side panel's.
 const LEVEL_OPTIONS = [
   { value: "all", label: "All levels" },
   { value: "ERROR", label: "ERROR" },
@@ -110,6 +118,18 @@ const LEVEL_OPTIONS = [
   { value: "INFO", label: "INFO" },
   { value: "DEBUG", label: "DEBUG" },
 ];
+
+// The toolbar fixture's search fields, the log panel's.
+const LOG_FIELDS = ["level", "source", "agent", "trace", "event"] as const;
+
+// A fixed clock, so the strip's bins land in the same place on every run.
+const FIXTURE_NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
+
+// Entries across the last hour, one failure in the newest quarter.
+const VOLUME_POINTS: VolumePoint[] = Array.from({ length: 40 }, (_, i) => ({
+  ts: FIXTURE_NOW - 60 * 60 * 1000 + i * 90 * 1000,
+  severity: i === 36 ? "error" : i % 7 === 0 ? "warn" : "none",
+}));
 
 const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
 
@@ -288,6 +308,30 @@ const CONVEX_SERVER_ERROR = new Error(
 
 const subscribeNever = (): (() => void) => () => {};
 
+/**
+ * Size cells: fully reported, reported without a disk, a row written before
+ * sizes were verified (its specs are only the config's guess), and a computer
+ * whose daemon reported none.
+ */
+const SIZE_ROWS: Array<{
+  provider: string;
+  specs: Doc<"sandboxInstances">["specs"] | undefined;
+  verified: boolean;
+}> = [
+  {
+    provider: "daytona",
+    specs: { vcpu: 2, memoryMb: 4096, storageGb: 10 },
+    verified: true,
+  },
+  { provider: "e2b", specs: { vcpu: 2, memoryMb: 512 }, verified: true },
+  {
+    provider: "lambda",
+    specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+    verified: false,
+  },
+  { provider: "machine", specs: undefined, verified: true },
+];
+
 /** The account's ChatGPT plan, signed in; the gallery also renders none. */
 const CONNECTION_FIXTURES: Connection[] = [
   {
@@ -302,8 +346,9 @@ const CONNECTION_FIXTURES: Connection[] = [
 ];
 
 export function UiGallery(): React.JSX.Element {
-  const [level, setLevel] = useState("INFO");
   const [search, setSearch] = useState("");
+  const [range, setRange] = useState<RangePreset>("1h");
+  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
   const [pressLevel, setPressLevel] = useState("INFO");
   const [pressTab, setPressTab] = useState(PRESS_TABS[0]);
   const [pressCount, setPressCount] = useState(0);
@@ -347,6 +392,11 @@ export function UiGallery(): React.JSX.Element {
     );
   }
 
+  // The sandbox list with its panel and dock, with no provider behind it.
+  if (dashboardTab === "sandbox") {
+    return <SandboxInstancesStandIn />;
+  }
+
   // A trace link keeps the path and swaps ?tab=, so the dashboard stand-in
   // answers the same parameter the dashboard page does.
   if (dashboardTab === "monitoring" || dashboardTab === "tracing") {
@@ -372,23 +422,36 @@ export function UiGallery(): React.JSX.Element {
         <ObservabilityToolbar
           search={search}
           onSearchChange={setSearch}
-          searchPlaceholder="Search logs…"
-          filterAriaLabel="Filter by log level"
-          filterValue={level}
-          filterOptions={LEVEL_OPTIONS}
-          onFilterChange={setLevel}
-          fromTime=""
-          onFromTimeChange={() => {}}
-          toTime=""
-          onToTimeChange={() => {}}
-          hasFilters={false}
-          onClear={() => {}}
+          searchPlaceholder="Search logs · level: source: agent: trace: event:"
+          searchFields={LOG_FIELDS}
+          range={range}
+          onRangeChange={setRange}
+          window={timeWindow}
+          onWindowChange={setTimeWindow}
+          points={VOLUME_POINTS}
+          now={FIXTURE_NOW}
           onRefresh={() => {}}
           refreshDisabled={false}
           refreshTitle="Refresh"
           isError={false}
         />
+        <p className="text-xs text-muted-foreground">
+          query <span data-toolbar-query>{search}</span>
+          {timeWindow && (
+            <>
+              {" · window "}
+              <span data-toolbar-window>
+                {Math.round(timeWindow.from)}-{Math.round(timeWindow.to)}
+              </span>
+            </>
+          )}
+        </p>
         <LogTableStandIn />
+      </section>
+
+      <section data-fixture="data-table" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Data table</h2>
+        <DataTableStandIn />
       </section>
 
       <section data-fixture="usage-chart" className="flex flex-col gap-2">
@@ -573,6 +636,31 @@ export function UiGallery(): React.JSX.Element {
             </StatusPage>
           </div>
         </div>
+      </section>
+
+      <section data-fixture="sandbox-size" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Sandbox size</h2>
+        {/* The instances table's Size cell, one row per SIZE_ROWS case. */}
+        <table className="w-fit text-xs whitespace-nowrap">
+          <tbody>
+            {SIZE_ROWS.map((row) => (
+              <tr
+                key={row.provider}
+                data-provider={row.provider}
+                className="border-t border-border"
+              >
+                <td className="px-4 py-2.5">{row.provider}</td>
+                <td className="px-4 py-2.5 text-muted-foreground">
+                  <SpecsValue
+                    specs={row.specs}
+                    verified={row.verified}
+                    provider={row.provider}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
 
       <section data-fixture="onboarding" className="flex flex-col gap-2">

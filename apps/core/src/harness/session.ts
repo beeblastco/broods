@@ -48,6 +48,7 @@ import {
   rehydrateStoredMedia,
 } from "./channel-media.ts";
 import {
+  COMPACTION_MARKER,
   isCompactionSummaryMessage,
   summarizeConversation,
 } from "./compaction.ts";
@@ -773,6 +774,7 @@ export class Session {
     bytes: number;
   }> {
     const loaded = await loadConfiguredSkillPrompt(
+      this.accountId,
       allowedSkillPaths,
       skillPath,
       resourcePaths,
@@ -1043,29 +1045,36 @@ export class Session {
     } = {},
   ): Promise<StoredConversationEntry[]> {
     if (!this.persist) return [];
-    const entries: StoredConversationEntry[] = [];
-    let afterCursor = options.afterCreatedAt ?? undefined;
+    const afterCursor = options.afterCreatedAt ?? undefined;
+    // A full read pages back from the newest row and stops at the latest
+    // compaction summary: every reader projects from there on.
+    const backward = afterCursor === undefined;
+    const pages: StoredConversationEntry[][] = [];
+    let cursor = afterCursor;
     for (;;) {
       const result = await runtime.query<StoredConversationEventPage>(
         "listConversationEvents",
-        {
-          conversationKey: this.conversationKey,
-          afterCursor: afterCursor,
-        },
+        backward
+          ? {
+              conversationKey: this.conversationKey,
+              beforeCursor: cursor,
+              fromSystemPrefix: COMPACTION_MARKER,
+            }
+          : { conversationKey: this.conversationKey, afterCursor: cursor },
       );
-      entries.push(
-        ...result.page.map((row) => ({
+      pages.push(
+        result.page.map((row) => ({
           createdAt: row.cursor,
           event: row.event,
         })),
       );
       if (result.isDone) {
-        return entries;
+        return (backward ? pages.reverse() : pages).flat();
       }
-      if (!result.continueCursor || result.continueCursor === afterCursor) {
+      if (!result.continueCursor || result.continueCursor === cursor) {
         throw new Error("Conversation event pagination did not advance");
       }
-      afterCursor = result.continueCursor;
+      cursor = result.continueCursor;
     }
   }
 

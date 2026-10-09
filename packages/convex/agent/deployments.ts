@@ -2,8 +2,9 @@
  * Project + stage scoped runtime keys (`bsk_…`).
  *
  * One key per stage invokes any deployed agent in it; the agent is chosen
- * per request by id. The dashboard surfaces the key/URLs; the CLI mints it on
- * `deploy`. The SHA-256 hash authenticates runtime calls (`getByApiKeyHash` in
+ * per request by id. An empty stage gets its key when it is created; a cloned
+ * or older stage gets it from the CLI's `deploy` or the dashboard's "Generate
+ * key". The SHA-256 hash authenticates runtime calls (`getByApiKeyHash` in
  * `core`); the plaintext is also stored AES-GCM encrypted so the owner can
  * recover it for dashboard streaming and CLI reconnect without rotating.
  */
@@ -18,7 +19,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
-import { authKit, deriveName } from "../auth";
+import { authKit, type AuthUser, deriveName } from "../auth";
 import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   auditDetailsJson,
@@ -26,19 +27,25 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "../model/auditEvents";
-import { accountDoc } from "../account/accounts";
+import { accountDoc } from "../model/accountDoc";
+import { requireDashboardPermission } from "../model/access";
 import {
+  keyHint,
   randomToken,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
+import { userByAuthId } from "../model/ownership/org";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import {
   sealStageSessionTicket,
   STAGE_SESSION_TICKET_TTL_MS,
 } from "../model/stageSessionTicket";
+
+const PROVISION_ACCOUNT_FIRST =
+  "Provision your organization's API account first (Settings → API Access).";
 
 /** A minted stage ticket plus the slugs the gateway's observability path uses. */
 export const stageSessionValidator = v.object({
@@ -107,31 +114,21 @@ export const ensureForStage = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
-    const context = await resolveStageContext(ctx, projectId, stageId);
-    const result = await ensureStageDeployment(ctx, {
-      authId: context.authId,
-      accountId: context.account._id,
+    const member = await userByAuthId(ctx, authUser.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
       projectId: projectId,
       stageId: stageId,
-      projectSlug: context.projectSlug,
-      stageSlug: context.stageSlug,
-      createdBy: deriveName(authUser),
     });
-    await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
-      accountId: context.account._id,
-      projectId: projectId,
-      stageId: stageId,
-      action: "ready",
-      endpointId: result.endpointId,
-      summary: "Stage runtime deployment is ready",
-    });
+    const result = await readyStageDeployment(
+      ctx,
+      authUser,
+      projectId,
+      stageId,
+    );
+    if (!result) throw new Error(PROVISION_ACCOUNT_FIRST);
 
     return toEnsureReturn(result);
   },
@@ -246,8 +243,9 @@ export const getForStage = query({
 /**
  * Any org member: mint a short-lived stage session ticket the dashboard uses
  * in place of the runtime key for logs, traces and the test chat. Core accepts
- * it as the stage's deployment credential until it expires. Null when the
- * stage has no deployment yet.
+ * it as the stage's deployment credential until it expires, but never for a
+ * machine sandbox claim: any member can mint this one. Null when the stage
+ * has no deployment yet.
  */
 export const mintStageSession = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
@@ -274,13 +272,16 @@ export const mintStageSession = mutation({
 
 /**
  * Seal a stage session ticket for the stage's active deployment. The caller
- * has already checked the member may read that stage. Null before the first
- * deploy. The slugs are what the gateway's observability path matches on.
+ * has already checked the member may read that stage, and passes
+ * `sandboxWrite` only once it has checked they may also write its sandboxes.
+ * Null before the first deploy. The slugs are what the gateway's
+ * observability path matches on; the ids scope a machine sandbox claim.
  */
 export async function mintStageSessionTicket(
   ctx: QueryCtx,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
+  sandboxWrite = false,
 ): Promise<StageSession | null> {
   const deployment = await ctx.db
     .query("agentDeployments")
@@ -298,8 +299,11 @@ export async function mintStageSessionTicket(
     {
       accountId: deployment.accountId,
       endpointId: deployment.endpointId,
+      projectId: projectId,
       projectSlug: deployment.projectSlug,
+      stageId: stageId,
       stageSlug: deployment.stageSlug,
+      ...(sandboxWrite ? { sandboxWrite: true as const } : {}),
       expiresAt: expiresAt,
     },
     stageTicketSecret(),
@@ -382,14 +386,16 @@ export const rotate = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
+    const member = await userByAuthId(ctx, authUser.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: projectId,
+      stageId: stageId,
+    });
     const context = await resolveStageContext(ctx, projectId, stageId);
+    if (!context) throw new Error(PROVISION_ACCOUNT_FIRST);
     const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
       accountId: context.account._id,
@@ -398,6 +404,7 @@ export const rotate = mutation({
       projectSlug: context.projectSlug,
       stageSlug: context.stageSlug,
       createdBy: deriveName(authUser),
+      createdByUserId: member._id,
       rotate: true,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
@@ -412,6 +419,42 @@ export const rotate = mutation({
     return toEnsureReturn(result);
   },
 });
+
+/**
+ * Mints a stage's runtime key and audits it, so Monitoring and Tracing stream
+ * from the first visit. Project and stage creation call it right after the
+ * insert; `ensureForStage` calls it on demand. Returns null while the org has
+ * no API account yet.
+ */
+export async function readyStageDeployment(
+  ctx: MutationCtx,
+  user: AuthUser,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+): Promise<EnsureResult | null> {
+  const context = await resolveStageContext(ctx, projectId, stageId);
+  if (!context) return null;
+  const result = await ensureStageDeployment(ctx, {
+    authId: context.authId,
+    accountId: context.account._id,
+    projectId: projectId,
+    stageId: stageId,
+    projectSlug: context.projectSlug,
+    stageSlug: context.stageSlug,
+    createdBy: deriveName(user),
+    createdByUserId: (await userByAuthId(ctx, user.id))?._id,
+  });
+  await recordDeploymentAudit(ctx, dashboardAuditActor(user), {
+    accountId: context.account._id,
+    projectId: projectId,
+    stageId: stageId,
+    action: "ready",
+    endpointId: result.endpointId,
+    summary: "Stage runtime deployment is ready",
+  });
+
+  return result;
+}
 
 /**
  * Find the stage's active deployment, creating one (with a fresh key) when
@@ -429,6 +472,8 @@ export async function ensureStageDeployment(
     stageSlug: string;
     /** Display name stamped on a newly minted or rotated key. */
     createdBy?: string;
+    /** The member behind it, when the dashboard minted or rotated. */
+    createdByUserId?: Id<"users">;
     rotate?: boolean;
   },
 ): Promise<EnsureResult> {
@@ -479,6 +524,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       createdAt: now,
       createdBy: args.createdBy,
+      createdByUserId: args.createdByUserId,
       lastUsedAt: undefined,
       updatedAt: now,
     });
@@ -506,6 +552,7 @@ export async function ensureStageDeployment(
     ...keyFields,
     createdAt: now,
     createdBy: args.createdBy,
+    createdByUserId: args.createdByUserId,
     updatedAt: now,
   });
   await refreshAccountChannelEndpoints(ctx, args.accountId);
@@ -565,7 +612,7 @@ async function runtimeKeyFields(
 
   return {
     apiKeyHash: await sha256Hex(rawApiKey),
-    keyHint: `${RUNTIME_KEY_PREFIX}…${rawApiKey.slice(-4)}`,
+    keyHint: keyHint(RUNTIME_KEY_PREFIX, rawApiKey),
     apiKeyCiphertext: blob.ciphertext,
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,
@@ -614,7 +661,7 @@ async function resolveStageContext(
   projectSlug: string;
   stageSlug: string;
   authId: string;
-}> {
+} | null> {
   const project = await ctx.db.get(projectId);
   if (!project) throw new Error("Project not found.");
   const stage = await ctx.db.get(stageId);
@@ -625,11 +672,7 @@ async function resolveStageContext(
     .query("accounts")
     .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
-  if (!account) {
-    throw new Error(
-      "Provision your organization's API account first (Settings → API Access).",
-    );
-  }
+  if (!account) return null;
 
   return {
     account: account,

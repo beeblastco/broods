@@ -114,6 +114,7 @@ let registryOwnsReservation = true;
 // This month's metered cost the fake budget store reports against a €5 budget.
 let budgetUsedPercent = 0;
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
   setSandboxInstanceStatus: mock(async () => {}),
   recordSandboxBurst: mock(async (): Promise<boolean> => true),

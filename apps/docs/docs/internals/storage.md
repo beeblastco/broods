@@ -1,106 +1,133 @@
 # Storage
 
-This page covers where workspace files, memory and skills live in S3, how the harness and the sandbox mount reach the same bytes, and the consistency rules between them. The user-facing model is in [Workspaces](../guides/workspaces.md), [Memory and sessions](../guides/memory-and-sessions.md) and [Skills](../guides/skills.md). Paths are relative to `apps/core/`.
+Where workspace files, memory and skills live in S3, how the harness and the sandbox mount reach the same bytes, and what one turn reads and writes. The user-facing model is in [Workspaces](../guides/workspaces.md), [Memory and sessions](../guides/memory-and-sessions.md) and [Skills](../guides/skills.md). Paths are relative to `apps/core/`.
 
 ## Key layout
 
-A workspace's files live directly under `<namespace>/` in the managed bucket named by `FILESYSTEM_BUCKET_NAME`. The namespace is `fs-` plus the first 40 hex characters of a scoped SHA-256 of `accountId:workspaceId`. `workspaceNamespace()` in `src/shared/workspaces.ts` computes it, hashing through `normalizeFilesystemNamespace()` in `src/shared/runtime-keys.ts`. Partitioning adds child folders below it, never another bucket. A `conversation` partition mounts `<namespace>/<alias>/fs-<hash of the conversation key>`, computed by `isolatedWorkspaceNamespace()`.
-
-The layout is single-sourced in `workspaceNamespacePrefix()` in `src/shared/sandbox.ts`. Harness-side S3 reads and writes and the sandbox's `mount-s3` mount both go through it, so changing it there moves both together. The `<namespace>/` segment is also the tenant boundary the per-mount IAM session policy is scoped to.
-
 ```mermaid
 flowchart TD
-  NS["Session.filesystemNamespace()"] --> Prefix["workspaceNamespacePrefix()"]
-  Prefix --> S3["S3 workspace bucket"]
-  Dashboard["dashboard Files tab"] --> ConfigApi["Convex workspace file API"]
-  ConfigApi --> Prefix
-  S3 --> Memory["memory/MEMORY.md + memory/*.md"]
-  S3 --> Skills["staged skills<br/>.claude/skills/name + .agents/skills/name"]
-  S3 --> Files["workspace files"]
-  Files --> Mount["mount-s3 --prefix namespace/<br/>at /mnt/workspaces/namespace"]
-  Mount --> Providers["lambda MicroVM, sandbox (workdir), Daytona"]
+  subgraph FS["workspace bucket, FILESYSTEM_BUCKET_NAME"]
+    NS["fs-hash/<br/>one workspace namespace"]
+    NS --> Files["workspace files"]
+    NS --> Mem["memory/MEMORY.md<br/>memory/slug.md"]
+    NS --> Sk["staged skills<br/>.claude/skills/name<br/>.agents/skills/name"]
+    NS --> AgentNs["agent/fs-hash/<br/>isolation: agent"]
+    NS --> ConvNs["alias/fs-hash/<br/>conversation partition"]
+  end
+  subgraph SK["skills bucket, SKILLS_BUCKET_NAME"]
+    Skill["accountId/skill-name/<br/>SKILL.md + resources"]
+  end
+  subgraph TB["tool-bundles bucket"]
+    Bundle["account-mcp/accountId/bundles/sha256.mjs"]
+  end
 ```
 
-Every S3-backed provider mounts the prefix with `mount-s3`, Mountpoint for S3. The MicroVM mounts from its `/run` lifecycle hook and gets refreshed credentials every 30 minutes. Workdir and Daytona mount per run. E2B and Vercel are not wired to S3 workspaces, and attaching one fails fast instead of silently using provider-native state. `src/harness/sandbox/s3-mount.ts` resolves the mount target and credentials the same way for every provider.
+- The namespace is `fs-` plus the first 40 hex of a scoped SHA-256 of `accountId:workspaceId` (`workspaceNamespace()` in `src/shared/workspaces.ts`, `normalizeFilesystemNamespace()` in `src/shared/runtime-keys.ts`).
+- `isolatedWorkspaceNamespace()` adds child folders for agent isolation and conversation partitions, never another bucket.
+- `workspaceNamespacePrefix()` in `src/shared/sandbox.ts` is the one place the prefix is built. Harness S3 calls and the sandbox mount both use it, and the per-mount IAM session policy is scoped to it.
 
-Mountpoint for S3 supports whole-file create and overwrite only. `O_APPEND` (`>>`), in-place edits and `rename()` fail with `EPERM`, which is why the `write` and `edit` tools rewrite whole files and `memory_save` rewrites the index in one `>` pass with no temp file. Both tools `sync` the file after writing.
+Every S3-backed provider mounts the prefix with Mountpoint for S3 (`mount-s3`) at `/mnt/workspaces/<namespace>`. `src/harness/sandbox/s3-mount.ts` resolves target and credentials the same way for all of them.
+
+```mermaid
+flowchart LR
+  Resolve["resolveS3Mount()"] --> VM["lambda MicroVM<br/>mounts in /run hook,<br/>credentials refreshed every 30 min"]
+  Resolve --> Wd["workdir sandbox<br/>mounts per run"]
+  Resolve --> Dt["Daytona<br/>mounts per run"]
+  Resolve -.->|"not wired, fails fast"| EV["E2B, Vercel"]
+```
+
+Mountpoint supports whole-file create and overwrite only. `>>`, in-place edits and `rename()` fail with `EPERM`, so `write`, `edit` and `memory_save` rewrite whole files in one `>` pass and `sync` after writing.
 
 ## Two doors to the same bytes
 
-The mount and the S3 API reach the same objects on different schedules:
+```mermaid
+flowchart LR
+  subgraph Sandbox["sandbox"]
+    Agent["agent: bash, read,<br/>glob, grep, write, edit"] --> Mount["mount-s3"]
+  end
+  subgraph Core["core harness"]
+    Api["S3 API<br/>src/shared/s3.ts"]
+  end
+  Mount -->|"upload on close"| Obj[("S3 objects<br/>namespace/")]
+  Obj -->|"after metadata cache refresh"| Mount
+  Api -->|"PutObject, CopyObject"| Obj
+  Obj -->|"GetObject"| Api
+  Dash["dashboard Files tab<br/>Convex file actions"] --> Obj
+```
 
-- Bucket to mount. An object the harness wrote with `PutObject` or `CopyObject` appears in the mount without remounting, after Mountpoint's metadata cache catches up.
-- Mount to bucket. A file the agent wrote through `bash` or the file tools is visible in the mount at once and reaches the bucket when Mountpoint uploads it on close.
+The agent always reads through the mount, so it sees its own writes at once. Harness reads pick the door by who last wrote the file:
 
-The routing below dates from the earlier S3 Files mount, where a mount write took 1 to 2 minutes to reach the S3 API. It was missing at +45 s and present at +120 s. Mountpoint uploads on close, so that window is now the upload itself. The routing stays because it is correct either way. Pick the door by who last wrote the file.
+| Reading                                                           | Last writer    | Read through                              |
+| ----------------------------------------------------------------- | -------------- | ----------------------------------------- |
+| Agent-written files, including agent-edited `MEMORY.md`           | sandbox mount  | the mount: `bash`, `read`, `glob`, `grep` |
+| Harness-written files: staged skills, sandbox artifact write-back | harness via S3 | the S3 API                                |
+| The skills bucket                                                 | harness via S3 | the S3 API. Never mounted                 |
 
-| Reading                                                                 | Last writer    | Read through                                       |
-| ----------------------------------------------------------------------- | -------------- | -------------------------------------------------- |
-| Agent-written files, including agent-edited `MEMORY.md`                 | sandbox mount  | The mount: `bash`, `read`, `glob`, `grep`          |
-| Harness-written files: staged skill copies, sandbox artifact write-back | harness via S3 | The S3 API (`src/shared/s3.ts`)                    |
-| The account skills bucket                                               | harness via S3 | The S3 API. It is a separate bucket, never mounted |
-
-The agent always reads through the mount, so it always sees its own writes. The choice only applies to harness-side reads.
-
-Read-only workspaces read through a service-managed read-only mount by default, with the same fresh-read semantics. `sandbox: null` opts out and reads S3 directly under the same prefix. That skips the mount and the cold start, but reads lag. A read-only workspace on a bring-your-own bucket always reads S3 directly, because the mount's `deny-all` network only reaches the managed bucket.
-
-One known exception exists. `Session.loadMemoryFile` reads `memory/MEMORY.md` through the S3 API at the start of each turn, so a workspace with no sandbox still serves memory. A read that lands before the agent's last edit reached the bucket is stale. This is accepted because memory converges across turns and a sandbox round trip every turn is costly. Route prompt-time memory reads through a sandbox-backed `read` if freshness ever becomes a hard requirement.
+- A read-only workspace reads through a service-managed read-only mount. `sandbox: null` reads S3 directly instead: no cold start, but reads can lag. A read-only workspace on a bring-your-own bucket always reads S3 directly, because the mount's `deny-all` network reaches only the managed bucket.
+- Known exception: `Session.loadMemoryFile` reads `memory/MEMORY.md` over the S3 API every turn, so a workspace with no sandbox still serves memory. A read before the agent's last edit reached the bucket is stale; memory converges across turns.
 
 ## Bring-your-own bucket
 
-A workspace can set `storage.bucket`, `region`, `prefix`, optional `endpoint`, and `auth: { type: "assumeRole", roleArn, externalId }` or `auth: { type: "r2", accessKeyId, secretAccessKey }`. Platform credentials only ever reach the managed bucket, so validation refuses a BYO bucket unless:
-
-- `auth.type` is `assumeRole` or `r2`. `managed` or missing auth is valid only without a `bucket`.
-- for `r2`, both keys are a single `${NAME}` env ref and `endpoint` is the account's `https://<account id>.r2.cloudflarestorage.com`.
-- `bucket` is not one of the platform's own buckets, compared case-insensitively.
-- `auth.roleArn` is an IAM role outside the platform AWS account.
-- `prefix` is set. Mount credentials are scoped to `bucket/prefix/*`, a directory boundary.
-- `endpoint`, when set, is a public `https` URL and appears only with `bucket`. The sandbox `options.s3Endpoint` follows the same rule. A self-hosted deployment can allow private endpoints, such as MinIO on the cluster network or single-label hosts like `http://minio:9000`, with `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on both core and Convex. A public host still needs `https`.
-
-The config API, `broods deploy` and the dashboard canvas check these on save, and core and the config plane check them again every time storage is resolved. A workspace stored before a rule existed fails with the same error instead of falling back to platform credentials.
+A workspace can set `storage.bucket`, `region`, `prefix`, optional `endpoint`, and `auth` of `{ type: "assumeRole", roleArn, externalId }` or `{ type: "r2", accessKeyId, secretAccessKey }`.
 
 ```mermaid
 flowchart TD
-  Storage["workspace.storage"] --> Resolve["resolveS3Mount()<br/>sandbox/s3-mount.ts"]
-  Resolve -->|"managed"| Managed["FILESYSTEM_BUCKET_NAME<br/>prefix namespace/<br/>harness role"]
-  Resolve -->|"bring your own"| STS["STS AssumeRole<br/>session policy: bucket/prefix*"]
-  Resolve -->|"r2"| Mint["Convex workspace.configs.r2Credentials<br/>JWT signed with the parent key"]
-  STS --> Byo["your bucket, short-lived scoped creds"]
-  Mint --> Byo
-  Managed --> Mount["sandbox mount + harness reads"]
-  Byo --> Mount
+  Storage["workspace.storage"] --> Resolve["resolveS3Mount()"]
+  Resolve -->|"managed"| Managed["FILESYSTEM_BUCKET_NAME<br/>assume sandbox-s3mount role"]
+  Resolve -->|"assumeRole"| STS["STS AssumeRole roleArn<br/>session policy: bucket/prefix*"]
+  Resolve -->|"r2"| Mint["Convex workspace.configs.r2Credentials<br/>temporary credentials JWT"]
+  Resolve -->|"no mount role"| Prov["provider's own credentials"]
+  Managed --> Use["sandbox mount + harness reads"]
+  STS --> Use
+  Mint --> Use
+  Prov --> Use
 ```
 
-`resolveS3Mount()` has four credential sources, in order. A bring-your-own bucket assumes the account's `roleArn`, or for `r2` asks Convex to mint R2 temporary credentials. The managed bucket assumes the platform `sandbox-s3mount` role named by `SANDBOX_MOUNT_ROLE_ARN`. Without that role, the provider supplies credentials itself, through workdir's declarative org secrets or sandbox `envVars`. Every assumed session, named `fp-sandbox-mount-<agentId>` on an agent-isolated mount and `fp-sandbox-mount-acct-<accountId>` on any other, and lasting one hour, carries a session policy allowing object reads and writes on `bucket/prefix*` and `ListBucket` only under that prefix, so the credentials handed to a sandbox can only touch that prefix. On the platform role the session also carries `SourceIdentity` and session tags for the account, and for the agent on an agent-isolated mount, see [sandboxes](sandboxes.md#isolation-levels). The prefix must end in `/`, so `agents/` never also matches `agents-archive/`. The mount and harness-side reads resolve the same target. Bring-your-own read targets are cached until 10 minutes before their credentials expire, an R2 one for at most a minute, since revoking the parent token kills its credentials at once. Workdir passes the credentials per exec to `mount-s3`, Daytona injects them into the run environment, and the MicroVM receives them in its `runHookPayload`.
+Validation refuses a BYO bucket unless:
 
-Workspace config is stored in plaintext, so no access keys are ever stored in it. R2 keys are `${NAME}` refs to stage env vars (CLI-synced workspace) or account env vars (API workspace). `workspace.configs.r2Credentials`, a mutation so no cached result outlives its credentials, checks the row belongs to the account, refuses a prefix outside `storage.prefix`, decrypts the two values and signs Cloudflare's local temporary-credential JWT (`model/r2Credentials.ts`: HS256 over bucket, `object-read-write`, `prefixPaths: [prefix]`, one hour). The parent secret stays in Convex. Core finds the row through `storage.owner`, which it stamps on its own view of the storage when it loads the row and which Convex never stores or accepts. The Convex file actions mint through the same mutation (`withR2Credentials`). R2 signs for region `auto`. Static access keys for other stores such as MinIO are not supported, since they would hand the parent key to the sandbox. `provider` stays `s3` for every S3-compatible vendor. It is reserved for a different protocol such as native Azure Blob or GCS.
+- `auth.type` is `assumeRole` or `r2`. `managed` or no auth is valid only without `bucket`.
+- `r2` keys are each a single `${NAME}` env ref and `endpoint` is the account's `https://<account id>.r2.cloudflarestorage.com`.
+- `bucket` is not a platform bucket, and `roleArn` is outside the platform AWS account.
+- `prefix` is set. Credentials are scoped to `bucket/prefix*`, and the prefix must end in `/`.
+- `endpoint` is public `https`. `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on core and Convex allows private hosts such as MinIO on a self-hosted cluster.
 
-Under `deny-all` or `restricted` networking, a MicroVM reaches S3 only through the gateway endpoint, whose policy names the managed bucket alone. BYO-bucket workspaces on `lambda` therefore need `allow-all`.
+The config API, `broods deploy` and the canvas check on save; core and the config plane check again every time storage resolves, so an old row fails instead of falling back to platform credentials.
+
+- Every assumed session lasts one hour and allows object reads and writes on `bucket/prefix*` and `ListBucket` under that prefix only. Naming and session tags: see [sandboxes](sandboxes.md#isolation-levels).
+- R2: Convex decrypts the two env values and signs Cloudflare's temporary-credential JWT (`model/r2Credentials.ts`, HS256, `object-read-write`, one prefix, one hour). The parent secret never leaves Convex. Core finds the row through `storage.owner`, which only core stamps on its in-memory copy.
+- BYO read targets are cached until 10 minutes before expiry, R2 ones for at most a minute.
+- Static access keys for other stores are not supported, since they would hand the parent key to the sandbox.
+- Under `deny-all` or `restricted` networking a MicroVM reaches S3 only through the gateway endpoint for the managed bucket, so BYO workspaces on `lambda` need `allow-all`.
 
 ## Dashboard Files panel
 
-The dashboard Files tab lists and mutates the same S3 namespace through the Convex workspace file actions in `packages/convex/workspace/filesPublic.ts`, so uploads, renames and deletes change the files the agent mounts. Convex file storage only holds upload blobs in transit. An upload grant in `uploadGrants`, at most 20 open per account per hour, hands out a Convex upload URL, and blobs no workspace file references are deleted after a day.
+The Files tab lists and mutates the same namespace through Convex file actions (`packages/convex/workspace/filesPublic.ts`). API uploads go through a Convex upload URL instead, one `uploadGrants` row each, at most 20 open per account per hour; blobs no file references are deleted after a day.
 
-- The last confirmed tree is cached in memory and `sessionStorage` and painted immediately, then revalidated. File contents and signed URLs are never cached.
-- Uploads show as pending rows until S3 confirms. Rename and delete update optimistically, then reload; a failure restores server state.
-- While visible, the panel lists S3 every 5 seconds, and again on focus, tab restore or Refresh. Overlapping lists dedup, and an older response cannot overwrite a newer optimistic change.
-- The panel cannot show an agent write before the mount has exported it to S3.
-- Dashboard uploads are capped at 512 KiB per file because the base64 payload crosses a Convex action. Agents can write larger files through the mount.
+```mermaid
+sequenceDiagram
+  participant D as Files tab
+  participant CV as Convex file actions
+  participant S3 as workspace bucket
 
-`GET /v1/workspaces/:id/files?path=` returns a presigned URL, about 1.4 KB long and valid for 5 minutes. `POST /v1/workspaces/:id/download-links` mints a short token under `/v1/downloads/:token` that redirects to a fresh presigned URL, valid 24 hours by default and at most 30 days (`packages/convex/workspace/files.ts`). Tokens are stored in `workspaceDownloadTokens`, and deleting the workspace or account revokes them. Routes live in `packages/convex/config/routes/workspaceFiles.ts`.
+  D->>D: paint cached tree from sessionStorage
+  loop every 5 s while visible, and on focus
+    D->>CV: list namespace
+    CV->>S3: list objects
+    S3-->>CV: keys
+    CV-->>D: tree, an older answer never overwrites a newer change
+  end
+  D->>CV: upload action, base64, 512 KiB cap
+  CV->>S3: PutObject
+  S3-->>D: pending row confirmed
+```
+
+- Rename and delete update optimistically and restore server state on failure. File contents and signed URLs are never cached.
+- An agent write shows only after the mount uploads it.
+- `GET /v1/workspaces/:id/files?path=` returns a presigned URL valid 5 minutes. `POST /v1/workspaces/:id/download-links` mints `/v1/downloads/:token`, valid 24 hours by default and at most 30 days, stored in `workspaceDownloadTokens` and revoked with the workspace or account (`packages/convex/workspace/files.ts`, routes in `packages/convex/config/routes/workspaceFiles.ts`).
 
 ## Sessions and memory
 
-`Session` in `src/harness/session.ts` owns the runtime path:
-
-- An agent turn is deduplicated at admission, by its ingress identity. `claim()` in `runtimeClaims` only guards channel commands such as `/clear` and context-only messages, which never enter the queue.
-- The conversation lease serializes work per conversation, fenced by owner generation. See [queue and steer](queue-and-steer.md).
-- `appendIngressEvents()` persists incoming user, assistant, tool and persisted system messages to `runtimeConversationEvents`.
-- `createTurnContext()` loads history, builds system prompt parts and prunes model-visible messages (`pruning.ts`).
-- `compactConversation()` folds the stored history into a bounded summary (`compaction.ts`). It serves `/compact`, runs after a finished turn reaches `session.autoCompaction.maxContextLength`, and after a turn the provider refused for context length. When the summary model refuses the history, it summarizes the halves apart and merges them.
-- `resolvedWorkspaces()`, backed by `resolveAgentRuntime()` in `src/shared/workspaces.ts`, resolves workspace and sandbox records, applies per-workspace overrides and hashes namespaces.
-
-What one turn reads and writes, and in which store:
+`Session` in `src/harness/session.ts` owns the runtime path. What one turn reads and writes:
 
 ```mermaid
 sequenceDiagram
@@ -117,7 +144,7 @@ sequenceDiagram
   H->>S: createTurnContext()
   par loaded at once
     S->>CVX: history pages
-    S->>S3: memory/MEMORY.md per workspace (loadMemoryFile)
+    S->>S3: memory/MEMORY.md per workspace
     S->>S: resolve workspaces, skill and subagent metadata
   end
   S->>S: system prompt parts, pruning
@@ -125,16 +152,28 @@ sequenceDiagram
   M->>CVX: persistModelMessages each step, fenced by ownerGeneration
 ```
 
-Structured memory is one markdown file per fact under `memory/`, indexed by `memory/MEMORY.md`. `memory_save` (`tools/memory.tool.ts`) writes an entry and updates the index through the sandbox write path. The index is loaded into the system prompt when it exists.
+- Admission dedups a turn by ingress identity. `claim()` in `runtimeClaims` guards only channel commands such as `/clear` and context-only messages. The lease is in [queue and steer](queue-and-steer.md).
+- `compactConversation()` (`compaction.ts`) folds history into a summary on `/compact`, after a turn passes `session.autoCompaction.maxContextLength`, and after a context-length refusal. A refused summary is split in halves and merged.
+
+Structured memory is one markdown file per fact, indexed by `memory/MEMORY.md`:
+
+```mermaid
+flowchart LR
+  Model["model calls memory_save"] --> Tool["memory.tool.ts"]
+  Tool -->|"write memory/slug.md,<br/>rewrite MEMORY.md, sync"| Mount["sandbox mount"]
+  Mount -->|"upload on close"| S3[("namespace/memory/")]
+  S3 -->|"next turn, S3 API"| Load["Session.loadMemoryFile"]
+  Load --> Prompt["system prompt<br/>memory index block"]
+```
 
 ## Skills
 
-Skills are stored by the Convex config plane in the skills bucket under `<accountId>/<skill-name>`. The path comes from the `SKILL.md` frontmatter name, not the upload folder.
+Skills live in the skills bucket under `<accountId>/<skill-name>`, named by the `SKILL.md` frontmatter, not the upload folder.
 
 ```mermaid
 flowchart LR
   Owner -->|"POST /v1/skills"| Config["Convex config plane"]
-  Config -->|"validate"| Store["S3 skills bucket"]
+  Config -->|"validate"| Store[("skills bucket")]
   Store -->|"metadata only"| Session["session.ts<br/>skill panel"]
   Session --> Model
   Model -->|"load_skill(path)"| Loader["load-skill.tool.ts"]
@@ -142,23 +181,12 @@ flowchart LR
   Loader -->|"server-side copy"| Ws["workspace namespace<br/>.claude/skills + .agents/skills"]
 ```
 
-- `session.ts` lists the path, name and description of each allowed skill in the prompt. `load_skill` returns `SKILL.md` and any requested resources through the S3 API, which works with no workspace or sandbox.
-- With a workspace attached, every `load_skill` re-stages a fresh copy into `<namespace>/.claude/skills/<name>` and mirrors it to `.agents/skills/<name>`, per `SKILL_CANONICAL_DIR` and `SKILL_MIRROR_DIRS` in `src/harness/skills.ts`. It drops stale files first. It uses S3 server-side copy, so bytes do not stream through core. No sandbox mounts the skills bucket. The staged copy is how scripts reach a sandbox.
-- Harness adapters get the same skills as `HarnessAgentSkill` entries through `src/harness/skills.ts`.
-- Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged with executable POSIX metadata so shebang scripts run directly. Other text files are staged non-executable.
-- `src/shared/skills.ts` and `packages/convex/model/skillRules.ts` both validate. Names are lowercase letters, digits and hyphens, at most 64 characters, with no `anthropic`, `claude` or XML tags. Files are text only, at most 5 MB each and 30 MB per bundle.
-
-Design rules:
-
-- Skill CRUD stays in the Convex config plane, in `packages/convex/config/http.ts` and `packages/convex/model/skills.ts`, as Node actions only. Skills are S3 bundles, and there is no Convex skills table.
-- Shared runtime validation and S3 path rules stay in `src/shared/skills.ts`.
-- The model-facing `load_skill` schema stays in `src/harness/tools/load-skill.tool.ts`.
-- Editing a skill goes through an editable workspace and the normal file tools, never through `load_skill`.
+- `load_skill` returns `SKILL.md` and requested resources over the S3 API, so it works with no workspace.
+- With a workspace, every `load_skill` re-stages a fresh copy to `.claude/skills/<name>` and mirrors it to `.agents/skills/<name>` (`SKILL_CANONICAL_DIR`, `SKILL_MIRROR_DIRS` in `src/harness/skills.ts`), dropping stale files first. No sandbox mounts the skills bucket; the staged copy is how scripts reach one.
+- Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged executable.
+- `src/shared/skills.ts` and `packages/convex/model/skillRules.ts` validate: names of lowercase letters, digits and hyphens, at most 64 characters, no `anthropic`, `claude` or XML tags; text files only, 5 MB each, 30 MB per bundle.
+- Skill CRUD is Node actions in the config plane (`packages/convex/config/http.ts`, `packages/convex/model/skills.ts`). There is no Convex skills table. Editing a skill goes through an editable workspace and the file tools, never `load_skill`.
 
 ## Future external storage
 
-S3-compatible stores such as MinIO, Wasabi and B2 need a way to scope credentials per mount, as R2 does with temporary credentials. `endpoint` is already in the BYO contract for them. Non-S3 providers such as Google Drive, native GCS and Azure Blob would go behind a new `storage.provider`, and must still:
-
-- keep one logical namespace for memory, staged skills and files,
-- mount or sync that namespace into the sandbox's workspace root,
-- stay out of `session.ts` and the agent loop.
+Other S3-compatible stores (MinIO, Wasabi, B2) need per-mount scoped credentials, as R2 has; `endpoint` is already in the contract. Non-S3 providers would go behind a new `storage.provider` and must keep one namespace for memory, skills and files, mount or sync it into the sandbox, and stay out of `session.ts` and the agent loop.

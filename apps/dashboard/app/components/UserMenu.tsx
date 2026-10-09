@@ -1,6 +1,7 @@
 "use client";
 
 /** The account row at the sidebar's foot, and the menu it opens upward. */
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import {
   Avatar,
   AvatarFallback,
@@ -23,7 +24,7 @@ import {
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
 import { api } from "@broods/convex/_generated/api";
-import { useAuth } from "@workos-inc/authkit-nextjs/components";
+import { useSession } from "@/app/lib/session";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   Building2,
@@ -44,13 +45,13 @@ import { useCallback } from "react";
 
 export function UserMenu(): React.JSX.Element | null {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signOut } = useAuth();
+  const { user, signOut } = useSession();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
   const currentUser = useQuery(
     api.user.getCurrent,
-    isAuthenticated ? {} : "skip",
+    useSignedIn() ? {} : "skip",
   );
   // Warm the account/org routes the moment the menu opens so the first click
   // paints instantly instead of stalling on a cold chunk + data fetch.

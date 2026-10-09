@@ -14,6 +14,7 @@ import {
   type CanvasNodeMenuEntries,
 } from "@/app/components/canvas/CanvasNodeMenu";
 import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
+import { CanvasKeyReady } from "@/app/components/canvas/CanvasKeyReady";
 import { CanvasNoticeStrip } from "@/app/components/canvas/CanvasNotice";
 import {
   CanvasRefusal,
@@ -109,6 +110,7 @@ import {
   findFreePosition,
   GRID,
 } from "@broods/convex/model/canvasLayout";
+import { defaultStage } from "@broods/convex/model/defaultStage";
 import { api } from "@broods/convex/_generated/api";
 import {
   agreedSandboxOrderNumbers,
@@ -139,6 +141,7 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
@@ -250,21 +253,41 @@ let firstCanvasReported = false;
 
 type FlowPosition = { x: number; y: number };
 
+/** The stage-scoped queries `Canvas` runs for `CanvasInner`; undefined while loading. */
+type StageData = {
+  canvasLayout: FunctionReturnType<typeof api.canvas.getByProject> | undefined;
+  mcpServers: FunctionReturnType<typeof api.mcp.listByStage> | undefined;
+  machineConnections:
+    | FunctionReturnType<typeof api.sandbox.machines.listForActiveOrg>
+    | undefined;
+};
+
 export function Canvas({
   projectId,
 }: {
   projectId: Id<"projects">;
 }): React.JSX.Element {
-  const { stageId } = useStage();
+  const { stageId, stageArgs } = useStage();
+  const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
+  const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
+  const machineConnections = useQuery(
+    api.sandbox.machines.listForActiveOrg,
+    stageArgs,
+  );
 
   // Remount per stage: a stage switch with a debounced save pending would
   // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
-  // sync) and the next edit would persist it into the new stage.
+  // sync) and the next edit would persist it into the new stage. The queries
+  // live out here to keep their subscriptions across that remount; their data
+  // waits for the stage, so no edit lands before a save knows where to go.
   return (
     <ReactFlowProvider>
       <CanvasInner
         key={`${projectId}:${stageId ?? "loading"}`}
         projectId={projectId}
+        canvasLayout={stageId ? canvasLayout : undefined}
+        mcpServers={stageId ? mcpServers : undefined}
+        machineConnections={stageId ? machineConnections : undefined}
       />
     </ReactFlowProvider>
   );
@@ -442,22 +465,16 @@ function findNearestAgentNode(
 
 function CanvasInner({
   projectId,
+  canvasLayout,
+  mcpServers,
+  machineConnections,
 }: {
   projectId: Id<"projects">;
-}): React.JSX.Element {
+} & StageData): React.JSX.Element {
   const { stageId } = useStage();
-  const stageArgs = stageId
-    ? { projectId: projectId, stageId: stageId }
-    : ("skip" as const);
-  const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
-  const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
   const mcpServersByNode = useMemo(
     () => serversByNode(mcpServers ?? []),
     [mcpServers],
-  );
-  const machineConnections = useQuery(
-    api.sandbox.machines.listForActiveOrg,
-    stageArgs,
   );
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -507,6 +524,7 @@ function CanvasInner({
     label: string;
   } | null>(null);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const emptyGuideRef = useRef<HTMLDivElement>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [agentCreatePosition, setAgentCreatePosition] =
@@ -588,11 +606,24 @@ function CanvasInner({
   ).withOptimisticUpdate((localStore, args) => {
     // Keep the cached layout in sync with the pending write so the post-save
     // snapshot matches what's on screen (local React state is already optimistic).
+    // A bare URL reads the stage-less entry; write it only while this stage is
+    // still the default, as this re-runs on every server change.
+    const layout = { nodes: args.nodes, edges: args.edges };
     localStore.setQuery(
       api.canvas.getByProject,
       { projectId: args.projectId, stageId: args.stageId },
-      { nodes: args.nodes, edges: args.edges },
+      layout,
     );
+    const stages = localStore.getQuery(api.stage.list, {
+      projectId: args.projectId,
+    });
+    if (stages && defaultStage(stages)?._id === args.stageId) {
+      localStore.setQuery(
+        api.canvas.getByProject,
+        { projectId: args.projectId },
+        layout,
+      );
+    }
   });
   const updateRuntimeRefs = useMutation(api.agent.config.updateRuntimeRefs);
   const updateSubagentRefs = useMutation(api.agent.config.updateSubagentRefs);
@@ -1311,6 +1342,20 @@ function CanvasInner({
     if (!open) setAgentCreatePosition(null);
   }, []);
   const onOpenSourcePicker = useCallback(() => {
+    // The empty canvas already shows the source list: point at it, don't
+    // stack the same list in a dialog over it. A frame later, so a closing
+    // context menu has already handed focus back; focusVisible so the ring
+    // shows after a mouse pick too.
+    const emptyGuide = emptyGuideRef.current;
+    if (emptyGuide) {
+      requestAnimationFrame(() =>
+        emptyGuide
+          .querySelector<HTMLButtonElement>("button:enabled")
+          ?.focus({ focusVisible: true }),
+      );
+
+      return;
+    }
     setAgentCreatePosition(getFreeAddPosition());
     setSourcePickerOpen(true);
   }, [getFreeAddPosition]);
@@ -1659,8 +1704,10 @@ function CanvasInner({
           <CanvasControls onTidy={tidyLayout} />
         </Panel>
         {/* One strip at the top centre for everything the canvas raises: a
-            refused connection, a refused drop, a save that failed. */}
+            refused connection, a refused drop, a save that failed, a new
+            project's key. */}
         <CanvasNoticeStrip>
+          <CanvasKeyReady projectId={projectId} stageId={stageId} />
           <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
           <CanvasDropPreview drop={drop} />
           <CanvasSaveStatus
@@ -1772,7 +1819,10 @@ function CanvasInner({
           </ContextMenu>
 
           {isEmpty && canWrite && (
-            <EmptyCanvasGuide onCreateConfig={() => onOpenCreateConfig()} />
+            <EmptyCanvasGuide
+              ref={emptyGuideRef}
+              onCreateConfig={() => onOpenCreateConfig()}
+            />
           )}
           {isEmpty && !canWrite && (
             <p className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">

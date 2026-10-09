@@ -15,7 +15,7 @@ info:
 
     Every core and config-plane response carries `X-Request-Id`. Every non-2xx body from core and the config plane is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and core and config-plane 429s also carry the IETF `RateLimit-*` fields. The edge may also limit requests per client address, and answers its own 429 as plain text with only `Retry-After`.
 
-    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket, never the runtime key.
+    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket.
 
     The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
@@ -280,7 +280,9 @@ paths:
         Poll one run by the `runId` the accepting response returned. A run id is
         account-unique and resolves the owning agent from storage, so no agent
         has to be named here. Every accepted request reaches completed, failed,
-        or expired.
+        or expired. The embeddable runtime key reads runs of public agents only;
+        a member's stage ticket also reads runs of its stage's private agents,
+        as it may start them.
       parameters:
         - name: runId
           in: path
@@ -1721,7 +1723,7 @@ paths:
                       {
                         type: string,
                         enum: [tiny, xsmall, small, medium, large],
-                        description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (daytona/e2b/vercel size themselves); ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk. Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
+                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Rejected on machine and custom. Defaults to the provider's own default when unset. tiny and xsmall are the free-tier size names; usage counts at the machine a name starts, so on cloudflare both start a 0.5 vCPU / 4 GB instance.",
                       }
                     image:
                       {
@@ -2204,7 +2206,7 @@ paths:
         "201": { description: Workspace created }
         "400":
           {
-            description: "Invalid config, including a named bucket without its own credentials",
+            description: "Invalid config, including a named bucket without its own credentials, or a role session naming an env var (`${NAME}`) it may not read with `env:read`",
           }
     get:
       tags: [Workspaces]
@@ -2273,6 +2275,8 @@ paths:
                   description: Deep-merged into the stored config, same shape as create. Set a field to `null` to delete it; arrays are replaced whole.
       responses:
         "200": { description: Updated }
+        "400":
+          description: Invalid config, or a role session changed `storage` to name an env var (`${NAME}`) it may not read with `env:read`
     delete:
       tags: [Workspaces]
       summary: Delete workspace
@@ -2570,6 +2574,11 @@ paths:
     patch:
       tags: [MCP servers]
       summary: Update external MCP server
+      description: >-
+        A role session that changes the server's `url`, `transport`,
+        `sandbox`, `command`, bundle, `runtime` or `oauth` answers 400 when
+        an agent's `config.mcp` entry for it names an account env var the
+        session may not read with `env:read`.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: serverId, in: path, required: true, schema: { type: string } }
@@ -2585,6 +2594,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Mcp"
+        "400":
+          description: Invalid body, or a role repoints a server its agents send env vars the role may not read
         "409":
           { description: A server with this name already exists in the stage }
     delete:
@@ -2825,6 +2836,11 @@ paths:
     patch:
       tags: [Policies]
       summary: Update agent policy
+      description: >-
+        A policy an organization role holds keeps its document and status:
+        changing either answers 409, so change it in the dashboard. Setting
+        `status: "deleted"` answers 409 while an agent or a channel record
+        still lists the policy, as DELETE does.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: policyId, in: path, required: true, schema: { type: string } }
@@ -2840,12 +2856,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentPolicy"
+        "409":
+          description: Held by an organization role, or still referenced when deleting
     delete:
       tags: [Policies]
       summary: Delete agent policy
       description: >-
         Refused with 409 while an agent or a channel record still lists the
-        policy in `policies`. Detach it first. The check reads the agent's saved
+        policy in `policies`, or an organization role holds it. Detach it
+        first. The check reads the agent's saved
         config, so deleting a policy a deployed agent still lists makes that
         agent refuse every action until it is redeployed.
       security: [{ BearerAuth: [] }]
@@ -2854,7 +2873,8 @@ paths:
       responses:
         "200": { description: Deleted }
         "404": { description: Not found }
-        "409": { description: Still referenced by an agent or channel record }
+        "409":
+          { description: Still referenced by an agent, channel record or role }
 
   /v1/roles:
     post:
@@ -2863,8 +2883,11 @@ paths:
       description: >-
         Create a scoped API role. The policy uses the API action namespace
         (`agents:read`, `crons:write`, ...). Provide `projectId` and `stageId`
-        together; they bind which runtime keys may assume the role. Role
-        management accepts only the account key, never a session token.
+        together; they bind which runtime keys may assume the role and hold
+        its sessions to that stage: a pinned session reaches only resources
+        on its stage, and collections and account-wide resources answer
+        `403`. Role management accepts only the account key, never a session
+        token.
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true
