@@ -123,7 +123,8 @@ export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   );
 }
 
-function actorName(actor: Actor): string {
+/** What a Created by cell calls the actor: the platform is Broods, anyone else their name. */
+export function actorName(actor: Actor): string {
   return "kind" in actor && actor.kind === "platform" ? "Broods" : actor.name;
 }
 

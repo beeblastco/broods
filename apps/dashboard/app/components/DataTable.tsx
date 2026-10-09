@@ -30,9 +30,6 @@ export interface HeadSort {
   words?: [string, string];
 }
 
-/** The sort words for a time column, in place of A to Z. */
-export const TIME_WORDS: [string, string] = ["Oldest first", "Newest first"];
-
 /** The filter half of a header menu: the column's values and the ones in effect. */
 export interface HeadFilter {
   field: string;
@@ -60,7 +57,8 @@ export function DataTable({
 }
 
 /**
- * The column header cell. With `sort` or `filter` it opens one menu: sort
+ * The column header cell. With `sort` alone a click sorts the column and a
+ * second click flips it. With `filter` it opens one menu instead: sort
  * either way, then the column's values with a check on the ones in effect.
  * The sorted column reads in foreground with an arrow. `align="right"` for
  * numbers and switches.
@@ -77,22 +75,24 @@ export function DataTableHead({
   sort?: HeadSort;
   filter?: HeadFilter;
 }): React.JSX.Element {
-  const menu = sort !== undefined || filter !== undefined;
+  const button = sort !== undefined || filter !== undefined;
 
   return (
     <th
       className={cn(
         "font-medium",
-        menu ? "px-1 py-1" : "px-3 py-2",
+        button ? "px-1 py-1" : "px-3 py-2",
         align === "right" ? "text-right" : "text-left",
         className,
       )}
       {...props}
     >
-      {menu ? (
+      {filter ? (
         <HeadMenu sort={sort} filter={filter} align={align}>
           {children}
         </HeadMenu>
+      ) : sort ? (
+        <SortButton sort={sort}>{children}</SortButton>
       ) : (
         children
       )}
@@ -100,7 +100,32 @@ export function DataTableHead({
   );
 }
 
-/** The header's menu: the sort pair, a rule, then the filter values. */
+/** The header as one button: a click sorts ascending, another flips it. */
+function SortButton({
+  sort,
+  children,
+}: {
+  sort: HeadSort;
+  children: ReactNode;
+}): React.JSX.Element {
+  const sorted = sort.dir ?? null;
+
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      tone={sorted !== null ? "default" : "muted"}
+      className="cursor-pointer font-medium"
+      onClick={() => sort.onSort(sorted === "asc" ? "desc" : "asc")}
+    >
+      {children}
+      {sorted === "asc" && <ArrowUp className="size-3" />}
+      {sorted === "desc" && <ArrowDown className="size-3" />}
+    </Button>
+  );
+}
+
+/** The header's menu for a filterable column: the sort pair, a rule, then the filter values. */
 function HeadMenu({
   sort,
   filter,
