@@ -210,22 +210,18 @@ export function CronsTable({
         <DataTable>
           <DataTableHeader>
             <tr>
-              <DataTableHead plain sort={list.sortFor("name")}>
-                Name
-              </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("agent")}>
-                Agent
-              </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("schedule")}>
+              <DataTableHead sort={list.sortFor("name")}>Name</DataTableHead>
+              <DataTableHead sort={list.sortFor("agent")}>Agent</DataTableHead>
+              <DataTableHead sort={list.sortFor("schedule")}>
                 Schedule
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("status")}>
+              <DataTableHead sort={list.sortFor("status")}>
                 Status
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("last")}>
+              <DataTableHead sort={list.sortFor("last")}>
                 Last run
               </DataTableHead>
-              <DataTableHead plain align="right" sort={list.sortFor("next")}>
+              <DataTableHead align="right" sort={list.sortFor("next")}>
                 Next run
               </DataTableHead>
             </tr>

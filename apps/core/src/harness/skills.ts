@@ -155,6 +155,7 @@ export async function loadConfiguredHarnessSkills(
 }
 
 export async function loadConfiguredSkillPrompt(
+  accountId: string | undefined,
   allowedSkillPaths: string[],
   skillPath: string,
   resourcePaths: string[] = [],
@@ -170,6 +171,12 @@ export async function loadConfiguredSkillPrompt(
   if (!allowedSkillPaths.includes(skillPath)) {
     throw new Error(`Skill is not configured for this agent: ${skillPath}`);
   }
+  // `skills.allowed` is only checked to be strings, so the tool holds the
+  // ownership line itself rather than lean on the metadata listing failing.
+  if (!accountId) {
+    throw new Error("Skills require an account-scoped run");
+  }
+  parseOwnedSkillPath(accountId, skillPath);
 
   const loaded = await loadSkillContent(skillPath, resourcePaths);
   const staged = workspaceNamespace

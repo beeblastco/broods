@@ -14,7 +14,7 @@ interface Props {
   /** The part of the window the list is narrowed to, or null for all of it. */
   selection: TimeWindow | null;
   onSelect: (selection: TimeWindow | null) => void;
-  /** A time to mark with a red line, such as the selected trace's start. */
+  /** A time to mark with a red line, such as the selected trace or log line. */
   marker?: number;
 }
 
