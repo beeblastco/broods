@@ -78,7 +78,7 @@ const MAX_TTL_MS = 60 * 60_000;
 const RATE_LIMIT_RETRIES = 3;
 const RATE_LIMIT_PATTERN = /\b429\b|rate limit/i;
 const RATE_LIMIT_WAIT_PATTERN =
-  /(?:retry after|try again in) (\d+(?:\.\d+)?)\s*(ms|s)\b/i;
+  /(?:retry after|try again in) (\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|seconds?)\b/i;
 const RATE_LIMIT_BACKOFF_MS = 2_000;
 const MAX_RATE_LIMIT_WAIT_MS = 60_000;
 
@@ -544,7 +544,7 @@ function rateLimitWaitMs(message: string, attempt: number): number | null {
   const [, amount, unit] = RATE_LIMIT_WAIT_PATTERN.exec(message) ?? [];
   const askedMs =
     amount && unit
-      ? Number(amount) * (unit.toLowerCase() === "s" ? 1000 : 1)
+      ? Number(amount) * (unit.toLowerCase().startsWith("m") ? 1 : 1000)
       : RATE_LIMIT_BACKOFF_MS * 2 ** (attempt - 1);
 
   return Math.min(Math.ceil(askedMs), MAX_RATE_LIMIT_WAIT_MS);

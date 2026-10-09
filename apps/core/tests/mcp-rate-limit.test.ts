@@ -49,6 +49,34 @@ it("waits the asked time and retries a rate-limited call", async () => {
   expect(calls).toBe(3);
 });
 
+it("reads a wait given in words", async () => {
+  let calls = 0;
+  setMcpForTests({
+    callTool: async () => {
+      calls += 1;
+
+      return calls < 2
+        ? {
+            isError: true,
+            content: [
+              { type: "text", text: "429: please retry after 0.01 seconds" },
+            ],
+          }
+        : { content: [{ type: "text", text: "found" }] };
+    },
+  });
+  const startedAt = Date.now();
+
+  const result = await callMcpTool(mcpConnection(record, undefined), "search", {
+    q: "x",
+  });
+
+  expect(result).toBe("found");
+  expect(calls).toBe(2);
+  // A wait read as 2s backoff instead of 10ms would show here.
+  expect(Date.now() - startedAt).toBeLessThan(1_000);
+});
+
 it("fails the call once the retries are spent", async () => {
   let calls = 0;
   setMcpForTests({
