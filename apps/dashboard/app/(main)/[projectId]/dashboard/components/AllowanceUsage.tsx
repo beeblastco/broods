@@ -53,7 +53,7 @@ const ROWS: AllowanceRow[] = [
     unit: "hours",
     share: "hostedMcpHours",
     color: "var(--color-usage-mcp-sandbox)",
-    help: "Time your hosted MCP servers spent answering tool calls, at the runner's memory size, plus a small share per call. Idle servers cost nothing.",
+    help: "Time your hosted MCP servers spent answering tool calls, at the runner's memory size, plus a small share per request. Idle servers cost nothing.",
   },
   {
     key: "storageGb",

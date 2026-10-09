@@ -554,7 +554,7 @@ function UsageStats({
           : "No runs",
       trend: bins.map((b) => b.invocations),
       color: "var(--color-usage-tasks)",
-      help: "Agent runs that finished in this window, a subagent's run counted on its own. Runs still going are added from the live trace.",
+      help: "Agent runs that finished in this window, a subagent's run counted on its own. A run still going is added from the live trace for its first 20 minutes.",
     },
     {
       label: "Model calls",
