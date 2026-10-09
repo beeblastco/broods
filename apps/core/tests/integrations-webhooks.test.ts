@@ -8,6 +8,7 @@ import {
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type IntegrationRoutingOptions,
+  resetChannelAgentListsForTests,
 } from "../src/harness/integrations.ts";
 import {
   getObservabilityContext,
@@ -170,6 +171,65 @@ describe("account webhook ingress", () => {
         code: "unauthorized",
       },
     });
+  });
+
+  it("reuses a cached agent listing but runs only what verifies now", async () => {
+    resetChannelAgentListsForTests();
+    let listings = 0;
+    let current: AgentRecord | null = TEST_AGENT;
+    const handled: ChannelInboundEvent[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => current,
+      agentLister: async () => {
+        listings += 1;
+
+        return [TEST_AGENT];
+      },
+      cacheAgentLists: true,
+    });
+    const handlers = createHandlers({
+      handleChannelRequest: async (event) => {
+        handled.push(event);
+      },
+    });
+
+    const unsigned = await routeIncomingEvent(
+      createTelegramEvent(undefined, {
+        "x-telegram-bot-api-secret-token": "wrong",
+      }),
+      handlers,
+    );
+    const signed = await routeIncomingEvent(createTelegramEvent(), handlers);
+    await signed.afterResponse;
+
+    expect(unsigned.statusCode).toBe(401);
+    expect(signed.statusCode).toBe(200);
+    expect(listings).toBe(1);
+    expect(handled).toHaveLength(1);
+
+    // The secret rotated after the listing was cached: the old one no longer
+    // runs a turn, and a deleted agent runs nothing.
+    current = {
+      ...TEST_AGENT,
+      config: {
+        channels: {
+          telegram: {
+            ...TEST_ACCOUNT.config.channels.telegram,
+            webhookSecret: crypto.randomUUID(),
+          },
+        },
+      },
+    };
+    const rotated = await routeIncomingEvent(createTelegramEvent(), handlers);
+    current = null;
+    const deleted = await routeIncomingEvent(createTelegramEvent(), handlers);
+
+    expect(rotated.statusCode).toBe(401);
+    expect(deleted.statusCode).toBe(401);
+    expect(listings).toBe(1);
+    expect(handled).toHaveLength(1);
+    resetChannelAgentListsForTests();
   });
 
   it("returns 401 when Zalo webhook authentication is missing or wrong", async () => {
