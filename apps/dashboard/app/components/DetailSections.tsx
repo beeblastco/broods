@@ -5,13 +5,13 @@ import { JsonView } from "@/app/components/JsonView";
 import { cn } from "@/app/lib/utils";
 import type { JSONValue } from "convex/values";
 import { ChevronRight } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 
 // Above this a payload stays plain text: its JSON tree would mount tens of
 // thousands of nodes.
 const JSON_VIEW_MAX_CHARS = 100_000;
 
-/** One line in a Details section. Values read in mono (ids, counts) unless `words`. */
+/** One line in a Details section. Values read in mono (ids, counts) unless `words`, and copy on click. */
 export interface DetailRow {
   key: string;
   label: string;
@@ -20,6 +20,15 @@ export interface DetailRow {
   /** Red for an error message. */
   tone?: "error";
 }
+
+/** A line that holds a widget on the same grid instead of text to copy. */
+export interface ControlRow {
+  key: string;
+  label: string;
+  control: ReactNode;
+}
+
+const ROW_GRID = "grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1";
 
 /**
  * Collapsible section of labeled rows, each copying its value on click. Shared
@@ -50,29 +59,34 @@ export function DetailRows({
   rows,
   className = "-mx-2",
 }: {
-  rows: DetailRow[];
+  rows: Array<DetailRow | ControlRow>;
   className?: string;
 }): React.JSX.Element {
   return (
     <div className={cn("grid text-xs", className)}>
-      {rows.map((row) => (
-        <CopyRow
-          key={row.key}
-          value={row.value}
-          className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
-        >
-          <span className="truncate text-muted-foreground">{row.label}</span>
-          <span
-            className={cn(
-              "truncate",
-              row.tone === "error" ? "text-destructive" : "text-foreground/80",
-              !row.words && "font-mono",
-            )}
-          >
-            {row.value}
-          </span>
-        </CopyRow>
-      ))}
+      {rows.map((row) =>
+        "control" in row ? (
+          <div key={row.key} className={cn(ROW_GRID, "items-center")}>
+            <span className="truncate text-muted-foreground">{row.label}</span>
+            {row.control}
+          </div>
+        ) : (
+          <CopyRow key={row.key} value={row.value} className={ROW_GRID}>
+            <span className="truncate text-muted-foreground">{row.label}</span>
+            <span
+              className={cn(
+                "truncate",
+                row.tone === "error"
+                  ? "text-destructive"
+                  : "text-foreground/80",
+                !row.words && "font-mono",
+              )}
+            >
+              {row.value}
+            </span>
+          </CopyRow>
+        ),
+      )}
     </div>
   );
 }
