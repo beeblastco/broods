@@ -99,6 +99,13 @@ export function MonitoringPanel({
   // object (a refresh swaps it). It resolves against the filtered list below,
   // so the panel and strip marker close when the line leaves the view.
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // A key carries no stage, so a stage switch closes the line. Render-time
+  // adjustment, not an effect.
+  const [prevStageSlug, setPrevStageSlug] = useState(stageSlug);
+  if (stageSlug !== prevStageSlug) {
+    setPrevStageSlug(stageSlug);
+    setSelectedKey(null);
+  }
   const {
     query: filter,
     setQuery: setFilter,
