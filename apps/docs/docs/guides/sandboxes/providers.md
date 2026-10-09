@@ -1,6 +1,15 @@
 # Sandbox providers
 
-Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here. The `machine` provider has its own page, [Your computer](machine.md), and `custom`, a server you run on the sandbox HTTP contract, is on [Your own server](custom.md).
+Every provider runs the same tools, but setup, storage and network support differ. Pick one from the comparison on [Sandboxes](index.md), then configure it here.
+
+| Provider                   | Runs on                      | Section                                                   |
+| -------------------------- | ---------------------------- | --------------------------------------------------------- |
+| `sandbox`                  | Broods-hosted Firecracker VM | [`sandbox`](#sandbox)                                     |
+| `lambda`                   | AWS Lambda MicroVM           | [`lambda`](#lambda)                                       |
+| `daytona`, `e2b`, `vercel` | A vendor account you bring   | [`daytona`](#daytona), [`e2b`](#e2b), [`vercel`](#vercel) |
+| `cloudflare`               | Cloudflare Container         | [`cloudflare`](#cloudflare)                               |
+| `machine`                  | Your own computer            | [Your computer](machine.md)                               |
+| `custom`                   | Your server over HTTP        | [Your own server](custom.md)                              |
 
 ## `sandbox`
 
@@ -141,6 +150,38 @@ export const box = defineSandbox({
 | Symptom                                                | Fix                                                                                                        |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `Vercel Sandbox rejected the request (HTTP 403 / 401)` | The token is invalid, expired, or cannot reach the team and project. Check it at vercel.com/account/tokens |
+
+## `cloudflare`
+
+Runs `bash` in a [Cloudflare Container](https://developers.cloudflare.com/sandbox/) with `bash`, `python3`, Node 24, `git` and `ripgrep`. Use it for compute without a workspace.
+
+```ts
+export const box = defineSandbox({
+  name: "cloudflare",
+  provider: "cloudflare",
+  persistent: true,
+  size: "small",
+  network: { mode: "allow-all" },
+  permissionMode: "ask",
+  lifecycle: { idleTimeoutSeconds: 600 },
+});
+```
+
+| Field                          | Behavior                                                                                                   |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `persistent`                   | `true` keeps one Container per agent while it is warm. `false` uses a new one per call                     |
+| `lifecycle.idleTimeoutSeconds` | How long a warm Container waits for the next command before it sleeps. Default 15 minutes, at most 6 hours |
+| `network.mode`                 | `allow-all` turns internet on, `deny-all` turns it off, `restricted` is rejected                           |
+| `size`                         | The nearest Cloudflare instance type, from `standard-1` for `tiny` to `standard-4` for `large`             |
+| `options`                      | Only `workspaceRoot` and `reservationKey`                                                                  |
+
+- A Container that sleeps loses its files. Persistence keeps installs and files only while it stays warm, so keep setup in a step the agent can rerun.
+- Changing `network.mode` or `size` replaces a warm Container.
+- Workspaces are not supported. Attaching one fails.
+- `onCreate`, `onResume`, `snapshot` and `lifecycle.maxLifetimeSeconds` are rejected. Background jobs, suspend, resume and the Snapshot action are not available.
+- `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
+- The dashboard runs commands through its bounded runner. The API's `terminal` action opens a PTY only on a running Container, so run a command first to wake it.
+- The provider needs the deployment's Cloudflare bridge. Without it every run fails with an error saying the bridge is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).
 
 ## Environment variables in every provider
 

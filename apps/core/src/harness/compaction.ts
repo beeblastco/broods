@@ -21,7 +21,7 @@ const DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH = 500_000;
 // A single message the summary model still refuses at this size is not cut
 // further; the refusal surfaces instead.
 const MIN_SPLIT_MESSAGE_LENGTH = 1_000;
-const COMPACTION_MARKER = "<session-compaction-summary>";
+export const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 const COMPACTION_MESSAGE_SEPARATOR = "\n\n";
 

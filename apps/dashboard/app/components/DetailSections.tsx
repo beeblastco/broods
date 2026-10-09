@@ -5,18 +5,30 @@ import { JsonView } from "@/app/components/JsonView";
 import { cn } from "@/app/lib/utils";
 import type { JSONValue } from "convex/values";
 import { ChevronRight } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 
 // Above this a payload stays plain text: its JSON tree would mount tens of
 // thousands of nodes.
 const JSON_VIEW_MAX_CHARS = 100_000;
 
-/** One line in a Details section. Values read in mono (ids, counts) unless `words`. */
+// The label column and the value beside it, shared by every row kind.
+const ROW_GRID = "grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1";
+
+/** One line in a Details section. Values read in mono (ids, counts) unless `words`, and copy on click. */
 export interface DetailRow {
   key: string;
   label: string;
   value: string;
   words?: true;
+  /** Red for an error message. */
+  tone?: "error";
+}
+
+/** A line that holds a widget on the same grid instead of text to copy. */
+export interface ControlRow {
+  key: string;
+  label: string;
+  control: ReactNode;
 }
 
 /**
@@ -35,26 +47,53 @@ export function DetailFields({
   return (
     <details className="group/detail">
       <SectionSummary label={label} summary={summary} />
-      <div className="grid px-1 pb-2 text-xs">
-        {rows.map((row) => (
-          <CopyRow
-            key={row.key}
-            value={row.value}
-            className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
-          >
-            <span className="truncate text-muted-foreground">{row.label}</span>
+      <DetailRows rows={rows} className="px-1 pb-2" />
+    </details>
+  );
+}
+
+/**
+ * The labeled rows alone, a value copying on click or a control on the same
+ * grid, for a panel with no section to fold. By default they sit flush with
+ * the panel's padding.
+ */
+export function DetailRows({
+  rows,
+  className = "-mx-2",
+}: {
+  rows: Array<DetailRow | ControlRow>;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <div className={cn("grid text-xs", className)}>
+      {rows.map((row) => {
+        const label = (
+          <span className="truncate text-muted-foreground">{row.label}</span>
+        );
+
+        return "control" in row ? (
+          <div key={row.key} className={cn(ROW_GRID, "items-center gap-2")}>
+            {label}
+            {row.control}
+          </div>
+        ) : (
+          <CopyRow key={row.key} value={row.value} className={ROW_GRID}>
+            {label}
             <span
               className={cn(
-                "truncate text-foreground/80",
+                "truncate",
+                row.tone === "error"
+                  ? "text-destructive"
+                  : "text-foreground/80",
                 !row.words && "font-mono",
               )}
             >
               {row.value}
             </span>
           </CopyRow>
-        ))}
-      </div>
-    </details>
+        );
+      })}
+    </div>
   );
 }
 

@@ -48,6 +48,9 @@ const LEGACY_REDIRECTS: { from: string; to: string }[] = [
   { from: "/workspace/sandbox/e2b", to: "/guides/sandboxes/providers" },
   { from: "/workspace/sandbox/vercel", to: "/guides/sandboxes/providers" },
   { from: "/workspace/sandbox/machine", to: "/guides/sandboxes/machine" },
+  { from: "/guides/cloudflare-mcp", to: "/guides/tools" },
+  { from: "/guides/cloudflare-browser", to: "/guides/sandboxes/browsing" },
+  { from: "/guides/sandboxes/cloudflare", to: "/guides/sandboxes/providers" },
 ];
 
 const config: Config = {

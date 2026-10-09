@@ -19,14 +19,12 @@ const FLUSH_DELAY_MS = 10_000;
  * and `first-load.canvas` below flags the same measurement in the field.
  *
  * Measured on the CI runner with the document served locally: every page's
- * cold load is about 950 ms (JavaScript, then one Convex round trip for
- * auth and one for data, socket already open) except the canvas at 1.1 to
- * 1.6 s across runs, which waits on the stage list and only then asks for
- * the layout. A server-side default stage would fold those two trips into
- * one; until then 2 s holds the line the regression this guards against
- * crossed by a wide margin, and stays clear of runner noise.
+ * cold load is 850 to 1000 ms (JavaScript, then one Convex round trip for
+ * auth and one for data, socket already open). 1 s is the bar a user
+ * notices, the same as FIELD_RENDER_BUDGET_MS; it leaves little margin, so a
+ * page that needs another round trip fails here.
  */
-export const PAGE_RENDER_BUDGET_MS = 2000;
+export const PAGE_RENDER_BUDGET_MS = 1000;
 
 /**
  * What a real user's paint and navigation are held to. Tighter than the

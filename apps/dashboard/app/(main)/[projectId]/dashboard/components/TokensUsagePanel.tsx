@@ -1,5 +1,7 @@
 "use client";
 
+import { HelpMark } from "@/app/components/HelpMark";
+import { SegmentedControl } from "@/app/components/SegmentedControl";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -20,6 +22,7 @@ import {
   formatAxisNumber,
   tokenParts,
 } from "@/app/lib/usageChart";
+import { parseAsEpochMs, parseAsModelKeys } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -27,6 +30,7 @@ import { estimateModelTokenCost } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FunctionReturnType } from "convex/server";
+import { parseAsStringLiteral, useQueryStates } from "nuqs";
 import { useMemo, useState } from "react";
 import {
   formatBucketLabel,
@@ -93,7 +97,25 @@ const RANGE_BIN_SECONDS: Record<Range, number> = {
   "1y": 7 * 24 * 60 * 60,
 };
 
-const RANGES: Range[] = ["1h", "3h", "1d", "7d", "30d", "1y"];
+const RANGES: Array<{ id: Range }> = [
+  { id: "1h" },
+  { id: "3h" },
+  { id: "1d" },
+  { id: "7d" },
+  { id: "30d" },
+  { id: "1y" },
+];
+
+// The panel's view in the URL, so a link opens it: the `range`, the
+// `models` filter (null shows every model) and the clicked `bin`, keyed by
+// its start so it survives the window sliding.
+const USAGE_VIEW = {
+  range: parseAsStringLiteral(RANGES.map((option) => option.id)).withDefault(
+    "1h",
+  ),
+  models: parseAsModelKeys,
+  bin: parseAsEpochMs,
+};
 
 const COUNTER_KEYS: CounterKey[] = [
   "inputTokens",
@@ -144,11 +166,10 @@ export function TokensUsagePanel({
   stageSlug,
   apiKey,
 }: Props): React.JSX.Element {
-  const [range, setRange] = useState<Range>("1h");
-  // Model keys to show; null shows every model.
-  const [modelFilter, setModelFilter] = useState<string[] | null>(null);
-  // Keyed by bin start, not index, so the selection survives the window sliding.
-  const [selectedStart, setSelectedStart] = useState<number | null>(null);
+  const [view, setView] = useQueryStates(USAGE_VIEW);
+  const { range, models: modelFilter, bin: selectedStart } = view;
+  const setSelectedStart = (bin: number | null): void =>
+    void setView({ bin: bin });
 
   // Reactive subscription: usage totals update live as the harness meters tokens.
   const data = useQuery(api.logs.fetchUsageStats, {
@@ -261,9 +282,11 @@ export function TokensUsagePanel({
   // Checkbox semantics: a click adds or removes one model.
   const toggleModel = (key: string): void => {
     const shown = activeFilter ?? [...modelColors.keys()];
-    setModelFilter(
-      shown.includes(key) ? shown.filter((k) => k !== key) : [...shown, key],
-    );
+    void setView({
+      models: shown.includes(key)
+        ? shown.filter((k) => k !== key)
+        : [...shown, key],
+    });
   };
 
   return (
@@ -273,17 +296,14 @@ export function TokensUsagePanel({
         <h2 className="text-sm font-semibold text-foreground">Tokens</h2>
         <UsageToolbar
           range={range}
-          onRangeChange={(id) => {
-            setRange(id);
-            setSelectedStart(null);
-          }}
+          onRangeChange={(id) => void setView({ range: id, bin: null })}
           modelMenu={
             <ModelMenu
               modelColors={modelColors}
               allShown={activeFilter === null}
               isShown={isShown}
               onToggle={toggleModel}
-              onShowAll={() => setModelFilter(null)}
+              onShowAll={() => void setView({ models: null })}
             />
           }
           // Only while that bin is still on the chart; the live window slides.
@@ -473,7 +493,9 @@ function Sparkline({
  * The numbers row for the range or the clicked bin: four evenly spaced
  * columns, each a large value over a trend line in the chart's colours and
  * one detail line. Laid out by its own width, not the window's; values count
- * to their new number here, so only this row repaints during the tween.
+ * to their new number here, so only this row repaints during the tween. A
+ * column whose number is not what its label suggests carries a "?" with
+ * what it counts.
  */
 function UsageStats({
   bins,
@@ -522,6 +544,7 @@ function UsageStats({
           : `${modelsShown} of ${modelsTotal} models`,
       trend: binCosts,
       color: "var(--color-usage-output)",
+      help: "Each model's tokens at its public per-million USD rate. An estimate for comparing runs, not the bill from your provider.",
     },
     {
       label: "Tasks",
@@ -532,6 +555,7 @@ function UsageStats({
           : "No runs",
       trend: bins.map((b) => b.invocations),
       color: "var(--color-usage-tasks)",
+      help: "Agent runs that finished in this window, a subagent's run counted on its own. With all models shown, a run still going is added from the live trace for its first 20 minutes.",
     },
     {
       label: "Model calls",
@@ -550,7 +574,10 @@ function UsageStats({
             key={column.label}
             className="grid min-w-0 gap-1 border-border px-4 py-3 @2xl:border-l @2xl:first:border-l-0"
           >
-            <div className="text-xs text-muted-foreground">{column.label}</div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {column.label}
+              {column.help && <HelpMark text={column.help} />}
+            </div>
             <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
               {column.value}
             </div>
@@ -588,24 +615,12 @@ function UsageToolbar({
 }): React.JSX.Element {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5">
-        {RANGES.map((id) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={range === id}
-            onClick={() => onRangeChange(id)}
-            className={cn(
-              "cursor-pointer rounded px-2.5 py-1 text-xs transition-colors",
-              range === id
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {id}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        options={RANGES}
+        value={range}
+        onChange={onRangeChange}
+        ariaLabel="Time range"
+      />
       {modelMenu}
       {selectedStart !== null && (
         <button

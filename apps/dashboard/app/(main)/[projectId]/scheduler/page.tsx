@@ -6,6 +6,7 @@
  * agents this project owns.
  */
 
+import { EmptyState } from "@/app/components/EmptyState";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -46,62 +47,65 @@ export default function CronsPage({
   const loading =
     crons === undefined || agents === undefined || account === undefined;
 
-  return (
-    <div className="mx-auto w-full max-w-5xl px-6 pt-6 pb-12">
-      <h1 className="sr-only">Scheduler</h1>
-      {canWrite && (
-        <div className="flex justify-end pb-6">
-          <Button
-            size="sm"
-            className="cursor-pointer"
-            disabled={!canCreate}
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus className="size-4 mr-1" />
-            New cron job
-          </Button>
-        </div>
-      )}
+  // The list fills the page edge to edge like Monitoring; the states before
+  // it have one line or card to show and keep the usual margins.
+  const body = (): React.JSX.Element => {
+    if (loading) {
+      return (
+        <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>
+      );
+    }
+    if (!account) {
+      return (
+        <EmptyState
+          title="Your organization is not provisioned yet."
+          detail="Provision the broods account in settings before creating schedulers."
+        />
+      );
+    }
+    if (agents.length === 0) {
+      return (
+        <EmptyState
+          title="This project has no agents yet."
+          detail="Add an agent on the Architecture canvas before scheduling a run."
+        />
+      );
+    }
+    if (crons.length === 0) {
+      return (
+        <EmptyState
+          title="No schedulers yet."
+          detail="Create one to run an agent on a recurring schedule."
+          action={
+            canCreate && (
+              <Button
+                size="sm"
+                className="cursor-pointer"
+                onClick={() => setCreateOpen(true)}
+              >
+                <Plus className="size-4" />
+                New scheduler
+              </Button>
+            )
+          }
+        />
+      );
+    }
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      ) : !account ? (
-        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            Your organization is not provisioned yet. Provision the broods
-            account in settings before creating cron jobs.
-          </p>
-        </div>
-      ) : agents.length === 0 ? (
-        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
-          <p className="text-sm text-foreground">
-            This project has no agents yet.
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Add an agent on the Architecture canvas, or create one through the
-            account API, before scheduling a run.
-          </p>
-        </div>
-      ) : crons.length === 0 ? (
-        <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
-          <p className="text-sm text-foreground">No scheduled jobs yet.</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Create one to run an agent on a recurring schedule.
-          </p>
-          {canWrite && (
-            <Button
-              size="sm"
-              className="mt-4 cursor-pointer"
-              onClick={() => setCreateOpen(true)}
-            >
-              <Plus className="size-4 mr-1" />
-              Create your first cron job
-            </Button>
-          )}
-        </div>
-      ) : (
-        <CronsTable crons={crons} agents={agents} />
-      )}
+    return (
+      <CronsTable
+        projectId={typedProjectId}
+        crons={crons}
+        agents={agents}
+        onCreate={canCreate ? () => setCreateOpen(true) : undefined}
+      />
+    );
+  };
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
+      <h1 className="sr-only">Scheduler</h1>
+      {body()}
 
       {createOpen && (
         <CronDialog

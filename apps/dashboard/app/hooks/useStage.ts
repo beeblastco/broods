@@ -9,13 +9,18 @@
  */
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { defaultStage } from "@broods/convex/model/defaultStage";
 import { useQuery } from "convex/react";
 import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
+/** Arguments for a stage-scoped query that resolves a missing `stageId` to the project's default. */
+type StageArgs = { projectId: Id<"projects">; stageId?: Id<"stages"> } | "skip";
+
 /** Setting null removes the stage param, so the default stage applies. */
 export function useStage(): {
   stageId: Id<"stages"> | null;
+  stageArgs: StageArgs;
   setStageId: (id: Id<"stages"> | null) => void;
 } {
   const searchParams = useSearchParams();
@@ -28,14 +33,20 @@ export function useStage(): {
   ) as Doc<"stages">[] | undefined;
 
   const stageParam = searchParams.get("stage");
-  const stageId = stages?.length
-    ? (stages.find((stage) => stage._id === stageParam) ?? defaultStage(stages))
-        ._id
-    : null;
+  const defaultStageId = defaultStage(stages ?? [])?._id ?? null;
+  const stageId =
+    stages?.find((stage) => stage._id === stageParam)?._id ?? defaultStageId;
+  // The default stage keeps one query key whether or not the URL names it, so
+  // picking the stage already on screen does not refetch it.
+  const readsDefault =
+    stageParam === null || (stageId !== null && stageId === defaultStageId);
 
   const setStageId = useCallback(
     (id: Id<"stages"> | null) => {
       const next = new URLSearchParams(searchParams.toString());
+      // A run or row id belongs to the stage it came from.
+      next.delete("trace");
+      next.delete("sel");
       if (id) {
         next.set("stage", id);
       } else {
@@ -54,15 +65,25 @@ export function useStage(): {
     [searchParams, pathname],
   );
 
-  return { stageId: stageId, setStageId: setStageId };
+  return {
+    stageId: stageId,
+    stageArgs: stageQueryArgs(projectId, readsDefault, stageId),
+    setStageId: setStageId,
+  };
 }
 
-/** The Development default, else any Development stage, else the default, else the first. */
-function defaultStage(stages: Doc<"stages">[]): Doc<"stages"> {
-  return (
-    stages.find((stage) => stage.kind === "development" && stage.isDefault) ??
-    stages.find((stage) => stage.kind === "development") ??
-    stages.find((stage) => stage.isDefault) ??
-    stages[0]
-  );
+/**
+ * The default stage leaves `stageId` out, so the query reads it on the server
+ * and a bare URL starts it alongside the stage list. Another stage waits for
+ * the list.
+ */
+function stageQueryArgs(
+  projectId: Id<"projects"> | undefined,
+  readsDefault: boolean,
+  stageId: Id<"stages"> | null,
+): StageArgs {
+  if (!projectId) return "skip";
+  if (readsDefault) return { projectId: projectId };
+
+  return stageId ? { projectId: projectId, stageId: stageId } : "skip";
 }

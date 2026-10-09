@@ -98,6 +98,31 @@ describe("mcp.listByStage", () => {
     ]);
   });
 
+  test("with no stage lists the project's default stage, as the dashboard picks it", async () => {
+    const t = listTest();
+    const { otherStageId, projectId, stageId } = await seed(t);
+    await insertServers(t, projectId, [
+      {
+        name: "github",
+        nodeId: "node_github",
+        stageId: stageId,
+        transport: "http",
+      },
+      {
+        name: "linear",
+        nodeId: "node_linear",
+        stageId: otherStageId,
+        transport: "http",
+      },
+    ]);
+
+    const servers = await t.query(api.mcp.listByStage, {
+      projectId: projectId,
+    });
+
+    expect(servers.map((server) => server.name)).toEqual(["github"]);
+  });
+
   test("returns nothing for a stage outside the project", async () => {
     const t = listTest();
     const { stageId } = await seed(t);

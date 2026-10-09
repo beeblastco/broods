@@ -22,7 +22,7 @@ import { SandboxSnapshotsTable } from "./components/SandboxSnapshotsTable";
 export default function SandboxPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
-  const { stageId: activeStageId } = useStage();
+  const { stageId: activeStageId, stageArgs } = useStage();
   const stages = useQuery(api.stage.list, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
@@ -30,20 +30,17 @@ export default function SandboxPage(): React.JSX.Element {
     api.sandbox.instances.listForActiveOrg,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
-  const machines = useQuery(
-    api.sandbox.machines.listForActiveOrg,
-    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
-  );
+  const machines = useQuery(api.sandbox.machines.listForActiveOrg, stageArgs);
   const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
+  const agents = useQuery(api.agent.agents.listForProject, {
+    projectId: projectId,
+  });
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const observability = useObservabilityScope(projectId, activeStageId);
 
   const searchParams = useSearchParams();
   const tab = pickTab(SANDBOX_TABS, searchParams.get("tab"));
   const view = tab.id;
-  // The instances view carries a detail column beside a wide table, so it
-  // gets the full width the observability tabs get; the rest stay readable.
-  const contentWidth = view === "instances" ? "max-w-none" : "max-w-7xl";
 
   const loading =
     stages === undefined ||
@@ -51,14 +48,22 @@ export default function SandboxPage(): React.JSX.Element {
     machines === undefined ||
     snapshots === undefined ||
     account === undefined;
+  // The instances view is a flush list with a detail column and a dock, like
+  // Monitoring, and scrolls inside itself; the rest keep the usual margins.
+  const flush = view === "instances" && !loading && Boolean(account);
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-auto">
+    <div
+      className={cn(
+        "flex h-full min-w-0 flex-col",
+        flush ? "overflow-hidden" : "overflow-auto",
+      )}
+    >
       <h1 className="sr-only">{tab.label}</h1>
       <div
         className={cn(
-          "mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-6 pt-6 pb-12",
-          contentWidth,
+          "mx-auto flex min-h-0 w-full flex-1 flex-col",
+          flush ? "max-w-none" : "max-w-7xl gap-3 px-6 pt-6 pb-12",
         )}
       >
         {loading ? (
@@ -74,11 +79,13 @@ export default function SandboxPage(): React.JSX.Element {
           <SandboxInstancesTable
             instances={instances}
             machines={machines}
+            agents={agents ?? []}
+            snapshots={snapshots}
             projectId={projectId}
             observability={observability}
           />
         ) : view === "snapshots" ? (
-          <SandboxSnapshotsTable snapshots={snapshots} />
+          <SandboxSnapshotsTable projectId={projectId} snapshots={snapshots} />
         ) : view === "security" ? (
           <SandboxPolicyTable instances={instances} dimension="security" />
         ) : (

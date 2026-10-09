@@ -16,6 +16,7 @@ import {
 } from "./model/agentSync";
 import { deleteAgentConfig } from "./model/agentRuntimeSecrets";
 import { accountIdForProject } from "./model/auditEvents";
+import { byDefaultThenName } from "./model/defaultStage";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -616,13 +617,7 @@ export async function listStagesForProject(
     .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
     .collect();
 
-  return stages.sort((a, b) =>
-    a.isDefault !== b.isDefault
-      ? a.isDefault
-        ? -1
-        : 1
-      : a.name.localeCompare(b.name),
-  );
+  return stages.sort(byDefaultThenName);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

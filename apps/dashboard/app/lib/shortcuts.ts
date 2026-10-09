@@ -150,6 +150,12 @@ export const SHORTCUTS = [
   },
   { combos: ["c"], id: "table.create", label: "New item", scope: "table" },
   { combos: ["r"], id: "table.refresh", label: "Refresh", scope: "table" },
+  {
+    combos: ["`"],
+    id: "sandbox.terminal",
+    label: "Toggle the terminal",
+    scope: "table",
+  },
 ] as const satisfies readonly Shortcut[];
 
 /** Overlay section order. */

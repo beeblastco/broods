@@ -17,6 +17,11 @@ import {
 } from "../_generated/server";
 import { accountIdForProject } from "../model/auditEvents";
 import {
+  refsOutsideStage,
+  resourceStageScope,
+  STAGE_SCOPED_RESOURCE_TYPES,
+} from "../model/projectScope";
+import {
   API_POLICY_ACTIONS,
   normalizePolicyDocument,
 } from "../model/policyRules";
@@ -226,6 +231,42 @@ export const resolveSession = internalQuery({
       ...(role.stageId !== undefined ? { stageId: role.stageId } : {}),
     };
   },
+});
+
+const stageScopedTypeValidator = v.union(
+  ...STAGE_SCOPED_RESOURCE_TYPES.map((type) => v.literal(type)),
+);
+
+/**
+ * The stage a config-plane resource lives in, for a stage-pinned role session.
+ * Null when it has none or is not this account's.
+ */
+export const resourceScope = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    type: stageScopedTypeValidator,
+    id: v.string(),
+  },
+  returns: v.union(
+    v.object({ projectId: v.id("projects"), stageId: v.id("stages") }),
+    v.null(),
+  ),
+  handler: async (ctx, args) =>
+    await resourceStageScope(ctx, args.accountId, args.type, args.id),
+});
+
+/** The refs a stage-pinned role's write names that sit off its stage. */
+export const refsOutsidePin = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    pin: v.object({ projectId: v.string(), stageId: v.string() }),
+    refs: v.array(v.object({ type: stageScopedTypeValidator, id: v.string() })),
+  },
+  returns: v.array(
+    v.object({ type: stageScopedTypeValidator, id: v.string() }),
+  ),
+  handler: async (ctx, args) =>
+    await refsOutsideStage(ctx, args.accountId, args.pin, args.refs),
 });
 
 /** Null when the role is unknown or belongs to another account. */

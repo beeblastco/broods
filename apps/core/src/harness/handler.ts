@@ -97,6 +97,7 @@ import {
 } from "./async-tools.ts";
 import {
   readAgentFullStream,
+  recordFailedTurn,
   runAgentLoop,
   USER_STOP_MESSAGE,
   type AgentLoopStream,
@@ -143,6 +144,7 @@ import {
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   admitRun,
+  refundRun,
   planRefusalResponse,
   type PlanRefusal,
 } from "./plan-limits.ts";
@@ -171,6 +173,13 @@ const AGENT_PROCESSING_FAILED = "Agent processing failed";
 // in the tool results of the cut-off step.
 const CONTINUE_TURN_TEXT =
   "Your previous turn was cut off before it finished. Continue the task from where you left off.";
+// Channel admissions that start no run, so they give back their rate count.
+const NO_RUN_OUTCOMES: ReadonlySet<IngressAdmission["outcome"]> = new Set([
+  "duplicate",
+  "rejected",
+  "capacity",
+  "conflict",
+]);
 const CONVERSATION_BUSY =
   "Conversation is already processing another turn. Try again when the current turn finishes.";
 const CHANNEL_APPROVAL_DENIAL_REASON =
@@ -184,12 +193,14 @@ const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
 const WORKER_SLOT_GRACE_MS = 5_000;
+const WORKER_DEADLINE_MESSAGE = "Run exceeded the worker deadline";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
 // A queued run holds its lease from admission, so the queue renews it well
 // inside the TTL until a slot starts the run.
 const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
+const QUEUED_LEASE_RENEW_CONCURRENCY = 16;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on the session's OWNER_CHECK_INTERVAL_MS clock. A frame the client
 // acts on checks exactly: a stale run must not land one in a stream the next
@@ -205,14 +216,16 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
 ]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerRuns: [
+type PendingWorkerRun = [
   kind: string,
   run: InProcessWorkerRun,
   lease: LiveOwner | undefined,
-][] = [];
+];
+const pendingWorkerRuns: PendingWorkerRun[] = [];
 
 let activeInProcessWorkers = 0;
 let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
+let renewingQueuedLeases = false;
 
 type ContinuationOutcome =
   | { kind: "ready"; invoked: boolean; publicEventId: string }
@@ -273,7 +286,7 @@ export function dispatchInProcessWorker(
     pendingWorkerRuns.push([kind, run, lease]);
     if (!queuedLeaseTimer) {
       queuedLeaseTimer = setInterval(
-        renewQueuedLeases,
+        () => void renewQueuedLeases(),
         QUEUED_LEASE_RENEW_INTERVAL_MS,
       );
       queuedLeaseTimer.unref();
@@ -283,12 +296,14 @@ export function dispatchInProcessWorker(
   }
 
   activeInProcessWorkers += 1;
+  const slotAbort = new AbortController();
   const execution = run({
     requestId: crypto.randomUUID(),
     deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
     // Workers run detached; they never emit an HTTP response, so there is no
     // post-response tail to defer.
     waitUntil: () => {},
+    abortSignal: slotAbort.signal,
   }).then(
     () => undefined,
     (err) => {
@@ -298,9 +313,9 @@ export function dispatchInProcessWorker(
       });
     },
   );
-  // Nothing here kills a hung model stream or tool, so a few
-  // stuck workers would otherwise pin every slot for every tenant on the pod. An
-  // overrun frees the slot but leaves the underlying work running.
+  // A few stuck workers would otherwise pin every slot for every tenant on the
+  // pod. An overrun frees the slot and aborts the run, so the pod never runs
+  // more than MAX_INPROCESS_WORKERS model passes at once.
   let slotTimer: ReturnType<typeof setTimeout> | undefined;
   const guarded = Promise.race([
     execution,
@@ -310,6 +325,7 @@ export function dispatchInProcessWorker(
           kind: kind,
           budgetMs: WORKER_TIMEOUT_BUDGET_MS,
         });
+        slotAbort.abort(new Error(WORKER_DEADLINE_MESSAGE));
         resolve();
       }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);
       slotTimer.unref?.();
@@ -461,6 +477,7 @@ async function handleRequest(
     },
     {
       directApiEnabled: ENABLE_DIRECT_API,
+      cacheAgentLists: true,
       ...(context?.waitUntil
         ? { waitUntil: context.waitUntil.bind(context) }
         : {}),
@@ -1404,6 +1421,7 @@ async function handleNatsWorkerRequest(
         asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
+        ...(context?.abortSignal ? { abortSignal: context?.abortSignal } : {}),
         consumeStream: (stream) =>
           pipeAgentStream(stream, (chunk): Promise<void> =>
             fencedPublisher.publish(chunk),
@@ -1620,6 +1638,9 @@ export async function handleChannelRequest(
     stageSlug: event.stageSlug,
   };
   await dispatchRecoveredIngress(scope, admission);
+  // Only a new envelope starts a run; a redelivery or a refusal gives its
+  // count back, so a provider's retries cannot spend the per-minute limit.
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
 
@@ -1760,10 +1781,13 @@ async function runChannelTurns(
             await commandOutcome(session, command),
           );
         } else {
-          const turnContext = await session.createTurnContext(
-            incomingEphemeral,
-            incoming,
-          );
+          const turnStartedAt = Date.now();
+          const turnContext = await session
+            .createTurnContext(incomingEphemeral, incoming)
+            .catch((err: unknown) => {
+              recordFailedTurn(session, turnStartedAt, err);
+              throw err;
+            });
           if (!isRunnableModelInput(turnContext.messages.at(-1))) {
             settlement = {
               status: "failed",
@@ -2099,6 +2123,7 @@ async function prepareDirectTurn(
   event: DirectInboundEvent,
 ): Promise<DirectTurn | null> {
   const session = directSession(event);
+  const turnStartedAt = Date.now();
   try {
     const turnContext = await session.createTurnContext(
       event.ephemeralSystem,
@@ -2107,6 +2132,7 @@ async function prepareDirectTurn(
 
     return { session: session, turnContext: turnContext };
   } catch (err) {
+    recordFailedTurn(session, turnStartedAt, err);
     await settleFailedIngressAndDrain(
       session,
       err instanceof Error ? err.message : "Direct turn preparation failed",
@@ -2612,28 +2638,52 @@ async function invokeHarnessWorker(
   );
 }
 
-/** The queue's timer: renews every waiting run's lease, so a long wait does not hand its conversation to `maintain`. */
-function renewQueuedLeases(): void {
-  for (const [kind, , lease] of pendingWorkerRuns) {
-    if (!lease) continue;
-    renewIngressOwner(lease).then(
-      (renewal): void => {
-        if (renewal !== "renewed") {
-          logWarn("Queued worker lease was not renewed", {
-            kind: kind,
-            conversationKey: lease.conversationKey,
-            renewal: renewal,
-          });
-        }
-      },
-      (err: unknown): void => {
-        logError("Queued worker lease renewal failed", {
-          kind: kind,
-          conversationKey: lease.conversationKey,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      },
-    );
+/**
+ * The queue's timer: renews every waiting run's lease, so a long wait does not
+ * hand its conversation to `maintain`. A few renewals at a time, so a full
+ * queue does not fire a thousand mutations at once, and one sweep at a time. A
+ * lease that comes back stale or stopped is no longer renewed: the run finds
+ * that out on its own first renewal once a slot starts it.
+ */
+async function renewQueuedLeases(): Promise<void> {
+  if (renewingQueuedLeases) return;
+  renewingQueuedLeases = true;
+  try {
+    const waiting = pendingWorkerRuns.filter((entry) => entry[2]);
+    for (
+      let offset = 0;
+      offset < waiting.length;
+      offset += QUEUED_LEASE_RENEW_CONCURRENCY
+    ) {
+      await Promise.all(
+        waiting
+          .slice(offset, offset + QUEUED_LEASE_RENEW_CONCURRENCY)
+          .map(renewQueuedLease),
+      );
+    }
+  } finally {
+    renewingQueuedLeases = false;
+  }
+}
+
+async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
+  const [kind, , lease] = entry;
+  if (!lease) return;
+  try {
+    const renewal = await renewIngressOwner(lease);
+    if (renewal === "renewed") return;
+    entry[2] = undefined;
+    logWarn("Queued worker lease was not renewed", {
+      kind: kind,
+      conversationKey: lease.conversationKey,
+      renewal: renewal,
+    });
+  } catch (err) {
+    logError("Queued worker lease renewal failed", {
+      kind: kind,
+      conversationKey: lease.conversationKey,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -3024,6 +3074,7 @@ async function runAgentLoopUntilSubagentsIdle(
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
     ...(hooks ? { hooks: hooks } : {}),
+    ...(context?.abortSignal ? { abortSignal: context.abortSignal } : {}),
     ...(reply.onQuestionsPending
       ? { onQuestionsPending: reply.onQuestionsPending.bind(reply) }
       : {}),
@@ -3084,6 +3135,8 @@ async function runParentContinuationLoop(options: {
   initialTurnContext: DirectTurn["turnContext"];
   agentConfig: DirectInboundEvent["agentConfig"];
   hooks?: HookDispatcher;
+  // Aborts the model pass and skips the wait on async work it left running.
+  abortSignal?: AbortSignal;
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
@@ -3141,6 +3194,7 @@ async function runParentContinuationLoop(options: {
               ? "tool"
               : undefined,
         hooks: hooks,
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
       },
     );
     traceId = stream.traceId();
@@ -3182,7 +3236,11 @@ async function runParentContinuationLoop(options: {
       };
     }
     // A stop means stop: nothing waits on the work it left running.
-    if (stream.didFail() && stream.failureText() !== USER_STOP_MESSAGE) {
+    if (
+      stream.didFail() &&
+      stream.failureText() !== USER_STOP_MESSAGE &&
+      !options.abortSignal?.aborted
+    ) {
       // Subagents and async tools from earlier steps may still be running or
       // already done. Wait for them and write their results into the history,
       // so the next turn ("try again") sees them instead of redoing the work.

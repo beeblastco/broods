@@ -19,13 +19,16 @@ try {
   // No local env file: the suites read whatever the shell provides.
 }
 
-export const DEV_URL = "http://localhost:3000";
-export const BASE_URL = process.env.E2E_BASE_URL ?? DEV_URL;
+// PORT moves the local server off 3000 (next dev reads it too), so a worktree's
+// suite does not land on the main checkout's `next dev` and test the wrong tree.
+export const DEV_PORT = process.env.PORT ?? "3000";
+export const DEV_URL = `http://localhost:${DEV_PORT}`;
+export const BASE_URL = process.env.E2E_BASE_URL || DEV_URL;
 export const AUTH_DIR = join(__dirname, "..", ".auth");
 export const STORAGE_STATE = join(AUTH_DIR, "session.json");
 export const PROJECT_FILE = join(AUTH_DIR, "project.txt");
 export const MISSING_PROBE =
-  "E2E_EMAIL and E2E_PASSWORD pick the probe account; E2E_BASE_URL the server (default http://localhost:3000)";
+  "E2E_EMAIL and E2E_PASSWORD pick the probe account, or E2E_ADMIN_KEY a self-hosted stack's admin; E2E_BASE_URL the server (default http://localhost:3000)";
 /** ReactFlow's viewport: on the page once the canvas has mounted. */
 export const CANVAS_READY = ".react-flow__viewport";
 /** A fresh browser context that is already signed in. */
@@ -34,6 +37,8 @@ export const SIGNED_IN_CONTEXT = {
   storageState: STORAGE_STATE,
 };
 export const probeAccount = {
+  /** A self-hosted stack's admin key; wins over the WorkOS login when set. */
+  adminKey: process.env.E2E_ADMIN_KEY,
   email: process.env.E2E_EMAIL,
   password: process.env.E2E_PASSWORD,
   projectId: process.env.E2E_PROJECT_ID,
@@ -44,7 +49,9 @@ const AUTH_TIMEOUT_MS = 60_000;
 const PROJECT_PATH = /^\/([a-z0-9]{20,})$/;
 
 export function hasProbe(): boolean {
-  return Boolean(probeAccount.email && probeAccount.password);
+  return Boolean(
+    probeAccount.adminKey || (probeAccount.email && probeAccount.password),
+  );
 }
 
 /** The project id `auth.setup.ts` resolved for this run. */
@@ -70,7 +77,11 @@ export async function resolveProjectId(page: Page): Promise<string> {
     // this build runs against the dev backend, which may lack the functions
     // that route calls until the merge deploys them.
     await page.goto("/projects");
-    const card = page.getByRole("button", { name: /^Open / }).first();
+    // `next dev` adds an "Open Next.js Dev Tools" button; on a fresh account
+    // with no project it would be the only match.
+    const card = page
+      .getByRole("button", { name: /^Open (?!Next\.js Dev Tools)/ })
+      .first();
     const empty = page.getByText("No projects yet");
     await card.or(empty).first().waitFor({ timeout: AUTH_TIMEOUT_MS });
     if (await card.isVisible()) {
@@ -98,10 +109,21 @@ export async function resolveProjectId(page: Page): Promise<string> {
   );
 }
 
-/** Drive the hosted AuthKit sign-in form until the app is back on its own origin. */
+/**
+ * Sign in with the admin key on a self-hosted stack, else drive the hosted
+ * AuthKit form until the app is back on its own origin.
+ */
 export async function signIn(page: Page): Promise<void> {
   const origin = new URL(BASE_URL).origin;
   await page.goto("/");
+  if (probeAccount.adminKey) {
+    await page.getByLabel("Admin key").fill(probeAccount.adminKey);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.waitForURL((url) => !url.pathname.startsWith("/auth/"), {
+      timeout: AUTH_TIMEOUT_MS,
+    });
+    return;
+  }
   await page.waitForURL((url) => url.origin !== origin, {
     timeout: AUTH_TIMEOUT_MS,
   });

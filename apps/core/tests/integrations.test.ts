@@ -12,9 +12,14 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../src/shared/runtime-keys.ts";
-import type { AuthContext } from "../src/shared/auth.ts";
+import type { AuthContext, StageTicketScope } from "../src/shared/auth.ts";
 import { coreRequest } from "./helpers/http.ts";
 
+const STAGE_TICKET: StageTicketScope = {
+  projectId: "proj_1",
+  stageId: "stage_1",
+  sandboxWrite: false,
+};
 const CHILD_RUN_ID = `run_${"b".repeat(32)}`;
 const TEST_RUN_ID = `run_${"a".repeat(32)}`;
 
@@ -105,7 +110,7 @@ describe("direct API ingress", () => {
             endpointId: "env-endpoint",
             projectSlug: "demo",
             stageSlug: "development",
-            ...(stageTicket ? { stageTicket: true } : {}),
+            ...(stageTicket ? { stageTicket: STAGE_TICKET } : {}),
           }),
         },
       );
@@ -350,7 +355,7 @@ describe("direct API ingress", () => {
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
                 stageSlug: "development",
-                stageTicket: true,
+                stageTicket: STAGE_TICKET,
               }
             : null,
       },
@@ -398,7 +403,7 @@ describe("direct API ingress", () => {
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
                 stageSlug: "development",
-                stageTicket: true,
+                stageTicket: STAGE_TICKET,
               }
             : null,
       },
@@ -1947,6 +1952,45 @@ describe("direct API ingress", () => {
     expect(handledEvents).toEqual([]);
   });
 
+  it("lets a stage ticket read back a run on a private agent of its stage", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer ticket" },
+        { method: "GET", rawPath: `/v1/runs/${TEST_RUN_ID}` },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({
+          statusCode: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "processing" }),
+        }),
+      }),
+      {
+        authResolver: async (): Promise<AuthContext> => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          stageTicket: STAGE_TICKET,
+        }),
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            scopedDirectEventId(
+              TEST_ACCOUNT.accountId,
+              TEST_AGENT_PRIVATE.agentId,
+              "one",
+            ),
+            "alpha",
+            TEST_AGENT_PRIVATE.agentId,
+          ),
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+  });
+
   for (const source of [
     "channel",
     "cron/internal",
@@ -2090,6 +2134,47 @@ describe("direct API ingress", () => {
       ]);
     });
   }
+
+  it("lets a stage ticket read a subagent of a private parent, never the runtime key", async () => {
+    const fixture = subagentStatusFixture({
+      parentEventId: scopedDirectEventId(
+        TEST_ACCOUNT.accountId,
+        TEST_AGENT_PRIVATE.agentId,
+        "parent-one",
+      ),
+    });
+    const read = (stageTicket: boolean): Promise<ResponseShape> =>
+      deploymentStatusRequest(
+        CHILD_RUN_ID,
+        createHandlers({
+          handleStatusRequest: async () => ({
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "processing" }),
+          }),
+        }),
+        {
+          asyncAgentResultLoader: async () => fixture.childResult,
+          ingressStatusLoader: async () =>
+            ingressStatus(
+              fixture.childResult.eventId,
+              "subagent-child",
+              fixture.childAgentId,
+              CHILD_RUN_ID,
+            ),
+          ingressStatusByEventIdLoader: async () =>
+            ingressStatus(
+              fixture.parentEventId,
+              "parent-conversation",
+              TEST_AGENT_PRIVATE.agentId,
+            ),
+        },
+        stageTicket,
+      );
+
+    expect((await read(false)).statusCode).toBe(403);
+    expect((await read(true)).statusCode).toBe(200);
+  });
 
   it("rejects subagent status when the durable parent lacks public deployment provenance", async () => {
     const fixture = subagentStatusFixture();
@@ -2393,6 +2478,7 @@ async function deploymentStatusRequest(
   runId: string,
   handlers: ReturnType<typeof createHandlers>,
   options: IntegrationRoutingOptions,
+  stageTicket = false,
 ): Promise<ResponseShape> {
   return routeIncomingEvent(
     createEvent(
@@ -2412,6 +2498,7 @@ async function deploymentStatusRequest(
         endpointId: "env-endpoint",
         projectSlug: "demo",
         stageSlug: "development",
+        ...(stageTicket ? { stageTicket: STAGE_TICKET } : {}),
       }),
     },
   );
@@ -2442,7 +2529,7 @@ async function runtimeKeyRequest(
         endpointId: "env-endpoint",
         projectSlug: "demo",
         stageSlug: "development",
-        ...(stageTicket ? { stageTicket: true } : {}),
+        ...(stageTicket ? { stageTicket: STAGE_TICKET } : {}),
       }),
     },
   );
@@ -2646,7 +2733,7 @@ describe("run token (auth kind agent)", () => {
           endpointId: "env-endpoint",
           projectSlug: "demo",
           stageSlug: "development",
-          stageTicket: true,
+          stageTicket: STAGE_TICKET,
         }),
         deploymentLoader: async () => ({
           accountId: TEST_ACCOUNT.accountId,

@@ -20,8 +20,17 @@ export const STAGE_SESSION_TICKET_TTL_MS = 15 * 60 * 1000;
 export interface StageSessionTicket {
   accountId: string;
   endpointId: string;
+  projectId: string;
   projectSlug: string;
+  stageId: string;
   stageSlug: string;
+  /**
+   * Set only when the minter may write the stage's sandboxes (an org owner or
+   * admin, through `broods login`). Claiming a `broods machine` record needs
+   * it, because the daemon then receives every exec frame, env secrets
+   * included. A plain member's dashboard ticket never carries it.
+   */
+  sandboxWrite?: true;
   /** Unix ms after which the ticket is rejected. */
   expiresAt: number;
 }
@@ -103,11 +112,22 @@ function parseTicket(payload: string): StageSessionTicket | null {
   }
   if (!decoded || typeof decoded !== "object") return null;
   const record = decoded as Record<string, unknown>;
-  const { accountId, endpointId, projectSlug, stageSlug, expiresAt } = record;
+  const {
+    accountId,
+    endpointId,
+    projectId,
+    projectSlug,
+    stageId,
+    stageSlug,
+    sandboxWrite,
+    expiresAt,
+  } = record;
   if (
     typeof accountId !== "string" ||
     typeof endpointId !== "string" ||
+    typeof projectId !== "string" ||
     typeof projectSlug !== "string" ||
+    typeof stageId !== "string" ||
     typeof stageSlug !== "string" ||
     typeof expiresAt !== "number" ||
     !Number.isFinite(expiresAt)
@@ -118,8 +138,11 @@ function parseTicket(payload: string): StageSessionTicket | null {
   return {
     accountId: accountId,
     endpointId: endpointId,
+    projectId: projectId,
     projectSlug: projectSlug,
+    stageId: stageId,
     stageSlug: stageSlug,
+    ...(sandboxWrite === true ? { sandboxWrite: true } : {}),
     expiresAt: expiresAt,
   };
 }

@@ -75,7 +75,7 @@ export function CronDialog({
   const [scheduleExpression, setScheduleExpression] = useState(
     cron?.scheduleExpression ?? "",
   );
-  const [timezone, setTimezone] = useState(cron?.timezone ?? "");
+  const [timezone, setTimezone] = useState(cron?.timezone ?? "UTC");
   const [status, setStatus] = useState<"active" | "paused">(
     cron?.status ?? "active",
   );
@@ -89,6 +89,7 @@ export function CronDialog({
     name.trim().length > 0 &&
     agentId.length > 0 &&
     prompt.trim().length > 0 &&
+    timezone.trim().length > 0 &&
     scheduleValid &&
     !pending;
 
@@ -110,7 +111,7 @@ export function CronDialog({
           input: prompt.trim(),
           conversationKey: conversationKey.trim() || undefined,
           scheduleExpression: scheduleExpression.trim(),
-          timezone: timezone.trim() || undefined,
+          timezone: timezoneToSave(cron?.timezone, timezone),
           status: status,
           description: description.trim() || undefined,
         });
@@ -122,7 +123,7 @@ export function CronDialog({
           input: prompt.trim(),
           conversationKey: conversationKey.trim() || undefined,
           scheduleExpression: scheduleExpression.trim(),
-          timezone: timezone.trim() || undefined,
+          timezone: timezoneToSave(cron?.timezone, timezone),
           status: status,
           description: description.trim() || undefined,
         });
@@ -141,7 +142,7 @@ export function CronDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {mode === "create" ? "New cron job" : "Edit cron job"}
+            {mode === "create" ? "New scheduler" : "Edit scheduler"}
           </DialogTitle>
           <DialogDescription>
             Runs an agent on a recurring schedule.
@@ -272,13 +273,13 @@ export function CronDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1">
               <Label htmlFor="cj-tz" variant="muted" className="text-xs">
-                Timezone (optional)
+                Timezone
               </Label>
               <Input
                 id="cj-tz"
                 value={timezone}
                 onChange={(e) => setTimezone(e.target.value)}
-                placeholder="Europe/Amsterdam"
+                placeholder="UTC"
               />
             </div>
 
@@ -335,7 +336,10 @@ export function CronDialog({
 }
 
 /** The first user text message, which is the part the dialog lets you edit. */
-function eventsToText(events: Doc<"crons">["events"] | undefined): string {
+/** The user text of the stored events: the prompt the job sends each fire. */
+export function eventsToText(
+  events: Doc<"crons">["events"] | undefined,
+): string {
   if (!Array.isArray(events)) return "";
   for (const message of events) {
     if (message?.role !== "user") continue;
@@ -351,4 +355,18 @@ function eventsToText(events: Doc<"crons">["events"] | undefined): string {
   }
 
   return "";
+}
+
+/**
+ * The zone to store. A job saved without one runs in UTC and shows "UTC";
+ * leaving that untouched keeps the stored value, so an edit to another field
+ * does not re-register the schedule.
+ */
+function timezoneToSave(
+  stored: string | undefined,
+  typed: string,
+): string | undefined {
+  const next = typed.trim();
+
+  return stored === undefined && next === "UTC" ? undefined : next;
 }

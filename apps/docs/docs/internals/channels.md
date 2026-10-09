@@ -1,326 +1,284 @@
 # Channels
 
-This page covers how core turns a provider webhook into an agent run and sends the reply back. It covers the adapter contract, the runtime flow, attachment handling, and how to add a provider. Per-provider setup for users is under [Channels](../channels/index.md). Paths are relative to `apps/core/`.
+How core turns a provider webhook into an agent run and sends the reply back. Per-provider setup for users is under [Channels](../channels/index.md). Paths are relative to `apps/core/`.
 
 ## File map
 
-| File                              | Owns                                                                                                |
-| --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `src/harness/integrations.ts`     | Routing, account and agent lookup, adapter selection (`createChannelRegistry`), provider ACKs       |
-| `src/harness/handler.ts`          | Session setup, command dispatch, agent execution, final reply                                       |
-| `src/shared/channels.ts`          | The shared contracts: `ChannelAdapter`, `ChannelActions`, `InboundMessage`                          |
-| `src/shared/<channel>-channel.ts` | Provider auth, parsing, formatting and reply calls                                                  |
-| `src/shared/matrix-wire.ts`       | The wire shapes core and `apps/matrix-forwarder` share. No imports, so the forwarder can bundle it. |
-| `src/shared/commands.ts`          | `/new` and `/clear`, `/compact`, `/steer`, `/stop` and `/cancel`, `/queue`, `/help`                 |
-| `src/harness/channel-media.ts`    | Inbound attachment download, storage and model hand-off                                             |
-| `src/shared/media-ticket.ts`      | Sealed `/v1/media/{ticket}` links                                                                   |
+| File                                | Owns                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------- |
+| `src/harness/integrations.ts`       | Webhook routing, the credential scan, record lookup, policy gate, provider ACK               |
+| `src/harness/handler.ts`            | `handleChannelRequest` admission, `runChannelTurns` on the worker pool, final reply          |
+| `src/shared/channels.ts`            | The contracts: `ChannelAdapter`, `ChannelActions`, `InboundMessage`                          |
+| `src/shared/<channel>-channel.ts`   | Provider auth, parsing, formatting and reply calls                                           |
+| `src/shared/matrix-wire.ts`         | Wire shapes shared with `apps/matrix-forwarder`. No imports, so the forwarder can bundle it. |
+| `src/shared/commands.ts`            | `/new` and `/clear`, `/compact`, `/steer`, `/stop` and `/cancel`, `/queue`, `/help`          |
+| `src/harness/tools/channel.tool.ts` | The model-facing `send-*` tools                                                              |
+| `src/harness/channel-media.ts`      | Inbound attachment download, storage and model hand-off                                      |
+| `src/shared/media-ticket.ts`        | Sealed `/v1/media/{ticket}` links                                                            |
 
-Slack, Telegram, Discord, GitHub, Linear, WhatsApp, Teams, Google Chat and Twilio build on the Chat SDK adapters (`@chat-adapter/slack`, `/telegram`, `/discord`, `/github`, `/linear`, `/whatsapp`, `/teams`, `/gchat`, `/twilio`), used as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing an adapter keeps in Chat state survives. That rules out Linear OAuth and client-credentials tokens, which the adapter refreshes and caches there, so Linear takes a personal API key only. Linear verifies with the Linear SDK's own webhook client, which also refuses a delivery signed more than a minute earlier. Teams checks the inbound token with the Teams SDK JWT validator (`@microsoft/teams.apps`), accepting only Bot Framework connector tokens whose `serviceurl` claim matches the activity, and Google Chat verifies through the adapter's own `handleWebhook`, which with no `Chat` behind it does nothing after the check. Twilio signs the public URL it called, so its adapter rebuilds that URL from `PUBLIC_BASE_URL` and the request path, or takes `webhookUrl` when the tenant set one. Messenger and Instagram use `@chat-adapter/messenger` and `/instagram` the same way and share Meta webhook handling in `meta-channel.ts`: the GET `hub.challenge` handshake, the `X-Hub-Signature-256` check and the walk over a batched delivery. Gmail uses only the primitives of `@chat-adapter/gmail` (`/api`, `/format`, `/webhook`), never its Chat adapter, which needs persistent Chat state: `gmail-channel.ts` verifies the Pub/Sub push, lists the inbox mail since shortly before it was published and leaves duplicates to the event claim. The Convex projection writer starts each mailbox's Gmail watch on deploy and `channel/gmail.ts` renews it daily. Matrix, Pancake and Zalo are Broods-native because Chat SDK does not cover them. Two providers need a process that holds a connection open, covered under [Forwarders](#forwarders).
+Slack, Telegram, Discord, GitHub, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram use Chat SDK adapters (`@chat-adapter/*`) as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing kept in Chat state survives. That is why Linear takes a personal API key only (OAuth tokens are refreshed and cached in Chat state). Messenger and Instagram share Meta webhook handling in `meta-channel.ts`. Matrix, Pancake and Zalo are Broods-native. Gmail uses only the primitives of `@chat-adapter/gmail` (`/api`, `/format`, `/webhook`), never its Chat adapter, which needs persistent Chat state: `gmail-channel.ts` verifies the Pub/Sub push, lists the inbox mail since shortly before it was published and leaves duplicates to the event claim. The Convex projection writer starts each mailbox's Gmail watch on deploy and `channel/gmail.ts` renews it daily.
 
-Webhooks arrive at `/v1/webhooks/{accountId}/{channel}` for the production stage and `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage, so two stages sharing one bot never receive each other's traffic.
+## Inbound paths
 
-A GET on a webhook URL with no query string answers `{"status":"ok"}` so a provider console sees it live. A GET with a query string is a subscription handshake. It goes through the same credential scan as a delivery, and the adapter answers it from `parse` with a `response`: WhatsApp checks `hub.verify_token` in `authenticate` and echoes `hub.challenge`. A GET with a query string that no channel claims, such as Pancake's `?secret=` URL, still answers `{"status":"ok"}`.
+```mermaid
+flowchart LR
+  subgraph providers["Providers"]
+    Hook["Slack, Telegram, WhatsApp,<br/>GitHub, Linear, Teams, ..."]
+    DInt["Discord interactions"]
+    DGw["Discord Gateway"]
+    HS["Matrix homeserver"]
+  end
+  DF["apps/discord-forwarder<br/>one socket per bot token"]
+  MF["apps/matrix-forwarder<br/>/sync long-poll, E2EE keys"]
+  T["Traefik<br/>route webhooks, no rate limit"]
+  C["core<br/>integrations.ts"]
+  CX["Convex<br/>runtimeIngress, channelRecords"]
+
+  Hook -->|"POST webhook"| T
+  DInt -->|"POST interaction"| T
+  DGw -->|"MESSAGE_CREATE"| DF
+  DF -->|"POST GATEWAY_MESSAGE_CREATE"| T
+  MF -->|"/sync"| HS
+  MF -->|"POST MATRIX_ROOM_EVENT"| T
+  T --> C
+  C <--> CX
+  DF -.->|"listConnections"| CX
+  MF -.->|"listConnections"| CX
+  C -->|"provider REST replies"| providers
+  C -->|"POST /v1/send, /v1/typing"| MF
+  MF -->|"m.room.encrypted"| HS
+```
+
+Webhook URLs are `/v1/webhooks/{accountId}/{channel}` for the production stage and `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage, so two stages sharing one bot never see each other's traffic. The URL names no agent. Traefik (`apps/edge/src/routes.ts`) sends the path straight to core with no per-address limit, because providers post from shared egress addresses.
+
+A GET with no query string answers `{"status":"ok"}` so a provider console sees the URL live. A GET with a query string is a subscription handshake and goes through the same scan as a delivery. WhatsApp checks `hub.verify_token` in `authenticate` and echoes `hub.challenge` from `parse`. A GET no channel claims, such as Pancake's `?secret=` URL, still answers `ok`.
 
 ## Runtime flow
 
+Which agent gets a delivery, and what `parse` decides:
+
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] --> Url["/v1/webhooks/accountId/channel"]
-  Url --> Account["load active account"]
-  Account --> Agent["find the agent whose<br/>credentials verify the request"]
-  Agent --> Registry["createChannelRegistry(config)"]
-  Registry --> Auth["adapter.authenticate(req)"]
-  Auth --> Parse["adapter.parse(req)"]
-  Parse -->|"response / ignore"| Early["provider response"]
-  Parse -->|"cleanup"| Cleanup["delete the conversation's<br/>partition folder"]
-  Parse -->|"context"| Context["store as context,<br/>no agent run"]
-  Parse --> Record["channel record lookup<br/>(platform, externalId)"]
-  Record --> Gate["agent.invoke policy gate"]
-  Gate -->|"message"| Handler["handleChannelRequest<br/>ingest, acceptIngress"]
-  Handler --> Ack["provider ACK<br/>after admission or 2 s"]
-  Handler --> Worker["channel-worker"]
-  Worker --> Session["session.ts"]
-  Session --> Harness["harness.ts"]
-  Harness --> Actions["ChannelActions"]
-  Actions --> Provider
+  In["POST /v1/webhooks/:accountId/:channel"] --> Acc["load active account"]
+  Acc --> Scan["credential scan<br/>agents by id, canHandle, authenticate"]
+  Scan -->|"no agent configures it"| E503["503 not configured"]
+  Scan -->|"unknown stage endpoint"| E404["404 unknown_webhook_stage"]
+  Scan -->|"no credentials verify"| E401["401"]
+  Scan -->|"lowest verifying agent id,<br/>every verifier if routesEachEntry"| Parse["adapter.parse"]
+  Parse -->|"response"| Resp["provider response at once"]
+  Parse -->|"ignore"| Ign["200, no run"]
+  Parse -->|"cleanup"| Clean["delete conversation-partitioned<br/>workspace folders"]
+  Parse -->|"context"| Ctx["record lookup,<br/>store as context, no run"]
+  Parse -->|"message or batch"| Rec["channelRecords lookup<br/>platform, externalId"]
+  Rec -->|"lookup failed"| Down["post: cannot reach<br/>channel configuration"]
+  Rec --> Gate["agent.invoke policy"]
+  Gate -->|"denied"| Deny["post refusal in channel"]
+  Gate --> Admit["processChannelMessage"]
 ```
 
-`handleChannelWebhook` in `integrations.ts` runs the steps in that order. The ACK waits for the `onMessageReceived` hook, attachment ingest, admission, dedup and a durable queue entry in Convex, for at most `CHANNEL_ACK_BUDGET_MS` (2 s). That stays under Slack's and Discord's 3 s retry limit, and a retry never races an admitted message. Model work starts on the `MAX_INPROCESS_WORKERS` pool once admission makes this message the conversation's owner.
+- Ties between agents that verify the same request go to the lowest agent id (`localeCompare`), so the choice never varies. A channel record is how users resolve that tie. WhatsApp, Messenger and Instagram set `routesEachEntry`: every verifier gets the delivery and keeps only its own entries.
+- A record lookup that finds nothing falls back to the credential holder. One that fails refuses the turn, since running without the record's policies and `denyTools` would be an escalation. A `context` message whose lookup fails is dropped with a warning.
+- `eventId` and `conversationKey` are scoped with `accountId` and `agentId` before the session sees them. A run only sees its own channel's config; core strips other channels' credentials.
 
-One message over time. The `critical` block is what the ACK waits on:
+One message, from webhook to reply. The `critical` block is what the provider ACK waits on:
 
 ```mermaid
 sequenceDiagram
   participant P as Provider
-  participant G as gateway
+  participant T as Traefik
   participant I as integrations.ts
   participant H as handler.ts
-  participant CV as Convex runtimeIngress
+  participant CX as Convex runtimeIngress
   participant W as channel-worker
-  participant R as harness.ts
 
-  P->>G: POST /v1/webhooks/:accountId/:channel
-  G->>I: proxy to core
-  I->>I: authenticate, parse, channel record, agent.invoke gate
-  critical at most CHANNEL_ACK_BUDGET_MS (2 s)
-    I->>I: onMessageReceived hook
-    I->>H: handleChannelRequest (typing and reaction fire first)
-    H->>H: ingestChannelAttachments
-    H->>CV: acceptIngress, mode steer
-    CV-->>H: owner, queued or duplicate
-    H->>W: dispatchInProcessWorker, only when owner
+  P->>T: POST /v1/webhooks/:accountId/:channel
+  T->>I: route to core
+  I->>I: scan, parse, record, agent.invoke gate
+  critical at most CHANNEL_ACK_BUDGET_MS, 2 s
+    I->>I: onMessageReceived hook, may drop or rewrite
+    I-->>P: sendTyping, reactToMessage, fire and forget
+    I->>H: handleChannelRequest
+    H->>H: command, plan limits, ingestChannelAttachments
+    H->>CX: accept, mode steer
+    CX-->>H: owner, queued, duplicate, rejected or capacity
+    H->>W: dispatchInProcessWorker, owner only
   end
-  I-->>G: provider ack
-  G-->>P: 200
-  W->>R: runChannelTurns
-  R->>P: ChannelActions sendText or stream
-  W->>CV: settle envelope, drain queued follow-ups
+  I-->>P: adapter ack, or 200
+  W->>W: runChannelTurns
+  alt adapter has stream
+    W->>P: stream, Slack, Telegram, GitHub
+  else
+    W->>P: sendText final reply, after onMessageSending hook
+  end
+  W->>CX: takeNext, settles this envelope
+  CX-->>W: next queued group, or lease released
 ```
 
-A `queued` or `duplicate` outcome starts no worker for this message, only one for a group that admission recovered from an expired owner. The current owner drains the queued envelope on its own worker slot when its turn settles.
-
-If two agents hold credentials that verify the same request, the lower agent id receives it, compared with `localeCompare`. The order is fixed so it cannot vary between requests. A channel record is how users resolve that tie. An adapter that sets `routesEachEntry` (WhatsApp, Messenger, Instagram) instead hands the delivery to every agent that verifies it, each keeping only the entries it owns, under the one ack budget.
-
-A record lookup that finds nothing falls back to the credential holder. A lookup that fails refuses the turn and posts "I can't reach my channel configuration right now", because running without the record's policies and `denyTools` would be an escalation. The channel path already needs the control plane to admit ingress, so this costs no availability that is not already lost. A `context` message whose lookup fails is dropped with a warning.
-
-`integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them. A webhook run only sees its own channel's config; core strips other channels' credentials from the runtime agent config.
+The 2 s budget stays under Slack's and Discord's 3 s retry limit, so a provider retry never races an admitted message. Whatever is still admitting when the budget runs out carries on after the ACK. A `queued` or `duplicate` outcome starts no worker: the current owner drains the queue on its own worker slot (`runChannelTurns` loops on `takeNext`). Busy-conversation rules are in [queue and steer](queue-and-steer.md). Model work runs on the `MAX_INPROCESS_WORKERS` pool shared with async and WebSocket runs.
 
 ## Adapter contract
 
-Each provider implements `ChannelAdapter` from `src/shared/channels.ts`. The types it produces and consumes:
+Each provider implements `ChannelAdapter` from `src/shared/channels.ts`:
 
-```mermaid
-classDiagram
-  direction LR
-  class ChannelAdapter
-  <<interface>> ChannelAdapter
-  ChannelAdapter : +name string
-  ChannelAdapter : +canHandle(req) boolean
-  ChannelAdapter : +authenticate(req) boolean
-  ChannelAdapter : +parse(req) ChannelParseResult
-  ChannelAdapter : +actions(msg) ChannelActions
-  ChannelAdapter : +applyReplyIn?(source, replyIn)
-  ChannelAdapter : +rehydrateAttachment?(attachment)
+| `ChannelAdapter` member  | Purpose                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `name`                   | URL segment and config key, such as `telegram`                                    |
+| `routesEachEntry?`       | Hand the delivery to every verifying agent (Meta batches)                         |
+| `canHandle(req)`         | Quick provider-shape check, usually on headers                                    |
+| `authenticate(req)`      | Provider-native signature or secret check                                         |
+| `parse(req)`             | One `ChannelParseResult`, below. May be async. Never downloads.                   |
+| `actions(msg)`           | `ChannelActions` scoped to the inbound message                                    |
+| `applyReplyIn?()`        | Rewrites reply routing for a record's `replyIn`. Only Slack implements it.        |
+| `rehydrateAttachment?()` | Rebuilds an attachment reader from stored metadata so a later turn can re-read it |
 
-  class ChannelActions
-  <<interface>> ChannelActions
-  ChannelActions : +sendText(text)
-  ChannelActions : +sendTyping()
-  ChannelActions : +reactToMessage(emoji)
-  ChannelActions : +supportsReactions? boolean
-  ChannelActions : +sendImages?(images, caption)
-  ChannelActions : +sendFiles?(files, caption)
-  ChannelActions : +sendSticker?(sticker)
-  ChannelActions : +sendQuestions?(prompt)
-  ChannelActions : +sendReplyButtons?(text, replies)
-  ChannelActions : +stream?(textStream, options)
+| `parse()` kind | Meaning                                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `message`      | Run the agent, after sending `ack` or a default `200`                                                          |
+| `context`      | Store as conversation context, no run. Slack, Discord, Telegram and Matrix use it for messages not to the bot. |
+| `batch`        | Several `message` or `context` results from one POST, admitted in order under one ACK budget (Meta batching)   |
+| `cleanup`      | Delete the conversation's partition folders. GitHub returns it when an issue or PR closes.                     |
+| `ignore`       | Stop without a run, usually an unsupported event                                                               |
+| `response`     | Answer the provider at once, such as a challenge reply                                                         |
 
-  class ChannelParseResult
-  <<union>> ChannelParseResult
-  class ParsedChannelMessage["ParsedChannelMessage, kind message"]
-  ParsedChannelMessage : +message InboundMessage
-  ParsedChannelMessage : +ack? ChannelResponse
-  class ParsedChannelContext["ParsedChannelContext, kind context"]
-  ParsedChannelContext : +message InboundMessage
-  class ParsedChannelBatch["ParsedChannelBatch, kind batch"]
-  ParsedChannelBatch : +results ParsedChannelMessage or ParsedChannelContext[]
-  ParsedChannelBatch : +ack? ChannelResponse
-  class ParsedChannelCleanup["ParsedChannelCleanup, kind cleanup"]
-  ParsedChannelCleanup : +channelName string
-  ParsedChannelCleanup : +conversationKey string
-  class Ignore["kind ignore"]
-  Ignore : +response? ChannelResponse
-  class Respond["kind response"]
-  Respond : +response ChannelResponse
+`InboundMessage` carries `eventId` (provider id, used for dedup), `conversationKey` (thread, chat or channel), `channelName`, `content` (AI SDK `UserContent`), `attachments` (named readers, no bytes yet), `events` (extra model messages such as a one-turn system message), `identity` (`ChannelIdentity`: `workspaceRef`, `channelId`, `threadId`, `userId`, `userName`, `userRoles`), `source` (opaque reply routing, which can hold interaction tokens) and `answer` (an `ask_questions` button click).
 
-  class InboundMessage
-  InboundMessage : +eventId string
-  InboundMessage : +conversationKey string
-  InboundMessage : +channelName string
-  InboundMessage : +content UserContent
-  InboundMessage : +attachments? Attachment[]
-  InboundMessage : +events? ChannelIngressEvent[]
-  InboundMessage : +source Record
-  InboundMessage : +answer? ChannelQuestionAnswer
+`ChannelActions` requires `sendText`, `sendTyping` and `reactToMessage`. A provider declares more by implementing them, and the tools follow:
 
-  class ChannelIdentity
-  ChannelIdentity : +workspaceRef? string
-  ChannelIdentity : +channelId? string
-  ChannelIdentity : +threadId? string
-  ChannelIdentity : +userId? string
-  ChannelIdentity : +userName? string
-  ChannelIdentity : +userRoles? string[]
+| Tool             | Registers when                                                                               |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| `send-message`   | the run has a session dispatcher and the agent has at least one channel, channel turn or not |
+| `send-update`    | always on a channel turn                                                                     |
+| `send-images`    | `sendImages` or `sendFiles` exists                                                           |
+| `send-files`     | a workspace is attached                                                                      |
+| `send-sticker`   | `sendSticker` exists                                                                         |
+| `send-reactions` | `supportsReactions` is `true`                                                                |
 
-  ChannelAdapter ..> ChannelParseResult : parse
-  ChannelAdapter ..> ChannelActions : actions
-  ChannelParseResult <|-- ParsedChannelMessage
-  ChannelParseResult <|-- ParsedChannelContext
-  ChannelParseResult <|-- ParsedChannelBatch
-  ChannelParseResult <|-- ParsedChannelCleanup
-  ChannelParseResult <|-- Ignore
-  ChannelParseResult <|-- Respond
-  ParsedChannelMessage --> InboundMessage
-  ParsedChannelContext --> InboundMessage
-  InboundMessage --> ChannelIdentity : identity
-```
-
-| Member                   | Purpose                                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| `name`                   | Stable URL segment and config key, such as `telegram`                                    |
-| `canHandle(req)`         | Quick provider-shape check, usually on headers                                           |
-| `authenticate(req)`      | Provider-native signature or secret check                                                |
-| `parse(req)`             | Turns the webhook into one of the results below. May be async.                           |
-| `actions(msg)`           | Reply, typing and reaction actions scoped to the inbound message                         |
-| `applyReplyIn?(...)`     | Rewrites reply routing for a record's `replyIn`. Only Slack implements it.               |
-| `rehydrateAttachment?()` | Rebuilds an attachment reader from stored metadata so a later turn can download it again |
-
-`parse()` outcomes:
-
-| Result     | Meaning                                                                                                                                                                                                                 |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message`  | Continue into the agent loop after sending `ack` or a default `200`                                                                                                                                                     |
-| `context`  | Store the message as conversation context without running the agent. Slack, Discord, Telegram and Matrix return it for messages that do not address the bot, so a later mention sees what the room said.                |
-| `batch`    | Several `message` or `context` results from one delivery, each resolved and admitted on its own, in order, inside one ack budget. WhatsApp, Messenger and Instagram return it when Meta batches messages into one POST. |
-| `cleanup`  | Delete the conversation's partition folder (`cleanupChannelPartitions`). GitHub returns it when an issue or PR closes.                                                                                                  |
-| `ignore`   | Stop without running the agent, usually an unsupported event                                                                                                                                                            |
-| `response` | Return a provider-specific response at once, such as a challenge reply                                                                                                                                                  |
-
-`ChannelActions` in `channels.ts` has `sendText`, `sendTyping` and `reactToMessage`, plus optional `sendImages`, `sendFiles`, `sendSticker`, `sendQuestions`, `sendReplyButtons`, `stream` and a `supportsReactions` flag. A provider declares a capability by implementing the method. The model-facing tools in `src/harness/tools/channel.tool.ts` follow that.
-
-| Tool             | Registers when                                                                                                                                                                                                        |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `send-message`   | the run has a session dispatcher and the agent config has at least one channel. Not tied to the current turn being a channel turn                                                                                     |
-| `send-update`    | always on a channel turn, since every provider can post text                                                                                                                                                          |
-| `send-images`    | `sendImages` or `sendFiles` exists                                                                                                                                                                                    |
-| `send-files`     | a workspace is attached. Without `sendFiles` it posts sealed links as text.                                                                                                                                           |
-| `send-sticker`   | `sendSticker` exists                                                                                                                                                                                                  |
-| `send-reactions` | `supportsReactions` is `true`. Telegram, Matrix, Linear and WhatsApp always, Slack, Discord and GitHub when the inbound message id is known, never Pancake, Zalo, Teams, Google Chat, Twilio, Messenger or Instagram. |
-
-The normalized `InboundMessage`:
-
-- `eventId` is the provider delivery or message id, used for dedup.
-- `conversationKey` is the provider thread, chat or channel key.
-- `channelName` is the adapter name.
-- `content` is AI SDK `UserContent`.
-- `attachments` are named attachments with an adapter-owned `fetchData` reader. They hold no bytes yet.
-- `events` holds optional extra model messages, such as a one-turn system message that must not persist.
-- `identity` is the provider-neutral `ChannelIdentity` with `workspaceRef`, `channelId`, `threadId`, `userId`, `userName`, and `userRoles` filled from the channel record. Record lookup and policy read it.
-- `source` is opaque provider metadata for commands and replies. It stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
-- `answer` is set when the message is a click on an `ask_questions` button.
+Only Slack, Telegram and GitHub implement `stream()` (GitHub buffers and posts one comment). Every other channel sends one final `sendText`.
 
 ## Shared pipeline behavior
 
-Adapters do not implement these; the shared pipeline does:
+Adapters do not implement these:
 
-- Commands. Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route `/command` input through `commands.ts` instead of the agent. GitHub, Linear and Pancake treat slash text as agent input.
-- Typing and reaction are fire-and-forget. A failed typing or reaction call never fails the turn.
-- Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` (`handler.ts`).
-- A failed turn replies with `formatChannelErrorText()`, a `⚠️` line with the provider's own reason (retry wrapper, org ids and docs links stripped) plus the step that fixes it: /compact or /new for a request over the context or per-minute token limit (a new conversation on channels without inline commands), a wait for a rate limit or a dropped connection, credits for a quota. The agent's secrets are redacted first. Policy refusals use the same format.
-- `sendChannelFailure()` adds the way to retry: a Retry button on channels that implement `sendReplyButtons` (Telegram today, where a tap arrives as the message "Retry"), and `Reply "retry" to try again.` on the rest. A retry is a normal message, and the failed run's finished subagent and async tool results are already in history.
-- Deferred replies. A turn that finishes in the background pushes its result back through `sendChannelReply()`, which rebuilds the adapter from the agent config and the stored `source`, and runs the `onMessageSending` hook first. See [architecture](architecture.md).
+- Commands. Channels in `INLINE_COMMAND_CHANNELS` (Discord, Google Chat, Instagram, Matrix, Messenger, Slack, Teams, Telegram, Twilio, WhatsApp, Zalo) route `/command` text through `commands.ts`. GitHub, Linear and Pancake pass it to the agent.
+- Typing and reaction never fail the turn.
+- Tools with `needsApproval` are denied on channel turns.
+- A failed turn replies with `formatChannelErrorText()`: the provider's reason, secrets redacted, plus the step that fixes it. `sendChannelFailure()` adds a Retry button where `sendReplyButtons` exists (Telegram), or `Reply "retry"` text.
+- A turn that finishes in the background replies through `sendChannelReply()`, which rebuilds the adapter from config and the stored `source` and runs `onMessageSending` first. See [architecture](architecture.md).
 - Trace links are omitted unless the connection sets `trace: "enabled"`.
-- When a policy denies `agent.invoke`, core posts the refusal in-channel and the turn never starts.
-
-## Reply streaming
-
-Three adapters implement `stream()`. Slack uses Chat SDK's native Slack streaming API. Telegram private chats use rich draft previews through `fromFullStream()` and then persist the final response. GitHub buffers text and posts one Markdown comment. Discord, Matrix, Pancake, Zalo, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram have no `stream()` and send one final `sendText` reply. Linear could edit a comment as it grows, but each edit comes back as another webhook delivery.
-
-Slack, Telegram, Discord, GitHub, Linear, WhatsApp, Teams, Google Chat and Twilio delegate Markdown formatting to their Chat SDK adapters. Pancake and Zalo keep provider-specific text handling.
 
 ## Outbound files and images
 
-The model only ever names workspace paths or public URLs. The adapter decides how the provider takes them:
+The model names workspace paths or public URLs. The tool seals each workspace file into a durable `/v1/media/{ticket}` link and keeps a reader beside it, then falls down a ladder:
 
-| Channel     | Pictures                          | Documents                         | Batch                   |
-| ----------- | --------------------------------- | --------------------------------- | ----------------------- |
-| Telegram    | fetches the URL                   | fetches the URL                   | album of 2 to 10        |
-| Slack       | Block Kit image blocks            | uploads bytes (`files.uploadV2`)  | one message, one upload |
-| Discord     | uploads bytes                     | uploads bytes                     | one multipart message   |
-| Matrix      | uploads bytes                     | uploads bytes                     | one per message         |
-| Pancake     | uploads bytes (`upload_contents`) | uploads bytes                     | one per message         |
-| Zalo        | fetches the URL                   | none                              | one per message         |
-| WhatsApp    | uploads bytes, or links a URL     | uploads bytes, or links a URL     | one per message         |
-| Teams       | none                              | none                              | text links only         |
-| Google Chat | none                              | none                              | text links only         |
-| Twilio      | fetches the URL (MMS)             | none                              | one per message         |
-| Instagram   | uploads bytes, or fetches the URL | uploads bytes, or fetches the URL | one per message         |
-| Messenger   | none                              | none                              | text links only         |
-| GitHub      | none                              | none                              | text links only         |
+```mermaid
+sequenceDiagram
+  participant M as Model
+  participant Tool as send-images / send-files
+  participant A as Adapter
+  participant P as Provider
+  participant C as core /v1/media
 
-A workspace attachment carries both a sealed link and a reader, so fetch-style providers take the link and upload-style providers read the bytes only at upload time. A caption rides the first message only.
+  M->>Tool: file_paths or urls, caption
+  Tool->>Tool: seal media ticket, keep a reader
+  Tool->>Tool: onMessageSending hook on the caption
+  opt send-images and sendImages exists
+    Tool->>A: sendImages
+    A->>P: upload bytes, or pass the link
+    P->>C: GET /v1/media/:ticket, fetch-style only
+  end
+  opt no sendImages, or it threw
+    Tool->>A: sendFiles
+    A->>P: upload bytes, or pass the link
+  end
+  opt no sendFiles, or it threw
+    Tool->>A: sendText with download links
+    Tool-->>M: links sent as text, do not resend
+  end
+```
 
-A workspace file leaves as a durable `/v1/media/{ticket}` link served by core, not a presigned S3 URL. Some providers re-fetch on every view, and Zalo stores the URL itself, so an expiring URL would leave broken images in chat history. Storage stays private, and the sealed ticket is the only credential. The ticket is minted per workspace and account. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it.
+| Channel                                       | Pictures                          | Documents                         | Batch                   |
+| --------------------------------------------- | --------------------------------- | --------------------------------- | ----------------------- |
+| Telegram                                      | fetches the URL                   | fetches the URL                   | album of 2 to 10        |
+| Slack                                         | Block Kit image blocks            | uploads bytes (`files.uploadV2`)  | one message, one upload |
+| Discord                                       | uploads bytes                     | uploads bytes                     | one multipart message   |
+| Matrix                                        | uploads bytes                     | uploads bytes                     | one per message         |
+| Pancake                                       | uploads bytes (`upload_contents`) | uploads bytes                     | one per message         |
+| Zalo                                          | fetches the URL                   | none                              | one per message         |
+| WhatsApp                                      | uploads bytes, or links a URL     | uploads bytes, or links a URL     | one per message         |
+| Instagram                                     | uploads bytes, or fetches the URL | uploads bytes, or fetches the URL | one per message         |
+| Twilio                                        | fetches the URL (MMS)             | none                              | one per message         |
+| Teams, Google Chat, Messenger, GitHub, Linear | none                              | none                              | text links only         |
 
-`send-images` degrades rather than fails. With no picture endpoint, or a rejected batch, pictures go out through the `send-files` path, as documents or as download links. Core logs the rejection reason and does not show it to the recipient. Where a provider has no document endpoint, `send-files` posts the links as text and says so in its tool result so the model does not send them twice. An agent with no workspace gets no `send-files`, and its `send-images` takes `urls` only. The harness logs a warning naming the cause.
+The link has no expiry because some providers re-fetch on every view, and Zalo stores the URL itself. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it. A caption rides the first message only. Rejection reasons go to the log, not the chat.
 
 ## Inbound attachments
 
-- Parsing never downloads. `ingestChannelAttachments` reads media after parse, just before admission, so a queued turn still carries it. The ACK waits at most 2 s for that, so a video download never holds the provider's connection open. Each adapter uses the provider's own auth. Telegram resolves a file id through `getFile` and signs with the bot token. Slack sends a bearer header, checks the host before attaching the token, and strips auth if a redirect leaves Slack. Teams sends the bot token only to the activity's own connector; any other attachment URL goes through core's guarded fetch.
-- With a workspace attached, each attachment is read once and written twice, to the agent's default workspace under `media/` for its own tools, and to the attachment store, a prefix of the managed bucket that no sandbox mounts. The model gets a `/v1/media/{ticket}` link to the attachment-store copy, so it survives the agent tidying its workspace. Nothing is inlined as base64, because the conversation is stored as JSON and a link still resolves when the turn replays later. Deleting the account deletes the store.
-- With no workspace, nothing is stored. The bytes reach the model on the turn they arrive, and the message keeps a reference to the channel's own copy so a later turn re-reads it with the channel's credentials. The channel then decides how long media works. A Telegram file id lasts, and a Discord link expires within a day.
-- Core checks limits twice, on the declared size and on the bytes read. The limits are 6 MB for a picture, 25 MB for anything else, at most ten attachments per message. The media type is sniffed from the bytes, not taken from the provider, except when the sniff only identifies a container, since a `.docx` is a zip. An unreadable attachment becomes a line of text saying so.
-- Pictures go to the model as pictures. PDFs, audio and video go as native parts only where the model provider accepts that exact type, and otherwise as a saved file. Every message with attachments gets one note listing what arrived and where.
-- `src/harness/transcribe.ts` transcribes audio the model cannot hear on the way in, with the account's own provider. It uses `whisper-1` on OpenAI, `whisper-large-v3-turbo` on Groq, `voxtral-mini-latest` on Mistral. Google and Vertex get the recording itself. `config.model.transcriptionModelId` overrides the model. Transcription fails fast rather than retrying, and the note says whether the provider was busy, refused the file, or the account has no speech-to-text.
+```mermaid
+flowchart LR
+  Parse["parse<br/>named readers, no bytes"] --> Ingest["ingestChannelAttachments<br/>before admission"]
+  Ingest --> Check["size check, declared and read<br/>sniff media type"]
+  Check -->|"workspace attached"| Two["write media/ in default workspace<br/>and the attachment store"]
+  Check -->|"no workspace"| Ref["bytes for this turn only,<br/>keep a provider reference"]
+  Two --> Model["model gets a /v1/media link<br/>plus one note per message"]
+  Ref --> Model
+  Check -->|"audio the model cannot hear"| Tx["transcribe.ts<br/>account's own provider"]
+  Tx --> Model
+```
+
+- Download happens after parse and before admission, so a queued turn still carries its media. Each adapter uses the provider's own auth, and Slack and Teams only send their token to their own hosts.
+- The attachment store is a managed-bucket prefix no sandbox mounts, so the link survives the agent tidying its workspace. Nothing is inlined as base64. Deleting the account deletes the store.
+- Without a workspace, a later turn re-reads the provider's copy, so the provider decides how long media works (a Telegram file id lasts, a Discord link expires within a day).
+- Limits: 6 MB per picture, 25 MB otherwise, ten attachments per message (`src/shared/media-types.ts`, `channel-media.ts`). An unreadable attachment becomes a line of text.
+- Transcription fails fast at ingest, and the note says whether the provider was busy, refused the file, or has no speech-to-text. `config.model.transcriptionModelId` overrides the default.
 
 ## Forwarders
 
-Two providers do not deliver ordinary messages to a webhook, so a separate single-replica deployment holds the connection and POSTs to the channel webhook. Both read connections from every config plane listed in `BROODS_CONFIG_PLANES` and keep one connection per credential, fanning each event out to every plane's webhook, so the same bot on dev and prod is never connected twice. Neither filters anything. Which message runs the agent is core's decision.
+Discord sends regular messages only over a Gateway socket, and Matrix has no webhooks, so each has a single-replica deployment that holds the connection and POSTs to the channel webhook. Both read connections from every plane in `BROODS_CONFIG_PLANES`, keep one connection per credential, and fan each event out to every webhook that credential serves. Neither filters: which message runs is core's decision.
 
-| Forwarder                | Why it exists                                                                                | What it POSTs                                                                                                                                                  | Core calls back                                                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `apps/discord-forwarder` | Discord sends regular messages only over a Gateway WebSocket                                 | `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }` with the bot token in `x-discord-gateway-token`                                                            | nothing. Replies use the Discord REST API.                                                                           |
-| `apps/matrix-forwarder`  | Matrix has no webhooks. A client long-polls `/sync`. The forwarder also holds the E2EE keys. | `{ "type": "MATRIX_ROOM_EVENT", "encrypted", "event", "roomId", "senderName", "userId" }`, already decrypted, with the access token in `x-matrix-access-token` | `POST /v1/send` and `POST /v1/typing` at `MATRIX_FORWARDER_URL`, because only the forwarder can encrypt for the room |
+| Forwarder                | POSTs                                                                                     | Header                    | Core calls back                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------- |
+| `apps/discord-forwarder` | `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }`                                       | `x-discord-gateway-token` | nothing, replies use Discord REST                       |
+| `apps/matrix-forwarder`  | `{ "type": "MATRIX_ROOM_EVENT", "encrypted", "event", "roomId", "senderName", "userId" }` | `x-matrix-access-token`   | `POST /v1/send`, `/v1/typing` at `MATRIX_FORWARDER_URL` |
 
-A Matrix message and its reply make one round trip through the forwarder:
+A Matrix message and its reply:
 
 ```mermaid
 sequenceDiagram
   participant HS as Matrix homeserver
   participant F as matrix-forwarder
-  participant G as gateway
+  participant T as Traefik
   participant C as core matrix-channel.ts
 
   F->>HS: /sync long-poll from the stored sync token
   HS-->>F: timeline events
   F->>F: OlmMachine decrypt, hold back until keys arrive
-  F->>G: POST channel webhook, MATRIX_ROOM_EVENT
-  G->>C: proxy, x-matrix-access-token
-  C->>C: admit, as above
+  F->>T: POST channel webhook, MATRIX_ROOM_EVENT
+  T->>C: route to core
+  C->>C: admit, as in runtime flow
   C-->>F: 200
   F->>F: write sync token after the batch
   C->>C: run the turn
-  C->>F: POST /v1/send at MATRIX_FORWARDER_URL
+  C->>F: POST /v1/send
   F->>F: encrypt for the room
-  F->>HS: send m.room.encrypted
+  F->>HS: m.room.encrypted
   F-->>C: event id
 ```
 
-Media skips the forwarder. The attachment key rides the decrypted event, so core downloads, decrypts, encrypts and uploads files against the homeserver itself.
+Media skips the forwarder: the attachment key rides the decrypted event, so core downloads, decrypts, encrypts and uploads against the homeserver itself. Replies carry the `app.broods.bot` marker (`MATRIX_BOT_MARKER`) so core never answers its own events.
 
-Core's Discord adapter takes both the interaction webhook and the forwarded shape on one URL and tells them apart by the `x-discord-gateway-token` header.
-
-A deployment without the Discord forwarder can post the events itself. Send each Discord `MESSAGE_CREATE` event unmodified, wrapped as below, with the bot token in `x-discord-gateway-token`:
-
-```json
-{
-  "type": "GATEWAY_MESSAGE_CREATE",
-  "data": { "...": "MESSAGE_CREATE payload" }
-}
-```
-
-An absent `author.bot` means a human, as Discord sends it. For a message inside a thread, add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits its parent. Without it the conversation keys under the thread id as if it were a channel, `/new` in that thread disagrees, and allow lists that name the parent channel reject it. Matrix replies carry the `app.broods.bot` marker (`MATRIX_BOT_MARKER`), so core never answers its own events on a personal account. Deployment constraints for both are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
+Core's Discord adapter takes interactions and forwarded messages on one URL and tells them apart by `x-discord-gateway-token`. A deployment without the forwarder can post `MESSAGE_CREATE` events itself in the same wrapper. An absent `author.bot` means a human. For a thread message add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits the parent. Deployment constraints are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
 
 ## Add a channel
 
 1. Add the config type to `src/shared/domain/agent-config.ts`.
-2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()` in `packages/convex/model/agentRules.ts`.
-3. Create `src/shared/<channel>-channel.ts` implementing `ChannelAdapter`. Use a Chat SDK adapter when one exists. Keep provider formatting and send logic in this module only for providers Chat SDK does not cover. Fill `identity` so records and policies can match the room and sender.
-4. In `src/harness/integrations.ts`, add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
-5. In `packages/broods/src/resources.ts`, add the name to `ChannelType`, the connection and channel input types, and the `define<Channel>Connection` and `define<Channel>Channel` constructors. `packages/broods/src/client.ts` also lists channel names for the webhook URL helpers.
-6. If the provider cannot call a webhook, add a forwarder like the two above rather than polling from core.
+2. Validate `config.channels.<channel>` in `normalizeChannelsConfig()` in `packages/convex/model/agentRules.ts`.
+3. Create `src/shared/<channel>-channel.ts` implementing `ChannelAdapter`. Use a Chat SDK adapter when one exists. Fill `identity` so records and policies can match.
+4. Add `create<Channel>ChannelFromConfig()` to `createChannelRegistry()` in `src/harness/integrations.ts`.
+5. In `packages/broods/src/resources.ts`, add the name to `ChannelType`, the input types, and `define<Channel>Connection` and `define<Channel>Channel`. `packages/broods/src/client.ts` lists channel names for the webhook URL helpers.
+6. If the provider cannot call a webhook, add a forwarder rather than polling from core.
 7. Update the [API reference](/api-reference), the user docs under `channels/`, a `packages/demos/channel-*` demo, and focused tests.
 
-Never hardcode channel-specific behavior in commands, shared handlers or the agent loop. Commands receive only `ChannelActions`.
+Never hardcode channel behavior in commands, shared handlers or the agent loop. Commands receive only `ChannelActions`.
 
 ### Adapter skeleton
 
@@ -388,9 +346,7 @@ export function createExampleChannel(
 
 ### Rules
 
-- Verify signatures or webhook secrets before parsing user-controlled payloads deeply.
-- ACK within the 2 s admission budget. Model work belongs after the ACK.
-- Use stable provider ids for `eventId` so duplicate deliveries dedup.
-- Use thread, chat or channel ids for `conversationKey` so follow-ups keep context.
-- Never download attachments during `parse`.
+- Verify signatures or secrets before parsing user-controlled payloads deeply.
+- Use stable provider ids for `eventId` so redeliveries dedup, and thread or chat ids for `conversationKey` so follow-ups keep context.
+- Never download attachments in `parse`.
 - A provider `apiUrl` override must be a public `https` URL, checked when the channel is saved, because core sends the token to it.

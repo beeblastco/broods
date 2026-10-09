@@ -61,6 +61,23 @@ export async function agentsInStage(
   return await agentsForConfigs(ctx, configs, accountId);
 }
 
+/**
+ * Whether `agentId` has a config row in `projectId` on any stage: one indexed
+ * read, for a check on a single cron or conversation.
+ */
+export async function agentInProject(
+  ctx: Ctx,
+  agentId: Id<"agents">,
+  projectId: Id<"projects">,
+): Promise<boolean> {
+  const configs = await ctx.db
+    .query("agentConfigs")
+    .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+    .collect();
+
+  return configs.some((config) => config.projectId === projectId);
+}
+
 /** The crons whose agent belongs to `projectId` and is owned by `accountId`. */
 export async function cronsInProject(
   ctx: Ctx,
@@ -154,4 +171,133 @@ async function agentsForConfigs(
   }
 
   return agents;
+}
+
+/** The API resource families whose rows live in one stage. */
+export const STAGE_SCOPED_RESOURCE_TYPES = [
+  "agents",
+  "channels",
+  "crons",
+  "mcp",
+  "policies",
+  "sandboxes",
+  "workspaces",
+] as const;
+
+export type StageScopedResourceType =
+  (typeof STAGE_SCOPED_RESOURCE_TYPES)[number];
+
+/** A stage-scoped resource one config names, e.g. an agent's sandbox. */
+export type StageScopedRef = { type: StageScopedResourceType; id: string };
+
+/**
+ * The refs that do not resolve to `pin`'s stage, so a pinned role's write
+ * cannot point a resource at another stage's.
+ */
+export async function refsOutsideStage(
+  ctx: Ctx,
+  accountId: Id<"accounts">,
+  pin: { projectId: string; stageId: string },
+  refs: StageScopedRef[],
+): Promise<StageScopedRef[]> {
+  const outside: StageScopedRef[] = [];
+  for (const ref of refs) {
+    const scope = await resourceStageScope(ctx, accountId, ref.type, ref.id);
+    if (scope?.projectId !== pin.projectId || scope.stageId !== pin.stageId) {
+      outside.push(ref);
+    }
+  }
+
+  return outside;
+}
+
+/**
+ * The stage one of `accountId`'s resources lives in, for a stage-pinned role's
+ * check. Null when the row is missing, belongs to another account, is
+ * account-scoped, or (for an agent) has config rows on more than one stage.
+ */
+export async function resourceStageScope(
+  ctx: Ctx,
+  accountId: Id<"accounts">,
+  type: StageScopedResourceType,
+  id: string,
+): Promise<ProjectStageScope | null> {
+  switch (type) {
+    case "agents":
+      return await agentStageScope(ctx, accountId, id);
+    case "crons": {
+      const cronId = ctx.db.normalizeId("crons", id);
+      const cron = cronId ? await ctx.db.get(cronId) : null;
+      if (!cron || cron.accountId !== accountId) return null;
+
+      return await agentStageScope(ctx, accountId, cron.agentId);
+    }
+    case "channels":
+      return rowStageScope(accountId, await getRow(ctx, "channelRecords", id));
+    case "mcp":
+      return rowStageScope(accountId, await getRow(ctx, "mcp", id));
+    case "policies":
+      return rowStageScope(accountId, await getRow(ctx, "agentPolicies", id));
+    case "sandboxes":
+      return rowStageScope(accountId, await getRow(ctx, "sandboxConfigs", id));
+    case "workspaces":
+      return rowStageScope(
+        accountId,
+        await getRow(ctx, "workspaceConfigs", id),
+      );
+  }
+}
+
+async function agentStageScope(
+  ctx: Ctx,
+  accountId: Id<"accounts">,
+  id: string,
+): Promise<ProjectStageScope | null> {
+  const agent = await getRow(ctx, "agents", id);
+  if (!agent || agent.accountId !== accountId) return null;
+  const configs = await ctx.db
+    .query("agentConfigs")
+    .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+    .collect();
+  const [first] = configs;
+  if (
+    !first ||
+    configs.some(
+      (config) =>
+        config.projectId !== first.projectId ||
+        config.stageId !== first.stageId,
+    )
+  ) {
+    return null;
+  }
+
+  return { projectId: first.projectId, stageId: first.stageId };
+}
+
+async function getRow<
+  T extends
+    | "agentPolicies"
+    | "agents"
+    | "channelRecords"
+    | "mcp"
+    | "sandboxConfigs"
+    | "workspaceConfigs",
+>(ctx: Ctx, table: T, id: string): Promise<Doc<T> | null> {
+  const normalized = ctx.db.normalizeId(table, id);
+
+  return normalized ? await ctx.db.get(normalized) : null;
+}
+
+function rowStageScope(
+  accountId: Id<"accounts">,
+  row: {
+    accountId: Id<"accounts">;
+    projectId?: Id<"projects">;
+    stageId?: Id<"stages">;
+  } | null,
+): ProjectStageScope | null {
+  if (!row || row.accountId !== accountId) return null;
+  if (!row.projectId || !row.stageId) return null;
+
+  return { projectId: row.projectId, stageId: row.stageId };
 }

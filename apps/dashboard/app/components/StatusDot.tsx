@@ -64,3 +64,24 @@ export function StatusDot({
     </span>
   );
 }
+
+/** The dot and its word side by side: the word stays foreground, the dot carries the color. */
+export function StatusWord({
+  tone,
+  children,
+  className,
+}: {
+  tone: StatusTone;
+  children: string;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5", className)}>
+      <span
+        aria-hidden
+        className={cn("size-2 shrink-0 rounded-full", STATUS_TONE_BG[tone])}
+      />
+      {children}
+    </span>
+  );
+}

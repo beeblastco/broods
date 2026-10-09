@@ -15,15 +15,12 @@ import { authKit } from "../auth";
 import { accountIdForProject } from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
-import { isPlainObject } from "../model/objects";
+import { isPlainObject, stableJson } from "../model/objects";
+import { roleHoldingPolicy } from "../model/access";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
-import { AGENT_POLICY_ACTIONS } from "../model/policyRules";
+import { normalizePolicyDocument } from "../model/policyRules";
 import { agentPoliciesFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
-
-// Sourced from the CRUD normalizer rather than restated: this copy had gone
-// stale and silently refused every `agent.invoke` rule the runtime supports.
-const POLICY_ACTION_SET = new Set<string>(AGENT_POLICY_ACTIONS);
 
 const policyDoc = v.object({
   ...agentPoliciesFields,
@@ -356,6 +353,22 @@ export const updateInternal = internalMutation({
       args.document !== undefined
         ? normalizePolicyDocument(args.document)
         : undefined;
+    // An org role's policies sit under the dashboard's access:write ceiling,
+    // which an API key has no member to weigh. Fields sent back unchanged pass.
+    if (
+      (document !== undefined &&
+        stableJson(document) !== stableJson(policy.document)) ||
+      (args.status !== undefined && args.status !== policy.status)
+    ) {
+      const holder = await roleHoldingPolicy(ctx, policy);
+      if (holder) {
+        throw new ClientError(
+          `The role "${holder.name}" holds this policy; change it in the dashboard`,
+          "conflict",
+        );
+      }
+    }
+    if (args.status === "deleted") await assertPolicyUnreferenced(ctx, policy);
     await ctx.db.patch(normalized, {
       ...(args.name !== undefined ? { name: args.name } : {}),
       ...(args.description !== undefined
@@ -414,45 +427,6 @@ export const usageCounts = query({
     return counts;
   },
 });
-
-/**
- * Validates a policy document's shape before persisting.
- * Exported so CLI sync writes go through the same gate as CRUD mutations.
- * @param value candidate policy document
- * @returns the validated document
- * @throws when version, rules, effects, or actions are malformed
- */
-export function normalizePolicyDocument(value: unknown): unknown {
-  if (!isPlainObject(value))
-    throw new ClientError("Policy document must be an object.");
-  if (value.version !== 1)
-    throw new ClientError("Policy document version must be 1.");
-  if (!Array.isArray(value.rules))
-    throw new ClientError("Policy document rules must be an array.");
-  for (const [index, rule] of value.rules.entries()) {
-    if (!isPlainObject(rule))
-      throw new ClientError(`Policy rule ${index + 1} must be an object.`);
-    if (rule.effect !== "allow" && rule.effect !== "deny") {
-      throw new ClientError(
-        `Policy rule ${index + 1} effect must be allow or deny.`,
-      );
-    }
-    if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
-      throw new ClientError(
-        `Policy rule ${index + 1} actions must be a non-empty array.`,
-      );
-    }
-    for (const action of rule.actions) {
-      if (typeof action !== "string" || !POLICY_ACTION_SET.has(action)) {
-        throw new ClientError(
-          `Policy rule ${index + 1} contains an unsupported action.`,
-        );
-      }
-    }
-  }
-
-  return value;
-}
 
 async function requireEditablePolicy(
   ctx: Parameters<typeof getProjectForRole>[0],

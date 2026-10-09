@@ -752,7 +752,7 @@ describe("createTools", () => {
     expect(
       runSubagentSchema.jsonSchema.properties.tasks.items.properties
         .conversationKey?.description,
-    ).toContain("Existing subagent conversation key");
+    ).toContain("conversationKey an earlier run_subagent call returned");
     expect(
       (
         tools.run_subagent as {

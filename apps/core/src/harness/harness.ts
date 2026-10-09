@@ -12,6 +12,7 @@ import {
   context as otelContextApi,
   trace as otelTraceApi,
   SpanStatusCode,
+  TraceFlags,
   type Context as OtelContext,
   type Span,
 } from "@opentelemetry/api";
@@ -271,6 +272,9 @@ export interface AgentLoopOptions {
   // Request-shared hook dispatcher (one storage load + one ctx.state per
   // request); the loop builds its own when the handler does not pass one.
   hooks?: HookDispatcher;
+  // Aborts the run from outside, as the worker pool does when it reclaims an
+  // overrunning run's slot.
+  abortSignal?: AbortSignal;
   // Test seam for lifecycle webhook delivery, which opens its own pinned
   // socket rather than going through a mockable global.
   webhookTransport?: PinnedFetchTransport;
@@ -889,6 +893,20 @@ export async function runAgentLoop(
   let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
+  const abortRun = (): void => {
+    const reason: unknown = options.abortSignal?.reason;
+    terminalError ??=
+      reason instanceof Error ? reason : new Error(String(reason));
+    runAbort.abort(terminalError);
+  };
+  if (options.abortSignal?.aborted) {
+    abortRun();
+  } else {
+    options.abortSignal?.addEventListener("abort", abortRun, {
+      once: true,
+      signal: runAbort.signal,
+    });
+  }
   /**
    * What a run that ended cleanly still waits on, the person first: an approval
    * or an open question needs them, while subagents, async tools and background
@@ -944,6 +962,7 @@ export async function runAgentLoop(
   ): Promise<void> => {
     if (usageFinalized) return;
     usageFinalized = true;
+    options.abortSignal?.removeEventListener("abort", abortRun);
     releaseSandboxOccupancy?.();
     const taskTokens = usageTokenTotals(usage);
     const { waitingOn, questions: openQuestions } =
@@ -2314,6 +2333,70 @@ export async function runAgentLoop(
     hasStructuredOutput: (): boolean => Boolean(modelOutput),
     finalResponse: (): JSONValue | undefined => finalResponse,
     traceId: (): string => traceId,
+  });
+}
+
+/**
+ * Records a turn that failed before runAgentLoop could open its root span, as
+ * the failed task it is: one root span on the trace id the turn's log lines
+ * already carry, so the task list shows it and "View trace" on those lines
+ * finds it instead of "Trace not found".
+ */
+export function recordFailedTurn(
+  session: Session,
+  startedAt: number,
+  error: unknown,
+): void {
+  const context = getObservabilityContext();
+  const traceId = context?.traceId ?? mintTraceId();
+  const scope = {
+    accountId: session.accountId ?? "",
+    project: session.projectSlug ?? "",
+    stage: session.stageSlug ?? "",
+    endpointId: session.endpointId ?? "",
+    agentId: session.agentId ?? "",
+    conversationKey: session.conversationKey,
+  };
+  const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
+  const name = `agent.${kind}`;
+  const message = redactSensitiveText(
+    errorMessage(error),
+    context?.secretValues,
+  );
+  const endTimeMs = Date.now();
+  // Started under a span context that only carries the trace id, so the OTel
+  // span lands on the trace the log lines name rather than on a fresh one.
+  const otelSpan = getTracer().startSpan(
+    name,
+    {
+      startTime: startedAt,
+      attributes: { ...observabilityAttributes(scope), "task.state": "failed" },
+    },
+    otelTraceApi.setSpanContext(otelContextApi.active(), {
+      traceId: traceId,
+      spanId: mintSpanId(),
+      traceFlags: TraceFlags.SAMPLED,
+    }),
+  );
+  otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: message });
+  otelSpan.end(endTimeMs);
+  const spanId = otelSpan.spanContext().spanId;
+  // Best-effort and off the turn's path: a NATS outage must not hold up the
+  // failure's settlement.
+  void publishSpan({
+    traceId: traceId,
+    spanId: /[^0]/.test(spanId) ? spanId : mintSpanId(),
+    name: name,
+    kind: kind,
+    startTimeMs: startedAt,
+    endTimeMs: endTimeMs,
+    durationMs: endTimeMs - startedAt,
+    status: "error",
+    endpointId: session.endpointId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    attributes: { "task.state": "failed" },
+    error: message,
   });
 }
 

@@ -5,9 +5,14 @@ import {
   foldSteps,
   groupSpans,
   matchesTaskQuery,
-  parseTaskQuery,
+  TASK_QUERY_FIELDS,
   taskChannel,
+  type TaskQuery,
 } from "../app/(main)/[projectId]/dashboard/components/TracingPanel";
+import { parseQuery } from "../app/lib/queryTokens";
+
+const parseTaskQuery = (input: string): TaskQuery =>
+  parseQuery(input, TASK_QUERY_FIELDS);
 
 const TASK_ID = "acct:a:agent:b:tg:1:msg-9";
 

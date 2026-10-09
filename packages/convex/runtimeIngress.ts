@@ -627,28 +627,42 @@ export const maintain = internalMutation({
  * queue behind a run that core handed back at shutdown. Core calls it on boot
  * and on a timer, then dispatches every returned application, whose lease it
  * now holds.
+ *
+ * Steps through queued conversations in key order, one index read each, so a
+ * conversation with a long queue behind a live owner costs no more than any
+ * other. Bounded like maintain: `continueAfter` is the last conversation this
+ * page looked at, for the caller's next page, or null when none remain.
  */
 export const recoverQueued = internalMutation({
-  args: { leaseTtlMs: v.number() },
-  returns: v.array(recoveredIngressValidator),
+  args: {
+    leaseTtlMs: v.number(),
+    afterConversationKey: v.optional(v.string()),
+  },
+  returns: v.object({
+    recovered: v.array(recoveredIngressValidator),
+    continueAfter: v.union(v.string(), v.null()),
+  }),
   handler: async (
     ctx,
     args,
-  ): Promise<Infer<typeof recoveredIngressValidator>[]> => {
+  ): Promise<{
+    recovered: Infer<typeof recoveredIngressValidator>[];
+    continueAfter: string | null;
+  }> => {
     const now = Date.now();
-    // Bounded like maintain. A page full of queues behind live owners delays
-    // the rest to a later sweep, which the next message would also unblock.
-    const rows = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_status_and_expiresAt", (q) =>
-        q.eq("status", "queued").gt("expiresAt", now),
-      )
-      .take(MAX_DRAIN_ENVELOPES);
     const recovered: Infer<typeof recoveredIngressValidator>[] = [];
-    const visited = new Set<string>();
-    for (const row of rows) {
-      if (visited.has(row.conversationKey)) continue;
-      visited.add(row.conversationKey);
+    let after = args.afterConversationKey;
+    for (let visited = 0; visited < MAX_DRAIN_ENVELOPES; visited += 1) {
+      const row = await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_status_and_conversationKey", (q) =>
+          after === undefined
+            ? q.eq("status", "queued")
+            : q.eq("status", "queued").gt("conversationKey", after),
+        )
+        .first();
+      if (!row) return { recovered: recovered, continueAfter: null };
+      after = row.conversationKey;
       const coordinator = await getCoordinator(ctx, row.conversationKey);
       if (!coordinator || hasActiveOwner(coordinator, now)) continue;
       const account = await ctx.db.get(coordinator.accountId);
@@ -671,7 +685,7 @@ export const recoverQueued = internalMutation({
       });
     }
 
-    return recovered;
+    return { recovered: recovered, continueAfter: after ?? null };
   },
 });
 
