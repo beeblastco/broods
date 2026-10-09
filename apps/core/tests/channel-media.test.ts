@@ -80,6 +80,7 @@ await mock.module("../src/shared/s3.ts", () => ({
   readS3Text: mock(async () => ""),
   s3ObjectExists: mock(async () => true),
   getS3ObjectUrl: mock(async () => ""),
+  putS3ObjectUrl: mock(async () => ""),
   listS3Prefix: mock(async () => []),
   deleteS3Object: mock(async () => {}),
   deleteS3Prefix: mock(async () => 0),
@@ -600,6 +601,39 @@ describe("rehydrateStoredMedia", () => {
       "broods-media://telegram/photo.png?fileId=file-42&mediaType=image%2Fpng&type=image",
     );
     expect(noteText(parts)).toContain("read from telegram");
+  });
+
+  // Re-caching the same picture used to add its size again without taking the
+  // old copy's off, so the counter outgrew the cache and evicted everything.
+  it("keeps one copy's worth of bytes for a picture that arrives again", async () => {
+    const large = Buffer.concat([PNG_BYTES, Buffer.alloc(5 * 1024 * 1024)]);
+    let stored: ModelMessage | undefined;
+    for (let i = 0; i < 7; i += 1) {
+      const parts = await ingestInboundAttachments(
+        [
+          {
+            ...imageAttachment(),
+            fetchData: async (): Promise<Buffer> => large,
+            fetchMetadata: { fileId: "file-again" },
+          },
+        ],
+        { accountId: ACCOUNT, channelName: "telegram", eventId: `evt-${i}` },
+      );
+      const image = parts.stored.find((part) => part.type === "image");
+      if (image?.type !== "image") throw new Error("expected an image part");
+      stored = { role: "user", content: [image] };
+    }
+    if (!stored) throw new Error("expected a stored message");
+    const fetchMock = telegramFetch();
+
+    const messages = await rehydrateStoredMedia([stored], telegramConfig());
+
+    const content = messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error("expected message parts");
+    const image = content.find((part) => part.type === "image");
+    if (image?.type !== "image") throw new Error("expected an image part");
+    expect(image.image).toEqual(large);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reads the bytes back through the channel that delivered them", async () => {

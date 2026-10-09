@@ -438,7 +438,11 @@ function cacheMedia(reference: string, bytes: Buffer): void {
   if (bytes.byteLength > MEDIA_CACHE_MAX_BYTES) {
     return;
   }
-  mediaCache.delete(reference);
+  const replaced = mediaCache.get(reference);
+  if (replaced) {
+    mediaCache.delete(reference);
+    mediaCacheBytes -= replaced.byteLength;
+  }
   mediaCache.set(reference, bytes);
   mediaCacheBytes += bytes.byteLength;
   for (const [key, value] of mediaCache) {

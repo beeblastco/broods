@@ -81,6 +81,8 @@ export interface MachineSocketData {
   /** Unset for a bearer with no account. */
   accountId?: string;
   claimed?: boolean;
+  /** Set once the socket closes, so a claim still awaiting its lookup drops it. */
+  closed?: boolean;
   key?: string;
   /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
@@ -188,6 +190,7 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
       });
     },
     close: function (socket): void {
+      socket.data.closed = true;
       const key = socket.data.key;
       const connection = key ? connections.get(key) : undefined;
       // A replaced socket must not tear down its successor's registration.
@@ -344,6 +347,9 @@ async function claimSandbox(
     (entry) =>
       entry.name === hello.sandbox && entry.config.provider === "machine",
   );
+  // A socket that closed during the lookup already ran its close handler, so
+  // registering it now would leave a dead holder that refuses the next daemon.
+  if (socket.data.closed) return;
   // A stage ticket reaches its own stage's record, else an account-level one
   // of that name, never another stage's: a ticket for development must not
   // take over the production machine that shares its name.

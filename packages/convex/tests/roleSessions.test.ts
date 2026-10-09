@@ -521,6 +521,68 @@ describe("stage-pinned role sessions", () => {
     ).toBe(400);
   });
 
+  test("a role cannot point a workspace's R2 storage at env vars it cannot read", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const workspaceId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("workspaceConfigs", {
+          accountId: seeded.accountId,
+          projectId: seeded.projectId,
+          stageId: seeded.stageId,
+          name: "dev-files",
+          config: { storage: { provider: "s3" as const } },
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+    );
+    const roleId = await createRole(t, seeded, {
+      policy: {
+        version: 1,
+        rules: [
+          { id: "ws", effect: "allow", actions: ["workspaces:write"] },
+          {
+            id: "dev-env",
+            effect: "allow",
+            actions: ["env:read"],
+            resources: { resourceIds: ["DEV_R2_KEY", "DEV_R2_SECRET"] },
+          },
+        ],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+    const r2 = (key: string, secret: string): unknown => ({
+      config: {
+        storage: {
+          provider: "s3",
+          bucket: "files",
+          prefix: "dev",
+          endpoint: `https://${"a".repeat(32)}.r2.cloudflarestorage.com`,
+          auth: { type: "r2", accessKeyId: key, secretAccessKey: secret },
+        },
+      },
+    });
+    const patch = (body: unknown): Promise<Response> =>
+      t.fetch(`/v1/workspaces/${workspaceId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+    const stolen = await patch(r2("${PROD_R2_KEY}", "${PROD_R2_SECRET}"));
+    expect(stolen.status).toBe(400);
+    expect(await stolen.text()).toContain("PROD_R2_KEY, PROD_R2_SECRET");
+    const row = await t.run(async (ctx) => await ctx.db.get(workspaceId));
+    expect(row?.config?.storage.bucket).toBeUndefined();
+    expect((await patch(r2("${DEV_R2_KEY}", "${DEV_R2_SECRET}"))).status).toBe(
+      200,
+    );
+  });
+
   test("a role cannot repoint an MCP server whose agents send it env vars the role cannot read", async () => {
     const t = roleTest();
     const seeded = await seed(t);

@@ -16,18 +16,22 @@ interface Props {
   /** The part of the window the list is narrowed to, or null for all of it. */
   selection: TimeWindow | null;
   onSelect: (selection: TimeWindow | null) => void;
+  /** A time to mark with a red line, such as the selected trace's start. */
+  marker?: number | null;
 }
 
 /**
  * Volume per bin under the toolbar, error and warn share tinted. Dragging
  * across it narrows the list to those bins; a click on the strip outside a
- * selection clears it. The whole window reads at the right edge.
+ * selection clears it. The whole window reads at the right edge. A marker
+ * inside the window draws as a red line.
  */
 export function VolumeStrip({
   bins,
   window,
   selection,
   onSelect,
+  marker = null,
 }: Props): React.JSX.Element {
   const strip = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
@@ -117,6 +121,14 @@ export function VolumeStrip({
             "--sel-right": `${((window.to - shown.to) / span) * 100}%`,
           }}
           className="pointer-events-none absolute inset-y-0 left-(--sel-left) right-(--sel-right) border-x border-info bg-info/10"
+        />
+      )}
+      {marker !== null && marker >= window.from && marker <= window.to && (
+        <span
+          style={{
+            "--marker-left": `${((marker - window.from) / span) * 100}%`,
+          }}
+          className="pointer-events-none absolute inset-y-0 left-(--marker-left) w-px bg-destructive"
         />
       )}
       {/* The window ends at the client's clock, which the server render cannot know. */}
