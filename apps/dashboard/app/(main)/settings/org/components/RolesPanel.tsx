@@ -383,7 +383,7 @@ function RolePanel({
         </DataTableBody>
       </DataTable>
 
-      {custom && canChange && (
+      {editable && custom && (
         <DeleteZone
           description="Delete the role. A member who holds it has to be given another role first."
           resourceName={custom.name}
@@ -420,22 +420,17 @@ function AttachPolicy({
 }): React.JSX.Element {
   const pathname = usePathname();
   const search = useSearchParams().toString();
-  const button = (
-    <Button
-      variant="outline"
-      size="sm"
-      tone="muted"
-      className="cursor-pointer"
-    />
-  );
+  const look = {
+    variant: "outline",
+    size: "sm",
+    tone: "muted",
+    className: "cursor-pointer",
+  } as const;
 
   if (policies.length === 0) {
     return (
       <Button
-        variant="outline"
-        size="sm"
-        tone="muted"
-        className="cursor-pointer"
+        {...look}
         nativeButton={false}
         render={<Link href={tabHref(pathname, "policies", search)} />}
       >
@@ -446,7 +441,9 @@ function AttachPolicy({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={button}>Attach policy</DropdownMenuTrigger>
+      <DropdownMenuTrigger render={<Button {...look} />}>
+        Attach policy
+      </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {attachable.length === 0 && (
           <DropdownMenuItem disabled>Every policy is attached</DropdownMenuItem>

@@ -55,20 +55,24 @@ export default function OrgSettingsPage(): React.JSX.Element {
 
   const flush = FLUSH_TABS.has(tab.id);
 
-  // The states before a panel have one line or card to show and keep the
-  // usual margins whatever the tab; only the panel slot follows the tab.
+  // The states before a panel have one line or card to show and sit in the
+  // narrow column whatever the tab; only the panel slot follows the tab.
   const body = (): React.JSX.Element | null => {
     if (org === undefined) {
       return (
-        <p className="px-6 pt-6 text-sm text-muted-foreground">Loading...</p>
+        <p className="mx-auto w-full max-w-2xl px-6 pt-6 text-sm text-muted-foreground">
+          Loading...
+        </p>
       );
     }
     if (org === null) {
       return (
-        <div className="mx-6 mt-6 rounded-lg border border-border bg-card px-4 py-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            You do not have an organization yet.
-          </p>
+        <div className="mx-auto w-full max-w-2xl px-6 pt-6">
+          <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              You do not have an organization yet.
+            </p>
+          </div>
         </div>
       );
     }

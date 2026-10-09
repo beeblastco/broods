@@ -762,7 +762,7 @@ function AddRuleDialog({
 
 function matchesField(policy: Policy, field: Field, value: string): boolean {
   return field === "scope"
-    ? policy.scope.toLowerCase() === value
+    ? policy.scope.toLowerCase().startsWith(value)
     : policy.mode === value;
 }
 

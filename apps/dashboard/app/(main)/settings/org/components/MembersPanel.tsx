@@ -330,7 +330,7 @@ function MemberPanel({
       {editable && (
         <DeleteZone
           description="Remove the member from the organization. They keep their account and can be invited again."
-          label="Remove"
+          verb="Remove"
           resourceName={member.name}
           resourceType="member"
           onDelete={() => remove({ membershipId: member.membershipId })}

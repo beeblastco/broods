@@ -27,9 +27,9 @@ export function DangerZone({
 
 /**
  * The danger zone whose one action is deleting the panel's resource: the
- * Delete button, the typed-confirm dialog, and the pending state. The
- * dialog shows the mutation's rejection under its input; on success the
- * panel closes.
+ * button, the typed-confirm dialog, and the pending state. The dialog shows
+ * the mutation's rejection under its input; once the mutation resolves the
+ * dialog closes and `onDeleted` runs, usually closing the panel.
  */
 export function DeleteZone({
   description,
@@ -37,16 +37,18 @@ export function DeleteZone({
   resourceType,
   onDelete,
   onDeleted,
-  label = "Delete",
+  verb = "Delete",
+  disabled = false,
 }: {
   description: string;
-  /** The button's word, when it is not Delete: "Remove" for a member. */
-  label?: string;
   resourceName: string;
-  /** The noun the confirm phrase names: "role", "scheduler". */
+  /** The noun the dialog names: "role", "scheduler". */
   resourceType: string;
   onDelete: () => Promise<unknown>;
   onDeleted: () => void;
+  /** The button's and the dialog's word when it is not Delete: "Remove", "Terminate". */
+  verb?: string;
+  disabled?: boolean;
 }): React.JSX.Element {
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
@@ -55,10 +57,11 @@ export function DeleteZone({
     setPending(true);
     try {
       await onDelete();
-      onDeleted();
     } finally {
       setPending(false);
     }
+    setConfirming(false);
+    onDeleted();
   }
 
   return (
@@ -67,9 +70,10 @@ export function DeleteZone({
         variant="destructive"
         size="sm"
         className="cursor-pointer"
+        disabled={disabled}
         onClick={() => setConfirming(true)}
       >
-        {label}
+        {verb}
       </Button>
       {confirming && (
         <DeleteConfirmDialog
@@ -80,6 +84,7 @@ export function DeleteZone({
           critical={false}
           onConfirm={confirm}
           isDeleting={pending}
+          verb={verb}
         />
       )}
     </DangerZone>

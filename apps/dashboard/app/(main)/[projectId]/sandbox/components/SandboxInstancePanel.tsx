@@ -1,6 +1,6 @@
 "use client";
 
-import { DangerZone } from "@/app/components/DangerZone";
+import { DeleteZone } from "@/app/components/DangerZone";
 import {
   DataTable,
   DataTableBody,
@@ -9,7 +9,6 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel } from "@/app/components/DetailSplit";
 import { StatusWord } from "@/app/components/StatusDot";
@@ -79,8 +78,6 @@ export function SandboxInstancePanel({
   const [snapName, setSnapName] = useState("");
   const [snapPending, setSnapPending] = useState(false);
   const [snapMessage, setSnapMessage] = useState<string | null>(null);
-  const [terminating, setTerminating] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const actionable = controllable(instance);
   // workdir, Daytona, E2B and Vercel capture a running sandbox; a lambda MicroVM
@@ -115,21 +112,6 @@ export function SandboxInstancePanel({
       setSnapMessage(toErrorMessage(err));
     } finally {
       setSnapPending(false);
-    }
-  }
-
-  async function handleTerminate(): Promise<void> {
-    if (!instance.sandboxConfigId) return;
-    setTerminating(true);
-    try {
-      await terminate({
-        sandboxId: instance.sandboxConfigId,
-        reservationKey: instance.reservationKey,
-      });
-      setConfirmOpen(false);
-      onClose();
-    } finally {
-      setTerminating(false);
     }
   }
 
@@ -223,17 +205,22 @@ export function SandboxInstancePanel({
       )}
 
       {canWrite && (
-        <DangerZone description="Terminate the instance, releasing its reservation and compute.">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="cursor-pointer"
-            disabled={!actionable}
-            onClick={() => setConfirmOpen(true)}
-          >
-            Terminate
-          </Button>
-        </DangerZone>
+        <DeleteZone
+          description="Terminate the instance, releasing its reservation and compute."
+          verb="Terminate"
+          disabled={!actionable}
+          resourceName={instance.name}
+          resourceType="sandbox instance"
+          onDelete={() =>
+            instance.sandboxConfigId
+              ? terminate({
+                  sandboxId: instance.sandboxConfigId,
+                  reservationKey: instance.reservationKey,
+                })
+              : Promise.resolve()
+          }
+          onDeleted={onClose}
+        />
       )}
 
       {!actionable && (
@@ -243,16 +230,6 @@ export function SandboxInstancePanel({
             : "This instance predates the config link, so it can be viewed but not controlled here."}
         </p>
       )}
-
-      <DeleteConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        resourceName={instance.name}
-        resourceType="sandbox instance"
-        critical={false}
-        onConfirm={handleTerminate}
-        isDeleting={terminating}
-      />
     </DetailPanel>
   );
 }
