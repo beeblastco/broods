@@ -62,7 +62,7 @@ flowchart TD
   C -.->|no workspace| NB
 ```
 
-`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md), and `cloudflare` has [Cloudflare Containers](cloudflare.md). The `machine` provider has its own page, [Your computer](machine.md), and so does `custom`, [Your own server](custom.md).
+`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md). `machine` and `custom` have their own pages, [Your computer](machine.md) and [Your own server](custom.md).
 
 ## Configuration
 
@@ -71,7 +71,7 @@ flowchart TD
 | `provider`             | `lambda`               | Compute backend, from the table above                                                                                                   |
 | `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`                                    |
 | `size`                 | provider default       | Sizes `sandbox` and `cloudflare`. Ignored on `lambda`, `daytona`, `e2b`, `vercel`. Rejected on `machine`, `custom`. See [Sizes](#sizes) |
-| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Images](#images)                             |
+| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Web browsing](browsing.md#browser-images)    |
 | `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                                         |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                                                |
 | `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                                               |
@@ -196,23 +196,7 @@ flowchart LR
 
 The dashboard Snapshots view shows which image each running instance booted from.
 
-On `lambda`, `image` picks a platform image with a browser by name. With `snapshot` set too, the machine boots the snapshot and `image` names the variant it was built from, so a snapshot of an Obscura sandbox keeps `browse` working. The dashboard sets it when you pick the snapshot. `image` cannot be combined with `fallbackProvider`.
-
-```ts
-export const web = defineSandbox({
-  name: "web",
-  provider: "lambda",
-  image: "obscura",
-  network: { mode: "allow-all" },
-});
-```
-
-| `image`   | Adds                                                                                                      | Use it for                                                       |
-| --------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `obscura` | [Obscura](https://github.com/h4ckf0r0day/obscura), about 77 MB: page to markdown, text, links, screenshot | Reading the web. Markdown is 3 to 17x smaller than a page's HTML |
-| `browser` | Headless Chromium as `chromium`, about 770 MB                                                             | Screenshots that must match Chrome, heavy JavaScript apps        |
-
-The agent then runs `obscura fetch https://example.com --dump markdown --quiet` through `bash`. Obscura refuses private and link-local addresses unless passed `--allow-private-network`.
+On `lambda`, `image: "obscura"` or `image: "browser"` boots a platform image with a headless browser, see [Web browsing](browsing.md#browser-images). With `snapshot` set too, the machine boots the snapshot and `image` names the variant it was built from, so a snapshot of an Obscura sandbox keeps `browse` working. The dashboard sets it when you pick the snapshot. `image` cannot be combined with `fallbackProvider`.
 
 A persistent `lambda` sandbox can also run a stdio MCP server from its image, such as `obscura mcp`, and keep it alive between calls. See [Run a server in a sandbox](../tools.md#run-a-server-in-a-sandbox).
 
