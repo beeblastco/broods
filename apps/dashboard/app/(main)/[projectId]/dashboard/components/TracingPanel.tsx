@@ -17,7 +17,11 @@ import {
 } from "@/app/hooks/useObservabilityStream";
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatNumber } from "@/app/lib/formatNumber";
-import { formatDateTime, formatTime } from "@/app/lib/formatTime";
+import {
+  formatDateTime,
+  formatDuration,
+  formatTime,
+} from "@/app/lib/formatTime";
 import {
   effectiveWindow,
   parseQuery,
@@ -948,19 +952,6 @@ function displayAttribute(value: unknown): string {
   }
 
   return value;
-}
-
-function formatDuration(ms: number): string {
-  // A wait on a person runs minutes to days, where seconds stop reading well.
-  if (ms >= 3_600_000) {
-    return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
-  }
-  if (ms >= 60_000) {
-    return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
-  }
-  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
-
-  return `${Math.round(ms)}ms`;
 }
 
 function numericAttribute(

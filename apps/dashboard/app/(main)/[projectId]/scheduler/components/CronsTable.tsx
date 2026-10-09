@@ -1,5 +1,6 @@
 "use client";
 
+import { BarStrip } from "@/app/components/BarStrip";
 import { CopyTextarea } from "@/app/components/CopyTextarea";
 import {
   DataTable,
@@ -29,10 +30,13 @@ import {
   nextFireAt,
   untilLabel,
 } from "@/app/lib/cronSchedule";
-import { formatDate, formatDateTime } from "@/app/lib/formatTime";
+import {
+  formatDate,
+  formatDateTime,
+  formatDuration,
+} from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
-import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
@@ -59,9 +63,6 @@ const CRON_ID = parseAsId<"crons">();
 
 // A job with no zone of its own runs in UTC, so that is what the panel says.
 const DEFAULT_TIMEZONE = "UTC";
-
-// The tallest bar of the run histogram stops here, so its label stays readable.
-const BAR_MAX_PERCENT = 70;
 
 type Cron = FunctionReturnType<typeof api.agent.crons.listForProject>[number];
 type CronRun = FunctionReturnType<
@@ -496,12 +497,12 @@ function RunHistogram({
 }): React.JSX.Element {
   // `runs` is newest first; the bars read oldest to newest. A run still going
   // sets no scale: one stuck in `started` would flatten every finished bar.
-  const bars = runs
+  const timed = runs
     .toReversed()
     .map((run) => ({ run: run, ms: durationMs(run, now) }));
   const max = Math.max(
     1,
-    ...bars.flatMap((bar) =>
+    ...timed.flatMap((bar) =>
       bar.run.completedAt === undefined ? [] : [bar.ms],
     ),
   );
@@ -509,24 +510,15 @@ function RunHistogram({
   const newest = formatDate(runs[0].startedAt);
 
   return (
-    <div className="relative flex h-9 shrink-0 items-end gap-px border-b border-border pt-1 select-none">
-      {bars.map(({ run, ms }) => (
-        <span
-          key={run._id}
-          title={`${formatDateTime(run.startedAt)} · ${RUN_WORD[run.status]} · ${durationLabel(run)}`}
-          style={{
-            "--bar-height": `${Math.min(1, ms / max) * BAR_MAX_PERCENT}%`,
-          }}
-          className={cn(
-            "h-(--bar-height) min-h-px flex-1",
-            RUN_BAR[run.status],
-          )}
-        />
-      ))}
-      <span className="pointer-events-none absolute top-0 right-0 font-mono text-3xs text-muted-foreground">
-        {runs.length === 1 ? newest : `${oldest} → ${newest}`}
-      </span>
-    </div>
+    <BarStrip
+      bars={timed.map(({ run, ms }) => ({
+        key: run._id,
+        height: ms / max,
+        tone: RUN_BAR[run.status],
+        title: `${formatDateTime(run.startedAt)} · ${RUN_WORD[run.status]} · ${durationLabel(run)}`,
+      }))}
+      label={runs.length === 1 ? newest : `${oldest} → ${newest}`}
+    />
   );
 }
 
@@ -587,11 +579,11 @@ function durationMs(run: CronRun, now: number): number {
   return Math.max(0, (run.completedAt ?? now) - run.startedAt);
 }
 
-/** The run's length in whole seconds, or a dash while it still runs. */
+/** The run's length as Tracing prints a span, or a dash while it still runs. */
 function durationLabel(run: CronRun): string {
   if (run.completedAt === undefined) return "—";
 
-  return `${Math.max(1, Math.round(durationMs(run, run.completedAt) / 1000))}s`;
+  return formatDuration(durationMs(run, run.completedAt));
 }
 
 /** Whether a `field:value` token matches the job. */
