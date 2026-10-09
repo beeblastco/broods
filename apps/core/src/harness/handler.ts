@@ -1784,8 +1784,8 @@ async function runChannelTurns(
           const turnStartedAt = Date.now();
           const turnContext = await session
             .createTurnContext(incomingEphemeral, incoming)
-            .catch(async (err: unknown) => {
-              await recordFailedTurn(session, turnStartedAt, err);
+            .catch((err: unknown) => {
+              recordFailedTurn(session, turnStartedAt, err);
               throw err;
             });
           if (!isRunnableModelInput(turnContext.messages.at(-1))) {
@@ -2132,7 +2132,7 @@ async function prepareDirectTurn(
 
     return { session: session, turnContext: turnContext };
   } catch (err) {
-    await recordFailedTurn(session, turnStartedAt, err);
+    recordFailedTurn(session, turnStartedAt, err);
     await settleFailedIngressAndDrain(
       session,
       err instanceof Error ? err.message : "Direct turn preparation failed",

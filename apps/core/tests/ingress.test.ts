@@ -320,7 +320,7 @@ describe("async turn without model input", (): void => {
     spyOn(Session.prototype, "createTurnContext").mockRejectedValue(
       new Error("ArgumentValidationError"),
     );
-    const recorded = spyOn(harness, "recordFailedTurn").mockResolvedValue();
+    const recorded = spyOn(harness, "recordFailedTurn").mockReturnValue();
     const event: DirectInboundEvent = {
       ...candidate(),
       publicEventId: "event-1",

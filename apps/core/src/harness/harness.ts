@@ -2342,11 +2342,11 @@ export async function runAgentLoop(
  * already carry, so the task list shows it and "View trace" on those lines
  * finds it instead of "Trace not found".
  */
-export async function recordFailedTurn(
+export function recordFailedTurn(
   session: Session,
   startedAt: number,
   error: unknown,
-): Promise<void> {
+): void {
   const context = getObservabilityContext();
   const traceId = context?.traceId ?? mintTraceId();
   const scope = {
@@ -2381,7 +2381,9 @@ export async function recordFailedTurn(
   otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: message });
   otelSpan.end(endTimeMs);
   const spanId = otelSpan.spanContext().spanId;
-  await publishSpan({
+  // Best-effort and off the turn's path: a NATS outage must not hold up the
+  // failure's settlement.
+  void publishSpan({
     traceId: traceId,
     spanId: /[^0]/.test(spanId) ? spanId : mintSpanId(),
     name: name,

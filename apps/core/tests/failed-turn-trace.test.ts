@@ -61,7 +61,7 @@ it("records a failed task on the trace id the turn's logs carry", async () => {
       otelContext: otelContextApi.active(),
       secretValues: ["s3cret"],
     });
-    await recordFailedTurn(
+    recordFailedTurn(
       session,
       startedAt,
       new Error("ArgumentValidationError with s3cret inside"),
