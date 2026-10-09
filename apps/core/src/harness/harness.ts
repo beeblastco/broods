@@ -271,6 +271,9 @@ export interface AgentLoopOptions {
   // Request-shared hook dispatcher (one storage load + one ctx.state per
   // request); the loop builds its own when the handler does not pass one.
   hooks?: HookDispatcher;
+  // Aborts the run from outside, as the worker pool does when it reclaims an
+  // overrunning run's slot.
+  abortSignal?: AbortSignal;
   // Test seam for lifecycle webhook delivery, which opens its own pinned
   // socket rather than going through a mockable global.
   webhookTransport?: PinnedFetchTransport;
@@ -889,6 +892,20 @@ export async function runAgentLoop(
   let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
+  const abortRun = (): void => {
+    const reason: unknown = options.abortSignal?.reason;
+    terminalError ??=
+      reason instanceof Error ? reason : new Error(String(reason));
+    runAbort.abort(terminalError);
+  };
+  if (options.abortSignal?.aborted) {
+    abortRun();
+  } else {
+    options.abortSignal?.addEventListener("abort", abortRun, {
+      once: true,
+      signal: runAbort.signal,
+    });
+  }
   /**
    * What a run that ended cleanly still waits on, the person first: an approval
    * or an open question needs them, while subagents, async tools and background

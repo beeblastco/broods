@@ -195,6 +195,33 @@ describe("in-process worker dispatch", () => {
     }
   });
 
+  it("aborts an overrunning run when it reclaims the slot", async () => {
+    const releases: (() => void)[] = [];
+    let signal: AbortSignal | undefined;
+    jest.useFakeTimers();
+    try {
+      dispatchInProcessWorker(
+        "test-worker",
+        (context): Promise<void> =>
+          new Promise<void>((resolve) => {
+            signal = context.abortSignal;
+            releases.push(resolve);
+          }),
+      );
+      jest.advanceTimersByTime(10 * 60 * 1000);
+      expect(signal?.aborted).toBe(false);
+      jest.advanceTimersByTime(5_000);
+      expect(signal?.aborted).toBe(true);
+      expect((signal?.reason as Error).message).toBe(
+        "Run exceeded the worker deadline",
+      );
+      await drainInProcessWorkers();
+    } finally {
+      jest.useRealTimers();
+      for (const release of releases) release();
+    }
+  });
+
   it("logs and swallows worker failures like a fire-and-forget invoke", async () => {
     // Must not reject or throw; the failure only surfaces through logError.
     dispatchInProcessWorker("test-worker", async () => {
