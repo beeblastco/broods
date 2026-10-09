@@ -83,12 +83,19 @@ export function SandboxDock({
   const logId = instance.logStream
     ? sandboxLogId(instance.logStream)
     : undefined;
-  // The self-hosted workdir `sandbox` provider exposes an in-guest PTY WebSocket
-  // and AWS MicroVM (`lambda`) exposes its native shell endpoint; the third-party
-  // providers keep the bounded command runner.
+  // The providers core opens a PTY for: workdir (`sandbox`) over its in-guest
+  // WebSocket, AWS MicroVM (`lambda`) over its shell endpoint, and the
+  // Cloudflare bridge in its Container. The rest keep the bounded runner.
   const liveShell =
-    instance.provider === "sandbox" || instance.provider === "lambda";
-  const runnable = hasTerminal(instance) && instance.status !== "terminating";
+    instance.provider === "sandbox" ||
+    instance.provider === "lambda" ||
+    instance.provider === "cloudflare";
+  // Nothing runs while the provider is mid-change: a connect would race the
+  // suspend in flight, and a terminating instance is gone.
+  const runnable =
+    hasTerminal(instance) &&
+    instance.status !== "terminating" &&
+    instance.status !== "suspending";
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
