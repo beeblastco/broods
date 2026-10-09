@@ -961,6 +961,7 @@ export async function runAgentLoop(
   ): Promise<void> => {
     if (usageFinalized) return;
     usageFinalized = true;
+    options.abortSignal?.removeEventListener("abort", abortRun);
     releaseSandboxOccupancy?.();
     const taskTokens = usageTokenTotals(usage);
     const { waitingOn, questions: openQuestions } =
