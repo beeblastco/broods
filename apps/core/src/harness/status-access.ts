@@ -3,6 +3,7 @@
  * is allowed only through its already-authorized, active, public parent.
  */
 
+import type { StageTicketScope } from "../shared/auth.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
   parseAccountAgentScopedKey,
@@ -17,6 +18,8 @@ export interface StatusAccessAuth {
   endpointId: string;
   stageSlug: string;
   projectSlug: string;
+  /** A member's ticket, which runs the stage's private agents too. */
+  stageTicket?: StageTicketScope;
 }
 
 export interface StatusAccessContext {
@@ -79,7 +82,9 @@ async function publicAgentDenial(
   context: StatusAccessContext,
 ): Promise<StatusAccessDenial | null> {
   const agent = await context.agentLoader(request.accountId, request.agentId);
-  if (!agent || agent.config.publicAccess !== true) {
+  // A ticket may POST a run on a private agent of its stage, so it may also
+  // read that run back; publicAccess only opens an agent to the frontend key.
+  if (!agent || (agent.config.publicAccess !== true && !auth.stageTicket)) {
     return {
       code: "public_access_disabled",
       message: `Agent ${request.agentId} is not publicly accessible.`,

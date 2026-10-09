@@ -1952,6 +1952,45 @@ describe("direct API ingress", () => {
     expect(handledEvents).toEqual([]);
   });
 
+  it("lets a stage ticket read back a run on a private agent of its stage", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer ticket" },
+        { method: "GET", rawPath: `/v1/runs/${TEST_RUN_ID}` },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({
+          statusCode: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "processing" }),
+        }),
+      }),
+      {
+        authResolver: async (): Promise<AuthContext> => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          stageTicket: STAGE_TICKET,
+        }),
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            scopedDirectEventId(
+              TEST_ACCOUNT.accountId,
+              TEST_AGENT_PRIVATE.agentId,
+              "one",
+            ),
+            "alpha",
+            TEST_AGENT_PRIVATE.agentId,
+          ),
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+  });
+
   for (const source of [
     "channel",
     "cron/internal",
