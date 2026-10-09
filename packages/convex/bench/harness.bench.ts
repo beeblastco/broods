@@ -33,7 +33,7 @@ export interface RuntimeFunctions {
     listConversationEvents: FunctionReference<
       "query",
       "internal",
-      { conversationKey: string },
+      { conversationKey: string; fromSystemPrefix?: string },
       unknown
     >;
     saveHarnessSession: FunctionReference<

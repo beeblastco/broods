@@ -879,6 +879,41 @@ describe("stored item projection", () => {
 });
 
 describe("context prepare", () => {
+  it("asks for history from the latest compaction summary on", async () => {
+    const history = await stubHistory([
+      {
+        cursor: "0",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          message: {
+            role: "system",
+            content: "<session-compaction-summary>Earlier: the user likes tea.",
+          },
+        },
+      },
+      ...userRows(2).map((row, index) => ({ ...row, cursor: `${index + 1}` })),
+    ]);
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext();
+
+      expect(history.reads).toEqual([
+        expect.objectContaining({
+          fromSystemPrefix: "<session-compaction-summary>",
+        }),
+      ]);
+      expect(turnContext.messages).toHaveLength(2);
+      expect(
+        turnContext.system.some((message) =>
+          message.content.includes("likes tea"),
+        ),
+      ).toBe(true);
+    } finally {
+      history.restore();
+    }
+  });
+
   it("times each load and reads memory and skills once for the whole run", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     process.env.SKILLS_BUCKET_NAME = "skills";
@@ -1533,15 +1568,19 @@ async function newSession(
 // controls the history a turn starts from.
 async function stubHistory(
   page: StoredConversationEventPage["page"],
-): Promise<{ restore: () => void }> {
+): Promise<{ reads: unknown[]; restore: () => void }> {
   const { runtime } = await import("../src/shared/convex/runtime.ts");
   const originalQuery = runtime.query.bind(runtime);
-  runtime.query = (async (name: string) =>
-    name === "listConversationEvents"
-      ? { page: page, isDone: true, continueCursor: null }
-      : null) as typeof runtime.query;
+  const reads: unknown[] = [];
+  runtime.query = (async (name: string, args: unknown) => {
+    if (name !== "listConversationEvents") return null;
+    reads.push(args);
+
+    return { page: page, isDone: true, continueCursor: null };
+  }) as typeof runtime.query;
 
   return {
+    reads: reads,
     restore: (): void => {
       runtime.query = originalQuery;
     },

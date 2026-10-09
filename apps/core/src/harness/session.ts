@@ -48,6 +48,7 @@ import {
   rehydrateStoredMedia,
 } from "./channel-media.ts";
 import {
+  COMPACTION_MARKER,
   isCompactionSummaryMessage,
   summarizeConversation,
 } from "./compaction.ts";
@@ -1051,6 +1052,9 @@ export class Session {
         {
           conversationKey: this.conversationKey,
           afterCursor: afterCursor,
+          // Every reader projects from the latest summary on, so the first
+          // page starts there rather than at the conversation's first row.
+          fromSystemPrefix: COMPACTION_MARKER,
         },
       );
       entries.push(

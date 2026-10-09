@@ -180,16 +180,49 @@ export const appendConversationEvent = internalMutation({
 });
 
 /**
+ * With `fromSystemPrefix` and no `afterCursor`, the first page reads newest
+ * first and stops at the latest system row whose text starts with that prefix
+ * (core's compaction summary), so a turn reads only what it projects. When no
+ * such row fits in one page's budget, it pages from the start as before.
  * @returns page rows plus an exclusive cursor for the next page
  */
 export const listConversationEvents = internalQuery({
-  args: { conversationKey: v.string(), afterCursor: v.optional(v.string()) },
+  args: {
+    conversationKey: v.string(),
+    afterCursor: v.optional(v.string()),
+    fromSystemPrefix: v.optional(v.string()),
+  },
   returns: v.object({
     page: v.array(v.object({ cursor: v.string(), event: v.any() })),
     isDone: v.boolean(),
     continueCursor: v.union(v.string(), v.null()),
   }),
   handler: async (ctx, args) => {
+    if (args.fromSystemPrefix !== undefined && !args.afterCursor) {
+      const newest: { cursor: string; event: Value }[] = [];
+      let newestBytes = 0;
+      let complete = true;
+      for await (const row of ctx.db
+        .query("runtimeConversationEvents")
+        .withIndex("by_conversationKey_and_cursor", (q) =>
+          q.eq("conversationKey", args.conversationKey),
+        )
+        .order("desc")) {
+        if (
+          newest.length >= CONVERSATION_EVENT_PAGE_SIZE ||
+          newestBytes >= CONVERSATION_EVENT_PAGE_BYTES
+        ) {
+          complete = false;
+          break;
+        }
+        newest.push({ cursor: row.cursor, event: row.event });
+        newestBytes += getConvexSize(row.event);
+        if (isSystemTextWithPrefix(row.event, args.fromSystemPrefix)) break;
+      }
+      if (complete) {
+        return { page: newest.reverse(), isDone: true, continueCursor: null };
+      }
+    }
     const query = ctx.db
       .query("runtimeConversationEvents")
       .withIndex("by_conversationKey_and_cursor", (q) =>
@@ -223,6 +256,24 @@ export const listConversationEvents = internalQuery({
     };
   },
 });
+
+/** Whether a stored event is a system message whose text starts with `prefix`. */
+function isSystemTextWithPrefix(event: unknown, prefix: string): boolean {
+  if (typeof event !== "object" || event === null || !("message" in event)) {
+    return false;
+  }
+  const message = event.message;
+
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "role" in message &&
+    message.role === "system" &&
+    "content" in message &&
+    typeof message.content === "string" &&
+    message.content.startsWith(prefix)
+  );
+}
 
 export const getHarnessSession = internalQuery({
   args: { conversationKey: v.string() },

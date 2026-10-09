@@ -122,6 +122,80 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("starts a long conversation at its latest compaction summary in one read", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const summary = (text: string): unknown => ({
+      message: { role: "system", content: `<summary>${text}` },
+    });
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 1_200; index += 1) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: String(index).padStart(4, "0"),
+          event:
+            index === 300
+              ? summary("old")
+              : index === 1_197
+                ? summary("latest")
+                : { message: { role: "user", content: `turn ${index}` } },
+        });
+      }
+    });
+
+    const page = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+      fromSystemPrefix: "<summary>",
+    });
+    expect(page.page.map((row): string => row.cursor)).toEqual([
+      "1197",
+      "1198",
+      "1199",
+    ]);
+    expect(page).toMatchObject({ isDone: true, continueCursor: null });
+  });
+
+  test("reads a short conversation with no summary whole, and pages a long one from the start", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const short = conversationKeyFor(accountId);
+    const long = `${short}-long`;
+    await t.run(async (ctx) => {
+      for (const [key, count] of [
+        [short, 3],
+        [long, 600],
+      ] as const) {
+        for (let index = 0; index < count; index += 1) {
+          await ctx.db.insert("runtimeConversationEvents", {
+            accountId: accountId,
+            conversationKey: key,
+            cursor: String(index).padStart(4, "0"),
+            event: { message: { role: "user", content: `turn ${index}` } },
+          });
+        }
+      }
+    });
+
+    const whole = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: short,
+      fromSystemPrefix: "<summary>",
+    });
+    expect(whole.page.map((row): string => row.cursor)).toEqual([
+      "0000",
+      "0001",
+      "0002",
+    ]);
+    expect(whole.isDone).toBe(true);
+    const first = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: long,
+      fromSystemPrefix: "<summary>",
+    });
+    expect(first.page.at(0)?.cursor).toBe("0000");
+    expect(first).toMatchObject({ isDone: false, continueCursor: "0511" });
+  });
+
   test("splits fat rows by bytes without skipping or repeating one", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
