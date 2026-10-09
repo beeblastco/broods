@@ -157,43 +157,38 @@ describe("runtime persistence", () => {
     expect(page).toMatchObject({ isDone: true, continueCursor: null });
   });
 
-  test("reads a short conversation with no summary whole, and pages a long one from the start", async () => {
+  test("pages a conversation with no summary backward to its first row", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
-    const short = conversationKeyFor(accountId);
-    const long = `${short}-long`;
+    const conversationKey = conversationKeyFor(accountId);
     await t.run(async (ctx) => {
-      for (const [key, count] of [
-        [short, 3],
-        [long, 600],
-      ] as const) {
-        for (let index = 0; index < count; index += 1) {
-          await ctx.db.insert("runtimeConversationEvents", {
-            accountId: accountId,
-            conversationKey: key,
-            cursor: String(index).padStart(4, "0"),
-            event: { message: { role: "user", content: `turn ${index}` } },
-          });
-        }
+      for (let index = 0; index < 600; index += 1) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: String(index).padStart(4, "0"),
+          event: { message: { role: "user", content: `turn ${index}` } },
+        });
       }
     });
 
-    const whole = await t.query(internal.runtime.listConversationEvents, {
-      conversationKey: short,
+    const newest = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
       fromSystemPrefix: "<summary>",
     });
-    expect(whole.page.map((row): string => row.cursor)).toEqual([
-      "0000",
-      "0001",
-      "0002",
-    ]);
-    expect(whole.isDone).toBe(true);
-    const first = await t.query(internal.runtime.listConversationEvents, {
-      conversationKey: long,
+    expect(newest.page).toHaveLength(512);
+    expect(newest.page.at(0)?.cursor).toBe("0088");
+    expect(newest.page.at(-1)?.cursor).toBe("0599");
+    expect(newest).toMatchObject({ isDone: false, continueCursor: "0088" });
+    const oldest = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+      beforeCursor: newest.continueCursor ?? undefined,
       fromSystemPrefix: "<summary>",
     });
-    expect(first.page.at(0)?.cursor).toBe("0000");
-    expect(first).toMatchObject({ isDone: false, continueCursor: "0511" });
+    expect(oldest.page.map((row): string => row.cursor)).toEqual(
+      Array.from({ length: 88 }, (_, index) => String(index).padStart(4, "0")),
+    );
+    expect(oldest).toMatchObject({ isDone: true, continueCursor: null });
   });
 
   test("splits fat rows by bytes without skipping or repeating one", async () => {

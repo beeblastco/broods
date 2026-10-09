@@ -180,16 +180,18 @@ export const appendConversationEvent = internalMutation({
 });
 
 /**
- * With `fromSystemPrefix` and no `afterCursor`, the first page reads newest
- * first and stops at the latest system row whose text starts with that prefix
- * (core's compaction summary), so a turn reads only what it projects. When no
- * such row fits in one page's budget, it pages from the start as before.
+ * Forward from `afterCursor` by default. With `fromSystemPrefix`, it pages
+ * backward instead, newest first from `beforeCursor`, and is done at the
+ * latest system row whose text starts with that prefix (core's compaction
+ * summary) or at the first row: a turn reads only the rows it projects. Each
+ * page is in cursor order; `continueCursor` is the next `beforeCursor` then.
  * @returns page rows plus an exclusive cursor for the next page
  */
 export const listConversationEvents = internalQuery({
   args: {
     conversationKey: v.string(),
     afterCursor: v.optional(v.string()),
+    beforeCursor: v.optional(v.string()),
     fromSystemPrefix: v.optional(v.string()),
   },
   returns: v.object({
@@ -198,30 +200,38 @@ export const listConversationEvents = internalQuery({
     continueCursor: v.union(v.string(), v.null()),
   }),
   handler: async (ctx, args) => {
-    if (args.fromSystemPrefix !== undefined && !args.afterCursor) {
+    if (args.fromSystemPrefix !== undefined) {
+      const prefix = args.fromSystemPrefix;
       const newest: { cursor: string; event: Value }[] = [];
       let newestBytes = 0;
-      let complete = true;
+      let isDone = true;
       for await (const row of ctx.db
         .query("runtimeConversationEvents")
         .withIndex("by_conversationKey_and_cursor", (q) =>
-          q.eq("conversationKey", args.conversationKey),
+          args.beforeCursor
+            ? q
+                .eq("conversationKey", args.conversationKey)
+                .lt("cursor", args.beforeCursor)
+            : q.eq("conversationKey", args.conversationKey),
         )
         .order("desc")) {
         if (
           newest.length >= CONVERSATION_EVENT_PAGE_SIZE ||
           newestBytes >= CONVERSATION_EVENT_PAGE_BYTES
         ) {
-          complete = false;
+          isDone = false;
           break;
         }
         newest.push({ cursor: row.cursor, event: row.event });
         newestBytes += getConvexSize(row.event);
-        if (isSystemTextWithPrefix(row.event, args.fromSystemPrefix)) break;
+        if (isSystemTextWithPrefix(row.event, prefix)) break;
       }
-      if (complete) {
-        return { page: newest.reverse(), isDone: true, continueCursor: null };
-      }
+
+      return {
+        page: newest.reverse(),
+        isDone: isDone,
+        continueCursor: isDone ? null : (newest[0]?.cursor ?? null),
+      };
     }
     const query = ctx.db
       .query("runtimeConversationEvents")

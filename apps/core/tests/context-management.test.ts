@@ -879,6 +879,35 @@ describe("stored item projection", () => {
 });
 
 describe("context prepare", () => {
+  it("stitches history paged backward into cursor order", async () => {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalQuery = runtime.query.bind(runtime);
+    const rows = userRows(4);
+    const reads: unknown[] = [];
+    runtime.query = (async (name: string, args: { beforeCursor?: string }) => {
+      if (name !== "listConversationEvents") return null;
+      reads.push(args.beforeCursor);
+
+      return args.beforeCursor === undefined
+        ? { page: rows.slice(2), isDone: false, continueCursor: "2" }
+        : { page: rows.slice(0, 2), isDone: true, continueCursor: null };
+    }) as typeof runtime.query;
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext();
+
+      expect(reads).toEqual([undefined, "2"]);
+      expect(turnContext.messages.map((message) => message.content)).toEqual([
+        "message 0",
+        "message 1",
+        "message 2",
+        "message 3",
+      ]);
+    } finally {
+      runtime.query = originalQuery;
+    }
+  });
+
   it("asks for history from the latest compaction summary on", async () => {
     const history = await stubHistory([
       {
