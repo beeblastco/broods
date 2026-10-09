@@ -145,7 +145,7 @@ export function LiveSandboxTerminal({
   const connected = status === "live" || status === "connecting";
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
           Interactive shell inside the sandbox (a real in-guest TTY). Connecting
@@ -168,8 +168,8 @@ export function LiveSandboxTerminal({
           </Button>
         )}
       </div>
-      <div className="overflow-hidden rounded-lg border border-border bg-terminal-background p-2">
-        <div ref={containerRef} className="h-80 w-full" />
+      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-terminal-background p-2">
+        <div ref={containerRef} className="h-full min-h-40 w-full" />
       </div>
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <StatusDot tone={CONNECTION_TONE[status]} label={status} />
