@@ -137,7 +137,7 @@ Pods, namespaces and replicas: [Operations](operations.md#runtime-topology). How
 | Logs, traces, metrics                   | [Observability](observability.md)                                               |
 | Deploying or running it                 | [Self-hosting](self-hosting.md), [operations](operations.md), [CI/CD](ci-cd.md) |
 
-Each workspace has its own `AGENTS.md` with the gotchas for that folder.
+Each workspace has its own `AGENTS.md` with the gotchas for that folder. Read it before changing that workspace.
 
 ## Contributor workflow
 

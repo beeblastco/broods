@@ -375,7 +375,7 @@ Config rows such as `mcp`, `sandboxConfigs` and `workspaceConfigs` also carry `p
 
 ## Async and deferred work
 
-Everything a run starts stays in core's process: subagents are child loops, background runs are in-process workers, code hooks run in a pooled V8 isolate (`src/harness/isolate`). There are no worker deployments. Hosted MCP calls go to the Workers runtime or the Lambda ([tools and MCP](tools-and-mcp.md)).
+Run-local work stays in core's process: subagents are child loops, background runs are in-process workers, and code hooks run in a pooled V8 isolate (`src/harness/isolate`). Broods deploys no separate worker services. Hosted MCP calls run in the Workers runtime or on Lambda ([tools and MCP](tools-and-mcp.md)).
 
 A detached sandbox job outlives its request:
 

@@ -82,7 +82,7 @@ flowchart TD
 | `machine`    | `machine-executor.ts`    | rejected                            | no                                 | no              | no       | no                                 |
 | `custom`     | `http-executor.ts`       | rejected                            | no                                 | no              | no       | no                                 |
 
-Background jobs need a persistent workspace sandbox, so a provider that cannot mount a workspace cannot run one.
+The detached workspace job needs a persistent workspace sandbox. E2B instead runs `background: true` natively on a persistent sandbox, with a completion callback but no logs or stop.
 
 ## Stateless call
 
