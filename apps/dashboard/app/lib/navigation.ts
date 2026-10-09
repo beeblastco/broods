@@ -190,10 +190,22 @@ export function stepNavItem(
   return items[next];
 }
 
-/** A tab's href on `path`, keeping the current params (e.g. `?stage=`) so it survives a share or a new browser tab. */
-export function tabHref(path: string, tabId: string, search: string): string {
-  const next = new URLSearchParams(search);
+/**
+ * A tab's href on `path`. Only `?stage=` carries over from `search`, so it
+ * survives a share or a new browser tab while one tab's search, range or
+ * selection never leaks into another; `params` adds the view to open there
+ * (e.g. `{ trace }`).
+ */
+export function tabHref(
+  path: string,
+  tabId: string,
+  search: string,
+  params: Record<string, string> = {},
+): string {
+  const stage = new URLSearchParams(search).get("stage");
+  const next = new URLSearchParams(stage ? { stage: stage } : {});
   next.set("tab", tabId);
+  for (const [key, value] of Object.entries(params)) next.set(key, value);
 
   return `${path}?${next.toString()}`;
 }

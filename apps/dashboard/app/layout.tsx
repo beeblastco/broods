@@ -3,6 +3,7 @@ import { currentSession, selfHosted } from "@/app/lib/selfHostSession";
 import type { InitialSession } from "@/app/lib/session";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import type { Metadata } from "next";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { headers } from "next/headers";
 import { prefetchDNS } from "react-dom";
 import "./globals.css";
@@ -27,9 +28,12 @@ export default async function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
-        <ConvexClientProvider initialSession={initialSession}>
-          {children}
-        </ConvexClientProvider>
+        {/* View state lives in the URL (app/lib/urlState.ts); writes are shallow. */}
+        <NuqsAdapter>
+          <ConvexClientProvider initialSession={initialSession}>
+            {children}
+          </ConvexClientProvider>
+        </NuqsAdapter>
       </body>
     </html>
   );

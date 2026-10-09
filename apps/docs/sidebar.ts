@@ -114,6 +114,7 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "guides/hooks", label: "Hooks" },
         { type: "doc", id: "guides/webhooks", label: "Webhooks" },
         { type: "doc", id: "guides/observability", label: "Logs and traces" },
+        { type: "doc", id: "guides/dashboard-links", label: "Dashboard links" },
       ],
     },
     {

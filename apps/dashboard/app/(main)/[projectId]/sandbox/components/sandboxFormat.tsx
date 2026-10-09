@@ -9,6 +9,7 @@ import {
   MACHINE_TONE,
   type MachineState,
 } from "@/app/lib/machineConnection";
+import { tabHref } from "@/app/lib/navigation";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 
 // Same four tones as the tracing panel: sky while the provider is still moving
@@ -74,13 +75,11 @@ export const SNAPSHOT_TONE: Record<
 export function dashboardHref(
   projectId: Id<"projects">,
   stage: string | null,
-  params: Record<string, string>,
+  { tab, ...params }: { tab: string } & Record<string, string>,
 ): string {
-  const next = new URLSearchParams();
-  if (stage) next.set("stage", stage);
-  for (const [key, value] of Object.entries(params)) next.set(key, value);
+  const search = new URLSearchParams(stage ? { stage: stage } : {});
 
-  return `/${projectId}/dashboard?${next.toString()}`;
+  return tabHref(`/${projectId}/dashboard`, tab, search.toString(), params);
 }
 
 /** One label and value row of a detail panel. */

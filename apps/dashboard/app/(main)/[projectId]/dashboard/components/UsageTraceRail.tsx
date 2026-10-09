@@ -2,6 +2,7 @@
 
 import { Input } from "@/app/components/ui/input";
 import { formatNumber } from "@/app/lib/formatNumber";
+import { tabHref } from "@/app/lib/navigation";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
@@ -71,13 +72,9 @@ export function UsageTraceRail({
           (t.inputPreview ?? "").toLowerCase().includes(needle),
       )
     : traced;
-  const traceHref = (traceId: string): string => {
-    const next = new URLSearchParams(searchParams.toString());
-    next.set("tab", "tracing");
-    next.set("trace", traceId);
-
-    return `${pathname}?${next.toString()}`;
-  };
+  // Only the stage and the trace travel; the usage range and bin stay here.
+  const traceHref = (traceId: string): string =>
+    tabHref(pathname, "tracing", searchParams.toString(), { trace: traceId });
 
   return (
     <Rail>

@@ -45,6 +45,7 @@ import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDate } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
+import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
@@ -54,6 +55,7 @@ import {
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
+import { useQueryState } from "nuqs";
 import { useState } from "react";
 
 type Policy = FunctionReturnType<typeof api.access.listPolicies>[number];
@@ -72,6 +74,9 @@ interface ScopeItem {
 const QUERY_FIELDS = ["scope", "mode"] as const;
 
 const TABLE_MIN_WIDTH = 640;
+
+// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
+const POLICY_ID = parseAsId<"agentPolicies">();
 
 const NO_ROWS: Policy[] = [];
 
@@ -97,9 +102,7 @@ export function OrgPoliciesPanel(): React.JSX.Element {
   const { can } = usePermissions();
   const canChange = can("access:write");
   const policies = useQuery(api.access.listPolicies, {});
-  const [selectedId, setSelectedId] = useState<Id<"agentPolicies"> | null>(
-    null,
-  );
+  const [selectedId, setSelectedId] = useQueryState("sel", POLICY_ID);
   const [creating, setCreating] = useState(false);
   const list = useListState({
     rows: policies ?? NO_ROWS,
