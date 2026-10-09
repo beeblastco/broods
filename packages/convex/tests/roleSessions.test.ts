@@ -466,6 +466,166 @@ describe("stage-pinned role sessions", () => {
     expect(record?.config.agentBindings).toEqual([{ agentId: devAgent }]);
   });
 
+  test("a dev-pinned role cannot name an account env var in its agent", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const devAgent = await insertAgent(t, seeded, seeded.stageId, "dev-agent");
+    await t.mutation(internal.account.envVars.set, {
+      accountId: seeded.accountId,
+      name: "PROD_DB_PASSWORD",
+      value: "hunter2",
+    });
+    const token = await pinnedSession(t, seeded);
+
+    const response = await t.fetch(`/v1/agents/${devAgent}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        config: { systemPrompt: "leak ${PROD_DB_PASSWORD}" },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("PROD_DB_PASSWORD");
+    const agent = await t.run(async (ctx) => await ctx.db.get(devAgent));
+    expect(agent?.encryptedConfig).toBeUndefined();
+
+    // A name the config already carries stays where it was put, but the role
+    // may not move it into a section it changes.
+    const set = await t.fetch(`/v1/agents/${devAgent}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${ACCOUNT_SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        config: { systemPrompt: "use ${PROD_DB_PASSWORD}" },
+      }),
+    });
+    expect(set.status).toBe(200);
+    const patch = (body: unknown): Promise<Response> =>
+      t.fetch(`/v1/agents/${devAgent}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    expect((await patch({ description: "kept" })).status).toBe(200);
+    expect(
+      (await patch({ config: { systemPrompt: "say ${PROD_DB_PASSWORD}" } }))
+        .status,
+    ).toBe(400);
+  });
+
+  test("a role cannot repoint an MCP server whose agents send it env vars the role cannot read", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const agentId = await insertAgent(t, seeded, seeded.stageId, "mcp-agent");
+    await t.mutation(internal.account.envVars.set, {
+      accountId: seeded.accountId,
+      name: "GITHUB_TOKEN",
+      value: "ghp_secret",
+    });
+    const serverId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("mcp", {
+          accountId: seeded.accountId,
+          projectId: seeded.projectId,
+          stageId: seeded.stageId,
+          name: "github",
+          transport: "http" as const,
+          url: "https://mcp.example.com/mcp",
+          status: "active" as const,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+    );
+    const request = (
+      path: string,
+      token: string,
+      body: unknown,
+    ): Promise<Response> =>
+      t.fetch(path, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    const set = await request(`/v1/agents/${agentId}`, ACCOUNT_SECRET, {
+      config: {
+        mcp: {
+          [serverId]: { headers: { Authorization: "Bearer ${GITHUB_TOKEN}" } },
+        },
+      },
+    });
+    expect(set.status).toBe(200);
+    const roleId = await createRole(t, seeded, {
+      policy: {
+        version: 1,
+        rules: [{ id: "mcp", effect: "allow", actions: ["mcp:write"] }],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+
+    const repointed = await request(`/v1/mcp/${serverId}`, token, {
+      url: "https://attacker.example/mcp",
+    });
+    expect(repointed.status).toBe(400);
+    expect(await repointed.text()).toContain("GITHUB_TOKEN");
+    const row = await t.run(async (ctx) => await ctx.db.get(serverId));
+    expect(row?.url).toBe("https://mcp.example.com/mcp");
+    expect(
+      (await request(`/v1/mcp/${serverId}`, token, { description: "kept" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await request(`/v1/mcp/${serverId}`, ACCOUNT_SECRET, {
+          url: "https://mcp2.example.com/mcp",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  test("an unpinned role cannot create an agent naming an env var it cannot read", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    await t.mutation(internal.account.envVars.set, {
+      accountId: seeded.accountId,
+      name: "PROD_DB_PASSWORD",
+      value: "hunter2",
+    });
+    const roleId = await createRole(t, seeded, {
+      policy: {
+        version: 1,
+        rules: [{ id: "agents", effect: "allow", actions: ["agents:write"] }],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+
+    const response = await t.fetch("/v1/agents", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "leaky",
+        config: { systemPrompt: "leak ${PROD_DB_PASSWORD}" },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("PROD_DB_PASSWORD");
+  });
+
   test("a dev-pinned role cannot list or create account-wide", async () => {
     const t = roleTest();
     const seeded = await seed(t);

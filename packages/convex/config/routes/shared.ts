@@ -15,7 +15,13 @@ import {
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../../model/accountSecrets";
-import type { RolePrincipal } from "../../model/apiAuthorization";
+import {
+  authorize,
+  rolePrincipal,
+  type RolePrincipal,
+} from "../../model/apiAuthorization";
+import { collectEnvPlaceholderNames } from "../../model/agentConfigCodec";
+import { stableJson } from "../../model/objects";
 import type { StageScopedRef } from "../../model/projectScope";
 import type { AuditActor, AuditResource } from "../../model/auditEvents";
 import { RUN_TOKEN_PREFIX } from "../../model/principal";
@@ -583,6 +589,36 @@ function parsePageLimit(raw: string): number | null {
   const limit = Number(raw);
 
   return limit >= 1 && limit <= MAX_PAGE_SIZE ? limit : null;
+}
+
+/**
+ * Refuse a role's write that names an account env var as `${NAME}` the role
+ * may not read. The config plane resolves those names into the stored config,
+ * so naming one would hand its value to whatever the config sends it to. A
+ * top-level section left exactly as it was keeps the names someone who could
+ * read them put there; any change to a section could carry one somewhere new,
+ * such as a prompt or a provider or MCP URL the role points at itself.
+ */
+export function assertRoleMayReadEnv(
+  role: RolePrincipal | undefined,
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown>,
+): void {
+  if (!role) return;
+  const principal = rolePrincipal(role);
+  const refused = new Set<string>();
+  for (const [key, section] of Object.entries(after)) {
+    if (before && stableJson(before[key]) === stableJson(section)) continue;
+    for (const name of collectEnvPlaceholderNames(section)) {
+      if (!authorize(principal, "env:read", { type: "env", id: name }).allow)
+        refused.add(name);
+    }
+  }
+  if (refused.size > 0) {
+    throw new ClientError(
+      `Role may not read the env vars it names: ${[...refused].sort().join(", ")}`,
+    );
+  }
 }
 
 /**

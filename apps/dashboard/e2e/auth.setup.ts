@@ -15,6 +15,9 @@ import {
 } from "./lib/session";
 
 setup.skip(!hasProbe(), MISSING_PROBE);
+// A fresh stack compiles each route on its first visit and provisions the
+// account, which together outrun the default 30 s.
+setup.setTimeout(120_000);
 
 setup("sign in as the probe account", async ({ page }) => {
   await signIn(page);

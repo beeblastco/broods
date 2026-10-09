@@ -10,11 +10,12 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
-import { getOrgMembership, type OrgRole } from "./ownership/org";
+import { getOrgMembership, orgIdOf, type OrgRole } from "./ownership/org";
 import {
   DASHBOARD_POLICY_ACTIONS,
   type DashboardPolicyAction,
   type PolicyDocument,
+  type PolicyEffect,
   type PolicyRule,
 } from "./policyRules";
 
@@ -48,19 +49,7 @@ export function policiesAllow(
   action: string,
   scope: DashboardScope = {},
 ): boolean {
-  let allowed = false;
-  for (const policy of policies) {
-    if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {
-      continue;
-    }
-    for (const rule of policy.document.rules) {
-      if (!rule.actions.includes(action) || !ruleApplies(rule, scope)) continue;
-      if (rule.effect === "deny") return false;
-      allowed = true;
-    }
-  }
-
-  return allowed;
+  return ruleVerdict(policies, action, scope) === "allow";
 }
 
 /** The tier's permissions plus what the policies allow in the scope. */
@@ -68,12 +57,9 @@ export function dashboardPermissions(
   access: MemberAccess,
   scope: DashboardScope = {},
 ): DashboardPolicyAction[] {
-  const held = new Set(tierPermissions(access.tier));
-  for (const action of DASHBOARD_POLICY_ACTIONS) {
-    if (policiesAllow(access.policies, action, scope)) held.add(action);
-  }
-
-  return [...held];
+  return DASHBOARD_POLICY_ACTIONS.filter((action) =>
+    policiesAllowOrTier(access, action, scope),
+  );
 }
 
 /** One member's tier and policies in one org; null when they are not a member. */
@@ -123,7 +109,8 @@ export async function requireDashboardPermission(
 /**
  * A caller hands out no permission they lack, in any scope the policies name:
  * what the policies would grant a member is compared with what the caller
- * holds, org-wide and in each project and stage a policy or rule points at.
+ * holds, org-wide and in each project and stage a policy or rule points at,
+ * the caller's own included.
  * Otherwise `access:write` or `members:write` would be a way up. `before` is
  * what the policies granted until now, so an edit answers only for what it adds.
  */
@@ -136,7 +123,14 @@ export async function assertGrantsWithinReach(
 ): Promise<void> {
   const access = await memberAccess(ctx, orgId, caller);
   if (!access) throw new ClientError("No permission for this", "unauthorized");
-  for (const scope of await scopesNamed(ctx, policies)) {
+  // The scopes `before` and the caller's own policies name count too: a deny
+  // scoped to one project is where the caller lacks what an org-wide grant
+  // or a dropped deny would hand over.
+  for (const scope of await scopesNamed(ctx, [
+    ...policies,
+    ...before,
+    ...access.policies,
+  ])) {
     const held = [
       ...dashboardPermissions(access, scope),
       ...dashboardPermissions({ tier: "member", policies: before }, scope),
@@ -151,6 +145,30 @@ export async function assertGrantsWithinReach(
       );
     }
   }
+}
+
+/** The first org role that holds the policy, or null when none does. */
+export async function roleHoldingPolicy(
+  ctx: Ctx,
+  policy: Doc<"agentPolicies">,
+): Promise<Doc<"orgRoles"> | null> {
+  const account = await ctx.db.get(policy.accountId);
+  const orgId = account ? orgIdOf(ctx, account) : null;
+  if (!orgId) return null;
+  const roles = await orgRoles(ctx, orgId);
+
+  return roles.find((role) => role.policyIds.includes(policy._id)) ?? null;
+}
+
+/** Every custom role in the org. */
+export async function orgRoles(
+  ctx: Ctx,
+  orgId: Id<"orgs">,
+): Promise<Doc<"orgRoles">[]> {
+  return await ctx.db
+    .query("orgRoles")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .collect();
 }
 
 /** The policies that still exist and are active, with the scope their row carries. */
@@ -170,14 +188,19 @@ export async function activePolicies(
     }));
 }
 
-function policiesAllowOrTier(
+/** Whether the tier holds the action, or the policies allow it in the scope. Without a rule on `keys:read`, a granted `keys:write` reads, so a writer sees the list. */
+export function policiesAllowOrTier(
   access: MemberAccess,
   action: DashboardPolicyAction,
   scope: DashboardScope,
 ): boolean {
+  if (tierPermissions(access.tier).includes(action)) return true;
+  const verdict = ruleVerdict(access.policies, action, scope);
+  if (verdict) return verdict === "allow";
+
   return (
-    tierPermissions(access.tier).includes(action) ||
-    policiesAllow(access.policies, action, scope)
+    action === "keys:read" &&
+    policiesAllow(access.policies, "keys:write", scope)
   );
 }
 
@@ -224,6 +247,27 @@ function idCondition<T extends "projects" | "stages">(
   return typeof match?.value === "string"
     ? (ctx.db.normalizeId(table, match.value) ?? undefined)
     : undefined;
+}
+
+/** What the rules on one action say in one scope: a matching deny, else a matching allow, else nothing. */
+function ruleVerdict(
+  policies: readonly ScopedPolicy[],
+  action: string,
+  scope: DashboardScope,
+): PolicyEffect | null {
+  let verdict: PolicyEffect | null = null;
+  for (const policy of policies) {
+    if (policy.document.mode !== "enforce" || !scopeHolds(policy, scope)) {
+      continue;
+    }
+    for (const rule of policy.document.rules) {
+      if (!rule.actions.includes(action) || !ruleApplies(rule, scope)) continue;
+      if (rule.effect === "deny") return "deny";
+      verdict = "allow";
+    }
+  }
+
+  return verdict;
 }
 
 /** A policy row made for one project or stage applies only there. */

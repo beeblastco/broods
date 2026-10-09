@@ -14,8 +14,7 @@ import { authKit } from "./auth";
 import {
   hasDashboardPermission,
   memberAccess,
-  policiesAllow,
-  tierPermissions,
+  policiesAllowOrTier,
 } from "./model/access";
 import { actorOf, actorsOf, actorValidator } from "./model/actor";
 import { getActiveOrgForUser, userByAuthId } from "./model/ownership/org";
@@ -54,6 +53,8 @@ const apiKeyValidator = v.object({
 const projectKeysValidator = v.object({
   runtime: v.array(runtimeKeyValidator),
   api: v.array(apiKeyValidator),
+  /** The stages the viewer may rotate, revoke and make keys on: `keys:write` on each. */
+  writable: v.array(v.object({ _id: v.id("stages"), name: v.string() })),
 });
 
 type OrgKey = Infer<typeof orgKeyValidator>;
@@ -112,15 +113,21 @@ export const listForProject = query({
         .query("stages")
         .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
         .collect()
-    ).filter(
-      (stage) =>
-        tierPermissions(access.tier).includes("keys:read") ||
-        policiesAllow(access.policies, "keys:read", {
+    ).filter((stage) =>
+      policiesAllowOrTier(access, "keys:read", {
+        projectId: args.projectId,
+        stageId: stage._id,
+      }),
+    );
+    if (stages.length === 0) return null;
+    const writable = stages
+      .filter((stage) =>
+        policiesAllowOrTier(access, "keys:write", {
           projectId: args.projectId,
           stageId: stage._id,
         }),
-    );
-    if (stages.length === 0) return null;
+      )
+      .map((stage) => ({ _id: stage._id, name: stage.name }));
     const perStage = await Promise.all(
       stages.map((stage) => stageKeys(ctx, stage)),
     );
@@ -164,7 +171,7 @@ export const listForProject = query({
       }
     }
 
-    return { runtime: runtime, api: api };
+    return { runtime: runtime, api: api, writable: writable };
   },
 });
 
