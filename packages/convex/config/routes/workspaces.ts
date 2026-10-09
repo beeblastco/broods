@@ -7,6 +7,7 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import type { RolePrincipal } from "../../model/apiAuthorization";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { toPublicWorkspaceConfigResponse } from "../../model/responses";
 import {
@@ -15,6 +16,7 @@ import {
   workspaceNamespace,
 } from "../../model/workspaceRules";
 import {
+  assertRoleMayReadEnv,
   json,
   jsonError,
   methodNotAllowed,
@@ -29,6 +31,7 @@ export async function handleWorkspaceConfigRoute(
   req: Request,
   accountId: Id<"accounts">,
   actor: AuditActor,
+  role: RolePrincipal | undefined,
   workspaceId?: string,
 ): Promise<Response> {
   if (!workspaceId) {
@@ -48,6 +51,8 @@ export async function handleWorkspaceConfigRoute(
     }
     if (req.method === "POST") {
       const input = normalizeCreateWorkspaceConfigInput(await req.json());
+      // Core signs R2 requests with the account env vars the storage names.
+      assertRoleMayReadEnv(role, undefined, input.config);
       const createdId: Id<"workspaceConfigs"> = await ctx.runMutation(
         internal.workspace.configs.create,
         {
@@ -108,6 +113,7 @@ export async function handleWorkspaceConfigRoute(
       existing.config ?? { storage: { provider: "s3" } },
       await req.json(),
     );
+    assertRoleMayReadEnv(role, existing.config, patch.config);
     await ctx.runMutation(internal.workspace.configs.update, {
       accountId: accountId,
       workspaceId: workspaceId,

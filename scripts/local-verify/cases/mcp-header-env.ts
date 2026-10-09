@@ -111,7 +111,13 @@ export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
     name: `mcp-writer-${context.runId}`,
     policy: {
       version: 1,
-      rules: [{ id: "mcp", effect: "allow", actions: ["mcp:write"] }],
+      rules: [
+        {
+          id: "write",
+          effect: "allow",
+          actions: ["mcp:write", "workspaces:write"],
+        },
+      ],
     },
   });
   const { roleId } = (await created.json()) as { roleId: string };
@@ -134,6 +140,29 @@ export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
     "a role that may not read SEARCH_TOKEN cannot repoint the server that receives it",
     repointed.status === 400 && refusal.includes("SEARCH_TOKEN"),
     `${repointed.status} ${refusal.slice(0, 200)}`,
+  );
+  // Core signs a workspace's R2 requests with the env vars its storage names.
+  const workspace = await send("POST", "/v1/workspaces", token, {
+    name: `r2-${context.runId}`,
+    config: {
+      storage: {
+        provider: "s3",
+        bucket: "files",
+        prefix: "verify",
+        endpoint: `https://${"a".repeat(32)}.r2.cloudflarestorage.com`,
+        auth: {
+          type: "r2",
+          accessKeyId: "${SEARCH_TOKEN}",
+          secretAccessKey: "${SEARCH_TOKEN}",
+        },
+      },
+    },
+  });
+  const workspaceRefusal = await workspace.text();
+  assertStep(
+    "a role that may not read SEARCH_TOKEN cannot sign workspace storage with it",
+    workspace.status === 400 && workspaceRefusal.includes("SEARCH_TOKEN"),
+    `${workspace.status} ${workspaceRefusal.slice(0, 200)}`,
   );
   await send("DELETE", `/v1/roles/${roleId}`, context.accountSecret);
 }

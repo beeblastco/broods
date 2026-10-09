@@ -601,14 +601,16 @@ function parsePageLimit(raw: string): number | null {
  */
 export function assertRoleMayReadEnv(
   role: RolePrincipal | undefined,
-  before: Record<string, unknown> | undefined,
-  after: Record<string, unknown>,
+  before: object | undefined,
+  after: object,
 ): void {
   if (!role) return;
   const principal = rolePrincipal(role);
+  const previous = new Map<string, unknown>(Object.entries(before ?? {}));
   const refused = new Set<string>();
   for (const [key, section] of Object.entries(after)) {
-    if (before && stableJson(before[key]) === stableJson(section)) continue;
+    if (before && stableJson(previous.get(key)) === stableJson(section))
+      continue;
     for (const name of collectEnvPlaceholderNames(section)) {
       if (!authorize(principal, "env:read", { type: "env", id: name }).allow)
         refused.add(name);

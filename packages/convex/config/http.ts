@@ -332,6 +332,7 @@ async function dispatchResourceRoute(
         req,
         accountId,
         actor,
+        role,
         route.workspaceId,
       );
     case "sandboxes":
