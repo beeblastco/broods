@@ -40,9 +40,9 @@ interface DetailSplitProps {
 }
 
 /**
- * The detail column's header with a close button, then a scrollable body.
- * With `actions` and no `meta` the header is one centered line, the same
- * height as the toolbar over the table.
+ * The detail column's header, then a scrollable body. The title line holds
+ * the title, the panel's actions and the close button, at the toolbar's
+ * height when there are actions; `meta` is a second line under it.
  */
 export function DetailPanel({
   title,
@@ -53,27 +53,24 @@ export function DetailPanel({
 }: DetailPanelProps): React.JSX.Element {
   return (
     <>
-      <div
-        className={cn(
-          "flex justify-between gap-2 border-b border-border/60 px-3 py-2",
-          actions && !meta ? "items-center" : "items-start",
-        )}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium">{title}</div>
-          {meta}
+      <div className="border-b border-border/60 px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1 truncate text-xs font-medium">
+            {title}
+          </div>
+          {actions && (
+            <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close details"
+            className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
         </div>
-        {actions && (
-          <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
-        )}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close details"
-          className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-        >
-          <X className="size-3.5" />
-        </button>
+        {meta}
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3">{children}</div>
     </>

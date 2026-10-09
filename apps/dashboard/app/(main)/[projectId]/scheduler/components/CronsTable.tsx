@@ -9,8 +9,8 @@ import {
   DataTableHeader,
   DataTableRow,
   DataTableSub,
-  TIME_WORDS,
 } from "@/app/components/DataTable";
+import { DangerZone } from "@/app/components/DangerZone";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DetailRows, type DetailRow } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
@@ -19,7 +19,7 @@ import { SearchInput } from "@/app/components/SearchInput";
 import { StatusWord, type StatusTone } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
-import { Who, type Actor } from "@/app/components/Who";
+import { actorName, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -38,13 +38,13 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import Link from "next/link";
 import { useQueryState } from "nuqs";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   dashboardHref,
   relativeTime,
+  TraceLink,
 } from "../../sandbox/components/sandboxFormat";
 import { CronDialog, eventsToText } from "./CronDialog";
 
@@ -59,9 +59,6 @@ const CRON_ID = parseAsId<"crons">();
 
 // A job with no zone of its own runs in UTC, so that is what the panel says.
 const DEFAULT_TIMEZONE = "UTC";
-
-// Sort words for the next-run column; the last-run column reads oldest and newest.
-const NEXT_WORDS: [string, string] = ["Soonest first", "Latest first"];
 
 // The tallest bar of the run histogram stops here, so its label stays readable.
 const BAR_MAX_PERCENT = 70;
@@ -207,6 +204,7 @@ export function CronsTable({
               projectId={projectId}
               row={selected}
               agents={agents}
+              now={now}
               onClose={() => setSelectedId(null)}
             />
           )
@@ -227,14 +225,10 @@ export function CronsTable({
               <DataTableHead plain sort={list.sortFor("status")}>
                 Status
               </DataTableHead>
-              <DataTableHead plain sort={list.sortFor("last", TIME_WORDS)}>
+              <DataTableHead plain sort={list.sortFor("last")}>
                 Last run
               </DataTableHead>
-              <DataTableHead
-                plain
-                align="right"
-                sort={list.sortFor("next", NEXT_WORDS)}
-              >
+              <DataTableHead plain align="right" sort={list.sortFor("next")}>
                 Next run
               </DataTableHead>
             </tr>
@@ -333,17 +327,20 @@ function CronPanel({
   projectId,
   row,
   agents,
+  now,
   onClose,
 }: {
   projectId: Id<"projects">;
   row: CronRow;
   agents: Props["agents"];
+  /** The table's clock, so a running run's bar grows with it. */
+  now: number;
   onClose: () => void;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const update = useMutation(api.agent.cronsPublic.update);
   const remove = useMutation(api.agent.cronsPublic.remove);
-  const { error, run } = useSubmit();
+  const { error, pending: switching, run } = useSubmit();
   const { cron, zone } = row;
   const runs = useQuery(api.agent.crons.listRunsForProject, {
     projectId: projectId,
@@ -356,15 +353,15 @@ function CronPanel({
   const newest = runs?.[0];
   const facts: DetailRow[] = [
     { key: "timezone", label: "Timezone", value: zone, words: true },
-    ...(cron.conversationKey
-      ? [
-          {
-            key: "conversation",
-            label: "Conversation",
-            value: cron.conversationKey,
-          },
-        ]
-      : []),
+  ];
+  if (cron.conversationKey) {
+    facts.push({
+      key: "conversation",
+      label: "Conversation",
+      value: cron.conversationKey,
+    });
+  }
+  facts.push(
     {
       key: "creator",
       label: "Created by",
@@ -377,18 +374,16 @@ function CronPanel({
       value: formatDate(cron.createdAt),
       words: true,
     },
-    ...(newest?.status === "failed" && newest.error
-      ? [
-          {
-            key: "error",
-            label: "Last error",
-            value: newest.error,
-            words: true as const,
-            tone: "error" as const,
-          },
-        ]
-      : []),
-  ];
+  );
+  if (newest?.status === "failed" && newest.error) {
+    facts.push({
+      key: "error",
+      label: "Last error",
+      value: newest.error,
+      words: true,
+      tone: "error",
+    });
+  }
 
   async function handleDelete(): Promise<void> {
     setPending(true);
@@ -420,6 +415,7 @@ function CronPanel({
               size="sm"
               tone="muted"
               className="cursor-pointer"
+              disabled={switching}
               onClick={() =>
                 run(() =>
                   update({
@@ -436,7 +432,7 @@ function CronPanel({
       }
       onClose={onClose}
     >
-      <DetailRows rows={facts} className="-mx-2" />
+      <DetailRows rows={facts} />
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
       <h4 className="mt-5 mb-1.5 text-sm font-medium">Prompt</h4>
@@ -449,26 +445,22 @@ function CronPanel({
         <p className="text-xs text-muted-foreground">No runs yet.</p>
       ) : (
         <>
-          <RunHistogram runs={runs} />
+          <RunHistogram runs={runs} now={now} />
           <RunsTable projectId={projectId} runs={runs} />
         </>
       )}
 
       {canWrite && (
-        <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-          <h4 className="text-sm font-medium text-destructive">Danger zone</h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Delete the scheduler. Its past runs stay in Tracing.
-          </p>
+        <DangerZone description="Delete the scheduler. Its past runs stay in Tracing.">
           <Button
             variant="destructive"
             size="sm"
-            className="mt-3 cursor-pointer"
+            className="cursor-pointer"
             onClick={() => setDeleting(true)}
           >
             Delete
           </Button>
-        </div>
+        </DangerZone>
       )}
 
       {editing && (
@@ -499,20 +491,35 @@ function CronPanel({
  * when it failed, sky while it still runs. The same strip Monitoring draws
  * under its toolbar, so a glance says how the job has been doing.
  */
-function RunHistogram({ runs }: { runs: CronRun[] }): React.JSX.Element {
-  const ordered = runs.slice().reverse();
-  const max = Math.max(1, ...ordered.map(durationMs));
-  const first = ordered[0];
-  const last = ordered[ordered.length - 1];
+function RunHistogram({
+  runs,
+  now,
+}: {
+  runs: CronRun[];
+  now: number;
+}): React.JSX.Element {
+  // `runs` is newest first; the bars read oldest to newest. A run still going
+  // sets no scale: one stuck in `started` would flatten every finished bar.
+  const bars = runs
+    .toReversed()
+    .map((run) => ({ run: run, ms: durationMs(run, now) }));
+  const max = Math.max(
+    1,
+    ...bars.flatMap((bar) =>
+      bar.run.completedAt === undefined ? [] : [bar.ms],
+    ),
+  );
+  const oldest = formatDate(runs[runs.length - 1].startedAt);
+  const newest = formatDate(runs[0].startedAt);
 
   return (
     <div className="relative flex h-9 shrink-0 items-end gap-px border-b border-border pt-1 select-none">
-      {ordered.map((run) => (
+      {bars.map(({ run, ms }) => (
         <span
           key={run._id}
           title={`${formatDateTime(run.startedAt)} · ${RUN_WORD[run.status]} · ${durationLabel(run)}`}
           style={{
-            "--bar-height": `${(durationMs(run) / max) * BAR_MAX_PERCENT}%`,
+            "--bar-height": `${Math.min(1, ms / max) * BAR_MAX_PERCENT}%`,
           }}
           className={cn(
             "h-(--bar-height) min-h-px flex-1",
@@ -521,9 +528,7 @@ function RunHistogram({ runs }: { runs: CronRun[] }): React.JSX.Element {
         />
       ))}
       <span className="pointer-events-none absolute top-0 right-0 font-mono text-3xs text-muted-foreground">
-        {first === last
-          ? formatDate(first.startedAt)
-          : `${formatDate(first.startedAt)} → ${formatDate(last.startedAt)}`}
+        {runs.length === 1 ? newest : `${oldest} → ${newest}`}
       </span>
     </div>
   );
@@ -565,15 +570,14 @@ function RunsTable({
               {durationLabel(run)}
             </DataTableCell>
             <DataTableCell align="right">
-              <Link
+              <TraceLink
                 href={dashboardHref(projectId, stage, {
                   tab: "tracing",
                   q: `conv:${run.conversationKey}`,
                 })}
-                className="cursor-pointer text-foreground underline-offset-3 hover:underline"
               >
                 Trace
-              </Link>
+              </TraceLink>
             </DataTableCell>
           </DataTableRow>
         ))}
@@ -582,22 +586,16 @@ function RunsTable({
   );
 }
 
-/** The name a Created by row shows for whoever made the job. */
-function actorName(actor: Actor): string {
-  if ("kind" in actor && actor.kind === "platform") return "Broods";
-
-  return actor.name;
+/** How long a run took, or how long it has been running as of `now`. */
+function durationMs(run: CronRun, now: number): number {
+  return Math.max(0, (run.completedAt ?? now) - run.startedAt);
 }
 
-/** How long a run took, or how long it has been running. */
-function durationMs(run: CronRun): number {
-  return Math.max(0, (run.completedAt ?? Date.now()) - run.startedAt);
-}
-
+/** The run's length in whole seconds, or a dash while it still runs. */
 function durationLabel(run: CronRun): string {
   if (run.completedAt === undefined) return "—";
 
-  return `${Math.max(1, Math.round((run.completedAt - run.startedAt) / 1000))}s`;
+  return `${Math.max(1, Math.round(durationMs(run, run.completedAt) / 1000))}s`;
 }
 
 /** Whether a `field:value` token matches the job. */

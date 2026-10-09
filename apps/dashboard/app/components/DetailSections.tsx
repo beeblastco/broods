@@ -42,10 +42,13 @@ export function DetailFields({
   );
 }
 
-/** The labeled rows alone, each copying its value on click, for a panel with no section to fold. */
+/**
+ * The labeled rows alone, each copying its value on click, for a panel with
+ * no section to fold. By default they sit flush with the panel's padding.
+ */
 export function DetailRows({
   rows,
-  className,
+  className = "-mx-2",
 }: {
   rows: DetailRow[];
   className?: string;

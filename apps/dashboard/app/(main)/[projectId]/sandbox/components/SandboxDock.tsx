@@ -6,6 +6,7 @@
  * the panel was opened from, so the detail column stays a list of facts.
  */
 
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -13,11 +14,12 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { Play, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
-import { dashboardHref } from "./sandboxFormat";
+import { controllable, dashboardHref } from "./sandboxFormat";
 import {
   sandboxLogId,
   SandboxLogTail,
@@ -30,21 +32,11 @@ const COMMAND_HISTORY = 20;
 export type DockTab = "terminal" | "logs";
 
 type Instance = Doc<"sandboxInstances">;
-
-interface CommandResult {
-  ok: boolean;
-  runtime: string;
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  durationMs: number;
-  truncated: boolean;
-  provider: string;
-}
+type Controllable = Instance & { sandboxConfigId: Id<"sandboxConfigs"> };
 
 interface CommandEntry {
   command: string;
-  result?: CommandResult;
+  result?: FunctionReturnType<typeof api.sandbox.public.runSandboxCommand>;
   error?: string;
 }
 
@@ -58,19 +50,6 @@ interface Props {
   onClose: () => void;
 }
 
-/** Whether the instance has a guest log stream the gateway can tail. */
-export function hasLogTail(instance: Instance): boolean {
-  return (
-    instance.logStream !== undefined &&
-    sandboxLogId(instance.logStream) !== undefined
-  );
-}
-
-/** Whether the dashboard can shell into the instance at all. */
-export function hasTerminal(instance: Instance): boolean {
-  return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
-}
-
 export function SandboxDock({
   instance,
   projectId,
@@ -80,9 +59,7 @@ export function SandboxDock({
   onClose,
 }: Props): React.JSX.Element {
   const searchParams = useSearchParams();
-  const logId = instance.logStream
-    ? sandboxLogId(instance.logStream)
-    : undefined;
+  const logId = sandboxLogId(instance.logStream);
   // The providers core opens a PTY for: workdir (`sandbox`) over its in-guest
   // WebSocket, AWS MicroVM (`lambda`) over its shell endpoint, and the
   // Cloudflare bridge in its Container. The rest keep the bounded runner.
@@ -93,9 +70,7 @@ export function SandboxDock({
   // Nothing runs while the provider is mid-change: a connect would race the
   // suspend in flight, and a terminating instance is gone.
   const runnable =
-    hasTerminal(instance) &&
-    instance.status !== "terminating" &&
-    instance.status !== "suspending";
+    instance.status !== "terminating" && instance.status !== "suspending";
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
@@ -124,9 +99,7 @@ export function SandboxDock({
           {instance.name}
         </span>
         <span className="flex-1" />
-        <kbd className="rounded border border-border px-1 font-mono text-3xs text-muted-foreground">
-          `
-        </kbd>
+        <ShortcutKeys id="sandbox.terminal" bordered />
         <Button
           variant="ghost"
           size="icon-xs"
@@ -146,17 +119,18 @@ export function SandboxDock({
             monitoringHref={dashboardHref(
               projectId,
               searchParams.get("stage"),
-              {
-                tab: "monitoring",
-              },
+              { tab: "monitoring" },
             )}
           />
-        ) : liveShell && instance.sandboxConfigId && hasTerminal(instance) ? (
+        ) : !controllable(instance) ? (
+          <p className="text-xs text-muted-foreground">
+            This instance cannot run commands from the dashboard.
+          </p>
+        ) : liveShell ? (
           <LiveSandboxTerminal
             sandboxId={instance.sandboxConfigId}
             reservationKey={instance.reservationKey}
             disabled={!runnable}
-            className="min-h-0 flex-1"
           />
         ) : (
           <CommandRunner instance={instance} runnable={runnable} />
@@ -171,7 +145,7 @@ function CommandRunner({
   instance,
   runnable,
 }: {
-  instance: Instance;
+  instance: Controllable;
   runnable: boolean;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
@@ -180,9 +154,13 @@ function CommandRunner({
   const [pending, setPending] = useState(false);
   const [entries, setEntries] = useState<CommandEntry[]>([]);
 
+  const push = (entry: CommandEntry): void => {
+    setEntries((prev) => [entry, ...prev].slice(0, COMMAND_HISTORY));
+  };
+
   async function handleRun(): Promise<void> {
-    if (!instance.sandboxConfigId || !command.trim()) return;
     const code = command.trim();
+    if (!code) return;
     setPending(true);
     try {
       const result = await runCommand({
@@ -190,16 +168,9 @@ function CommandRunner({
         reservationKey: instance.reservationKey,
         code: code,
       });
-      setEntries((prev) =>
-        [{ command: code, result: result }, ...prev].slice(0, COMMAND_HISTORY),
-      );
+      push({ command: code, result: result });
     } catch (err) {
-      setEntries((prev) =>
-        [{ command: code, error: toErrorMessage(err) }, ...prev].slice(
-          0,
-          COMMAND_HISTORY,
-        ),
-      );
+      push({ command: code, error: toErrorMessage(err) });
     } finally {
       setPending(false);
     }

@@ -1,5 +1,6 @@
 "use client";
 
+import { DangerZone } from "@/app/components/DangerZone";
 import {
   DataTable,
   DataTableBody,
@@ -16,7 +17,7 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { toErrorMessage } from "@/app/lib/errors";
-import { formatTime } from "@/app/lib/formatTime";
+import { formatDateTime, formatTime } from "@/app/lib/formatTime";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { SNAPSHOT_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
@@ -25,8 +26,9 @@ import { Camera, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { type DockTab, hasLogTail, hasTerminal } from "./SandboxDock";
-import { dashboardHref } from "./sandboxFormat";
+import type { DockTab } from "./SandboxDock";
+import { controllable, dashboardHref, TraceLink } from "./sandboxFormat";
+import { sandboxLogId } from "./SandboxLogTail";
 
 // Activity rows shown before "Show all"; the query holds the rest.
 const ACTIVITY_PREVIEW = 5;
@@ -69,10 +71,9 @@ export function SandboxInstancePanel({
   const createSnapshot = useAction(api.sandbox.public.createSnapshot);
   const terminate = useAction(api.sandbox.public.terminateSandbox);
   const searchParams = useSearchParams();
-  const [allActivity, setAllActivity] = useState(false);
   const auditEvents = useQuery(api.sandbox.auditEvents.listForInstance, {
     reservationKey: instance.reservationKey,
-    limit: allActivity ? ACTIVITY_LIMIT : ACTIVITY_PREVIEW + 1,
+    limit: ACTIVITY_LIMIT,
   });
 
   const [snapName, setSnapName] = useState("");
@@ -81,9 +82,7 @@ export function SandboxInstancePanel({
   const [terminating, setTerminating] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  // An ephemeral instance lives only for the call that created it, so broods has
-  // already dropped it by the time an action here could reach the provider.
-  const controllable = hasTerminal(instance);
+  const actionable = controllable(instance);
   // workdir, Daytona, E2B and Vercel capture a running sandbox; a lambda MicroVM
   // is rebuilt as a new image from the files it changed.
   const supportsSnapshot = SNAPSHOT_SANDBOX_PROVIDERS.has(instance.provider);
@@ -95,8 +94,6 @@ export function SandboxInstancePanel({
       candidate._id === instance.snapshotId ||
       candidate.externalImageId === instance.snapshotId,
   );
-
-  const facts = instanceFacts(instance, snapshot);
 
   async function handleSnapshot(): Promise<void> {
     if (!instance.sandboxConfigId || !snapName.trim()) return;
@@ -160,7 +157,7 @@ export function SandboxInstancePanel({
               <ExternalLink className="size-3.5" />
             </Button>
           )}
-          {hasLogTail(instance) && (
+          {sandboxLogId(instance.logStream) !== undefined && (
             <Button
               variant="outline"
               size="sm"
@@ -171,7 +168,7 @@ export function SandboxInstancePanel({
               Logs
             </Button>
           )}
-          {controllable && (
+          {actionable && (
             <Button
               variant="outline"
               size="sm"
@@ -186,16 +183,10 @@ export function SandboxInstancePanel({
       }
       onClose={onClose}
     >
-      <DetailRows rows={facts} className="-mx-2" />
+      <DetailRows rows={instanceFacts(instance, snapshot)} />
 
       <h4 className="mt-5 mb-1.5 text-sm font-medium">Activity</h4>
-      <ActivityTable
-        events={auditEvents}
-        projectId={projectId}
-        stage={stage}
-        expanded={allActivity}
-        onExpand={() => setAllActivity(true)}
-      />
+      <ActivityTable events={auditEvents} projectId={projectId} stage={stage} />
 
       {supportsSnapshot && (
         <div className="mt-5">
@@ -210,14 +201,14 @@ export function SandboxInstancePanel({
               value={snapName}
               onChange={(event) => setSnapName(event.target.value)}
               placeholder="snapshot name"
-              disabled={!controllable || snapPending}
+              disabled={!actionable || snapPending}
               className="h-8"
             />
             {canWrite && (
               <Button
                 size="sm"
                 className="cursor-pointer"
-                disabled={!controllable || snapPending || !snapName.trim()}
+                disabled={!actionable || snapPending || !snapName.trim()}
                 onClick={handleSnapshot}
               >
                 <Camera className="size-3.5" />
@@ -232,24 +223,20 @@ export function SandboxInstancePanel({
       )}
 
       {canWrite && (
-        <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-          <h4 className="text-sm font-medium text-destructive">Danger zone</h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Terminate the instance, releasing its reservation and compute.
-          </p>
+        <DangerZone description="Terminate the instance, releasing its reservation and compute.">
           <Button
             variant="destructive"
             size="sm"
-            className="mt-3 cursor-pointer"
-            disabled={!controllable}
+            className="cursor-pointer"
+            disabled={!actionable}
             onClick={() => setConfirmOpen(true)}
           >
             Terminate
           </Button>
-        </div>
+        </DangerZone>
       )}
 
-      {!controllable && (
+      {!actionable && (
         <p className="mt-3 text-xs text-muted-foreground">
           {instance.ephemeral
             ? "This instance exists only for the call that created it, so it can be watched but not controlled here. Make the sandbox persistent to reserve one you can suspend, resume, and shell into."
@@ -272,22 +259,19 @@ export function SandboxInstancePanel({
 
 /**
  * Expects `events` newest first. One row per lifecycle event: when, what,
- * how it went or who did it, and its trace. The preview shows the newest
- * few; "Show all" widens the query.
+ * how it went or who did it, and its trace. The newest few show first;
+ * "Show all" unfolds the rest of the query.
  */
 function ActivityTable({
   events,
   projectId,
   stage,
-  expanded,
-  onExpand,
 }: {
   events: SandboxAuditEvent[] | undefined;
   projectId: Id<"projects">;
   stage: string | null;
-  expanded: boolean;
-  onExpand: () => void;
 }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
   if (events === undefined || events.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
@@ -309,44 +293,45 @@ function ActivityTable({
           </tr>
         </DataTableHeader>
         <DataTableBody>
-          {shown.map((event) => (
-            <DataTableRow key={event._id}>
-              <DataTableCell
-                muted
-                className="font-mono tabular-nums"
-                title={new Date(event.createdAt).toLocaleString()}
-              >
-                {formatTime(event.createdAt)}
-              </DataTableCell>
-              <DataTableCell>
-                <StatusWord tone={event.result}>{event.action}</StatusWord>
-              </DataTableCell>
-              <DataTableCell
-                muted
-                className="truncate"
-                title={auditDetail(event)}
-              >
-                <span
-                  className={event.result === "error" ? "text-destructive" : ""}
+          {shown.map((event) => {
+            const detail = auditDetail(event);
+
+            return (
+              <DataTableRow key={event._id}>
+                <DataTableCell
+                  muted
+                  className="font-mono tabular-nums"
+                  title={formatDateTime(event.createdAt)}
                 >
-                  {auditDetail(event)}
-                </span>
-              </DataTableCell>
-              <DataTableCell align="right">
-                {event.traceId && (
-                  <Link
-                    href={dashboardHref(projectId, stage, {
-                      tab: "tracing",
-                      trace: event.traceId,
-                    })}
-                    className="cursor-pointer text-foreground underline-offset-3 hover:underline"
+                  {formatTime(event.createdAt)}
+                </DataTableCell>
+                <DataTableCell>
+                  <StatusWord tone={event.result}>{event.action}</StatusWord>
+                </DataTableCell>
+                <DataTableCell muted className="truncate" title={detail}>
+                  <span
+                    className={
+                      event.result === "error" ? "text-destructive" : ""
+                    }
                   >
-                    Trace
-                  </Link>
-                )}
-              </DataTableCell>
-            </DataTableRow>
-          ))}
+                    {detail}
+                  </span>
+                </DataTableCell>
+                <DataTableCell align="right">
+                  {event.traceId && (
+                    <TraceLink
+                      href={dashboardHref(projectId, stage, {
+                        tab: "tracing",
+                        trace: event.traceId,
+                      })}
+                    >
+                      Trace
+                    </TraceLink>
+                  )}
+                </DataTableCell>
+              </DataTableRow>
+            );
+          })}
         </DataTableBody>
       </DataTable>
       {!expanded && events.length > ACTIVITY_PREVIEW && (
@@ -355,7 +340,7 @@ function ActivityTable({
           size="xs"
           tone="muted"
           className="mt-1 cursor-pointer"
-          onClick={onExpand}
+          onClick={() => setExpanded(true)}
         >
           Show all
         </Button>
