@@ -442,9 +442,11 @@ function RoleItem({
     >
       <span className="flex min-w-0 flex-col">
         <span className="truncate">{option.label}</span>
-        <span className="truncate text-2xs text-muted-foreground">
-          {option.description}
-        </span>
+        {option.description && (
+          <span className="truncate text-2xs text-muted-foreground">
+            {option.description}
+          </span>
+        )}
       </span>
     </DropdownMenuItem>
   );
@@ -572,8 +574,7 @@ function roleOptions(roles: Role[]): RoleOption[] {
         {
           value: role._id,
           label: role.name,
-          description:
-            role.description || `${role.permissions.length} permissions`,
+          description: role.description,
           pick: { tier: "member", roleId: role._id },
         },
       ];

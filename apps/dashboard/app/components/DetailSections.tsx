@@ -11,6 +11,9 @@ import { type ReactNode, useMemo, useState } from "react";
 // thousands of nodes.
 const JSON_VIEW_MAX_CHARS = 100_000;
 
+// The label column and the value beside it, shared by every row kind.
+const ROW_GRID = "grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1";
+
 /** One line in a Details section. Values read in mono (ids, counts) unless `words`, and copy on click. */
 export interface DetailRow {
   key: string;
@@ -27,8 +30,6 @@ export interface ControlRow {
   label: string;
   control: ReactNode;
 }
-
-const ROW_GRID = "grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1";
 
 /**
  * Collapsible section of labeled rows, each copying its value on click. Shared
@@ -52,8 +53,9 @@ export function DetailFields({
 }
 
 /**
- * The labeled rows alone, each copying its value on click, for a panel with
- * no section to fold. By default they sit flush with the panel's padding.
+ * The labeled rows alone, a value copying on click or a control on the same
+ * grid, for a panel with no section to fold. By default they sit flush with
+ * the panel's padding.
  */
 export function DetailRows({
   rows,
@@ -64,15 +66,19 @@ export function DetailRows({
 }): React.JSX.Element {
   return (
     <div className={cn("grid text-xs", className)}>
-      {rows.map((row) =>
-        "control" in row ? (
-          <div key={row.key} className={cn(ROW_GRID, "items-center")}>
-            <span className="truncate text-muted-foreground">{row.label}</span>
+      {rows.map((row) => {
+        const label = (
+          <span className="truncate text-muted-foreground">{row.label}</span>
+        );
+
+        return "control" in row ? (
+          <div key={row.key} className={cn(ROW_GRID, "items-center gap-2")}>
+            {label}
             {row.control}
           </div>
         ) : (
           <CopyRow key={row.key} value={row.value} className={ROW_GRID}>
-            <span className="truncate text-muted-foreground">{row.label}</span>
+            {label}
             <span
               className={cn(
                 "truncate",
@@ -85,8 +91,8 @@ export function DetailRows({
               {row.value}
             </span>
           </CopyRow>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }
