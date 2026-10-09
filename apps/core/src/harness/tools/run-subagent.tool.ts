@@ -73,7 +73,7 @@ export function buildRunSubagentInputSchema(
     taskProperties.conversationKey = {
       type: "string",
       description:
-        "Existing subagent conversation key to resume. Omit to start a new persistent conversation.",
+        "A conversationKey an earlier run_subagent call returned, to resume that child. Omit to start a new persistent conversation.",
     };
   }
 

@@ -4,6 +4,8 @@
  * Signed with a key HKDF-derived from STAGE_TICKET_SECRET under its own info
  * string, so a run token can never open a stage ticket or the reverse. Core
  * is the only minter and verifier; the config plane refuses the prefix.
+ * The same secret also tags the subagent conversation keys core mints, under
+ * another info string.
  */
 
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
@@ -29,8 +31,12 @@ export interface RunTokenSubject {
 
 type RunTokenClaims = RunTokenSubject & { exp: number };
 
-// One derived key per secret value, so a rotation re-derives and a test can swap it.
-let derivedKey: { secret: string; key: Buffer } | undefined;
+const SUBAGENT_KEY_HKDF_INFO = "broods-subagent-key";
+const SUBAGENT_KEY_TAG_HEX = 32;
+
+// One derived key per info string and secret value, so a rotation re-derives
+// and a test can swap it.
+const derivedKeys = new Map<string, { secret: string; key: Buffer }>();
 
 /** Verify signature and expiry; null for anything else. */
 export function openRunToken(
@@ -74,18 +80,28 @@ export function sealRunToken(
   return `${RUN_TOKEN_PREFIX}${payload}.${sign(payload).toString("base64url")}`;
 }
 
-function runTokenKey(): Buffer {
+function derivedKey(info: string): Buffer {
   const secret = requireEnv("STAGE_TICKET_SECRET");
-  if (derivedKey?.secret !== secret) {
-    derivedKey = {
-      secret: secret,
-      key: Buffer.from(hkdfSync("sha256", secret, "", HKDF_INFO, KEY_BYTES)),
-    };
-  }
+  const cached = derivedKeys.get(info);
+  if (cached?.secret === secret) return cached.key;
+  const key = Buffer.from(hkdfSync("sha256", secret, "", info, KEY_BYTES));
+  derivedKeys.set(info, { secret: secret, key: key });
 
-  return derivedKey.key;
+  return key;
 }
 
 function sign(payload: string): Buffer {
-  return createHmac("sha256", runTokenKey()).update(payload).digest();
+  return createHmac("sha256", derivedKey(HKDF_INFO)).update(payload).digest();
+}
+
+/**
+ * The tag that proves core minted a subagent conversation key for this scope:
+ * a direct-API caller can name a conversation in the same form, never with a
+ * valid tag.
+ */
+export function subagentKeyTag(scope: string): string {
+  return createHmac("sha256", derivedKey(SUBAGENT_KEY_HKDF_INFO))
+    .update(scope)
+    .digest("hex")
+    .slice(0, SUBAGENT_KEY_TAG_HEX);
 }

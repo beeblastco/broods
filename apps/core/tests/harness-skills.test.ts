@@ -243,12 +243,27 @@ describe("loadConfiguredSkillPrompt", () => {
 
     expect(
       loadConfiguredSkillPrompt(
+        "acct_test",
         ["acct_test/allowed-skill"],
         "acct_test/other-skill",
       ),
     ).rejects.toThrow(
       "Skill is not configured for this agent: acct_test/other-skill",
     );
+  });
+
+  it("refuses a configured skill owned by another account", async () => {
+    const { loadConfiguredSkillPrompt } =
+      await import("../src/harness/skills.ts");
+
+    await expect(
+      loadConfiguredSkillPrompt(
+        "acct_test",
+        ["acct_other/their-skill"],
+        "acct_other/their-skill",
+      ),
+    ).rejects.toThrow("acct_other/their-skill");
+    expect(readS3TextMock).not.toHaveBeenCalled();
   });
 
   it("loads skill prompt with default resource paths", async () => {
@@ -267,6 +282,7 @@ describe("loadConfiguredSkillPrompt", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/test-skill"],
       "acct_test/test-skill",
     );
@@ -302,6 +318,7 @@ describe("loadConfiguredSkillPrompt", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/resource-skill"],
       "acct_test/resource-skill",
       ["README.md", "config.json"],
@@ -328,6 +345,7 @@ describe("loadConfiguredSkillPrompt", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/dedup-skill"],
       "acct_test/dedup-skill",
       ["SKILL.md"],
@@ -351,6 +369,7 @@ describe("loadConfiguredSkillPrompt", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/byte-skill"],
       "acct_test/byte-skill",
     );
@@ -410,6 +429,7 @@ describe("loadConfiguredSkillPrompt", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/script-skill"],
       "acct_test/script-skill",
       ["scripts/analyze.py"],
@@ -479,6 +499,7 @@ describe("loadConfiguredSkillPrompt", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/refresh-skill"],
       "acct_test/refresh-skill",
       [],
@@ -508,9 +529,9 @@ describe("loadConfiguredSkillPrompt", () => {
     const { loadConfiguredSkillPrompt } =
       await import("../src/harness/skills.ts");
 
-    expect(loadConfiguredSkillPrompt(["invalid"], "invalid")).rejects.toThrow(
-      "Invalid skill path: invalid",
-    );
+    expect(
+      loadConfiguredSkillPrompt("acct_test", ["invalid"], "invalid"),
+    ).rejects.toThrow("Invalid skill path: invalid");
   });
 
   it("throws when skill file does not exist in S3", async () => {
@@ -523,6 +544,7 @@ describe("loadConfiguredSkillPrompt", () => {
 
     expect(
       loadConfiguredSkillPrompt(
+        "acct_test",
         ["acct_test/missing-skill"],
         "acct_test/missing-skill",
       ),
@@ -950,6 +972,7 @@ describe("formatLoadedSkillPrompt output structure", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/xml-skill"],
       "acct_test/xml-skill",
     );
@@ -979,6 +1002,7 @@ describe("formatLoadedSkillPrompt output structure", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/heading-skill"],
       "acct_test/heading-skill",
       ["README.md"],
@@ -1002,6 +1026,7 @@ describe("formatLoadedSkillPrompt output structure", () => {
       await import("../src/harness/skills.ts");
 
     const result = await loadConfiguredSkillPrompt(
+      "acct_test",
       ["acct_test/trim-skill"],
       "acct_test/trim-skill",
     );
