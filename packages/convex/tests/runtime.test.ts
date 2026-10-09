@@ -122,6 +122,75 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("starts a long conversation at its latest compaction summary in one read", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const summary = (text: string): unknown => ({
+      message: { role: "system", content: `<summary>${text}` },
+    });
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 1_200; index += 1) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: String(index).padStart(4, "0"),
+          event:
+            index === 300
+              ? summary("old")
+              : index === 1_197
+                ? summary("latest")
+                : { message: { role: "user", content: `turn ${index}` } },
+        });
+      }
+    });
+
+    const page = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+      fromSystemPrefix: "<summary>",
+    });
+    expect(page.page.map((row): string => row.cursor)).toEqual([
+      "1197",
+      "1198",
+      "1199",
+    ]);
+    expect(page).toMatchObject({ isDone: true, continueCursor: null });
+  });
+
+  test("pages a conversation with no summary backward to its first row", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 600; index += 1) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: String(index).padStart(4, "0"),
+          event: { message: { role: "user", content: `turn ${index}` } },
+        });
+      }
+    });
+
+    const newest = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+      fromSystemPrefix: "<summary>",
+    });
+    expect(newest.page).toHaveLength(512);
+    expect(newest.page.at(0)?.cursor).toBe("0088");
+    expect(newest.page.at(-1)?.cursor).toBe("0599");
+    expect(newest).toMatchObject({ isDone: false, continueCursor: "0088" });
+    const oldest = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+      beforeCursor: newest.continueCursor ?? undefined,
+      fromSystemPrefix: "<summary>",
+    });
+    expect(oldest.page.map((row): string => row.cursor)).toEqual(
+      Array.from({ length: 88 }, (_, index) => String(index).padStart(4, "0")),
+    );
+    expect(oldest).toMatchObject({ isDone: true, continueCursor: null });
+  });
+
   test("splits fat rows by bytes without skipping or repeating one", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
