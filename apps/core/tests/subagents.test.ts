@@ -9,6 +9,8 @@ const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+  // Persistent child keys are tagged with a key derived from it.
+  process.env.STAGE_TICKET_SECRET = "stage-secret";
 });
 
 interface TestCompletion {
@@ -858,17 +860,14 @@ describe("SubagentCoordinator", () => {
     const resumed = await internals.resolveTask(
       {
         prompt: "continue",
-        conversationKey:
-          "subagent-persistent-0b9f6a52-3c1e-4d7a-9e2b-5f8c1d4a7e30",
+        conversationKey: created.publicConversationKey,
       },
       [],
       [],
     );
-    expect(resumed.publicConversationKey).toBe(
-      "subagent-persistent-0b9f6a52-3c1e-4d7a-9e2b-5f8c1d4a7e30",
-    );
+    expect(resumed.publicConversationKey).toBe(created.publicConversationKey);
     expect(resumed.conversationKey).toContain(
-      "api:subagent-persistent-0b9f6a52-3c1e-4d7a-9e2b-5f8c1d4a7e30",
+      `api:${created.publicConversationKey}`,
     );
     expect(resumed.persistent).toBe(true);
     expect(resumed.resuming).toBe(true);
@@ -881,15 +880,22 @@ describe("SubagentCoordinator", () => {
         [],
         [],
       ),
-    ).rejects.toThrow("must be a subagent-persistent-... key");
-    // The prefix alone is a name any direct-API caller can pick.
-    await expect(
-      internals.resolveTask(
-        { prompt: "recount", conversationKey: "subagent-persistent-alice" },
-        [],
-        [],
-      ),
-    ).rejects.toThrow("must be a subagent-persistent-... key");
+    ).rejects.toThrow("must be one run_subagent returned to this agent");
+    // The minted form alone is a name any direct-API caller can pick: only
+    // core's tag over this account and parent makes it resumable.
+    const forged = created.publicConversationKey.replace(
+      /-[0-9a-f]{32}$/,
+      `-${"0".repeat(32)}`,
+    );
+    for (const conversationKey of ["subagent-persistent-alice", forged]) {
+      await expect(
+        internals.resolveTask(
+          { prompt: "recount", conversationKey: conversationKey },
+          [],
+          [],
+        ),
+      ).rejects.toThrow("must be one run_subagent returned to this agent");
+    }
   });
 
   it("admits a persistent child conversation to own a fencing generation", async () => {

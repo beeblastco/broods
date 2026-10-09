@@ -34,7 +34,7 @@ export const lead = defineAgent({
 
 ## How the model uses it
 
-One `run_subagent` call starts up to 10 tasks. Each task has a `prompt`, and optionally the `agentId` of an allowed agent and a `conversationKey` to resume an earlier child. Only a key in the form `run_subagent` mints (`subagent-persistent-{uuid}`) resumes; any other key is refused, so a model cannot be talked into opening a direct-API caller's conversation with the child agent. The call returns at once with a `taskId`, `runId` and `conversationKey` per task. Results are injected into the parent automatically when they finish: at the parent's next step if it is still working, or as one batch after its pass.
+One `run_subagent` call starts up to 10 tasks. Each task has a `prompt`, and optionally the `agentId` of an allowed agent and a `conversationKey` to resume an earlier child. Only a key an earlier `run_subagent` call returned resumes: core signs each key for the account and parent agent that minted it and refuses any other, so a model cannot be talked into opening a direct-API caller's conversation with the child agent. The call returns at once with a `taskId`, `runId` and `conversationKey` per task. Results are injected into the parent automatically when they finish: at the parent's next step if it is still working, or as one batch after its pass.
 
 A child that runs a Pi `harness` shares one machine with every other conversation of that agent, each in its own work folder. Set `isolated: true` on a task to give a new conversation a machine of its own, for untrusted code, clashing installs or tests other work could contaminate. The machine a conversation starts on is the one it resumes on. An isolated machine is released after a day idle; the shared one after a week. Claude Code, Codex, Deep Agents and OpenCode always get one machine per conversation, because their bridge binds a fixed port.
 
@@ -68,7 +68,7 @@ With `stream: true`, attach to a child over WebSocket using the values `run_suba
   "type": "attach",
   "requestId": "attach-child-1",
   "agentId": "agent_child",
-  "conversationKey": "subagent-persistent-abc123",
+  "conversationKey": "subagent-persistent-3f1c9a2e-7b4d-4e8a-9c21-5d6f0a1b2c3d-8e1f4a2b9c7d6e5f0a1b2c3d4e5f6a7b",
   "eventId": "<taskId>",
   "runId": "<runId>"
 }
