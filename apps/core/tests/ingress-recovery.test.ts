@@ -36,4 +36,36 @@ describe("queued ingress recovery", () => {
       mutate.mockRestore();
     }
   });
+
+  it("resumes the next sweep where a capped one stopped", async () => {
+    let page = 0;
+    const mutate = spyOn(runtime, "mutate").mockImplementation(
+      async <T>(): Promise<T> => {
+        page += 1;
+
+        return { recovered: [], continueAfter: `key-${page}` } as T;
+      },
+    );
+    try {
+      startIngressRecovery();
+      for (let i = 0; i < 200 && mutate.mock.calls.length < 50; i += 1) {
+        await Bun.sleep(1);
+      }
+      await Bun.sleep(5);
+      expect(mutate).toHaveBeenCalledTimes(50);
+
+      stopIngressRecovery();
+      startIngressRecovery();
+      for (let i = 0; i < 200 && mutate.mock.calls.length < 51; i += 1) {
+        await Bun.sleep(1);
+      }
+
+      expect(mutate.mock.calls[50]?.[1]).toEqual({
+        leaseTtlMs: 15 * 60 * 1000,
+        afterConversationKey: "key-50",
+      });
+    } finally {
+      mutate.mockRestore();
+    }
+  });
 });

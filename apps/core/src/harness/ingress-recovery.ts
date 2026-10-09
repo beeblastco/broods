@@ -14,11 +14,15 @@ import type { IngressDispatchScope } from "./integrations.ts";
 
 // A lease handed back at shutdown is picked up within this, or on boot.
 const RECOVERY_INTERVAL_MS = 30_000;
-// Pages of queued conversations one sweep walks; the next sweep starts over.
+// What one sweep walks before it hands the rest to the next: pages of queued
+// conversations, and queues it promotes, which all land on this pod's worker
+// queue. The next sweep resumes where this one stopped.
 const MAX_RECOVERY_PAGES = 50;
+const MAX_RECOVERED_PER_SWEEP = 100;
 
 let recovery: ReturnType<typeof setInterval> | undefined;
 let sweeping = false;
+let resumeAfter: string | undefined;
 
 /** Sweeps once now, then on a timer. No-op when it is already running. */
 export function startIngressRecovery(): void {
@@ -65,19 +69,23 @@ function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
 }
 
 /**
- * One pass: promote every orphaned queue and dispatch what it returns, a page
- * of queued conversations at a time. Each entry is its own conversation, so a
- * page dispatches together. A dispatch that fails settles its envelope and
- * drains on, like any other.
+ * One pass: promote orphaned queues and dispatch what they return, a page of
+ * queued conversations at a time, from where the last pass stopped. Each entry
+ * is its own conversation, so a page dispatches together. A dispatch that
+ * fails settles its envelope and drains on, like any other.
  */
 async function sweepQueuedIngress(): Promise<void> {
   if (sweeping) return;
   sweeping = true;
   let count = 0;
   try {
-    let after: string | undefined;
-    for (let page = 0; page < MAX_RECOVERY_PAGES; page += 1) {
-      const { recovered, continueAfter } = await recoverQueuedIngress(after);
+    for (
+      let page = 0;
+      page < MAX_RECOVERY_PAGES && count < MAX_RECOVERED_PER_SWEEP;
+      page += 1
+    ) {
+      const { recovered, continueAfter } =
+        await recoverQueuedIngress(resumeAfter);
       count += recovered.length;
       await Promise.all(
         recovered.map((entry): Promise<void> =>
@@ -92,8 +100,8 @@ async function sweepQueuedIngress(): Promise<void> {
           ),
         ),
       );
+      resumeAfter = continueAfter ?? undefined;
       if (continueAfter === null) break;
-      after = continueAfter;
     }
   } catch (err) {
     logError("Queued ingress recovery failed", {

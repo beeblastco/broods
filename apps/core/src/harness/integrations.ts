@@ -157,9 +157,10 @@ const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // A webhook lists and decrypts its URL's agents before any signature is
 // checked. With `cacheAgentLists`, unsigned traffic reuses one listing per
 // account or stage URL for this long, so a flood costs one read per window; a
-// request that verifies lists again before it runs. A newly deployed agent's
-// channel can miss deliveries for up to this long; providers retry those.
+// request that verifies lists again before it runs.
 const CHANNEL_AGENT_LIST_TTL_MS = 10_000;
+// A request no cached agent verifies may reload a listing this old, at most.
+const CHANNEL_AGENT_LIST_RELOAD_AFTER_MS = 1_000;
 // Listings hold decrypted configs, so few are kept and expired ones go first.
 const CHANNEL_AGENT_LIST_CACHE_LIMIT = 256;
 // The single runtime entry point; sync or background is a body field.
@@ -486,7 +487,7 @@ class DirectForbiddenError extends Error {
 
 const channelAgentLists = new Map<
   string,
-  { agents: Promise<AgentRecord[]>; expiresAt: number }
+  { agents: Promise<AgentRecord[]>; loadedAt: number; expiresAt: number }
 >();
 
 class DirectNotFoundError extends Error {}
@@ -937,11 +938,49 @@ async function handleHttpRequest(
 }
 
 /**
- * Find the agent whose channel credentials verify this request. Only agents
- * that configure the channel are tried, signature checks are cheap, and the
- * scan is capped so a large account cannot turn one webhook into unbounded work.
+ * Find the agent whose channel credentials verify this request. A request no
+ * cached agent verifies tries once more on a fresh listing when the cached one
+ * is over a second old, so a new agent or a rotated secret is picked up within
+ * a second while unsigned traffic still reads at most once a second.
  */
 async function findChannelCredentialHolder(
+  context: HttpRoutingContext,
+  accountId: string,
+  channelName: string,
+  request: ChannelRequest,
+  endpointId?: string,
+): Promise<ChannelCredentialHolder> {
+  const holder = await scanChannelCredentialHolder(
+    context,
+    accountId,
+    channelName,
+    request,
+    endpointId,
+  );
+  if (
+    !context.cacheAgentLists ||
+    holder.kind === "holder" ||
+    holder.kind === "unavailable" ||
+    !dropAgedChannelAgentList(channelAgentListKey(accountId, endpointId))
+  ) {
+    return holder;
+  }
+
+  return scanChannelCredentialHolder(
+    context,
+    accountId,
+    channelName,
+    request,
+    endpointId,
+  );
+}
+
+/**
+ * One pass of `findChannelCredentialHolder`. Only agents that configure the
+ * channel are tried, signature checks are cheap, and the scan is capped so a
+ * large account cannot turn one webhook into unbounded work.
+ */
+async function scanChannelCredentialHolder(
   context: HttpRoutingContext,
   accountId: string,
   channelName: string,
@@ -1060,9 +1099,30 @@ function listWebhookAgents(
   if (fresh || !context.cacheAgentLists) return list();
 
   return cachedChannelAgentList(
-    endpointId ? `${accountId}\u0000${endpointId}` : accountId,
+    channelAgentListKey(accountId, endpointId),
     list,
   );
+}
+
+function channelAgentListKey(
+  accountId: string,
+  endpointId: string | undefined,
+): string {
+  return endpointId ? `${accountId}\u0000${endpointId}` : accountId;
+}
+
+/** Drops the listing under `key` when it is old enough to load again; whether it did. */
+function dropAgedChannelAgentList(key: string): boolean {
+  const cached = channelAgentLists.get(key);
+  if (
+    !cached ||
+    Date.now() - cached.loadedAt < CHANNEL_AGENT_LIST_RELOAD_AFTER_MS
+  ) {
+    return false;
+  }
+  channelAgentLists.delete(key);
+
+  return true;
 }
 
 /**
@@ -1134,7 +1194,11 @@ function cachedChannelAgentList(
   ) {
     channelAgentLists.delete(oldest.value);
   }
-  const entry = { agents: load(), expiresAt: now + CHANNEL_AGENT_LIST_TTL_MS };
+  const entry = {
+    agents: load(),
+    loadedAt: now,
+    expiresAt: now + CHANNEL_AGENT_LIST_TTL_MS,
+  };
   channelAgentLists.set(key, entry);
   entry.agents.catch((): void => {
     if (channelAgentLists.get(key) === entry) channelAgentLists.delete(key);
