@@ -806,15 +806,27 @@ describe("agent rules", () => {
     ).toThrow(
       "config.channels.gmail.topicName must be projects/{project}/topics/{name}",
     );
+    for (const allowedUserIds of [["*"], [], undefined]) {
+      expect(() =>
+        normalizeAgentConfig({
+          channels: {
+            gmail: {
+              id: "gmail",
+              autoSend: true,
+              allowedUserIds: allowedUserIds,
+            },
+          },
+        }),
+      ).toThrow(
+        "config.channels.gmail.autoSend needs allowedUserIds that name senders, not * or an empty list",
+      );
+    }
     expect(() =>
-      normalizeAgentConfig({
-        channels: {
-          gmail: { id: "gmail", autoSend: true, allowedUserIds: ["*"] },
-        },
-      }),
-    ).toThrow(
-      "config.channels.gmail.autoSend needs allowedUserIds that name senders, not *",
-    );
+      normalizeAgentConfig(
+        { channels: { gmail: { id: "gmail", autoSend: true } } },
+        { patch: true },
+      ),
+    ).not.toThrow();
   });
 
   it("validates harness configs", () => {

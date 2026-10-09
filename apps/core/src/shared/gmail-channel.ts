@@ -180,16 +180,33 @@ export function createGmailChannel(
         }
         // Fetched together, so the push is acknowledged inside Pub/Sub's
         // deadline. Gmail lists newest first; turns run in arrival order.
-        const fetched = await Promise.all(
+        const fetched = await Promise.allSettled(
           listing.messages
             .toReversed()
             .map((pointer) =>
               toMessageResult(pointer.id, mailbox, options, api),
             ),
         );
-        const results = fetched.filter(
-          (result): result is ParsedChannelMessage => result !== null,
-        );
+        const results: ParsedChannelMessage[] = [];
+        const failures: unknown[] = [];
+        for (const outcome of fetched) {
+          if (outcome.status === "rejected") failures.push(outcome.reason);
+          else if (outcome.value) results.push(outcome.value);
+        }
+        // A message whose read failed is listed again by the next
+        // notification, which looks back ten minutes. Only a push with nothing
+        // readable at all is left unacknowledged for Pub/Sub to redeliver.
+        if (failures.length > 0 && results.length === 0) throw failures[0];
+        if (failures.length > 0) {
+          logWarn("Gmail messages left for the next notification", {
+            mailbox: mailbox,
+            failed: failures.length,
+            reason:
+              failures[0] instanceof Error
+                ? failures[0].message
+                : String(failures[0]),
+          });
+        }
 
         return results.length > 0
           ? { kind: "batch", results: results }

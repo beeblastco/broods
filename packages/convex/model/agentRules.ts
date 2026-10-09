@@ -1205,15 +1205,7 @@ function normalizeGmailConfig(
       );
     }
   }
-  if (
-    config.autoSend === true &&
-    Array.isArray(config.allowedUserIds) &&
-    config.allowedUserIds.includes("*")
-  ) {
-    throw new ClientError(
-      "config.channels.gmail.autoSend needs allowedUserIds that name senders, not *",
-    );
-  }
+  if (config.autoSend === true) assertGmailAutoSend(config, options);
   if (
     typeof config.subscription === "string" &&
     !/^projects\/[^/]+\/subscriptions\/[^/]+$/.test(config.subscription)
@@ -1251,6 +1243,28 @@ function normalizeGmailConfig(
   ) {
     throw new ClientError(
       `config.channels.gmail needs ${missing.join(", ")} to receive mail`,
+    );
+  }
+}
+
+/**
+ * Sending without review needs a list that names senders. A patch may set
+ * `autoSend` without restating the list; the merged config checks the pair.
+ */
+function assertGmailAutoSend(
+  config: Record<string, unknown>,
+  options: AgentConfigCheckOptions,
+): void {
+  const senders = Array.isArray(config.allowedUserIds)
+    ? config.allowedUserIds
+    : null;
+  const open =
+    senders === null
+      ? !options.patch
+      : senders.length === 0 || senders.includes("*");
+  if (open) {
+    throw new ClientError(
+      "config.channels.gmail.autoSend needs allowedUserIds that name senders, not * or an empty list",
     );
   }
 }

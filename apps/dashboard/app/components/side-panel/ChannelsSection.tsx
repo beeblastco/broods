@@ -163,6 +163,7 @@ const CHANNELS: ChannelKind[] = [
         key: "allowedUserIds",
         label: "Allowed senders",
         type: "stringList",
+        required: true,
         placeholder: "boss@example.com, *",
       },
     ],

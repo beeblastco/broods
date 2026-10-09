@@ -6,7 +6,7 @@ title: Gmail
 
 The Gmail channel runs the agent when mail reaches one inbox, and answers in the same thread. Replies are drafts a person reviews and sends from Gmail, unless `autoSend` is on.
 
-Gmail cannot call a webhook directly. A Gmail watch publishes inbox changes to a Pub/Sub topic, and a push subscription on that topic posts to the Broods webhook. Broods starts the watch when the channel is deployed and renews it every day, because a watch lapses after seven days.
+Gmail cannot call a webhook directly. A Gmail watch publishes inbox changes to a Pub/Sub topic, and a push subscription on that topic posts to the Broods webhook. Broods starts the watch when the channel is deployed and renews it every day, because a watch lapses after seven days. A start that fails on Google's side is retried three times within twenty minutes; a refused grant waits for you to fix it.
 
 ## Setup
 
@@ -105,7 +105,7 @@ What does not:
 - No attachments in either direction. The agent is told how many arrived.
 - No typing indicator, reactions or chat commands.
 - A push reads mail from ten minutes before Gmail published it. A push that Pub/Sub redelivers more than a day late reads only the last day. One push reads at most 20 new messages; a larger burst logs a warning and the rest are left unread.
-- One mailbox holds one watch, on one topic. Stages that share a mailbox share that topic, with one push subscription per stage's webhook URL. A mailbox removed from every agent keeps publishing until its watch lapses, within seven days.
+- One mailbox holds one watch, on one topic. Stages that share a mailbox share that topic, with one push subscription per stage's webhook URL. Agents that name two topics for one mailbox are skipped at renewal and logged, since each watch call would replace the other's. A mailbox removed from every agent keeps publishing until its watch lapses, within seven days.
 
 Email is untrusted input: anyone who can reach the mailbox can write to the agent. Keep `allowedUserIds` narrow, and leave `autoSend` off unless replies need no review. Broods refuses `autoSend` with `["*"]`, since the agent would then answer anyone automatically.
 
