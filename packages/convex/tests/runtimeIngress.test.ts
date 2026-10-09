@@ -1690,6 +1690,44 @@ describe("runtime ingress", () => {
     ).toEqual({ recovered: [], continueAfter: null });
   });
 
+  test("recovery expires a released queue's elapsed envelopes instead of running them", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const role of ["owner", "queued"]) {
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: `released-${role}`,
+          mode: "followup",
+        }),
+      );
+    }
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: conversationKey,
+      ownerEventId: "released-owner",
+      ownerGeneration: 1,
+    });
+    vi.useFakeTimers({ now: Date.now() + 120_000 });
+    try {
+      expect(
+        await t.mutation(internal.runtimeIngress.recoverQueued, {
+          leaseTtlMs: 60_000,
+        }),
+      ).toEqual({ recovered: [], continueAfter: null });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_released-queued",
+      }),
+    ).toMatchObject({ status: "expired" });
+  });
+
   test("a long queue behind a live owner does not hide a released one", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
