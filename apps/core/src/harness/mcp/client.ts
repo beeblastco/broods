@@ -44,6 +44,7 @@ import {
 } from "../sandbox/machine-executor.ts";
 import { mergeSandboxEnv } from "../sandbox/utils.ts";
 import { publicHostFetch } from "../../shared/http.ts";
+import { logInfo } from "../../shared/log.ts";
 import { withImageLimits } from "../tools/utils.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
@@ -68,6 +69,18 @@ const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_TTL_MS = 60 * 60_000;
+
+// A rate-limited tool call waits out the window and tries again before the
+// model hears about it: a step's parallel calls to one server trip a per-minute
+// cap together, and the model's retry would only trip it again. The wait is the
+// one the server's message names, like Firecrawl's "please retry after 47s",
+// else a growing pause.
+const RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_PATTERN = /\b429\b|rate limit/i;
+const RATE_LIMIT_WAIT_PATTERN =
+  /(?:retry after|try again in) (\d+(?:\.\d+)?)\s*(ms|s)\b/i;
+const RATE_LIMIT_BACKOFF_MS = 2_000;
+const MAX_RATE_LIMIT_WAIT_MS = 60_000;
 
 const discoverCache = new Map<string, CachedDiscover>();
 const toolListCache = new Map<string, CachedListing>();
@@ -126,7 +139,24 @@ export async function callMcpTool(
   args: Record<string, unknown>,
   options: McpCallOptions = {},
 ): Promise<unknown> {
-  const result = await callMcpToolResult(connection, toolName, args, options);
+  let result = await callMcpToolResult(connection, toolName, args, options);
+  for (
+    let attempt = 1;
+    result.isError && attempt <= RATE_LIMIT_RETRIES;
+    attempt += 1
+  ) {
+    const waitMs = rateLimitWaitMs(renderContent(result.content), attempt);
+    if (waitMs === null) break;
+    logInfo("MCP tool rate limited, retrying", {
+      server: connection.record.name,
+      tool: toolName,
+      attempt: attempt,
+      waitMs: waitMs,
+    });
+    await sleep(waitMs, options.abortSignal);
+    if (options.abortSignal?.aborted) break;
+    result = await callMcpToolResult(connection, toolName, args, options);
+  }
   if (result.isError) {
     throw new Error(
       `MCP tool ${connection.record.name}.${toolName} failed: ${renderContent(result.content)}`,
@@ -508,6 +538,18 @@ function pruneCache(cache: Map<string, unknown>): void {
   }
 }
 
+/** How long a rate-limited call waits before its retry; null when the failure is something else. */
+function rateLimitWaitMs(message: string, attempt: number): number | null {
+  if (!RATE_LIMIT_PATTERN.test(message)) return null;
+  const [, amount, unit] = RATE_LIMIT_WAIT_PATTERN.exec(message) ?? [];
+  const askedMs =
+    amount && unit
+      ? Number(amount) * (unit.toLowerCase() === "s" ? 1000 : 1)
+      : RATE_LIMIT_BACKOFF_MS * 2 ** (attempt - 1);
+
+  return Math.min(Math.ceil(askedMs), MAX_RATE_LIMIT_WAIT_MS);
+}
+
 /**
  * Text view of a result's content. Non-text blocks are named instead of
  * silently dropped, so an image-only result never reads as an empty success.
@@ -569,6 +611,21 @@ function resolveOauth(
     refreshToken: resolved("refreshToken"),
     tokenUrl: record.oauth?.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
   };
+}
+
+/** Waits `ms`, or less when the signal aborts first. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 async function withClient<T>(

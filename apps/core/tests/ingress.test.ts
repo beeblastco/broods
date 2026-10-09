@@ -313,6 +313,34 @@ describe("async turn without model input", (): void => {
     mock.restore();
   });
 
+  it("records the failed task when the turn context does not load", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(Session.prototype, "createTurnContext").mockRejectedValue(
+      new Error("ArgumentValidationError"),
+    );
+    const recorded = spyOn(harness, "recordFailedTurn").mockResolvedValue();
+    const event: DirectInboundEvent = {
+      ...candidate(),
+      publicEventId: "event-1",
+      publicConversationKey: "conversation-1",
+      events: [],
+      agentConfig: {},
+      ownerGeneration: 1,
+    };
+
+    await expect(
+      handler({ kind: "direct-api-async-worker", event: event }),
+    ).rejects.toThrow("ArgumentValidationError");
+
+    expect(recorded).toHaveBeenCalledTimes(1);
+    expect(recorded.mock.calls[0]?.[0]).toBeInstanceOf(Session);
+    expect(recorded.mock.calls[0]?.[2]).toEqual(
+      new Error("ArgumentValidationError"),
+    );
+  });
+
   it("settles the envelope with its own reason when the cron settle fails", async (): Promise<void> => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
