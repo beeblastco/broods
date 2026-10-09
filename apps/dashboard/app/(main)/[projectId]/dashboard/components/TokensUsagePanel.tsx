@@ -1,5 +1,6 @@
 "use client";
 
+import { HelpMark } from "@/app/components/HelpMark";
 import { SegmentedControl } from "@/app/components/SegmentedControl";
 import {
   DropdownMenu,
@@ -492,7 +493,9 @@ function Sparkline({
  * The numbers row for the range or the clicked bin: four evenly spaced
  * columns, each a large value over a trend line in the chart's colours and
  * one detail line. Laid out by its own width, not the window's; values count
- * to their new number here, so only this row repaints during the tween.
+ * to their new number here, so only this row repaints during the tween. A
+ * column whose number is not what its label suggests carries a "?" with
+ * what it counts.
  */
 function UsageStats({
   bins,
@@ -541,6 +544,7 @@ function UsageStats({
           : `${modelsShown} of ${modelsTotal} models`,
       trend: binCosts,
       color: "var(--color-usage-output)",
+      help: "Each model's tokens at its public per-million USD rate. An estimate for comparing runs, not the bill from your provider.",
     },
     {
       label: "Tasks",
@@ -551,6 +555,7 @@ function UsageStats({
           : "No runs",
       trend: bins.map((b) => b.invocations),
       color: "var(--color-usage-tasks)",
+      help: "Agent runs that finished in this window, a subagent's run counted on its own. With all models shown, a run still going is added from the live trace for its first 20 minutes.",
     },
     {
       label: "Model calls",
@@ -569,7 +574,10 @@ function UsageStats({
             key={column.label}
             className="grid min-w-0 gap-1 border-border px-4 py-3 @2xl:border-l @2xl:first:border-l-0"
           >
-            <div className="text-xs text-muted-foreground">{column.label}</div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {column.label}
+              {column.help && <HelpMark text={column.help} />}
+            </div>
             <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
               {column.value}
             </div>
