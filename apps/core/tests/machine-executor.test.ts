@@ -142,6 +142,46 @@ test("a daemon reconnecting reclaims its record, and a dropped daemon fails its 
   expect(await pending).toBe("Replaced by a newer connection");
 });
 
+test("a daemon that hangs up while its claim is looked up leaves the record free", async () => {
+  const storage = machineStorage();
+  const list = storage.sandboxConfigs.list.bind(storage.sandboxConfigs);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve): void => {
+    release = resolve;
+  });
+  let looking: () => void = () => {};
+  const lookedUp = new Promise<void>((resolve): void => {
+    looking = resolve;
+  });
+  storage.sandboxConfigs.list = async (accountId: string) => {
+    looking();
+    await held;
+
+    return await list(accountId);
+  };
+  setStorageForTests(storage);
+  const server = core();
+
+  const gone = openSocket(server);
+  gone.onopen = (): void =>
+    gone.send(
+      JSON.stringify({ type: "hello", sandbox: "my-mac", instance: "gone" }),
+    );
+  await lookedUp;
+  gone.close();
+  await closeOf(gone);
+  // Let core run its close handler before the lookup answers.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  storage.sandboxConfigs.list = list;
+  release();
+
+  // Another daemon, with no --force, gets the record the dead socket never held.
+  const next = await connectDaemon(server, "my-mac", () => {}, {
+    instance: "next",
+  });
+  expect(next.ready.sandboxId).toBe(MACHINE_SANDBOX_ID);
+});
+
 test("another daemon is refused naming the holder, even on the same host, and --force takes over", async () => {
   const server = core();
   const holder = await connectDaemon(server, "my-mac", () => {}, {

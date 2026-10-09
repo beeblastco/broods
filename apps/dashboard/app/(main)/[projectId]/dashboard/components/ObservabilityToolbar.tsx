@@ -38,6 +38,8 @@ interface Props {
   onWindowChange: (window: TimeWindow | null) => void;
   /** Every entry held, before filters; the strip draws their volume. */
   points: VolumePoint[];
+  /** A time the strip marks with a red line, such as the selected trace. */
+  marker?: number | null;
   /** The strip's right edge; the panels pass the same clock their filters use. */
   now: number;
   onRefresh: () => void;
@@ -74,6 +76,7 @@ export function ObservabilityToolbar({
   window,
   onWindowChange,
   points,
+  marker,
   now,
   onRefresh,
   refreshDisabled,
@@ -143,6 +146,7 @@ export function ObservabilityToolbar({
         window={rangeWindow}
         selection={window}
         onSelect={selectWindow}
+        marker={marker}
       />
     </>
   );
