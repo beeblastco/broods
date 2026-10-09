@@ -39,7 +39,7 @@ interface Props {
   /** Every entry held, before filters; the strip draws their volume. */
   points: VolumePoint[];
   /** A time the strip marks with a red line, such as the selected trace. */
-  marker?: number | null;
+  marker?: number;
   /** The strip's right edge; the panels pass the same clock their filters use. */
   now: number;
   onRefresh: () => void;
