@@ -131,8 +131,8 @@ async function subagentDenial(
     return accessDenied();
   }
 
-  // The parent must be an active public agent, on this deployment, with a live
-  // ingress row, the same gate the parent's own status read passes.
+  // The parent must pass the gate its own status read does: an active agent
+  // (public, unless a ticket reads it) on this deployment, with a live ingress row.
   const [parentAgent, parentDeployment, parentStatus] = await Promise.all([
     context.agentLoader(request.accountId, parentScope.agentId),
     context.deploymentLoader(request.accountId, parentScope.agentId),
@@ -144,7 +144,7 @@ async function subagentDenial(
   ]);
   if (
     !parentAgent ||
-    parentAgent.config.publicAccess !== true ||
+    (parentAgent.config.publicAccess !== true && !auth.stageTicket) ||
     !deploymentScopeMatches(auth, parentDeployment) ||
     !parentStatus ||
     parentStatus.eventId !== parentEventId ||

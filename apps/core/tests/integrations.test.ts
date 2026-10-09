@@ -2135,6 +2135,47 @@ describe("direct API ingress", () => {
     });
   }
 
+  it("lets a stage ticket read a subagent of a private parent, never the runtime key", async () => {
+    const fixture = subagentStatusFixture({
+      parentEventId: scopedDirectEventId(
+        TEST_ACCOUNT.accountId,
+        TEST_AGENT_PRIVATE.agentId,
+        "parent-one",
+      ),
+    });
+    const read = (stageTicket: boolean): Promise<ResponseShape> =>
+      deploymentStatusRequest(
+        CHILD_RUN_ID,
+        createHandlers({
+          handleStatusRequest: async () => ({
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "processing" }),
+          }),
+        }),
+        {
+          asyncAgentResultLoader: async () => fixture.childResult,
+          ingressStatusLoader: async () =>
+            ingressStatus(
+              fixture.childResult.eventId,
+              "subagent-child",
+              fixture.childAgentId,
+              CHILD_RUN_ID,
+            ),
+          ingressStatusByEventIdLoader: async () =>
+            ingressStatus(
+              fixture.parentEventId,
+              "parent-conversation",
+              TEST_AGENT_PRIVATE.agentId,
+            ),
+        },
+        stageTicket,
+      );
+
+    expect((await read(false)).statusCode).toBe(403);
+    expect((await read(true)).statusCode).toBe(200);
+  });
+
   it("rejects subagent status when the durable parent lacks public deployment provenance", async () => {
     const fixture = subagentStatusFixture();
     const response = await deploymentStatusRequest(
@@ -2437,6 +2478,7 @@ async function deploymentStatusRequest(
   runId: string,
   handlers: ReturnType<typeof createHandlers>,
   options: IntegrationRoutingOptions,
+  stageTicket = false,
 ): Promise<ResponseShape> {
   return routeIncomingEvent(
     createEvent(
@@ -2456,6 +2498,7 @@ async function deploymentStatusRequest(
         endpointId: "env-endpoint",
         projectSlug: "demo",
         stageSlug: "development",
+        ...(stageTicket ? { stageTicket: STAGE_TICKET } : {}),
       }),
     },
   );
