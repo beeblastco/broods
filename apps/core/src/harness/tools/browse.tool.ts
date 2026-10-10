@@ -114,7 +114,9 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
           },
         );
         if (!result.ok || (result.exitCode ?? 0) !== 0) {
-          return toolError(formatRunText(result));
+          return toolError(
+            formatRunText(result, sandboxTimeoutSeconds(sandbox)),
+          );
         }
         if (mode !== "screenshot" || !workspace) {
           return { type: "text", value: result.stdout.trim() || "(empty)" };

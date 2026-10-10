@@ -37,6 +37,8 @@ import {
   sandboxRunMetadata,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  sandboxTimeoutSeconds,
+  selectableSandboxes,
   targetsAgentSandbox,
   workspaceParamSchema,
   writesOutsideAllowed,
@@ -47,6 +49,9 @@ import { toolError, toolText } from "./utils.ts";
 // What every no-mount run has in common, so the schema and the notes never drift.
 const THROWAWAY_NOTE =
   "Nothing written there reaches durable storage, so use it for throwaway work";
+// Providers whose workspace is a mount-s3 FUSE mount, which has no rename or append.
+const S3_MOUNT_PROVIDERS: ReadonlySet<SandboxExecutorConfig["provider"]> =
+  new Set<SandboxExecutorConfig["provider"]>(["daytona", "lambda", "sandbox"]);
 
 interface BashInput {
   command: string;
@@ -138,6 +143,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
                   metadata: sandboxRunMetadata(context, ws),
                   principal: context.principal?.(),
                 }),
+                sandboxTimeoutSeconds(sandbox),
               ),
           );
         } catch (cause) {
@@ -187,7 +193,8 @@ function description(context: SandboxToolContext): string {
 Usage notes:
 - ${runtimes}
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by \`[exit code N]\` when the command fails; very large output is truncated.
+- ${timeoutNote(context)}
 - ${state}${sandboxesNote(context)}`;
   }
 
@@ -197,8 +204,9 @@ Usage notes:
 - The selected workspace's sandbox may restrict runtimes; commands using disallowed runtimes are rejected before execution.
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by a bracketed status such as \`[exit code N]\` or \`[timed out, exit code N]\` when the command fails; very large output is truncated.
-- Each command starts in the current workspace directory; use relative paths.
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by \`[exit code N]\` when the command fails; very large output is truncated.
+- ${timeoutNote(context)}
+- Each command starts in the current workspace directory; use relative paths.${s3MountNote(context)}
 - DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
 - Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${reservedNote(context)}${ownSandboxNote(context)}${sandboxesNote(context)}${backgroundNote(context)}`;
@@ -413,6 +421,23 @@ function reservedStandaloneNote(sandbox: SandboxExecutorConfig): string {
   return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
 }
 
+// Scenario note: a mount-s3 workspace refuses rename and append, which in-place
+// editors and `>>` rely on, and the failure ("Function not implemented") reads
+// like a broken tool.
+function s3MountNote(context: SandboxToolContext): string {
+  const mounted = context.workspaces.some(
+    (workspace): boolean =>
+      workspace.sandbox !== undefined &&
+      S3_MOUNT_PROVIDERS.has(workspace.sandbox.provider),
+  );
+  if (!mounted) {
+    return "";
+  }
+
+  return `
+- The workspace is an S3 mount with no rename or append: \`sed -i\`, \`mv\` and \`>>\` on its files fail. Use edit/write, or work in /tmp and \`cp\` back.`;
+}
+
 // Scenario note: the sandboxes a call can pick by name, the default first when
 // nothing mounts it. One list, so `sandbox` never means two different things.
 function sandboxesNote(context: SandboxToolContext): string {
@@ -456,6 +481,22 @@ function sandboxParamSchema(
     enum: choices.map((choice): string => choice.name),
     description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${ignoresWorkspace}`,
   };
+}
+
+// The per-call limit the model plans around, one figure per distinct limit among
+// the sandboxes a call can reach.
+function timeoutNote(context: SandboxToolContext): string {
+  const reachable = [
+    ...context.workspaces.map((workspace) => workspace.sandbox),
+    ...selectableSandboxes(context).map((entry) => entry.sandbox),
+  ].filter((sandbox): sandbox is SandboxExecutorConfig => Boolean(sandbox));
+  const limits = [
+    ...new Set(
+      reachable.map((sandbox): number => sandboxTimeoutSeconds(sandbox)),
+    ),
+  ].sort((a, b): number => a - b);
+
+  return `Each call is limited to ${limits.map((seconds): string => `${seconds}s`).join(" or ")}; past it the call fails.`;
 }
 
 // The write guard is not on everywhere: it steps aside on the agent's own reserved

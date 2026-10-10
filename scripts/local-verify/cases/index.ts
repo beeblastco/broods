@@ -2,6 +2,7 @@ import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { autoCompaction } from "./auto-compaction.ts";
+import { bashTimeout } from "./bash-timeout.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
@@ -36,6 +37,7 @@ export const verifyCases: readonly VerifyCase[] = [
   steerAtBoundary,
   autoCompaction,
   machineSandbox,
+  bashTimeout,
   ownBucketSandbox,
   sandboxImage,
   lambdaSnapshot,

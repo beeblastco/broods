@@ -2155,7 +2155,7 @@ describe("createSandboxExecutor", () => {
     expect(posts).toBe(1);
   });
 
-  it("surfaces an exec that outlived its deadline instead of posting it again", async () => {
+  it("times out an exec that outlived its deadline instead of posting it again", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
     const {
@@ -2183,7 +2183,13 @@ describe("createSandboxExecutor", () => {
       throw new DOMException("", "TimeoutError");
     }) as unknown as typeof fetch;
 
-    expect(executor.run(request)).rejects.toThrow(DOMException);
+    // A timeout like one the guest stops itself, with nothing the guest never sent.
+    expect(await executor.run(request)).toMatchObject({
+      ok: false,
+      timedOut: true,
+      exitCode: null,
+      stdout: "",
+    });
     expect(
       posted.filter((body): boolean => body.includes("sleep infinity")),
     ).toHaveLength(1);

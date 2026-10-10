@@ -74,6 +74,7 @@ export async function connectMachine(
     computer: boolean;
     name: string;
     envVars?: Record<string, string>;
+    timeout?: number;
   },
 ): Promise<MachineConnection> {
   const { sandboxId } = await context.account.createSandbox({
@@ -83,6 +84,7 @@ export async function connectMachine(
       permissionMode: "bypass",
       network: { mode: "allow-all" },
       ...(options.envVars ? { envVars: options.envVars } : {}),
+      ...(options.timeout ? { timeout: options.timeout } : {}),
     },
   });
   let output = "";

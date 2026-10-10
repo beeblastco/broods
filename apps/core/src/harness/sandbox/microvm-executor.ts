@@ -103,6 +103,7 @@ import {
   configuredSandboxSpecs,
   configString,
   EXEC_GRACE_MS,
+  execDeadlineResponse,
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
@@ -519,7 +520,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
       return execRunResult(
         request,
-        await this.#exec(microvmId, endpoint, payload),
+        await this.#exec(microvmId, endpoint, payload).catch(
+          execDeadlineResponse,
+        ),
         PROVIDER,
         startedAt,
       );
@@ -1155,7 +1158,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         target.endpoint,
         payload,
         CACHED_WARMUP_BUDGET_MS,
-      );
+      ).catch(execDeadlineResponse);
     } catch (error) {
       if (!(error instanceof MicrovmNotReadyError)) throw error;
       const key = sandboxReservationKey(request);
