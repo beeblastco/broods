@@ -184,7 +184,7 @@ flowchart TD
   B --> R
   P --> R["checkout the stage's ref,<br/>sst refresh, sst diff"]
   R -->|diff exits non-zero| F[Fail, apply nothing]
-  R -->|"no + - ~ lines"| OK[No drift]
+  R -->|"plan says No changes"| OK[No drift]
   R -->|drift| D{production?}
   D -->|no| DEP["sst deploy,<br/>deletes orphans"]
   D -->|yes| REP["Fail the job,<br/>report only"]
