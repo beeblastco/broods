@@ -222,16 +222,16 @@ describe("in-process worker dispatch", () => {
     }
   });
 
-  it("hands a yielding run's slot to the queued run and resumes it next", async () => {
+  it("hands a yielding run's slot to the queued run and resumes it next", async (): Promise<void> => {
     const releases: (() => void)[] = [];
     const started: string[] = [];
     const blocked = (): Promise<void> =>
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve): void => {
         releases.push(resolve);
       });
     let firstDeadline = 0;
     let resumedDeadline = 0;
-    dispatchInProcessWorker("test-worker", async (context) => {
+    dispatchInProcessWorker("test-worker", async (context): Promise<void> => {
       started.push("yielder");
       firstDeadline = context.deadlineMs;
       await blocked();
@@ -239,12 +239,12 @@ describe("in-process worker dispatch", () => {
       resumedDeadline = context.deadlineMs;
     });
     for (let i = 0; i < 7; i += 1) {
-      dispatchInProcessWorker("test-worker", async () => {
+      dispatchInProcessWorker("test-worker", async (): Promise<void> => {
         started.push(`busy-${i}`);
         await blocked();
       });
     }
-    dispatchInProcessWorker("test-worker", async () => {
+    dispatchInProcessWorker("test-worker", async (): Promise<void> => {
       started.push("queued");
       await blocked();
     });

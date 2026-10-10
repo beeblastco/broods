@@ -151,7 +151,7 @@ const MAX_AGENT_ITERATIONS = 30;
 // close to its deadline yields its worker slot after the step, or, when it may
 // not yield, takes one last step with no tools and no new steers that answers.
 // Steers left queued start the next run.
-const DEADLINE_WIND_DOWN_MS = 3 * 60 * 1000;
+export const DEADLINE_WIND_DOWN_MS = 3 * 60 * 1000;
 const WIND_DOWN_INSTRUCTION =
   "This turn is out of time. Reply now with what you have so far and say what is left; the user can ask you to continue.";
 // Tools whose successful call already delivered the run's output to a channel
@@ -2392,7 +2392,7 @@ export async function runAgentLoop(
     consumeStream: wrappedConsumeStream,
     ensureFinalized: ensureFinalized,
     didFail: (): boolean => didFail,
-    yielded: (): boolean => yielded,
+    yielded: (): boolean => yielded && !didFail,
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,

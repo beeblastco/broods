@@ -10,7 +10,7 @@
 
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
-import { requireEnv, WORKER_TIMEOUT_BUDGET_MS } from "./env.ts";
+import { MAX_RUN_SLOTS, requireEnv, WORKER_TIMEOUT_BUDGET_MS } from "./env.ts";
 
 const HKDF_INFO = "broods-run-token";
 const KEY_BYTES = 32;
@@ -19,7 +19,7 @@ const TTL_MAX_MS = 2 * 60 * 60 * 1000;
 
 /** Outlives the run budget by a margin, capped: a leaked token stays short. */
 const RUN_TOKEN_TTL_MS = Math.min(
-  WORKER_TIMEOUT_BUDGET_MS + TTL_MARGIN_MS,
+  WORKER_TIMEOUT_BUDGET_MS * MAX_RUN_SLOTS + TTL_MARGIN_MS,
   TTL_MAX_MS,
 );
 

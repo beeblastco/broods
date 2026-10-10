@@ -923,11 +923,15 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("winds down with a tool-free last step near the deadline", async () => {
-    const stepBoundary = mock(async (..._args: unknown[]) => ({
-      renewal: "renewed",
-      steering: null,
-    }));
+  it("winds down with a tool-free last step near the deadline", async (): Promise<void> => {
+    const stepBoundary = mock(
+      async (
+        ..._args: unknown[]
+      ): Promise<{ renewal: string; steering: null }> => ({
+        renewal: "renewed",
+        steering: null,
+      }),
+    );
     const stream = await startTwoStepTurn(
       undefined,
       { deadlineMs: Date.now() + 60_000 },
@@ -950,7 +954,7 @@ describe("runAgentLoop", () => {
     expect(stream.didFail()).toBe(false);
   });
 
-  it("yields at the step boundary near the deadline when the pool runs it on", async () => {
+  it("yields at the step boundary near the deadline when the pool runs it on", async (): Promise<void> => {
     const stream = await startTwoStepTurn(undefined, {
       deadlineMs: Date.now() + 60_000,
       canYield: true,

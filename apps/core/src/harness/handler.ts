@@ -44,6 +44,7 @@ import {
 import {
   booleanEnv,
   getHarnessPublicUrl,
+  MAX_RUN_SLOTS,
   positiveIntegerEnv,
   WORKER_TIMEOUT_BUDGET_MS,
 } from "../shared/env.ts";
@@ -96,6 +97,7 @@ import {
   completionToParentMessage,
 } from "./async-tools.ts";
 import {
+  DEADLINE_WIND_DOWN_MS,
   readAgentFullStream,
   recordFailedTurn,
   runAgentLoop,
@@ -187,15 +189,13 @@ const CHANNEL_APPROVAL_DENIAL_REASON =
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 // What a subagent or async-tool wait leaves of the request budget, so the parent
-// still has time for the turn that reads the results before the deadline.
-const WAIT_DEADLINE_MARGIN_MS = 60 * 1000;
+// still has time for the turn that reads the results before the deadline. The
+// harness yields or winds down in that same window, so they match.
+const WAIT_DEADLINE_MARGIN_MS = DEADLINE_WIND_DOWN_MS;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
 const WORKER_SLOT_GRACE_MS = 5_000;
-// How many worker slots one run may take in turn: an hour at the default
-// budget, so a run that never ends still stops costing tokens.
-const MAX_RUN_SLOTS = positiveIntegerEnv("MAX_RUN_SLOTS", 6);
 const WORKER_DEADLINE_MESSAGE = "Run exceeded the worker deadline";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
@@ -304,7 +304,7 @@ export function dispatchInProcessWorker(
     // A few stuck workers would otherwise pin every slot for every tenant on
     // the pod. An overrun frees the slot and aborts the run, so the pod never
     // runs more than MAX_INPROCESS_WORKERS model passes at once.
-    const slotTimer = setTimeout(() => {
+    const slotTimer = setTimeout((): void => {
       logError("In-process worker exceeded deadline; reclaiming slot", {
         kind: kind,
         budgetMs: WORKER_TIMEOUT_BUDGET_MS,
@@ -324,15 +324,22 @@ export function dispatchInProcessWorker(
   context.yieldSlot = async (heldLease): Promise<void> => {
     if (runAbort.signal.aborted || !releaseSlot) return;
     releaseSlot();
+    // No budget while queued: a coordinator reading the old deadline would
+    // take the parent for out of time.
+    context.deadlineMs = Number.POSITIVE_INFINITY;
     await new Promise<void>((resolve): void => {
-      enqueueWorker([
-        kind,
-        (): void => {
-          takeSlot();
-          resolve();
-        },
-        heldLease,
-      ]);
+      enqueueWorker(
+        [
+          kind,
+          (): void => {
+            takeSlot();
+            resolve();
+          },
+          heldLease,
+        ],
+        // A run stopped mid-turn holding its lease is never load-shed.
+        false,
+      );
     });
   };
   enqueueWorker([
@@ -340,8 +347,8 @@ export function dispatchInProcessWorker(
     (): void => {
       takeSlot();
       const execution = run(context).then(
-        () => undefined,
-        (err) => {
+        (): void => undefined,
+        (err): void => {
           logError("In-process worker failed", {
             kind: kind,
             error: err instanceof Error ? err.message : String(err),
@@ -350,10 +357,10 @@ export function dispatchInProcessWorker(
       );
       const worker: Promise<void> = Promise.race([
         execution,
-        new Promise<void>((resolve) => {
+        new Promise<void>((resolve): void => {
           abandon = resolve;
         }),
-      ]).finally(() => {
+      ]).finally((): void => {
         releaseSlot?.();
         inProcessWorkers.delete(worker);
       });
@@ -2704,13 +2711,13 @@ async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
 }
 
 /** Starts a worker now when a slot is free, else queues it FIFO. */
-function enqueueWorker(entry: PendingWorkerRun): void {
+function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
   if (activeInProcessWorkers < MAX_INPROCESS_WORKERS) {
     entry[1]();
 
     return;
   }
-  if (pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
+  if (loadShed && pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
     // Load-shed: the awaiting caller surfaces the error instead of the queue
     // growing without bound.
     throw new Error("In-process worker queue is full");
@@ -3260,7 +3267,8 @@ async function runParentContinuationLoop(options: {
     // from the stored tool results once a slot is free again.
     if (stream.yielded()) {
       turnContext = await resumeAfterYield(
-        options,
+        options.session,
+        options.context,
         turnContext.ephemeralSystem,
       );
       continue;
@@ -3380,16 +3388,11 @@ async function runParentContinuationLoop(options: {
  * turn's one-turn system messages are not stored, so they carry over.
  */
 async function resumeAfterYield(
-  options: {
-    session: Session;
-    subagentCoordinator: SubagentCoordinator;
-    asyncToolCoordinator: AsyncToolCoordinator;
-    context?: RequestContext;
-  },
+  session: Session,
+  context: RequestContext | undefined,
   ephemeralSystem: SystemModelMessage[],
 ): Promise<DirectTurn["turnContext"]> {
-  const { session } = options;
-  await options.context?.yieldSlot?.(
+  await context?.yieldSlot?.(
     session.ownerGeneration === undefined
       ? undefined
       : {
@@ -3398,6 +3401,7 @@ async function resumeAfterYield(
           ownerGeneration: session.ownerGeneration,
         },
   );
+
   return session.createTurnContext(ephemeralSystem);
 }
 
