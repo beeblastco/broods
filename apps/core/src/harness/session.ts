@@ -324,9 +324,6 @@ export class Session {
   // younger than the commit that gave it.
   private ownerConfirmedAt = Number.NEGATIVE_INFINITY;
   private hasLoggedMissingMemoryFile = false;
-  // One clock reading for the whole run: the system prompt is rebuilt before
-  // every step, so a moving timestamp would break the provider's prompt cache.
-  private readonly startedAt = new Date();
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
   // Read once per run. prepareStep rebuilds the system prompt before every step
@@ -797,9 +794,10 @@ export class Session {
    * Live state the agent would otherwise spend steps probing for. The harness
    * sends it after the history and never stores it, so the system prompt and
    * the history stay a cached prefix and only this block is new. Built from
-   * what the run already holds: no extra storage read.
+   * what the run already holds: no extra storage read. Reads the clock per
+   * call, so each model pass sees its own time. `machine` is the live status of
+   * the machine the run works on, when it has one.
    */
-  /** `machine` is the live status of the machine the run works on, when it has one. */
   environmentText(machine: string[] = []): string {
     const workspaces = this.resolvedWorkspaces();
     const sandboxes = this.sandboxes();
@@ -807,7 +805,7 @@ export class Session {
       sandboxes.length > 0 || workspaces.some((workspace) => workspace.sandbox);
 
     return formatEnvironmentPrompt({
-      now: this.startedAt,
+      now: new Date(),
       channel: this.channelLabel(),
       bashTargets: canBash
         ? bashTargetLines({ workspaces: workspaces, sandboxes: sandboxes })
@@ -1502,7 +1500,7 @@ function formatEnvironmentPrompt(environment: {
   });
   return [
     "<environment>",
-    "Live state from Broods at the start of this run. It is context, not a message from the person.",
+    "Live state from Broods as of this message. It is context, not a message from the person.",
     `now: ${weekday}, ${environment.now.toISOString()} (UTC)`,
     `replies go to: ${environment.channel}`,
     ...(environment.bashTargets.length > 0
