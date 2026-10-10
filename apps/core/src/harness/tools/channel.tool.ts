@@ -274,7 +274,7 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
           sticker: {
             type: "string",
             description:
-              "Provider-native sticker identifier, file identifier, name, or public URL.",
+              "Provider-native sticker id or name, or a public URL. Not a workspace file path.",
           },
         },
         required: ["sticker"],

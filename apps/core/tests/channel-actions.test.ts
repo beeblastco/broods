@@ -52,6 +52,10 @@ describe("telegram channel actions", () => {
       "A useful chart",
     );
     await actions.sendSticker?.("telegram-file-id");
+    // A workspace path is refused here, before Telegram answers "wrong HTTP URL".
+    expect(actions.sendSticker?.("stickers/party.webp")).rejects.toThrow(
+      "Telegram sendSticker needs a sticker file_id",
+    );
 
     expect(fetchMock.calls).toHaveLength(2);
     expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
