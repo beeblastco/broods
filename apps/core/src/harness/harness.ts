@@ -384,6 +384,24 @@ export async function runAgentLoop(
     string,
     { type: string; cpuUsec: number }
   >();
+  // Child OTel spans remain open until the corresponding AI SDK finish hook.
+  // Their real OTel IDs are reused in the live NATS trace rows.
+  const stepSpans = new Map<number, TrackedSpan>();
+  const toolSpans = new Map<string, TrackedSpan>();
+  /** Passed to the tool registry as `onToolRetry`; tallies each wait on the call's open span. */
+  const recordToolRetry = (toolCallId: string, waitMs: number): void => {
+    const tracked = toolSpans.get(toolCallId);
+    if (!tracked) return;
+    const retry = {
+      "tool.retry.count":
+        Number(tracked.attributes["tool.retry.count"] ?? 0) + 1,
+      "tool.retry.wait_ms":
+        Number(tracked.attributes["tool.retry.wait_ms"] ?? 0) + waitMs,
+    };
+    // A fresh object: the running row published at start may still hold the old one.
+    tracked.attributes = { ...tracked.attributes, ...retry };
+    tracked.otelSpan.setAttributes(retry);
+  };
   /** Passed to the tool registry as `onSandboxCpu`; folds each CPU sample into the usage buckets. */
   const recordSandboxCpu = (sample: SandboxCpuSample): void => {
     if (!(sample.cpuUsec > 0)) return;
@@ -679,6 +697,7 @@ export async function runAgentLoop(
         dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: recordSandboxCpu,
+        onToolRetry: recordToolRetry,
         onBlockingQuestion: (question): void => {
           questionSummaries.push(question);
         },
@@ -776,10 +795,6 @@ export async function runAgentLoop(
   let finalResponse: JSONValue | undefined;
   let lastStepText = "";
 
-  // Child OTel spans remain open until the corresponding AI SDK finish hook.
-  // Their real OTel IDs are reused in the live NATS trace rows.
-  const stepSpans = new Map<number, TrackedSpan>();
-  const toolSpans = new Map<string, TrackedSpan>();
   const toolStepNumbers = new Map<string, number | undefined>();
   /** Opens a model.step or tool.call OTel span and keeps the ids its live NATS row reuses. */
   const startTrackedSpan = (
@@ -1575,8 +1590,7 @@ export async function runAgentLoop(
         agentId: session.agentId,
         conversationKey: session.conversationKey,
         attributes: {
-          "tool.name": toolCall.toolName,
-          "tool.call_id": toolCall.toolCallId,
+          ...tracked.attributes,
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
           ...computeAttributes,

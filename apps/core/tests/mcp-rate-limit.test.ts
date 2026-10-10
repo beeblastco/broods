@@ -4,11 +4,13 @@
  */
 
 import { afterEach, expect, it } from "bun:test";
+import type { Tool } from "ai";
 import {
   callMcpTool,
   mcpConnection,
   setMcpForTests,
 } from "../src/harness/mcp/client.ts";
+import { mcpTools } from "../src/harness/mcp/mcp.tool.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 
 const RATE_LIMITED =
@@ -47,6 +49,43 @@ it("waits the asked time and retries a rate-limited call", async () => {
 
   expect(result).toBe("found");
   expect(calls).toBe(3);
+});
+
+it("reports each wait against the tool call, for its span", async () => {
+  let calls = 0;
+  setMcpForTests({
+    callTool: async () => {
+      calls += 1;
+
+      return calls < 3
+        ? { isError: true, content: [{ type: "text", text: RATE_LIMITED }] }
+        : { content: [{ type: "text", text: "found" }] };
+    },
+  });
+  const retries: Array<[string, number]> = [];
+  const tools = mcpTools(
+    mcpConnection(record, undefined),
+    [{ name: "search", inputSchema: { type: "object" } }],
+    {
+      onToolRetry: (toolCallId, waitMs): void => {
+        retries.push([toolCallId, waitMs]);
+      },
+    },
+  );
+
+  const search: Tool<Record<string, unknown>> | undefined =
+    tools.firecrawl__search;
+
+  const result = await search?.execute?.(
+    { q: "x" },
+    { toolCallId: "call-1", messages: [], context: {} },
+  );
+
+  expect(result).toBe("found");
+  expect(retries).toEqual([
+    ["call-1", 10],
+    ["call-1", 10],
+  ]);
 });
 
 it("reads a wait given in words", async () => {

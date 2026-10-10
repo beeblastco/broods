@@ -103,10 +103,12 @@ export interface McpConnection {
 }
 
 /** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
- * terminal frame, so the harness can meter the run's compute. */
+ * terminal frame, so the harness can meter the run's compute. onRetry fires
+ * after each rate-limit wait it retries on, so the tool.call span can show it. */
 export interface McpCallOptions {
   abortSignal?: AbortSignal;
   onCpuUsec?: (cpuUsec: number) => void;
+  onRetry?: (waitMs: number) => void;
 }
 
 interface CachedDiscover {
@@ -155,6 +157,7 @@ export async function callMcpTool(
     });
     await sleep(waitMs, options.abortSignal);
     if (options.abortSignal?.aborted) break;
+    options.onRetry?.(waitMs);
     result = await callMcpToolResult(connection, toolName, args, options);
   }
   if (result.isError) {

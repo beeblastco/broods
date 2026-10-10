@@ -8,14 +8,18 @@
 import type { Tool as McpTool } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
-import type { SandboxCpuSample } from "../sandbox/types.ts";
+import type { ToolContext } from "../tools/index.ts";
 import { normalizeToolResultOutput } from "../tools/utils.ts";
 import { callMcpTool, type McpConnection } from "./client.ts";
 
+/** Builds the model-facing tools of one connected server; the tool registry calls it per server. */
 export function mcpTools(
   connection: McpConnection,
   remoteTools: McpTool[],
-  onSandboxCpu?: (sample: SandboxCpuSample) => void,
+  {
+    onSandboxCpu,
+    onToolRetry,
+  }: Pick<ToolContext, "onSandboxCpu" | "onToolRetry">,
 ): ToolSet {
   const tools: ToolSet = {};
   for (const remote of remoteTools) {
@@ -32,6 +36,8 @@ export function mcpTools(
           (input ?? {}) as Record<string, unknown>,
           {
             abortSignal: options.abortSignal,
+            onRetry: (waitMs: number): void =>
+              onToolRetry?.(options.toolCallId, waitMs),
             // Only a hosted row's Lambda reports CPU; metered under the
             // dedicated tool-compute type so it never files as the agent's
             // own sandbox.
