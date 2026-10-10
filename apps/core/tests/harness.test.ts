@@ -21,7 +21,10 @@ import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
-import type { AgentLoopStream } from "../src/harness/harness.ts";
+import type {
+  AgentLoopOptions,
+  AgentLoopStream,
+} from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import {
   setStorageForTests,
@@ -920,6 +923,26 @@ describe("runAgentLoop", () => {
     );
   });
 
+  it("winds down with a tool-free last step near the deadline", async () => {
+    const stepBoundary = mock(async (..._args: unknown[]) => ({
+      renewal: "renewed",
+      steering: null,
+    }));
+    const stream = await startTwoStepTurn(
+      undefined,
+      { deadlineMs: Date.now() + 60_000 },
+      stepBoundary,
+    );
+    await stream.consumeStream();
+
+    // One last step, no tools, told to answer now; steers stay queued.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
+    const call = twoStepModelInUse?.doStreamCalls[0];
+    expect(call?.toolChoice).toEqual({ type: "none" });
+    expect(JSON.stringify(call?.prompt)).toContain("This turn is out of time");
+    expect(stepBoundary.mock.calls[0]?.[1]).toEqual({ claimSteering: false });
+  });
+
   it("fails the run when the model sends nothing within the chunk timeout", async () => {
     process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
     // Longer than the timeout; the mock stream ignores the abort a real
@@ -942,7 +965,9 @@ describe("runAgentLoop", () => {
   it("fails the run when the worker pool aborts it", async () => {
     weatherDelayMs = 900;
     const slot = new AbortController();
-    const stream = await startTwoStepTurn(undefined, slot.signal);
+    const stream = await startTwoStepTurn(undefined, {
+      abortSignal: slot.signal,
+    });
     setTimeout(
       () => slot.abort(new Error("Run exceeded the worker deadline")),
       100,
@@ -2245,7 +2270,7 @@ describe("runAgentLoop", () => {
 
     await stream.consumeStream();
 
-    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toHaveLength(2);
+    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toHaveLength(3);
   });
 
   it("drops the step-count stop when maxTurn is 0", async () => {
@@ -2290,7 +2315,7 @@ describe("runAgentLoop", () => {
 
     await stream.consumeStream();
 
-    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toHaveLength(1);
+    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toHaveLength(2);
   });
 
   it("exposes skill tools only when skills are enabled", async () => {
@@ -3226,7 +3251,11 @@ function installHarnessEnv(): void {
 // Starts the "real-two-step" weather turn on the real SDK loop.
 async function startTwoStepTurn(
   persistModelMessages: () => Promise<string[]> = async () => [],
-  abortSignal?: AbortSignal,
+  loopOptions: AgentLoopOptions = {},
+  stepBoundary: (...args: unknown[]) => Promise<unknown> = async () => ({
+    renewal: "renewed",
+    steering: null,
+  }),
 ): Promise<AgentLoopStream> {
   installHarnessEnv();
   streamTextScenario = "real-two-step";
@@ -3241,7 +3270,7 @@ async function startTwoStepTurn(
       sandboxes: () => [],
       environmentText: () => "<environment>",
       persistModelMessages: persistModelMessages,
-      stepBoundary: async () => ({ renewal: "renewed", steering: null }),
+      stepBoundary: stepBoundary,
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
         system: [],
@@ -3258,7 +3287,7 @@ async function startTwoStepTurn(
       model: { provider: "google", modelId: "gemini-test" },
     },
     { onFinalText: async () => {}, onErrorText: async () => {} },
-    abortSignal ? { abortSignal: abortSignal } : {},
+    loopOptions,
   );
 }
 

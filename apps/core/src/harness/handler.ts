@@ -1422,6 +1422,7 @@ async function handleNatsWorkerRequest(
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
         ...(context?.abortSignal ? { abortSignal: context?.abortSignal } : {}),
+        ...(context ? { deadlineMs: context.deadlineMs } : {}),
         consumeStream: (stream) =>
           pipeAgentStream(stream, (chunk): Promise<void> =>
             fencedPublisher.publish(chunk),
@@ -3075,6 +3076,7 @@ async function runAgentLoopUntilSubagentsIdle(
     agentConfig: agentConfig,
     ...(hooks ? { hooks: hooks } : {}),
     ...(context?.abortSignal ? { abortSignal: context.abortSignal } : {}),
+    ...(context ? { deadlineMs: context.deadlineMs } : {}),
     ...(reply.onQuestionsPending
       ? { onQuestionsPending: reply.onQuestionsPending.bind(reply) }
       : {}),
@@ -3137,6 +3139,7 @@ async function runParentContinuationLoop(options: {
   hooks?: HookDispatcher;
   // Aborts the model pass and skips the wait on async work it left running.
   abortSignal?: AbortSignal;
+  deadlineMs?: number;
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
@@ -3195,6 +3198,9 @@ async function runParentContinuationLoop(options: {
               : undefined,
         hooks: hooks,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(options.deadlineMs !== undefined
+          ? { deadlineMs: options.deadlineMs }
+          : {}),
       },
     );
     traceId = stream.traceId();

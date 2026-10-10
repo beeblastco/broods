@@ -628,6 +628,46 @@ describe("runtime ingress", () => {
     ).toMatchObject({ status: "processing", appliedToEventId: "owner" });
   });
 
+  test("stepBoundary without claimSteering leaves the steer queued", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "steer-1",
+        mode: "steer",
+      }),
+    );
+
+    expect(
+      await t.mutation(internal.runtimeIngress.stepBoundary, {
+        conversationKey: conversationKey,
+        ownerEventId: "owner",
+        ownerGeneration: owner.ownerGeneration!,
+        leaseTtlMs: 60_000,
+        claimSteering: false,
+      }),
+    ).toEqual({ renewal: "renewed", steering: null });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_steer-1",
+      }),
+    ).toMatchObject({ status: "queued" });
+  });
+
   test("stepBoundary from a moved owner is stale and writes nothing", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

@@ -147,6 +147,12 @@ import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 /** Default step cap when the agent config sets no `agent.maxTurn`. */
 const MAX_AGENT_ITERATIONS = 30;
+// A slow model step on a long context can take two minutes, so the run starts
+// its last step this long before the deadline: no tools, no new steers, just
+// the answer. Steers left queued start the next run.
+const DEADLINE_WIND_DOWN_MS = 3 * 60 * 1000;
+const WIND_DOWN_INSTRUCTION =
+  "This turn is out of time. Reply now with what you have so far and say what is left; the user can ask you to continue.";
 // Tools whose successful call already delivered the run's output to a channel
 // or another session. Some models (gemini flash) legitimately stop with no
 // final text after one of these, so an empty response then is a finished turn,
@@ -275,6 +281,8 @@ export interface AgentLoopOptions {
   // Aborts the run from outside, as the worker pool does when it reclaims an
   // overrunning run's slot.
   abortSignal?: AbortSignal;
+  // When the request or worker budget ends; the run winds down before it.
+  deadlineMs?: number;
   // Test seam for lifecycle webhook delivery, which opens its own pinned
   // socket rather than going through a mockable global.
   webhookTransport?: PinnedFetchTransport;
@@ -1217,6 +1225,7 @@ export async function runAgentLoop(
   });
 
   const maxTurn = agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS;
+  let windingDown = false;
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
@@ -1246,13 +1255,18 @@ export async function runAgentLoop(
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
+      (): boolean => windingDown,
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
+      windingDown =
+        options.deadlineMs !== undefined &&
+        Date.now() >= options.deadlineMs - DEADLINE_WIND_DOWN_MS;
       // One mutation stores the step, renews the lease and claims steers, so a
       // steer is never claimed by a turn whose step failed to store or stopped.
       const { renewal, steering } = await session.stepBoundary(
         responseMessages.slice(persistedResponseCount),
+        { claimSteering: !windingDown },
       );
       if (renewal === "stopped") {
         throw new Error(USER_STOP_MESSAGE);
@@ -1313,6 +1327,21 @@ export async function runAgentLoop(
       // (newly persisted rows, steering, skills a tool loaded), and the step and
       // root spans both trace off this.
       turnContext.system = refreshed.system;
+      if (windingDown) {
+        logInfo("Run winding down before its deadline", {
+          eventId: session.eventId,
+          conversationKey: session.conversationKey,
+        });
+
+        return {
+          instructions: [
+            ...refreshed.system,
+            { role: "system", content: WIND_DOWN_INSTRUCTION },
+          ],
+          toolChoice: "none",
+          ...(stepMessages !== messages ? { messages: stepMessages } : {}),
+        };
+      }
 
       return {
         instructions: refreshed.system,

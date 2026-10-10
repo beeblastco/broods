@@ -451,10 +451,13 @@ export class Session {
   /**
    * The model step boundary as one fenced mutation: stores the step's new
    * messages, reports a stop or a lost lease, renews the lease, and claims the
-   * steers waiting to join this turn. Rows that do not fit one mutation are
-   * appended first, in cursor order.
+   * steers waiting to join this turn, unless `claimSteering` is false. Rows
+   * that do not fit one mutation are appended first, in cursor order.
    */
-  async stepBoundary(messages: ModelMessage[]): Promise<StepBoundary> {
+  async stepBoundary(
+    messages: ModelMessage[],
+    options: { claimSteering: boolean } = { claimSteering: true },
+  ): Promise<StepBoundary> {
     const events = this.storedEvents(messages);
     if (this.ownerGeneration === undefined) {
       await this.appendStoredEvents(events);
@@ -471,6 +474,7 @@ export class Session {
       ownerGeneration: this.ownerGeneration,
       leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
       ...(inline.length > 0 ? { events: inline } : {}),
+      ...(options.claimSteering ? {} : { claimSteering: false }),
     });
     if (boundary.renewal !== "stale") this.trackSystemCursor(events);
     if (boundary.renewal === "renewed") this.confirmOwner(startedAt);
