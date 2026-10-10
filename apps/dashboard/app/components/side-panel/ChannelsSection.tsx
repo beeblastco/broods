@@ -104,6 +104,71 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
+    kind: "gmail",
+    label: "Gmail",
+    fields: [
+      { key: "mailbox", label: "Mailbox", type: "text", required: true },
+      {
+        key: "clientId",
+        label: "OAuth client ID",
+        type: "text",
+        required: true,
+      },
+      {
+        key: "clientSecret",
+        label: "OAuth client secret",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "refreshToken",
+        label: "Refresh token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "topicName",
+        label: "Watch topic",
+        type: "text",
+        required: true,
+        placeholder: "projects/my-project/topics/gmail",
+      },
+      {
+        key: "subscription",
+        label: "Push subscription",
+        type: "text",
+        required: true,
+        placeholder: "projects/my-project/subscriptions/gmail-push",
+      },
+      {
+        key: "serviceAccountEmail",
+        label: "Push service account",
+        type: "text",
+        required: true,
+        placeholder: "gmail-push@my-project.iam.gserviceaccount.com",
+      },
+      {
+        key: "audience",
+        label: "Push audience",
+        type: "text",
+        placeholder: "Defaults to the webhook URL",
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed mailboxes",
+        type: "stringList",
+        placeholder: "agent@example.com, *",
+      },
+      {
+        key: "allowedUserIds",
+        label: "Allowed senders",
+        type: "stringList",
+        required: true,
+        placeholder: "boss@example.com, *",
+      },
+    ],
+  },
+  {
     kind: "github",
     label: "GitHub",
     fields: [

@@ -14,6 +14,7 @@ import type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentGmailChannelConfig,
   AgentGoogleChatChannelConfig,
   AgentInstagramChannelConfig,
   AgentLinearChannelConfig,
@@ -52,6 +53,7 @@ import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channe
 // the SDK hook typings cannot drift from what core actually emits.
 export type { TelegramSource } from "../../../apps/core/src/shared/telegram-channel.ts";
 export type { GoogleChatSource } from "../../../apps/core/src/shared/gchat-channel.ts";
+export type { GmailSource } from "../../../apps/core/src/shared/gmail-channel.ts";
 export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
 export type { LinearSource } from "../../../apps/core/src/shared/linear-channel.ts";
 export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
@@ -83,6 +85,7 @@ export type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentGmailChannelConfig,
   AgentGoogleChatChannelConfig,
   AgentInstagramChannelConfig,
   AgentLinearChannelConfig,

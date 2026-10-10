@@ -21,25 +21,14 @@
  * hold it, convex and core.
  */
 
-import { v, type Infer } from "convex/values";
+import { v } from "convex/values";
 import { internalQuery } from "../_generated/server";
 import { accountCipher, encryptionSecrets } from "../model/accountKeys";
-import { channelEndpointBotToken } from "../model/channelEndpoints";
-
-const channelConnectionValidator = v.object({
-  agentId: v.string(),
-  agentName: v.string(),
-  /** The channel's API base URL, when set. Matrix always sets its homeserver. */
-  apiUrl: v.optional(v.string()),
-  botToken: v.string(),
-  /**
-   * Path only. The caller joins it onto its own configured base URL, so the
-   * config plane never has to know which gateway front door is in front of it.
-   */
-  webhookPath: v.string(),
-});
-
-export type ChannelConnection = Infer<typeof channelConnectionValidator>;
+import {
+  channelConnectionValidator,
+  type ChannelConnection,
+} from "../model/channelConnection";
+import { channelEndpointSecrets } from "../model/channelEndpoints";
 
 /**
  * Every deployed agent that configures a bot token for `channel`, one row each,
@@ -58,7 +47,7 @@ export const listConnections = internalQuery({
       .collect();
     const connections: ChannelConnection[] = [];
     for (const row of rows) {
-      const botToken = await channelEndpointBotToken(
+      const { botToken } = await channelEndpointSecrets(
         row,
         await accountCipher(ctx, row.accountId),
       );

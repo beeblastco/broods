@@ -4,7 +4,7 @@ title: Channels
 
 # Channels
 
-A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Messenger or Instagram. Messages that arrive there become agent turns, and the answer goes back to the same place.
+A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Gmail, Twilio SMS, Messenger or Instagram. Messages that arrive there become agent turns, and the answer goes back to the same place.
 
 - A connection is one app install and holds its credentials, such as a Slack bot token.
 - A channel names one room the connection answers in, such as `#product-eng`.
@@ -46,22 +46,23 @@ An agent can hold several connections of different providers. One connection bel
 
 ## Supported channels
 
-| Provider                  | Reaches                                | Required connection fields                                 | Commands |
-| ------------------------- | -------------------------------------- | ---------------------------------------------------------- | -------- |
-| [Telegram](telegram.md)   | private chats, groups, forum topics    | `botToken`, `webhookSecret`                                | yes      |
-| [Slack](slack.md)         | channels, private groups, DMs          | `botToken`, `signingSecret`                                | yes      |
-| [Discord](discord.md)     | guild channels and threads             | `botToken`, `publicKey`                                    | yes      |
-| [GitHub](github.md)       | issues, pull requests, comment threads | `webhookSecret`, `appId`, `privateKey`                     | no       |
-| [Linear](linear.md)       | issue comments that mention the agent  | `apiKey`, `webhookSecret`, `userName`                      | no       |
-| [Matrix](matrix.md)       | rooms, including encrypted ones        | `apiUrl`, `botToken`                                       | yes      |
-| [Pancake](pancake.md)     | Pancake inbox messages and comments    | `pageId`, `pageAccessToken`, `webhookSecret`               | no       |
-| [Zalo](zalo.md)           | private chats and groups               | `botToken`, `webhookSecret`                                | yes      |
-| [WhatsApp](whatsapp.md)   | customer chats with a business number  | `accessToken`, `appSecret`, `phoneNumberId`, `verifyToken` | yes      |
-| [Teams](teams.md)         | personal chats, group chats, channels  | `appId`, `appPassword`, `appTenantId`                      | yes      |
-| [Google Chat](gchat.md)   | direct messages, @-mentions in spaces  | `credentials`, `googleChatProjectNumber` or `endpointUrl`  | yes      |
-| [Twilio SMS](twilio.md)   | SMS and MMS to a Twilio number         | `accountSid`, `authToken`                                  | yes      |
-| [Instagram](instagram.md) | professional account DMs               | `accessToken`, `accountId`, `appSecret`, `verifyToken`     | yes      |
-| [Messenger](messenger.md) | Facebook Page DMs                      | `appSecret`, `pageAccessToken`, `verifyToken`              | yes      |
+| Provider                  | Reaches                                | Required connection fields                                                                   | Commands |
+| ------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------- | -------- |
+| [Telegram](telegram.md)   | private chats, groups, forum topics    | `botToken`, `webhookSecret`                                                                  | yes      |
+| [Slack](slack.md)         | channels, private groups, DMs          | `botToken`, `signingSecret`                                                                  | yes      |
+| [Discord](discord.md)     | guild channels and threads             | `botToken`, `publicKey`                                                                      | yes      |
+| [GitHub](github.md)       | issues, pull requests, comment threads | `webhookSecret`, `appId`, `privateKey`                                                       | no       |
+| [Linear](linear.md)       | issue comments that mention the agent  | `apiKey`, `webhookSecret`, `userName`                                                        | no       |
+| [Matrix](matrix.md)       | rooms, including encrypted ones        | `apiUrl`, `botToken`                                                                         | yes      |
+| [Pancake](pancake.md)     | Pancake inbox messages and comments    | `pageId`, `pageAccessToken`, `webhookSecret`                                                 | no       |
+| [Zalo](zalo.md)           | private chats and groups               | `botToken`, `webhookSecret`                                                                  | yes      |
+| [WhatsApp](whatsapp.md)   | customer chats with a business number  | `accessToken`, `appSecret`, `phoneNumberId`, `verifyToken`                                   | yes      |
+| [Teams](teams.md)         | personal chats, group chats, channels  | `appId`, `appPassword`, `appTenantId`                                                        | yes      |
+| [Google Chat](gchat.md)   | direct messages, @-mentions in spaces  | `credentials`, `googleChatProjectNumber` or `endpointUrl`                                    | yes      |
+| [Gmail](gmail.md)         | new mail in one inbox                  | `mailbox`, OAuth grant, `topicName`, `subscription`, `serviceAccountEmail`, `allowedUserIds` | no       |
+| [Twilio SMS](twilio.md)   | SMS and MMS to a Twilio number         | `accountSid`, `authToken`                                                                    | yes      |
+| [Instagram](instagram.md) | professional account DMs               | `accessToken`, `accountId`, `appSecret`, `verifyToken`                                       | yes      |
+| [Messenger](messenger.md) | Facebook Page DMs                      | `appSecret`, `pageAccessToken`, `verifyToken`                                                | yes      |
 
 Store every secret with `broods env set NAME` and reference it with `env("NAME")`. Never inline a token.
 

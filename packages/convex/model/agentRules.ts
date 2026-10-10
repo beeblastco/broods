@@ -1051,6 +1051,7 @@ function normalizeChannelsConfig(
   normalizeTelegramConfig(channels.telegram);
   normalizeGoogleChatConfig(channels.gchat, options);
   normalizeGitHubConfig(channels.github);
+  normalizeGmailConfig(channels.gmail, options);
   normalizeLinearConfig(channels.linear, options);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
@@ -1165,6 +1166,107 @@ function normalizeGitHubConfig(value: unknown): void {
     "config.channels.github.botUserId",
     Number.MAX_SAFE_INTEGER,
   );
+}
+
+/**
+ * A Gmail mailbox runs only with its OAuth client, its watch topic, the push
+ * subscription that verifies deliveries, and a sender allow list, since anyone
+ * can write to an address. Sending without review needs a list that names
+ * senders. A patch may carry the grant alone, so the merged config checks the
+ * set.
+ */
+function normalizeGmailConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions,
+): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new ClientError("config.channels.gmail must be an object");
+  const config = value as Record<string, unknown>;
+  normalizeChannelIdentityConfig(config, "config.channels.gmail");
+  for (const key of [
+    "audience",
+    "clientId",
+    "clientSecret",
+    "mailbox",
+    "refreshToken",
+    "serviceAccountEmail",
+    "subscription",
+    "topicName",
+  ]) {
+    assertOptionalString(config[key], `config.channels.gmail.${key}`);
+  }
+  assertOptionalBoolean(config.autoSend, "config.channels.gmail.autoSend");
+  for (const key of ["mailbox", "serviceAccountEmail"]) {
+    const address = config[key];
+    if (typeof address === "string" && !/^[^\s@]+@[^\s@]+$/.test(address)) {
+      throw new ClientError(
+        `config.channels.gmail.${key} must be an email address`,
+      );
+    }
+  }
+  if (config.autoSend === true) assertGmailAutoSend(config, options);
+  if (
+    typeof config.subscription === "string" &&
+    !/^projects\/[^/]+\/subscriptions\/[^/]+$/.test(config.subscription)
+  ) {
+    throw new ClientError(
+      "config.channels.gmail.subscription must be projects/{project}/subscriptions/{name}",
+    );
+  }
+  if (
+    typeof config.topicName === "string" &&
+    !/^projects\/[^/]+\/topics\/[^/]+$/.test(config.topicName)
+  ) {
+    throw new ClientError(
+      "config.channels.gmail.topicName must be projects/{project}/topics/{name}",
+    );
+  }
+  const missing = [
+    "clientId",
+    "clientSecret",
+    "mailbox",
+    "serviceAccountEmail",
+    "subscription",
+    "topicName",
+  ].filter((key) => typeof config[key] !== "string" || config[key] === "");
+  if (
+    !Array.isArray(config.allowedUserIds) ||
+    config.allowedUserIds.length === 0
+  ) {
+    missing.push("allowedUserIds");
+  }
+  if (
+    typeof config.refreshToken === "string" &&
+    missing.length > 0 &&
+    !options.patch
+  ) {
+    throw new ClientError(
+      `config.channels.gmail needs ${missing.join(", ")} to receive mail`,
+    );
+  }
+}
+
+/**
+ * Sending without review needs a list that names senders. A patch may set
+ * `autoSend` without restating the list; the merged config checks the pair.
+ */
+function assertGmailAutoSend(
+  config: Record<string, unknown>,
+  options: AgentConfigCheckOptions,
+): void {
+  const senders = Array.isArray(config.allowedUserIds)
+    ? config.allowedUserIds
+    : null;
+  const open =
+    senders === null
+      ? !options.patch
+      : senders.length === 0 || senders.includes("*");
+  if (open) {
+    throw new ClientError(
+      "config.channels.gmail.autoSend needs allowedUserIds that name senders, not * or an empty list",
+    );
+  }
 }
 
 /**

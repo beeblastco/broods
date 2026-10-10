@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
 import { convexTest, type TestConvex } from "convex-test";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { ChannelConnection } from "../channel/connections";
+import type { ChannelConnection } from "../model/channelConnection";
 import { accountCipherForWrite } from "../model/accountKeys";
 import schema from "../schema";
 
@@ -139,6 +139,15 @@ async function listConnections(
   tt: T,
   channel: string,
 ): Promise<ChannelConnection[]> {
+  await reconcile(tt);
+
+  return await tt.query(internal.channel.connections.listConnections, {
+    channel: channel,
+  });
+}
+
+/** Runs the hourly reconcile sweep and settles every account it schedules. */
+async function reconcile(tt: T): Promise<void> {
   vi.useFakeTimers();
   try {
     await tt.mutation(internal.channel.endpointReconcile.reconcile, {});
@@ -146,10 +155,6 @@ async function listConnections(
   } finally {
     vi.useRealTimers();
   }
-
-  return await tt.query(internal.channel.connections.listConnections, {
-    channel: channel,
-  });
 }
 
 const discordConfig = (botToken: string): Record<string, unknown> => ({
@@ -394,5 +399,119 @@ describe("listConnections", () => {
     await seedDeployment(tt, scope, "endpoint-1");
 
     expect(await listConnections(tt, "discord")).toEqual([]);
+  });
+});
+
+describe("gmail watch targets", () => {
+  const gmail = {
+    clientId: "client",
+    clientSecret: "secret",
+    mailbox: "agent@example.com",
+    refreshToken: "refresh",
+    topicName: "projects/p/topics/gmail",
+  };
+  const WATCH_URL =
+    "https://gmail.googleapis.com/gmail/v1/users/agent%40example.com/watch";
+
+  /** Google grants a token and answers every watch with `watchStatus`. */
+  function stubGoogle(watchStatus = 200): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(
+      async (url: string | URL | Request): Promise<Response> =>
+        String(url).startsWith("https://oauth2.googleapis.com/token")
+          ? Response.json({ access_token: "token" })
+          : new Response(JSON.stringify({ historyId: "1" }), {
+              status: watchStatus,
+            }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    return fetchMock;
+  }
+
+  function watchCalls(fetchMock: ReturnType<typeof vi.fn>): unknown[][] {
+    return fetchMock.mock.calls.filter(([url]) => String(url) === WATCH_URL);
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("a deployed mailbox starts its watch and answers what renewing it needs", async () => {
+    const fetchMock = stubGoogle();
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", { channels: { gmail: gmail } });
+    await seedDeployment(tt, scope, "endpoint-1");
+    await reconcile(tt);
+
+    expect(await tt.query(internal.channel.gmail.targets, {})).toEqual([gmail]);
+    const calls = watchCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    const [, init] = calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      labelIds: ["INBOX"],
+      topicName: gmail.topicName,
+    });
+    expect(init.headers).toMatchObject({ Authorization: "Bearer token" });
+  });
+
+  test("a watch Google could not start is tried three more times", async () => {
+    const fetchMock = stubGoogle(503);
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", { channels: { gmail: gmail } });
+    await seedDeployment(tt, scope, "endpoint-1");
+    await reconcile(tt);
+
+    expect(watchCalls(fetchMock)).toHaveLength(4);
+  });
+
+  test("a watch Google refused is left to the operator", async () => {
+    const fetchMock = stubGoogle(400);
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", { channels: { gmail: gmail } });
+    await seedDeployment(tt, scope, "endpoint-1");
+    await reconcile(tt);
+
+    expect(watchCalls(fetchMock)).toHaveLength(1);
+  });
+
+  test("renewal skips a mailbox whose rows name two topics", async () => {
+    const fetchMock = stubGoogle();
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", { channels: { gmail: gmail } });
+    await seedAgent(tt, scope, "triage", {
+      channels: {
+        gmail: { ...gmail, topicName: "projects/p/topics/other" },
+      },
+    });
+    await seedAgent(tt, scope, "sales", {
+      channels: { gmail: { ...gmail, mailbox: "sales@example.com" } },
+    });
+    await seedDeployment(tt, scope, "endpoint-1");
+    await reconcile(tt);
+    fetchMock.mockClear();
+
+    await tt.action(internal.channel.gmail.renewAll, {});
+
+    expect(watchCalls(fetchMock)).toHaveLength(0);
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).endsWith("/users/sales%40example.com/watch"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("a mailbox without a watch topic has nothing to renew", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const { topicName: _topicName, ...withoutTopic } = gmail;
+    await seedAgent(tt, scope, "tracy", { channels: { gmail: withoutTopic } });
+    await seedDeployment(tt, scope, "endpoint-1");
+    await reconcile(tt);
+
+    expect(await tt.query(internal.channel.gmail.targets, {})).toEqual([]);
   });
 });

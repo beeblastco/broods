@@ -13,7 +13,7 @@
  * watch and asks it for `matrix`.
  */
 
-import type { ChannelConnection } from "@broods/convex/channel/connections";
+import type { ChannelConnection } from "@broods/convex/model/channelConnection";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import type { ConfigPlane } from "./config.ts";

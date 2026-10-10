@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
-import { defineSandbox, env } from "../src/resources.ts";
+import {
+  defineGmailChannel,
+  defineGmailConnection,
+  defineSandbox,
+  env,
+} from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
 // Resolve the SDK entrypoint relative to this test file so generated fixtures
@@ -678,6 +683,7 @@ import {
   defineSlackConnection,
   defineDiscordConnection,
   defineGoogleChatConnection,
+  defineGmailConnection,
   defineLinearConnection,
   defineMatrixConnection,
   definePancakeConnection,
@@ -770,6 +776,17 @@ export const gchat = defineGoogleChatConnection({
   googleChatProjectNumber: "123456789012",
   allowedChannelIds: ["spaces/AAA"],
 });
+export const gmail = defineGmailConnection({
+  clientId: "client.apps.googleusercontent.com",
+  clientSecret: env("GMAIL_CLIENT_SECRET"),
+  refreshToken: env("GMAIL_REFRESH_TOKEN"),
+  mailbox: "agent@example.com",
+  serviceAccountEmail: "push@project.iam.gserviceaccount.com",
+  subscription: "projects/p/subscriptions/gmail",
+  topicName: "projects/p/topics/gmail",
+  allowedChannelIds: ["*"],
+  allowedUserIds: ["boss@example.com"],
+});
 export const teams = defineTeamsConnection({
   appId: env("TEAMS_APP_ID"),
   appPassword: env("TEAMS_APP_PASSWORD"),
@@ -791,6 +808,7 @@ export const support = defineAgent({
     telegram,
     gchat,
     github,
+    gmail,
     linear,
     slack,
     discord,
@@ -858,6 +876,12 @@ export const support = defineAgent({
         googleChatProjectNumber: "123456789012",
         allowedChannelIds: ["spaces/AAA"],
       },
+      gmail: {
+        mailbox: "agent@example.com",
+        topicName: "projects/p/topics/gmail",
+        allowedChannelIds: ["*"],
+        allowedUserIds: ["boss@example.com"],
+      },
       teams: {
         appTenantId: "tenant-1",
         allowedChannelIds: ["19:general@thread.tacv2"],
@@ -879,6 +903,7 @@ export const support = defineAgent({
     { alias: "discord", type: "discord", agentName: "support" },
     { alias: "gchat", type: "gchat", agentName: "support" },
     { alias: "github", type: "github", agentName: "support" },
+    { alias: "gmail", type: "gmail", agentName: "support" },
     { alias: "instagram", type: "instagram", agentName: "support" },
     { alias: "linear", type: "linear", agentName: "support" },
     { alias: "matrix", type: "matrix", agentName: "support" },
@@ -892,6 +917,7 @@ export const support = defineAgent({
     { alias: "zalo", type: "zalo", agentName: "support" },
   ]);
   expect(collectEnvRefNames(manifest)).toContain("GITHUB_PRIVATE_KEY");
+  expect(collectEnvRefNames(manifest)).toContain("GMAIL_REFRESH_TOKEN");
 });
 
 test("compileProject rejects a channel reused by two agents", async () => {
@@ -2727,3 +2753,33 @@ export const support = defineAgent({
 
   return cwd;
 }
+
+test("defineGmailChannel refuses a mailbox its connection does not read", () => {
+  const gmail = defineGmailConnection({
+    clientId: "client",
+    clientSecret: env("GMAIL_CLIENT_SECRET"),
+    refreshToken: env("GMAIL_REFRESH_TOKEN"),
+    mailbox: "Agent@example.com",
+    serviceAccountEmail: "push@project.iam.gserviceaccount.com",
+    subscription: "projects/p/subscriptions/gmail",
+    topicName: "projects/p/topics/gmail",
+    allowedUserIds: ["*"],
+  });
+
+  expect(
+    defineGmailChannel({
+      name: "inbox",
+      connection: gmail,
+      mailbox: "agent@example.com",
+    }).name,
+  ).toBe("inbox");
+  expect(() =>
+    defineGmailChannel({
+      name: "other",
+      connection: gmail,
+      mailbox: "other@example.com",
+    }),
+  ).toThrow(
+    'Channel "other" mailbox "other@example.com" is not its connection\'s mailbox',
+  );
+});

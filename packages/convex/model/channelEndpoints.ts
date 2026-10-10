@@ -1,8 +1,10 @@
 /**
  * Single writer for the `channelEndpoints` projection: one small row per
- * (agent, channel, deployment) that configures a bot token, so the forwarder's
- * standing `listConnections` subscription reads a few rows keyed by platform
- * instead of every deployment plus every agent's encrypted config blob.
+ * (agent, channel, deployment) that configures a channel's credentials, so the
+ * forwarder's standing `listConnections` subscription reads a few rows keyed by
+ * platform instead of every deployment plus every agent's encrypted config
+ * blob. Most channels project their bot token; Gmail projects what
+ * `channel/gmail.ts` needs to start and renew its watch.
  *
  * Every seam that changes an agent's channels, its deployment, or its stage
  * calls `refreshAccountChannelEndpoints`; the hourly reconcile in
@@ -10,45 +12,53 @@
  * instead of leaving a bot silently connected or absent.
  */
 
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
 import type { AccountCipher } from "./envelope";
 import { agentsInStage } from "./projectScope";
 
-/** What a forwarder needs to connect as one channel: its token, and for Matrix the homeserver. */
-type ChannelCredentials = Pick<DesiredEndpoint, "apiUrl" | "botToken">;
+/** The config fields a channel projects, all required; every other channel projects its bot token. */
+const PROJECTED_KEYS: Record<string, readonly string[] | undefined> = {
+  gmail: ["clientId", "clientSecret", "mailbox", "refreshToken", "topicName"],
+};
+const BOT_TOKEN_KEYS = ["botToken"] as const;
+
+/** What a forwarder needs to connect as one channel: its secrets, and for Matrix the homeserver. */
+type ChannelCredentials = Pick<DesiredEndpoint, "apiUrl" | "secrets">;
 
 /** The slice of a decrypted agent config the projection reads. */
 interface ChannelsConfigView {
-  channels?: Record<
-    string,
-    { apiUrl?: unknown; botToken?: unknown } | undefined
-  >;
+  channels?: Record<string, Record<string, unknown> | undefined>;
 }
 
 interface DesiredEndpoint {
   agentId: string;
   agentName: string;
   apiUrl?: string;
-  botToken: string;
   endpointId: string;
   platform: string;
+  secrets: Record<string, string>;
   webhookPath: string;
 }
 
-export async function channelEndpointBotToken(
+/** A projection row's decrypted secrets: `botToken`, or the fields in `PROJECTED_KEYS`. */
+export async function channelEndpointSecrets(
   row: Doc<"channelEndpoints">,
   cipher: AccountCipher,
-): Promise<string | null> {
+): Promise<Record<string, string>> {
   const decrypted = await cipher.decrypt("channelEndpoints:tokenCiphertext", {
     ciphertext: row.tokenCiphertext,
     iv: row.tokenIv,
     tag: row.tokenTag,
   });
-  const botToken = decrypted?.botToken;
+  const secrets: Record<string, string> = {};
+  for (const [key, value] of Object.entries(decrypted ?? {})) {
+    if (typeof value === "string" && value) secrets[key] = value;
+  }
 
-  return typeof botToken === "string" && botToken ? botToken : null;
+  return secrets;
 }
 
 /**
@@ -80,9 +90,10 @@ export async function refreshAccountChannelEndpoints(
     const current = existingByKey.get(endpointKey(entry));
     existingByKey.delete(endpointKey(entry));
     if (current?.digest === digest) continue;
-    const encrypted = await cipher.encrypt("channelEndpoints:tokenCiphertext", {
-      botToken: entry.botToken,
-    });
+    const encrypted = await cipher.encrypt(
+      "channelEndpoints:tokenCiphertext",
+      entry.secrets,
+    );
     const fields = {
       accountId: accountId,
       agentId: entry.agentId,
@@ -97,10 +108,17 @@ export async function refreshAccountChannelEndpoints(
       updatedAt: Date.now(),
       webhookPath: entry.webhookPath,
     };
-    if (current) {
-      await ctx.db.patch(current._id, fields);
+    let rowId = current?._id;
+    if (rowId) {
+      await ctx.db.patch(rowId, fields);
     } else {
-      await ctx.db.insert("channelEndpoints", fields);
+      rowId = await ctx.db.insert("channelEndpoints", fields);
+    }
+    // A new or changed mailbox starts its watch now; the daily cron renews it.
+    if (entry.platform === "gmail") {
+      await ctx.scheduler.runAfter(0, internal.channel.gmail.watch, {
+        rowId: rowId,
+      });
     }
   }
   for (const stale of existingByKey.values()) {
@@ -132,7 +150,7 @@ export function webhookPath(
   return `/v1/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
 }
 
-/** Every channel with a bot token in one agent's decrypted config, keyed by channel. */
+/** Every channel with all its projected secrets in one agent's decrypted config, keyed by channel. */
 async function agentChannelCredentials(
   agent: Doc<"agents">,
   cipher: AccountCipher,
@@ -148,12 +166,13 @@ async function agentChannelCredentials(
     tag: agent.encryptionTag,
   })) as ChannelsConfigView | null;
   for (const [platform, channel] of Object.entries(config?.channels ?? {})) {
-    const botToken = channel?.botToken;
-    if (typeof botToken !== "string" || !botToken) continue;
-    const apiUrl = channel?.apiUrl;
+    if (!channel) continue;
+    const secrets = projectedSecrets(platform, channel);
+    if (!secrets) continue;
+    const apiUrl = channel.apiUrl;
     credentials.set(platform, {
       apiUrl: typeof apiUrl === "string" && apiUrl ? apiUrl : undefined,
-      botToken: botToken,
+      secrets: secrets,
     });
   }
 
@@ -183,14 +202,14 @@ async function desiredEndpoints(
     );
     for (const agent of agents) {
       const credentials = await agentChannelCredentials(agent, cipher);
-      for (const [platform, { apiUrl, botToken }] of credentials) {
+      for (const [platform, { apiUrl, secrets }] of credentials) {
         const entry: DesiredEndpoint = {
           agentId: agent._id,
           agentName: agent.name,
           apiUrl: apiUrl,
-          botToken: botToken,
           endpointId: deployment.endpointId,
           platform: platform,
+          secrets: secrets,
           webhookPath: webhookPath(
             accountId,
             deployment.endpointId,
@@ -212,7 +231,7 @@ async function endpointDigest(entry: DesiredEndpoint): Promise<string> {
     entry.agentId,
     entry.agentName,
     entry.apiUrl ?? null,
-    entry.botToken,
+    ...Object.values(entry.secrets),
     entry.endpointId,
     entry.platform,
     entry.webhookPath,
@@ -233,4 +252,19 @@ function endpointKey(entry: {
   platform: string;
 }): string {
   return `${entry.agentId}\u0000${entry.platform}\u0000${entry.endpointId}`;
+}
+
+/** The channel's projected secrets, or null when any is missing or empty. */
+function projectedSecrets(
+  platform: string,
+  channel: Record<string, unknown>,
+): Record<string, string> | null {
+  const secrets: Record<string, string> = {};
+  for (const key of PROJECTED_KEYS[platform] ?? BOT_TOKEN_KEYS) {
+    const value = channel[key];
+    if (typeof value !== "string" || !value) return null;
+    secrets[key] = value;
+  }
+
+  return secrets;
 }

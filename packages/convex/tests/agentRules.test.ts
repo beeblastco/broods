@@ -790,6 +790,43 @@ describe("agent rules", () => {
         },
       }),
     ).toThrow("config.channels.gchat.endpointUrl must use https");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          gmail: { id: "gmail", refreshToken: "r", mailbox: "a@b.co" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.gmail needs clientId, clientSecret, serviceAccountEmail, subscription, topicName, allowedUserIds to receive mail",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { gmail: { id: "gmail", topicName: "gmail-topic" } },
+      }),
+    ).toThrow(
+      "config.channels.gmail.topicName must be projects/{project}/topics/{name}",
+    );
+    for (const allowedUserIds of [["*"], [], undefined]) {
+      expect(() =>
+        normalizeAgentConfig({
+          channels: {
+            gmail: {
+              id: "gmail",
+              autoSend: true,
+              allowedUserIds: allowedUserIds,
+            },
+          },
+        }),
+      ).toThrow(
+        "config.channels.gmail.autoSend needs allowedUserIds that name senders, not * or an empty list",
+      );
+    }
+    expect(() =>
+      normalizeAgentConfig(
+        { channels: { gmail: { id: "gmail", autoSend: true } } },
+        { patch: true },
+      ),
+    ).not.toThrow();
   });
 
   it("validates harness configs", () => {

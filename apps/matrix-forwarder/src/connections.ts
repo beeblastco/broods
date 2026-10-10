@@ -4,7 +4,7 @@
  * differs, because a Matrix account also names its homeserver.
  */
 
-import type { ChannelConnection } from "@broods/convex/channel/connections";
+import type { ChannelConnection } from "@broods/convex/model/channelConnection";
 import type { ConfigPlane } from "../../discord-forwarder/src/config.ts";
 import { logWarn } from "../../discord-forwarder/src/log.ts";
 

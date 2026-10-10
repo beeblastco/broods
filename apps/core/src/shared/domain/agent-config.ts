@@ -345,6 +345,7 @@ export interface AgentChannelsConfig {
   telegram?: AgentTelegramChannelConfig;
   gchat?: AgentGoogleChatChannelConfig;
   github?: AgentGitHubChannelConfig;
+  gmail?: AgentGmailChannelConfig;
   linear?: AgentLinearChannelConfig;
   slack?: AgentSlackChannelConfig;
   discord?: AgentDiscordChannelConfig;
@@ -671,6 +672,36 @@ export interface AgentGoogleChatChannelConfig {
   /** `service-{projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`, for an app built as a Workspace add-on. */
   workspaceAddOnServiceAccountEmail?: string;
   userName?: string;
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * One Gmail mailbox, read through a Gmail watch on a Pub/Sub topic whose push
+ * subscription posts to the webhook. The OAuth client and refresh token act as
+ * the mailbox; `allowedUserIds` lists sender addresses. Replies are drafts
+ * unless `autoSend` is true.
+ */
+export interface AgentGmailChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
+  id?: string;
+  /** Push subscription token audience. Defaults to the webhook URL, as Pub/Sub does. */
+  audience?: string;
+  /** Send replies instead of leaving them as drafts. */
+  autoSend?: boolean;
+  clientId?: string;
+  clientSecret?: string;
+  /** The address the refresh token was granted for. */
+  mailbox?: string;
+  refreshToken?: string;
+  /** The push subscription's service account, which signs every delivery. */
+  serviceAccountEmail?: string;
+  /** `projects/{project}/subscriptions/{name}`, the push subscription. */
+  subscription?: string;
+  /** `projects/{project}/topics/{name}`, where the Gmail watch publishes. */
+  topicName?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

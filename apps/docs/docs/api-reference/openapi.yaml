@@ -558,7 +558,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, gmail, twilio, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -583,6 +583,7 @@ paths:
                 whatsapp,
                 teams,
                 gchat,
+                gmail,
                 twilio,
                 instagram,
                 messenger,
@@ -660,6 +661,7 @@ paths:
                 whatsapp,
                 teams,
                 gchat,
+                gmail,
                 twilio,
                 instagram,
                 messenger,
@@ -4931,7 +4933,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, gmail, twilio, instagram, messenger.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -6512,6 +6514,69 @@ components:
               items:
                 type: string
               description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+
+        gmail:
+          type: object
+          description: One Gmail mailbox, read through a Gmail watch on a Pub/Sub topic whose push subscription posts to the webhook. Every push must carry a token Google signed as `serviceAccountEmail` for `audience`. Replies are threaded drafts unless `autoSend` is true.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            mailbox:
+              type: string
+              description: The address the refresh token was granted for.
+            clientId:
+              type: string
+            clientSecret:
+              type: string
+            refreshToken:
+              type: string
+              description: Refresh token with the gmail.readonly and gmail.compose scopes.
+            topicName:
+              type: string
+              pattern: "^projects/[^/]+/topics/[^/]+$"
+              description: Where the Gmail watch publishes. Broods starts the watch on deploy and renews it daily.
+            subscription:
+              type: string
+              pattern: "^projects/[^/]+/subscriptions/[^/]+$"
+              description: The push subscription that posts to the webhook.
+            serviceAccountEmail:
+              type: string
+              description: The service account the push subscription signs as.
+            audience:
+              type: string
+              description: Push token audience. Defaults to the webhook URL.
+            autoSend:
+              type: boolean
+              default: false
+              description: Send replies instead of leaving them as drafts. Needs `allowedUserIds` that name senders, not ["*"].
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Mailboxes this connection answers for. Every one when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Sender addresses allowed to trigger the agent. Required; ["*"] lets anyone in. A named sender also needs Gmail to have authenticated their domain.
             trace:
               type: string
               enum: [enabled, disabled]

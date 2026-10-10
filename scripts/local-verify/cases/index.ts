@@ -8,6 +8,7 @@ import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
+import { gmailChannel } from "./gmail-channel.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
@@ -51,6 +52,7 @@ export const verifyCases: readonly VerifyCase[] = [
   mcpHeaderEnv,
   r2Workspace,
   workToolWebhooks,
+  gmailChannel,
   webhookHandshake,
   connections,
   auditLedger,
