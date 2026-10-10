@@ -134,7 +134,7 @@ import {
   openQuestion,
   type PendingQuestionSummary,
 } from "./questions.ts";
-import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
+import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
@@ -726,9 +726,11 @@ export async function runAgentLoop(
   };
   // Hooks let tool.call.started deny or edit args and tool.result transform
   // output; the owner fence rechecks conversation ownership before each call.
-  const tools = wrapToolsWithOwnerFence(
-    wrapToolsWithHooks(builtTools, hooks),
-    session,
+  // Computer actions in one step share a screen, so they run in the model's
+  // order, reserved in onToolExecutionStart.
+  const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
+    wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
+    "computer",
   );
   const policyToolApproval = await createPolicyToolApproval(
     agentConfig,
@@ -1439,6 +1441,8 @@ export async function runAgentLoop(
       });
     },
     onToolExecutionStart: async ({ toolCall }) => {
+      // Before any await: the SDK gets here in the model's call order.
+      reserveComputerTurn(toolCall);
       const stepNumber = activeStepNumber;
       const now = Date.now();
       if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {

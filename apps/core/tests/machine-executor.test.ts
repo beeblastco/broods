@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
-import type { ToolExecuteFunction } from "ai";
+import {
+  simulateReadableStream,
+  streamText,
+  type ToolExecuteFunction,
+} from "ai";
+import { MockLanguageModelV4 } from "ai/test";
 import {
   callMcpTool,
   listMcpTools,
@@ -13,6 +19,7 @@ import {
   runMachineComputerAction,
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
+import { serializeToolCalls } from "../src/harness/tool-execute.ts";
 import computerTool from "../src/harness/tools/computer.tool.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
@@ -21,6 +28,7 @@ import {
   occupiedReason,
   parseCoreFrame,
   parseDaemonFrame,
+  type ComputerInput,
   type MachineComputerFrame,
   type MachineExecFrame,
   type MachineHelloFrame,
@@ -463,6 +471,76 @@ test("a name from a longer list is refused once one computer is left", async () 
     type: "text",
     value: "mine",
   });
+});
+
+test("one step's computer actions reach the daemon one at a time, in the model's order", async () => {
+  const server = core();
+  const sent: string[] = [];
+  let inFlight = 0;
+  let overlapped = false;
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: (frame, socket): void => {
+      sent.push(frame.action);
+      overlapped ||= inFlight > 0;
+      inFlight += 1;
+      setTimeout((): void => {
+        inFlight -= 1;
+        answersWith("OK")(frame, socket);
+      }, 10);
+    },
+  });
+  const { tools, reserve } = serializeToolCalls(
+    computerTool([machine()]),
+    "computer",
+  );
+  const actions: ComputerInput[] = [
+    { action: "left_click", coordinate: [10, 20] },
+    { action: "type", text: "hello" },
+    { action: "screenshot" },
+  ];
+  const model = new MockLanguageModelV4({
+    doStream: {
+      stream: simulateReadableStream<LanguageModelV4StreamPart>({
+        chunks: [
+          ...actions.map((input, index): LanguageModelV4StreamPart => ({
+            type: "tool-call",
+            toolCallId: `call-${index}`,
+            toolName: "computer",
+            input: JSON.stringify(input),
+          })),
+          {
+            type: "finish",
+            finishReason: { unified: "tool-calls", raw: "tool_use" },
+            usage: {
+              inputTokens: {
+                total: 1,
+                noCache: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 1, text: 1, reasoning: 0 },
+            },
+          },
+        ],
+      }),
+    },
+  });
+
+  await streamText({
+    model: model,
+    prompt: "type hello into the field",
+    tools: tools,
+    // Like the harness: reserve first, then await. The click's start (a
+    // lifecycle webhook) resolves last, as in the trace where the text was
+    // typed before the click that focused the field.
+    onToolExecutionStart: async ({ toolCall }): Promise<void> => {
+      reserve(toolCall);
+      if (toolCall.toolCallId === "call-0") await Bun.sleep(50);
+    },
+  }).consumeStream();
+
+  expect(sent).toEqual(["left_click", "type", "screenshot"]);
+  expect(overlapped).toBe(false);
 });
 
 test("an MCP row lists and calls through the daemon that serves that server", async () => {

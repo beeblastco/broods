@@ -14,6 +14,19 @@ const AsyncGeneratorFunction = Object.getPrototypeOf(
 
 export type ToolExecute = NonNullable<ToolSet[string]["execute"]>;
 
+/** A tool set whose one serialized tool runs its calls in reserved order. */
+export interface ToolCallQueue {
+  tools: ToolSet;
+  /** Takes the next turn for a call of the serialized tool; others are ignored. */
+  reserve: (toolCall: { toolName: string; toolCallId: string }) => void;
+}
+
+// `after` settles when the call before it is done; `done` frees the next one.
+interface ToolCallTurn {
+  after: Promise<void>;
+  done: () => void;
+}
+
 /** Runs around a tool call: `before` gates/rewrites input, `after` its result. */
 export interface ToolExecuteHooks {
   before?: (input: unknown) => Promise<unknown>;
@@ -35,6 +48,62 @@ export function isAsyncIterable(
  */
 export function isStreamingExecute(execute: ToolExecute): boolean {
   return execute instanceof AsyncGeneratorFunction;
+}
+
+/**
+ * Runs one non-streaming tool's calls one at a time, in the order their turns
+ * are reserved. The harness reserves from onToolExecutionStart before its first
+ * await, which the SDK reaches in the model's call order; execute itself comes
+ * after awaited start callbacks (lifecycle webhooks), hooks and the owner fence,
+ * any of which can let a later click or keypress overtake an earlier one. A call
+ * nobody reserved takes its turn when execute starts.
+ */
+export function serializeToolCalls(
+  tools: ToolSet,
+  name: string,
+): ToolCallQueue {
+  const tool = tools[name];
+  if (typeof tool?.execute !== "function" || isStreamingExecute(tool.execute)) {
+    return { tools: tools, reserve: (): void => {} };
+  }
+  const call = tool.execute;
+  const turns = new Map<string, ToolCallTurn>();
+  let last: Promise<void> = Promise.resolve();
+  const takeTurn = (toolCallId: string): ToolCallTurn => {
+    const done = Promise.withResolvers<void>();
+    const turn = { after: last, done: done.resolve };
+    turns.set(toolCallId, turn);
+    last = done.promise;
+
+    return turn;
+  };
+
+  return {
+    tools: {
+      ...tools,
+      [name]: {
+        ...tool,
+        execute: async (...args: Parameters<ToolExecute>): Promise<unknown> => {
+          const [, options] = args;
+          const turn =
+            turns.get(options.toolCallId) ?? takeTurn(options.toolCallId);
+          turns.delete(options.toolCallId);
+          try {
+            await turn.after;
+            // A stopped run must not fire the actions still waiting their turn.
+            options.abortSignal?.throwIfAborted();
+
+            return await call(...args);
+          } finally {
+            turn.done();
+          }
+        },
+      } as ToolSet[string],
+    },
+    reserve: (toolCall: { toolName: string; toolCallId: string }): void => {
+      if (toolCall.toolName === name) takeTurn(toolCall.toolCallId);
+    },
+  };
 }
 
 // `after` applies to a streaming tool's last yield, which is the value the SDK
