@@ -689,6 +689,33 @@ describe("createTools", () => {
     ).rejects.toThrow("tasks[0].description is not supported");
   });
 
+  it("reads null optional run_subagent fields as omitted", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const dispatch = mock(async () => ({ tasks: [] }));
+    const tools = await createTools(
+      createToolContext(undefined, "google", dispatch),
+      {
+        subagent: {
+          enabled: true,
+          mode: "ephemeral",
+        },
+      },
+    );
+
+    await channelToolExecute(tools.run_subagent, {
+      tasks: [
+        {
+          agentId: null,
+          prompt: "research",
+          conversationKey: null,
+          isolated: null,
+        },
+      ],
+    });
+
+    expect(dispatch).toHaveBeenCalledWith([{ prompt: "research" }], []);
+  });
+
   it("exposes parent subagent tools only for a persistent session", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const dispatch = mock(async () => ({ tasks: [] }));

@@ -153,11 +153,13 @@ function normalizeInput(
   return tasks.map((task, index) => normalizeTask(task, index, mode));
 }
 
+// Models often send null for an optional field they mean to leave out, so null
+// reads as omitted here and in normalizeTask.
 function normalizeOptionalString(
   value: unknown,
   name: string,
 ): string | undefined {
-  if (value === undefined) {
+  if (value == null) {
     return undefined;
   }
   if (typeof value !== "string") {
@@ -197,7 +199,7 @@ function normalizeTask(
     task.agentId,
     `tasks[${index}].agentId`,
   );
-  if (mode !== "persistent" && task.conversationKey !== undefined) {
+  if (mode !== "persistent" && task.conversationKey != null) {
     throw new Error(
       `tasks[${index}].conversationKey is only supported in persistent mode`,
     );
@@ -209,7 +211,7 @@ function normalizeTask(
           `tasks[${index}].conversationKey`,
         )
       : undefined;
-  if (task.isolated !== undefined && typeof task.isolated !== "boolean") {
+  if (task.isolated != null && typeof task.isolated !== "boolean") {
     throw new Error(`tasks[${index}].isolated must be a boolean`);
   }
 
