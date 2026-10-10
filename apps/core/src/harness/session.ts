@@ -474,7 +474,7 @@ export class Session {
       ownerGeneration: this.ownerGeneration,
       leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
       ...(inline.length > 0 ? { events: inline } : {}),
-      ...(options.claimSteering ? {} : { claimSteering: false }),
+      claimSteering: options.claimSteering,
     });
     if (boundary.renewal !== "stale") this.trackSystemCursor(events);
     if (boundary.renewal === "renewed") this.confirmOwner(startedAt);

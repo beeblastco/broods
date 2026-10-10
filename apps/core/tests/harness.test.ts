@@ -935,12 +935,19 @@ describe("runAgentLoop", () => {
     );
     await stream.consumeStream();
 
-    // One last step, no tools, told to answer now; steers stay queued.
-    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
-    const call = twoStepModelInUse?.doStreamCalls[0];
+    // After the step that crossed the line, one last step with no tools,
+    // told to answer now; steers stay queued.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+    expect(twoStepModelInUse?.doStreamCalls[0]?.toolChoice).not.toEqual({
+      type: "none",
+    });
+    const call = twoStepModelInUse?.doStreamCalls[1];
     expect(call?.toolChoice).toEqual({ type: "none" });
     expect(JSON.stringify(call?.prompt)).toContain("This turn is out of time");
-    expect(stepBoundary.mock.calls[0]?.[1]).toEqual({ claimSteering: false });
+    expect(stepBoundary.mock.calls.at(-1)?.[1]).toEqual({
+      claimSteering: false,
+    });
+    expect(stream.didFail()).toBe(false);
   });
 
   it("yields at the step boundary near the deadline when the pool runs it on", async () => {

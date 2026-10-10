@@ -1232,11 +1232,26 @@ export async function runAgentLoop(
   });
 
   const maxTurn = agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS;
+  // Decided once per step boundary, in stopWhen: near the deadline the run
+  // yields its slot, or, when it may not (last slot, or at its step cap, where
+  // a next pass would start a fresh count), winds down in its next step.
   let windingDown = false;
   let yielded = false;
-  const nearDeadline = (): boolean =>
-    options.deadlineMs !== undefined &&
-    Date.now() >= options.deadlineMs - DEADLINE_WIND_DOWN_MS;
+  const stopForDeadline = (stepCount: number): boolean => {
+    if (
+      options.deadlineMs === undefined ||
+      Date.now() < options.deadlineMs - DEADLINE_WIND_DOWN_MS ||
+      questionSummaries.length > 0
+    ) {
+      return false;
+    }
+    yielded =
+      options.canYield === true &&
+      (maxTurn === AGENT_MAX_TURN_UNLIMITED || stepCount < maxTurn);
+    windingDown = !yielded;
+
+    return yielded;
+  };
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
@@ -1266,20 +1281,10 @@ export async function runAgentLoop(
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
-      // A run at its step cap is done, not yielding: the next pass would
-      // start a fresh count.
-      ({ steps }): boolean => {
-        yielded =
-          options.canYield === true &&
-          nearDeadline() &&
-          (maxTurn === AGENT_MAX_TURN_UNLIMITED || steps.length < maxTurn);
-
-        return yielded || windingDown;
-      },
+      ({ steps }): boolean => stopForDeadline(steps.length),
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
-      windingDown = options.canYield !== true && nearDeadline();
       // One mutation stores the step, renews the lease and claims steers, so a
       // steer is never claimed by a turn whose step failed to store or stopped.
       const { renewal, steering } = await session.stepBoundary(
@@ -1937,8 +1942,9 @@ export async function runAgentLoop(
         options.subagentWatch?.confirmDelivered();
 
         // A run that gave up its slot ends on tool results; its next pass
-        // answers from them, so nothing is delivered or failed here.
-        yielded &&= approvals.length === 0 && questionSummaries.length === 0;
+        // answers from them, so nothing is delivered or failed here. A step
+        // waiting on an approval stops for that instead.
+        yielded &&= approvals.length === 0;
         if (yielded) {
           logInfo(
             `Run yielded its worker slot after ${stepCount} step(s)`,
