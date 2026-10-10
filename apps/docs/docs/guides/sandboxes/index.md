@@ -222,7 +222,7 @@ write  notes/a.txt          # creates parent folders
 read   notes/a.txt          # numbered lines
 edit   notes/a.txt          # exact, unique string replacement
 glob   **/*.py              # newest first
-grep   TODO                 # ripgrep
+grep   TODO                 # ripgrep, or grep -E without it
 bash   python3 notes/run.py
 ```
 
