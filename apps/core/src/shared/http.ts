@@ -5,7 +5,6 @@ import {
   isDeniedAddress,
   type GuardedFetchOptions,
 } from "../harness/isolate/runner/pinned-fetch.mjs";
-import type { LiveOwner } from "../harness/ingress.ts";
 
 /**
  * The core HTTP contract every handler speaks, plus generic request/response
@@ -90,9 +89,19 @@ export interface RequestContext {
   /**
    * Gives this run's worker slot to the next queued run and resolves once the
    * run holds a slot again, with `deadlineMs` moved to that slot's budget.
-   * Absent outside the worker pool and once the run used its last slot.
+   * Absent outside the worker pool and once the run used its last slot. The
+   * lease is the harness's `LiveOwner`, spelled out so the SDK, which
+   * typechecks this file, does not pull in the harness.
    */
-  yieldSlot?(lease: LiveOwner | undefined): Promise<void>;
+  yieldSlot?(
+    lease:
+      | {
+          conversationKey: string;
+          ownerEventId: string;
+          ownerGeneration: number;
+        }
+      | undefined,
+  ): Promise<void>;
 }
 
 /**
