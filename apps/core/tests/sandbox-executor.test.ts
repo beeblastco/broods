@@ -2456,6 +2456,7 @@ describe("createSandboxExecutor", () => {
     const executor = createSandboxExecutor({
       provider: "lambda",
       persistent: true,
+      onResume: ["uv sync"],
     });
 
     const handle = await executor.runBackground({
@@ -2479,6 +2480,19 @@ describe("createSandboxExecutor", () => {
     expect(launched).toContain("setsid bash");
     expect(launched).toContain("job_test.running");
     expect(launched).toContain(`.fp-jobs/${ns}`);
+    // The job and the hook get the persistent workspace as HOME, the same `~` as a
+    // foreground exec, not a throwaway dir the guest deletes once they return.
+    const bodies = microvmFetchMock.mock.calls
+      .map((call) => (call[1] as { body?: unknown } | undefined)?.body)
+      .filter((body): body is string => typeof body === "string")
+      .map((body) => JSON.parse(body));
+    for (const marker of ["setsid bash", "uv sync"]) {
+      const exec = bodies.find((body) => String(body.code).includes(marker));
+      expect(exec.env).toMatchObject({
+        HOME: `/mnt/workspaces/${ns}`,
+        TMPDIR: "/tmp",
+      });
+    }
   });
 
   it("asserts the workspace mount before launching a background job on a new MicroVM", async () => {

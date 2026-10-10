@@ -569,6 +569,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const result = await this.#shell(microvmId, endpoint, script, {
       timeoutSeconds: 30,
       env: callbackEnv(request.callback),
+      home: workDir,
     });
     if (result.exitCode !== null && result.exitCode !== 0) {
       throw new Error(
@@ -1590,7 +1591,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   // Control/lifecycle bash for onCreate/onResume hooks and background-job marker
-  // scripts. No workspace cwd, since those scripts use absolute paths.
+  // scripts. No workspace cwd, since those scripts use absolute paths. With no
+  // namespace the guest points HOME and TMPDIR at a dir it deletes on return, so
+  // `home` (the workspace) keeps what a hook installs or a job runs under `~`.
   async #shell(
     microvmId: string,
     endpoint: string,
@@ -1599,6 +1602,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       timeoutSeconds?: number;
       budgetMs?: number;
       env?: Record<string, string>;
+      home?: string;
     } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
     const response = await this.#exec(
@@ -1608,7 +1612,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         runtime: "bash",
         code: script,
         timeout_ms: (options.timeoutSeconds ?? 60) * 1000,
-        env: { ...this.#sandboxEnvVars(), ...options.env },
+        env: {
+          ...this.#sandboxEnvVars(),
+          ...options.env,
+          ...(options.home ? { HOME: options.home, TMPDIR: "/tmp" } : {}),
+        },
       },
       options.budgetMs ?? WARMUP_BUDGET_MS,
     );
@@ -1762,6 +1770,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const result = await this.#shell(microvmId, endpoint, script, {
       timeoutSeconds: this.#config.timeout ?? 120,
       budgetMs: budgetMs,
+      home: workDir,
     });
     if (result.exitCode !== null && result.exitCode !== 0) {
       throw new Error(
