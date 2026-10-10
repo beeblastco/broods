@@ -655,6 +655,7 @@ describe("async turn that throws after it settles", (): void => {
         consumeStream: async (): Promise<void> => {},
         questionSummaries: (): PendingQuestionSummary[] => questions,
         didFail: (): boolean => false,
+        yielded: (): boolean => false,
         failureText: (): null => null,
       };
     }) as never);

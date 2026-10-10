@@ -86,6 +86,22 @@ export interface RequestContext {
   waitUntil(promise: Promise<unknown>): void;
   /** Aborted when the pod's worker pool reclaims this run's slot. */
   abortSignal?: AbortSignal;
+  /**
+   * Gives this run's worker slot to the next queued run and resolves once the
+   * run holds a slot again, with `deadlineMs` moved to that slot's budget.
+   * Absent outside the worker pool and once the run used its last slot. The
+   * lease is the harness's `LiveOwner`, spelled out so the SDK, which
+   * typechecks this file, does not pull in the harness.
+   */
+  yieldSlot?(
+    lease:
+      | {
+          conversationKey: string;
+          ownerEventId: string;
+          ownerGeneration: number;
+        }
+      | undefined,
+  ): Promise<void>;
 }
 
 /**

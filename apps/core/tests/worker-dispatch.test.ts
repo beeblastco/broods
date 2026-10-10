@@ -222,6 +222,50 @@ describe("in-process worker dispatch", () => {
     }
   });
 
+  it("hands a yielding run's slot to the queued run and resumes it next", async (): Promise<void> => {
+    const releases: (() => void)[] = [];
+    const started: string[] = [];
+    const blocked = (): Promise<void> =>
+      new Promise<void>((resolve): void => {
+        releases.push(resolve);
+      });
+    let firstDeadline = 0;
+    let resumedDeadline = 0;
+    dispatchInProcessWorker("test-worker", async (context): Promise<void> => {
+      started.push("yielder");
+      firstDeadline = context.deadlineMs;
+      await blocked();
+      await context.yieldSlot!(undefined);
+      resumedDeadline = context.deadlineMs;
+    });
+    for (let i = 0; i < 7; i += 1) {
+      dispatchInProcessWorker("test-worker", async (): Promise<void> => {
+        started.push(`busy-${i}`);
+        await blocked();
+      });
+    }
+    dispatchInProcessWorker("test-worker", async (): Promise<void> => {
+      started.push("queued");
+      await blocked();
+    });
+    await flushMicrotasks();
+    expect(started).not.toContain("queued");
+
+    // The yield frees the slot for the queued run; the yielder waits its turn.
+    await Bun.sleep(2);
+    releases.shift()!();
+    await flushMicrotasks();
+    expect(started).toContain("queued");
+    expect(resumedDeadline).toBe(0);
+
+    releases.shift()!();
+    await flushMicrotasks();
+    expect(resumedDeadline).toBeGreaterThan(firstDeadline);
+
+    while (releases.length > 0) releases.shift()!();
+    await drainInProcessWorkers();
+  });
+
   it("logs and swallows worker failures like a fire-and-forget invoke", async () => {
     // Must not reject or throw; the failure only surfaces through logError.
     dispatchInProcessWorker("test-worker", async () => {

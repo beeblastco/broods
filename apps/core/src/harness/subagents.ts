@@ -168,7 +168,7 @@ export class SubagentCoordinator {
   constructor(
     private readonly parentSession: Session,
     private readonly parentAgentConfig: AgentConfig,
-    private readonly waitUntilMs: number = Date.now() +
+    private readonly waitUntil: number | (() => number) = Date.now() +
       DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
     dependencies: SubagentCoordinatorDependencies = {},
   ) {
@@ -182,6 +182,13 @@ export class SubagentCoordinator {
     // than stranding it when a caller builds a coordinator without a dispatcher.
     this.dispatchNextIngress =
       dependencies.dispatchNextIngress ?? (async () => false);
+  }
+
+  // A getter follows the worker's budget as a yielding run moves to a new slot.
+  private get waitUntilMs(): number {
+    return typeof this.waitUntil === "number"
+      ? this.waitUntil
+      : this.waitUntil();
   }
 
   private get isPersistentMode(): boolean {

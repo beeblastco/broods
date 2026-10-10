@@ -785,7 +785,8 @@ export const settle = internalMutation({
  * One model step boundary in one transaction: the fenced append of the step's
  * rows, the stop check, the lease renewal, and the steer claim. A stale owner
  * writes nothing. A stop keeps the rows, as `renewOwner` beside a fenced append
- * did, and claims no steer.
+ * did, and claims no steer. `claimSteering: false` leaves steers queued for the
+ * next run, as a run winding down before its deadline asks.
  */
 export const stepBoundary = internalMutation({
   args: {
@@ -794,6 +795,7 @@ export const stepBoundary = internalMutation({
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
     events: v.optional(conversationEventsValidator),
+    claimSteering: v.optional(v.boolean()),
   },
   returns: stepBoundaryResultValidator,
   handler: async (
@@ -814,7 +816,10 @@ export const stepBoundary = internalMutation({
       return { renewal: "stopped" as const, steering: null };
     }
     // A claimed steer extends the lease itself.
-    const steering = await claimSteering(ctx, coordinator, args, now);
+    const steering =
+      args.claimSteering === false
+        ? null
+        : await claimSteering(ctx, coordinator, args, now);
     if (!steering) await renewHeldLease(ctx, coordinator, args.leaseTtlMs, now);
 
     return { renewal: "renewed" as const, steering: steering };

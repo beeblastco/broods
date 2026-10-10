@@ -3,6 +3,10 @@ export const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
   "WORKER_TIMEOUT_BUDGET_MS",
   10 * 60 * 1000,
 );
+// How many worker slots one run may take in turn by yielding near its
+// deadline: an hour at the default budget, so a run that never ends still
+// stops costing tokens.
+export const MAX_RUN_SLOTS = positiveIntegerEnv("MAX_RUN_SLOTS", 6);
 
 export function requireEnv(name: string): string {
   const value = process.env[name];
