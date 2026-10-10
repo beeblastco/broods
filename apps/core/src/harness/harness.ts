@@ -1674,8 +1674,8 @@ export async function runAgentLoop(
       taskCacheWriteTokens +=
         stepTokens.cacheWriteTokens ||
         extractCacheWriteTokens(configuredModel.providerName, providerMetadata);
-      // An aborted run never reaches onEnd, so finished steps are summed here.
-      // onEnd replaces both with its own totals.
+      // An aborted run never reaches onEnd, and a stopped one gets an empty
+      // total there, so finished steps are summed here.
       const soFar = usageTokenTotals(taskUsage);
       taskUsage = {
         inputTokens: soFar.inputTokens + stepTokens.inputTokens,
@@ -1934,7 +1934,9 @@ export async function runAgentLoop(
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       finishObserved = true;
-      taskUsage = usage;
+      // The turn total wins (a harness counts calls no step reported), unless
+      // a stop thrown from prepareStep left it empty: then the step sum stands.
+      if (usageTokenTotals(usage).totalTokens > 0) taskUsage = usage;
       taskStepCount = stepCount;
       const approvalRequests = extractApprovalRequests(steps);
       // `isAutomatic` records a decision the SDK already answered this run, so
@@ -1954,7 +1956,7 @@ export async function runAgentLoop(
         toolsUsed: tools.toolsUsed,
         toolUsage: tools.toolUsage,
         toolCalls: tools.toolCalls,
-        usage: usage,
+        usage: taskUsage,
       };
 
       try {
@@ -2021,7 +2023,7 @@ export async function runAgentLoop(
               toolsUsed: tools.toolsUsed,
               toolUsage: tools.toolUsage,
               toolCalls: tools.toolCalls,
-              usage: usage,
+              usage: taskUsage,
             },
           );
           await lifecycle.emit("agent.failed", {
@@ -2042,7 +2044,7 @@ export async function runAgentLoop(
         // parsing or reply delivery below fails, so record the metric line once
         // here; a later failure adds its own model.invocation.failed line.
         logInfo(
-          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(usage)}, ${formatDuration(finishLog.durationMs)}`,
+          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(taskUsage)}, ${formatDuration(finishLog.durationMs)}`,
           finishLog,
         );
 

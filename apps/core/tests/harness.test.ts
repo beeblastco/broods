@@ -552,8 +552,9 @@ const streamTextMock = mock(
             text: "Let me try again:\n\nFinal answer only.",
             finishReason: "stop",
             rawFinishReason: "STOP",
-            usage: { inputTokens: 8, outputTokens: 12, totalTokens: 20 },
-            totalUsage: { inputTokens: 8, outputTokens: 12, totalTokens: 20 },
+            // A harness turn total also counts calls no step reported.
+            usage: { inputTokens: 30, outputTokens: 12, totalTokens: 42 },
+            totalUsage: { inputTokens: 30, outputTokens: 12, totalTokens: 42 },
             steps: [],
             toolCalls: [],
           });
@@ -1121,6 +1122,68 @@ describe("runAgentLoop", () => {
       outputTokens: 5,
       totalTokens: 15,
     });
+  });
+
+  it("meters the steps a run stopped at the step boundary finished", async () => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    let boundaries = 0;
+    const stream = await startTwoStepTurn(undefined, {}, async () => {
+      boundaries += 1;
+
+      return {
+        renewal: boundaries === 1 ? "renewed" : "stopped",
+        steering: null,
+      };
+    });
+    await stream.consumeStream();
+
+    expect(stream.failureText()).toBe("Stopped by user at the model boundary");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      status: "failed",
+      stepCount: 1,
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+    });
+  });
+
+  it("meters the turn total when it counts more than the steps", async () => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    streamTextScenario = "multi-step-text";
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: () => [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async () => {},
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "hello" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-custom" },
+      },
+      { onFinalText: async () => {}, onErrorText: async () => {} },
+    );
+    await stream.consumeStream();
+
+    expect(writes[0]).toMatchObject({ inputTokens: 30, totalTokens: 42 });
   });
 
   it("sends the error hook when the model finishes with empty text", async () => {
