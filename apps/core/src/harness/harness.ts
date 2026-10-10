@@ -1266,8 +1266,13 @@ export async function runAgentLoop(
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
-      (): boolean => {
-        yielded = options.canYield === true && nearDeadline();
+      // A run at its step cap is done, not yielding: the next pass would
+      // start a fresh count.
+      ({ steps }): boolean => {
+        yielded =
+          options.canYield === true &&
+          nearDeadline() &&
+          (maxTurn === AGENT_MAX_TURN_UNLIMITED || steps.length < maxTurn);
 
         return yielded || windingDown;
       },

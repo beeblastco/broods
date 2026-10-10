@@ -3261,7 +3261,10 @@ async function runParentContinuationLoop(options: {
     // The pass gave its slot to the next queued run; the next pass carries on
     // from the stored tool results once a slot is free again.
     if (stream.yielded()) {
-      turnContext = await resumeAfterYield(options);
+      turnContext = await resumeAfterYield(
+        options,
+        turnContext.ephemeralSystem,
+      );
       continue;
     }
     // Only a clean pass leads to another pass that can answer a subagent.
@@ -3375,14 +3378,18 @@ async function runParentContinuationLoop(options: {
 /**
  * Hands a yielded pass's worker slot to the next queued run, holding the
  * conversation lease meanwhile, then reloads the stored history, which ends in
- * the cut-off step's tool results, for the next pass on the fresh budget.
+ * the cut-off step's tool results, for the next pass on the fresh budget. The
+ * turn's one-turn system messages are not stored, so they carry over.
  */
-async function resumeAfterYield(options: {
-  session: Session;
-  subagentCoordinator: SubagentCoordinator;
-  asyncToolCoordinator: AsyncToolCoordinator;
-  context?: RequestContext;
-}): Promise<DirectTurn["turnContext"]> {
+async function resumeAfterYield(
+  options: {
+    session: Session;
+    subagentCoordinator: SubagentCoordinator;
+    asyncToolCoordinator: AsyncToolCoordinator;
+    context?: RequestContext;
+  },
+  ephemeralSystem: SystemModelMessage[],
+): Promise<DirectTurn["turnContext"]> {
   const { session } = options;
   await options.context?.yieldSlot?.(
     session.ownerGeneration === undefined
@@ -3397,7 +3404,7 @@ async function resumeAfterYield(options: {
   options.subagentCoordinator.waitUntilMs = waitUntil;
   options.asyncToolCoordinator.waitUntilMs = waitUntil;
 
-  return session.createTurnContext();
+  return session.createTurnContext(ephemeralSystem);
 }
 
 /**
