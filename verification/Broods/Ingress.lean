@@ -42,8 +42,9 @@ inductive Step where
   /-- `promoteQueuedGroup` and `applySteering`: queued to processing. -/
   | promote (generation appliedTo : Nat)
   /-- `stepBoundary`: the steer claim, behind the fence and the stop check of the
-  same transaction that stores the step and renews the lease. -/
-  | stepBoundary (ownerEventId generation : Nat)
+  same transaction that stores the step and renews the lease. `claim` is
+  `claimSteering`: false for a run winding down, which leaves steers queued. -/
+  | stepBoundary (ownerEventId generation : Nat) (claim : Bool)
   /-- `settleAppliedEnvelopes`, reached through `settle` and `takeNext`. -/
   | settle (ownerEventId generation : Nat) (outcome : Outcome)
   /-- `expireQueuedEnvelopes`. -/
@@ -98,8 +99,9 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
     if e.status == .queued && decide (now < e.expiresAt) then
       { e with status := .processing, ownerGeneration := some g, appliedToEventId := some to }
     else e
-  | .stepBoundary owner g, e =>
-    if boundaryProceeds c owner g now && e.status == .queued && decide (now < e.expiresAt) then
+  | .stepBoundary owner g claim, e =>
+    if claim && boundaryProceeds c owner g now && e.status == .queued &&
+        decide (now < e.expiresAt) then
       { e with status := .processing, ownerGeneration := some g, appliedToEventId := some owner }
     else e
   | .settle owner g o, e =>
@@ -208,16 +210,16 @@ theorem fence_agreement {c : Coord} {now owner : Nat} {e : Envelope}
     split <;> simp_all
   · simp [step, hlive, hrun, Status.terminal]
 
-/-- A step boundary claims a steer only for the live owner of a generation nobody
-stopped, decided in the transaction that claims it. -/
-theorem boundary_fenced {c : Coord} {now owner g : Nat} {e : Envelope}
-    (h : step c now (.stepBoundary owner g) e ≠ e) :
-    requireOwner c owner g now = true ∧ c.stopRequestedGeneration ≠ some g := by
+/-- A step boundary claims a steer only when it asks to, for the live owner of a
+generation nobody stopped, decided in the transaction that claims it. -/
+theorem boundary_fenced {c : Coord} {now owner g : Nat} {claim : Bool} {e : Envelope}
+    (h : step c now (.stepBoundary owner g claim) e ≠ e) :
+    claim = true ∧ requireOwner c owner g now = true ∧ c.stopRequestedGeneration ≠ some g := by
   simp only [step] at h
   split at h
   · rename_i hc
     simp only [boundaryProceeds, Bool.and_eq_true, bne_iff_ne, ne_eq] at hc
-    exact ⟨hc.1.1.1, hc.1.1.2⟩
+    exact ⟨hc.1.1.1, hc.1.1.2.1, hc.1.1.2.2⟩
   · exact absurd rfl h
 
 /-- A boundary that proceeds leaves its owner fenced in for 9/10 of the TTL. -/
@@ -276,13 +278,14 @@ example :
   decide
 
 /-- A stopped boundary claims no steer and leaves the lease as it was; without the
-stop, the same boundary claims it. -/
+stop, the same boundary claims it, unless it is winding down. -/
 example :
     let c : Coord := ⟨1, some 7, some 10, some 1⟩
     let e : Envelope := ⟨8, .queued, 20, none, none, false⟩
-    step c 5 (.stepBoundary 7 1) e = e ∧ c.stepBoundary 7 1 5 100 = c ∧
-      (step { c with stopRequestedGeneration := none } 5 (.stepBoundary 7 1) e).status =
-        .processing := by
+    step c 5 (.stepBoundary 7 1 true) e = e ∧ c.stepBoundary 7 1 5 100 = c ∧
+      (step { c with stopRequestedGeneration := none } 5 (.stepBoundary 7 1 true) e).status =
+        .processing ∧
+      step { c with stopRequestedGeneration := none } 5 (.stepBoundary 7 1 false) e = e := by
   decide
 
 /-- A queued row that names the owner is left queued by its settle. -/
