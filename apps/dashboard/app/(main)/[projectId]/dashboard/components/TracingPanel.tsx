@@ -294,6 +294,7 @@ const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "gchat:", label: "Google Chat" },
   { prefix: "gh:", label: "GitHub" },
   { prefix: "linear:", label: "Linear" },
+  { prefix: "notion:", label: "Notion" },
   { prefix: "pancake:", label: "Pancake" },
   { prefix: "teams:", label: "Teams" },
   { prefix: "twilio:", label: "Twilio" },

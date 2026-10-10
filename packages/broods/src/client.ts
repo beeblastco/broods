@@ -91,6 +91,7 @@ export interface ChannelReference {
     | "gchat"
     | "github"
     | "linear"
+    | "notion"
     | "slack"
     | "discord"
     | "matrix"

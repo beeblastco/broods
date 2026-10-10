@@ -14,6 +14,7 @@ import type {
   AgentLinearChannelConfig,
   AgentMatrixChannelConfig,
   AgentMessengerChannelConfig,
+  AgentNotionChannelConfig,
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
   AgentTelegramChannelConfig,
@@ -31,6 +32,7 @@ import type {
   GoogleChatSource,
   GitHubSource,
   LinearSource,
+  NotionSource,
   SlackSource,
   DiscordSource,
   MatrixSource,
@@ -242,6 +244,7 @@ export type ChannelType =
   | "gchat"
   | "github"
   | "linear"
+  | "notion"
   | "slack"
   | "discord"
   | "matrix"
@@ -346,6 +349,26 @@ export type LinearConnectionInput = EnvRefString<
       "apiKey" | "apiUrl" | "userName" | "webhookSecret"
     >,
     "apiKey" | "userName" | "webhookSecret"
+  >
+> &
+  ConnectionIdentityInput;
+
+/**
+ * `verificationToken` is omitted until Notion's subscription handshake hands
+ * it over; the connection logs it for you on the first deploy.
+ */
+export type NotionConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentNotionChannelConfig,
+      | "apiBaseUrl"
+      | "keywords"
+      | "mentionMode"
+      | "token"
+      | "userName"
+      | "verificationToken"
+    >,
+    "token"
   >
 > &
   ConnectionIdentityInput;
@@ -493,6 +516,10 @@ export type LinearConnectionDefinition = ConnectionDefinition<
   "linear",
   LinearConnectionInput
 >;
+export type NotionConnectionDefinition = ConnectionDefinition<
+  "notion",
+  NotionConnectionInput
+>;
 export type SlackConnectionDefinition = ConnectionDefinition<
   "slack",
   SlackConnectionInput
@@ -538,6 +565,7 @@ export type AnyConnectionDefinition =
   | GoogleChatConnectionDefinition
   | GitHubConnectionDefinition
   | LinearConnectionDefinition
+  | NotionConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
   | MatrixConnectionDefinition
@@ -626,6 +654,12 @@ export type LinearChannelInput = ChannelRulesInput & {
   connection: LinearConnectionDefinition;
   /** Team key, e.g. "ENG", or several that share one set of rules. */
   team: string | readonly string[];
+};
+
+export type NotionChannelInput = ChannelRulesInput & {
+  connection: NotionConnectionDefinition;
+  /** Page id, with or without hyphens as in the page URL, or several. */
+  pageId: string | readonly string[];
 };
 
 export type TeamsChannelInput = ChannelRulesInput & {
@@ -739,6 +773,7 @@ export type TelegramMessageSource = TelegramSource;
 export type GoogleChatMessageSource = GoogleChatSource;
 export type GitHubMessageSource = GitHubSource;
 export type LinearMessageSource = LinearSource;
+export type NotionMessageSource = NotionSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
 export type MatrixMessageSource = MatrixSource;
@@ -759,6 +794,7 @@ export type ChannelMessageReceived =
   | { channel: "gchat"; text: string; source: GoogleChatMessageSource }
   | { channel: "github"; text: string; source: GitHubMessageSource }
   | { channel: "linear"; text: string; source: LinearMessageSource }
+  | { channel: "notion"; text: string; source: NotionMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
   | { channel: "matrix"; text: string; source: MatrixMessageSource }
@@ -1170,6 +1206,12 @@ export function defineMessengerConnection(
   return defineConnection("messenger", config);
 }
 
+export function defineNotionConnection(
+  config: NotionConnectionInput,
+): NotionConnectionDefinition {
+  return defineConnection("notion", config);
+}
+
 export function definePancakeConnection(
   config: PancakeConnectionInput,
 ): PancakeConnectionDefinition {
@@ -1276,6 +1318,24 @@ export function defineMessengerChannel<const Name extends string>(
   return defineChannelResource(name, description, psid, undefined, rules);
 }
 
+// Core names a page by the hyphenated id the Notion API returns; a page URL
+// ends in the same 32 hex digits without them.
+export function defineNotionChannel<const Name extends string>(
+  input: ResourceInput<Name, NotionChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, pageId, ...rules } = input;
+
+  return defineChannelResource(
+    name,
+    description,
+    typeof pageId === "string"
+      ? hyphenateNotionPageId(pageId)
+      : pageId.map(hyphenateNotionPageId),
+    undefined,
+    rules,
+  );
+}
+
 export function definePancakeChannel<const Name extends string>(
   input: ResourceInput<Name, PancakeChannelInput>,
 ): ChannelResource<Name> {
@@ -1370,6 +1430,15 @@ export function isResource(value: unknown): value is AnyResource {
 // value you paste is the value the field asks for. All of them normalize to the
 // `externalId` the backend stores, one row per id, and `platform` comes off the
 // connection.
+function hyphenateNotionPageId(id: string): string {
+  return id
+    .toLowerCase()
+    .replace(
+      /^([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})$/,
+      "$1-$2-$3-$4-$5",
+    );
+}
+
 function defineChannelResource<const Name extends string>(
   name: Name,
   description: string | undefined,

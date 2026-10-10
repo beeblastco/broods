@@ -680,6 +680,7 @@ import {
   defineGoogleChatConnection,
   defineLinearConnection,
   defineMatrixConnection,
+  defineNotionConnection,
   definePancakeConnection,
   defineTeamsConnection,
   defineTwilioConnection,
@@ -757,6 +758,12 @@ export const linear = defineLinearConnection({
   userName: "support-ai",
   allowedChannelIds: ["ENG"],
 });
+export const notion = defineNotionConnection({
+  token: env("NOTION_TOKEN"),
+  verificationToken: env("NOTION_VERIFICATION_TOKEN"),
+  userName: "support-ai",
+  allowedChannelIds: ["*"],
+});
 export const twilio = defineTwilioConnection({
   accountSid: env("TWILIO_ACCOUNT_SID"),
   authToken: env("TWILIO_AUTH_TOKEN"),
@@ -792,6 +799,7 @@ export const support = defineAgent({
     gchat,
     github,
     linear,
+    notion,
     slack,
     discord,
     matrix,
@@ -842,6 +850,7 @@ export const support = defineAgent({
         mentionText: "@support-ai",
       },
       linear: { userName: "support-ai", allowedChannelIds: ["ENG"] },
+      notion: { userName: "support-ai", allowedChannelIds: ["*"] },
       pancake: { senderId: "staff-1", allowedChannelIds: ["*"] },
       twilio: {
         phoneNumber: "+15550001111",
@@ -883,6 +892,7 @@ export const support = defineAgent({
     { alias: "linear", type: "linear", agentName: "support" },
     { alias: "matrix", type: "matrix", agentName: "support" },
     { alias: "messenger", type: "messenger", agentName: "support" },
+    { alias: "notion", type: "notion", agentName: "support" },
     { alias: "pancake", type: "pancake", agentName: "support" },
     { alias: "slack", type: "slack", agentName: "support" },
     { alias: "teams", type: "teams", agentName: "support" },
@@ -2594,6 +2604,35 @@ test("compileProject leaves a single chat id as one record under its own name", 
 
   expect(records.map((record) => record.name)).toEqual(["lamy-internal"]);
   expect(records[0]?.config).toMatchObject({ externalId: "7788" });
+});
+
+test("defineNotionChannel stores a page id copied from a URL in the API's hyphenated form", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineNotionChannel, defineNotionConnection, env } from "${RESOURCES_MODULE}";
+
+export const notion = defineNotionConnection({ token: env("NOTION_TOKEN") });
+
+export const docs = defineAgent({ name: "docs", connections: [notion] });
+
+export const roadmap = defineNotionChannel({
+  name: "roadmap",
+  connection: notion,
+  pageId: "1F2E3D4C00004000800000000000000A",
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const record = manifest.resources.find(
+    (resource) => resource.kind === "channelRecord",
+  );
+
+  expect(record?.config).toMatchObject({
+    platform: "notion",
+    externalId: "1f2e3d4c-0000-4000-8000-00000000000a",
+  });
 });
 
 test("compileProject rejects an unusable channel id list", async () => {

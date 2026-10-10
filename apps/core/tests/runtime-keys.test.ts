@@ -93,6 +93,23 @@ describe("channelScopeKeyFromConversation", () => {
     ).toBe("linear:issue-1:c:comment-1");
   });
 
+  it("collapses Notion discussion threads to their page", () => {
+    expect(channelScopeKeyFromConversation("notion:page-1:disc-1")).toBe(
+      "notion:page-1",
+    );
+    expect(
+      channelScopeKeyFromConversation(
+        "acct:acct_1:agent:agent_1:notion:page-1:disc-2",
+      ),
+    ).toBe("notion:page-1");
+    expect(channelScopeKeyFromConversation("notion:page-1")).toBe(
+      "notion:page-1",
+    );
+    expect(
+      channelScopeKeyFromConversation("notion:page-1:disc-1", "conversation"),
+    ).toBe("notion:page-1:disc-1");
+  });
+
   it("falls back to the whole conversation key for direct/custom conversations", () => {
     expect(channelScopeKeyFromConversation("api:thread-1")).toBe(
       "api:thread-1",

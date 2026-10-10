@@ -173,6 +173,36 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
+    kind: "notion",
+    label: "Notion",
+    fields: [
+      {
+        key: "token",
+        label: "Integration token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "verificationToken",
+        label: "Webhook verification token",
+        type: "secret",
+        placeholder: "Logged by the first handshake",
+      },
+      {
+        key: "userName",
+        label: "Name (for @-mention gating)",
+        type: "text",
+        placeholder: "notion-bot",
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed page IDs",
+        type: "stringList",
+        placeholder: "Page ID, *",
+      },
+    ],
+  },
+  {
     kind: "slack",
     label: "Slack",
     fields: [

@@ -16,7 +16,7 @@ How core turns a provider webhook into an agent run and sends the reply back. Pe
 | `src/harness/channel-media.ts`      | Inbound attachment download, storage and model hand-off                                      |
 | `src/shared/media-ticket.ts`        | Sealed `/v1/media/{ticket}` links                                                            |
 
-Slack, Telegram, Discord, GitHub, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram use Chat SDK adapters (`@chat-adapter/*`) as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing kept in Chat state survives. That is why Linear takes a personal API key only (OAuth tokens are refreshed and cached in Chat state). Messenger and Instagram share Meta webhook handling in `meta-channel.ts`. Matrix, Pancake and Zalo are Broods-native.
+Slack, Telegram, Discord, GitHub, Linear, Notion, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram use Chat SDK adapters (`@chat-adapter/*`) as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing kept in Chat state survives. That is why Linear takes a personal API key only (OAuth tokens are refreshed and cached in Chat state). A Notion event names a comment by id, so the Notion adapter reads it back from the API inside `parse`. Before its `verificationToken` is set, a Notion connection accepts only Notion's unsigned one-time handshake and logs the token for the operator. Messenger and Instagram share Meta webhook handling in `meta-channel.ts`. Matrix, Pancake and Zalo are Broods-native.
 
 ## Inbound paths
 
@@ -159,7 +159,7 @@ Only Slack, Telegram and GitHub implement `stream()` (GitHub buffers and posts o
 
 Adapters do not implement these:
 
-- Commands. Channels in `INLINE_COMMAND_CHANNELS` (Discord, Google Chat, Instagram, Matrix, Messenger, Slack, Teams, Telegram, Twilio, WhatsApp, Zalo) route `/command` text through `commands.ts`. GitHub, Linear and Pancake pass it to the agent.
+- Commands. Channels in `INLINE_COMMAND_CHANNELS` (Discord, Google Chat, Instagram, Matrix, Messenger, Slack, Teams, Telegram, Twilio, WhatsApp, Zalo) route `/command` text through `commands.ts`. GitHub, Linear, Notion and Pancake pass it to the agent.
 - Typing and reaction never fail the turn.
 - Tools with `needsApproval` are denied on channel turns.
 - A failed turn replies with `formatChannelErrorText()`: the provider's reason, secrets redacted, plus the step that fixes it. `sendChannelFailure()` adds a Retry button where `sendReplyButtons` exists (Telegram), or `Reply "retry"` text.
@@ -196,18 +196,18 @@ sequenceDiagram
   end
 ```
 
-| Channel                                       | Pictures                          | Documents                         | Batch                   |
-| --------------------------------------------- | --------------------------------- | --------------------------------- | ----------------------- |
-| Telegram                                      | fetches the URL                   | fetches the URL                   | album of 2 to 10        |
-| Slack                                         | Block Kit image blocks            | uploads bytes (`files.uploadV2`)  | one message, one upload |
-| Discord                                       | uploads bytes                     | uploads bytes                     | one multipart message   |
-| Matrix                                        | uploads bytes                     | uploads bytes                     | one per message         |
-| Pancake                                       | uploads bytes (`upload_contents`) | uploads bytes                     | one per message         |
-| Zalo                                          | fetches the URL                   | none                              | one per message         |
-| WhatsApp                                      | uploads bytes, or links a URL     | uploads bytes, or links a URL     | one per message         |
-| Instagram                                     | uploads bytes, or fetches the URL | uploads bytes, or fetches the URL | one per message         |
-| Twilio                                        | fetches the URL (MMS)             | none                              | one per message         |
-| Teams, Google Chat, Messenger, GitHub, Linear | none                              | none                              | text links only         |
+| Channel                                               | Pictures                          | Documents                         | Batch                   |
+| ----------------------------------------------------- | --------------------------------- | --------------------------------- | ----------------------- |
+| Telegram                                              | fetches the URL                   | fetches the URL                   | album of 2 to 10        |
+| Slack                                                 | Block Kit image blocks            | uploads bytes (`files.uploadV2`)  | one message, one upload |
+| Discord                                               | uploads bytes                     | uploads bytes                     | one multipart message   |
+| Matrix                                                | uploads bytes                     | uploads bytes                     | one per message         |
+| Pancake                                               | uploads bytes (`upload_contents`) | uploads bytes                     | one per message         |
+| Zalo                                                  | fetches the URL                   | none                              | one per message         |
+| WhatsApp                                              | uploads bytes, or links a URL     | uploads bytes, or links a URL     | one per message         |
+| Instagram                                             | uploads bytes, or fetches the URL | uploads bytes, or fetches the URL | one per message         |
+| Twilio                                                | fetches the URL (MMS)             | none                              | one per message         |
+| Teams, Google Chat, Messenger, GitHub, Linear, Notion | none                              | none                              | text links only         |
 
 The link has no expiry because some providers re-fetch on every view, and Zalo stores the URL itself. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it. A caption rides the first message only. Rejection reasons go to the log, not the chat.
 
