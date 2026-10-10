@@ -16,6 +16,11 @@ const PARENT_EVENT_ID = scopedDirectEventId(
   "agent_parent",
   "parent-event",
 );
+const PARENT_CONVERSATION_KEY = scopedDirectConversationKey(
+  ACCOUNT_ID,
+  "agent_parent",
+  "chat",
+);
 
 const originalQuery = runtime.query.bind(runtime);
 const originalMutate = runtime.mutate.bind(runtime);
@@ -121,6 +126,7 @@ it("waits for a running subagent before answering its status", async () => {
   const tools = getStatus({
     accountId: ACCOUNT_ID,
     eventId: PARENT_EVENT_ID,
+    conversationKey: PARENT_CONVERSATION_KEY,
     watch: watchWith({
       waitForSettled: async (id: string, timeoutMs: number): Promise<void> => {
         waits.push({ taskId: id, timeoutMs: timeoutMs });
@@ -155,6 +161,7 @@ it("does not wait on a task paired with the wrong agent", async () => {
   const tools = getStatus({
     accountId: ACCOUNT_ID,
     eventId: PARENT_EVENT_ID,
+    conversationKey: PARENT_CONVERSATION_KEY,
     watch: watchWith({ waitForSettled: waitForSettled }),
   });
 
@@ -311,9 +318,9 @@ it("reports a late stop as not running without trusting stale task status", asyn
   ).resolves.toEqual({ status: "not_running" });
 });
 
-it("rejects another parent's task before reading durable state", async () => {
+it("rejects another account's task before reading durable state", async () => {
   const foreignTaskId = createSubagentTaskId(
-    scopedDirectEventId(ACCOUNT_ID, "other_parent", "event"),
+    scopedDirectEventId("account_2", "agent_parent", "event"),
   );
   const query = mock(async () => null);
   runtime.query = query as never;
@@ -330,6 +337,62 @@ it("rejects another parent's task before reading durable state", async () => {
     ).rejects.toThrow(`Error: no subagent task found for ${foreignTaskId}`);
   }
   expect(query).not.toHaveBeenCalled();
+});
+
+it("rejects a task another conversation started", async () => {
+  const foreignTaskId = createSubagentTaskId(
+    scopedDirectEventId(ACCOUNT_ID, "agent_parent", "other-event"),
+  );
+  const query = spyOn(runtime, "query").mockResolvedValue({
+    conversationKey: `${PARENT_CONVERSATION_KEY}-other`,
+  });
+  const tools = await subagentTools(PARENT_EVENT_ID);
+
+  expect(
+    execute(tools.get_subagent_status, {
+      taskId: foreignTaskId,
+      agentId: AGENT_ID,
+    }),
+  ).rejects.toThrow(`Error: no subagent task found for ${foreignTaskId}`);
+  expect(query.mock.calls.map(([name]) => name)).toEqual([
+    "getIngressStatusByEventId",
+  ]);
+});
+
+it("reads a task an earlier turn of this conversation started", async () => {
+  const earlierEventId = scopedDirectEventId(
+    ACCOUNT_ID,
+    "agent_parent",
+    "earlier-event",
+  );
+  const taskId = createSubagentTaskId(earlierEventId);
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
+  // The ownership read of the earlier turn's envelope, then the child's row.
+  const query = spyOn(runtime, "query")
+    .mockResolvedValueOnce({ conversationKey: PARENT_CONVERSATION_KEY })
+    .mockResolvedValueOnce({
+      accountId: ACCOUNT_ID,
+      eventId: childEventId,
+      conversationKey: scopedDirectConversationKey(
+        ACCOUNT_ID,
+        AGENT_ID,
+        "earlier",
+      ),
+      status: "completed",
+      response: "late answer",
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+      expiresAt: Date.now() + 1_000,
+    });
+  const tools = await subagentTools(PARENT_EVENT_ID);
+
+  expect(
+    await execute(tools.get_subagent_status, {
+      taskId: taskId,
+      agentId: AGENT_ID,
+    }),
+  ).toEqual({ status: "completed", response: "late answer" });
+  expect(query.mock.calls[0]?.[1]).toMatchObject({ eventId: earlierEventId });
 });
 
 it("rejects a sibling task and an agent mismatch as not found", async () => {
@@ -405,6 +468,7 @@ it("answers a child's open question with a steer instead of queuing it", async (
     accountId: ACCOUNT_ID,
     agentConfig: {},
     eventId: PARENT_EVENT_ID,
+    conversationKey: PARENT_CONVERSATION_KEY,
     session: {} as Session,
     watch: watchWith({
       answerQuestion: (id: string, answer: string): boolean => {
@@ -458,6 +522,7 @@ async function subagentTools(
     agentConfig: {},
     dispatchAppliedIngress: dispatchAppliedIngress,
     eventId: parentEventId,
+    conversationKey: PARENT_CONVERSATION_KEY,
     // The update tool reads only the session's dispatch scope fields.
     session: {
       endpointId: undefined,

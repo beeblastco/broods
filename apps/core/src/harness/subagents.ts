@@ -77,6 +77,13 @@ const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 // How long a child's ask_parent waits for the parent's answer.
 const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
+// What the parent model reads for a child it stopped waiting for.
+const STILL_RUNNING_NOTE =
+  "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
+// The coordinator of the run that detached each child still working, by the
+// child's result event id, so a later turn's get_subagent_status read reaches
+// it. Core runs one replica, so every reader is in this process.
+const detachedResults = new Map<string, SubagentCoordinator>();
 
 interface SubagentCompletion {
   taskId: string;
@@ -84,7 +91,7 @@ interface SubagentCompletion {
   agentId: string;
   description?: string;
   conversationKey: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "running";
   response?: JSONValue;
   error?: string;
   // What the parent actually sees, after subagent.visibility + an onSubagentFinish
@@ -124,6 +131,12 @@ type SubagentIngressDispatcher = (
   session: Session,
   scope: IngressDispatchScope,
 ) => Promise<boolean>;
+/** Starts a new parent turn with a child's result, once per `taskId`. */
+type SubagentParentResumer = (
+  parent: Session,
+  taskId: string,
+  message: UserModelMessage,
+) => Promise<void>;
 
 // Collaborators the handler owns. Every one has a working default, so tests and
 // non-handler callers override only what they exercise.
@@ -131,6 +144,7 @@ interface SubagentCoordinatorDependencies {
   lifecycle?: AgentLifecycleEmitter;
   publisherFactory?: SubagentPublisherFactory;
   dispatchNextIngress?: SubagentIngressDispatcher;
+  resumeParent?: SubagentParentResumer;
 }
 
 export class SubagentCoordinator {
@@ -140,6 +154,9 @@ export class SubagentCoordinator {
     string,
     Omit<SubagentCompletion, "status" | "response" | "error" | "visibleResult">
   >();
+  // Children still running after the parent stopped waiting. Each reports
+  // through `resumeParent` instead, as a new turn of the parent conversation.
+  private readonly detached = new Set<string>();
   private readonly waiters = new Set<() => void>();
   // Child runs whose outcome is recorded; a later failure never overwrites it.
   private readonly recorded = new Set<string>();
@@ -164,6 +181,7 @@ export class SubagentCoordinator {
   private readonly lifecycle: AgentLifecycleEmitter;
   private readonly publisherFactory: SubagentPublisherFactory;
   private readonly dispatchNextIngress: SubagentIngressDispatcher;
+  private readonly resumeParent: SubagentParentResumer;
 
   constructor(
     private readonly parentSession: Session,
@@ -182,6 +200,8 @@ export class SubagentCoordinator {
     // than stranding it when a caller builds a coordinator without a dispatcher.
     this.dispatchNextIngress =
       dependencies.dispatchNextIngress ?? (async () => false);
+    // Without a resumer a late result is only recorded on its status row.
+    this.resumeParent = dependencies.resumeParent ?? (async () => {});
   }
 
   // A getter follows the worker's budget as a yielding run moves to a new slot.
@@ -255,6 +275,11 @@ export class SubagentCoordinator {
 
   get pendingCount(): number {
     return this.pending.size;
+  }
+
+  /** Children still working, waited on or not; the root span waits on them. */
+  get runningCount(): number {
+    return this.pending.size + this.detached.size;
   }
 
   async waitForIdle(
@@ -352,6 +377,9 @@ export class SubagentCoordinator {
   confirmDelivered(): void {
     for (const eventId of this.readUnsaved) {
       this.delivered.add(eventId);
+      // A later turn read a child an earlier run detached: that run's resume
+      // would answer it a second time.
+      detachedResults.get(eventId)?.delivered.add(eventId);
       // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
         (completion): boolean =>
@@ -475,36 +503,34 @@ export class SubagentCoordinator {
     return true;
   }
 
-  async drainCompletionsAndTimeoutsToParent(): Promise<number> {
+  /**
+   * The parent stops waiting: finished results go in as usual, and each child
+   * still working is reported as running. Those keep running and later resume
+   * the parent conversation with their result through `resumeParent`.
+   */
+  async drainCompletionsAndDetachToParent(): Promise<number> {
     if (this.completions.length === 0 && this.pending.size === 0) {
       return 0;
     }
 
     const completions = this.completions.splice(0);
-    const timeouts = [...this.pending.keys()].map(
-      (taskId): SubagentCompletion => {
-        const metadata = this.pendingMetadata.get(taskId);
-
-        return {
-          taskId: metadata?.taskId ?? taskId,
-          eventId: metadata?.eventId ?? taskId,
-          agentId: metadata?.agentId ?? "unknown",
-          ...(metadata?.description
-            ? { description: metadata.description }
-            : {}),
-          conversationKey: metadata?.conversationKey ?? "unknown",
-          status: "failed",
-          error:
-            "Subagent task is still pending near the parent request timeout.",
-        };
-      },
-    );
-
+    // A child whose result is in this batch is only settling its lease.
+    const answered = new Set(completions.map(({ taskId }) => taskId));
+    const running = [...this.pendingMetadata.values()]
+      .filter(({ taskId }): boolean => !answered.has(taskId))
+      .map((metadata): SubagentCompletion => ({
+        ...metadata,
+        status: "running",
+      }));
+    for (const { taskId, eventId } of running) {
+      this.detached.add(taskId);
+      detachedResults.set(eventId, this);
+    }
     this.pending.clear();
     this.pendingMetadata.clear();
     // The parent stops waiting, so no answer is coming.
     this.closeQuestions();
-    const batch = [...completions, ...timeouts];
+    const batch = [...completions, ...running];
     await this.parentSession.persistModelMessages(
       batch.map(completionToParentMessage),
     );
@@ -681,6 +707,8 @@ export class SubagentCoordinator {
         await trackedPublisher?.close();
         this.pending.delete(task.taskId);
         this.pendingMetadata.delete(task.taskId);
+        this.detached.delete(task.taskId);
+        detachedResults.delete(task.eventId);
         this.notifyCompletion();
       });
 
@@ -1101,7 +1129,9 @@ export class SubagentCoordinator {
   }
 
   private async completeTask(completion: SubagentCompletion): Promise<void> {
-    const shouldInjectToParent = this.pending.has(completion.taskId);
+    const shouldInjectToParent =
+      this.pending.has(completion.taskId) ||
+      this.detached.has(completion.taskId);
 
     if (
       completion.status === "failed" &&
@@ -1171,7 +1201,12 @@ export class SubagentCoordinator {
       (completion.visibleResult !== undefined ||
         !this.delivered.has(completion.eventId))
     ) {
-      this.completions.push(completion);
+      // Read after the hook: the parent may have stopped waiting meanwhile.
+      if (this.detached.has(completion.taskId)) {
+        await this.resumeParentWith(completion);
+      } else {
+        this.completions.push(completion);
+      }
     }
     this.notifyCompletion();
     logInfo("Subagent task completed", {
@@ -1239,6 +1274,24 @@ export class SubagentCoordinator {
     });
 
     return mutation?.visibleResult as JSONValue | undefined;
+  }
+
+  // A result the parent stopped waiting for starts its own parent turn. Its
+  // row already holds the result, so a failed resume is only logged.
+  private async resumeParentWith(
+    completion: SubagentCompletion,
+  ): Promise<void> {
+    await this.resumeParent(
+      this.parentSession,
+      completion.taskId,
+      completionToParentMessage(completion),
+    ).catch((error: unknown): void => {
+      logError("Failed to resume the parent with a late subagent result", {
+        parentEventId: this.parentSession.eventId,
+        taskId: completion.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   // Puts unsaved questions back; one whose child stopped waiting stays dropped.
@@ -1353,18 +1406,17 @@ function completionToParentMessage(
       ? modelValueToUserParts(visible)
       : [];
   const prefix = `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n`;
+  const detail =
+    completion.status === "running"
+      ? STILL_RUNNING_NOTE
+      : (completion.error ?? "(no result)");
 
   return {
     role: "user",
     content:
       resultParts.length > 0
         ? prependTextToUserParts(prefix, resultParts)
-        : [
-            {
-              type: "text",
-              text: `${prefix}${completion.error ?? "(no result)"}`,
-            },
-          ],
+        : [{ type: "text", text: `${prefix}${detail}` }],
   };
 }
 

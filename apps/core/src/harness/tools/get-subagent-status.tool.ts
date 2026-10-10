@@ -4,7 +4,10 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
-import type { AsyncAgentResultRecord } from "../async-agent-result.ts";
+import {
+  getAsyncAgentResult,
+  type AsyncAgentResultRecord,
+} from "../async-agent-result.ts";
 import {
   getOwnedSubagent,
   SUBAGENT_TOOL_PROPERTIES,
@@ -33,7 +36,7 @@ export default function getSubagentStatusTool(
   return {
     get_subagent_status: tool({
       description:
-        "Check a persistent subagent previously started by this run, using the taskId and agentId from run_subagent. A running subagent is waited on for up to 60 seconds first. You rarely need this: results are added to this conversation when the subagent finishes, so you can simply end your turn.",
+        "Check a persistent subagent started earlier in this conversation, using the taskId and agentId from run_subagent. A running subagent this turn started is waited on for up to 60 seconds first. You rarely need this: its result arrives in this conversation as a new message when it finishes, even after your turn ends, so you can simply end your turn.",
       inputSchema: jsonSchema<SubagentToolInput>({
         type: "object",
         properties: SUBAGENT_TOOL_PROPERTIES,
@@ -54,7 +57,8 @@ export default function getSubagentStatusTool(
             STATUS_WAIT_MS,
             abortSignal,
           );
-          record = (await getOwnedSubagent(context, input)) ?? record;
+          // Ownership is settled; only the row can have changed.
+          record = (await getAsyncAgentResult(record.eventId)) ?? record;
         }
         // The model now holds the outcome, so it is not injected a second time.
         if (record.status === "completed" || record.status === "failed") {

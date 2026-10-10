@@ -17,6 +17,7 @@ import {
   getAsyncAgentResult,
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
+import { getIngressStatusByEventId } from "../ingress.ts";
 
 export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
   taskId: {
@@ -53,6 +54,7 @@ export type ToolContentPart = Extract<
 export interface SubagentToolContext {
   accountId: string;
   eventId: string;
+  conversationKey: string;
 }
 
 /** A persistent subagent's question to its parent; null when no answer comes. */
@@ -81,11 +83,16 @@ export interface SubagentToolInput {
 
 export type UserContentPart = Exclude<UserContent, string>[number];
 
+/**
+ * The subagent tools' ownership check: the task's status row, when a run of
+ * this conversation started it. A child can outlive the run that started it,
+ * so a later turn of the same conversation can still read, steer or stop it.
+ */
 export async function getOwnedSubagent(
   context: SubagentToolContext,
   input: SubagentToolInput,
 ): Promise<AsyncAgentResultRecord | null> {
-  if (subagentParentEventId(input.taskId) !== context.eventId) {
+  if (!(await startedInConversation(context, input.taskId))) {
     return null;
   }
 
@@ -515,6 +522,32 @@ export function parseToolResultOutput(
   value: unknown,
 ): ToolResultOutput | undefined {
   return isToolResultOutput(value) ? value : undefined;
+}
+
+// The task id names the run that started the child; a run other than this one
+// counts when its envelope belongs to this conversation.
+async function startedInConversation(
+  context: SubagentToolContext,
+  taskId: string,
+): Promise<boolean> {
+  const parentEventId = subagentParentEventId(taskId);
+  if (parentEventId === null) {
+    return false;
+  }
+  if (parentEventId === context.eventId) {
+    return true;
+  }
+  const scope = parseAccountAgentScopedKey(parentEventId);
+  if (!scope || scope.accountId !== context.accountId) {
+    return false;
+  }
+  const parent = await getIngressStatusByEventId({
+    accountId: scope.accountId,
+    agentId: scope.agentId,
+    eventId: parentEventId,
+  });
+
+  return parent?.conversationKey === context.conversationKey;
 }
 
 function textPart(

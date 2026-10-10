@@ -50,7 +50,7 @@ In persistent mode the parent also gets:
 
 A persistent child gets `ask_parent`: it asks the parent one question and waits up to 5 minutes for the answer. The question reaches the parent at its next step, or wakes it if it is waiting on children. The parent answers with `update_subagent` in `steer` mode. With no answer in time, the child is told to continue on its best judgment.
 
-A parent can only control children it started. From outside, a persistent child is an ordinary conversation. Stop or steer it through the normal run endpoints with its `conversationKey`.
+A parent can only control children its conversation started, in this turn or an earlier one. From outside, a persistent child is an ordinary conversation. Stop or steer it through the normal run endpoints with its `conversationKey`.
 
 ## What a child inherits
 
@@ -78,6 +78,6 @@ A runtime key can attach only to children of a public parent in its own stage. L
 
 ## Timing
 
-The parent's request stays open while children run. Over SSE it sends heartbeat comments during quiet waits. If the request is about to hit its deadline, finished results and timeout notices are injected together so the parent can answer with what it has. A follow-up queued on a child after the parent's wait expired still runs, but its result stays in the child's conversation.
+The parent's request stays open while children run. Over SSE it sends heartbeat comments during quiet waits. If the request is about to hit its deadline, the parent stops waiting: it gets the finished results and a note that each other child is still running, and answers with what it has. Those children keep working, and each result later arrives in the parent conversation as a new message, which starts a new parent turn. A channel or WebSocket conversation gets that turn's reply where it asked; an API conversation finds it in its history on the next run. A follow-up queued on a child after the parent's wait expired still runs, but its result stays in the child's conversation.
 
 The [`subagent` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/subagent) is a runnable example. [Subagent internals](../internals/subagents.md) explains how it works inside.

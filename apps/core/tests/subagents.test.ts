@@ -753,7 +753,7 @@ describe("SubagentCoordinator", () => {
     ).rejects.toThrow("ownership lost");
   });
 
-  it("emits heartbeats while waiting and batches completed results with timeout notices", async () => {
+  it("emits heartbeats while waiting and batches completed results with still-running notices", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
       async (_messages: UserModelMessage[]) => [],
@@ -787,18 +787,105 @@ describe("SubagentCoordinator", () => {
     );
     expect(onHeartbeat).toHaveBeenCalledWith(1);
 
-    expect(coordinator.drainCompletionsAndTimeoutsToParent()).resolves.toBe(2);
+    expect(coordinator.drainCompletionsAndDetachToParent()).resolves.toBe(2);
     expect(persistModelMessages).toHaveBeenCalledTimes(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messages).toHaveLength(2);
     expect(messageText(messages[0])).toContain("finished before timeout");
-    expect(messageText(messages[1])).toContain(
-      "Subagent task is still pending near the parent request timeout.",
-    );
+    expect(messageText(messages[1])).toContain("status: running");
+    expect(messageText(messages[1])).toContain("do not redo this task");
+    expect(messageText(messages[1])).not.toContain("failed");
     expect(messageText(messages[1])).toContain("agentId: agent_research");
     expect(messageText(messages[1])).toContain(
       "conversationKey: subagent-subagent_2",
     );
+  });
+
+  it("resumes the parent with a result that lands after the parent stopped waiting", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const resumeParent = mock(
+      async (
+        _parent: unknown,
+        _taskId: string,
+        _message: UserModelMessage,
+      ): Promise<void> => {},
+    );
+    const session = parentSession();
+    const coordinator = new SubagentCoordinator(session, {}, Date.now(), {
+      lifecycle: { emit: async (): Promise<void> => {} },
+      resumeParent: resumeParent,
+    });
+    const late = lateChild();
+    coordinator["pending"].set(late.taskId, new Promise((): void => {}));
+    coordinator["pendingMetadata"].set(late.taskId, late);
+
+    try {
+      expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(1);
+      expect(coordinator.pendingCount).toBe(0);
+      // The parent's run still ends waiting on it.
+      expect(coordinator.runningCount).toBe(1);
+
+      await coordinator["completeTask"]({ ...late, status: "completed" });
+
+      expect(resumeParent).toHaveBeenCalledTimes(1);
+      const [parent, taskId, message] = resumeParent.mock.calls[0]!;
+      expect(parent).toBe(session);
+      expect(taskId).toBe(late.taskId);
+      expect(messageText(message)).toContain("status: completed");
+      expect(messageText(message)).toContain("the late answer");
+      // Nothing queues for a parent pass that will never drain it.
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+    } finally {
+      mutate.mockRestore();
+    }
+  });
+
+  it("does not resume the parent with a late result a later turn already read", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const resumeParent = mock(async (): Promise<void> => {});
+    const detaching = new SubagentCoordinator(parentSession(), {}, Date.now(), {
+      lifecycle: { emit: async (): Promise<void> => {} },
+      resumeParent: resumeParent,
+    });
+    const laterTurn = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 60_000,
+    );
+    const late = lateChild();
+    detaching["pending"].set(late.taskId, new Promise((): void => {}));
+    detaching["pendingMetadata"].set(late.taskId, late);
+
+    try {
+      await detaching.drainCompletionsAndDetachToParent();
+      // The later turn's get_subagent_status read, saved with its step.
+      laterTurn.markDelivered(late.eventId);
+      laterTurn.confirmDelivered();
+      await detaching["completeTask"]({ ...late, status: "completed" });
+
+      expect(resumeParent).not.toHaveBeenCalled();
+    } finally {
+      mutate.mockRestore();
+    }
+  });
+
+  it("does not call a child running when its result is in the same batch", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now(),
+    );
+    // Finished, but still settling its lease, so it is still pending.
+    const finished = lateChild();
+    coordinator["completions"].push({ ...finished, status: "completed" });
+    coordinator["pending"].set(finished.taskId, new Promise((): void => {}));
+    coordinator["pendingMetadata"].set(finished.taskId, finished);
+
+    expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(1);
+    expect(coordinator.runningCount).toBe(0);
   });
 
   it("stringifies structured subagent results for parent injection", async () => {
@@ -1509,6 +1596,23 @@ function completion(taskId: string, response: unknown): TestCompletion {
     conversationKey: `conversation_${taskId}`,
     status: "completed",
     response: response,
+  };
+}
+
+// A child's identity and the result it finishes with, typed for the coordinator.
+function lateChild(): {
+  taskId: string;
+  eventId: string;
+  agentId: string;
+  conversationKey: string;
+  response: string;
+} {
+  return {
+    taskId: "subagent_1",
+    eventId: "event_subagent_1",
+    agentId: "agent_subagent_1",
+    conversationKey: "conversation_subagent_1",
+    response: "the late answer",
   };
 }
 
