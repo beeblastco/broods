@@ -1547,7 +1547,7 @@ describe("session messages", (): void => {
     ).rejects.toThrow("must belong to the current agent");
   });
 
-  it("refuses a chat that has never messaged the bot", async (): Promise<void> => {
+  it("refuses a chat that has never messaged the bot, naming the key format and this conversation's key", async (): Promise<void> => {
     // No coordinator row means no stored channel target, which is every group
     // the bot was added to but that has not spoken yet.
     runtime.query = async function <T>(): Promise<T> {
@@ -1565,6 +1565,6 @@ describe("session messages", (): void => {
           message: "Chương trình Trung Thu",
         },
       }),
-    ).rejects.toThrow("not an existing channel session");
+    ).rejects.toThrow("This conversation's key is zalo:zgr-internal.");
   });
 });

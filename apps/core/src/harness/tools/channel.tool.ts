@@ -13,6 +13,7 @@ import {
 } from "../../shared/channels.ts";
 import { logWarn } from "../../shared/log.ts";
 import { contentTypeForPath } from "../../shared/media-types.ts";
+import { CHANNEL_SESSION_KEY_FORMAT } from "../../shared/runtime-keys.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type {
   RunSessionMessageDispatch,
@@ -196,14 +197,14 @@ export function sendMessageTool(dispatch: RunSessionMessageDispatch): ToolSet {
   return {
     "send-message": tool({
       description:
-        "Sends a message to another conversation session. The target agent processes it as a follow-up and replies in that conversation.",
+        "Sends a message to another channel conversation of this agent, a chat that has messaged it before. The agent processes it there as a follow-up and replies in that chat. Subagent conversations are not reachable here.",
       inputSchema: jsonSchema<SessionMessageInput>({
         type: "object",
         properties: {
           conversationKey: {
             type: "string",
             minLength: 1,
-            description: "Conversation key of the target agent session.",
+            description: `Key of the target channel conversation: ${CHANNEL_SESSION_KEY_FORMAT}.`,
           },
           message: {
             type: "string",

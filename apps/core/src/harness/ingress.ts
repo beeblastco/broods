@@ -21,6 +21,7 @@ import {
 import { runtime } from "../shared/convex/runtime.ts";
 import {
   accountAgentScopedKey,
+  CHANNEL_SESSION_KEY_FORMAT,
   createRunId,
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
@@ -539,8 +540,15 @@ export async function prepareSessionMessage(options: {
     agentId: options.agentId,
     conversationKey: conversationKey,
   });
+  const sourceKey = publicConversationKeyFromScoped(
+    options.sourceConversationKey,
+    options.accountId,
+    options.agentId,
+  );
   if (!target) {
-    throw new Error("Target conversation is not an existing channel session");
+    throw new Error(
+      `Target conversation is not an existing channel session of this agent: it must be a chat that has messaged this agent before, keyed ${CHANNEL_SESSION_KEY_FORMAT}. This conversation's key is ${sourceKey}.`,
+    );
   }
   const publicEventId = `session-message-${crypto.randomUUID()}`;
   const eventId = accountAgentScopedKey(
@@ -571,11 +579,7 @@ export async function prepareSessionMessage(options: {
       events: [
         {
           role: "user",
-          content: `[Inter-session message from ${publicConversationKeyFromScoped(
-            options.sourceConversationKey,
-            options.accountId,
-            options.agentId,
-          )}]\n${options.input.message}`,
+          content: `[Inter-session message from ${sourceKey}]\n${options.input.message}`,
         },
       ],
       requestedMode: "followup",

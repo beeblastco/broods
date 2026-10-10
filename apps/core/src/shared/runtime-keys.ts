@@ -44,6 +44,8 @@ export const MATRIX_INTEGRATION_PREFIX = "matrix:";
 export const INSTAGRAM_INTEGRATION_PREFIX = "instagram:";
 export const MESSENGER_INTEGRATION_PREFIX = "messenger:";
 export const WHATSAPP_INTEGRATION_PREFIX = "whatsapp:";
+/** How a channel session's key reads, for send-message's description and refusal. */
+export const CHANNEL_SESSION_KEY_FORMAT = `channel prefix plus platform ids, e.g. ${TELEGRAM_INTEGRATION_PREFIX}<chatId> (negative for groups), ${SLACK_INTEGRATION_PREFIX}<teamId>:<channelId>[:<threadTs>]`;
 
 const RESERVED_EVENT_ID_PREFIXES = [
   INTERNAL_EVENT_ID_PREFIX,
