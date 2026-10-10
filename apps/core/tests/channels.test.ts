@@ -9,6 +9,7 @@ import {
   extractText,
   formatChannelErrorText,
   isAllowedId,
+  WORKER_DEADLINE_MESSAGE,
 } from "../src/shared/channels.ts";
 
 describe("shared channel helpers", () => {
@@ -153,6 +154,12 @@ describe("formatChannelErrorText", () => {
   it("leaves a word that only contains 'timeout' letters alone", () => {
     expect(formatChannelErrorText("Invalid runtime output schema")).toBe(
       "⚠️ Invalid runtime output schema",
+    );
+  });
+
+  it("says a worker deadline overrun in the user's words", () => {
+    expect(formatChannelErrorText(WORKER_DEADLINE_MESSAGE, "telegram")).toBe(
+      "⚠️ I ran out of time on this turn. Send a message to continue where I left off.",
     );
   });
 

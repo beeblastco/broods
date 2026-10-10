@@ -16,6 +16,7 @@ import {
   extractText,
   formatChannelErrorText,
   sendChannelFailure,
+  WORKER_DEADLINE_MESSAGE,
 } from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import {
@@ -196,7 +197,6 @@ const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
 const WORKER_SLOT_GRACE_MS = 5_000;
-const WORKER_DEADLINE_MESSAGE = "Run exceeded the worker deadline";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
