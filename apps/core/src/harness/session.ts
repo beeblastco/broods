@@ -315,7 +315,6 @@ export class Session {
   readonly trigger: RunTrigger | undefined;
   readonly principal: Principal | undefined;
   private readonly agentConfig: AgentConfig;
-  private mintedRunToken: string | undefined;
   private readonly persist: boolean;
   private messageSequence = 0;
   private lastSystemCursor: string | null = null;
@@ -360,16 +359,19 @@ export class Session {
     this.persist = options.persist ?? true;
   }
 
-  /** The identity a sandbox exec runs with. Its `brt_` bearer is minted on first use, so a run with no exec never signs one. */
+  /**
+   * The identity a sandbox exec runs with. Its `brt_` bearer is minted per
+   * exec, so a run with no exec never signs one and a run that yields its
+   * worker slot never hands out a token that aged in the queue.
+   */
   sandboxPrincipal(): SandboxRunPrincipal | undefined {
     if (!this.principal) return undefined;
-    this.mintedRunToken ??= sealRunToken(this.principal);
     const baseUrl = getHarnessPublicUrl();
 
     return {
       accountId: this.principal.accountId,
       agentId: this.principal.agentId,
-      runToken: this.mintedRunToken,
+      runToken: sealRunToken(this.principal),
       ...(baseUrl ? { baseUrl: baseUrl } : {}),
     };
   }
