@@ -34,10 +34,18 @@ const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
 // Every Broods credential: its b-prefix plus a long base64url body (signed
-// tickets add a dot), so short identifiers like `bsk_id` stay readable.
-// Identical in apps/core/src/shared/log.ts; keep them in step.
+// tickets add a dot), so short identifiers like `bsk_id` stay readable. It
+// starts a word or follows an escaped `\n`, `\r` or `\t`, as in a serialized
+// JSON line. Identical in apps/core/src/shared/log.ts; keep them in step.
 const BROODS_CREDENTIAL_PATTERN =
-  /\bb(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
+  /(?<=^|[^A-Za-z0-9_]|\\[nrt])b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
+// Well-known third-party credentials (GitHub, OpenAI, Anthropic, AWS, Slack,
+// Google, JWT). Same boundary as above, except a token never starts after a
+// `-` either: never starting inside a `-`/`_` run keeps the JWT branch
+// linear. The lookahead skips most positions on one char. Identical in
+// apps/core/src/shared/log.ts; keep them in step.
+const PROVIDER_CREDENTIAL_PATTERN =
+  /(?=[gsAxe])(?<=^|[^A-Za-z0-9_-]|\\[nrt])(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abpors]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
 
 /**
  * Lambda handler for one CloudWatch Logs subscription delivery. Control messages
@@ -157,7 +165,8 @@ export function redact(line) {
     .replace(BEARER_SECRET_PATTERN, "Bearer [redacted]")
     .replace(BASIC_SECRET_PATTERN, "Basic [redacted]")
     .replace(QUERY_SECRET_PATTERN, "$1[redacted]")
-    .replace(BROODS_CREDENTIAL_PATTERN, "[redacted]");
+    .replace(BROODS_CREDENTIAL_PATTERN, "[redacted]")
+    .replace(PROVIDER_CREDENTIAL_PATTERN, "[redacted]");
 }
 
 function decodeCloudWatchEvent(event) {
