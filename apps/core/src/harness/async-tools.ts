@@ -69,8 +69,8 @@ export class AsyncToolCoordinator {
 
   constructor(
     private readonly parentSession: Session,
-    private readonly waitUntilMs: number = Date.now() +
-      DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
+    // Moved on when the run yields its worker slot and gets a fresh budget.
+    public waitUntilMs: number = Date.now() + DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
   ) {}
 
   /** Wraps the tools named in `asyncToolNames` so they return a statusId and run in the background. */

@@ -5,6 +5,7 @@ import {
   isDeniedAddress,
   type GuardedFetchOptions,
 } from "../harness/isolate/runner/pinned-fetch.mjs";
+import type { LiveOwner } from "../harness/ingress.ts";
 
 /**
  * The core HTTP contract every handler speaks, plus generic request/response
@@ -86,6 +87,12 @@ export interface RequestContext {
   waitUntil(promise: Promise<unknown>): void;
   /** Aborted when the pod's worker pool reclaims this run's slot. */
   abortSignal?: AbortSignal;
+  /**
+   * Gives this run's worker slot to the next queued run and resolves once the
+   * run holds a slot again, with `deadlineMs` moved to that slot's budget.
+   * Absent outside the worker pool and once the run used its last slot.
+   */
+  yieldSlot?(lease: LiveOwner | undefined): Promise<void>;
 }
 
 /**

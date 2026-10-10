@@ -147,9 +147,10 @@ import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 /** Default step cap when the agent config sets no `agent.maxTurn`. */
 const MAX_AGENT_ITERATIONS = 30;
-// A slow model step on a long context can take two minutes, so the run starts
-// its last step this long before the deadline: no tools, no new steers, just
-// the answer. Steers left queued start the next run.
+// A slow model step on a long context can take two minutes, so a run this
+// close to its deadline yields its worker slot after the step, or, when it may
+// not yield, takes one last step with no tools and no new steers that answers.
+// Steers left queued start the next run.
 const DEADLINE_WIND_DOWN_MS = 3 * 60 * 1000;
 const WIND_DOWN_INSTRUCTION =
   "This turn is out of time. Reply now with what you have so far and say what is left; the user can ask you to continue.";
@@ -281,8 +282,12 @@ export interface AgentLoopOptions {
   // Aborts the run from outside, as the worker pool does when it reclaims an
   // overrunning run's slot.
   abortSignal?: AbortSignal;
-  // When the request or worker budget ends; the run winds down before it.
+  // When the request or worker budget ends; the run yields or winds down
+  // before it.
   deadlineMs?: number;
+  // The worker pool will run the conversation on in another slot, so a run
+  // near its deadline stops at a step boundary instead of winding down.
+  canYield?: boolean;
   // Test seam for lifecycle webhook delivery, which opens its own pinned
   // socket rather than going through a mockable global.
   webhookTransport?: PinnedFetchTransport;
@@ -299,6 +304,8 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
    */
   ensureFinalized(drained: boolean): Promise<void>;
   didFail(): boolean;
+  // Stopped at a step boundary to give up its worker slot; nothing delivered.
+  yielded(): boolean;
   failureText(): string | null;
   approvalSummaries(): ToolApprovalSummary[];
   questionSummaries(): PendingQuestionSummary[];
@@ -1226,6 +1233,10 @@ export async function runAgentLoop(
 
   const maxTurn = agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS;
   let windingDown = false;
+  let yielded = false;
+  const nearDeadline = (): boolean =>
+    options.deadlineMs !== undefined &&
+    Date.now() >= options.deadlineMs - DEADLINE_WIND_DOWN_MS;
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
@@ -1255,13 +1266,15 @@ export async function runAgentLoop(
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
-      (): boolean => windingDown,
+      (): boolean => {
+        yielded = options.canYield === true && nearDeadline();
+
+        return yielded || windingDown;
+      },
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
-      windingDown =
-        options.deadlineMs !== undefined &&
-        Date.now() >= options.deadlineMs - DEADLINE_WIND_DOWN_MS;
+      windingDown = options.canYield !== true && nearDeadline();
       // One mutation stores the step, renews the lease and claims steers, so a
       // steer is never claimed by a turn whose step failed to store or stopped.
       const { renewal, steering } = await session.stepBoundary(
@@ -1918,6 +1931,18 @@ export async function runAgentLoop(
         persistedResponseCount = responseMessages.length;
         options.subagentWatch?.confirmDelivered();
 
+        // A run that gave up its slot ends on tool results; its next pass
+        // answers from them, so nothing is delivered or failed here.
+        yielded &&= approvals.length === 0 && questionSummaries.length === 0;
+        if (yielded) {
+          logInfo(
+            `Run yielded its worker slot after ${stepCount} step(s)`,
+            finishLog,
+          );
+
+          return;
+        }
+
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
         // already answered through that tool, and one that stopped on a
@@ -2356,6 +2381,7 @@ export async function runAgentLoop(
     consumeStream: wrappedConsumeStream,
     ensureFinalized: ensureFinalized,
     didFail: (): boolean => didFail,
+    yielded: (): boolean => yielded,
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,

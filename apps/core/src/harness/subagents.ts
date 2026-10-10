@@ -168,8 +168,8 @@ export class SubagentCoordinator {
   constructor(
     private readonly parentSession: Session,
     private readonly parentAgentConfig: AgentConfig,
-    private readonly waitUntilMs: number = Date.now() +
-      DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
+    // Moved on when the run yields its worker slot and gets a fresh budget.
+    public waitUntilMs: number = Date.now() + DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
     dependencies: SubagentCoordinatorDependencies = {},
   ) {
     this.lifecycle =

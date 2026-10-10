@@ -943,6 +943,23 @@ describe("runAgentLoop", () => {
     expect(stepBoundary.mock.calls[0]?.[1]).toEqual({ claimSteering: false });
   });
 
+  it("yields at the step boundary near the deadline when the pool runs it on", async () => {
+    const stream = await startTwoStepTurn(undefined, {
+      deadlineMs: Date.now() + 60_000,
+      canYield: true,
+    });
+    await stream.consumeStream();
+
+    // Step 0's tool ran and its result is stored; no answer, no failure.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
+    expect(twoStepModelInUse?.doStreamCalls[0]?.toolChoice).not.toEqual({
+      type: "none",
+    });
+    expect(stream.yielded()).toBe(true);
+    expect(stream.didFail()).toBe(false);
+    expect(stream.finalResponse()).toBeUndefined();
+  });
+
   it("fails the run when the model sends nothing within the chunk timeout", async () => {
     process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
     // Longer than the timeout; the mock stream ignores the abort a real
