@@ -38,4 +38,4 @@ Open with **Blocked on me**: taste and solution questions, each with what you sa
 
 When Phicks overrules a finding, or flags something the review missed, propose one line for here: what they said, and the why. On their yes, land it through its own `/file-pr` PR, never inside the PR under review. Read these before step 2.
 
-- _(none yet)_
+- A hover-only control like HelpMark's "?" uses `cursor-help`: it is not clickable, so a pointer cursor would lie. Phone users are not a target for now, so a mouse-only tooltip is fine.
