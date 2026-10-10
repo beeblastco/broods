@@ -230,9 +230,11 @@ jobs:
             exit "$DIFF_RC"
           fi
 
-          # Drift signal: any Pulumi-style diff line (starts with +, -, ~) at
-          # column 0 (resource-level) or after 6 spaces (attribute-level).
-          if grep -qE '^([\+\-\~] |^      [\+\-\~] )' "$LOG_DIR/diff.log"; then
+          # Drift signal: sst diff ends a clean plan with "No changes". Any
+          # other plan lists resources to create, update or delete. The old
+          # "+ - ~" line match hit the "~  Diff" header sst prints on every
+          # run, so a clean stage counted as drift.
+          if ! grep -q 'No changes' "$LOG_DIR/diff.log"; then
             echo "drift_detected=true" >> "$GITHUB_OUTPUT"
             echo "## Drift detected for stage \`$TARGET_STAGE\` in \`$TARGET_REGION\`. The plan is in the \"Detect drift\" step log." >> "$GITHUB_STEP_SUMMARY"
           else
