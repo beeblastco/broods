@@ -161,13 +161,6 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "internals/ci-cd", label: "CI/CD" },
       ],
     },
-    {
-      type: "category",
-      label: "Proposals",
-      items: [
-        { type: "doc", id: "internals/jev-judge", label: "Judge (proposal)" },
-      ],
-    },
   ],
 };
 
