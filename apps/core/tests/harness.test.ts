@@ -3660,6 +3660,7 @@ async function firstStepCall(
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
         system: system,
+        storedSystemEnd: 1,
       }),
     } as never,
     {
