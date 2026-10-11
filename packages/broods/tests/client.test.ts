@@ -59,6 +59,36 @@ test("client streams directly from core with apiKey auth", async () => {
   expect(result.text).toBe("hi");
 });
 
+test("run reads every pass of a run, past a mid-stream finish, until the stream closes", async (): Promise<void> => {
+  // A run that hands its worker slot on, or resumes after subagent results,
+  // streams a second pass after the first one's `finish`.
+  const pass = (id: string, text: string): string[] => [
+    `data: {"type":"text-start","id":"${id}"}`,
+    `data: {"type":"text-delta","id":"${id}","text":"${text}"}`,
+    `data: {"type":"text-end","id":"${id}"}`,
+    'data: {"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":0,"outputTokens":0,"totalTokens":0}}',
+  ];
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      new Response(
+        [
+          ...pass("0", "first "),
+          ": keepalive",
+          ...pass("1", "second"),
+          "",
+        ].join("\n\n"),
+      ),
+  });
+
+  const result = await client.run({ agentId: "agent_1", input: "hello" });
+
+  expect(result.text).toBe("first second");
+  expect(
+    result.events.filter((event): boolean => event.type === "finish"),
+  ).toHaveLength(2);
+});
+
 test("stream reports a busy accepted ingress without treating JSON as SSE", async () => {
   const client = new BroodsClient({
     apiKey: "test-key",

@@ -101,25 +101,26 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     execute: async function (ctx) {
-      return withIngressClearLease(ctx, "clear", async (ownerGeneration) => {
-        for (
-          let batchNumber = 0;
-          batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
-          batchNumber += 1
-        ) {
-          const result = await runtime.mutate<{
-            deleted: number;
-            hasMore: boolean;
-          }>("clearFencedConversation", {
-            conversationKey: ctx.conversationKey,
-            ownerEventId: ctx.eventId,
-            ownerGeneration: ownerGeneration,
-          });
-          if (!result.hasMore) return "Context cleared. Starting fresh.";
-        }
+      return withIngressClearLease(
+        ctx,
+        "clear",
+        async (ownerEventId, ownerGeneration) => {
+          for (
+            let batchNumber = 0;
+            batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
+            batchNumber += 1
+          ) {
+            const result = await runtime.mutate("clearFencedConversation", {
+              conversationKey: ctx.conversationKey,
+              ownerEventId: ownerEventId,
+              ownerGeneration: ownerGeneration,
+            });
+            if (!result.hasMore) return "Context cleared. Starting fresh.";
+          }
 
-        return `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`;
-      });
+          return `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`;
+        },
+      );
     },
   },
   {
@@ -183,10 +184,7 @@ export const commands: CommandHandler[] = [
       if (!ctx.accountId || !ctx.agentId) {
         throw new Error("Stop requires account and agent scope");
       }
-      const result = await runtime.mutate<{
-        stopped: boolean;
-        queuedCount: number;
-      }>("stopIngressOwner", {
+      const result = await runtime.mutate("stopIngressOwner", {
         accountId: ctx.accountId,
         agentId: ctx.agentId,
         conversationKey: ctx.conversationKey,
@@ -401,26 +399,23 @@ function stripCommandToken(content: string, token: string): string {
 async function withIngressClearLease(
   ctx: CommandContext,
   verb: string,
-  run: (ownerGeneration: number) => Promise<string>,
+  run: (ownerEventId: string, ownerGeneration: number) => Promise<string>,
 ): Promise<string> {
   if (!ctx.accountId || !ctx.agentId || !ctx.eventId) {
     throw new Error(`${verb} requires account, agent, and event scope`);
   }
-  const ownerGeneration = await runtime.mutate<number | null>(
-    "acquireIngressClear",
-    {
-      accountId: ctx.accountId,
-      agentId: ctx.agentId,
-      conversationKey: ctx.conversationKey,
-      ownerEventId: ctx.eventId,
-      leaseTtlMs: INGRESS_CLEAR_LEASE_TTL_MS,
-    },
-  );
+  const ownerGeneration = await runtime.mutate("acquireIngressClear", {
+    accountId: ctx.accountId,
+    agentId: ctx.agentId,
+    conversationKey: ctx.conversationKey,
+    ownerEventId: ctx.eventId,
+    leaseTtlMs: INGRESS_CLEAR_LEASE_TTL_MS,
+  });
   if (ownerGeneration === null) {
     return `Cannot ${verb} while a turn or queued message is active. Try again after it finishes.`;
   }
   try {
-    return await run(ownerGeneration);
+    return await run(ctx.eventId, ownerGeneration);
   } finally {
     await runtime.mutate("releaseIngressOwner", {
       conversationKey: ctx.conversationKey,

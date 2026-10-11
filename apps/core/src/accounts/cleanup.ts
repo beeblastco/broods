@@ -140,9 +140,9 @@ async function deleteConvexRuntimeRows(
     batchNumber < ACCOUNT_RUNTIME_DELETE_MAX_BATCHES;
     batchNumber += 1
   ) {
-    const batch = await runtime.mutate<
-      typeof totals & { totalDeleted: number }
-    >("deleteAccountRuntimeData", { accountId: accountId });
+    const batch = await runtime.mutate("deleteAccountRuntimeData", {
+      accountId: accountId,
+    });
     totals.conversationsDeleted += batch.conversationsDeleted;
     totals.processedEventsDeleted += batch.processedEventsDeleted;
     totals.asyncAgentResultDeleted += batch.asyncAgentResultDeleted;

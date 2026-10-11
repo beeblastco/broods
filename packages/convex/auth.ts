@@ -2,7 +2,7 @@
  * WorkOS AuthKit integration and event handlers for user authentication lifecycle.
  */
 
-import { AuthKit } from "@convex-dev/workos-authkit";
+import { AuthKit, type AuthFunctions } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import { authProvider } from "./model/selfHostAuth";
@@ -14,7 +14,10 @@ const selfHosted = authProvider() === "self-host";
 export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   components.workOSAuthKit,
   {
-    authFunctions: internal.auth,
+    // The generated API types `authKitAction` from the component's own
+    // `v.record` returns validator, wider than the payload `AuthFunctions`
+    // names. These are the component's handlers, so the refs are its own.
+    authFunctions: internal.auth as AuthFunctions,
     ...(selfHosted
       ? {
           apiKey: "self-hosted",

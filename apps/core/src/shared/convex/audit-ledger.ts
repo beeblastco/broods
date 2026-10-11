@@ -4,15 +4,14 @@
  * so core never holds the head. Errors are logged and never reach the run.
  */
 
-const internal: any = require("@broods/convex/_generated/api").internal;
 import { logError } from "../log.ts";
 import type { Storage } from "../storage.ts";
-import { getConvexClient } from "./client.ts";
+import { adminMutation, internal } from "./client.ts";
 
 export const auditLedger: Storage["auditLedger"] = {
   append: async function (input): Promise<void> {
     try {
-      await getConvexClient().mutation(
+      await adminMutation(
         internal.audit.ledger.record,
         {
           accountId: input.accountId,

@@ -120,8 +120,12 @@ it("waits for a running subagent before answering its status", async () => {
     expiresAt: Date.now() + 1_000,
   };
   spyOn(runtime, "query")
-    .mockResolvedValueOnce({ ...row, status: "processing" })
-    .mockResolvedValueOnce({ ...row, status: "completed", response: "done" });
+    .mockResolvedValueOnce({ ...row, status: "processing" } as never)
+    .mockResolvedValueOnce({
+      ...row,
+      status: "completed",
+      response: "done",
+    } as never);
   const waits: Array<{ taskId: string; timeoutMs: number }> = [];
   const delivered: string[] = [];
   const { default: getStatus } =
@@ -157,7 +161,7 @@ it("does not wait on a task paired with the wrong agent", async () => {
     createdAt: "2026-08-13T00:00:00.000Z",
     updatedAt: "2026-08-13T00:00:00.000Z",
     expiresAt: Date.now() + 1_000,
-  });
+  } as never);
   const waitForSettled = mock(async (): Promise<void> => {});
   const { default: getStatus } =
     await import("../src/harness/tools/get-subagent-status.tool.ts");
@@ -331,11 +335,11 @@ it("tells the parent a follow-up queued on a stopped child still reports", async
     createdAt: "2026-08-13T00:00:00.000Z",
     updatedAt: "2026-08-13T00:00:00.000Z",
     expiresAt: Date.now() + 1_000,
-  });
+  } as never);
   spyOn(runtime, "mutate").mockResolvedValue({ queuedCount: 1, stopped: true });
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  await expect(
+  expect(
     execute(tools.stop_subagent, { taskId: taskId, agentId: AGENT_ID }),
   ).resolves.toEqual({
     status: "stopping",
@@ -370,7 +374,7 @@ it("rejects a task another conversation started", async () => {
   );
   const query = spyOn(runtime, "query").mockResolvedValue({
     conversationKey: `${PARENT_CONVERSATION_KEY}-other`,
-  });
+  } as never);
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   expect(
@@ -394,7 +398,9 @@ it("reads a task an earlier turn of this conversation started", async () => {
   const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
   // The ownership read of the earlier turn's envelope, then the child's row.
   const query = spyOn(runtime, "query")
-    .mockResolvedValueOnce({ conversationKey: PARENT_CONVERSATION_KEY })
+    .mockResolvedValueOnce({
+      conversationKey: PARENT_CONVERSATION_KEY,
+    } as never)
     .mockResolvedValueOnce({
       accountId: ACCOUNT_ID,
       eventId: childEventId,
@@ -408,7 +414,7 @@ it("reads a task an earlier turn of this conversation started", async () => {
       createdAt: "2026-08-13T00:00:00.000Z",
       updatedAt: "2026-08-13T00:00:00.000Z",
       expiresAt: Date.now() + 1_000,
-    });
+    } as never);
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   expect(
@@ -484,7 +490,7 @@ it("answers a child's open question with a steer instead of queuing it", async (
     createdAt: "2026-08-13T00:00:00.000Z",
     updatedAt: "2026-08-13T00:00:00.000Z",
     expiresAt: Date.now() + 1_000,
-  });
+  } as never);
   const mutate = spyOn(runtime, "mutate");
   const answers: Array<{ taskId: string; answer: string }> = [];
   const { default: update } =

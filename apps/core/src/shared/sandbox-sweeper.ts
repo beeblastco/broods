@@ -22,6 +22,12 @@ interface SandboxReservationSummary extends ReservedSandbox {
   accountId: string;
 }
 
+interface OrphanedSandboxPage {
+  page: SandboxReservationSummary[];
+  cursor: string | null;
+  isDone: boolean;
+}
+
 let firstSweep: ReturnType<typeof setTimeout> | undefined;
 let sweeper: ReturnType<typeof setInterval> | undefined;
 let sweeping = false;
@@ -65,13 +71,8 @@ export function stopSandboxSweeper(): void {
  */
 export async function sweepExpiredSandboxes(): Promise<number> {
   const [expired, orphaned] = await Promise.all([
-    runtime.query<SandboxReservationSummary[]>(
-      "listExpiredSandboxReservations",
-      { limit: SWEEP_PAGE_SIZE },
-    ),
-    runtime.query<SandboxReservationSummary[]>("listOrphanedSandboxInstances", {
-      limit: SWEEP_PAGE_SIZE,
-    }),
+    runtime.query("listExpiredSandboxReservations", { limit: SWEEP_PAGE_SIZE }),
+    listOrphanedSandboxes(),
   ]);
   const byAccount = new Map<string, SandboxReservationSummary[]>();
   for (const reservation of [...expired, ...orphaned]) {
@@ -94,6 +95,29 @@ export async function sweepExpiredSandboxes(): Promise<number> {
   }
 
   return released;
+}
+
+/**
+ * Orphaned mirrors, oldest first, read page by page until a page's worth is found
+ * or the idle ones run out, so pages that hold none never end the scan. A mirror
+ * whose reservation the sweep deferred keeps its age, so such rows can fill the
+ * oldest page indefinitely; stopping there would hide every orphan behind them.
+ * Each read is one bounded page, and the scan ends at the idle cut, so a pass
+ * reads at most the idle mirrors once.
+ */
+async function listOrphanedSandboxes(): Promise<SandboxReservationSummary[]> {
+  const orphaned: SandboxReservationSummary[] = [];
+  let cursor: string | null = null;
+  do {
+    const result: OrphanedSandboxPage = await runtime.query(
+      "listOrphanedSandboxInstances",
+      { cursor: cursor, limit: SWEEP_PAGE_SIZE },
+    );
+    orphaned.push(...result.page);
+    cursor = result.isDone ? null : result.cursor;
+  } while (cursor !== null && orphaned.length < SWEEP_PAGE_SIZE);
+
+  return orphaned;
 }
 
 async function deferAttempted(
@@ -148,7 +172,7 @@ async function sweepAccount(
 ): Promise<number> {
   let leased = false;
   try {
-    leased = await runtime.mutate<boolean>("claimEvent", {
+    leased = await runtime.mutate("claimEvent", {
       accountId: accountId,
       key: SWEEP_LEASE_KEY,
       ttlSeconds: SWEEP_LEASE_SECONDS,

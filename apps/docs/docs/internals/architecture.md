@@ -53,6 +53,7 @@ sequenceDiagram
     H-->>C: 202 runId, statusUrl
   else owner, sync
     X-->>H: owner, generation N
+    H->>H: dispatchInProcessWorker, keepalives while queued
     H->>R: session.ts context, streamText loop
     R-->>C: SSE stream parts
   else owner, background: true
@@ -66,7 +67,7 @@ sequenceDiagram
 
 - Also `POST /v1/projects/:p/stages/:s/agents/:endpointId`. `ENABLE_DIRECT_API` gates both, default `true`.
 - A duplicate idempotency key answers with the first admission's run id. The same key with a different payload is `409 idempotency_conflict`.
-- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8. Queue modes: [queue and steer](queue-and-steer.md).
+- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8, streamed and background runs alike. A full worker queue fails a streamed run with `503`. Queue modes: [queue and steer](queue-and-steer.md).
 
 ### WebSocket run
 

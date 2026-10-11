@@ -16,7 +16,7 @@ cp apps/core/.env.example apps/core/.env
 ## Development workflow
 
 ```bash
-bun run check            # oxlint, oxfmt check, and every workspace check (dashboard adds @shadcn/lint)
+bun run check            # type-aware oxlint, oxfmt check, and every workspace check (dashboard adds @shadcn/lint)
 bun run test             # core, convex, and broods SDK tests
 bun run build            # build the core Bun container binary
 bun run verification:test # TypeScript contracts mirrored by the Lean models

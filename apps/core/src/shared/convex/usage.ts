@@ -7,18 +7,17 @@
  * project/stage pair, so neither slug is sent.
  */
 
-const internal: any = require("@broods/convex/_generated/api").internal;
 import { logError } from "../log.ts";
 import type { Storage } from "../storage.ts";
-import { getConvexClient } from "./client.ts";
+import { adminMutation, internal } from "./client.ts";
 
 export const taskUsage: Storage["taskUsage"] = {
   record: async function (input): Promise<void> {
     try {
-      await getConvexClient().mutation(
+      await adminMutation(
         internal.usage.recordTaskUsage,
         {
-          accountId: input.accountId as any,
+          accountId: input.accountId,
           endpointId: input.endpointId ?? "",
           agentId: input.agentId,
           principalChain: input.principalChain,

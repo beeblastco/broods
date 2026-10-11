@@ -56,7 +56,7 @@ export function buildRunSubagentInputSchema(
     agentId: {
       type: "string",
       description:
-        "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit only for a virtual one-shot subagent.",
+        "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit it only for a virtual subagent, which runs on your own config.",
     },
     prompt: {
       type: "string",
@@ -106,7 +106,7 @@ export default function runSubagentTool(context: {
       description: [
         "Dispatch one or more subagents for independent parallel work.",
         "Returns task ids immediately so you can continue working while results are injected into the parent conversation later.",
-        "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual one-shot subagent.",
+        "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual subagent, which runs on your own config.",
         ...(context.mode === "persistent"
           ? [
               "Use conversationKey to resume an existing persistent subagent conversation; omit it to start a new one.",

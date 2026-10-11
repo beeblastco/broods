@@ -169,6 +169,14 @@ export function redactSerialized(
  * and a `nextPageToken` must reach the reader as they were.
  */
 export function redactWithRunSecrets(
+  value: string,
+  secretValues?: readonly string[],
+): string;
+export function redactWithRunSecrets(
+  value: unknown,
+  secretValues?: readonly string[],
+): unknown;
+export function redactWithRunSecrets(
   value: unknown,
   secretValues: readonly string[] = runSecretValues(),
 ): unknown {

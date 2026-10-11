@@ -75,8 +75,8 @@ import {
 import {
   assertEnvironmentVariableUnreferenced,
   loadEnvironmentVariableValues,
-  upsertEnvironmentVariable,
 } from "../model/environmentValues";
+import { upsertEnvironmentVariable } from "../model/environmentWrites";
 import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";

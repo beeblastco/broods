@@ -330,7 +330,7 @@ describe("async turn without model input", (): void => {
       ownerGeneration: 1,
     };
 
-    await expect(
+    expect(
       handler({ kind: "direct-api-async-worker", event: event }),
     ).rejects.toThrow("ArgumentValidationError");
 
@@ -1430,15 +1430,15 @@ describe("session messages", (): void => {
       },
     } as never);
     let queryArgs: Record<string, unknown> | undefined;
-    runtime.query = async function <T>(
-      name: Parameters<typeof runtime.query>[0],
+    runtime.query = (async (
+      name: string,
       args: Record<string, unknown>,
-    ): Promise<T> {
+    ): Promise<ConversationDispatchTarget> => {
       expect(name).toBe("getConversationTarget");
       queryArgs = args;
 
-      return target as T;
-    };
+      return target;
+    }) as typeof runtime.query;
     const prepared = await prepareSessionMessage({
       accountId: "acct_test",
       agentId: "agent_test",

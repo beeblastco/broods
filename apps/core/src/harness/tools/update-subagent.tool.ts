@@ -180,7 +180,8 @@ async function resolveSubagentAgentConfig(
   context: UpdateSubagentContext,
   input: UpdateSubagentInput,
 ): Promise<AgentConfig | null> {
-  if (input.agentId === `${VIRTUAL_AGENT_PREFIX}${input.taskId}`) {
+  // Real agent ids are Convex ids, so only a virtual child carries the prefix.
+  if (input.agentId.startsWith(VIRTUAL_AGENT_PREFIX)) {
     return virtualSubagentConfig(context.agentConfig);
   }
 

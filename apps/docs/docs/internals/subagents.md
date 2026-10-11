@@ -35,7 +35,7 @@ flowchart TD
   Rebuild --> Pass
 ```
 
-The wait budget ends 3 minutes before the request or worker deadline, or 8 minutes out when there is none (`waitUntilMs` in `handler.ts`). When it runs out, `drainCompletionsAndDetachToParent` tells the parent each child still working is `running` and detaches it. A detached child keeps running, and its result resumes the parent conversation through `resumeAfterSubagentResult`: a `followup` continuation admitted once per task (`<root event>:async-subagent:<task nonce>`) on the delivery of the turn that started it, the same path a settled background job takes. A result a later turn already read with `get_subagent_status` is not resumed. Until then the parent root span ends `waiting` on `subagent`. A queued question ends the wait early so the parent can answer while other children keep running. A failed write at a step boundary puts the taken results and questions back in the queue.
+The wait budget ends 3 minutes before the request or worker deadline, or 8 minutes out when there is none (`waitUntilMs` in `handler.ts`). When it runs out, `drainCompletionsAndDetachToParent` tells the parent each child still working is `running` and detaches it. A detached child keeps running, and its result resumes the parent conversation through `resumeAfterSubagentResult`: a `followup` continuation admitted once per task (`<root event>:async-subagent:<task nonce>`) on the delivery of the turn that started it, the same path a settled background job takes. A result a later turn already read with `get_subagent_status` is not resumed. Until then the parent root span ends `waiting` on `subagent`. A queued question ends the wait early so the parent can answer while other children keep running. Results, `running` notices and questions reach the parent transcript in one write. A write too large for one append takes several, and a failed one, at a step boundary or when the wait runs out, puts back only what no append saved, for the next drain.
 
 ### Sync SSE
 
@@ -106,7 +106,7 @@ Inherited context (`context: "inherited"`) goes straight into the child model ca
 
 ## Persistent children and control
 
-In `persistent` mode, the default, each child is admitted through the same [conversation coordinator](queue-and-steer.md) as a top-level run, with mode `reject`, under a key `subagent-persistent-<uuid>-<tag>`. The tag is an HMAC derived from `STAGE_TICKET_SECRET` over the account, parent agent and UUID, so `run_subagent` only resumes keys core minted for that parent. There is no subagent-specific control API: the control tools use the normal ingress path on the child's conversation.
+In `persistent` mode, the default, each child is admitted through the same [conversation coordinator](queue-and-steer.md) as a top-level run, with mode `reject`, under a key `subagent-persistent-<uuid>-<tag>`. The tag is an HMAC derived from `STAGE_TICKET_SECRET` over the account, parent agent and UUID, so `run_subagent` only resumes keys core minted for that parent. A virtual child in this mode is named `virtual_subagent_<uuid>` after its key, so resuming the key reaches the same child and its stored conversation; an ephemeral one is named after its task. There is no subagent-specific control API: the control tools use the normal ingress path on the child's conversation.
 
 ```mermaid
 stateDiagram-v2

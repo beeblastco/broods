@@ -58,6 +58,8 @@ jobs:
         run: bun install --ignore-scripts --frozen-lockfile
 
       - name: Lint, format check and typecheck
+        # `check` lints with `lint:types`: the type-aware pass (floating
+        # promises, awaiting a non-promise) fails here, not only the plain rules.
         run: bun run check
 
       - name: Read the Node version
@@ -257,6 +259,13 @@ jobs:
 
       - name: Start the local stack
         run: bun run local:up
+
+      - name: Generated Convex API is current
+        # local:up deploys packages/convex, which regenerates _generated. The
+        # API is static (convex.json codegen.staticApi): core and the dashboard
+        # type every call from it, so a validator changed without
+        # `bun run --filter @broods/convex codegen` fails here.
+        run: git diff --exit-code -- packages/convex/_generated
 
       - name: Verify through the edge
         run: bun run local:verify

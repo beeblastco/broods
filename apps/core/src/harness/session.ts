@@ -384,7 +384,7 @@ export class Session {
   async assertCurrentOwner(): Promise<void> {
     if (this.ownerGeneration === undefined) return;
     const startedAt = performance.now();
-    const current = await runtime.query<boolean>("isCurrentIngressOwner", {
+    const current = await runtime.query("isCurrentIngressOwner", {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
@@ -474,7 +474,7 @@ export class Session {
     const inline = batches.pop() ?? [];
     for (const batch of batches) await this.appendConversationEvents(batch);
     const startedAt = performance.now();
-    const boundary = await runtime.mutate<StepBoundary>("stepIngressBoundary", {
+    const boundary = await runtime.mutate("stepIngressBoundary", {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
@@ -583,9 +583,17 @@ export class Session {
     return next;
   }
 
-  async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
+  /**
+   * @param onSaved called after each append Convex accepts, with how many of
+   * the stored events are saved so far. A large batch takes several appends,
+   * so a caller that retries a failure can skip what is already saved.
+   */
+  async persistModelMessages(
+    messages: ModelMessage[],
+    onSaved?: (saved: number) => void,
+  ): Promise<string[]> {
     const events = this.storedEvents(messages);
-    await this.appendStoredEvents(events);
+    await this.appendStoredEvents(events, onSaved);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -596,16 +604,28 @@ export class Session {
     });
   }
 
+  /**
+   * Stores the native checkpoint under the owner fence, in the write itself. An
+   * ephemeral run keeps nothing; a persisted one always runs under an owner, so a
+   * missing one is a bug, not a write to let through unfenced.
+   */
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
     if (!this.persist) return;
+    if (this.ownerGeneration === undefined) {
+      throw new Error("Harness checkpoint needs a conversation owner");
+    }
     const serialized = JSON.stringify(state.resumeState);
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
     }
+    const startedAt = performance.now();
     await runtime.mutate("saveHarnessSession", {
       conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
       ...state,
     });
+    this.confirmOwner(startedAt);
   }
 
   /**
@@ -861,10 +881,14 @@ export class Session {
   /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
   private async appendStoredEvents(
     events: { cursor: string; event: StoredConversationEvent }[],
+    onSaved?: (saved: number) => void,
   ): Promise<void> {
     if (events.length === 0) return;
+    let saved = 0;
     for (const batch of storedEventBatches(events)) {
       await this.appendConversationEvents(batch);
+      saved += batch.length;
+      onSaved?.(saved);
     }
     this.trackSystemCursor(events);
   }
@@ -1066,7 +1090,7 @@ export class Session {
     const pages: StoredConversationEntry[][] = [];
     let cursor = afterCursor;
     for (;;) {
-      const result = await runtime.query<StoredConversationEventPage>(
+      const result = await runtime.query(
         "listConversationEvents",
         backward
           ? {
