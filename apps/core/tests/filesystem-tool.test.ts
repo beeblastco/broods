@@ -1177,6 +1177,10 @@ describe("sandbox tool set", () => {
     writeFileSync(join(workspace, "src", "a.ts"), "one\nhas TODO here\n");
     writeFileSync(join(workspace, "notes.md"), "TODO too\n");
     writeFileSync(join(workspace, "empty.ts"), "nothing\n");
+    mkdirSync(join(workspace, "dist"));
+    writeFileSync(join(workspace, "dist", "out.js"), "TODO built\n");
+    mkdirSync(join(workspace, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(workspace, "node_modules", "dep", "x.js"), "TODO\n");
     microvmFetchMock.mockImplementation(
       async (url: string, init: { body: string }): Promise<Response> => {
         const { code } = JSON.parse(init.body);
@@ -1212,12 +1216,15 @@ describe("sandbox tool set", () => {
     };
 
     try {
-      expect(await search({})).toBe("notes.md\nsrc/a.ts");
+      expect(await search({})).toBe("dist/out.js\nnotes.md\nsrc/a.ts");
       expect(await search({ glob: "**/*.ts", output_mode: "count" })).toBe(
         "src/a.ts:1",
       );
-      expect(await search({ glob: "*.{md,txt}" })).toBe("notes.md");
-      expect(await search({ glob: "!*.md" })).toBe("src/a.ts");
+      expect(await search({ glob: "!dist/**" })).toBe("notes.md\nsrc/a.ts");
+      expect(await search({ glob: "!*.md" })).toBe("dist/out.js\nsrc/a.ts");
+      expect(await search({ path: "node_modules/dep" })).toBe(
+        "node_modules/dep/x.js",
+      );
       expect(
         await search({
           path: "src",
@@ -1227,7 +1234,7 @@ describe("sandbox tool set", () => {
         }),
       ).toBe("src/a.ts:2:has TODO here");
       expect(await search({ pattern: "absent" })).toBe("No matches found");
-      await expect(
+      expect(
         grep.execute({ pattern: "(", output_mode: "count" }),
       ).rejects.toThrow();
     } finally {

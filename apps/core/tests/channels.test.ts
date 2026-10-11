@@ -9,7 +9,6 @@ import {
   extractText,
   formatChannelErrorText,
   isAllowedId,
-  WORKER_DEADLINE_MESSAGE,
 } from "../src/shared/channels.ts";
 
 describe("shared channel helpers", () => {
@@ -158,7 +157,9 @@ describe("formatChannelErrorText", () => {
   });
 
   it("says a worker deadline overrun in the user's words", () => {
-    expect(formatChannelErrorText(WORKER_DEADLINE_MESSAGE, "telegram")).toBe(
+    expect(
+      formatChannelErrorText("I ran out of time on this turn.", "telegram"),
+    ).toBe(
       "⚠️ I ran out of time on this turn. Send a message to continue where I left off.",
     );
   });
