@@ -27,7 +27,7 @@ flowchart TD
   Pend -->|"no"| Drain["drain queued completions"]
   Pend -->|"yes"| Wait["waitForIdle<br/>heartbeat every 15 s"]
   Wait -->|"idle, or a child asked a question"| Drain
-  Wait -->|"wait budget reached"| Timeout["drain results<br/>plus timeout notices"]
+  Wait -->|"wait budget reached"| Timeout["drain results plus<br/>still-running notes, detach the rest"]
   Drain --> Inj{"anything injected?"}
   Timeout --> Inj
   Inj -->|"no"| Done["return final response"]
@@ -35,7 +35,7 @@ flowchart TD
   Rebuild --> Pass
 ```
 
-The wait budget ends 60 s before the request or worker deadline, or 8 minutes out when there is none (`waitUntilMs` in `handler.ts`). A queued question ends the wait early so the parent can answer while other children keep running. A failed write at a step boundary puts the taken results and questions back in the queue.
+The wait budget ends 3 minutes before the request or worker deadline, or 8 minutes out when there is none (`waitUntilMs` in `handler.ts`). When it runs out, `drainCompletionsAndDetachToParent` tells the parent each child still working is `running` and detaches it. A detached child keeps running, and its result resumes the parent conversation through `resumeAfterSubagentResult`: a `followup` continuation admitted once per task (`<root event>:async-subagent:<task nonce>`) on the delivery of the turn that started it, the same path a settled background job takes. A result a later turn already read with `get_subagent_status` is not resumed. Until then the parent root span ends `waiting` on `subagent`. A queued question ends the wait early so the parent can answer while other children keep running. A failed write at a step boundary puts the taken results and questions back in the queue.
 
 ### Sync SSE
 
@@ -162,7 +162,7 @@ sequenceDiagram
   end
 ```
 
-The control tools accept only tasks created by the calling parent event, so a child cannot control a sibling and one parent cannot control another's child. Ephemeral children hold no durable conversation and no owner generation, so nothing fences a stop or steer against them. That is the main reason `persistent` is the default.
+The control tools accept only tasks created by a run of the calling conversation: the calling event itself, or an earlier event whose ingress row has the same conversation key. A child cannot control a sibling and one conversation cannot control another's child. Ephemeral children hold no durable conversation and no owner generation, so nothing fences a stop or steer against them. That is the main reason `persistent` is the default.
 
 ## Live child streaming
 

@@ -314,6 +314,7 @@ export async function createTools(
         getSubagentStatusTool({
           accountId: context.accountId,
           eventId: context.session.eventId,
+          conversationKey: context.session.conversationKey,
           ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         updateSubagentTool({
@@ -321,12 +322,14 @@ export async function createTools(
           agentConfig: agentConfig,
           dispatchAppliedIngress: context.dispatchAppliedIngress,
           eventId: context.session.eventId,
+          conversationKey: context.session.conversationKey,
           session: context.session,
           ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         stopSubagentTool({
           accountId: context.accountId,
           eventId: context.session.eventId,
+          conversationKey: context.session.conversationKey,
         }),
       );
     }

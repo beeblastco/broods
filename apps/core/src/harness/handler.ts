@@ -9,6 +9,7 @@ import type {
   TextStreamPart,
   ToolModelMessage,
   ToolSet,
+  UserModelMessage,
 } from "ai";
 import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
@@ -76,6 +77,7 @@ import {
   publicEventIdForScope,
   scopedDirectConversationKey,
   scopedDirectEventId,
+  subagentTaskNonce,
 } from "../shared/runtime-keys.ts";
 import { getStorage } from "../shared/storage.ts";
 import { resolveAgentRuntime } from "../shared/workspaces.ts";
@@ -87,6 +89,7 @@ import {
 } from "./async-agent-result.ts";
 import {
   getAsyncToolResult,
+  rootEventId,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
   type AsyncToolDelivery,
@@ -125,6 +128,7 @@ import {
   type IngressAdmission,
   type IngressConfigRef,
   type IngressDelivery,
+  type IngressMode,
   type IngressSettlement,
   type LiveOwner,
   type SessionMessageInput,
@@ -224,6 +228,11 @@ type PendingWorkerRun = [
   lease: LiveOwner | undefined,
 ];
 const pendingWorkerRuns: PendingWorkerRun[] = [];
+// What every parent run's SubagentCoordinator takes from the handler.
+const SUBAGENT_DEPENDENCIES = {
+  dispatchNextIngress: dispatchNextIngress,
+  resumeParent: resumeAfterSubagentResult,
+};
 
 let activeInProcessWorkers = 0;
 let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
@@ -693,37 +702,109 @@ async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
-  if (!scope) {
+  // A result the model already pulled via async_status would be answered twice.
+  if (!scope || settled.status === "processing" || settled.observed === true) {
     return { kind: "skip" };
   }
+  const publicEventId = `async-tools-${settled.resultId}`;
+  const question = settled.toolName === ASK_QUESTIONS_TOOL_NAME;
+
+  return resumeConversation({
+    ...scope,
+    eventId: asyncToolContinuationEventId(settled.parentEventId),
+    publicEventId: publicEventId,
+    conversationKey: settled.conversationKey,
+    // An answered question streams under its own id, the one the answer
+    // response names. Any other job keeps the parent's, so a reconnect that
+    // attaches to the parent replays it.
+    delivery:
+      question && settled.delivery?.kind === "nats"
+        ? { ...settled.delivery, publicEventId: publicEventId }
+        : settled.delivery,
+    ...(settled.delivery?.kind === "async"
+      ? { asyncResultEventId: settled.parentEventId }
+      : {}),
+    message: completionToParentMessage({
+      resultId: settled.resultId,
+      toolName: settled.toolName,
+      input: settled.input,
+      status: settled.status,
+      ...(settled.response !== undefined ? { response: settled.response } : {}),
+      ...(settled.error ? { error: settled.error } : {}),
+    }),
+    // An answer joins a live run at its next step boundary; a finished job
+    // waits its turn behind the current one.
+    requestedMode: question ? "steer" : "followup",
+  });
+}
+
+/**
+ * Resumes the parent conversation with a subagent result that came in after
+ * the parent run stopped waiting for it. The child's task id keeps it to one
+ * continuation, which queues behind whatever turn holds the conversation.
+ */
+async function resumeAfterSubagentResult(
+  parent: Session,
+  taskId: string,
+  message: UserModelMessage,
+): Promise<void> {
+  // The task id's own nonce, under the root event, so a chain of late results
+  // does not nest every earlier id into the next.
+  const nonce = subagentTaskNonce(taskId);
+  if (!parent.accountId || !parent.agentId || !nonce) {
+    return;
+  }
+  await resumeConversation({
+    accountId: parent.accountId,
+    agentId: parent.agentId,
+    eventId: `${rootEventId(parent.eventId)}:async-subagent:${nonce}`,
+    publicEventId: `async-subagent-${nonce}`,
+    conversationKey: parent.conversationKey,
+    delivery: parent.delivery,
+    message: message,
+    requestedMode: "followup",
+  });
+}
+
+/**
+ * Starts a new turn of a conversation with a result that settled after its
+ * run stopped waiting: a detached tool row or a late subagent. It is admitted
+ * once per `eventId` and answers where the turn that started the work did.
+ */
+async function resumeConversation(options: {
+  accountId: string;
+  agentId: string;
+  eventId: string;
+  publicEventId: string;
+  conversationKey: string;
+  delivery: AsyncToolDelivery | undefined;
+  asyncResultEventId?: string;
+  message: UserModelMessage;
+  requestedMode: IngressMode;
+}): Promise<ContinuationOutcome> {
   const agent = await getStorage().agents.getById(
-    scope.accountId,
-    scope.agentId,
+    options.accountId,
+    options.agentId,
   );
   if (!agent) {
     return { kind: "skip" };
   }
-
-  // A result the model already pulled via async_status would be answered twice.
-  if (settled.status === "processing" || settled.observed === true) {
-    return { kind: "skip" };
-  }
   const publicConversationKey = eventPublicConversationKey(
-    settled.conversationKey,
-    scope.accountId,
-    scope.agentId,
+    options.conversationKey,
+    options.accountId,
+    options.agentId,
   );
   // A channel session resumes on its record-narrowed config, as a cron does.
   const target = await resolveReentryTarget({
-    accountId: scope.accountId,
-    agentId: scope.agentId,
+    accountId: options.accountId,
+    agentId: options.agentId,
     publicConversationKey: publicConversationKey,
     agentConfig: toRuntimeAgentConfig(agent.config),
   });
 
   const continuationEvent: DirectInboundEvent = {
-    accountId: scope.accountId,
-    agentId: scope.agentId,
+    accountId: options.accountId,
+    agentId: options.agentId,
     runId: createRunId(),
     agentConfig: target.agentConfig,
     configRef: target.configRef,
@@ -731,46 +812,33 @@ async function continueAfterAsyncToolSettlement(
     endpointId: target.endpointId,
     projectSlug: target.projectSlug,
     stageSlug: target.stageSlug,
-    eventId: asyncToolContinuationEventId(settled.parentEventId),
-    ...(settled.delivery?.kind === "async"
-      ? { asyncResultEventId: settled.parentEventId }
+    eventId: options.eventId,
+    ...(options.asyncResultEventId
+      ? { asyncResultEventId: options.asyncResultEventId }
       : {}),
-    ...(settled.delivery?.kind === "channel"
+    ...(options.delivery?.kind === "channel"
       ? {
           replyTarget: {
-            channelName: settled.delivery.channelName,
-            ...(settled.delivery.identity
-              ? { identity: settled.delivery.identity }
+            channelName: options.delivery.channelName,
+            ...(options.delivery.identity
+              ? { identity: options.delivery.identity }
               : {}),
-            source: settled.delivery.source,
+            source: options.delivery.source,
           },
         }
       : {}),
-    publicEventId: `async-tools-${settled.resultId}`,
-    conversationKey: settled.conversationKey,
+    publicEventId: options.publicEventId,
+    conversationKey: options.conversationKey,
     publicConversationKey: publicConversationKey,
-    events: [
-      completionToParentMessage({
-        resultId: settled.resultId,
-        toolName: settled.toolName,
-        input: settled.input,
-        status: settled.status,
-        ...(settled.response !== undefined
-          ? { response: settled.response }
-          : {}),
-        ...(settled.error ? { error: settled.error } : {}),
-      }),
-    ],
-    // An answer joins a live run at its next step boundary; a finished job
-    // waits its turn behind the current one.
-    requestedMode:
-      settled.toolName === ASK_QUESTIONS_TOOL_NAME ? "steer" : "followup",
-    idempotencyKey: asyncToolContinuationEventId(settled.parentEventId),
+    events: [options.message],
+    requestedMode: options.requestedMode,
+    idempotencyKey: options.eventId,
   };
 
+  // Queued behind a socket turn, it still answers on that socket.
   const { owned: ownedContinuation } = await admitInternalContinuation(
     continuationEvent,
-    continuationDelivery(continuationEvent),
+    continuationDelivery(onSocket(continuationEvent, options.delivery)),
   );
   if (!ownedContinuation) {
     return {
@@ -783,7 +851,7 @@ async function continueAfterAsyncToolSettlement(
     eventId: ownedContinuation.eventId,
     conversationKey: ownedContinuation.conversationKey,
   });
-  await invokeAsyncToolContinuationWorker(ownedContinuation, settled);
+  await invokeContinuationWorker(ownedContinuation, options.delivery);
 
   return {
     kind: "ready",
@@ -1431,7 +1499,7 @@ async function handleNatsWorkerRequest(
         session,
         event.agentConfig,
         (): number => waitUntilMs(context),
-        { dispatchNextIngress: dispatchNextIngress },
+        SUBAGENT_DEPENDENCIES,
       );
       const asyncToolCoordinator = new AsyncToolCoordinator(
         session,
@@ -2339,28 +2407,35 @@ async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
   } satisfies AsyncWorkerInvocation);
 }
 
-/** Continues an async-tool completion on the worker its original request came in on. */
-async function invokeAsyncToolContinuationWorker(
+/** Runs a continuation on the worker kind its original request came in on. */
+async function invokeContinuationWorker(
   event: DirectInboundEvent,
-  settled: AsyncToolResultRecord,
+  delivery: AsyncToolDelivery | undefined,
 ): Promise<void> {
-  if (settled.delivery?.kind === "nats") {
-    await invokeNatsWorker({
-      ...event,
-      // An answered question streams under its own id, the one the answer
-      // response names. Any other job keeps the parent's, so a reconnect that
-      // attaches to the parent replays it.
-      ...(settled.toolName === ASK_QUESTIONS_TOOL_NAME
-        ? {}
-        : { publicEventId: settled.delivery.publicEventId }),
-      publicConversationKey: settled.delivery.publicConversationKey,
-      connectionId: settled.delivery.connectionId,
-    });
+  if (delivery?.kind === "nats") {
+    await invokeNatsWorker(onSocket(event, delivery));
 
     return;
   }
 
   await invokeAsyncWorker(event);
+}
+
+// A continuation of a socket turn streams under that turn's ids on its connection.
+function onSocket(
+  event: DirectInboundEvent,
+  delivery: AsyncToolDelivery | undefined,
+): DirectInboundEvent {
+  if (delivery?.kind !== "nats") {
+    return event;
+  }
+
+  return {
+    ...event,
+    publicEventId: delivery.publicEventId,
+    publicConversationKey: delivery.publicConversationKey,
+    connectionId: delivery.connectionId,
+  };
 }
 
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
@@ -3000,7 +3075,7 @@ function createDirectContinuationSseBody(
           session,
           event.agentConfig,
           (): number => waitUntilMs(context),
-          { dispatchNextIngress: dispatchNextIngress },
+          SUBAGENT_DEPENDENCIES,
         );
         const asyncToolCoordinator = new AsyncToolCoordinator(
           session,
@@ -3116,7 +3191,7 @@ async function runAgentLoopUntilSubagentsIdle(
     session,
     agentConfig,
     (): number => waitUntilMs(context),
-    { dispatchNextIngress: dispatchNextIngress },
+    SUBAGENT_DEPENDENCIES,
   );
   const asyncToolCoordinator = new AsyncToolCoordinator(session, (): number =>
     waitUntilMs(context),
@@ -3243,7 +3318,7 @@ async function runParentContinuationLoop(options: {
         ): Promise<SessionMessageResult> =>
           dispatchSessionMessage(options.session, input),
         pendingWork: (): TaskWaitingOn | undefined =>
-          options.subagentCoordinator.pendingCount > 0
+          options.subagentCoordinator.runningCount > 0
             ? "subagent"
             : options.asyncToolCoordinator.pendingCount > 0
               ? "tool"
@@ -3553,7 +3628,7 @@ async function waitAndDrainAsyncWork(
   const [subagentCount, asyncToolCount] = await Promise.all([
     subagentStatus === "idle"
       ? subagentCoordinator.drainCompletionsToParent()
-      : subagentCoordinator.drainCompletionsAndTimeoutsToParent(),
+      : subagentCoordinator.drainCompletionsAndDetachToParent(),
     asyncToolStatus === "idle"
       ? asyncToolCoordinator.drainCompletionsToParent()
       : asyncToolCoordinator.drainCompletionsAndTimeoutsToParent(),

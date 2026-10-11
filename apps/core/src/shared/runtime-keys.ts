@@ -15,7 +15,7 @@ const UUID_PATTERN =
 // from the constants above, never from caller input.
 const UUID_EXACT = new RegExp(`^${UUID_PATTERN}$`);
 const SUBAGENT_TASK_ID = new RegExp(
-  `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~${UUID_PATTERN}$`,
+  `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~(${UUID_PATTERN})$`,
 );
 const RUN_ID = new RegExp(`^${RUN_ID_PREFIX}[0-9a-f]{32}$`);
 
@@ -326,6 +326,11 @@ export function parseAccountAgentScopedKey(
     agentId: match[2],
     key: match[3],
   };
+}
+
+/** The nonce that makes a subagent task id unique, or null for a malformed id. */
+export function subagentTaskNonce(taskId: string): string | null {
+  return SUBAGENT_TASK_ID.exec(taskId)?.[2] ?? null;
 }
 
 export function subagentParentEventId(taskId: string): string | null {
