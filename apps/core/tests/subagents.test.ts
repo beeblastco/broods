@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as ai from "ai";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { NatsPublisher } from "../src/shared/nats.ts";
 import { setStorageForTests } from "../src/shared/storage.ts";
@@ -74,6 +75,7 @@ interface CoordinatorInternals {
     taskId: string;
     eventId: string;
     agentId: string;
+    agentConfig: AgentConfig;
     publicConversationKey: string;
     conversationKey: string;
     persistent: boolean;
@@ -1124,6 +1126,48 @@ describe("SubagentCoordinator", () => {
         ),
       ).rejects.toThrow("must be one run_subagent returned to this agent");
     }
+  });
+
+  it("runs a virtual child on subagent.model with the parent's tools", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const parent: AgentConfig = {
+      model: {
+        provider: "deepseek",
+        modelId: "deepseek-flash",
+        temperature: 0,
+      },
+      tools: { webSearch: { enabled: true } },
+      sandboxes: ["sandbox_1"],
+      denyTools: ["bash"],
+      policies: ["policy_room"],
+      subagent: { enabled: true, model: { modelId: "deepseek-v4-pro" } },
+    };
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+      } as never,
+      parent,
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    const { agentConfig } = await internals.resolveTask(
+      { prompt: "count" },
+      [],
+      [],
+    );
+
+    expect(agentConfig).toEqual({
+      ...parent,
+      model: {
+        provider: "deepseek",
+        modelId: "deepseek-v4-pro",
+        temperature: 0,
+      },
+      subagent: { ...parent.subagent, enabled: false },
+    });
   });
 
   it("admits a persistent child conversation to own a fencing generation", async () => {

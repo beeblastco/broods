@@ -29,6 +29,7 @@ import {
   subagentNotFound,
   toolError,
   VIRTUAL_AGENT_PREFIX,
+  virtualSubagentConfig,
   type SubagentToolContext,
   type SubagentToolInput,
   type SubagentWatch,
@@ -181,7 +182,7 @@ async function resolveSubagentAgentConfig(
 ): Promise<AgentConfig | null> {
   // Real agent ids are Convex ids, so only a virtual child carries the prefix.
   if (input.agentId.startsWith(VIRTUAL_AGENT_PREFIX)) {
-    return subagentConfig(context.agentConfig, context.agentConfig);
+    return virtualSubagentConfig(context.agentConfig);
   }
 
   const agent = await getStorage().agents.getById(

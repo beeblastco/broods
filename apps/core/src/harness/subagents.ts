@@ -69,6 +69,7 @@ import {
   prependTextToUserParts,
   subagentConfig,
   VIRTUAL_AGENT_PREFIX,
+  virtualSubagentConfig,
 } from "./tools/utils.ts";
 
 const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
@@ -633,10 +634,7 @@ export class SubagentCoordinator {
       runId: runId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
-      agentConfig: subagentConfig(
-        this.parentAgentConfig,
-        this.parentAgentConfig,
-      ),
+      agentConfig: virtualSubagentConfig(this.parentAgentConfig),
       publicConversationKey: publicConversationKey,
       conversationKey: scopedDirectConversationKey(
         accountId,
