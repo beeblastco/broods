@@ -911,6 +911,20 @@ describe("agent rules", () => {
     );
   });
 
+  it("validates the virtual subagent model like config.model", () => {
+    expect(
+      normalizeAgentConfig({ subagent: { model: { modelId: "o3" } } }).subagent,
+    ).toEqual({ model: { modelId: "o3" } });
+    expect(() =>
+      normalizeAgentConfig({ subagent: { model: { apiKey: "sk" } } }),
+    ).toThrow(
+      "config.subagent.model.apiKey is not supported; use config.subagent.model.providerOptions for provider-specific settings",
+    );
+    expect(() =>
+      normalizeAgentConfig({ subagent: { model: { provider: "nope" } } }),
+    ).toThrow("config.subagent.model.provider must be one of:");
+  });
+
   it("validates subagent event streaming across full, create, update, and patch inputs", () => {
     expect(
       normalizeAgentConfig({ subagent: { stream: true } }).subagent,

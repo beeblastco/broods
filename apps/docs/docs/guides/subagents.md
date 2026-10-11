@@ -31,6 +31,18 @@ export const lead = defineAgent({
 | `mode`       | `"persistent"` | Persistent children keep a conversation you can resume, steer and stop. `"ephemeral"` keeps them in memory only.            |
 | `stream`     | `false`        | `true` lets a WebSocket client attach to a child's live output                                                              |
 | `visibility` | `"result"`     | What the parent sees of a result, `"full"`, `"result"` or `"none"`. The `onSubagentFinish` [hook](hooks.md) can reshape it. |
+| `model`      | parent's       | Model for virtual subagents, merged key by key over the parent's `model`. A predefined agent runs on its own model.         |
+
+A virtual subagent on another model keeps everything else of the parent, its tools, MCP servers, sandboxes and hooks included:
+
+```ts title="broods/index.ts"
+export const lead = defineAgent({
+  name: "lead",
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+  model: { provider: "openai", modelId: "gpt-5.5" },
+  subagent: { enabled: true, model: { modelId: "o3" } },
+});
+```
 
 ## How the model uses it
 
@@ -56,7 +68,7 @@ A parent can only control children its conversation started, in this turn or an 
 
 - The parent's policies and denied tools, on top of its own. A channel that withholds `bash` from the parent withholds it from every child.
 - The same channel and user identity for policy checks.
-- A predefined child keeps its own workspaces. A virtual child uses the parent's config, including its hooks.
+- A predefined child keeps its own workspaces. A virtual child uses the parent's config, including its tools and hooks, on `subagent.model` when set.
 - Tool approval settings. A child that inherits approval currently fails, so turn approval off on the parent's tools when you use subagents.
 
 ## Watching a child live

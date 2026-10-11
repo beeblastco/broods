@@ -66,7 +66,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `connections`       | Channel connections the agent answers on                                                                 |
 | `sandboxes`         | Sandboxes it can use. The first is the default                                                           |
 | `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                |
-| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                          |
+| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`, `model`                                 |
 | `skills`            | `enabled`, `allowed` skill resources                                                                     |
 | `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                     |
 | `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox needs `image: "obscura"` and `allow-all` |
@@ -170,6 +170,7 @@ See [Tools](../guides/tools.md).
 | `mode`       | `"persistent"` | `"ephemeral"` keeps child conversations in memory only              |
 | `stream`     | `false`        | Publish child stream parts for WebSocket attach                     |
 | `visibility` | `"result"`     | What the parent sees, `full`, `result` or `none`                    |
+| `model`      | parent's       | Model for virtual subagents, merged over the parent's `model`       |
 
 See [Subagents](../guides/subagents.md).
 

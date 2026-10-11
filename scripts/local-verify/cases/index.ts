@@ -23,6 +23,7 @@ import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
+import { subagentModel } from "./subagent-model.ts";
 import { subagentStop } from "./subagent-stop.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
@@ -37,6 +38,7 @@ export const verifyCases: readonly VerifyCase[] = [
   queuedCompact,
   steerAtBoundary,
   subagentStop,
+  subagentModel,
   autoCompaction,
   machineSandbox,
   bashTimeout,
