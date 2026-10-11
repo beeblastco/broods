@@ -3744,7 +3744,6 @@ function isErrorStreamChunk(chunk: unknown): boolean {
   );
 }
 
-/** A sync HTTP run whose input is a queued command: streams its reply. */
 function emptySseResponse(): Response {
   return new Response(
     new ReadableStream({
