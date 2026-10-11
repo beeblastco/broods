@@ -166,7 +166,10 @@ describe("account webhook ingress", () => {
 
     expect(response.statusCode).toBe(503);
     expect(responseJson(response)).toMatchObject({
-      error: { code: "channel_lookup_unavailable" },
+      error: {
+        code: "service_unavailable",
+        message: "Channel lookup failed, retry the delivery",
+      },
     });
   });
 
