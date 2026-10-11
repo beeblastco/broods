@@ -1,9 +1,30 @@
-import { describe, expect, it, jest, spyOn } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+  mock,
+  spyOn,
+} from "bun:test";
+import * as harness from "../src/harness/harness.ts";
+import { Session } from "../src/harness/session.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import type { AccountRecord } from "../src/shared/domain/accounts.ts";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import {
+  resetStorageForTests,
+  setStorageForTests,
+  type Storage,
+} from "../src/shared/storage.ts";
+import { coreRequest } from "./helpers/http.ts";
 
-const { dispatchInProcessWorker, drainInProcessWorkers } =
+const { dispatchInProcessWorker, drainInProcessWorkers, handler } =
   await import("../src/harness/handler.ts");
 const QUEUED_LEASE_RENEW_INTERVAL_MS = 5 * 60 * 1000;
+const WORKER_SLOTS = 8;
+const MAX_PENDING_WORKER_RUNS = 1000;
 
 /** Lets settled renewals run their continuations; fake timers also fake Bun.sleep. */
 async function flushMicrotasks(): Promise<void> {
@@ -272,5 +293,157 @@ describe("in-process worker dispatch", () => {
       throw new Error("worker exploded");
     });
     await drainInProcessWorkers();
+  });
+});
+
+describe("streamed runs", (): void => {
+  const account: AccountRecord = {
+    accountId: "acct_1",
+    username: "ada",
+    secretHash: "hash",
+    status: "active",
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
+  const agent: AgentRecord = {
+    accountId: "acct_1",
+    agentId: "agent_1",
+    name: "agent",
+    config: {},
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
+  let mutations: [string, unknown][];
+  let modelPasses: number;
+  let releases: (() => void)[];
+
+  beforeEach((): void => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    mutations = [];
+    modelPasses = 0;
+    releases = [];
+    setStorageForTests({
+      accounts: { getById: async (): Promise<AccountRecord> => account },
+      agents: { getById: async (): Promise<AgentRecord> => agent },
+      budgets: { get: async (): Promise<null> => null },
+    } as unknown as Storage);
+    spyOn(runtime, "mutate").mockImplementation(
+      async <T>(name: string, args: unknown): Promise<T> => {
+        mutations.push([name, args]);
+
+        return (
+          name === "acceptIngress"
+            ? { outcome: "owner", ownerGeneration: 1 }
+            : null
+        ) as T;
+      },
+    );
+    spyOn(runtime, "query").mockImplementation(
+      async <T>(name: string): Promise<T> =>
+        (name === "isCurrentIngressOwner" ? true : null) as T,
+    );
+    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      messages: [{ role: "user", content: "hi" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    });
+    // The pass ends before any model call; only when it starts matters.
+    spyOn(harness, "runAgentLoop").mockImplementation(
+      async (): Promise<never> => {
+        modelPasses += 1;
+        throw new Error("model pass reached");
+      },
+    );
+    for (let slot = 0; slot < WORKER_SLOTS; slot += 1) {
+      dispatchInProcessWorker(
+        "busy",
+        (): Promise<void> =>
+          new Promise<void>((resolve): void => {
+            releases.push(resolve);
+          }),
+      );
+    }
+  });
+
+  afterEach(async (): Promise<void> => {
+    for (const release of releases) release();
+    await drainInProcessWorkers();
+    mock.restore();
+    resetStorageForTests();
+    delete process.env.SERVICE_AUTH_SECRET;
+  });
+
+  function streamedRun(index: number): Promise<Response> {
+    return handler(
+      coreRequest(
+        "POST",
+        "/v1/runs",
+        {
+          authorization: "Bearer service-secret",
+          "x-account-id": "acct_1",
+        },
+        {
+          agentId: "agent_1",
+          eventId: `event-${index}`,
+          conversationKey: `conversation-${index}`,
+          events: [{ role: "user", content: "hi" }],
+        },
+      ),
+    );
+  }
+
+  function settles(): unknown[] {
+    return mutations
+      .filter(([name]): boolean => name === "settleIngress")
+      .map(([, args]): unknown => args);
+  }
+
+  it("waits for a worker slot like every other run, streaming meanwhile", async (): Promise<void> => {
+    const responses = await Promise.all([streamedRun(1), streamedRun(2)]);
+    await Bun.sleep(20);
+
+    // The streams are open, but no model pass starts while every slot is busy.
+    expect(responses.map((response): number => response.status)).toEqual([
+      200, 200,
+    ]);
+    expect(modelPasses).toBe(0);
+
+    for (const release of releases.splice(0)) release();
+    const bodies = await Promise.all(
+      responses.map((response): Promise<string> => response.text()),
+    );
+    expect(modelPasses).toBe(2);
+    for (const body of bodies) expect(body).toContain("model pass reached");
+  });
+
+  it("starts nothing for a client that left while it waited", async (): Promise<void> => {
+    const response = await streamedRun(1);
+    await response.body!.cancel();
+
+    for (const release of releases.splice(0)) release();
+    await drainInProcessWorkers();
+    expect(modelPasses).toBe(0);
+    expect(settles()).toEqual([
+      expect.objectContaining({ status: "failed", ownerGeneration: 1 }),
+    ]);
+  });
+
+  it("answers 503 and fails the run when the worker queue is full", async (): Promise<void> => {
+    for (let index = 0; index < MAX_PENDING_WORKER_RUNS; index += 1) {
+      dispatchInProcessWorker("queued", async (): Promise<void> => {});
+    }
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(503);
+    expect(await response.text()).toContain("In-process worker queue is full");
+    expect(modelPasses).toBe(0);
+    expect(settles()).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        error: "In-process worker queue is full",
+      }),
+    ]);
   });
 });
