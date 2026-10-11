@@ -17,6 +17,10 @@ import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
 import { FrameQueue } from "../frames.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
+// A pooled runner says ready right after Node loads the isolated-vm addon, about
+// 80 ms cold. Each hook fire spawns one up to 3 times, so waiting the full run
+// timeout on a hung one cost about 90 s of the run per fire and held a pool place.
+const WORKER_READY_TIMEOUT_MS = 5_000;
 const RUNNER_ENV_KEYS = [
   "PATH",
   "ISOLATE_MEMORY_LIMIT_MB",
@@ -329,7 +333,7 @@ class IsolateWorker {
   readonly #startup = setTimeout(() => {
     this.#ready.reject(new Error("isolate worker did not become ready"));
     this.kill();
-  }, runnerTimeoutMs());
+  }, WORKER_READY_TIMEOUT_MS);
 
   constructor() {
     // prewarmIsolatePool may drop a failed start; acquireWorker reads the reason.

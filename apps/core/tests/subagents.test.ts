@@ -755,6 +755,72 @@ describe("SubagentCoordinator", () => {
     expect(messageText(retried[0])).toContain("second");
   });
 
+  it("stores a result and a question once when the append commits but its reply is lost", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const { Session } = await import("../src/harness/session.ts");
+    const originalMutate = runtime.mutate.bind(runtime);
+    // Convex's append: a row whose dedupe key is already stored is skipped.
+    const stored: {
+      dedupeKey?: string;
+      event: { message: UserModelMessage };
+    }[] = [];
+    let replies = 0;
+    runtime.mutate = mock(
+      async (
+        _name: string,
+        args: { events: (typeof stored)[number][] },
+      ): Promise<null> => {
+        for (const row of args.events) {
+          if (
+            row.dedupeKey === undefined ||
+            !stored.some(({ dedupeKey }) => dedupeKey === row.dedupeKey)
+          ) {
+            stored.push(row);
+          }
+        }
+        replies += 1;
+        if (replies === 1) throw new Error("reply lost");
+
+        return null;
+      },
+    ) as never;
+    try {
+      const coordinator = new SubagentCoordinator(
+        new Session({
+          eventId: "event_parent",
+          conversationKey: "conversation_parent",
+          accountId: "account_1",
+          agentId: "agent_parent",
+          ownerGeneration: 1,
+        }),
+        {},
+        Date.now() + 10_000,
+      );
+      const internals = coordinator as unknown as CoordinatorInternals;
+      internals.completions.push(completion("subagent_1", "finished"));
+      internals.pendingMetadata.set("subagent_2", {
+        taskId: "subagent_2",
+        eventId: "event_subagent_2",
+        agentId: "agent_research",
+        conversationKey: "child",
+      });
+      const answer = coordinator.askParent("subagent_2", "Which account?");
+      expect(await coordinator.waitForIdle()).toBe("question");
+
+      expect(coordinator.takeParentMessages()).rejects.toThrow("reply lost");
+      expect(await coordinator.drainCompletionsToParent()).toBe(2);
+      const texts = stored.map(({ event }) => messageText(event.message));
+      expect(texts.filter((text) => text.includes("finished"))).toHaveLength(1);
+      expect(
+        texts.filter((text) => text.includes("Which account?")),
+      ).toHaveLength(1);
+      coordinator.answerQuestion("subagent_2", "BeeBlast");
+      expect(await answer).toBe("BeeBlast");
+    } finally {
+      runtime.mutate = originalMutate;
+    }
+  });
+
   it("keeps a finished result and the running notice when the detach write fails", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
