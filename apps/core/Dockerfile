@@ -43,9 +43,17 @@ RUN bun build apps/core/src/shared/env.ts --target=node --outfile /out/health-en
 
 FROM node:22-alpine AS isolate-deps
 WORKDIR /app/isolate-runner
+# The source build leaves object files, a static archive, the package tarball and
+# every platform's prebuilds behind; the runner needs only what node-gyp-build
+# loads. Loading the copy here fails the build if that list ever falls short.
 RUN apk add --no-cache build-base python3 \
     && npm init -y \
-    && npm i isolated-vm@7.0.0
+    && npm i isolated-vm@7.0.0 \
+    && mkdir -p /out/node_modules/isolated-vm/build/Release \
+    && cp -R node_modules/node-gyp-build /out/node_modules/ \
+    && cp node_modules/isolated-vm/package.json node_modules/isolated-vm/isolated-vm.js node_modules/isolated-vm/LICENSE /out/node_modules/isolated-vm/ \
+    && cp node_modules/isolated-vm/build/Release/isolated_vm.node /out/node_modules/isolated-vm/build/Release/ \
+    && cd /out && node -e "new (require('isolated-vm').Isolate)().dispose()"
 
 FROM alpine:3.22 AS runner
 WORKDIR /app
@@ -57,7 +65,7 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ nodejs \
     && addgroup --system --gid 1001 core \
     && adduser --system --uid 1001 core
 COPY --from=builder --chown=1001:1001 /out/core-server ./core-server
-COPY --from=isolate-deps --chown=1001:1001 /app/isolate-runner/node_modules ./isolate-runner/node_modules
+COPY --from=isolate-deps --chown=1001:1001 /out/node_modules ./isolate-runner/node_modules
 COPY --chown=1001:1001 apps/core/src/harness/isolate/runner/ ./isolate-runner/
 COPY --from=builder --chown=1001:1001 /out/health-env.mjs ./health-env.mjs
 USER 1001

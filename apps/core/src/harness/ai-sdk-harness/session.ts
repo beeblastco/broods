@@ -2,19 +2,30 @@
  * Composition boundary between durable Broods sessions and live HarnessAgent sessions.
  */
 
-import type {
-  HarnessAgent,
-  HarnessAgentResumeSessionState,
-  HarnessAgentSession,
+import {
+  HarnessCapabilityUnsupportedError,
+  type HarnessAgent,
+  type HarnessAgentResumeSessionState,
+  type HarnessAgentSession,
 } from "@ai-sdk/harness/agent";
+import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { isSandboxGoneError } from "../sandbox/utils.ts";
-import type { Session, StoredHarnessSession } from "../session.ts";
-import { logWarn } from "../../shared/log.ts";
+import type {
+  ConversationIngressEvent,
+  Session,
+  StoredHarnessSession,
+} from "../session.ts";
+import { extractText } from "../../shared/channels.ts";
+import { logInfo, logWarn } from "../../shared/log.ts";
 import {
   harnessSessionParking,
   harnessSharesSandbox,
   type AiSdkHarnessType,
 } from "./adapters/index.ts";
+
+const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
+// Harness types whose runtime refused a mid-turn message in this process.
+export const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
 
 export interface HarnessReservationOptions {
   /** The agent-level key its first sandbox reserves on, when it reserves one. */
@@ -126,4 +137,103 @@ export async function parkAiSdkHarnessSession(
     await options.nativeSession.destroy().catch(() => {});
     throw error;
   }
+}
+
+/**
+ * Saves steering that arrived during a HarnessAgent turn, then hands it to the
+ * running turn, which takes it at its next safe input boundary. Only for
+ * adapters that accept mid-turn messages; the rest get it before their next
+ * turn. A hand-over that fails throws and fails the run; the steer is already
+ * in history, so a retry still reads it.
+ */
+export async function steerHarnessTurn(
+  session: Session,
+  harnessSession: HarnessAgentSession,
+  type: AiSdkHarnessType,
+): Promise<void> {
+  // Only plain-text steers can be handed over; the rest stay queued for the
+  // next turn, which takes them whole.
+  const steering = await session.applySteeringIngress({ textOnly: true });
+  if (!steering) {
+    return;
+  }
+  const events = steering.events as ConversationIngressEvent[];
+  const text = events
+    .flatMap((event): string[] =>
+      event.role === "user" ? [extractText(event.content).trim()] : [],
+    )
+    .filter(Boolean)
+    .join("\n\n");
+  await session.appendIngressEvents(events);
+  if (text) {
+    await harnessSession
+      .experimental_steerTurn(text)
+      .catch((error: unknown): never => {
+        // This runtime cannot take one at all, so later turns in this process
+        // leave steers queued for the next turn instead.
+        if (error instanceof HarnessCapabilityUnsupportedError) {
+          MID_TURN_STEERING_UNSUPPORTED.add(type);
+        }
+        throw error;
+      });
+  }
+  logInfo("Steering ingress applied during HarnessAgent turn", {
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+    steeringEventCount: steering.contributingEventIds.length,
+  });
+}
+
+/** The agent's first sandbox, which a harness run needs to run on. */
+export function requireHarnessSandbox(
+  sandbox: SandboxExecutorConfig | undefined,
+): SandboxExecutorConfig {
+  if (!sandbox) {
+    throw new Error(
+      "config.harness needs a sandbox to run on; list one first in config.sandboxes",
+    );
+  }
+
+  return sandbox;
+}
+
+/**
+ * Renews the conversation lease every second during a HarnessAgent turn and
+ * aborts the run on a stop, a lost lease or repeated renewal failures.
+ * Returns the function that stops the monitor.
+ */
+export function startHarnessLeaseMonitor(
+  session: Session,
+  abortController: AbortController,
+  stopMessage: string,
+): () => void {
+  let checking = false;
+  let consecutiveFailures = 0;
+  const timer = setInterval(async () => {
+    if (checking || abortController.signal.aborted) {
+      return;
+    }
+    checking = true;
+    try {
+      const renewal = await session.renewConversationLease();
+      consecutiveFailures = 0;
+      if (renewal === "stopped") {
+        abortController.abort(new Error(stopMessage));
+      } else if (renewal === "stale") {
+        abortController.abort(
+          new Error("Conversation ownership changed during HarnessAgent turn"),
+        );
+      }
+    } catch (error) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= HARNESS_LEASE_RENEWAL_FAILURE_LIMIT) {
+        abortController.abort(error);
+      }
+    } finally {
+      checking = false;
+    }
+  }, 1_000);
+  timer.unref();
+
+  return () => clearInterval(timer);
 }
