@@ -1361,6 +1361,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   #execPayload(request: SandboxRunRequest): SandboxExecRequest {
+    // A persistent run with no workspace has no namespace to keep `~` in, so it
+    // gets the same HOME as its hooks and jobs.
+    const home =
+      this.#persistent(request) && !request.namespace
+        ? this.#workDir(this.#workspaceKey(request))
+        : undefined;
+
     return {
       runtime: request.runtime ?? "bash",
       code: request.code,
@@ -1374,7 +1381,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       ...(request.args && request.args.length > 0
         ? { args: request.args }
         : {}),
-      env: this.#sandboxEnvVars(request.envVars, request.principal),
+      env: {
+        ...this.#sandboxEnvVars(request.envVars, request.principal),
+        ...homeEnv(home),
+      },
     };
   }
 
@@ -1611,7 +1621,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         env: {
           ...this.#sandboxEnvVars(),
           ...options.env,
-          ...(options.home ? { HOME: options.home, TMPDIR: "/tmp" } : {}),
+          ...homeEnv(options.home),
         },
       },
       options.budgetMs ?? WARMUP_BUDGET_MS,
@@ -1895,6 +1905,11 @@ function evictToCap<T extends { expiresAt: number }>(
   if (cache.size < CACHE_MAX_ENTRIES) return;
   const oldest = cache.keys().next().value;
   if (oldest) cache.delete(oldest);
+}
+
+// HOME and TMPDIR for an exec the guest would otherwise give a throwaway home.
+function homeEnv(home: string | undefined): Record<string, string> {
+  return home ? { HOME: home, TMPDIR: "/tmp" } : {};
 }
 
 function isMicrovmGone(error: unknown): boolean {

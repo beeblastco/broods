@@ -11,6 +11,7 @@ import * as planLimits from "../src/harness/plan-limits.ts";
 import * as sandboxSnapshots from "../src/shared/convex/sandbox-snapshots.ts";
 import * as s3 from "../src/shared/s3.ts";
 import { requestBodyText, requestUrl } from "./helpers/http.ts";
+import type { SandboxExecRequest } from "../src/shared/domain/sandbox-config.ts";
 import type {
   SandboxExecutorConfig,
   SandboxRunRequest,
@@ -270,30 +271,32 @@ let microvmMountLive = true;
 // Checks that must report "not mounted" before the mount comes up, mirroring a VM
 // that answers /exec while its `/run` hook is still mounting.
 let microvmMountPendingChecks = 0;
-const microvmFetchMock = mock(async (_url: string, init?: unknown) => {
-  // The create-time mount assertion is infrastructure every workspace run pays for,
-  // so it answers "mounted" here and tests keep asserting on their own exec payload.
-  const body = (init as { body?: string } | undefined)?.body;
-  const mounted = typeof body === "string" && body.includes("mountpoint -q ");
-  let live = microvmMountLive;
-  if (mounted && microvmMountPendingChecks > 0) {
-    microvmMountPendingChecks -= 1;
-    live = false;
-  }
+const microvmFetchMock = mock(
+  async (_url: string, init?: { body?: string }) => {
+    // The create-time mount assertion is infrastructure every workspace run pays for,
+    // so it answers "mounted" here and tests keep asserting on their own exec payload.
+    const body = init?.body;
+    const mounted = typeof body === "string" && body.includes("mountpoint -q ");
+    let live = microvmMountLive;
+    if (mounted && microvmMountPendingChecks > 0) {
+      microvmMountPendingChecks -= 1;
+      live = false;
+    }
 
-  return new Response(
-    JSON.stringify(
-      mounted
-        ? {
-            ...microvmExecPayload,
-            ok: live,
-            exit_code: live ? 0 : 1,
-          }
-        : microvmExecPayload,
-    ),
-    { status: 200, headers: { "content-type": "application/json" } },
-  );
-});
+    return new Response(
+      JSON.stringify(
+        mounted
+          ? {
+              ...microvmExecPayload,
+              ok: live,
+              exit_code: live ? 0 : 1,
+            }
+          : microvmExecPayload,
+      ),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  },
+);
 function microvmCommand(type: string) {
   return class {
     input: unknown;
@@ -308,12 +311,18 @@ function microvmCommand(type: string) {
 const execBodies = (): string[] =>
   microvmFetchMock.mock.calls
     .map(
-      (call) =>
-        JSON.parse((call[1] as { body: string }).body).code as
-          | string
-          | undefined,
+      (call): string | undefined =>
+        (JSON.parse(call[1]?.body ?? "{}") as { code?: string }).code,
     )
     .filter((code): code is string => typeof code === "string");
+// The env of the first /exec POST whose `code` contains `marker`.
+const execEnv = (marker: string): Record<string, string> | undefined =>
+  microvmFetchMock.mock.calls
+    .map(
+      (call): Partial<SandboxExecRequest> =>
+        JSON.parse(call[1]?.body ?? "{}") as Partial<SandboxExecRequest>,
+    )
+    .find((body): boolean => body.code?.includes(marker) === true)?.env;
 const microvmRunInput = (): Record<string, unknown> => {
   const call = microvmSendMock.mock.calls.find(
     (c) => (c[0] as { _type?: string })?._type === "RunMicrovm",
@@ -2476,17 +2485,40 @@ describe("createSandboxExecutor", () => {
     expect(launched).toContain(`.fp-jobs/${ns}`);
     // The job and the hook get the persistent workspace as HOME, the same `~` as a
     // foreground exec, not a throwaway dir the guest deletes once they return.
-    const bodies = microvmFetchMock.mock.calls
-      .map((call) => (call[1] as { body?: unknown } | undefined)?.body)
-      .filter((body): body is string => typeof body === "string")
-      .map((body) => JSON.parse(body));
     for (const marker of ["setsid bash", "uv sync"]) {
-      const exec = bodies.find((body) => String(body.code).includes(marker));
-      expect(exec.env).toMatchObject({
+      expect(execEnv(marker)).toMatchObject({
         HOME: `/mnt/workspaces/${ns}`,
         TMPDIR: "/tmp",
       });
     }
+  });
+
+  it("gives a foreground run on a reserved VM with no workspace the hooks' HOME", async () => {
+    const key = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const request = { timeoutSeconds: 30, outputLimitBytes: 4096 };
+
+    await executor.run({ ...request, code: "echo own", reservationKey: key });
+    await executor.run({
+      ...request,
+      code: "echo mounted",
+      namespace: microvmNamespace(),
+      workspaceRoot: "/mnt/workspaces",
+    });
+
+    expect(execEnv("echo own")).toMatchObject({
+      HOME: `/mnt/workspaces/${key}`,
+      TMPDIR: "/tmp",
+    });
+    // A workspace run keeps `~` in its namespace, which the guest sets itself.
+    expect(execEnv("echo mounted")?.HOME).toBeUndefined();
   });
 
   it("asserts the workspace mount before launching a background job on a new MicroVM", async () => {
