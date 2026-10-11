@@ -65,11 +65,8 @@ export function stopSandboxSweeper(): void {
  */
 export async function sweepExpiredSandboxes(): Promise<number> {
   const [expired, orphaned] = await Promise.all([
-    runtime.query<SandboxReservationSummary[]>(
-      "listExpiredSandboxReservations",
-      { limit: SWEEP_PAGE_SIZE },
-    ),
-    runtime.query<SandboxReservationSummary[]>("listOrphanedSandboxInstances", {
+    runtime.query("listExpiredSandboxReservations", { limit: SWEEP_PAGE_SIZE }),
+    runtime.query("listOrphanedSandboxInstances", {
       limit: SWEEP_PAGE_SIZE,
     }),
   ]);
@@ -148,7 +145,7 @@ async function sweepAccount(
 ): Promise<number> {
   let leased = false;
   try {
-    leased = await runtime.mutate<boolean>("claimEvent", {
+    leased = await runtime.mutate("claimEvent", {
       accountId: accountId,
       key: SWEEP_LEASE_KEY,
       ttlSeconds: SWEEP_LEASE_SECONDS,

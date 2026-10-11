@@ -1019,10 +1019,10 @@ describe("context prepare", () => {
     const stubbedQuery = runtime.query.bind(runtime);
     const originalMutate = runtime.mutate.bind(runtime);
     const reads: string[] = [];
-    runtime.query = (async (name: string, args: Record<string, unknown>) => {
+    runtime.query = (async (name, args) => {
       reads.push(name);
 
-      return stubbedQuery(name as never, args);
+      return stubbedQuery(name, args);
     }) as typeof runtime.query;
     runtime.mutate = (async () => null) as typeof runtime.mutate;
     try {

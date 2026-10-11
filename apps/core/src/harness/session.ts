@@ -384,7 +384,7 @@ export class Session {
   async assertCurrentOwner(): Promise<void> {
     if (this.ownerGeneration === undefined) return;
     const startedAt = performance.now();
-    const current = await runtime.query<boolean>("isCurrentIngressOwner", {
+    const current = await runtime.query("isCurrentIngressOwner", {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
@@ -474,7 +474,7 @@ export class Session {
     const inline = batches.pop() ?? [];
     for (const batch of batches) await this.appendConversationEvents(batch);
     const startedAt = performance.now();
-    const boundary = await runtime.mutate<StepBoundary>("stepIngressBoundary", {
+    const boundary = await runtime.mutate("stepIngressBoundary", {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
@@ -1066,7 +1066,7 @@ export class Session {
     const pages: StoredConversationEntry[][] = [];
     let cursor = afterCursor;
     for (;;) {
-      const result = await runtime.query<StoredConversationEventPage>(
+      const result = await runtime.query(
         "listConversationEvents",
         backward
           ? {

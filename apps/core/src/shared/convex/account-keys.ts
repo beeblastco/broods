@@ -6,7 +6,6 @@
  * `@broods/convex/model/envelope`, the one copy both sides share.
  */
 
-import type { FunctionReference } from "convex/server";
 import {
   AccountCipher,
   type BlobScope,
@@ -15,7 +14,7 @@ import {
 } from "@broods/convex/model/envelope";
 import { requireSecretsEnv } from "../env.ts";
 import { NODE_CRYPTO } from "../node-aead.ts";
-import { getConvexClient } from "./client.ts";
+import { adminQuery, internal } from "./client.ts";
 
 const KEYRING_TTL_MS = 5 * 60_000;
 const SECRETS_ENV = "ACCOUNT_CONFIG_ENCRYPTION_SECRET";
@@ -28,16 +27,6 @@ interface CachedKeyring {
   cipher: Promise<AccountCipher>;
   expiresAt: number;
 }
-
-// Same boundary as storage.ts: the backend registers this as an internal
-// query, which the deploy key may call, and require() keeps its generated
-// types out of this package's typecheck. Only the args and result are typed.
-const listAccountKeys: FunctionReference<
-  "query",
-  "public",
-  { accountId: string },
-  WrappedAccountKey[]
-> = require("@broods/convex/_generated/api").internal.account.keys.list;
 
 const keyrings = new Map<string, CachedKeyring>();
 let loader: WrappedKeyLoader = loadFromConvex;
@@ -114,5 +103,5 @@ async function keyringHolding(
 }
 
 function loadFromConvex(accountId: string): Promise<WrappedAccountKey[]> {
-  return getConvexClient().query(listAccountKeys, { accountId: accountId });
+  return adminQuery(internal.account.keys.list, { accountId: accountId });
 }
