@@ -1939,7 +1939,9 @@ export async function runAgentLoop(
       finishObserved = true;
       // The turn total wins (a harness counts calls no step reported), unless
       // a stop thrown from prepareStep left it empty: then the step sum stands.
-      if (usageTokenTotals(usage).totalTokens > 0) taskUsage = usage;
+      if (Object.values(usageTokenTotals(usage)).some((tokens) => tokens > 0)) {
+        taskUsage = usage;
+      }
       taskStepCount = stepCount;
       const approvalRequests = extractApprovalRequests(steps);
       // `isAutomatic` records a decision the SDK already answered this run, so
