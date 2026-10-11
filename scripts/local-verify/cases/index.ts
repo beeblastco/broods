@@ -29,6 +29,7 @@ import { subagentModel } from "./subagent-model.ts";
 import { subagentStop } from "./subagent-stop.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
+import { websocketAttachAbort } from "./websocket-attach-abort.ts";
 import { workToolWebhooks } from "./work-tool-webhooks.ts";
 import { workspaceIsolation } from "./workspace-isolation.ts";
 
@@ -36,6 +37,7 @@ import { workspaceIsolation } from "./workspace-isolation.ts";
 export const verifyCases: readonly VerifyCase[] = [
   agentRun,
   sdkClient,
+  websocketAttachAbort,
   queuedFollowup,
   queuedCompact,
   steerAtBoundary,

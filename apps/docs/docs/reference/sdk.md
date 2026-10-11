@@ -183,7 +183,7 @@ The key travels as the `Sec-WebSocket-Protocol` entries `broods.v1` and `broods.
 | `subscription.sendControl(m)` | Sends more input to the live run. Steers by default     |
 | `subscription.close()`        | Closes the socket                                       |
 
-`subscribe` takes the run input fields above plus `agent`, a reference, `sessionId`, the conversation key, and `signal`. An aborted signal sends `cancel`. Pass `answers` instead of `input` to answer an open `ask_questions` prompt; the resumed run streams back on the same socket.
+`subscribe` takes the run input fields above plus `agent`, a reference, `sessionId`, the conversation key, and `signal`. An aborted signal sends `cancel`. `attach` also takes `signal`; aborting it closes the socket and calls `onError` once, but sends no `cancel`, so the run keeps going. Pass `answers` instead of `input` to answer an open `ask_questions` prompt; the resumed run streams back on the same socket.
 
 | Handler     | Receives                                                                       |
 | ----------- | ------------------------------------------------------------------------------ |
