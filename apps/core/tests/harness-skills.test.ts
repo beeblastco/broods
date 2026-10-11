@@ -268,7 +268,7 @@ describe("loadConfiguredSkillPrompt", () => {
     const { loadConfiguredSkillPrompt } =
       await import("../src/harness/skills.ts");
 
-    await expect(
+    expect(
       loadConfiguredSkillPrompt(
         "acct_test",
         ["acct_other/their-skill"],
@@ -789,7 +789,7 @@ describe("loadConfiguredHarnessSkills", () => {
     const { loadConfiguredHarnessSkills } =
       await import("../src/harness/skills.ts");
 
-    await expect(
+    expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: ["acct_test/oversized-skill"] },
       }),
@@ -871,7 +871,7 @@ describe("configured skill read bounds", () => {
     const { loadConfiguredHarnessSkills } =
       await import("../src/harness/skills.ts");
 
-    await expect(
+    expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: skillPaths },
       }),
@@ -886,7 +886,7 @@ describe("configured skill read bounds", () => {
       await import("../src/harness/skills.ts");
 
     const metadata = await listSkillMetadataForConfig("acct_test", skillPaths);
-    await expect(
+    expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: skillPaths },
       }),
@@ -942,10 +942,10 @@ describe("configured skill read bounds", () => {
       await import("../src/harness/skills.ts");
     const allowed = [skillPath, "acct_other/large-skill"];
 
-    await expect(
-      listSkillMetadataForConfig("acct_test", allowed),
-    ).rejects.toThrow("Skill path belongs to another account");
-    await expect(
+    expect(listSkillMetadataForConfig("acct_test", allowed)).rejects.toThrow(
+      "Skill path belongs to another account",
+    );
+    expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: allowed },
       }),

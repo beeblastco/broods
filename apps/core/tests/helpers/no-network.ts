@@ -30,6 +30,7 @@ globalThis.fetch = Object.assign(
 
 // node:http, node:https and node:tls all open their connection through here. A
 // string first argument is a Unix socket path, which never leaves the machine.
+// oxlint-disable-next-line typescript/unbound-method -- Reflect.apply below calls it on the socket
 const realConnect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (
   this: net.Socket,

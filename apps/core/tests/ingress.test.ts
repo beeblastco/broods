@@ -330,7 +330,7 @@ describe("async turn without model input", (): void => {
       ownerGeneration: 1,
     };
 
-    await expect(
+    expect(
       handler({ kind: "direct-api-async-worker", event: event }),
     ).rejects.toThrow("ArgumentValidationError");
 

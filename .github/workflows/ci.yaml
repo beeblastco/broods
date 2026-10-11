@@ -58,6 +58,8 @@ jobs:
         run: bun install --ignore-scripts --frozen-lockfile
 
       - name: Lint, format check and typecheck
+        # `check` lints with `lint:types`: the type-aware pass (floating
+        # promises, awaiting a non-promise) fails here, not only the plain rules.
         run: bun run check
 
       - name: Read the Node version

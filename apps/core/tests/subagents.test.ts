@@ -971,7 +971,7 @@ describe("SubagentCoordinator", () => {
 
     // A key the runtime never minted could name another caller's direct-API
     // conversation with the child agent.
-    await expect(
+    expect(
       internals.resolveTask(
         { prompt: "recount", conversationKey: "user-123" },
         [],
@@ -985,7 +985,7 @@ describe("SubagentCoordinator", () => {
       `-${"0".repeat(32)}`,
     );
     for (const conversationKey of ["subagent-persistent-alice", forged]) {
-      await expect(
+      expect(
         internals.resolveTask(
           { prompt: "recount", conversationKey: conversationKey },
           [],

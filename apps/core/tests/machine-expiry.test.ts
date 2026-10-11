@@ -107,7 +107,7 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
   refused.onopen = (): void =>
     refused.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
   expect((await refusal).code).toBe(MACHINE_CLOSE.unauthorized.code);
-  await expect(
+  expect(
     executor.run({
       code: "fixture-only-never-executed",
       envVars: { FRESH_SECRET: "created-after-expiry" },
@@ -204,7 +204,7 @@ test("a frame bound for a daemon past its ticket is refused even before the expi
   const closed = closeOf(daemon);
   jest.setSystemTime(expiresAt);
 
-  await expect(
+  expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "fixture-only-never-executed",
       envVars: { FRESH_SECRET: "created-after-expiry" },

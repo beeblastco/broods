@@ -44,8 +44,8 @@ outside repo, sibling of checkout:
 
 - no new function unless behavior really different from code that already exist. less code that stay maintainable is win. big complex code base = big technical debt.
 - before say done: run package own `bun run check` (lint + types) and root `bun run format` (oxfmt). never run raw `tsc` or `bunx tsc --noEmit`, wrong config.
-- lint = oxlint, one `.oxlintrc.json` at root for the whole repo. no eslint, it does not support TS 7. workspace `check` is types only, except dashboard; `bun run lint` at root covers every workspace.
+- lint = oxlint, one `.oxlintrc.json` at root for the whole repo. no eslint, it does not support TS 7. workspace `check` is types only, except dashboard; `bun run lint` at root covers every workspace. `import/no-cycle` is on: a value import cycle fails lint.
 - dashboard also loads `@shadcn/lint` (oxlint JS plugin, `jsPlugins` in the `apps/dashboard/**` override) for design system rules. dashboard `check` = types + `bun run lint`, so `ci.yaml` app-surfaces and `build-dashboard.yaml` fail on any shadcn error. tokens and what each rule allows: `apps/dashboard/AGENTS.md`.
 - format = oxfmt, one `.oxfmtrc.json` at root. no prettier. `bun run format` writes, `bun run format:check` gates CI and pre-commit. `**/_generated/**` is ignored so convex codegen output stays byte-identical to what codegen writes.
 - pre-commit hook in `.githooks/` runs oxlint + oxfmt --check on staged files. root `prepare` script wires it (`git config core.hooksPath .githooks`); it is skipped when install runs with `--ignore-scripts`, CI catches those.
-- `bun run lint:types` is the type-aware pass (oxlint-tsgolint). not in `check` yet, it still has a backlog. do not add new findings.
+- `bun run lint:types` is the type-aware pass (oxlint-tsgolint), a superset of `bun run lint`. root `check` (and so the required CI `validate` job) runs it, so a floating promise or an `await` of a non-promise fails the PR. it needs a whole-program build (~8s for one file), so the pre-commit hook keeps plain `oxlint`. oxlint and oxlint-tsgolint are pinned exact; bump both together.
