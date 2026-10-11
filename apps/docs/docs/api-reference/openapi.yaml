@@ -212,7 +212,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "503":
-          description: Streamed run only. A streamed run waits for a free worker slot like a background run, with keepalive comments meanwhile; when the deployment's run queue is full too, nothing runs and the request answers 503 with `Retry-After` and one SSE `error` frame.
+          description: The deployment's run queue is full (`service_unavailable`). A run waits for a free worker slot, a streamed one with keepalive comments meanwhile; only when the queue is full too is the request turned away, before it is counted against the plan or recorded, so a retry after `Retry-After` with the same `eventId` starts the run. A streamed run gets one SSE `error` frame, a background run a JSON envelope.
           headers:
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
@@ -221,6 +221,9 @@ paths:
               schema:
                 type: string
                 format: binary
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "402":
           description: The account has reached one of its monthly resource caps (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces caps.
           content:
@@ -470,6 +473,9 @@ paths:
               schema:
                 type: string
                 format: binary
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: The runtime key does not match this project and stage
           content:
@@ -1616,6 +1622,9 @@ paths:
               schema:
                 type: string
                 format: binary
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: The runtime key does not match the endpoint
           content:

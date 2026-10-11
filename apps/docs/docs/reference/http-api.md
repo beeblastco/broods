@@ -71,7 +71,7 @@ curl -N -X POST "https://gateway.broods.app/v1/runs" \
 | `answers`         | no                                  | Answers to open `ask_questions` prompts. Cannot be combined with `events`                                                                                 |
 | `continue`        | no                                  | Re-enter a run that stopped on the step cap or a provider fault                                                                                           |
 
-The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. One run can carry several model passes, each ending in its own `finish` part: after subagent or async tool results, or after the run hands its worker slot on near the slot deadline. The run is over when the stream closes, not at a `finish` part. A run that writes nothing for 30 seconds, such as during a long tool call, sends an SSE comment line such as `: keepalive` or `: waiting for async work pending=2`. SSE parsers ignore them, and they keep the connection open. A streamed run waits for a free worker slot like a background run, so on a busy deployment the stream may send only keepalives before its first part. If the run queue itself is full, the request answers `503` with `Retry-After` and one SSE `error` frame, and runs nothing. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
+The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. One run can carry several model passes, each ending in its own `finish` part: after subagent or async tool results, or after the run hands its worker slot on near the slot deadline. The run is over when the stream closes, not at a `finish` part. A run that writes nothing for 30 seconds, such as during a long tool call, sends an SSE comment line such as `: keepalive` or `: waiting for async work pending=2`. SSE parsers ignore them, and they keep the connection open. A streamed run waits for a free worker slot like a background run, so on a busy deployment the stream may send only keepalives before its first part. If the run queue itself is full, the request answers `503` with `Retry-After` and one SSE `error` frame. It runs nothing and is neither recorded nor counted against your plan, so retrying with the same `eventId` starts the run. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
 
 The dashboard advertises a scoped form of the same endpoint, `POST /v1/projects/{project}/stages/{stage}/agents/{endpointId}`. It takes the same body and refuses a key from another project or stage with `401`.
 
@@ -96,7 +96,7 @@ curl -X POST "https://gateway.broods.app/v1/runs" \
 }
 ```
 
-Poll `GET /v1/runs/{runId}` until the status settles. Status records stay readable for 7 days.
+Poll `GET /v1/runs/{runId}` until the status settles. Status records stay readable for 7 days. If the run queue is full, the request answers `503 service_unavailable` with `Retry-After` instead of `202`, and records nothing.
 
 | `status`                                      | Meaning                                                            |
 | --------------------------------------------- | ------------------------------------------------------------------ |
@@ -173,6 +173,7 @@ Branch on `code`, never on `message`. Each response also carries an `X-Request-I
 | 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                             |
 | 409    | `idempotency_conflict`   | Same idempotency key, different payload                                                                        |
 | 429    | `ingress_capacity`       | Conversation queue is full                                                                                     |
+| 503    | `service_unavailable`    | The deployment's run queue is full. Nothing is recorded; retry after `Retry-After`                             |
 
 On a streamed run, these arrive as the first SSE `error` frame instead of a JSON body.
 
