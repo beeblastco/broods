@@ -61,18 +61,20 @@ export async function streamedBurst(context: VerifyContext): Promise<void> {
   const answered = outcomes.filter(
     (outcome): boolean => outcome.error === null && outcome.text.length > 0,
   ).length;
-  // Without a model each run fails at the provider call, which still proves
-  // every queued stream got its slot: a stream that never ran ends silent.
+  // Without a model each run fails at the provider call, and that failure
+  // arrives as the run's own SSE error part, which proves the stream opened
+  // and the run got its slot. An HTTP refusal such as a 503 is "Run failed:".
+  const ranToError = outcomes.filter(
+    (outcome): boolean =>
+      outcome.error?.startsWith("Agent run failed:") === true,
+  ).length;
   assertStep(
     context.hasModelKey
       ? `all ${STREAMS} streamed runs answered through the worker queue`
-      : `all ${STREAMS} streamed runs ran to an outcome (${MODEL_KEY_HINT})`,
+      : `all ${STREAMS} streamed runs got a slot and ran (${MODEL_KEY_HINT})`,
     context.hasModelKey
       ? answered === STREAMS
-      : outcomes.every(
-          (outcome): boolean =>
-            outcome.error !== null || outcome.text.length > 0,
-        ),
+      : answered + ranToError === STREAMS,
     JSON.stringify(outcomes),
   );
 }

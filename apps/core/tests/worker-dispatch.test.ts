@@ -315,12 +315,15 @@ describe("streamed runs", (): void => {
   };
   let mutations: [string, unknown][];
   let modelPasses: number;
+  // Turns prepared: loading history and storing the new input.
+  let prepared: number;
   let releases: (() => void)[];
 
   beforeEach((): void => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     mutations = [];
     modelPasses = 0;
+    prepared = 0;
     releases = [];
     setStorageForTests({
       accounts: { getById: async (): Promise<AccountRecord> => account },
@@ -342,12 +345,18 @@ describe("streamed runs", (): void => {
       async <T>(name: string): Promise<T> =>
         (name === "isCurrentIngressOwner" ? true : null) as T,
     );
-    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
-      messages: [{ role: "user", content: "hi" }],
-      system: [],
-      ephemeralSystem: [],
-      systemContextSnapshot: { cursor: null, messages: [] },
-    });
+    spyOn(Session.prototype, "createTurnContext").mockImplementation(
+      async (): ReturnType<Session["createTurnContext"]> => {
+        prepared += 1;
+
+        return {
+          messages: [{ role: "user", content: "hi" }],
+          system: [],
+          ephemeralSystem: [],
+          systemContextSnapshot: { cursor: null, messages: [] },
+        };
+      },
+    );
     // The pass ends before any model call; only when it starts matters.
     spyOn(harness, "runAgentLoop").mockImplementation(
       async (): Promise<never> => {
@@ -408,6 +417,7 @@ describe("streamed runs", (): void => {
       200, 200,
     ]);
     expect(modelPasses).toBe(0);
+    expect(prepared).toBe(0);
 
     for (const release of releases.splice(0)) release();
     const bodies = await Promise.all(
@@ -424,6 +434,7 @@ describe("streamed runs", (): void => {
     for (const release of releases.splice(0)) release();
     await drainInProcessWorkers();
     expect(modelPasses).toBe(0);
+    expect(prepared).toBe(0);
     expect(settles()).toEqual([
       expect.objectContaining({ status: "failed", ownerGeneration: 1 }),
     ]);
@@ -437,8 +448,10 @@ describe("streamed runs", (): void => {
     const response = await streamedRun(1);
 
     expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("5");
     expect(await response.text()).toContain("In-process worker queue is full");
     expect(modelPasses).toBe(0);
+    expect(prepared).toBe(0);
     expect(settles()).toEqual([
       expect.objectContaining({
         status: "failed",

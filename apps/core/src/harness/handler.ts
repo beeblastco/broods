@@ -203,6 +203,7 @@ const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
+const WORKER_QUEUE_FULL = "In-process worker queue is full";
 // A queued run holds its lease from admission, so the queue renews it well
 // inside the TTL until a slot starts the run.
 const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
@@ -1105,49 +1106,126 @@ async function handleDirectRequest(
 }
 
 /**
- * The sync SSE answer for a run that owns its conversation: a queued command's
- * reply, or the model turn streaming.
+ * The sync SSE answer for a run that owns its conversation. The turn, a queued
+ * command's reply or the model streaming, runs on a worker slot like every
+ * other run, so MAX_INPROCESS_WORKERS bounds streamed runs too. The stream
+ * opens at once and keeps alive while the run waits, the queue renewing its
+ * lease. A full queue fails the run with a 503 before any stream opens; a
+ * client that left before its slot came starts nothing.
  */
 async function directTurnResponse(
   ownedEvent: DirectInboundEvent,
 ): Promise<Response> {
-  const command = queuedCommand(ownedEvent.events);
-  if (command) {
-    return commandSseResponse(ownedEvent, command);
-  }
-  try {
-    const turn = await prepareDirectTurn(ownedEvent);
-    if (!turn) {
-      return emptySseResponse();
-    }
+  if (workerQueueFull()) {
+    await failOwnedIngress(ownedEvent, WORKER_QUEUE_FULL);
 
-    const { session, turnContext } = turn;
-    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await settleFailedIngressAndDrain(
-        session,
-        "Request did not produce pending model input",
-        () => dispatchNextIngress(session, ownedEvent),
+    return errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS);
+  }
+  // A queued run starts from whichever run frees its slot, so it takes this
+  // request's observability context rather than inheriting that one.
+  const observability = getObservabilityContext();
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start: (controller): void => {
+      // Bun closes a response that writes nothing for its idleTimeout, and a
+      // queued run or one silent bash call can outlast it. A comment line is
+      // ignored by every SSE parser.
+      keepalive = setInterval((): void => {
+        try {
+          controller.enqueue(textEncoder.encode(": keepalive\n\n"));
+        } catch {
+          clearInterval(keepalive);
+        }
+      }, SSE_KEEPALIVE_INTERVAL_MS);
+      const frame = (chunk: unknown): Uint8Array =>
+        textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`);
+      dispatchInProcessWorker(
+        "direct-sse",
+        (context): Promise<void> =>
+          runWithObservabilityScope(async (): Promise<void> => {
+            try {
+              if (cancelled) {
+                await failOwnedIngress(
+                  ownedEvent,
+                  "The client disconnected before the run started",
+                );
+
+                return;
+              }
+              const command = queuedCommand(ownedEvent.events);
+              if (command) {
+                await runCommandTurn({
+                  event: ownedEvent,
+                  command: command,
+                  // A client that left takes nothing more; the command already
+                  // ran, so its outcome stays the run's own.
+                  send: async (chunk): Promise<void> => {
+                    try {
+                      controller.enqueue(frame(chunk));
+                    } catch {}
+                  },
+                });
+
+                return;
+              }
+              const turn = await prepareDirectTurn(ownedEvent).catch(
+                (err: unknown): null => {
+                  // prepareDirectTurn already settled the run as failed.
+                  const error =
+                    err instanceof Error ? err.message : String(err);
+                  logError("Direct request pre-processing failed", {
+                    eventId: ownedEvent.eventId,
+                    error: error,
+                  });
+                  controller.enqueue(frame({ type: "error", error: error }));
+
+                  return null;
+                },
+              );
+              if (!turn) return;
+              const { session, turnContext } = turn;
+              if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+                await settleFailedIngressAndDrain(
+                  session,
+                  "Request did not produce pending model input",
+                  () => dispatchNextIngress(session, ownedEvent),
+                );
+
+                return;
+              }
+              await streamDirectContinuation(
+                ownedEvent,
+                session,
+                turnContext,
+                controller,
+                context,
+              );
+            } finally {
+              clearInterval(keepalive);
+              try {
+                controller.close();
+              } catch {}
+            }
+          }, observability),
+        ownedEvent.ownerGeneration === undefined
+          ? undefined
+          : {
+              conversationKey: ownedEvent.conversationKey,
+              ownerEventId: ownedEvent.eventId,
+              ownerGeneration: ownedEvent.ownerGeneration,
+            },
       );
+    },
+    cancel: (): void => {
+      cancelled = true;
+    },
+  });
 
-      return emptySseResponse();
-    }
-
-    return await workerSseResponse(ownedEvent, (controller, context) =>
-      streamDirectContinuation(
-        ownedEvent,
-        session,
-        turnContext,
-        controller,
-        context,
-      ),
-    );
-  } catch (err) {
-    logError("Direct request pre-processing failed", {
-      eventId: ownedEvent.eventId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
 }
 
 /** Answer a direct async request with 202 and hand it to an in-process worker. */
@@ -2782,6 +2860,14 @@ async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
   }
 }
 
+/** True when a new run would neither start nor fit in the queue. */
+function workerQueueFull(): boolean {
+  return (
+    activeInProcessWorkers >= MAX_INPROCESS_WORKERS &&
+    pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS
+  );
+}
+
 /** Starts a worker now when a slot is free, else queues it FIFO. */
 function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
   if (activeInProcessWorkers < MAX_INPROCESS_WORKERS) {
@@ -2789,10 +2875,10 @@ function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
 
     return;
   }
-  if (loadShed && pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
+  if (loadShed && workerQueueFull()) {
     // Load-shed: the awaiting caller surfaces the error instead of the queue
     // growing without bound.
-    throw new Error("In-process worker queue is full");
+    throw new Error(WORKER_QUEUE_FULL);
   }
   pendingWorkerRuns.push(entry);
   if (!queuedLeaseTimer) {
@@ -3054,92 +3140,6 @@ async function resolveReentryTarget(options: {
         }
       : {}),
   };
-}
-
-/**
- * Streams a sync run from a worker slot, so MAX_INPROCESS_WORKERS bounds
- * streamed runs like every other run. The stream opens at once and keeps alive
- * while the run waits in the queue, which renews its lease. A client that left
- * before its slot came starts nothing; a full queue fails the run with a 503.
- */
-async function workerSseResponse(
-  event: DirectInboundEvent,
-  run: (
-    controller: ReadableStreamDefaultController<Uint8Array>,
-    context: RequestContext,
-  ) => Promise<void>,
-): Promise<Response> {
-  // A queued run starts from whichever run frees its slot, so it takes this
-  // request's observability context rather than inheriting that one.
-  const observability = getObservabilityContext();
-  let keepalive: ReturnType<typeof setInterval> | undefined;
-  let cancelled = false;
-  const failUnstarted = (error: string): Promise<boolean> => {
-    const session = directSession(event);
-
-    return settleFailedIngressAndDrain(session, error, () =>
-      dispatchNextIngress(session, event),
-    );
-  };
-  try {
-    const body = new ReadableStream<Uint8Array>({
-      start: (controller): void => {
-        // Bun closes a response that writes nothing for its idleTimeout, and a
-        // queued run or one silent bash call can outlast it. A comment line is
-        // ignored by every SSE parser.
-        keepalive = setInterval((): void => {
-          try {
-            controller.enqueue(textEncoder.encode(": keepalive\n\n"));
-          } catch {
-            clearInterval(keepalive);
-          }
-        }, SSE_KEEPALIVE_INTERVAL_MS);
-        dispatchInProcessWorker(
-          "direct-sse",
-          (context): Promise<void> =>
-            runWithObservabilityScope(async (): Promise<void> => {
-              try {
-                if (cancelled) {
-                  await failUnstarted(
-                    "The client disconnected before the run started",
-                  );
-
-                  return;
-                }
-                await run(controller, context);
-              } finally {
-                clearInterval(keepalive);
-                try {
-                  controller.close();
-                } catch {}
-              }
-            }, observability),
-          event.ownerGeneration === undefined
-            ? undefined
-            : {
-                conversationKey: event.conversationKey,
-                ownerEventId: event.eventId,
-                ownerGeneration: event.ownerGeneration,
-              },
-        );
-      },
-      cancel: (): void => {
-        cancelled = true;
-      },
-    });
-
-    return new Response(body, {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    });
-  } catch (err) {
-    // Only a full queue throws here, before any run started.
-    clearInterval(keepalive);
-    const message = err instanceof Error ? err.message : String(err);
-    await failUnstarted(message);
-
-    return errorSseResponse(message, 503);
-  }
 }
 
 /** The direct model turn on its worker slot, streamed to the client. */
@@ -3740,27 +3740,6 @@ function isErrorStreamChunk(chunk: unknown): boolean {
 }
 
 /** A sync HTTP run whose input is a queued command: streams its reply. */
-function commandSseResponse(
-  event: DirectInboundEvent,
-  command: QueuedCommand,
-): Promise<Response> {
-  return workerSseResponse(event, async (controller): Promise<void> => {
-    await runCommandTurn({
-      event: event,
-      command: command,
-      // A client that left takes nothing more; the command already ran, so
-      // its outcome stays the run's own.
-      send: async (chunk): Promise<void> => {
-        try {
-          controller.enqueue(
-            textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-          );
-        } catch {}
-      },
-    });
-  });
-}
-
 function emptySseResponse(): Response {
   return new Response(
     new ReadableStream({
@@ -3772,7 +3751,11 @@ function emptySseResponse(): Response {
   );
 }
 
-function errorSseResponse(error: string, statusCode = 200): Response {
+function errorSseResponse(
+  error: string,
+  statusCode = 200,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(
     new ReadableStream({
       start: function (controller) {
@@ -3784,7 +3767,10 @@ function errorSseResponse(error: string, statusCode = 200): Response {
         controller.close();
       },
     }),
-    { status: statusCode, headers: { "content-type": "text/event-stream" } },
+    {
+      status: statusCode,
+      headers: { ...headers, "content-type": "text/event-stream" },
+    },
   );
 }
 

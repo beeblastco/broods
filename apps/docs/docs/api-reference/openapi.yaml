@@ -212,7 +212,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "503":
-          description: Streamed run only. A streamed run waits for a free worker slot like a background run, with keepalive comments meanwhile; when the deployment's run queue is full too, nothing runs and the request answers 503 with one SSE `error` frame. Retry later.
+          description: Streamed run only. A streamed run waits for a free worker slot like a background run, with keepalive comments meanwhile; when the deployment's run queue is full too, nothing runs and the request answers 503 with `Retry-After` and one SSE `error` frame.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             text/event-stream:
               schema:
