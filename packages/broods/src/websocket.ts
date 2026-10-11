@@ -283,13 +283,19 @@ export class BroodsWebSocketClient {
       const payload = parseServerMessage(event.data);
       if (!payload) return;
       const effective = unwrapServerMessage(payload, handlers);
+      // A handler may abort or close this view; nothing is delivered after.
+      if (closed) return;
       handlers.onMessage?.(effective);
+      if (closed) return;
       if (effective.type === "done") handlers.onDone?.();
       if (effective.type === "error")
         handlers.onError?.(new Error(formatWireError(effective.error)));
     };
+    // The abnormal close that follows a socket error is reported once, here.
     socket.onerror = () => {
-      if (!closed) handlers.onError?.(webSocketAccessError(this.baseUrl));
+      if (closed) return;
+      close(1011, "websocket error");
+      handlers.onError?.(webSocketAccessError(this.baseUrl));
     };
     socket.onclose = (event) => {
       input.signal?.removeEventListener("abort", onAbort);
