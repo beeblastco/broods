@@ -294,7 +294,8 @@ export function modelSettingsFromModelConfig(
 
 /**
  * Prompt-cache defaults for a conversation run: Anthropic gets an ephemeral
- * cacheControl (caching there is opt-in per request), OpenAI (and ChatGPT,
+ * cacheControl (caching there is opt-in per request; the harness also puts it
+ * on the ends of the system prompt and the history), OpenAI (and ChatGPT,
  * where a cached prefix spends less of the plan) a promptCacheKey
  * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
  * A call without a conversation, like compaction, gets neither: a one-shot

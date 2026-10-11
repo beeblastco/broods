@@ -8,6 +8,7 @@ import {
   mock,
 } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
+import { requestBodyText } from "./helpers/http.ts";
 import { loopbackTransport, TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import type {
   LanguageModel,
@@ -17,15 +18,19 @@ import type {
   ToolSet,
 } from "ai";
 import * as actualAi from "ai";
+import * as actualAnthropic from "@ai-sdk/anthropic";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type {
   AgentLoopOptions,
   AgentLoopStream,
 } from "../src/harness/harness.ts";
+import { pruneSessionMessages } from "../src/harness/pruning.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import {
   setStorageForTests,
   type Storage,
@@ -38,6 +43,7 @@ import type {
 
 // mock.module("ai") below patches the namespace binding, so hold the real one.
 const realStreamText = actualAi.streamText;
+const realCreateAnthropic = actualAnthropic.createAnthropic;
 // Copied before the mocks patch them; afterAll hands them back to later files.
 const realAi = { ...actualAi };
 const realOpenAI = { ...actualOpenAI };
@@ -134,7 +140,7 @@ const streamTextMock = mock(
       messages: unknown[];
       responseMessages: unknown[];
     }) => Promise<{
-      instructions?: unknown;
+      instructions?: SystemModelMessage[];
       messages?: unknown[];
     }>;
     onStepStart?: (args: {
@@ -208,6 +214,7 @@ const streamTextMock = mock(
     output?: unknown;
     stopWhen?: unknown;
     instructions?: unknown;
+    providerOptions?: ProviderOptions;
     tools?: unknown;
     toolApproval?: unknown;
   }) => {
@@ -1934,6 +1941,110 @@ describe("runAgentLoop", () => {
     expect(args?.providerOptions?.anthropic).not.toHaveProperty("effort");
   });
 
+  it("marks the system prompt and the stored history so the next Anthropic run reads them from cache", async () => {
+    const config: AgentConfig = {
+      provider: { anthropic: { apiKey: "anthropic-key" } },
+      model: { provider: "anthropic", modelId: "claude-opus-5-5" },
+    };
+    const firstRun: ModelMessage[] = [
+      { role: "user", content: "check the build" },
+    ];
+    const secondRun: ModelMessage[] = [
+      ...firstRun,
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "bash",
+            input: { command: "make" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "bash",
+            output: { type: "text", value: "ok" },
+          },
+        ],
+      },
+      { role: "assistant", content: "The build passes." },
+      { role: "user", content: "thanks" },
+    ];
+    const breakpoint = { type: "ephemeral" };
+
+    const first = await anthropicRequestBody(firstRun, config);
+    const second = await anthropicRequestBody(secondRun, config);
+
+    // Automatic caching still covers the tail within a run.
+    expect(first.cache_control).toEqual(breakpoint);
+    // This run's ephemeral system is never stored, so the mark goes before it.
+    expect(first.system).toEqual([
+      { type: "text", text: "You are Tracy." },
+      { type: "text", text: "Memory index.", cache_control: breakpoint },
+      { type: "text", text: "Reply in Dutch." },
+    ]);
+    expect(first.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "check the build", cache_control: breakpoint },
+          { type: "text", text: "<environment>" },
+        ],
+      },
+    ]);
+    // What the first run marked is a byte-identical prefix of the second run,
+    // after pruning dropped the first run's tool call, so the second reads it.
+    expect(second.system).toEqual(first.system);
+    expect(second.messages).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "check the build" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "The build passes." }],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "thanks", cache_control: breakpoint },
+          { type: "text", text: "<environment>" },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves messages unmarked on providers without Anthropic caching", async () => {
+    const call = await firstStepCall([{ role: "user", content: "hello" }], {
+      provider: { openai: { apiKey: "openai-key" } },
+      model: { provider: "openai", modelId: "gpt-5-mini" },
+    });
+
+    expect(call).toMatchObject({
+      instructions: [
+        { role: "system", content: "You are Tracy." },
+        { role: "system", content: "Memory index." },
+        { role: "system", content: "Reply in Dutch." },
+      ],
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "hello" },
+            { type: "text", text: "<environment>" },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(call)).not.toContain("cacheControl");
+  });
+
   it("passes structured output config into streamText and returns parsed output", async () => {
     streamTextScenario = "structured-output";
     installHarnessEnv();
@@ -3476,4 +3587,100 @@ async function startHookServer(
   }
 
   return { port: address.port, server: server };
+}
+
+/**
+ * The Anthropic Messages body for one run over `history`: runAgentLoop builds
+ * the streamText call, and the real Anthropic provider renders it to the wire.
+ */
+async function anthropicRequestBody(
+  history: ModelMessage[],
+  config: AgentConfig,
+): Promise<Record<string, unknown>> {
+  const call = await firstStepCall(history, config);
+  let body: Record<string, unknown> = {};
+  const anthropic = realCreateAnthropic({
+    apiKey: "anthropic-key",
+    fetch: Object.assign(
+      async (
+        _input: string | URL | Request,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        body = JSON.parse(requestBodyText(init?.body));
+
+        return Response.json({ error: "stop" }, { status: 400 });
+      },
+      { preconnect: originalFetch.preconnect },
+    ),
+  });
+  await realStreamText({
+    model: anthropic("claude-opus-5-5"),
+    ...call,
+    maxRetries: 0,
+    onError: () => {},
+  }).consumeStream();
+
+  return body;
+}
+
+/**
+ * What step 0 of one run over the pruned `history` sends: the streamText call
+ * runAgentLoop makes, with the instructions its prepareStep returns. The
+ * system prompt is two stored messages and one ephemeral one.
+ */
+async function firstStepCall(
+  history: ModelMessage[],
+  config: AgentConfig,
+): Promise<{
+  instructions?: SystemModelMessage[];
+  messages: ModelMessage[];
+  providerOptions?: ProviderOptions;
+}> {
+  installHarnessEnv();
+  streamTextMock.mockClear();
+  const { runAgentLoop } = await import("../src/harness/harness.ts");
+  const ephemeralSystem: SystemModelMessage[] = [
+    { role: "system", content: "Reply in Dutch." },
+  ];
+  const system: SystemModelMessage[] = [
+    { role: "system", content: "You are Tracy." },
+    { role: "system", content: "Memory index." },
+    ...ephemeralSystem,
+  ];
+  const stream = await runAgentLoop(
+    {
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      sandboxes: () => [],
+      environmentText: () => "<environment>",
+      persistModelMessages: async () => {},
+      stepBoundary: async () => ({ renewal: "renewed", steering: null }),
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: system,
+        storedSystemEnd: 1,
+      }),
+    } as never,
+    {
+      messages: pruneSessionMessages(history, config),
+      system: system,
+      ephemeralSystem: ephemeralSystem,
+      systemContextSnapshot: { cursor: null, messages: [] },
+    },
+    config,
+  );
+  const call = streamTextMock.mock.calls[0]![0];
+  const step = await call.prepareStep!({
+    messages: call.messages,
+    responseMessages: [],
+  });
+  await stream.consumeStream();
+
+  return {
+    instructions: step.instructions,
+    messages: call.messages,
+    providerOptions: call.providerOptions,
+  };
 }

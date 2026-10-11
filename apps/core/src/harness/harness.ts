@@ -64,7 +64,7 @@ import {
   getSharedNatsConn,
   tracesSubject,
 } from "../shared/nats.ts";
-import type { ToolResultOutput } from "@ai-sdk/provider-utils";
+import type { ProviderOptions, ToolResultOutput } from "@ai-sdk/provider-utils";
 import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
@@ -1264,6 +1264,7 @@ export async function runAgentLoop(
     messages: withEnvironment(
       stripEnvelopeFieldsFromMessages(turnContext.messages),
       environment,
+      providerOptions,
     ),
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
@@ -1342,6 +1343,13 @@ export async function runAgentLoop(
         ephemeralSystem: turnContext.ephemeralSystem,
       });
       systemContextSnapshot = refreshed.systemContextSnapshot;
+      // Runs before every step, step 0 too. The next run starts with the stored
+      // system prompt, which ends before this run's ephemeral system.
+      const instructions = withCacheBreakpoint(
+        refreshed.system,
+        providerOptions,
+        refreshed.storedSystemEnd,
+      );
       // Keep the turn's instructions current: system context grows mid-run
       // (newly persisted rows, steering, skills a tool loaded), and the step and
       // root spans both trace off this.
@@ -1354,7 +1362,7 @@ export async function runAgentLoop(
 
         return {
           instructions: [
-            ...refreshed.system,
+            ...instructions,
             { role: "system", content: WIND_DOWN_INSTRUCTION },
           ],
           toolChoice: "none",
@@ -1363,7 +1371,7 @@ export async function runAgentLoop(
       }
 
       return {
-        instructions: refreshed.system,
+        instructions: instructions,
         ...(stepMessages !== messages ? { messages: stepMessages } : {}),
       };
     },
@@ -2646,15 +2654,20 @@ async function steerHarnessTurn(
 /**
  * The history with the live environment after it. It rides on the person's
  * latest message when that comes last, so the model still reads one request,
- * and comes as its own message after a tool result.
+ * and comes as its own message after a tool result. With `providerOptions`
+ * the end of the history, right before the environment, is a cache breakpoint.
  */
 function withEnvironment(
   messages: ModelMessage[],
   environment: string,
+  providerOptions?: ProviderOptions,
 ): ModelMessage[] {
   const last = messages.at(-1);
   if (last?.role !== "user") {
-    return [...messages, { role: "user", content: environment }];
+    return [
+      ...withCacheBreakpoint(messages, providerOptions),
+      { role: "user", content: environment },
+    ];
   }
   const content =
     typeof last.content === "string"
@@ -2663,8 +2676,42 @@ function withEnvironment(
 
   return [
     ...messages.slice(0, -1),
-    { ...last, content: [...content, { type: "text", text: environment }] },
+    {
+      ...last,
+      content: [
+        ...withCacheBreakpoint(content, providerOptions),
+        { type: "text", text: environment },
+      ],
+    },
   ];
+}
+
+/**
+ * Marks the item at `index` (the last by default) as an Anthropic cache
+ * breakpoint, at the ends of the stored system prompt and history the next run
+ * reads back. Unchanged when the run has no Anthropic cacheControl.
+ */
+function withCacheBreakpoint<T extends { providerOptions?: ProviderOptions }>(
+  items: T[],
+  providerOptions: ProviderOptions | undefined,
+  index: number = items.length - 1,
+): T[] {
+  const cacheControl = providerOptions?.anthropic?.cacheControl;
+  const item = items[index];
+  if (cacheControl === undefined || item === undefined) {
+    return items;
+  }
+
+  return items.with(index, {
+    ...item,
+    providerOptions: {
+      ...item.providerOptions,
+      anthropic: {
+        ...item.providerOptions?.anthropic,
+        cacheControl: cacheControl,
+      },
+    },
+  });
 }
 
 /**

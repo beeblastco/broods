@@ -176,6 +176,13 @@ export interface SystemContextSnapshot {
   messages: SystemModelMessage[];
 }
 
+// The run's system prompt. `storedSystemEnd` indexes its last stored part; the
+// run's ephemeral system follows, so the next run starts with what precedes it.
+interface SystemPromptParts {
+  system: SystemModelMessage[];
+  storedSystemEnd: number;
+}
+
 interface SubagentMetadata {
   agentId: string;
   name: string;
@@ -648,7 +655,7 @@ export class Session {
     // source `ephemeralSystem` list so system prompt refreshes preserve it.
     return {
       messages: pruneSessionMessages(messages, this.agentConfig),
-      system: await this.buildSystemPromptParts([], ephemeralSystem),
+      system: (await this.buildSystemPromptParts([], ephemeralSystem)).system,
       ephemeralSystem: ephemeralSystem,
       systemContextSnapshot: { cursor: null, messages: [] },
     };
@@ -691,7 +698,7 @@ export class Session {
     // refresh system prompt parts without duplicating old system rows.
     const systemContextSnapshot = createSystemContextSnapshot(history.entries);
     let messages = history.messages;
-    const system = await this.buildSystemPromptParts(
+    const { system } = await this.buildSystemPromptParts(
       systemContextSnapshot.messages,
       ephemeralSystem,
     );
@@ -727,10 +734,9 @@ export class Session {
   async loadRefreshedSystemPromptParts(options: {
     systemContextSnapshot: SystemContextSnapshot;
     ephemeralSystem?: SystemModelMessage[];
-  }): Promise<{
-    systemContextSnapshot: SystemContextSnapshot;
-    system: SystemModelMessage[];
-  }> {
+  }): Promise<
+    SystemPromptParts & { systemContextSnapshot: SystemContextSnapshot }
+  > {
     const snapshotCursor = options.systemContextSnapshot.cursor;
     const entries =
       this.lastSystemCursor === null ||
@@ -754,10 +760,10 @@ export class Session {
 
     return {
       systemContextSnapshot: systemContextSnapshot,
-      system: await this.buildSystemPromptParts(
+      ...(await this.buildSystemPromptParts(
         systemContextSnapshot.messages,
         options.ephemeralSystem ?? [],
-      ),
+      )),
     };
   }
 
@@ -886,7 +892,7 @@ export class Session {
   private async buildSystemPromptParts(
     promptMessages: SystemModelMessage[],
     ephemeralSystem: SystemModelMessage[] = [],
-  ): Promise<SystemModelMessage[]> {
+  ): Promise<SystemPromptParts> {
     const [memoryFiles, skillMetadata, subagentMetadata] = await Promise.all([
       this.loadMemoryFiles(),
       this.loadSkillMetadata(),
@@ -954,7 +960,7 @@ export class Session {
           ]
         : [];
 
-    return [
+    const stored = [
       ...agentSystemMessages(this.agentConfig.agent?.system),
       ...memorySystem,
       ...workspaceHarnessSystem,
@@ -964,8 +970,12 @@ export class Session {
       ...subagentSystem,
       ...this.loadedSkillPrompts,
       ...promptMessages,
-      ...ephemeralSystem,
     ];
+
+    return {
+      system: [...stored, ...ephemeralSystem],
+      storedSystemEnd: stored.length - 1,
+    };
   }
 
   private channelLabel(): string {
