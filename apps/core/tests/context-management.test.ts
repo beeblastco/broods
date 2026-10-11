@@ -1,5 +1,13 @@
 import { APICallError } from "@ai-sdk/provider";
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  mock,
+  setSystemTime,
+} from "bun:test";
 import * as actualAi from "ai";
 import type {
   Session,
@@ -115,6 +123,7 @@ setStorageForTests(testStorage());
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
+  setSystemTime();
   generateTextMock.mockClear();
   googleModelMock.mockClear();
   createGoogleMock.mockClear();
@@ -235,7 +244,21 @@ describe("session system context", () => {
     expect(environment).toMatch(
       /^<environment>\n[\s\S]*now: \w+day, \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)[\s\S]*<\/environment>$/,
     );
-    expect(session.environmentText()).toBe(environment);
+  });
+
+  it("reads the clock for each pass, not once per session", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const session = await newSession({});
+
+    setSystemTime(new Date("2026-10-10T10:21:58.000Z"));
+    const firstPass = session.environmentText();
+    setSystemTime(new Date("2026-10-10T10:30:05.000Z"));
+    const continuationPass = session.environmentText();
+
+    expect(firstPass).toContain("now: Saturday, 2026-10-10T10:21:58.000Z");
+    expect(continuationPass).toContain(
+      "now: Saturday, 2026-10-10T10:30:05.000Z",
+    );
   });
 
   it("withholds the scheduling clock until the agent opts in", async () => {
