@@ -3370,10 +3370,15 @@ async function runParentContinuationLoop(options: {
         questions: questions,
       };
     }
-    // A stop means stop: nothing waits on the work it left running.
+    // A stop means stop: the children it started stop too, and nothing waits
+    // on the work it left running.
+    const stopped = stream.failureText() === USER_STOP_MESSAGE;
+    if (stopped) {
+      options.subagentCoordinator.stopChildren();
+    }
     if (
       stream.didFail() &&
-      stream.failureText() !== USER_STOP_MESSAGE &&
+      !stopped &&
       !options.context?.abortSignal?.aborted
     ) {
       // Subagents and async tools from earlier steps may still be running or
