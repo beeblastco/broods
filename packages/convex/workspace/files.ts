@@ -18,6 +18,7 @@ import {
   query,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { requireActiveAccount } from "../model/activeAccount";
 import { deleteWorkspaceFile } from "../model/cascade";
 import { getProjectForRole } from "../model/ownership/project";
 import {
@@ -500,6 +501,8 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     if (!workspaceId) return null;
     const workspace = await ctx.db.get(workspaceId);
     if (!workspace || workspace.projectId !== args.projectId) return null;
+    // Every caller goes on to mint storage credentials for this account.
+    await requireActiveAccount(ctx, workspace.accountId);
 
     return {
       accountId: workspace.accountId,

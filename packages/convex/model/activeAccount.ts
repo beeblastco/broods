@@ -1,10 +1,11 @@
 /**
- * Account guards for runtime writes, which core makes on behalf of one
- * account. Runtime keys embed it as `acct:<accountId>:...`.
+ * Account guards for writes made on behalf of one account: runtime writes
+ * from core (runtime keys embed it as `acct:<accountId>:...`) and the
+ * dashboard's direct writes, uploads and compute calls.
  */
 
 import type { Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 /** @throws when the key has no `acct:<id>:` prefix. */
 export function accountIdFromKey(value: string): string {
@@ -16,7 +17,7 @@ export function accountIdFromKey(value: string): string {
 
 /** @throws when the account is missing or disabled. */
 export async function requireActiveAccount(
-  ctx: MutationCtx,
+  ctx: QueryCtx,
   accountId: Id<"accounts">,
 ): Promise<void> {
   const account = await ctx.db.get(accountId);
