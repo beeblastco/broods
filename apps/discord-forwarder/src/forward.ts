@@ -33,6 +33,7 @@ export interface ForwardTarget {
  * How a forwarder authenticates itself to the channel webhook, and how hard it
  * tries. `attempts` defaults to 1. Matrix keeps that: its sync loop awaits each
  * delivery, so retries against a dead core would stall every room behind it.
+ * It retries on a later sync instead, from what `fanOut` resolves.
  */
 export interface ForwardAuth {
   attempts?: number;
@@ -46,16 +47,23 @@ export interface ForwardAuth {
  * rejects or times out on its last attempt is logged and skipped, so one dead
  * agent cannot stall the socket or sync loop waiting on it. `fields` adds
  * channel detail to those two log lines.
+ *
+ * Resolves false when a target ended on a 5xx, a timeout or a network error,
+ * which a later delivery of the same body can still get through. A 4xx answers
+ * the same way every time, so it counts as settled. Discord has no way to ask
+ * for an event again and ignores the result; Matrix replays it from `/sync`.
  */
 export async function fanOut(
   targets: readonly ForwardTarget[],
   body: string,
   auth: ForwardAuth,
   fields: LogFields = {},
-): Promise<void> {
-  await Promise.all(
-    targets.map((target): Promise<void> => post(target, body, auth, fields)),
+): Promise<boolean> {
+  const settled = await Promise.all(
+    targets.map((target): Promise<boolean> => post(target, body, auth, fields)),
   );
+
+  return settled.every(Boolean);
 }
 
 export async function forwardMessageCreate(
@@ -82,7 +90,7 @@ async function post(
   body: string,
   auth: ForwardAuth,
   fields: LogFields,
-): Promise<void> {
+): Promise<boolean> {
   const attempts = auth.attempts ?? 1;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (attempt > 1) {
@@ -102,7 +110,7 @@ async function post(
         redirect: "error",
         signal: AbortSignal.timeout(auth.timeoutMs),
       });
-      if (response.ok) return;
+      if (response.ok) return true;
       // A 4xx answers the same way every time, so only a 5xx earns a retry.
       if (last || response.status < 500) {
         logWarn("Forward rejected by core", {
@@ -114,7 +122,7 @@ async function post(
           tokenHint: tokenHint(auth.token),
         });
 
-        return;
+        return response.status < 500;
       }
     } catch (error) {
       if (last) {
@@ -129,4 +137,6 @@ async function post(
       }
     }
   }
+
+  return false;
 }

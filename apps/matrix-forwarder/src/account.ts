@@ -36,7 +36,10 @@ import { sendRoomEvent } from "./send.ts";
 const BACKOFF_CEILING_MS = 60_000;
 /** How long a room's display names are used before they are fetched again. */
 const MEMBER_NAMES_TTL_MS = 5 * 60_000;
-/** How long an undecryptable event waits for its room key before it is dropped. */
+/**
+ * How long a held-back event is retried before it is dropped: one waiting on its
+ * room key, or one a webhook could not take yet.
+ */
 const PENDING_TTL_MS = 5 * 60_000;
 const POLL_TIMEOUT_MS = 30_000;
 // Every joined room, messages only. State, receipts and presence would wake the
@@ -69,12 +72,15 @@ export type AccountState =
 export interface MatrixAccountOptions {
   accessToken: string;
   apiUrl: string;
-  /** Awaited per event, so delivery keeps timeline order. */
-  onEvent: (event: MatrixForwardedEvent) => Promise<void>;
+  /**
+   * Awaited per event, so delivery keeps timeline order. Resolves false to have
+   * the event held back and offered again, like one that cannot be decrypted yet.
+   */
+  onEvent: (event: MatrixForwardedEvent) => Promise<boolean>;
   storeDir: string;
 }
 
-/** A timeline event on its way to core, held back while it cannot be decrypted. */
+/** A timeline event on its way to core, held back while it cannot be decrypted or delivered. */
 interface PendingEvent {
   event: RoomEvent;
   firstSeenMs: number;
@@ -174,7 +180,7 @@ export class MatrixAccount {
     // and core would only discard them again.
     if (isOwnMessage(plaintext.content)) return;
 
-    await this.options.onEvent(
+    const delivered = await this.options.onEvent(
       forwardedEvent({
         encrypted: encrypted,
         event: plaintext,
@@ -183,6 +189,9 @@ export class MatrixAccount {
         userId: session.userId,
       }),
     );
+    // Core claims each event id for 24 hours, so the targets that did take it
+    // drop the retry.
+    if (!delivered) this.pending.push(item);
   }
 
   /**
@@ -199,7 +208,7 @@ export class MatrixAccount {
     for (const item of this.pending.splice(0)) {
       if (signal.aborted) return;
       if (Date.now() - item.firstSeenMs > PENDING_TTL_MS) {
-        logWarn("Matrix event dropped, room key never arrived", {
+        logWarn("Matrix event dropped, held back past its retry window", {
           eventId: item.event.event_id,
           roomId: item.roomId,
           userId: session.userId,
@@ -315,8 +324,9 @@ export class MatrixAccount {
           if (signal.aborted) break;
           since = response.next_batch;
           // Held-back events live only in memory, so the stored token stays
-          // where a restart is served them again. The events around them come
-          // again too, and core drops those by event id.
+          // where a restart is served them again, whether they wait on a room
+          // key or on core. The events around them come again too, and core
+          // drops those by event id.
           await writeSyncToken(
             session.syncTokenPath,
             this.pending[0]?.since ?? since,

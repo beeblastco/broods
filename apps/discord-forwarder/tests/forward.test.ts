@@ -144,13 +144,42 @@ describe("forwarding a gateway message", () => {
   // Matrix awaits each delivery in its sync loop, so it does not opt in.
   it("tries once for a caller that does not ask for more", async (): Promise<void> => {
     const seen = scriptFetch([503]);
-    await fanOut([TARGETS[0]!], "{}", {
+    const settled = await fanOut([TARGETS[0]!], "{}", {
       header: "x-token",
       timeoutMs: 1_000,
       token: "token-a",
     });
 
     expect(seen.calls).toBe(1);
+    expect(settled).toBe(false);
+  });
+
+  // Matrix replays a delivery that resolves false, so a 4xx must not.
+  it("resolves false only while a target could still take it", async (): Promise<void> => {
+    const auth = { header: "x-token", timeoutMs: 1_000, token: "token-a" };
+
+    scriptFetch([200, 404]);
+    expect(await fanOut(TARGETS, "{}", auth)).toBe(true);
+    scriptFetch([200, 503]);
+    expect(await fanOut(TARGETS, "{}", auth)).toBe(false);
+    scriptFetch(["reset"]);
+    expect(await fanOut([TARGETS[0]!], "{}", auth)).toBe(false);
+  });
+
+  it("resolves false when a webhook never answers", async (): Promise<void> => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: (): Promise<Response> => new Promise((): void => {}),
+    });
+    globalThis.fetch = realFetch;
+
+    expect(
+      await fanOut(
+        [{ ...TARGETS[0]!, webhookUrl: `http://localhost:${server.port}/` }],
+        "{}",
+        { header: "x-token", timeoutMs: 50, token: "token-a" },
+      ),
+    ).toBe(false);
   });
 });
 
