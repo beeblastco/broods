@@ -453,14 +453,20 @@ describe("isolate pooled worker (--pool)", () => {
 // forwarding of the AI SDK abortSignal into the runner process on every CI run.
 describe("streamIsolatePayload cross-process abort", () => {
   const created: string[] = [];
-  const savedRunnerPath = process.env.ISOLATE_RUNNER_PATH;
-  const savedPool = process.env.ISOLATE_POOL;
+  // Every knob these tests set, put back as it was (or unset) after each one,
+  // so a later test file never inherits a stub runner or a shrunken pool.
+  const savedEnv = [
+    "ISOLATE_RUNNER_PATH",
+    "ISOLATE_POOL",
+    "ISOLATE_WORKER_POOL_SIZE",
+    "ISOLATE_RUNNER_TIMEOUT_SECONDS",
+  ].map((key): [string, string | undefined] => [key, process.env[key]]);
 
   afterEach(async () => {
-    if (savedRunnerPath === undefined) delete process.env.ISOLATE_RUNNER_PATH;
-    else process.env.ISOLATE_RUNNER_PATH = savedRunnerPath;
-    if (savedPool === undefined) delete process.env.ISOLATE_POOL;
-    else process.env.ISOLATE_POOL = savedPool;
+    for (const [key, value] of savedEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     // Never hand a worker spawned against this file's stub runner to whatever
     // runs next: the pool outlives the file that filled it.
     const { shutdownIsolatePool } =
@@ -768,7 +774,6 @@ describe("streamIsolatePayload cross-process abort", () => {
       const spawned = (await readFile(marker, "utf8")).trim().split("\n");
       expect(spawned).toHaveLength(2);
     } finally {
-      delete process.env.ISOLATE_WORKER_POOL_SIZE;
       shutdownIsolatePool();
     }
   });
@@ -834,7 +839,6 @@ describe("streamIsolatePayload cross-process abort", () => {
       );
       expect(await call()).toEqual([{ ok: true }]);
     } finally {
-      delete process.env.ISOLATE_WORKER_POOL_SIZE;
       shutdownIsolatePool();
     }
   }, 10_000);
@@ -870,7 +874,6 @@ describe("streamIsolatePayload cross-process abort", () => {
         "isolate worker failed to start: isolate worker did not become ready",
       );
     } finally {
-      delete process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS;
       shutdownIsolatePool();
     }
   }, 10_000);
