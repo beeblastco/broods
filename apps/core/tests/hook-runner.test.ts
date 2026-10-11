@@ -7,6 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { dirname } from "node:path";
 import {
   sanitizeHookResult,
   isHookMutableEvent,
@@ -80,6 +81,18 @@ describe("sanitizeHookResult", () => {
       ),
     ).toThrow(/exceeds/);
   });
+});
+
+describe("hook bundle reuse", () => {
+  it("reads each immutable bundle once across fire points, within a byte budget", () => {
+    // Its shared/s3.ts stand-in would reach every test file in this process.
+    const run = Bun.spawnSync(
+      [process.execPath, "test", "./tests/isolated/hook-bundle-cache.ts"],
+      { cwd: dirname(import.meta.dir) },
+    );
+
+    expect(run.exitCode, run.stderr.toString()).toBe(0);
+  }, 30_000);
 });
 
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
