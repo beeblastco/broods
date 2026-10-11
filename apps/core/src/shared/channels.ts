@@ -13,14 +13,6 @@ import { getObservabilityContext } from "./otel.ts";
 /** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
 
-/** The abort reason of a run that overran its worker slot; traces keep it as is. */
-export const WORKER_DEADLINE_MESSAGE = "Run exceeded the worker deadline";
-
-// What the chat says instead of WORKER_DEADLINE_MESSAGE. The retry affordance
-// (button or "reply retry" line) comes from sendChannelFailure.
-const WORKER_DEADLINE_CHAT_TEXT =
-  "I ran out of time on this turn. Send a message to continue where I left off.";
-
 // What a Retry tap or typed reply sends after a failed run.
 const RETRY_REPLY = "Retry";
 
@@ -42,6 +34,7 @@ const ERROR_HINTS: [RegExp, string | null][] = [
     "Try again in a moment.",
   ],
   [/\btimed? ?out\b|\betimedout\b|\beconnreset\b/i, "Try again."],
+  [/ran out of time/i, "Send a message to continue where I left off."],
 ];
 
 // Channels whose plain messages are parsed for slash commands like /new.
@@ -504,7 +497,6 @@ function simplifyErrorText(raw: string, commands: boolean): string {
   if (!message) {
     return "Something went wrong while generating a reply. Try again.";
   }
-  if (message === WORKER_DEADLINE_MESSAGE) return WORKER_DEADLINE_CHAT_TEXT;
   const hint = isContextLengthError(message)
     ? commands
       ? "Send /compact to summarize the conversation, or /new to start over if that fails."
