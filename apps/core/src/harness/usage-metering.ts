@@ -1,8 +1,9 @@
 /**
- * Per-task token metering helpers. Flattens the AI SDK v7 `LanguageModelUsage`
+ * Per-task metering helpers. Flattens the AI SDK v7 `LanguageModelUsage`
  * shape (nested input/output token details) for span attributes and usage rows,
- * and meters cache-write tokens with a providerMetadata fallback for providers
- * that only surface cache creation there.
+ * meters cache-write tokens with a providerMetadata fallback for providers
+ * that only surface cache creation there, and keeps one run's sandbox CPU
+ * ledger for its usage row, its root span and each tool.call span.
  */
 
 import {
@@ -11,6 +12,7 @@ import {
 } from "@broods/convex/model/modelPricing";
 import type { LanguageModelUsage } from "ai";
 import { isPlainObject } from "../shared/object.ts";
+import type { SandboxCpuSample } from "./sandbox/types.ts";
 
 export interface UsageTokenTotals {
   inputTokens: number;
@@ -85,4 +87,98 @@ export function extractCacheWriteTokens(
   }
 
   return 0;
+}
+
+/** One run's sandbox CPU: the tool registry writes it, spans and the usage row read it. */
+export interface SandboxCpuLedger {
+  /** Passed to the tool registry as `onSandboxCpu`; folds each CPU sample into the usage buckets. */
+  record: (sample: SandboxCpuSample) => void;
+  /** That call's compute, handed out once when its tool.call span closes. */
+  takeToolCompute: (
+    toolCallId: string,
+  ) => Pick<SandboxCpuSample, "type" | "cpuUsec"> | undefined;
+  /**
+   * Sandbox CPU so far split by role (agent's own sandbox vs hosted MCP), for
+   * the live root span re-published after each step. Empty until CPU arrives.
+   */
+  roleAttributes: () => Record<string, number>;
+  /** Sandbox CPU split per provider, for the finished root span. */
+  typeAttributes: () => Record<string, number>;
+  /** One sandboxUsage row per (type, role, tool) bucket. */
+  usage: () => SandboxCpuSample[];
+}
+
+export function createSandboxCpuLedger(): SandboxCpuLedger {
+  // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
+  // sandboxUsage row at finalize. CPU only arrives from sandbox execs and
+  // hosted MCP calls.
+  const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
+  // Per-call compute, so the tool.call span can report what that one call cost.
+  // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
+  const toolComputeByCallId = new Map<
+    string,
+    Pick<SandboxCpuSample, "type" | "cpuUsec">
+  >();
+
+  return {
+    record: (sample) => {
+      if (!(sample.cpuUsec > 0)) return;
+      if (sample.role === "tool" && sample.toolCallId !== undefined) {
+        const call = toolComputeByCallId.get(sample.toolCallId);
+        if (call) call.cpuUsec += sample.cpuUsec;
+        else
+          toolComputeByCallId.set(sample.toolCallId, {
+            type: sample.type,
+            cpuUsec: sample.cpuUsec,
+          });
+      }
+      const key = `${sample.type}|${sample.role}|${sample.toolName ?? ""}`;
+      const existing = sandboxUsageByKey.get(key);
+      if (existing) {
+        existing.cpuUsec += sample.cpuUsec;
+      } else {
+        sandboxUsageByKey.set(key, {
+          type: sample.type,
+          role: sample.role,
+          ...(sample.toolName ? { toolName: sample.toolName } : {}),
+          cpuUsec: sample.cpuUsec,
+        });
+      }
+    },
+    takeToolCompute: (toolCallId) => {
+      const compute = toolComputeByCallId.get(toolCallId);
+      toolComputeByCallId.delete(toolCallId);
+      return compute;
+    },
+    roleAttributes: () => {
+      let agent = 0;
+      let tool = 0;
+      for (const sample of sandboxUsageByKey.values()) {
+        if (sample.role === "agent") agent += sample.cpuUsec;
+        else if (sample.role === "tool") tool += sample.cpuUsec;
+      }
+
+      return {
+        ...(agent > 0 ? { "sandbox.cpu_usec.role.agent": agent } : {}),
+        ...(tool > 0 ? { "sandbox.cpu_usec.role.tool": tool } : {}),
+      };
+    },
+    typeAttributes: () => {
+      const cpuUsecByType = new Map<string, number>();
+      for (const sample of sandboxUsageByKey.values()) {
+        cpuUsecByType.set(
+          sample.type,
+          (cpuUsecByType.get(sample.type) ?? 0) + sample.cpuUsec,
+        );
+      }
+
+      return Object.fromEntries(
+        [...cpuUsecByType.entries()].map(([type, cpuUsec]) => [
+          `sandbox.cpu_usec.${type}`,
+          cpuUsec,
+        ]),
+      );
+    },
+    usage: () => [...sandboxUsageByKey.values()],
+  };
 }

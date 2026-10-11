@@ -17,6 +17,7 @@ import {
   asyncAgentOutcomeValidator,
   asyncAgentResultRow,
   conversationEventsValidator,
+  insertConversationEvents,
   markAsyncAgentResultSeen,
   writeAsyncAgentResult,
 } from "./runtime";
@@ -1262,17 +1263,15 @@ function ingressStatusResult(
 async function insertOwnedEvents(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
-  events: { cursor: string; event: unknown }[],
+  events: Infer<typeof conversationEventsValidator>,
 ): Promise<void> {
   await requireActiveAccount(ctx, coordinator.accountId);
-  for (const entry of events) {
-    await ctx.db.insert("runtimeConversationEvents", {
-      accountId: coordinator.accountId,
-      conversationKey: coordinator.conversationKey,
-      cursor: entry.cursor,
-      event: entry.event,
-    });
-  }
+  await insertConversationEvents(
+    ctx,
+    coordinator.accountId,
+    coordinator.conversationKey,
+    events,
+  );
 }
 
 /**

@@ -5107,7 +5107,7 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; event: any }>;
+        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
       },
       null
     >;
@@ -5853,7 +5853,7 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; event: any }>;
+        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
         ownerEventId: string;
         ownerGeneration: number;
       },
@@ -6095,7 +6095,7 @@ export declare const internal: {
       {
         claimSteering?: boolean;
         conversationKey: string;
-        events?: Array<{ cursor: string; event: any }>;
+        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
         leaseTtlMs: number;
         ownerEventId: string;
         ownerGeneration: number;

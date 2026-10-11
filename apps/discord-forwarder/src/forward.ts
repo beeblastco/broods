@@ -33,7 +33,7 @@ export interface ForwardTarget {
  * How a forwarder authenticates itself to the channel webhook, and how hard it
  * tries. `attempts` defaults to 1. Matrix keeps that: its sync loop awaits each
  * delivery, so retries against a dead core would stall every room behind it.
- * It retries on a later sync instead, from what `fanOut` resolves.
+ * It retries from its outbox instead, for the targets `fanOut` resolves.
  */
 export interface ForwardAuth {
   attempts?: number;
@@ -48,23 +48,25 @@ export interface ForwardAuth {
  * agent cannot stall the socket or sync loop waiting on it. `fields` adds
  * channel detail to those two log lines.
  *
- * Resolves false when a target ended on a 5xx, a 408, a 429, a timeout or a
- * network error, which a later delivery of the same body can still get
- * through. Any other 4xx answers the same way every time, so it counts as
- * settled. Discord has no way to ask for an event again and ignores the
- * result; Matrix replays it from `/sync`.
+ * Resolves the webhook URLs whose target ended on a 5xx, a 408, a 429, a
+ * timeout or a network error, which a later delivery of the same body can
+ * still get through. Any other 4xx answers the same way every time, so it
+ * counts as settled. Discord has no way to ask for an event again and ignores
+ * the result; Matrix keeps the event in its outbox for those targets only.
  */
 export async function fanOut(
   targets: readonly ForwardTarget[],
   body: string,
   auth: ForwardAuth,
   fields: LogFields = {},
-): Promise<boolean> {
+): Promise<string[]> {
   const settled = await Promise.all(
     targets.map((target): Promise<boolean> => post(target, body, auth, fields)),
   );
 
-  return settled.every(Boolean);
+  return targets
+    .filter((_, index): boolean => !settled[index])
+    .map((target): string => target.webhookUrl);
 }
 
 export async function forwardMessageCreate(

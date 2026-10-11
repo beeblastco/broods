@@ -16,6 +16,7 @@ import {
   reservedSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
+  runtimeConversationEventsFields,
   sandboxProviderValidator,
   subagentTaskValidator,
 } from "./schema";
@@ -46,7 +47,11 @@ export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
 
 /** A whole step's history rows in one write, in cursor order. */
 export const conversationEventsValidator = v.array(
-  v.object({ cursor: v.string(), event: v.any() }),
+  v.object({
+    cursor: v.string(),
+    dedupeKey: runtimeConversationEventsFields.dedupeKey,
+    event: v.any(),
+  }),
 );
 
 /** How an async run ended, or what it waits on, as its polling row records it. */
@@ -166,18 +171,49 @@ export const appendConversationEvent = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
-    for (const entry of args.events) {
-      await ctx.db.insert("runtimeConversationEvents", {
-        accountId: accountId,
-        conversationKey: args.conversationKey,
-        cursor: entry.cursor,
-        event: entry.event,
-      });
-    }
+    await insertConversationEvents(
+      ctx,
+      accountId,
+      args.conversationKey,
+      args.events,
+    );
 
     return null;
   },
 });
+
+/**
+ * Inserts history rows in order. A row whose dedupe key this conversation
+ * already stores is skipped: its first append committed and only the reply
+ * was lost, so the retry must not store it again.
+ */
+export async function insertConversationEvents(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  conversationKey: string,
+  events: Infer<typeof conversationEventsValidator>,
+): Promise<void> {
+  for (const entry of events) {
+    if (
+      entry.dedupeKey !== undefined &&
+      (await ctx.db
+        .query("runtimeConversationEvents")
+        .withIndex("by_conversationKey_and_dedupeKey", (q) =>
+          q
+            .eq("conversationKey", conversationKey)
+            .eq("dedupeKey", entry.dedupeKey),
+        )
+        .first())
+    ) {
+      continue;
+    }
+    await ctx.db.insert("runtimeConversationEvents", {
+      ...entry,
+      accountId: accountId,
+      conversationKey: conversationKey,
+    });
+  }
+}
 
 /**
  * Forward from `afterCursor` by default. With `fromSystemPrefix`, it pages

@@ -251,12 +251,13 @@ sequenceDiagram
 
   F->>HS: /sync long-poll from the stored sync token
   HS-->>F: timeline events
-  F->>F: OlmMachine decrypt, hold back until keys arrive
+  F->>F: add to the outbox, then write the sync token
+  F->>F: OlmMachine decrypt, wait in the outbox until keys arrive
   F->>T: POST channel webhook, MATRIX_ROOM_EVENT
   T->>C: route to core
   C->>C: admit, as in runtime flow
   C-->>F: 200
-  F->>F: write sync token after the batch
+  F->>F: delete from the outbox, or retry later on a 5xx, 408, 429 or timeout
   C->>C: run the turn
   C->>F: POST /v1/send
   F->>F: encrypt for the room

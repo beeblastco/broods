@@ -138,6 +138,7 @@ export function compatibilityApprovalStatus(
 
   // Looking is free; any other action asks like bash does, on the computer the
   // call names rather than on whatever the agent's own sandbox happens to be.
+  // createRuntimeToolApproval still holds a look behind an action that asks.
   if (toolName === COMPUTER_TOOL_NAME) {
     if (COMPUTER_READ_ACTIONS.has(String(record.action))) {
       return undefined;
@@ -299,28 +300,54 @@ export async function createPolicyToolApproval(
     : undefined;
 }
 
+// The run's tool approval. A policy deny stands even where ask mode would only
+// ask. A computer call after one in the same step that waits for a person also
+// asks, so it never runs first. `startStep` opens the next step; the harness
+// calls it from onStepStart.
 export function createRuntimeToolApproval(options: {
   configuredApprovals: ReadonlyMap<string, true>;
   workspaces: ResolvedWorkspace[];
   sandboxes?: ResolvedAgentSandbox[];
   policyApproval?: RuntimeToolApproval;
-}): RuntimeToolApproval | undefined {
+}): { approval: RuntimeToolApproval | undefined; startStep: () => void } {
   const hasCompatibilityApprovals =
     options.configuredApprovals.size > 0 ||
     options.workspaces.some((workspace) => workspace.sandbox) ||
     (options.sandboxes?.length ?? 0) > 0;
+  let computerWaits = false;
+  const startStep = (): void => {
+    computerWaits = false;
+  };
 
-  if (!hasCompatibilityApprovals && !options.policyApproval) return undefined;
+  if (!hasCompatibilityApprovals && !options.policyApproval) {
+    return { approval: undefined, startStep: startStep };
+  }
 
-  return async (event) => {
-    const compatibility = compatibilityApprovalStatus(
-      event.toolCall.toolName,
-      event.toolCall.input,
-      options,
-    );
-    if (compatibility) return compatibility;
+  return {
+    approval: async (event): Promise<ToolApprovalStatus> => {
+      const policy = await options.policyApproval?.(event);
+      const status =
+        approvalDecision(policy) === "denied"
+          ? policy
+          : (compatibilityApprovalStatus(
+              event.toolCall.toolName,
+              event.toolCall.input,
+              options,
+            ) ?? policy);
+      if (event.toolCall.toolName !== COMPUTER_TOOL_NAME) return status;
+      const decision = approvalDecision(status);
+      if (decision === "user-approval") {
+        computerWaits = true;
+      } else if (computerWaits && decision !== "denied") {
+        return {
+          type: "user-approval",
+          reason: `Waits for the ${COMPUTER_TOOL_NAME} call before it, which needs approval.`,
+        };
+      }
 
-    return options.policyApproval?.(event);
+      return status;
+    },
+    startStep: startStep,
   };
 }
 
@@ -723,4 +750,11 @@ function withEvaluationDeadline(
       }
     },
   };
+}
+
+// The decision an approval status carries, whether bare or with a reason.
+function approvalDecision(
+  status: ToolApprovalStatus,
+): Exclude<ToolApprovalStatus, object> {
+  return typeof status === "object" ? status.type : status;
 }

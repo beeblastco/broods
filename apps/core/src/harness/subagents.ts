@@ -216,6 +216,7 @@ export class SubagentCoordinator {
   private readonly questions: Array<{
     taskId: string;
     message: UserModelMessage;
+    dedupeKey: string;
   }> = [];
   // Set once no parent pass can answer, so ask_parent returns at once.
   private questionsClosed = false;
@@ -485,12 +486,23 @@ export class SubagentCoordinator {
     if (messages.length === 0) return messages;
     // One write for all of them. Each is one stored event, and a large write
     // takes several appends, so a failure puts back only what no append saved,
-    // and a later step or drain delivers it without repeating the rest.
+    // and a later step or drain delivers it without repeating the rest. An
+    // append that committed but lost its reply is put back too: its dedupe key
+    // makes the retry store it once.
     let saved = 0;
     await this.parentSession
-      .persistModelMessages(messages, (count): void => {
-        saved = count;
-      })
+      .persistModelMessages(
+        messages,
+        (count): void => {
+          saved = count;
+        },
+        [
+          ...completions.map(
+            ({ eventId, status }): string => `subagent:${eventId}:${status}`,
+          ),
+          ...questions.map(({ dedupeKey }): string => dedupeKey),
+        ],
+      )
       .catch((error: unknown): never => {
         this.completions.unshift(...completions.slice(saved));
         this.restoreQuestions(
@@ -537,6 +549,7 @@ export class SubagentCoordinator {
     this.questions.push({
       taskId: taskId,
       message: questionToParentMessage(metadata, question),
+      dedupeKey: `subagent-question:${crypto.randomUUID()}`,
     });
     this.notifyCompletion();
     const result = await answer;
@@ -1352,9 +1365,7 @@ export class SubagentCoordinator {
   }
 
   // Puts unsaved questions back; one whose child stopped waiting stays dropped.
-  private restoreQuestions(
-    questions: Array<{ taskId: string; message: UserModelMessage }>,
-  ): void {
+  private restoreQuestions(questions: SubagentCoordinator["questions"]): void {
     this.questions.unshift(
       ...questions.filter((open): boolean =>
         this.openQuestions.has(open.taskId),

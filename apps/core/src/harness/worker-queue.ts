@@ -4,6 +4,7 @@
  * does once it has its slot stays with the handler.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   MAX_RUN_SLOTS,
   positiveIntegerEnv,
@@ -34,6 +35,9 @@ type PendingWorkerRun = [
 const pendingWorkerRuns: PendingWorkerRun[] = [];
 
 let activeInProcessWorkers = 0;
+// Places `withQueuePlace` holds for requests still being admitted.
+let heldQueuePlaces = 0;
+const queuePlace = new AsyncLocalStorage<{ held: boolean }>();
 let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
 let renewingQueuedLeases = false;
 
@@ -114,32 +118,64 @@ export function dispatchInProcessWorker(
       );
     });
   };
-  enqueueWorker([
-    kind,
-    (): void => {
-      takeSlot();
-      const execution = run(context).then(
-        (): void => undefined,
-        (err): void => {
-          logError("In-process worker failed", {
-            kind: kind,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        },
-      );
-      const worker: Promise<void> = Promise.race([
-        execution,
-        new Promise<void>((resolve): void => {
-          abandon = resolve;
-        }),
-      ]).finally((): void => {
-        releaseSlot?.();
-        inProcessWorkers.delete(worker);
-      });
-      inProcessWorkers.add(worker);
-    },
-    lease,
-  ]);
+  // A run its request held a place for takes that place and is never shed.
+  const place = queuePlace.getStore();
+  const placed = place?.held === true;
+  if (place && placed) {
+    place.held = false;
+    heldQueuePlaces -= 1;
+  }
+  enqueueWorker(
+    [
+      kind,
+      (): void => {
+        takeSlot();
+        const execution = run(context).then(
+          (): void => undefined,
+          (err): void => {
+            logError("In-process worker failed", {
+              kind: kind,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          },
+        );
+        const worker: Promise<void> = Promise.race([
+          execution,
+          new Promise<void>((resolve): void => {
+            abandon = resolve;
+          }),
+        ]).finally((): void => {
+          releaseSlot?.();
+          inProcessWorkers.delete(worker);
+        });
+        inProcessWorkers.add(worker);
+      },
+      lease,
+    ],
+    !placed,
+  );
+}
+
+/**
+ * Holds one queue place while `admit` counts and records a run, so concurrent
+ * requests can never admit more runs than the queue takes. The first dispatch
+ * inside `admit` takes the place and is never shed; a place no run took is
+ * given back. Undefined, with nothing called, when the queue is full.
+ */
+export async function withQueuePlace<T>(
+  admit: () => Promise<T>,
+): Promise<T | undefined> {
+  if (workerQueueFull()) return undefined;
+  const place = { held: true };
+  heldQueuePlaces += 1;
+  try {
+    return await queuePlace.run(place, admit);
+  } finally {
+    if (place.held) {
+      place.held = false;
+      heldQueuePlaces -= 1;
+    }
+  }
 }
 
 /** Awaited by the container bootstrap on shutdown so queued work is not lost. */
@@ -201,8 +237,8 @@ async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
 /** True when a new run would neither start nor fit in the queue. */
 export function workerQueueFull(): boolean {
   return (
-    activeInProcessWorkers >= MAX_INPROCESS_WORKERS &&
-    pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS
+    activeInProcessWorkers + pendingWorkerRuns.length + heldQueuePlaces >=
+    MAX_INPROCESS_WORKERS + MAX_PENDING_WORKER_RUNS
   );
 }
 
