@@ -1222,6 +1222,7 @@ export class Session {
           modelIdentityFromModelConfig(this.agentConfig),
         ),
         this.agentConfig,
+        this.accountId,
       ),
     );
 
