@@ -1,6 +1,7 @@
 /**
  * The whole loop against a fake homeserver: whoami, the device's real crypto
- * store on disk, `/sync`, a forwarded message, and a send back into the room.
+ * store on disk, `/sync`, the outbox, a message forwarded to a webhook the
+ * fake also serves, and a send back into the room.
  * Everything else in this folder stubs the account, so this is the only test
  * that runs `MatrixAccount` itself.
  *
@@ -9,6 +10,7 @@
  * skips itself there rather than failing.
  */
 
+import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +20,7 @@ import {
   type MatrixForwardedEvent,
   type MatrixSendRequest,
 } from "../../core/src/shared/matrix-wire.ts";
+import type { ForwardTarget } from "../../discord-forwarder/src/forward.ts";
 import type { RoomEvent } from "../src/matrix.ts";
 
 const DEVICE_ID = "DEVICE1";
@@ -48,12 +51,18 @@ const DEFAULT_TIMELINE: RoomEvent[] = [
 
 interface Homeserver {
   apiUrl: string;
+  /** What the fake webhook was posted, in order. */
+  forwarded: MatrixForwardedEvent[];
+  /** Holds the webhook's answer while set. */
+  hold: Promise<void> | null;
   memberLookups: number;
   /** Who `/joined_members` lists. Tests edit it to have someone leave. */
   members: Record<string, { display_name: string }>;
   sent: Array<{ body: unknown; path: string }>;
   stop: () => void;
   syncs: number;
+  /** The fake webhook, as the account's only target. */
+  targets: () => ForwardTarget[];
 }
 
 interface HomeserverOptions {
@@ -77,16 +86,12 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const { MatrixAccount } = await import("../src/account.ts");
     const homeserver = fakeHomeserver();
     const storeDir = await temporaryStore();
-    const forwarded: MatrixForwardedEvent[] = [];
+    const forwarded = homeserver.forwarded;
     const account = new MatrixAccount({
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (event: MatrixForwardedEvent): Promise<boolean> => {
-        forwarded.push(event);
-
-        return true;
-      },
       storeDir: storeDir,
+      targets: homeserver.targets,
     });
 
     account.start();
@@ -142,8 +147,8 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const account = new MatrixAccount({
       accessToken: "syt_stale",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (): Promise<boolean> => true,
       storeDir: await temporaryStore(),
+      targets: homeserver.targets,
     });
 
     account.start();
@@ -157,7 +162,7 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     }
   }, 20_000);
 
-  it("keeps the stored token where an undecryptable event is served again", async () => {
+  it("keeps an undecryptable event in the outbox, not behind the sync token", async () => {
     const { MatrixAccount } = await import("../src/account.ts");
     const homeserver = fakeHomeserver({
       timeline: [
@@ -178,66 +183,79 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
       ],
     });
     const storeDir = await temporaryStore();
-    const forwarded: MatrixForwardedEvent[] = [];
     const account = new MatrixAccount({
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (event: MatrixForwardedEvent): Promise<boolean> => {
-        forwarded.push(event);
-
-        return true;
-      },
       storeDir: storeDir,
+      targets: homeserver.targets,
     });
 
     account.start();
     try {
-      // A few syncs past the one that served it, each retrying it.
+      // A few syncs past the one that served it.
       await until((): boolean => homeserver.syncs >= 5);
     } finally {
       await account.stop();
       homeserver.stop();
     }
 
-    expect(forwarded).toEqual([]);
+    expect(homeserver.forwarded).toEqual([]);
     expect(
       await readFile(join(storeDir, storePath(), "sync-token"), "utf8"),
-    ).toBe("s1");
+    ).toBe("s2");
+    // Still encrypted at rest, waiting for its room key.
+    using outbox = new Database(join(storeDir, storePath(), "outbox.sqlite"));
+    expect(
+      outbox.query("SELECT event_id, event_json FROM outbox").all(),
+    ).toEqual([
+      {
+        event_id: "$locked",
+        event_json: expect.stringContaining('"ciphertext":"unknown"'),
+      },
+    ]);
   }, 20_000);
 
-  it("stops between events on shutdown and keeps that sync to replay", async () => {
+  it("stops between events on shutdown and delivers the rest on the next start", async () => {
     const { MatrixAccount } = await import("../src/account.ts");
     const homeserver = fakeHomeserver({
       timeline: [ADA_MESSAGE, { ...ADA_MESSAGE, event_id: "$event-2" }],
     });
     const storeDir = await temporaryStore();
-    const forwarded: string[] = [];
     const { promise: delivered, resolve: deliver } =
       Promise.withResolvers<void>();
-    const account = new MatrixAccount({
+    // The first delivery is still in flight when shutdown starts.
+    homeserver.hold = delivered;
+    const options = {
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
-      // The first delivery is still in flight when shutdown starts.
-      onEvent: async (event: MatrixForwardedEvent): Promise<boolean> => {
-        forwarded.push(event.event.event_id);
-        await delivered;
-
-        return true;
-      },
       storeDir: storeDir,
-    });
+      targets: homeserver.targets,
+    };
+    const account = new MatrixAccount(options);
 
     account.start();
-    await until((): boolean => forwarded.length > 0);
+    await until((): boolean => homeserver.forwarded.length > 0);
     const stopped = account.stop();
     deliver();
     await stopped;
-    homeserver.stop();
+    const ids = (): string[] =>
+      homeserver.forwarded.map((event): string => event.event.event_id);
 
-    expect(forwarded).toEqual(["$event-1"]);
+    expect(ids()).toEqual(["$event-1"]);
     expect(
       await readFile(join(storeDir, storePath(), "sync-token"), "utf8"),
-    ).toBe("s1");
+    ).toBe("s2");
+
+    const restarted = new MatrixAccount(options);
+    restarted.start();
+    try {
+      await until((): boolean => homeserver.forwarded.length > 1);
+    } finally {
+      await restarted.stop();
+      homeserver.stop();
+    }
+
+    expect(ids()).toEqual(["$event-1", "$event-2"]);
   }, 20_000);
 
   it("asks who is in an encrypted room on every send", async () => {
@@ -246,8 +264,8 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const account = new MatrixAccount({
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (): Promise<boolean> => true,
       storeDir: await temporaryStore(),
+      targets: homeserver.targets,
     });
     const reply: MatrixSendRequest = {
       content: { body: "hi", msgtype: "m.text" },
@@ -283,6 +301,8 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
 function fakeHomeserver(options: HomeserverOptions = {}): Homeserver {
   const state: Homeserver = {
     apiUrl: "",
+    forwarded: [],
+    hold: null,
     memberLookups: 0,
     members: {
       "@ada:example.org": { display_name: "Ada" },
@@ -291,6 +311,13 @@ function fakeHomeserver(options: HomeserverOptions = {}): Homeserver {
     sent: [],
     stop: (): void => {},
     syncs: 0,
+    targets: (): ForwardTarget[] => [
+      {
+        agentId: "agent-1",
+        agentName: "support",
+        webhookUrl: `${state.apiUrl}/hook`,
+      },
+    ],
   };
   const server = Bun.serve({
     port: 0,
@@ -298,6 +325,15 @@ function fakeHomeserver(options: HomeserverOptions = {}): Homeserver {
       const url = new URL(request.url);
       const path = url.pathname.replace("/_matrix/client/v3", "");
 
+      if (path === "/hook") {
+        const forwarded: MatrixForwardedEvent = JSON.parse(
+          await request.text(),
+        );
+        state.forwarded.push(forwarded);
+        await state.hold;
+
+        return new Response(null, { status: 200 });
+      }
       if (options.unknownToken) {
         return Response.json(
           { errcode: "M_UNKNOWN_TOKEN", error: "Invalid access token" },

@@ -308,7 +308,7 @@ flowchart LR
 | NATS `WS_RESPONSES`     | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
 | NATS `OBSERVABILITY`    | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
 | Loki, Tempo             | Long-term logs and traces, via the OTel collector                        | Per collector config                |
-| Matrix forwarder volume | Each Matrix account's crypto store and sync token                        | Durable                             |
+| Matrix forwarder volume | Each Matrix account's crypto store, sync token and outbox                | Durable; an outbox event 12 hours   |
 
 Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). Byte layout: [storage](storage.md).
 

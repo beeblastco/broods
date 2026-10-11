@@ -3,19 +3,20 @@
  * sends core routes back through it.
  *
  * The store lives under `${MATRIX_STORE_DIR}/<sha256 of user|device>/`, next to
- * the sync token. Keying it on the device, not the token, means a token that
- * rotates but keeps its device reuses its keys, and a new device starts clean.
+ * the sync token and the outbox. Keying it on the device, not the token, means
+ * a token that rotates but keeps its device reuses its keys, and a new device
+ * starts clean.
  */
 
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
-  MatrixForwardedEvent,
   MatrixSendRequest,
   MatrixTypingRequest,
 } from "../../core/src/shared/matrix-wire.ts";
 import { backoffDelayMs } from "../../discord-forwarder/src/backoff.ts";
+import type { ForwardTarget } from "../../discord-forwarder/src/forward.ts";
 import {
   logError,
   logInfo,
@@ -23,24 +24,19 @@ import {
   tokenHint,
 } from "../../discord-forwarder/src/log.ts";
 import { RoomCrypto } from "./crypto.ts";
-import { forwardedEvent, isOwnMessage } from "./forward.ts";
+import { forwardedEvent, forwardRoomEvent, isOwnMessage } from "./forward.ts";
 import {
   MatrixClient,
   MatrixError,
-  type RoomEvent,
   type SyncFilter,
   type SyncResponse,
 } from "./matrix.ts";
+import { Outbox, type OutboxEntry, type OutboxEvent } from "./outbox.ts";
 import { sendRoomEvent } from "./send.ts";
 
 const BACKOFF_CEILING_MS = 60_000;
 /** How long a room's display names are used before they are fetched again. */
 const MEMBER_NAMES_TTL_MS = 5 * 60_000;
-/**
- * How long a held-back event is retried before it is dropped: one waiting on its
- * room key, or one a webhook could not take yet.
- */
-const PENDING_TTL_MS = 5 * 60_000;
 const POLL_TIMEOUT_MS = 30_000;
 // Every joined room, messages only. State, receipts and presence would wake the
 // long-poll for nothing core reads.
@@ -72,27 +68,18 @@ export type AccountState =
 export interface MatrixAccountOptions {
   accessToken: string;
   apiUrl: string;
-  /**
-   * Awaited per event, so delivery keeps timeline order. Resolves false to have
-   * the event held back and offered again, like one that cannot be decrypted
-   * yet; a held event then lands after the ones that went through meanwhile.
-   */
-  onEvent: (event: MatrixForwardedEvent) => Promise<boolean>;
   storeDir: string;
-}
-
-/** A timeline event on its way to core, held back while it cannot be decrypted or delivered. */
-interface PendingEvent {
-  event: RoomEvent;
-  firstSeenMs: number;
-  roomId: string;
-  /** The sync token whose `/sync` served this event, and would serve it again. */
-  since: string;
+  /**
+   * The webhooks to deliver to, read at each delivery: reconcile replaces them
+   * while the account runs.
+   */
+  targets: () => readonly ForwardTarget[];
 }
 
 /** What exists once whoami answered and the store is open. */
 interface Session {
   crypto: RoomCrypto;
+  outbox: Outbox;
   release: () => void;
   syncTokenPath: string;
   userId: string;
@@ -112,7 +99,6 @@ export class MatrixAccount {
     { expiresMs: number; names: Map<string, string | undefined> }
   >();
   private readonly options: MatrixAccountOptions;
-  private pending: PendingEvent[] = [];
   private running: Promise<void> | null = null;
   private session: Session | null = null;
 
@@ -150,95 +136,163 @@ export class MatrixAccount {
     await this.running;
   }
 
-  private async forwardEvent(
-    session: Session,
-    item: PendingEvent,
-    retry: boolean,
-  ): Promise<void> {
-    const { event, roomId } = item;
-    const encrypted = event.type === "m.room.encrypted";
-    let plaintext = event;
-    if (encrypted) {
-      try {
-        plaintext = await session.crypto.decrypt(roomId, event);
-      } catch (error) {
-        // Logged once, not on every retry: keys often land a sync later.
-        if (!retry) {
-          logWarn("Matrix event not decryptable yet, retrying", {
-            error: error instanceof Error ? error.message : String(error),
-            eventId: event.event_id,
-            roomId: roomId,
-            userId: session.userId,
-          });
-        }
-        this.pending.push(item);
-
-        return;
-      }
-    }
-    if (plaintext.type !== "m.room.message") return;
-    // The agent's own replies arrive on the next sync like any other message,
-    // and core would only discard them again.
-    if (isOwnMessage(plaintext.content)) return;
-
-    const delivered = await this.options.onEvent(
-      forwardedEvent({
-        encrypted: encrypted,
-        event: plaintext,
-        roomId: roomId,
-        senderName: await this.senderName(roomId, plaintext.sender),
-        userId: session.userId,
-      }),
-    );
-    // Core claims each event id for 24 hours, so the targets that did take it
-    // drop the retry.
-    if (!delivered) this.pending.push(item);
-  }
-
   /**
-   * Retries held-back events first, then this sync's timelines, in order.
-   * Stops between events once the account is stopping: each delivery can take
-   * the webhook timeout, and shutdown has a grace period to fit in.
+   * Tries every outbox event that is due, oldest first, on the targets it is
+   * still owed, and resolves when the next waiting one is due.
+   *
+   * An event that waits holds back the events behind it: on its targets when a
+   * webhook failed, in its room when its room key has not arrived. So no target
+   * gets a newer message before an older one, and an outage costs one webhook
+   * timeout per pass, not one per event. Stops between events once the account
+   * is stopping: each delivery can take the webhook timeout, and shutdown has a
+   * grace period to fit in. What it did not reach stays in the outbox.
    */
-  private async forwardSync(
-    session: Session,
-    response: SyncResponse,
-    since: string,
-  ): Promise<void> {
+  private async drain(session: Session): Promise<number> {
     const signal = this.controller.signal;
-    for (const item of this.pending.splice(0)) {
-      if (signal.aborted) return;
-      if (Date.now() - item.firstSeenMs > PENDING_TTL_MS) {
-        logWarn("Matrix event dropped, held back past its retry window", {
-          eventId: item.event.event_id,
-          roomId: item.roomId,
-          userId: session.userId,
-        });
+    for (const dropped of session.outbox.prune()) {
+      this.logDropped(session, dropped, dropped.reason);
+    }
+    /** Webhook URL to when it is tried again, for each target held back this pass. */
+    const failing = new Map<string, number>();
+    /** Room id to when its oldest undecrypted event is tried again. */
+    const keyWait = new Map<string, number>();
+    let wakeAtMs = Infinity;
+    for (const entry of session.outbox.entries()) {
+      if (signal.aborted) break;
+      const { eventId, roomId } = entry;
+      const owed = owedTargets(this.options.targets(), entry.targetsLeft);
+      if (owed.length === 0) {
+        // Every agent it was still owed is gone from the config plane.
+        if (entry.targetsLeft !== null) {
+          this.logDropped(session, entry, "removed");
+        }
+        session.outbox.settle(eventId);
         continue;
       }
-      await this.forwardEvent(session, item, true);
+      if (entry.nextAttemptMs > Date.now()) {
+        wakeAtMs = Math.min(wakeAtMs, entry.nextAttemptMs);
+        holdBehind(entry, owed, failing, keyWait);
+        continue;
+      }
+      const tryNow = owed.filter(
+        (target): boolean => !failing.has(target.webhookUrl),
+      );
+      if (keyWait.has(roomId) || tryNow.length === 0) continue;
+      const event = session.outbox.event(eventId);
+      if (event === null) continue;
+      const encrypted = event.type === "m.room.encrypted";
+      let plaintext = event;
+      if (encrypted) {
+        try {
+          plaintext = await session.crypto.decrypt(roomId, event);
+        } catch (error) {
+          // Logged once, not on every retry: keys often land a sync later.
+          if (entry.attempts === 0) {
+            logWarn("Matrix event not decryptable yet, retrying", {
+              error: error instanceof Error ? error.message : String(error),
+              eventId: eventId,
+              roomId: roomId,
+              userId: session.userId,
+            });
+          }
+          const retryAtMs =
+            Date.now() + backoffDelayMs(entry.attempts, BACKOFF_CEILING_MS);
+          session.outbox.retry(
+            eventId,
+            entry.attempts + 1,
+            retryAtMs,
+            entry.targetsLeft,
+          );
+          keyWait.set(roomId, retryAtMs);
+          wakeAtMs = Math.min(wakeAtMs, retryAtMs);
+          continue;
+        }
+      }
+      // The agent's own replies arrive on the next sync like any other
+      // message, and core would only discard them again.
+      if (
+        plaintext.type !== "m.room.message" ||
+        isOwnMessage(plaintext.content)
+      ) {
+        session.outbox.settle(eventId);
+        continue;
+      }
+      const left = await forwardRoomEvent(
+        forwardedEvent({
+          encrypted: encrypted,
+          event: plaintext,
+          roomId: roomId,
+          senderName: await this.senderName(roomId, plaintext.sender),
+          userId: session.userId,
+        }),
+        this.options.accessToken,
+        tryNow,
+      );
+      const retryAtMs =
+        Date.now() + backoffDelayMs(entry.attempts, BACKOFF_CEILING_MS);
+      for (const webhookUrl of left) failing.set(webhookUrl, retryAtMs);
+      // Still owed: the targets that failed, now or earlier in this pass. The
+      // event is tried again when the first of them is.
+      const pending = owed.filter((target): boolean =>
+        failing.has(target.webhookUrl),
+      );
+      if (pending.length === 0) {
+        session.outbox.settle(eventId);
+        continue;
+      }
+      const nextAttemptMs = Math.min(
+        ...pending.map(
+          (target): number => failing.get(target.webhookUrl) ?? retryAtMs,
+        ),
+      );
+      session.outbox.retry(eventId, entry.attempts + 1, nextAttemptMs, [
+        ...new Set(pending.map((target): string => target.agentId)),
+      ]);
+      wakeAtMs = Math.min(wakeAtMs, nextAttemptMs);
     }
-    for (const [roomId, room] of Object.entries(response.rooms?.join ?? {})) {
+
+    return wakeAtMs;
+  }
+
+  /** Puts every timeline event of a sync in the outbox, in timeline order. */
+  private keep(session: Session, response: SyncResponse): void {
+    const rooms = Object.entries(response.rooms?.join ?? {});
+    for (const [roomId, room] of rooms) {
       if (room.timeline?.limited) {
         logWarn("Matrix timeline gap, some messages were not delivered", {
           roomId: roomId,
           userId: session.userId,
         });
       }
-      for (const event of room.timeline?.events ?? []) {
-        if (signal.aborted) return;
-        await this.forwardEvent(
-          session,
-          {
-            event: event,
-            firstSeenMs: Date.now(),
-            roomId: roomId,
-            since: since,
-          },
-          false,
-        );
-      }
     }
+    session.outbox.add(
+      rooms.flatMap(([roomId, room]): OutboxEvent[] =>
+        (room.timeline?.events ?? []).map((event): OutboxEvent => ({
+          event: event,
+          roomId: roomId,
+        })),
+      ),
+    );
+  }
+
+  /** The dead-letter record: one error line per event the outbox gives up on. */
+  private logDropped(
+    session: Session,
+    entry: OutboxEntry,
+    reason: string,
+  ): void {
+    logError("Matrix event dropped from the outbox", {
+      agentIds: (
+        entry.targetsLeft ??
+        this.options.targets().map((target): string => target.agentId)
+      ).join(","),
+      attempts: entry.attempts,
+      eventId: entry.eventId,
+      firstSeen: new Date(entry.firstSeenMs).toISOString(),
+      reason: reason,
+      roomId: entry.roomId,
+      userId: session.userId,
+    });
   }
 
   /** whoami, then the device's store. Null when the account cannot or should no longer run. */
@@ -263,8 +317,10 @@ export class MatrixAccount {
     );
     const release = await claimStore(storePath, signal, whoami.user_id);
     if (release === null) return null;
+    let outbox: Outbox | undefined;
     try {
       await mkdir(join(storePath, "crypto"), { mode: 0o700, recursive: true });
+      outbox = new Outbox(join(storePath, "outbox.sqlite"));
       const crypto = await RoomCrypto.open(
         this.client,
         whoami.user_id,
@@ -280,11 +336,13 @@ export class MatrixAccount {
 
       return {
         crypto: crypto,
+        outbox: outbox,
         release: release,
         syncTokenPath: join(storePath, "sync-token"),
         userId: whoami.user_id,
       };
     } catch (error) {
+      outbox?.close();
       release();
       throw error;
     }
@@ -304,6 +362,10 @@ export class MatrixAccount {
             this.session = session;
             since = await readSyncToken(session.syncTokenPath);
           }
+          // Before the sync, so a held event goes out even while the
+          // homeserver is down, and is retried when it is due rather than when
+          // the next message happens to end the long-poll.
+          const wakeAtMs = await this.drain(session);
           this.state = "syncing";
           const response = await this.client.sync({
             filter: SYNC_FILTER,
@@ -311,7 +373,10 @@ export class MatrixAccount {
             since: since,
             // The first sync returns at once and is not forwarded: starting from
             // now, not replaying room history into the agent.
-            timeoutMs: since === undefined ? 0 : POLL_TIMEOUT_MS,
+            timeoutMs:
+              since === undefined
+                ? 0
+                : Math.max(0, Math.min(POLL_TIMEOUT_MS, wakeAtMs - Date.now())),
           });
           await session.crypto.receiveSync(response);
           if (since === undefined) {
@@ -319,19 +384,12 @@ export class MatrixAccount {
               userId: session.userId,
             });
           } else {
-            await this.forwardSync(session, response, since);
+            this.keep(session, response);
           }
-          // Not stored: a restart replays this sync, not skips it.
-          if (signal.aborted) break;
+          // Stored before anything is delivered: what this sync served is in
+          // the outbox now, and the next pass, or a restart, takes it from there.
           since = response.next_batch;
-          // Held-back events live only in memory, so the stored token stays
-          // where a restart is served them again, whether they wait on a room
-          // key or on core. The events around them come again too, and core
-          // drops those by event id.
-          await writeSyncToken(
-            session.syncTokenPath,
-            this.pending[0]?.since ?? since,
-          );
+          await writeSyncToken(session.syncTokenPath, since);
           attempt = 0;
         } catch (error) {
           if (signal.aborted) break;
@@ -369,6 +427,7 @@ export class MatrixAccount {
         try {
           await session.crypto.close();
         } finally {
+          session.outbox.close();
           session.release();
         }
       }
@@ -442,6 +501,36 @@ async function claimStore(
   release();
 
   return null;
+}
+
+/**
+ * Holds what comes after a waiting event behind it until it is due: its room
+ * while it waits on its room key (`targetsLeft` still null), else each target
+ * it is owed. The oldest waiting event sets the time.
+ */
+function holdBehind(
+  entry: OutboxEntry,
+  owed: readonly ForwardTarget[],
+  failing: Map<string, number>,
+  keyWait: Map<string, number>,
+): void {
+  const [holds, keys] =
+    entry.targetsLeft === null
+      ? [keyWait, [entry.roomId]]
+      : [failing, owed.map((target): string => target.webhookUrl)];
+  for (const key of keys) {
+    if (!holds.has(key)) holds.set(key, entry.nextAttemptMs);
+  }
+}
+
+/** The current targets an event is still owed: all of them before its first delivery. */
+function owedTargets(
+  targets: readonly ForwardTarget[],
+  agentIds: readonly string[] | null,
+): ForwardTarget[] {
+  return targets.filter(
+    (target): boolean => agentIds === null || agentIds.includes(target.agentId),
+  );
 }
 
 async function readSyncToken(path: string): Promise<string | undefined> {
