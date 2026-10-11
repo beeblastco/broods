@@ -990,12 +990,18 @@ describe("context prepare", () => {
       expect(readS3TextMock).toHaveBeenCalledTimes(2);
 
       // prepareStep rebuilds the prompt before every step: same reads, no S3.
+      // The run's ephemeral system comes after the stored parts.
       const refreshed = await session.loadRefreshedSystemPromptParts({
         systemContextSnapshot: turnContext.systemContextSnapshot,
+        ephemeralSystem: [{ role: "system", content: "Reply in Dutch." }],
       });
 
       expect(readS3TextMock).toHaveBeenCalledTimes(2);
-      expect(refreshed.system).toEqual(turnContext.system);
+      expect(refreshed.system).toEqual([
+        ...turnContext.system,
+        { role: "system", content: "Reply in Dutch." },
+      ]);
+      expect(refreshed.storedSystemEnd).toBe(turnContext.system.length - 1);
       expect(
         refreshed.system.some((message) =>
           message.content.includes("how we ship"),
