@@ -1186,6 +1186,7 @@ describe("sandbox tool set", () => {
       );
       expect(await search({ glob: "!dist/**" })).toBe("notes.md\nsrc/a.ts");
       expect(await search({ glob: "!*.md" })).toBe("dist/out.js\nsrc/a.ts");
+      expect(await search({ glob: "src/*" })).toBe("src/a.ts");
       expect(await search({ path: "node_modules/dep" })).toBe(
         "node_modules/dep/x.js",
       );

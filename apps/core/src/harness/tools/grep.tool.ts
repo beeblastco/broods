@@ -153,13 +153,17 @@ function searchCommand(input: GrepInput): string {
   else if (mode === "count") flags.push("-c");
   else if (input.line_numbers) flags.push("-n");
   const path = input.path ? toWorkspaceRelative(input.path) : undefined;
-  const tail = ["-e", input.pattern, ...(path ? ["--", path] : [])];
-  const inside = new Set(path?.split("/"));
+  // grep filters file names only, so a glob's literal directory (`src/*.ts`) becomes its root.
+  const grepRoot =
+    path ?? /^([^!*?[{]+)\/(?:\*\*\/)?[^/]+$/.exec(input.glob ?? "")?.[1];
+  const inside = new Set(grepRoot?.split("/"));
   const rg = [
     "rg",
     ...flags,
     ...(input.glob ? ["-g", input.glob] : []),
-    ...tail,
+    "-e",
+    input.pattern,
+    ...(path ? ["--", path] : []),
   ];
   // -I skips binaries like rg; no path searches the cwd with clean relative names.
   const grep = [
@@ -170,7 +174,9 @@ function searchCommand(input: GrepInput): string {
     ),
     ...flags,
     ...(input.glob ? [grepGlobFlag(input.glob)] : []),
-    ...tail,
+    "-e",
+    input.pattern,
+    ...(grepRoot ? ["--", grepRoot] : []),
   ];
 
   return `if command -v rg >/dev/null 2>&1; then ${rg.map(shellQuote).join(" ")}; else ${grep.map(shellQuote).join(" ")}; fi`;
