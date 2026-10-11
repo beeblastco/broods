@@ -8,6 +8,7 @@ import {
   type ModelMessage,
   type ToolApprovalRequestOutput,
   type ToolApprovalResponse,
+  type ToolApprovalStatus,
   type ToolExecuteFunction,
   type ToolSet,
 } from "ai";
@@ -736,6 +737,30 @@ test("core records each daemon connection, and a disconnect names that same conn
   expect(second?.ref.connectionId).not.toBe(first?.ref.connectionId);
 });
 
+test("a policy deny stands in ask mode instead of becoming a prompt", async () => {
+  const { approval } = createRuntimeToolApproval({
+    configuredApprovals: new Map(),
+    workspaces: [],
+    sandboxes: [machine()],
+    policyApproval: async (): Promise<ToolApprovalStatus> => "denied",
+  });
+
+  expect(
+    await approval?.({
+      toolCall: {
+        type: "tool-call",
+        toolCallId: "call-0",
+        toolName: "computer",
+        input: { action: "left_click" },
+      },
+      tools: {},
+      toolsContext: {},
+      runtimeContext: {},
+      messages: [],
+    }),
+  ).toBe("denied");
+});
+
 test("looking at the screen is free, anything else asks unless the sandbox is bypass", () => {
   const approval = (
     action: string,
@@ -1043,7 +1068,7 @@ function openSocket(
 function recordingComputer(ran: string[], clicked: Promise<void>): ToolSet {
   return {
     computer: tool({
-      inputSchema: z.object({ action: z.string() }).passthrough(),
+      inputSchema: z.object({ action: z.string() }).loose(),
       execute: async ({ action }): Promise<string> => {
         ran.push(action);
         if (action === "left_click") await clicked;

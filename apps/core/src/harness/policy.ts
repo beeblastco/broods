@@ -300,10 +300,10 @@ export async function createPolicyToolApproval(
     : undefined;
 }
 
-// The run's tool approval. An approval ends the run, so a computer call after
-// one of its step that waits for a person asks in the same round instead of
-// running first. `startStep` opens the next step; the harness calls it from
-// onStepStart.
+// The run's tool approval. A policy deny stands even where ask mode would only
+// ask. A computer call after one in the same step that waits for a person also
+// asks, so it never runs first. `startStep` opens the next step; the harness
+// calls it from onStepStart.
 export function createRuntimeToolApproval(options: {
   configuredApprovals: ReadonlyMap<string, true>;
   workspaces: ResolvedWorkspace[];
@@ -325,14 +325,17 @@ export function createRuntimeToolApproval(options: {
 
   return {
     approval: async (event): Promise<ToolApprovalStatus> => {
+      const policy = await options.policyApproval?.(event);
       const status =
-        compatibilityApprovalStatus(
-          event.toolCall.toolName,
-          event.toolCall.input,
-          options,
-        ) ?? (await options.policyApproval?.(event));
+        approvalDecision(policy) === "denied"
+          ? policy
+          : (compatibilityApprovalStatus(
+              event.toolCall.toolName,
+              event.toolCall.input,
+              options,
+            ) ?? policy);
       if (event.toolCall.toolName !== COMPUTER_TOOL_NAME) return status;
-      const decision = typeof status === "object" ? status.type : status;
+      const decision = approvalDecision(status);
       if (decision === "user-approval") {
         computerWaits = true;
       } else if (computerWaits && decision !== "denied") {
@@ -747,4 +750,11 @@ function withEvaluationDeadline(
       }
     },
   };
+}
+
+// The decision an approval status carries, whether bare or with a reason.
+function approvalDecision(
+  status: ToolApprovalStatus,
+): Exclude<ToolApprovalStatus, object> {
+  return typeof status === "object" ? status.type : status;
 }
