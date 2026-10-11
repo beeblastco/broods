@@ -133,7 +133,6 @@ describe("parkAiSdkHarnessSession", () => {
     const stop = mock(async () => CHECKPOINT);
     const saveHarnessSession = mock(async () => {});
     const broodsSession = {
-      assertCurrentOwner: async () => {},
       saveHarnessSession: saveHarnessSession,
     };
 
@@ -165,7 +164,6 @@ describe("parkAiSdkHarnessSession", () => {
 
     await parkAiSdkHarnessSession({
       broodsSession: {
-        assertCurrentOwner: async () => {},
         saveHarnessSession: async () => {},
       } as never,
       nativeSession: {
@@ -188,7 +186,6 @@ describe("parkAiSdkHarnessSession", () => {
 
     await parkAiSdkHarnessSession({
       broodsSession: {
-        assertCurrentOwner: async () => {},
         saveHarnessSession: async () => {},
       } as never,
       nativeSession: {
@@ -203,5 +200,65 @@ describe("parkAiSdkHarnessSession", () => {
 
     expect(detach).not.toHaveBeenCalled();
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Session.saveHarnessSession", () => {
+  const state = {
+    harnessType: "codex",
+    sessionId: "native-session",
+    resumeState: CHECKPOINT,
+    reservationKey: "acct:a:agent:b:sandbox",
+  } as const;
+
+  async function saved(options: {
+    ownerGeneration?: number;
+    persist?: boolean;
+  }): Promise<[string, Record<string, unknown>][]> {
+    const { Session } = await import("../src/harness/session.ts");
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate.bind(runtime);
+    const mutate = mock(
+      async (_name: string, _args: Record<string, unknown>) => null,
+    );
+    runtime.mutate = mutate as typeof runtime.mutate;
+    try {
+      await new Session({
+        eventId: "event",
+        conversationKey: "conversation",
+        accountId: "acct",
+        agentId: "agent",
+        agentConfig: {},
+        ...options,
+      }).saveHarnessSession(state);
+    } finally {
+      runtime.mutate = originalMutate;
+    }
+
+    return mutate.mock.calls;
+  }
+
+  it("writes the checkpoint under the run's owner fence", async () => {
+    expect(await saved({ ownerGeneration: 3 })).toEqual([
+      [
+        "saveHarnessSession",
+        {
+          conversationKey: "conversation",
+          ownerEventId: "event",
+          ownerGeneration: 3,
+          ...state,
+        },
+      ],
+    ]);
+  });
+
+  it("refuses a persisted checkpoint with no owner instead of writing it unfenced", async () => {
+    await expect(saved({})).rejects.toThrow(
+      "Harness checkpoint needs a conversation owner",
+    );
+  });
+
+  it("keeps nothing for an ephemeral run", async () => {
+    expect(await saved({ persist: false })).toEqual([]);
   });
 });

@@ -22,7 +22,14 @@ interface SandboxReservationSummary extends ReservedSandbox {
   accountId: string;
 }
 
+interface OrphanedSandboxPage {
+  page: SandboxReservationSummary[];
+  cursor: string | null;
+  isDone: boolean;
+}
+
 let firstSweep: ReturnType<typeof setTimeout> | undefined;
+let orphanCursor: string | null = null;
 let sweeper: ReturnType<typeof setInterval> | undefined;
 let sweeping = false;
 
@@ -64,15 +71,23 @@ export function stopSandboxSweeper(): void {
  * @returns the number of sandboxes released at their provider
  */
 export async function sweepExpiredSandboxes(): Promise<number> {
-  const [expired, orphaned] = await Promise.all([
+  // Each pass reads the next page of idle mirrors and wraps at the end, so a run
+  // of rows a deferred reservation still names cannot hide the ones past it.
+  // Cleared first: a cursor the query refuses must not fail every later pass.
+  const cursor = orphanCursor;
+  orphanCursor = null;
+  const [expired, orphanPage] = await Promise.all([
     runtime.query<SandboxReservationSummary[]>(
       "listExpiredSandboxReservations",
       { limit: SWEEP_PAGE_SIZE },
     ),
-    runtime.query<SandboxReservationSummary[]>("listOrphanedSandboxInstances", {
+    runtime.query<OrphanedSandboxPage>("listOrphanedSandboxInstances", {
+      cursor: cursor,
       limit: SWEEP_PAGE_SIZE,
     }),
   ]);
+  orphanCursor = orphanPage.isDone ? null : orphanPage.cursor;
+  const orphaned = orphanPage.page;
   const byAccount = new Map<string, SandboxReservationSummary[]>();
   for (const reservation of [...expired, ...orphaned]) {
     const pending = byAccount.get(reservation.accountId) ?? [];

@@ -40,17 +40,6 @@ export interface RuntimeFunctions {
       },
       unknown
     >;
-    saveHarnessSession: FunctionReference<
-      "mutation",
-      "internal",
-      {
-        conversationKey: string;
-        harnessType: "codex";
-        sessionId: string;
-        resumeState: unknown;
-      },
-      unknown
-    >;
   };
   runtimeIngress: {
     accept: FunctionReference<
@@ -75,6 +64,19 @@ export interface RuntimeFunctions {
         maxQueuedBytes: number;
       },
       { outcome: string; ownerGeneration?: number }
+    >;
+    saveHarnessSession: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        conversationKey: string;
+        ownerEventId: string;
+        ownerGeneration: number;
+        harnessType: "codex";
+        sessionId: string;
+        resumeState: unknown;
+      },
+      unknown
     >;
     settle: FunctionReference<
       "mutation",

@@ -30,10 +30,6 @@ const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
 
-// AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
-// coordinates, never chat history. Keep adapter regressions out of Convex rows.
-const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
-
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
 
@@ -324,60 +320,6 @@ export const getHarnessSession = internalQuery({
       resumeState: row.resumeState,
       reservationKey: row.reservationKey,
     };
-  },
-});
-
-export const saveHarnessSession = internalMutation({
-  args: {
-    conversationKey: v.string(),
-    harnessType: v.union(
-      v.literal("claude-code"),
-      v.literal("codex"),
-      v.literal("deepagents"),
-      v.literal("opencode"),
-      v.literal("pi"),
-    ),
-    sessionId: v.string(),
-    resumeState: v.any(),
-    reservationKey: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
-    const serializedResumeState = JSON.stringify(args.resumeState);
-    if (serializedResumeState === undefined) {
-      throw new Error("Harness resume state must be JSON serializable");
-    }
-    const resumeStateBytes = new TextEncoder().encode(
-      serializedResumeState,
-    ).byteLength;
-    if (resumeStateBytes > MAX_HARNESS_RESUME_STATE_BYTES) {
-      throw new Error(
-        `Harness resume state is ${resumeStateBytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
-      );
-    }
-    const existing = await ctx.db
-      .query("runtimeHarnessSessions")
-      .withIndex("by_conversationKey", (q) =>
-        q.eq("conversationKey", args.conversationKey),
-      )
-      .unique();
-    const value = {
-      accountId: accountId,
-      conversationKey: args.conversationKey,
-      harnessType: args.harnessType,
-      sessionId: args.sessionId,
-      resumeState: args.resumeState,
-      reservationKey: args.reservationKey,
-      updatedAt: Date.now(),
-    };
-    if (existing) {
-      await ctx.db.replace(existing._id, value);
-    } else {
-      await ctx.db.insert("runtimeHarnessSessions", value);
-    }
-
-    return null;
   },
 });
 
@@ -938,26 +880,37 @@ export const listAccountSandboxReservations = internalQuery({
  * prune), still carrying the provider id the sweeper needs to tear them down. Bounded to rows idle longer than a whole
  * reservation TTL so a live sandbox is never mistaken for one. `ephemeral` rows are
  * left out by the index, so they never fill the page: their key is a provider id, not
- * a reconnect key, and the hourly accrual deletes them.
- * @returns the orphaned mirror rows, up to `limit`
+ * a reconnect key, and the hourly accrual deletes them. Paged oldest first by
+ * cursor: a mirror whose reservation the sweeper deferred keeps its age, so
+ * reserved rows can fill any fixed prefix. The idle cut is checked per row rather
+ * than in the index range, so one pass's cursor still fits the next pass's query.
+ * @returns one page's orphaned mirror rows, and the cursor for the next page
  */
 export const listOrphanedSandboxInstances = internalQuery({
-  args: { limit: v.number() },
-  returns: v.array(sandboxReservationSummary),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<Infer<typeof sandboxReservationSummary>[]> => {
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    limit: v.number(),
+  },
+  returns: v.object({
+    page: v.array(sandboxReservationSummary),
+    cursor: v.union(v.string(), v.null()),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<SandboxReservationPage> => {
     const idleBefore = Date.now() - SANDBOX_RESERVATION_TTL_SECONDS * 1000;
-    const rows = await ctx.db
+    const result = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_ephemeral_and_lastUsedAt", (q) =>
-        q.eq("ephemeral", undefined).lt("lastUsedAt", idleBefore),
+        q.eq("ephemeral", undefined),
       )
-      .take(args.limit);
+      .paginate({ cursor: args.cursor, numItems: args.limit });
 
     const orphans: Infer<typeof sandboxReservationSummary>[] = [];
-    for (const row of rows) {
+    for (const row of result.page) {
+      // Oldest first: the first row still in use ends the idle ones.
+      if (row.lastUsedAt >= idleBefore) {
+        return { page: orphans, cursor: null, isDone: true };
+      }
       const reservation = await ctx.db
         .query("sandboxReservations")
         .withIndex("by_provider_and_reservationKey", (q) =>
@@ -975,7 +928,11 @@ export const listOrphanedSandboxInstances = internalQuery({
       });
     }
 
-    return orphans;
+    return {
+      page: orphans,
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
   },
 });
 

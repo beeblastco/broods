@@ -20,6 +20,7 @@ import type { BenchCase } from "../runner.ts";
 
 const LEASE_TTL_MS = 60_000;
 const STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CHECKPOINT_OWNER = "evt_checkpoint_owner";
 
 const USER_TURN = [
   {
@@ -40,24 +41,7 @@ export const convexRuntimeCases: readonly BenchCase[] = [
     run: async (): Promise<unknown> => {
       const { test, accountId, conversationKey } = await freshConversation();
       const eventId = `evt_${sequence++}`;
-      const owner = await test.mutation(internal.runtimeIngress.accept, {
-        accountId: accountId,
-        agentId: "bench-agent",
-        conversationKey: conversationKey,
-        eventId: eventId,
-        runId: `run_${eventId}`,
-        idempotencyKey: eventId,
-        payloadDigest: `digest:${eventId}`,
-        events: USER_TURN,
-        delivery: { kind: "http" },
-        requestedMode: "followup",
-        sizeBytes: 128,
-        leaseTtlMs: LEASE_TTL_MS,
-        envelopeTtlMs: LEASE_TTL_MS,
-        statusTtlMs: STATUS_TTL_MS,
-        maxQueuedCount: 100,
-        maxQueuedBytes: 1024 * 1024,
-      });
+      const owner = await admit(test, accountId, conversationKey, eventId);
       await test.mutation(internal.runtimeIngress.settle, {
         conversationKey: conversationKey,
         ownerEventId: eventId,
@@ -80,10 +64,15 @@ export const convexRuntimeCases: readonly BenchCase[] = [
     name: "convex/session-save-get",
     iterations: 10,
     samples: 15,
+    // One owner for every op: a turn pays the fenced write and the read-back,
+    // not the admission that made it owner.
     run: async (): Promise<unknown> => {
-      const { test, conversationKey } = await freshConversation();
-      await test.mutation(internal.runtime.saveHarnessSession, {
+      checkpointOwner ??= ownedConversation();
+      const { test, conversationKey } = await checkpointOwner;
+      await test.mutation(internal.runtimeIngress.saveHarnessSession, {
         conversationKey: conversationKey,
+        ownerEventId: CHECKPOINT_OWNER,
+        ownerGeneration: 1,
         harnessType: "codex",
         sessionId: `sess_${sequence++}`,
         resumeState: {
@@ -130,6 +119,7 @@ export const convexRuntimeCases: readonly BenchCase[] = [
 ];
 
 let sequence = 0;
+let checkpointOwner: ReturnType<typeof freshConversation> | null = null;
 let shared: { test: RuntimeTest; accountId: string } | null = null;
 
 async function freshConversation(): Promise<{
@@ -147,4 +137,45 @@ async function freshConversation(): Promise<{
     accountId: shared.accountId,
     conversationKey: `acct:${shared.accountId}:agent:bench-agent:api:conv_${sequence++}`,
   };
+}
+
+/** A conversation the checkpoint case's owner holds for longer than any run. */
+async function ownedConversation(): ReturnType<typeof freshConversation> {
+  const conversation = await freshConversation();
+  await admit(
+    conversation.test,
+    conversation.accountId,
+    conversation.conversationKey,
+    CHECKPOINT_OWNER,
+    STATUS_TTL_MS,
+  );
+
+  return conversation;
+}
+
+function admit(
+  test: RuntimeTest,
+  accountId: string,
+  conversationKey: string,
+  eventId: string,
+  leaseTtlMs = LEASE_TTL_MS,
+): Promise<{ outcome: string; ownerGeneration?: number }> {
+  return test.mutation(internal.runtimeIngress.accept, {
+    accountId: accountId,
+    agentId: "bench-agent",
+    conversationKey: conversationKey,
+    eventId: eventId,
+    runId: `run_${eventId}`,
+    idempotencyKey: eventId,
+    payloadDigest: `digest:${eventId}`,
+    events: USER_TURN,
+    delivery: { kind: "http" },
+    requestedMode: "followup",
+    sizeBytes: 128,
+    leaseTtlMs: leaseTtlMs,
+    envelopeTtlMs: leaseTtlMs,
+    statusTtlMs: STATUS_TTL_MS,
+    maxQueuedCount: 100,
+    maxQueuedBytes: 1024 * 1024,
+  });
 }
