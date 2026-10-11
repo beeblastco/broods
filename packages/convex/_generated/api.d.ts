@@ -136,6 +136,7 @@ import type * as model_sandboxRules from "../model/sandboxRules.js";
 import type * as model_secretNames from "../model/secretNames.js";
 import type * as model_selfHostAuth from "../model/selfHostAuth.js";
 import type * as model_serviceBridge from "../model/serviceBridge.js";
+import type * as model_skillLimits from "../model/skillLimits.js";
 import type * as model_skillRules from "../model/skillRules.js";
 import type * as model_skills from "../model/skills.js";
 import type * as model_slackDirectory from "../model/slackDirectory.js";
@@ -305,6 +306,7 @@ declare const fullApi: ApiFromModules<{
   "model/secretNames": typeof model_secretNames;
   "model/selfHostAuth": typeof model_selfHostAuth;
   "model/serviceBridge": typeof model_serviceBridge;
+  "model/skillLimits": typeof model_skillLimits;
   "model/skillRules": typeof model_skillRules;
   "model/skills": typeof model_skills;
   "model/slackDirectory": typeof model_slackDirectory;

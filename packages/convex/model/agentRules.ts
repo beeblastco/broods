@@ -19,7 +19,7 @@ import {
   type AccountModelProviderName,
 } from "./modelProviders";
 import { ClientError } from "./clientError";
-import { MAX_CONFIGURED_SKILLS } from "./skillRules";
+import { MAX_CONFIGURED_SKILLS } from "./skillLimits";
 
 export type AgentStatus = "active" | "disabled";
 export type { AccountModelProviderName } from "./modelProviders";

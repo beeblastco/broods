@@ -9,8 +9,6 @@ import { ClientError } from "./clientError";
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
-/** Distinct skills one agent may list in `config.skills.allowed`. */
-export const MAX_CONFIGURED_SKILLS = 32;
 /**
  * The head of SKILL.md that must hold its frontmatter: core reads only this
  * much of each configured skill for the per-turn skill list.

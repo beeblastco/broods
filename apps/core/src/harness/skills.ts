@@ -4,10 +4,8 @@
  */
 
 import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
-import {
-  MAX_CONFIGURED_SKILLS,
-  MAX_SKILL_METADATA_BYTES,
-} from "@broods/convex/model/skillRules";
+import { MAX_CONFIGURED_SKILLS } from "@broods/convex/model/skillLimits";
+import { MAX_SKILL_METADATA_BYTES } from "@broods/convex/model/skillRules";
 import type { SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { optionalEnv } from "../shared/env.ts";

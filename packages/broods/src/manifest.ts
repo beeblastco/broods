@@ -27,7 +27,7 @@ import {
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
 import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
-import { MAX_CONFIGURED_SKILLS } from "../../convex/model/skillRules.ts";
+import { MAX_CONFIGURED_SKILLS } from "../../convex/model/skillLimits.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
