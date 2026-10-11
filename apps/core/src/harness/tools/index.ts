@@ -564,7 +564,8 @@ async function registerMcpTools(
     const serverTools = mcpTools(
       server.connection,
       server.remoteTools,
-      context,
+      context.onSandboxCpu,
+      context.onToolRetry,
     );
     // Sanitized names collapsing within one server surface here too: the map
     // then has fewer keys than the listing had tools.

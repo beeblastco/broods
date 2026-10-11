@@ -135,6 +135,7 @@ import {
   type PendingQuestionSummary,
 } from "./questions.ts";
 import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
+import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
@@ -749,7 +750,7 @@ export async function runAgentLoop(
   // order, reserved in onToolExecutionStart.
   const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
     wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
-    "computer",
+    COMPUTER_TOOL_NAME,
   );
   const policyToolApproval = await createPolicyToolApproval(
     agentConfig,
@@ -1369,7 +1370,7 @@ export async function runAgentLoop(
       const instructions = withCacheBreakpoint(
         refreshed.system,
         providerOptions,
-        refreshed.system.length - turnContext.ephemeralSystem.length - 1,
+        refreshed.storedSystemEnd,
       );
       // Keep the turn's instructions current: system context grows mid-run
       // (newly persisted rows, steering, skills a tool loaded), and the step and
@@ -1535,6 +1536,8 @@ export async function runAgentLoop(
           },
         );
       const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
+      const toolInput =
+        tracked.attributes["tool.input"] ?? traceAttribute(toolCall.input);
       const outputErrorText = toolOutputErrorText(output);
       const toolSucceeded =
         toolOutput.type === "tool-result" && !outputErrorText;
@@ -1561,7 +1564,7 @@ export async function runAgentLoop(
         "tool.duration_ms": toolDurationMs,
         "tool.success": toolSucceeded,
         "tool.state": toolSucceeded ? "completed" : "failed",
-        "tool.input": traceAttribute(toolCall.input),
+        "tool.input": toolInput,
         ...computeAttributes,
         ...outputAttributes,
       });
@@ -1592,7 +1595,7 @@ export async function runAgentLoop(
         attributes: {
           ...tracked.attributes,
           "tool.state": toolSucceeded ? "completed" : "failed",
-          "tool.input": traceAttribute(toolCall.input),
+          "tool.input": toolInput,
           ...computeAttributes,
           ...outputAttributes,
           ...(stepNumber !== undefined
