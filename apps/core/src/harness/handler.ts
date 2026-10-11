@@ -42,13 +42,7 @@ import {
   directPrincipalChain,
   runPrincipal,
 } from "../shared/domain/principal.ts";
-import {
-  booleanEnv,
-  getHarnessPublicUrl,
-  MAX_RUN_SLOTS,
-  positiveIntegerEnv,
-  WORKER_TIMEOUT_BUDGET_MS,
-} from "../shared/env.ts";
+import { booleanEnv, getHarnessPublicUrl } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import {
   errorResponse,
@@ -115,14 +109,12 @@ import {
 } from "./hook-dispatcher.ts";
 import {
   acceptIngress,
-  DEFAULT_CONVERSATION_LEASE_TTL_MS,
   getConversationDispatchTarget,
   getIngressStatusByEventId,
   loadAppliedIngressConfig,
   loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
-  renewIngressOwner,
   takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
@@ -130,7 +122,6 @@ import {
   type IngressDelivery,
   type IngressMode,
   type IngressSettlement,
-  type LiveOwner,
   type SessionMessageInput,
   type SessionMessageResult,
 } from "./ingress.ts";
@@ -171,6 +162,11 @@ import {
   type QuestionAnswerResult,
 } from "./questions.ts";
 import { SubagentCoordinator } from "./subagents.ts";
+import {
+  dispatchInProcessWorker,
+  WORKER_QUEUE_FULL,
+  workerQueueFull,
+} from "./worker-queue.ts";
 
 // A queue at capacity drains on the order of seconds, not minutes.
 const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
@@ -198,16 +194,8 @@ const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const WAIT_DEADLINE_MARGIN_MS = DEADLINE_WIND_DOWN_MS;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
-const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
-const MAX_PENDING_WORKER_RUNS = 1000;
-const WORKER_QUEUE_FULL = "In-process worker queue is full";
-// A queued run holds its lease from admission, so the queue renews it well
-// inside the TTL until a slot starts the run.
-const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
-const QUEUED_LEASE_RENEW_CONCURRENCY = 16;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on the session's OWNER_CHECK_INTERVAL_MS clock. A frame the client
 // acts on checks exactly: a stale run must not land one in a stream the next
@@ -222,27 +210,15 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "waiting",
 ]);
 const textEncoder = new TextEncoder();
-const inProcessWorkers = new Set<Promise<void>>();
-type PendingWorkerRun = [
-  kind: string,
-  start: () => void,
-  lease: LiveOwner | undefined,
-];
-const pendingWorkerRuns: PendingWorkerRun[] = [];
 // What every parent run's SubagentCoordinator takes from the handler.
 const SUBAGENT_DEPENDENCIES = {
   dispatchNextIngress: dispatchNextIngress,
   resumeParent: resumeAfterSubagentResult,
 };
 
-let activeInProcessWorkers = 0;
-let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
-let renewingQueuedLeases = false;
-
 type ContinuationOutcome =
   | { kind: "ready"; invoked: boolean; publicEventId: string }
   | { kind: "skip" };
-type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
 
 interface AsyncWorkerInvocation {
   kind: "direct-api-async-worker";
@@ -275,116 +251,6 @@ interface ParentContinuationResult {
   traceId?: string;
   approvals: ToolApprovalSummary[];
   questions: PendingQuestionSummary[];
-}
-
-/**
- * Runs one agent turn on the pod's worker pool, or queues it FIFO while every
- * slot is busy. Every background run goes through here, channel turns
- * included, so MAX_INPROCESS_WORKERS bounds what the pod runs at once. A run
- * near its deadline calls `context.yieldSlot` to go to the back of the queue
- * and carry on with a fresh budget, up to MAX_RUN_SLOTS slots.
- * @param kind a label for logs
- * @param lease the conversation lease the run already holds, renewed while it waits
- */
-export function dispatchInProcessWorker(
-  kind: string,
-  run: InProcessWorkerRun,
-  lease?: LiveOwner,
-): void {
-  const runAbort = new AbortController();
-  let slotsUsed = 0;
-  let releaseSlot: (() => void) | undefined;
-  // Settles the run's tracked promise on an overrun, so a stuck run does not
-  // hold up the shutdown drain.
-  let abandon: (() => void) | undefined;
-  const context: RequestContext = {
-    requestId: crypto.randomUUID(),
-    deadlineMs: Date.now(),
-    // Workers run detached; they never emit an HTTP response, so there is no
-    // post-response tail to defer.
-    waitUntil: () => {},
-    abortSignal: runAbort.signal,
-  };
-  const takeSlot = (): void => {
-    activeInProcessWorkers += 1;
-    slotsUsed += 1;
-    context.deadlineMs = Date.now() + WORKER_TIMEOUT_BUDGET_MS;
-    if (slotsUsed >= MAX_RUN_SLOTS) delete context.yieldSlot;
-    // A few stuck workers would otherwise pin every slot for every tenant on
-    // the pod. An overrun frees the slot and aborts the run, so the pod never
-    // runs more than MAX_INPROCESS_WORKERS model passes at once.
-    const slotTimer = setTimeout((): void => {
-      logError("In-process worker exceeded deadline; reclaiming slot", {
-        kind: kind,
-        budgetMs: WORKER_TIMEOUT_BUDGET_MS,
-      });
-      // The reason is what the chat shows; the log line above stays technical.
-      runAbort.abort(new Error("I ran out of time on this turn."));
-      releaseSlot?.();
-      abandon?.();
-    }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);
-    slotTimer.unref?.();
-    releaseSlot = (): void => {
-      clearTimeout(slotTimer);
-      releaseSlot = undefined;
-      activeInProcessWorkers -= 1;
-      startNextWorker();
-    };
-  };
-  context.yieldSlot = async (heldLease): Promise<void> => {
-    if (runAbort.signal.aborted || !releaseSlot) return;
-    releaseSlot();
-    // No budget while queued: a coordinator reading the old deadline would
-    // take the parent for out of time.
-    context.deadlineMs = Number.POSITIVE_INFINITY;
-    await new Promise<void>((resolve): void => {
-      enqueueWorker(
-        [
-          kind,
-          (): void => {
-            takeSlot();
-            resolve();
-          },
-          heldLease,
-        ],
-        // A run stopped mid-turn holding its lease is never load-shed.
-        false,
-      );
-    });
-  };
-  enqueueWorker([
-    kind,
-    (): void => {
-      takeSlot();
-      const execution = run(context).then(
-        (): void => undefined,
-        (err): void => {
-          logError("In-process worker failed", {
-            kind: kind,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        },
-      );
-      const worker: Promise<void> = Promise.race([
-        execution,
-        new Promise<void>((resolve): void => {
-          abandon = resolve;
-        }),
-      ]).finally((): void => {
-        releaseSlot?.();
-        inProcessWorkers.delete(worker);
-      });
-      inProcessWorkers.add(worker);
-    },
-    lease,
-  ]);
-}
-
-/** Awaited by the container bootstrap on shutdown so queued work is not lost. */
-export async function drainInProcessWorkers(): Promise<void> {
-  while (inProcessWorkers.size > 0) {
-    await Promise.allSettled(inProcessWorkers);
-  }
 }
 
 export async function handler(
@@ -2809,95 +2675,6 @@ async function invokeHarnessWorker(
           ownerGeneration: event.ownerGeneration,
         },
   );
-}
-
-/**
- * The queue's timer: renews every waiting run's lease, so a long wait does not
- * hand its conversation to `maintain`. A few renewals at a time, so a full
- * queue does not fire a thousand mutations at once, and one sweep at a time. A
- * lease that comes back stale or stopped is no longer renewed: the run finds
- * that out on its own first renewal once a slot starts it.
- */
-async function renewQueuedLeases(): Promise<void> {
-  if (renewingQueuedLeases) return;
-  renewingQueuedLeases = true;
-  try {
-    const waiting = pendingWorkerRuns.filter((entry) => entry[2]);
-    for (
-      let offset = 0;
-      offset < waiting.length;
-      offset += QUEUED_LEASE_RENEW_CONCURRENCY
-    ) {
-      await Promise.all(
-        waiting
-          .slice(offset, offset + QUEUED_LEASE_RENEW_CONCURRENCY)
-          .map(renewQueuedLease),
-      );
-    }
-  } finally {
-    renewingQueuedLeases = false;
-  }
-}
-
-async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
-  const [kind, , lease] = entry;
-  if (!lease) return;
-  try {
-    const renewal = await renewIngressOwner(lease);
-    if (renewal === "renewed") return;
-    entry[2] = undefined;
-    logWarn("Queued worker lease was not renewed", {
-      kind: kind,
-      conversationKey: lease.conversationKey,
-      renewal: renewal,
-    });
-  } catch (err) {
-    logError("Queued worker lease renewal failed", {
-      kind: kind,
-      conversationKey: lease.conversationKey,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-/** True when a new run would neither start nor fit in the queue. */
-function workerQueueFull(): boolean {
-  return (
-    activeInProcessWorkers >= MAX_INPROCESS_WORKERS &&
-    pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS
-  );
-}
-
-/** Starts a worker now when a slot is free, else queues it FIFO. */
-function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
-  if (activeInProcessWorkers < MAX_INPROCESS_WORKERS) {
-    entry[1]();
-
-    return;
-  }
-  if (loadShed && workerQueueFull()) {
-    // Load-shed: the awaiting caller surfaces the error instead of the queue
-    // growing without bound.
-    throw new Error(WORKER_QUEUE_FULL);
-  }
-  pendingWorkerRuns.push(entry);
-  if (!queuedLeaseTimer) {
-    queuedLeaseTimer = setInterval(
-      () => void renewQueuedLeases(),
-      QUEUED_LEASE_RENEW_INTERVAL_MS,
-    );
-    queuedLeaseTimer.unref();
-  }
-}
-
-/** Hands a freed slot to the oldest queued worker. */
-function startNextWorker(): void {
-  const next = pendingWorkerRuns.shift();
-  if (pendingWorkerRuns.length === 0 && queuedLeaseTimer) {
-    clearInterval(queuedLeaseTimer);
-    queuedLeaseTimer = undefined;
-  }
-  next?.[1]();
 }
 
 function asyncToolContinuationEventId(parentEventId: string): string {

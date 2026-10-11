@@ -15,8 +15,9 @@ import { runtime } from "../src/shared/convex/runtime.ts";
 import { getStorage, resetStorageForTests } from "../src/shared/storage.ts";
 import { coreRequest } from "./helpers/http.ts";
 
-const { dispatchInProcessWorker, drainInProcessWorkers, handler } =
-  await import("../src/harness/handler.ts");
+const { handler } = await import("../src/harness/handler.ts");
+const { dispatchInProcessWorker, drainInProcessWorkers } =
+  await import("../src/harness/worker-queue.ts");
 const QUEUED_LEASE_RENEW_INTERVAL_MS = 5 * 60 * 1000;
 const WORKER_SLOTS = 8;
 const MAX_PENDING_WORKER_RUNS = 1000;
