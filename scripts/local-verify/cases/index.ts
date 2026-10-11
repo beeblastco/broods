@@ -26,6 +26,8 @@ import { sdkClient } from "./sdk-client.ts";
 import { skillLimit } from "./skill-limit.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
+import { subagentModel } from "./subagent-model.ts";
+import { subagentStop } from "./subagent-stop.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { workToolWebhooks } from "./work-tool-webhooks.ts";
@@ -39,6 +41,8 @@ export const verifyCases: readonly VerifyCase[] = [
   queuedCompact,
   steerAtBoundary,
   streamedBurst,
+  subagentStop,
+  subagentModel,
   autoCompaction,
   machineSandbox,
   bashTimeout,

@@ -4,6 +4,7 @@ import {
   S3Client as AwsS3Client,
   CopyObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -16,6 +17,14 @@ import { logDebug, logError } from "./log.ts";
 
 const SANDBOX_UID = "993";
 const SANDBOX_GID = "990";
+// Per-key DeleteObjects codes worth another try; any other code (AccessDenied)
+// fails the cleanup at once. Whole-request failures are the SDK's to retry.
+const RETRYABLE_DELETE_CODES = new Set([
+  "InternalError",
+  "ServiceUnavailable",
+  "SlowDown",
+]);
+const DELETE_ATTEMPTS = 3;
 
 let defaultClient: AwsS3Client | undefined;
 // One client per access object, so a cached read target keeps its connection
@@ -114,17 +123,60 @@ export async function deleteS3Object(
   );
 }
 
+/**
+ * Deletes every object under `prefix`, one listed page (up to 1,000 keys) per
+ * DeleteObjects request, one request at a time. Throws when any key could not
+ * be deleted, so a partial cleanup never reports success.
+ */
 export async function deleteS3Prefix(
   bucket: string,
   prefix: string,
   access?: S3Access,
 ): Promise<number> {
-  const objects = await listS3Prefix(bucket, prefix, access);
-  await Promise.all(
-    objects.map((object) => deleteS3Object(bucket, object.key, access)),
-  );
+  const client = awsClient(access);
+  let deleted = 0;
+  let continuationToken: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      }),
+    );
+    let keys = (page.Contents ?? []).flatMap((item) =>
+      item.Key ? [item.Key] : [],
+    );
+    const pageSize = keys.length;
+    for (let attempt = 1; keys.length > 0; attempt += 1) {
+      if (attempt > 1) await Bun.sleep(100 * 2 ** attempt);
+      const { Errors: errors = [] } = await client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: true },
+        }),
+      );
+      const [first] = errors;
+      if (
+        first &&
+        (attempt === DELETE_ATTEMPTS ||
+          errors.some(
+            (error) =>
+              !error.Key || !RETRYABLE_DELETE_CODES.has(error.Code ?? ""),
+          ))
+      ) {
+        throw new Error(
+          `S3 could not delete ${errors.length} of ${pageSize} objects under ${prefix} in ${bucket}, first ${first.Key}: ${first.Code} ${first.Message ?? ""}`.trim(),
+        );
+      }
+      keys = errors.flatMap((error) => (error.Key ? [error.Key] : []));
+    }
+    deleted += pageSize;
+    continuationToken = page.NextContinuationToken;
+  } while (continuationToken);
 
-  return objects.length;
+  return deleted;
 }
 
 export async function ensureS3DirectoryMarkers(

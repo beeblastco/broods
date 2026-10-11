@@ -81,8 +81,10 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const account = new MatrixAccount({
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (event: MatrixForwardedEvent): Promise<void> => {
+      onEvent: async (event: MatrixForwardedEvent): Promise<boolean> => {
         forwarded.push(event);
+
+        return true;
       },
       storeDir: storeDir,
     });
@@ -140,7 +142,7 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const account = new MatrixAccount({
       accessToken: "syt_stale",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (): Promise<void> => {},
+      onEvent: async (): Promise<boolean> => true,
       storeDir: await temporaryStore(),
     });
 
@@ -180,8 +182,10 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const account = new MatrixAccount({
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (event: MatrixForwardedEvent): Promise<void> => {
+      onEvent: async (event: MatrixForwardedEvent): Promise<boolean> => {
         forwarded.push(event);
+
+        return true;
       },
       storeDir: storeDir,
     });
@@ -214,9 +218,11 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
       // The first delivery is still in flight when shutdown starts.
-      onEvent: async (event: MatrixForwardedEvent): Promise<void> => {
+      onEvent: async (event: MatrixForwardedEvent): Promise<boolean> => {
         forwarded.push(event.event.event_id);
         await delivered;
+
+        return true;
       },
       storeDir: storeDir,
     });
@@ -240,7 +246,7 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const account = new MatrixAccount({
       accessToken: "syt_token",
       apiUrl: homeserver.apiUrl,
-      onEvent: async (): Promise<void> => {},
+      onEvent: async (): Promise<boolean> => true,
       storeDir: await temporaryStore(),
     });
     const reply: MatrixSendRequest = {

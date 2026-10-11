@@ -862,6 +862,17 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex" },
+        subagent: {
+          model: { output: { type: "object", schema: { type: "object" } } },
+        },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.subagent.model.output structured output is not supported with config.harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex" },
         policies: ["policy_1"],
         sandboxes: ["sandbox_1"],
       }),
@@ -922,6 +933,20 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ denyTools: "bash" })).toThrow(
       "config.denyTools must be an array of non-empty strings",
     );
+  });
+
+  it("validates the virtual subagent model like config.model", () => {
+    expect(
+      normalizeAgentConfig({ subagent: { model: { modelId: "o3" } } }).subagent,
+    ).toEqual({ model: { modelId: "o3" } });
+    expect(() =>
+      normalizeAgentConfig({ subagent: { model: { apiKey: "sk" } } }),
+    ).toThrow(
+      "config.subagent.model.apiKey is not supported; use config.subagent.model.providerOptions for provider-specific settings",
+    );
+    expect(() =>
+      normalizeAgentConfig({ subagent: { model: { provider: "nope" } } }),
+    ).toThrow("config.subagent.model.provider must be one of:");
   });
 
   it("validates subagent event streaming across full, create, update, and patch inputs", () => {
