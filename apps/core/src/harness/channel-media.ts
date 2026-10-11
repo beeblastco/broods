@@ -80,6 +80,12 @@ export const MEDIA_REFERENCE_SCHEME = "broods-media:";
 // gigabyte for everything, and the cache is a courtesy, not the storage.
 const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 
+// Sealed-link bytes one turn inlines into the prompt. Every replayed picture
+// rides each model request as base64, and providers cap a request (Anthropic at
+// 32 MB, after base64's third), while the pod holds them all at once. Past it a
+// link stays a link and the provider fetches it, as it did before replay read.
+const MAX_REPLAY_BYTES_PER_TURN = 20 * 1024 * 1024;
+
 // A bound on one message, not on the conversation. Every attachment past it is
 // still named for the agent; only the bytes are left with the provider.
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
@@ -199,6 +205,12 @@ interface StoredAttachment {
 
 /** A sealed link read back: its bytes, or the name of the file that is gone. */
 type SealedMedia = { bytes: Buffer } | { gone: string };
+
+/** One turn's sealed-link reads: whose links it may open, and bytes left. */
+interface SealedReplay {
+  accountId: string | undefined;
+  remainingBytes: number;
+}
 
 type UserContentPart = Exclude<UserContent, string>[number];
 
@@ -320,6 +332,7 @@ export async function readAttachmentBytes(
 export async function rehydrateStoredMedia(
   messages: ModelMessage[],
   agentConfig: AgentConfig,
+  accountId: string | undefined,
 ): Promise<ModelMessage[]> {
   const carriesMedia = messages.some(
     (message) =>
@@ -331,8 +344,13 @@ export async function rehydrateStoredMedia(
     return messages;
   }
 
+  const replay: SealedReplay = {
+    accountId: accountId,
+    remainingBytes: MAX_REPLAY_BYTES_PER_TURN,
+  };
+
   return await Promise.all(
-    messages.map((message) => rehydrateMessage(message, agentConfig)),
+    messages.map((message) => rehydrateMessage(message, agentConfig, replay)),
   );
 }
 
@@ -655,11 +673,15 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * The bytes behind a sealed link, read once per turn and kept in the media
  * cache. A link left for the provider is fetched by it again on every model
  * step, and a file the agent deleted would 404 there and fail the whole turn.
- * Null keeps the link: not a sealed link, a file over the media cap, or a
- * storage error, which is not proof of a deletion.
+ * Null keeps the link: not a sealed link, another account's link, a file over
+ * the media cap or past the turn's budget, or a storage error, which is not
+ * proof of a deletion. The account check matters because this read runs on
+ * core's own credentials and meters the ticket's account, and nothing else ties
+ * a link pasted into a conversation to the account running it.
  */
 async function readSealedMedia(
   part: UserContentPart,
+  replay: SealedReplay,
 ): Promise<SealedMedia | null> {
   const link = sealedMediaLink(part);
   const ticket = link
@@ -668,11 +690,16 @@ async function readSealedMedia(
         requireSecretsEnv("MEDIA_TICKET_SECRET"),
       )
     : null;
-  if (!link || !ticket) {
+  if (!link || !ticket || ticket.accountId !== replay.accountId) {
     return null;
   }
   const cached = cachedMedia(link);
   if (cached) {
+    if (cached.byteLength > replay.remainingBytes) {
+      return null;
+    }
+    replay.remainingBytes -= cached.byteLength;
+
     return { bytes: cached };
   }
   try {
@@ -680,9 +707,15 @@ async function readSealedMedia(
     if (!object) {
       return { gone: basename(ticket.path) };
     }
-    if ((object.head.contentLength ?? 0) > MAX_MEDIA_BYTES) {
+    const size = object.head.contentLength;
+    if (
+      size === undefined ||
+      size > MAX_MEDIA_BYTES ||
+      size > replay.remainingBytes
+    ) {
       return null;
     }
+    replay.remainingBytes -= size;
     const bytes = Buffer.from(await readMediaObject(object, ticket.accountId));
     cacheMedia(link, bytes);
 
@@ -706,6 +739,7 @@ async function readSealedMedia(
 async function rehydrateMessage(
   message: ModelMessage,
   agentConfig: AgentConfig,
+  replay: SealedReplay,
 ): Promise<ModelMessage> {
   if (message.role !== "user" || typeof message.content === "string") {
     return message;
@@ -732,7 +766,7 @@ async function rehydrateMessage(
       }
       const reference = mediaReferenceOf(part);
       if (!reference) {
-        const sealed = await readSealedMedia(part);
+        const sealed = await readSealedMedia(part, replay);
         if (!sealed) {
           return part;
         }

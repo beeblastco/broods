@@ -1310,7 +1310,11 @@ export async function runAgentLoop(
         turnContext.ephemeralSystem.push(...steeringSystem);
         stepMessages = [
           ...messages,
-          ...(await steeringModelMessages(steeringEvents, agentConfig)),
+          ...(await steeringModelMessages(
+            steeringEvents,
+            agentConfig,
+            session.accountId,
+          )),
         ];
         logInfo("Steering ingress applied at AI SDK step boundary", {
           eventId: session.eventId,
@@ -2551,7 +2555,7 @@ async function applyHarnessSteeringBeforeTurn(
     const ephemeralSystem = await session.appendIngressEvents(events);
     turnContext.ephemeralSystem.push(...ephemeralSystem);
     turnContext.messages.push(
-      ...(await steeringModelMessages(events, agentConfig)),
+      ...(await steeringModelMessages(events, agentConfig, session.accountId)),
     );
     steeringEventCount += steering.contributingEventIds.length;
   }
@@ -2578,6 +2582,7 @@ async function applyHarnessSteeringBeforeTurn(
 async function steeringModelMessages(
   events: ConversationIngressEvent[],
   agentConfig: AgentConfig,
+  accountId: string | undefined,
 ): Promise<ModelMessage[]> {
   return await rehydrateStoredMedia(
     stripEnvelopeFieldsFromMessages(
@@ -2589,6 +2594,7 @@ async function steeringModelMessages(
       ),
     ),
     agentConfig,
+    accountId,
   );
 }
 

@@ -631,7 +631,11 @@ describe("rehydrateStoredMedia", () => {
     if (!stored) throw new Error("expected a stored message");
     const fetchMock = telegramFetch();
 
-    const messages = await rehydrateStoredMedia([stored], telegramConfig());
+    const messages = await rehydrateStoredMedia(
+      [stored],
+      telegramConfig(),
+      ACCOUNT,
+    );
 
     const content = messages[0]?.content;
     if (!Array.isArray(content)) throw new Error("expected message parts");
@@ -649,6 +653,7 @@ describe("rehydrateStoredMedia", () => {
     const messages = await rehydrateStoredMedia(
       [storedMessage("file-77")],
       telegramConfig(),
+      ACCOUNT,
     ).finally(restoreDns);
 
     const content = messages[0]?.content;
@@ -682,6 +687,7 @@ describe("rehydrateStoredMedia", () => {
         },
       ],
       modelConfig("openai"),
+      ACCOUNT,
     );
 
     expect(messages[0]?.content).toEqual([
@@ -713,9 +719,9 @@ describe("rehydrateStoredMedia", () => {
       },
     ];
 
-    expect(await rehydrateStoredMedia(messages, modelConfig("openai"))).toBe(
-      messages,
-    );
+    expect(
+      await rehydrateStoredMedia(messages, modelConfig("openai"), ACCOUNT),
+    ).toBe(messages);
   });
 
   it("says a file the channel dropped is gone instead of failing the turn", async () => {
@@ -723,6 +729,7 @@ describe("rehydrateStoredMedia", () => {
     const messages = await rehydrateStoredMedia(
       [storedMessage("file-gone")],
       telegramConfig(),
+      ACCOUNT,
     );
 
     const content = messages[0]?.content;
@@ -743,6 +750,7 @@ describe("rehydrateStoredMedia", () => {
     const messages = await rehydrateStoredMedia(
       [sealedImageMessage(workspaceTicket())],
       modelConfig("openai"),
+      ACCOUNT,
     );
 
     expect(messages[0]?.content).toEqual([
@@ -771,8 +779,16 @@ describe("rehydrateStoredMedia", () => {
       }),
     ];
 
-    const first = await rehydrateStoredMedia(stored, modelConfig("openai"));
-    const replay = await rehydrateStoredMedia(stored, modelConfig("openai"));
+    const first = await rehydrateStoredMedia(
+      stored,
+      modelConfig("openai"),
+      ACCOUNT,
+    );
+    const replay = await rehydrateStoredMedia(
+      stored,
+      modelConfig("openai"),
+      ACCOUNT,
+    );
 
     const bytes = Buffer.from([1, 2, 3]);
     const image: ImagePart = {
@@ -794,6 +810,93 @@ describe("rehydrateStoredMedia", () => {
     readS3BytesMock.mockReset();
   });
 
+  // The read runs on core's credentials and meters the ticket's account, so a
+  // link sealed for another account is left as the link it was, never opened.
+  it("never opens a sealed link that belongs to another account or was forged", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+    headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
+      contentLength: 3,
+    }));
+    readS3BytesMock.mockImplementation(
+      async (): Promise<Uint8Array> => new Uint8Array([1, 2, 3]),
+    );
+    const stored = [
+      sealedImageMessage({
+        accountId: "acct_other",
+        path: "media/ff00/0-image-1.jpeg",
+      }),
+    ];
+
+    expect(
+      await rehydrateStoredMedia(stored, modelConfig("openai"), ACCOUNT),
+    ).toEqual(stored);
+    expect(
+      await rehydrateStoredMedia(stored, modelConfig("openai"), undefined),
+    ).toEqual(stored);
+    // A link sealed under a key core does not hold opens to nothing.
+    const forged: ModelMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            image: `https://core.example/v1/media/${sealMediaTicket(
+              { accountId: ACCOUNT, path: "media/ff01/0-image-1.jpeg" },
+              "not-the-media-ticket-secret",
+            )}`,
+            mediaType: "image/jpeg",
+          },
+        ],
+      },
+    ];
+    expect(
+      await rehydrateStoredMedia(forged, modelConfig("openai"), ACCOUNT),
+    ).toEqual(forged);
+    expect(headS3ObjectMock).not.toHaveBeenCalled();
+    expect(readS3BytesMock).not.toHaveBeenCalled();
+    expect(meterWrites).toEqual([]);
+    headS3ObjectMock.mockReset();
+    readS3BytesMock.mockReset();
+  });
+
+  // Every inlined picture rides each model request, so a turn inlines a
+  // bounded amount and leaves the rest as links for the provider to fetch.
+  it("leaves links past the turn's byte budget for the provider", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+    const size = 15 * 1024 * 1024;
+    headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
+      contentLength: size,
+    }));
+    readS3BytesMock.mockImplementation(
+      async (): Promise<Uint8Array> => new Uint8Array(size),
+    );
+    const stored = [
+      sealedImageMessage({ accountId: ACCOUNT, path: "media/b1/a.jpeg" }),
+      sealedImageMessage({ accountId: ACCOUNT, path: "media/b2/b.jpeg" }),
+    ];
+
+    const messages = await rehydrateStoredMedia(
+      stored,
+      modelConfig("openai"),
+      ACCOUNT,
+    );
+
+    const parts = messages.flatMap((message): unknown[] =>
+      Array.isArray(message.content) ? message.content : [],
+    );
+    const inlined = parts.filter(
+      (part): boolean =>
+        typeof part === "object" &&
+        part !== null &&
+        "image" in part &&
+        Buffer.isBuffer(part.image),
+    );
+    expect(inlined).toHaveLength(1);
+    expect(readS3BytesMock).toHaveBeenCalledTimes(1);
+    headS3ObjectMock.mockReset();
+    readS3BytesMock.mockReset();
+  });
+
   it("leaves a conversation with no references untouched", async () => {
     const messages = [
       {
@@ -802,9 +905,9 @@ describe("rehydrateStoredMedia", () => {
       },
     ];
 
-    expect(await rehydrateStoredMedia(messages, telegramConfig())).toBe(
-      messages,
-    );
+    expect(
+      await rehydrateStoredMedia(messages, telegramConfig(), ACCOUNT),
+    ).toBe(messages);
   });
 });
 
