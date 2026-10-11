@@ -47,7 +47,7 @@ Convex goes first so no service runs ahead of the schema it calls. npm goes last
 | `deploy-convex.yaml`           | `dev` or `main` pushes touching `packages/convex`; manual                         | `convex deploy`. `main` refuses a non-`prod:` key, or a self-hosted URL other than `https://convex-api.broods.app`                             |
 | `deploy.yaml`                  | `dev` or `main` pushes, except docs, dashboard and markdown only; manual          | SST deploy of the AWS data plane, then the Cloudflare MCP Worker. See [deploy pipeline](#deploy-pipeline)                                      |
 | `build-core.yaml`              | `dev` or `main` pushes touching core, Convex or root package files; manual        | Build `broods-core`, roll it after `deploy-convex` and `deploy`                                                                                |
-| `build-gateway.yaml`           | `dev` or `main` pushes touching the gateway or files it imports; manual           | Check, test, build `broods-gateway`, roll it                                                                                                   |
+| `build-gateway.yaml`           | `dev` or `main` pushes touching the gateway or files it imports; manual           | Check, test, build `broods-gateway`, roll it after core's rollout                                                                              |
 | `build-dashboard.yaml`         | `dev` or `main` pushes touching dashboard, SDK or Convex; manual                  | Build `broods-dashboard` with `NEXT_PUBLIC_*` args, roll it after `deploy-convex`                                                              |
 | `build-discord-forwarder.yaml` | `dev` or `main` pushes touching the forwarder or files it imports; manual         | Build `broods-discord-forwarder`. Rolls from `main`, or a manual run with `rollout` ticked                                                     |
 | `build-matrix-forwarder.yaml`  | same, for the Matrix forwarder and the Discord modules it imports                 | Build `broods-matrix-forwarder`. Same rollout rule                                                                                             |
@@ -96,12 +96,13 @@ sequenceDiagram
 | Image             | Infra workflow, `dev` / `main`                         | Waits for                           |
 | ----------------- | ------------------------------------------------------ | ----------------------------------- |
 | core              | `deploy-core-dev.yaml` / `deploy-core.yaml`            | `deploy-convex.yaml`, `deploy.yaml` |
-| gateway           | `deploy-gateway-dev.yaml` / `deploy-gateway.yaml`      | nothing                             |
+| gateway           | `deploy-gateway-dev.yaml` / `deploy-gateway.yaml`      | `build-core.yaml`, core's rollout   |
 | dashboard         | `deploy-dashboard-dev.yaml` / `deploy-dashboard.yaml`  | `deploy-convex.yaml`                |
 | discord-forwarder | `deploy-discord-forwarder.yaml`, `main` or ticked only | nothing                             |
 | matrix-forwarder  | `deploy-matrix-forwarder.yaml`, `main` or ticked only  | nothing                             |
 
 - A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
+- The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (a scope with no ticket expiry is a 502). A gateway that rolled first would refuse every such socket until core caught up.
 - Images are `ghcr.io/beeblastco/broods-*`, tagged with the commit sha plus a floating `dev` or `main` tag.
 - The rollout job has a 40 minute budget: 20 for prerequisites, 20 for the roll. It needs `INFRA_DISPATCH_TOKEN`.
 

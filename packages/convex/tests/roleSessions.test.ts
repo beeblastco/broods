@@ -37,6 +37,7 @@ type Seeded = {
 
 beforeEach(() => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  vi.stubEnv("SERVICE_AUTH_SECRET", "test-service-secret");
 });
 
 async function assumeRole(

@@ -69,6 +69,7 @@ const TEST_SCOPE: ObservabilityScope = {
   projectSlug: "shop",
   stageSlug: "dev",
   endpointIds: [],
+  expiresAt: Number.MAX_SAFE_INTEGER,
 };
 
 test("builds the core direct API body from a websocket execute message", () => {
@@ -1411,6 +1412,7 @@ test("resolves the scope a runtime key grants from core", async (): Promise<void
         projectSlug: "project",
         stageSlug: "production",
         endpointIds: ["endpoint-1"],
+        expiresAt: 1_900_000_000_000,
       });
     },
   );
@@ -1449,6 +1451,17 @@ test("a core that cannot answer is an outage, not a bad token", async (): Promis
     await resolve(async (): Promise<Response> => {
       throw new Error("timed out");
     }),
+  ).toEqual({ kind: "unavailable" });
+  // A scope with no expiry would let the socket outlive its ticket.
+  expect(
+    await resolve(async (): Promise<Response> =>
+      Response.json({
+        accountId: "account-1",
+        projectSlug: "project",
+        stageSlug: "production",
+        endpointIds: ["endpoint-1"],
+      }),
+    ),
   ).toEqual({ kind: "unavailable" });
 });
 
@@ -1497,6 +1510,7 @@ test("observability relay skips malformed and below-threshold log messages", asy
     readyState: WebSocket.OPEN,
     getBufferedAmount: () => 0,
     send: (value: string) => sent.push(JSON.parse(value)),
+    data: { kind: "observability", scope: TEST_SCOPE },
   } as unknown as Bun.ServerWebSocket<
     import("../src/observability.ts").ObservabilityGatewayData
   >;
@@ -1540,6 +1554,7 @@ test("asks Loki to drop the levels a subscription does not want", () => {
     projectSlug: "shop",
     stageSlug: "dev",
     endpointIds: [],
+    expiresAt: Number.MAX_SAFE_INTEGER,
   };
   const tenant = 'account_id="acct-1",project="shop",stage="dev"';
   // The deployment stream never carries guest output, matching the NATS relay.
@@ -1579,6 +1594,7 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
         projectSlug: "shop",
         stageSlug: "dev",
         endpointIds: [],
+        expiresAt: Number.MAX_SAFE_INTEGER,
       },
     },
   } as unknown as Bun.ServerWebSocket<ObservabilityGatewayData>;
@@ -3035,6 +3051,7 @@ test("observability relay waits out span backpressure instead of shedding", asyn
     readyState: WebSocket.OPEN,
     getBufferedAmount: () => (drainChecks++ < 3 ? 10 * 1024 * 1024 : 0),
     send: (value: string) => sent.push(JSON.parse(value)),
+    data: { kind: "observability", scope: TEST_SCOPE },
   } as unknown as Bun.ServerWebSocket<
     import("../src/observability.ts").ObservabilityGatewayData
   >;
@@ -3441,6 +3458,7 @@ test("observability selectors keep a hostile stage slug inside the string", () =
     projectSlug: "shop",
     stageSlug: 'dev"} or {stage=~".+',
     endpointIds: [],
+    expiresAt: Number.MAX_SAFE_INTEGER,
   };
   expect(quoteLabel(scope.stageSlug)).toBe('"dev\\"} or {stage=~\\".+"');
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(

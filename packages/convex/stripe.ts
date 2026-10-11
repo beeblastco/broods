@@ -14,6 +14,7 @@ import {
   internalMutation,
   internalQuery,
   query,
+  type MutationCtx,
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { ClientError } from "./model/clientError";
@@ -157,41 +158,122 @@ export const getLiveSubscriptionIdsInternal = internalQuery({
 });
 
 /**
- * Recompute a user's plan from their synced subscriptions. The webhook runs
- * it after `processEvent`. `users.plan` is the source of truth; orgs the user
- * owns carry a copy so the CLI and org settings read it off the org.
+ * Take the next read ticket for a subscription. The webhook claims it before
+ * it reads the subscription from Stripe, so ticket order is read start order.
  */
-export const syncPlanInternal = internalMutation({
-  args: { authId: v.string() },
+export const claimSubscriptionSyncInternal = internalMutation({
+  args: { stripeSubscriptionId: v.string() },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const sync = await ctx.db
+      .query("stripeSubscriptionSyncs")
+      .withIndex("by_stripeSubscriptionId", (q) =>
+        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
+      )
+      .unique();
+    if (!sync) {
+      await ctx.db.insert("stripeSubscriptionSyncs", {
+        stripeSubscriptionId: args.stripeSubscriptionId,
+        claimed: 1,
+        applied: 0,
+      });
+
+      return 1;
+    }
+    await ctx.db.patch(sync._id, { claimed: sync.claimed + 1 });
+
+    return sync.claimed + 1;
+  },
+});
+
+/**
+ * Store a subscription as Stripe returned it, then recompute the plan of each
+ * user it is filed under. Webhook payloads are only a cue to read: delivery is
+ * unordered and repeats, so the snapshot in an event can be stale. A read is
+ * dropped when a read with a later ticket already landed, and a subscription
+ * that ended never comes back, since Stripe never reopens one.
+ * `users.plan` is the source of truth; orgs the user owns carry a copy so the
+ * CLI and org settings read it off the org.
+ */
+export const applySubscriptionInternal = internalMutation({
+  args: {
+    ticket: v.number(),
+    subscription: v.object({
+      stripeSubscriptionId: v.string(),
+      stripeCustomerId: v.string(),
+      status: v.string(),
+      currentPeriodEnd: v.number(),
+      cancelAtPeriodEnd: v.boolean(),
+      cancelAt: v.optional(v.number()),
+      quantity: v.number(),
+      priceId: v.string(),
+      metadata: v.record(v.string(), v.string()),
+    }),
+  },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+    const sub = args.subscription;
+    const sync = await ctx.db
+      .query("stripeSubscriptionSyncs")
+      .withIndex("by_stripeSubscriptionId", (q) =>
+        q.eq("stripeSubscriptionId", sub.stripeSubscriptionId),
+      )
       .unique();
-    if (!user) return null;
+    if (!sync || args.ticket <= sync.applied) return null;
+    await ctx.db.patch(sync._id, { applied: args.ticket });
 
-    const subs = await ctx.runQuery(
-      components.stripe.public.listSubscriptionsByUserId,
-      { userId: args.authId },
+    const stored = await ctx.runQuery(
+      components.stripe.public.getSubscription,
+      { stripeSubscriptionId: sub.stripeSubscriptionId },
     );
-    const paid = subs.some((sub) =>
-      PAID_STATUSES.some((status) => status === sub.status),
-    );
-    const plan = paid ? ("pro" as const) : ("free" as const);
-    if (user.plan !== plan) await ctx.db.patch(user._id, { plan: plan });
+    if (stored && isEnded(stored.status) && !isEnded(sub.status)) return null;
 
-    const orgs = await ctx.db
-      .query("orgs")
-      .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", args.authId))
-      .collect();
-    for (const org of orgs) {
-      if (org.plan !== plan) await ctx.db.patch(org._id, { plan: plan });
+    // Created inserts a missing row and files earlier invoices under it;
+    // updated then writes the current state over an existing one.
+    await ctx.runMutation(
+      components.stripe.private.handleSubscriptionCreated,
+      sub,
+    );
+    await ctx.runMutation(
+      components.stripe.private.handleSubscriptionUpdated,
+      sub,
+    );
+
+    const authIds = new Set([sub.metadata.userId, stored?.userId]);
+    for (const authId of authIds) {
+      if (authId) await syncPlan(ctx, authId);
     }
 
     return null;
   },
 });
+
+/** Recompute a user's plan, and the copy on orgs they own, from their stored subscriptions. */
+async function syncPlan(ctx: MutationCtx, authId: string): Promise<void> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  if (!user) return;
+
+  const subs = await ctx.runQuery(
+    components.stripe.public.listSubscriptionsByUserId,
+    { userId: authId },
+  );
+  const paid = subs.some((sub) =>
+    PAID_STATUSES.some((status) => status === sub.status),
+  );
+  const plan = paid ? ("pro" as const) : ("free" as const);
+  if (user.plan !== plan) await ctx.db.patch(user._id, { plan: plan });
+
+  const orgs = await ctx.db
+    .query("orgs")
+    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", authId))
+    .collect();
+  for (const org of orgs) {
+    if (org.plan !== plan) await ctx.db.patch(org._id, { plan: plan });
+  }
+}
 
 /** The configured dashboard origin, or null when neither env var is set. */
 function allowedDashboardOrigin(): string | null {

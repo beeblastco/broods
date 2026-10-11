@@ -296,26 +296,39 @@ export async function readS3Bytes(
   access?: S3Access,
   maxBytes?: number,
 ): Promise<Uint8Array> {
-  const { body, contentLength } = await readS3Body(bucket, key, access);
-  if (
-    maxBytes !== undefined &&
-    (contentLength === undefined || contentLength > maxBytes)
-  ) {
-    await body.transformToWebStream().cancel();
-    throw new Error(
-      `S3 object ${key} is ${contentLength ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
-    );
-  }
+  const body = await readS3Body(bucket, key, access, maxBytes);
 
   return body.transformToByteArray();
 }
 
+/** An object's text, with `maxBytes` refused as in `readS3Bytes`. */
 export async function readS3Text(
   bucket: string,
   key: string,
   access?: S3Access,
+  maxBytes?: number,
 ): Promise<string> {
-  const { body } = await readS3Body(bucket, key, access);
+  const body = await readS3Body(bucket, key, access, maxBytes);
+
+  return body.transformToString();
+}
+
+/**
+ * The first `maxBytes` of an object as text. A ranged read, so the rest is
+ * never downloaded; a store that ignores the range is refused as above.
+ */
+export async function readS3TextHead(
+  bucket: string,
+  key: string,
+  maxBytes: number,
+): Promise<string> {
+  const body = await readS3Body(
+    bucket,
+    key,
+    undefined,
+    maxBytes,
+    `bytes=0-${maxBytes - 1}`,
+  );
 
   return body.transformToString();
 }
@@ -469,20 +482,30 @@ async function readS3Body(
   bucket: string,
   key: string,
   access?: S3Access,
-): Promise<{
-  body: NonNullable<GetObjectCommandOutput["Body"]>;
-  contentLength: number | undefined;
-}> {
+  maxBytes?: number,
+  range?: string,
+): Promise<NonNullable<GetObjectCommandOutput["Body"]>> {
   const result = await awsClient(access).send(
     new GetObjectCommand({
       Bucket: bucket,
       Key: key,
+      Range: range,
     }),
   );
 
   if (!result.Body) {
     throw new Error(`S3 object has no body: ${key}`);
   }
+  const contentLength = result.ContentLength;
+  if (
+    maxBytes !== undefined &&
+    (contentLength === undefined || contentLength > maxBytes)
+  ) {
+    await result.Body.transformToWebStream().cancel();
+    throw new Error(
+      `S3 object ${key} is ${contentLength ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
+    );
+  }
 
-  return { body: result.Body, contentLength: result.ContentLength };
+  return result.Body;
 }
