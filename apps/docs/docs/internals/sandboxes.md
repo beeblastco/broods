@@ -544,7 +544,7 @@ sequenceDiagram
   D->>Core: hello: sandbox, hostname, computer, mcp
   Core->>Core: check credentials and sandboxes:write, claim the record
   Core->>CVX: mirror the connection
-  Core->>D: ready
+  Core->>D: ready, expiresInMs for a stage ticket
   T->>Core: run(request)
   Core->>D: exec frame
   D-->>Core: result frame
@@ -552,10 +552,12 @@ sequenceDiagram
   loop every 60 s
     Core->>CVX: mark seen, quiet means offline
   end
+  D->>Core: credential: a fresh ticket, at half the time left
+  Core->>D: ready with the new expiresInMs
 ```
 
 - One daemon holds a record. A second is closed with `4423` naming the holder's host; `--force` replaces the holder, which gets `4409`. Bad credentials close with `4401`, an unknown sandbox name with `4404`, a malformed frame with `4400`.
-- A stage ticket's socket closes with `4419` the moment the ticket expires, and core sends no frame to it after that, even if the timer runs late. `4419` is not fatal: the daemon reconnects with a freshly minted ticket and reclaims its record, and a command still running then fails like any disconnect. Every heartbeat also resolves the daemon's bearer again; one that no longer resolves to the account (key rotated, role session ended or revoked, account suspended) closes with `4401`. A heartbeat that cannot reach Convex keeps the daemon.
+- A stage ticket's socket lives as long as its ticket. `ready` tells the daemon how long that is (`expiresInMs`, relative so a skewed clock cannot move it), and the daemon sends `{ type: "credential", token }` with a freshly minted ticket at half the time left, retrying at half of what remains until core answers. Core resolves that ticket and, only if it is for the socket's own account and stage and may still write sandboxes, moves the deadline and the bearer each heartbeat checks, then sends `ready` again with the new `expiresInMs`. Any other ticket closes the socket with `4401`; one core cannot check for an outage keeps the old deadline. Without a refresh the socket closes with `4419` the moment the ticket expires, and core sends no frame to it after that, even if the timer runs late. `4419` is not fatal: the daemon (and a CLI older than the refresh) reconnects with a freshly minted ticket and reclaims its record, and a command still running then fails like any disconnect. Every heartbeat also resolves the daemon's bearer again; one that no longer resolves to the account (key rotated, role session ended or revoked, account suspended) closes with `4401`. A heartbeat that cannot reach Convex keeps the daemon.
 - The socket accepts a stage ticket minted from `broods login`, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key or the dashboard's member ticket.
 - Frames cap at 4 MiB. A computer action has 30 s, an MCP call 60 s, `bash` its timeout plus 5 s.
 - Validation rejects `persistent`, `size`, `snapshot` and any network mode but `allow-all`, and a machine cannot back a workspace.

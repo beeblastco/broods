@@ -6,7 +6,10 @@
  */
 
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
-import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
+import {
+  sealStageSessionTicket,
+  type StageSessionTicket,
+} from "@broods/convex/model/stageSessionTicket";
 import {
   MachineSandboxExecutor,
   type MachineSocketData,
@@ -17,6 +20,7 @@ import {
   MACHINE_WEBSOCKET_PATH,
   parseCoreFrame,
   type MachineExecFrame,
+  type MachineReadyFrame,
 } from "../src/shared/machine-socket.ts";
 import {
   resetStorageForTests,
@@ -51,7 +55,7 @@ afterEach(async (): Promise<void> => {
   else process.env.STAGE_TICKET_SECRET = previousSecret;
 });
 
-test("a stage ticket's daemon is closed at the ticket's expiry and gets no exec after it", async (): Promise<void> => {
+test("a stage ticket's daemon that sends no fresh one is closed at the ticket's expiry and gets no exec after it", async (): Promise<void> => {
   const writes: MachineConnectionWrite[] = [];
   setStorageForTests(machineStorage(writes));
   const expiresAt = Date.now() + 1500;
@@ -116,6 +120,73 @@ test("a stage ticket's daemon is closed at the ticket's expiry and gets no exec 
     undefined,
   ]);
 }, 10_000);
+
+test("a fresh ticket before the expiry keeps the daemon past it, and frames still flow", async (): Promise<void> => {
+  setStorageForTests(machineStorage());
+  const expiresAt = Date.now() + 1000;
+  const daemon = await connectDaemon(
+    core(),
+    await ticket(expiresAt),
+    (frame, socket): void => socket.send(JSON.stringify(result(frame.id))),
+  );
+  let closed = false;
+  daemon.onclose = (): void => {
+    closed = true;
+  };
+  const acked = nextReady(daemon);
+
+  daemon.send(
+    JSON.stringify({
+      type: "credential",
+      token: await ticket(Date.now() + 60_000),
+    }),
+  );
+  expect((await acked).expiresInMs).toBeGreaterThan(55_000);
+  await Bun.sleep(expiresAt + 500 - Date.now());
+
+  const after = await new MachineSandboxExecutor(machineExecutorConfig()).run({
+    code: "fixture-only-never-executed",
+    timeoutSeconds: 1,
+    outputLimitBytes: 1024,
+  });
+  expect(after.ok).toBe(true);
+  expect(closed).toBe(false);
+}, 10_000);
+
+test("a fresh ticket for another stage or account, or one that cannot write sandboxes, closes the daemon as unauthorized", async (): Promise<void> => {
+  const storage = machineStorage();
+  setStorageForTests(storage);
+  // Any account resolves, so the other account's ticket is refused for the
+  // mismatch rather than for being unknown.
+  const own = await storage.accounts.getById(MACHINE_ACCOUNT_ID);
+  storage.accounts.getById = async (accountId: string) =>
+    own && { ...own, accountId: accountId };
+  const server = core();
+  const expiresAt = Date.now() + 60_000;
+
+  const refreshes: Partial<StageSessionTicket>[] = [
+    { stageId: "stage_prod" },
+    { accountId: "acct_other" },
+    // A plain member's dashboard ticket.
+    { sandboxWrite: undefined },
+  ];
+  for (const refresh of refreshes) {
+    const daemon = await connectDaemon(
+      server,
+      await ticket(expiresAt),
+      (): void => {},
+    );
+    const closed = closeOf(daemon);
+    daemon.send(
+      JSON.stringify({
+        type: "credential",
+        token: await ticket(expiresAt + 60_000, refresh),
+      }),
+    );
+
+    expect((await closed).code).toBe(MACHINE_CLOSE.unauthorized.code);
+  }
+});
 
 test("a frame bound for a daemon past its ticket is refused even before the expiry timer runs", async (): Promise<void> => {
   setStorageForTests(machineStorage());
@@ -211,6 +282,15 @@ function connectDaemon(
   });
 }
 
+function nextReady(socket: WebSocket): Promise<MachineReadyFrame> {
+  return new Promise((resolve): void => {
+    socket.addEventListener("message", (event): void => {
+      const frame = parseCoreFrame(String(event.data));
+      if (frame?.type === "ready") resolve(frame);
+    });
+  });
+}
+
 function openSocket(
   server: Bun.Server<MachineSocketData>,
   token: string,
@@ -238,7 +318,10 @@ function result(id: string): Record<string, unknown> {
 }
 
 /** A `broods login` ticket for the development stage, able to claim a machine. */
-function ticket(expiresAt: number): Promise<string> {
+function ticket(
+  expiresAt: number,
+  overrides: Partial<StageSessionTicket> = {},
+): Promise<string> {
   return sealStageSessionTicket(
     {
       accountId: MACHINE_ACCOUNT_ID,
@@ -249,6 +332,7 @@ function ticket(expiresAt: number): Promise<string> {
       stageSlug: "development",
       sandboxWrite: true,
       expiresAt: expiresAt,
+      ...overrides,
     },
     SECRET,
   );
