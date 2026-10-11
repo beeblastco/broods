@@ -57,11 +57,6 @@ jobs:
         # regenerate the prompt artifacts they need.
         run: bun install --ignore-scripts --frozen-lockfile
 
-      - name: Check dependency advisories
-        # Fails on a high/critical advisory in bun.lock that has no reviewed,
-        # unexpired exception in scripts/audit-gate.ts.
-        run: bun run deps:audit
-
       - name: Lint, format check and typecheck
         run: bun run check
 
@@ -137,6 +132,31 @@ jobs:
             range="origin/dev..$GITHUB_SHA"
           fi
           /tmp/gitleaks/gitleaks git --no-banner --redact --log-opts="$range" .
+
+  dependency-audit:
+    # Fails on a high/critical advisory in bun.lock without a reviewed, unexpired
+    # exception in scripts/audit-gate.ts. Its own job: the result also moves when
+    # an advisory is published or the registry is down, and that must not stop
+    # lint, types and tests in `validate` from reporting.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Test the gate
+        run: bun test scripts/audit-gate.test.ts
+
+      - name: Check dependency advisories
+        run: bun run deps:audit
 
   performance:
     # Deterministic CPU-only benchmarks over the per-request, per-turn and
