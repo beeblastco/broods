@@ -57,6 +57,11 @@ jobs:
         # regenerate the prompt artifacts they need.
         run: bun install --ignore-scripts --frozen-lockfile
 
+      - name: Check dependency advisories
+        # Fails on a high/critical advisory in bun.lock that has no reviewed,
+        # unexpired exception in scripts/audit-gate.ts.
+        run: bun run deps:audit
+
       - name: Lint, format check and typecheck
         run: bun run check
 
