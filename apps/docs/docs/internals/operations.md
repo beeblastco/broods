@@ -87,7 +87,7 @@ flowchart TB
 
 | Knob                                                     | Default | Effect                                                                              |
 | -------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------- |
-| `MAX_INPROCESS_WORKERS`                                  | 8       | Async runs in flight per pod. The rest queue, with their conversation lease renewed |
+| `MAX_INPROCESS_WORKERS`                                  | 8       | Runs in flight per pod, streamed runs too. The rest queue, with their lease renewed |
 | `WORKER_TIMEOUT_BUDGET_MS`                               | 600000  | A run still going 5 s past this loses its slot and fails                            |
 | `MODEL_FIRST_CHUNK_TIMEOUT_MS`, `MODEL_CHUNK_TIMEOUT_MS` | 300000  | Model silence before the first chunk, or between chunks, fails the run              |
 | `REQUEST_TIMEOUT_BUDGET_MS`                              | 600000  | Work deadline of one request                                                        |
