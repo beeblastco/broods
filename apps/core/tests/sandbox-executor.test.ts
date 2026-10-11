@@ -306,23 +306,21 @@ function microvmCommand(type: string) {
     }
   };
 }
+// Every POST the MicroVM got, parsed: /exec requests and the credential refresh.
+const microvmPosts = (): Partial<SandboxExecRequest>[] =>
+  microvmFetchMock.mock.calls.map((call): Partial<SandboxExecRequest> =>
+    JSON.parse(call[1]?.body ?? "{}"),
+  );
 // The `code` of every /exec POST, in order. Skips the credential-refresh POST,
 // which carries scoped keys rather than a script.
 const execBodies = (): string[] =>
-  microvmFetchMock.mock.calls
-    .map(
-      (call): string | undefined =>
-        (JSON.parse(call[1]?.body ?? "{}") as { code?: string }).code,
-    )
+  microvmPosts()
+    .map((post): string | undefined => post.code)
     .filter((code): code is string => typeof code === "string");
 // The env of the first /exec POST whose `code` contains `marker`.
 const execEnv = (marker: string): Record<string, string> | undefined =>
-  microvmFetchMock.mock.calls
-    .map(
-      (call): Partial<SandboxExecRequest> =>
-        JSON.parse(call[1]?.body ?? "{}") as Partial<SandboxExecRequest>,
-    )
-    .find((body): boolean => body.code?.includes(marker) === true)?.env;
+  microvmPosts().find((post): boolean => post.code?.includes(marker) === true)
+    ?.env;
 const microvmRunInput = (): Record<string, unknown> => {
   const call = microvmSendMock.mock.calls.find(
     (c) => (c[0] as { _type?: string })?._type === "RunMicrovm",
