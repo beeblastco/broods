@@ -39,6 +39,8 @@ import type { AccountCipher, WrappedAccountKey } from "../../model/envelope";
 export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
 const AUTH_FAILURE_MAX = 20;
+/** Upper bound on failed-auth counter rows, however many sources fail. */
+export const AUTH_FAILURE_BUCKETS = 4096;
 
 const MAX_PAGE_SIZE = 1000;
 
@@ -429,11 +431,18 @@ export async function writeAudit(
 }
 
 /**
- * Build the failed-auth limiter key from rightmost XFF and token hash prefix.
+ * Build the failed-auth limiter key from the request's source alone; the
+ * bearer value is the caller's to choose, so it never picks the counter.
+ * The source is the rightmost X-Forwarded-For hop: Traefik binds the node's
+ * ports and does not trust inbound forwarded headers, so through the edge that
+ * hop is the client's own address. A caller reaching the Convex site port
+ * directly writes that header itself, so the source is hashed into a fixed set
+ * of buckets: the table never holds more than `AUTH_FAILURE_BUCKETS` rows, and
+ * a spoofed address only lands in a bucket another address already counts in.
  * @param req incoming HTTP request
  * @returns limiter key
  */
-async function authFailureKey(req: Request): Promise<string> {
+export async function authFailureKey(req: Request): Promise<string> {
   const forwarded = req.headers.get("x-forwarded-for") ?? "";
   const ip =
     forwarded
@@ -441,12 +450,29 @@ async function authFailureKey(req: Request): Promise<string> {
       .map((entry) => entry.trim())
       .filter(Boolean)
       .pop() ?? "unknown";
-  const token = bearerToken(req);
-  const tokenHashPrefix = token
-    ? (await sha256Hex(token)).slice(0, 8)
-    : "missing";
+  const digest = await sha256Hex(sourcePrefix(ip));
 
-  return `${ip}:${tokenHashPrefix}`;
+  return `source:${parseInt(digest.slice(0, 8), 16) % AUTH_FAILURE_BUCKETS}`;
+}
+
+/**
+ * An IPv6 client usually holds a whole /64, so it counts as one source by that
+ * prefix; anything else counts as written.
+ * @param ip address from X-Forwarded-For
+ * @returns source the limiter counts
+ */
+function sourcePrefix(ip: string): string {
+  if (!ip.includes(":") || ip.includes(".")) return ip;
+  const [head = "", tail = ""] = ip.split("::");
+  const headGroups = head ? head.split(":") : [];
+  const tailGroups = tail ? tail.split(":") : [];
+  const zeros = Math.max(0, 8 - headGroups.length - tailGroups.length);
+  const groups = [...headGroups, ...Array(zeros).fill("0"), ...tailGroups];
+
+  return `${groups
+    .slice(0, 4)
+    .map((group) => parseInt(group, 16).toString(16))
+    .join(":")}::/64`;
 }
 
 /**

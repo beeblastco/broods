@@ -4311,7 +4311,7 @@ components:
                 | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
                 | `slack_error` | 502 | Slack returned another error or did not answer in time (channel directory). |
                 | `status_access_denied` | 403 | The run status belongs to another deployment than this credential's. |
-                | `too_many_auth_failures` | 429 | Too many unauthorized attempts from this caller. Retry after `Retry-After`. |
+                | `too_many_auth_failures` | 429 | Too many unauthorized attempts from this client address, whatever credentials they carried. A valid credential still authenticates. Retry after `Retry-After`. |
                 | `unauthorized` | 401 | Missing, invalid or revoked credential. |
                 | `unknown_webhook_stage` | 404 | No stage of this account is deployed at the webhook URL's endpoint id. |
                 | `unknown_webhook_url` | 404 | The webhook path matches neither webhook URL shape. |
