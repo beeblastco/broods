@@ -33,7 +33,7 @@ import {
 
 // Streaming would buy nothing here: chat pictures are small, and the cap exists
 // to stop a large workspace file from sitting in the pod's 1 GiB alongside a run.
-export const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
 interface MediaObject {
   bucket: string;
@@ -169,15 +169,19 @@ export async function locateMediaObject(
 }
 
 // The bytes of an object `locateMediaObject` found, for the media route and for
-// conversation replay. Core is outside AWS, so bytes from the managed bucket are
-// AWS egress. A tenant's own bucket is the tenant's bill.
+// conversation replay, refused past the media cap or with no known length. Core
+// is outside AWS, so bytes from the managed bucket are AWS egress. A tenant's
+// own bucket is the tenant's bill.
 export async function readMediaObject(
   object: MediaObject,
   accountId: string,
 ): Promise<Uint8Array> {
-  const bytes = object.access
-    ? await readS3Bytes(object.bucket, object.key, object.access)
-    : await readS3Bytes(object.bucket, object.key);
+  const bytes = await readS3Bytes(
+    object.bucket,
+    object.key,
+    object.access,
+    MAX_MEDIA_BYTES,
+  );
   if (!object.access) {
     recordUsage(accountId, { egressGb: bytes.byteLength / 1e9 });
   }

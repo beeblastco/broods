@@ -3152,20 +3152,42 @@ function serializeError(error: unknown): Record<string, unknown> {
 
 // Trace attributes keep a media part's type and size, not its base64: a
 // screenshot would fill the attribute with truncated noise. This covers the
-// tool results in a step's messages.
+// tool results and the user attachments in a step's messages.
 function messagesWithoutMediaBytes(messages: ModelMessage[]): ModelMessage[] {
-  return messages.map((message): ModelMessage =>
-    message.role === "tool"
-      ? {
-          ...message,
-          content: message.content.map((part) =>
-            part.type === "tool-result"
-              ? { ...part, output: toolOutputWithoutMediaBytes(part.output) }
-              : part,
-          ),
+  return messages.map((message): ModelMessage => {
+    if (message.role === "tool") {
+      return {
+        ...message,
+        content: message.content.map((part) =>
+          part.type === "tool-result"
+            ? { ...part, output: toolOutputWithoutMediaBytes(part.output) }
+            : part,
+        ),
+      };
+    }
+    if (message.role !== "user" || typeof message.content === "string") {
+      return message;
+    }
+
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type === "image" && part.image instanceof Uint8Array) {
+          return {
+            ...part,
+            image: `[${part.mediaType ?? "image"}, ${Math.round(part.image.byteLength / 1024)} KB]`,
+          };
         }
-      : message,
-  );
+
+        return part.type === "file" && part.data instanceof Uint8Array
+          ? {
+              ...part,
+              data: `[${part.mediaType}, ${Math.round(part.data.byteLength / 1024)} KB]`,
+            }
+          : part;
+      }),
+    };
+  });
 }
 
 // A tool's own output for its trace span, without media bytes.
