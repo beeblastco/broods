@@ -4,11 +4,19 @@
  * destination by client-side navigation. Each is timed until its own content
  * is on screen; anything over the render budget fails the run. The
  * dashboard sub-tabs (Monitoring, Tracing, Usage, Billing) are covered by the
- * cold loads; sidebar navigation covers the top-level routes. The session and
- * project come from `auth.setup.ts`.
+ * cold loads; sidebar navigation covers the top-level routes. A second test
+ * loads Monitoring with history and drives a live log burst through it. The
+ * session and project come from `auth.setup.ts`.
  */
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { PAGE_RENDER_BUDGET_MS } from "../../app/lib/perfReport";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type WebSocketRoute,
+} from "@playwright/test";
+import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts";
+import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
 import {
   BASE_URL,
   CANVAS_READY,
@@ -17,6 +25,7 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
+import { timeClientNavigation, waitForReady } from "../lib/timing";
 
 interface ProbePage {
   name: string;
@@ -32,7 +41,9 @@ interface Sample {
 }
 
 const COLD_VISITS = 2;
-const READY_TIMEOUT_MS = 30_000;
+// The live burst: the hook's whole retention, the most one burst can show.
+const BURST_EVENTS = 2_000;
+const BACKFILL_ROWS = 200;
 
 /**
  * A deployment is probed from a GitHub runner on another continent, so the
@@ -153,11 +164,13 @@ test("every page renders cold within budget, and every sidebar destination by na
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
   await waitForReady(PROJECT_PAGES[0].ready(navPage));
   for (const dest of SIDEBAR_NAV) {
-    const start = await navPage.evaluate(() => performance.now());
-    await navPage.getByRole("link", { name: dest.label, exact: true }).click();
-    await waitForReady(dest.ready(navPage));
-    const end = await navPage.evaluate(() => performance.now());
-    samples.push({ page: dest.label, kind: "navigate", ms: end - start });
+    const ms = await timeClientNavigation(
+      navPage,
+      () =>
+        navPage.getByRole("link", { name: dest.label, exact: true }).click(),
+      dest.ready(navPage),
+    );
+    samples.push({ page: dest.label, kind: "navigate", ms: ms });
   }
   await navContext.close();
 
@@ -184,12 +197,126 @@ test("every page renders cold within budget, and every sidebar destination by na
   ).toEqual([]);
 });
 
-/** Polls every frame: `locator.waitFor` backs off to 500 ms, rounding timings up to the next half second. */
-async function waitForReady(marker: Locator): Promise<void> {
+// A busy stage on Monitoring: history on screen and a line open, then a burst
+// of live lines with the mix a real stream carries (mostly short lines, an
+// occasional large payload, stragglers older than what is shown, and lines
+// that arrive twice). The socket is answered here, so the numbers are the
+// page's own: how long until the newest line is on screen, and how long the
+// main thread was blocked on the way.
+test("a live log burst on Monitoring reaches the screen without blocking the page", async ({
+  browser,
+}) => {
+  const projectId = readProjectId();
+  const context = await browser.newContext(SIGNED_IN_CONTEXT);
+  const page = await context.newPage();
+  const now = Date.now();
+  // Sockets the panel subscribed on, in order. The route is in place before
+  // the page loads: one added while it loads never reaches that document.
+  const subscribed: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
+    // The panel's only message on this socket is its subscribe.
+    socket.onMessage(() => {
+      socket.send(JSON.stringify({ type: "ready" }));
+      socket.send(
+        JSON.stringify({
+          type: "backfill",
+          stream: "logs",
+          entries: Array.from({ length: BACKFILL_ROWS }, (_, index) =>
+            logLine(`backfill ${index}`, now - 60_000 + index * 100, 300),
+          ),
+        }),
+      );
+      subscribed.push(socket);
+    });
+  });
+  await page.goto(`/${projectId}/dashboard?tab=monitoring`, {
+    waitUntil: "commit",
+  });
   await expect
-    .poll(() => marker.first().isVisible(), {
-      intervals: [16],
-      timeout: READY_TIMEOUT_MS,
+    .poll(() => subscribed.length, {
+      message: "Monitoring subscribes to its log stream",
+      timeout: 30_000,
     })
-    .toBe(true);
+    .toBeGreaterThan(0);
+  const route = subscribed[0];
+  const opened = page.getByRole("cell", {
+    name: `backfill ${BACKFILL_ROWS - 1}`,
+    exact: true,
+  });
+  await waitForReady(opened);
+  await opened.click();
+  const detail = page.getByRole("button", { name: "Close details" });
+  await waitForReady(detail);
+
+  const burst = Array.from({ length: BURST_EVENTS }, (_, index) => {
+    // Every 50th line repeats the one before it, never the last, so the
+    // newest line is a new one. Every 25th is a straggler, older than every
+    // burst line before it.
+    const line = index % 50 === 25 ? index - 1 : index;
+    const at = line % 25 === 12 ? now - 30_000 + line : now + line;
+
+    return JSON.stringify({
+      type: "log",
+      entry: logLine(`burst ${line}`, at, line % 100 === 0 ? 8_000 : 300),
+    });
+  });
+  const longTasks = await page.evaluateHandle(() => {
+    const durations: number[] = [];
+    new PerformanceObserver((list) => {
+      durations.push(...list.getEntries().map((entry) => entry.duration));
+    }).observe({ type: "longtask" });
+
+    return durations;
+  });
+  const start = performance.now();
+  for (const message of burst) route.send(message);
+  await waitForReady(
+    page.getByRole("cell", { name: `burst ${BURST_EVENTS - 1}`, exact: true }),
+  );
+  const visibleMs = performance.now() - start;
+  // A task still running when the row lands is reported when it ends.
+  await page.waitForTimeout(250);
+  const tasks = await longTasks.jsonValue();
+  const longestMs = Math.max(0, ...tasks);
+  await expect(detail).toBeVisible();
+  await context.close();
+
+  const result = {
+    events: BURST_EVENTS,
+    visibleMs: Math.round(visibleMs),
+    longTasks: tasks.length,
+    longestTaskMs: Math.round(longestMs),
+    totalLongTaskMs: Math.round(tasks.reduce((sum, ms) => sum + ms, 0)),
+  };
+  console.log(`Live burst ${JSON.stringify(result)}`);
+  await test.info().attach("burst", {
+    body: JSON.stringify(result, null, 2),
+    contentType: "application/json",
+  });
+  // The harness pushes all 2,000 frames through the browser protocol, and
+  // that transport is in this number the way the network is in a deployed
+  // run, so it gets the deployed budget. Blocking is the page's own: the
+  // long-task budget below is what a per-line rebuild breaks.
+  expect(
+    visibleMs,
+    `newest of ${BURST_EVENTS} live lines on screen`,
+  ).toBeLessThanOrEqual(DEPLOYED_RENDER_BUDGET_MS);
+  expect(longestMs, "longest main-thread task").toBeLessThanOrEqual(
+    PERF_BUDGETS["long-task"],
+  );
+});
+
+/** One log line whose row reads `name`, padded to about `bytes` of message. */
+function logLine(
+  name: string,
+  ts: number,
+  bytes: number,
+): ObservabilityLogEntry {
+  return {
+    ts: ts,
+    level: "INFO",
+    eventType: "",
+    message: JSON.stringify({ message: name, payload: "x".repeat(bytes) }),
+    service: "core",
+  };
 }
