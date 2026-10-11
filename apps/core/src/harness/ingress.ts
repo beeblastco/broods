@@ -21,14 +21,17 @@ import {
 import { runtime } from "../shared/convex/runtime.ts";
 import {
   accountAgentScopedKey,
-  CHANNEL_SESSION_KEY_FORMAT,
   createRunId,
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
+  SLACK_INTEGRATION_PREFIX,
+  TELEGRAM_INTEGRATION_PREFIX,
 } from "../shared/runtime-keys.ts";
 import { getStorage } from "../shared/storage.ts";
 import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 
+/** How a channel session's key reads, for send-message's description and refusal. */
+export const CHANNEL_SESSION_KEY_FORMAT = `channel prefix plus platform ids, e.g. ${TELEGRAM_INTEGRATION_PREFIX}<chatId> (negative for groups), ${SLACK_INTEGRATION_PREFIX}<teamId>:<channelId>[:<threadTs>]`;
 export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const DEFAULT_INGRESS_MAX_COUNT = 100;

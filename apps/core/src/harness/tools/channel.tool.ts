@@ -13,11 +13,11 @@ import {
 } from "../../shared/channels.ts";
 import { logWarn } from "../../shared/log.ts";
 import { contentTypeForPath } from "../../shared/media-types.ts";
-import { CHANNEL_SESSION_KEY_FORMAT } from "../../shared/runtime-keys.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type {
-  RunSessionMessageDispatch,
-  SessionMessageInput,
+import {
+  CHANNEL_SESSION_KEY_FORMAT,
+  type RunSessionMessageDispatch,
+  type SessionMessageInput,
 } from "../ingress.ts";
 import {
   resolveWorkspace,
