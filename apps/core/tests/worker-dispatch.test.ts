@@ -554,9 +554,11 @@ describe("streamed runs", (): void => {
       [1, 2, 3, 4, 5].map((index): Promise<Response> => streamedRun(index)),
     );
 
-    expect(responses.map((response): number => response.status).sort()).toEqual(
-      [200, 200, 503, 503, 503],
-    );
+    expect(
+      responses
+        .map((response): number => response.status)
+        .sort((a, b): number => a - b),
+    ).toEqual([200, 200, 503, 503, 503]);
     expect(ingress.acceptIngress).toHaveBeenCalledTimes(2);
     expect(settles()).toEqual([]);
     expect(workerQueueFull()).toBe(true);
