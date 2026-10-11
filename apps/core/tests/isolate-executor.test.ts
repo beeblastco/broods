@@ -843,19 +843,27 @@ describe("streamIsolatePayload cross-process abort", () => {
     }
   }, 10_000);
 
-  it("fails a call whose runner never says ready within the run timeout", async () => {
+  it("gives up on a runner that never says ready after its start deadline, not the run timeout", async () => {
+    // The start deadline used to be the 30 s run timeout, so each hook fire
+    // waited three of them (~90 s) on a hung runner before skipping the hook.
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-hang-"));
     created.push(dir);
+    const marker = join(dir, "spawns.txt");
     const stubPath = join(dir, "silent-runner.mjs");
-    await writeFile(stubPath, "setInterval(() => {}, 1000);", "utf8");
+    await writeFile(
+      stubPath,
+      `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(marker)}, "x"); setInterval(() => {}, 1000);`,
+      "utf8",
+    );
     delete process.env.ISOLATE_POOL;
     process.env.ISOLATE_RUNNER_PATH = stubPath;
-    process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS = "1";
+    process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS = "60";
 
     const { shutdownIsolatePool, streamIsolatePayload } =
       await import("../src/harness/isolate/executor.ts");
     shutdownIsolatePool();
     try {
+      const started = performance.now();
       const failure = await (async (): Promise<string> => {
         for await (const output of streamIsolatePayload("acct_hang", {
           bundleSourceB64: Buffer.from("export default {};").toString("base64"),
@@ -873,10 +881,14 @@ describe("streamIsolatePayload cross-process abort", () => {
       expect(failure).toBe(
         "isolate worker failed to start: isolate worker did not become ready",
       );
+      expect(await readFile(marker, "utf8")).toBe("xxx");
+      // Three 5 s start deadlines plus 300 ms of backoff, about 15 s. The bound
+      // leaves room for a loaded runner and still sits under one 60 s run timeout.
+      expect(performance.now() - started).toBeLessThan(30_000);
     } finally {
       shutdownIsolatePool();
     }
-  }, 10_000);
+  }, 35_000);
 });
 
 // A fixed timer here raced the runner's startup: abort before the stub installs
