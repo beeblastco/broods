@@ -27,6 +27,7 @@ import {
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
 import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
+import { MAX_CONFIGURED_SKILLS } from "../../convex/model/skillLimits.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
@@ -1391,6 +1392,24 @@ function validateHarnessStringArray(
   }
 }
 
+/**
+ * Same cap as the Convex validator, which CLI sync never runs: core reads
+ * every listed skill on each turn.
+ */
+function assertSkillCap(
+  resource: Extract<AnyResource, { kind: "agent" }>,
+): void {
+  const skills = new Set(
+    resource.config.skills?.allowed?.map((skill): string =>
+      isResource(skill) ? skill.name : skill,
+    ),
+  );
+  if (skills.size <= MAX_CONFIGURED_SKILLS) return;
+  throw new Error(
+    `Agent "${resource.name}" config.skills.allowed must list at most ${MAX_CONFIGURED_SKILLS} skills`,
+  );
+}
+
 function normalizeAgentConfig(
   resource: Extract<AnyResource, { kind: "agent" }>,
   _projectRoot: string,
@@ -1412,6 +1431,7 @@ function normalizeAgentConfig(
       `Agent "${resource.name}" sandboxes[${index}] "${String(sandbox)}" is listed more than once`,
     );
   });
+  assertSkillCap(resource);
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;

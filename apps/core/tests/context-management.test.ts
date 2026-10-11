@@ -70,6 +70,7 @@ await mock.module("../src/shared/s3.ts", () => ({
     (error as { $metadata?: { httpStatusCode?: number } }).$metadata
       ?.httpStatusCode === 404,
   readS3Text: readS3TextMock,
+  readS3TextHead: readS3TextMock,
   readS3Bytes: mock(async () => new Uint8Array()),
   writeS3Object: mock(async () => 0),
   s3ObjectExists: mock(async () => false),

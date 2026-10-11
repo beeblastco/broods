@@ -40,6 +40,7 @@ import {
   type CliOnboardingProject,
   type CliProject,
   type CliStage,
+  type CliStageSession,
   diffManifests,
   BroodsSyncClient,
   ManifestConflictError,
@@ -110,9 +111,6 @@ import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with 
 const VERSION = packageJson.version;
 const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
-// Re-mint a stage ticket this long before it expires, so a reconnect never
-// presents one the gateway is about to refuse.
-const STAGE_SESSION_REFRESH_MS = 60_000;
 // How often `broods dev` re-reads the stage when another session keeps syncing it.
 const DEV_SYNC_ATTEMPTS = 3;
 const DEFAULT_SERVICE_REGION = "eu-west-1";
@@ -2390,8 +2388,8 @@ async function resolveProjectStage(
 
 /**
  * The stage the logs, stream and machine commands act on, with a credential
- * for it: a 15-minute ticket minted from the `broods login` token and re-minted
- * once it nears expiry. Never the runtime key, which sits in frontends.
+ * for it: a 15-minute ticket minted from the `broods login` token, a fresh one
+ * per call. Never the runtime key, which sits in frontends.
  * Project and stage come back as slugs, which the gateway paths match on.
  */
 async function openStageSession(
@@ -2409,19 +2407,21 @@ async function openStageSession(
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
-  let session = await client.mintStageSession(
+  const session = await client.mintStageSession(
     configured.project,
     configured.stage,
   );
+  // A socket closes when its ticket expires, so every call after the first,
+  // a reconnect or a machine refresh, mints a ticket with its full lifetime:
+  // one reused with a minute left would close the socket a minute later.
+  let unused: CliStageSession | undefined = session;
   const credential = async (): Promise<string> => {
-    if (session.expiresAt - Date.now() < STAGE_SESSION_REFRESH_MS) {
-      session = await client.mintStageSession(
-        configured.project,
-        configured.stage,
-      );
-    }
+    const fresh =
+      unused ??
+      (await client.mintStageSession(configured.project, configured.stage));
+    unused = undefined;
 
-    return session.token;
+    return fresh.token;
   };
 
   // The socket must open on the server that issued the ticket; prod rejects a

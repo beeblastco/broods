@@ -25,6 +25,7 @@ const SCOPE = {
   projectSlug: "project",
   stageSlug: "production",
   endpointIds: ["endpoint-1"],
+  expiresAt: Number.MAX_SAFE_INTEGER,
 };
 
 const realFetch = globalThis.fetch;

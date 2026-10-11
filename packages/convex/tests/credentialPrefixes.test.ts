@@ -23,6 +23,7 @@ type T = ReturnType<typeof prefixTest>;
 
 beforeEach(() => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  vi.stubEnv("SERVICE_AUTH_SECRET", "test-service-secret");
 });
 
 describe("credential prefixes", () => {

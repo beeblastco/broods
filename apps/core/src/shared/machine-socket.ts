@@ -41,6 +41,8 @@ const HOLDER_MAX_BYTES = 40;
 
 export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
+  // Not fatal: the daemon reconnects with a fresh credential.
+  expired: { code: 4419, reason: "Credential expired" },
   occupied: { code: 4423, reason: "Already connected from another daemon" },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
   unauthorized: { code: 4401, reason: "Unauthorized; run broods login" },
@@ -117,6 +119,14 @@ const computerResultFrame = z.object({
   error: z.string().optional(),
 });
 
+// A fresh stage ticket for the socket's own account and stage, sent before the
+// one it holds expires, so core moves the deadline instead of closing a daemon
+// mid-command.
+const credentialFrame = z.object({
+  type: z.literal("credential"),
+  token: z.string().min(1),
+});
+
 const execFrame = z.object({
   type: z.literal("exec"),
   id: z.string(),
@@ -189,9 +199,13 @@ const mcpToolsFrame = z.object({
   error: z.string().optional(),
 });
 
+// Sent again each time core takes a fresh credential frame.
 const readyFrame = z.object({
   type: z.literal("ready"),
   sandboxId: z.string(),
+  // Only for a stage ticket: how long until core closes the socket. Relative,
+  // so a daemon whose clock is off still refreshes in time.
+  expiresInMs: z.number().optional(),
 });
 
 const resultFrame = z.object({
@@ -215,6 +229,7 @@ const coreFrame = z.discriminatedUnion("type", [
 
 const daemonFrame = z.discriminatedUnion("type", [
   computerResultFrame,
+  credentialFrame,
   helloFrame,
   mcpResultFrame,
   mcpToolsFrame,

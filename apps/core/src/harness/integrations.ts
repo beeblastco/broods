@@ -823,6 +823,9 @@ async function handleHttpRequest(
       projectSlug: auth.projectSlug,
       stageSlug: auth.stageSlug,
       endpointIds: [auth.endpointId],
+      // The gateway closes the socket at this instant: a ticket is checked
+      // once at the upgrade, so its lifetime must ride along.
+      expiresAt: auth.stageTicket.expiresAt,
     });
   }
 

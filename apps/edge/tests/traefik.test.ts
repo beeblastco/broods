@@ -90,6 +90,32 @@ test("the cluster limits HTTP in three routers and upgrades in one", (): void =>
   expect(limited("limit-http").join()).not.toMatch(/webhooks|media/);
 });
 
+// The config plane's failed-auth limiter trusts the hop Traefik appends to
+// X-Forwarded-For, so the edge must count each peer address itself and never
+// key its own limit on a header the caller writes.
+test("the cluster limits every config route by peer address", (): void => {
+  const config = clusterRoutes().filter(
+    (route) => route.services[0]?.name === "convex",
+  );
+
+  expect(config.length).toBeGreaterThan(0);
+  for (const route of config) {
+    expect(route.middlewares.map((middleware) => middleware.name)).toContain(
+      "broods-edge-limit-http",
+    );
+  }
+  expect(
+    renderKubernetes([], "beeblast").find(
+      (resource) => resource.metadata.name === "broods-edge-limit-http",
+    ),
+  ).toMatchObject({
+    spec: { rateLimit: { average: 20, period: "1s", burst: 200 } },
+  });
+  expect(JSON.stringify(renderKubernetes([], "beeblast"))).not.toMatch(
+    /sourceCriterion|ipStrategy|requestHeaderName/,
+  );
+});
+
 // Download and media links carry their credential in the path.
 test("download and media links stay out of the access log", (): void => {
   const unlogged = Object.entries(renderFileConfig(UPSTREAMS).http.routers)

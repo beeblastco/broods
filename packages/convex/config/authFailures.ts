@@ -1,6 +1,7 @@
 /**
  * Failed-auth rate limiter state for the public config HTTP surface: one
- * counter per (ip, token prefix) key, and its daily prune.
+ * counter per source bucket (`authFailureKey` in `routes/shared.ts`), never per
+ * bearer value, and its daily prune.
  */
 
 import { v } from "convex/values";

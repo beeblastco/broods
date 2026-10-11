@@ -2,7 +2,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { defaultStage } from "../defaultStage";
 import type { OrgRole } from "./org";
-import { getProjectForRole } from "./project";
+import { getProjectForRole, getProjectForWrite } from "./project";
 
 export async function getOwnedStage(
   ctx: QueryCtx | MutationCtx,
@@ -22,6 +22,21 @@ export async function getOwnedStage(
   if (!project) return null;
 
   return stage;
+}
+
+/** `getOwnedStage` for a write, upload or compute call; see `getProjectForWrite`. */
+export async function getStageForWrite(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+  stageId: Id<"stages">,
+  requiredRole?: OrgRole,
+): Promise<Doc<"stages"> | null> {
+  const stage = await ctx.db.get(stageId);
+  if (!stage) return null;
+
+  return (await getProjectForWrite(ctx, authId, stage.projectId, requiredRole))
+    ? stage
+    : null;
 }
 
 /**

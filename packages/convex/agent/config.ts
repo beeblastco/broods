@@ -29,7 +29,10 @@ import {
   type AuditActor,
 } from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
-import { getProjectForRole } from "../model/ownership/project";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "../model/ownership/project";
 import {
   deleteAgentConfig,
   saveAgentRuntimeSecrets,
@@ -93,7 +96,7 @@ export const create = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       projectId,
@@ -579,7 +582,7 @@ async function assertAgentConfigAdmin(
   authId: string,
   config: { projectId: Id<"projects"> },
 ): Promise<void> {
-  if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
+  if (!(await getProjectForWrite(ctx, authId, config.projectId, "admin"))) {
     throw new Error(AGENT_ADMIN_REQUIRED);
   }
 }

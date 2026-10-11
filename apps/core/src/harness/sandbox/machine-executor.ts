@@ -8,6 +8,7 @@
 import {
   authorize,
   rolePrincipal,
+  type ApiResource,
   type RolePrincipal,
 } from "@broods/convex/model/apiAuthorization";
 import { resolveBearerAuth } from "../../shared/auth.ts";
@@ -80,12 +81,22 @@ interface MachineConnection {
 export interface MachineSocketData {
   /** Unset for a bearer with no account. */
   accountId?: string;
+  /** The bearer it upgraded with, resolved again every heartbeat. */
+  authorization?: string;
   claimed?: boolean;
   /** Set once the socket closes, so a claim still awaiting its lookup drops it. */
   closed?: boolean;
+  /**
+   * Unix ms a stage ticket dies at, and the timer that closes the socket then.
+   * A credential frame with a fresh ticket moves both.
+   */
+  expiresAt?: number;
+  expiry?: ReturnType<typeof setTimeout>;
   key?: string;
   /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
+  /** The sandbox a role session claimed, checked again on every heartbeat. */
+  claim?: ApiResource;
   /** Set for a stage ticket or a stage-pinned role, which claim only their own stage's records. */
   stage?: { projectId: string; stageId: string };
 }
@@ -154,6 +165,7 @@ export function isMachineUpgrade(request: Request): boolean {
 export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
   {
     maxPayloadLength: MACHINE_MAX_FRAME_BYTES,
+    open: armExpiry,
     message: function (socket, raw): void {
       const accountId = socket.data.accountId;
       if (!accountId) {
@@ -174,6 +186,11 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
 
         return;
       }
+      if (frame.type === "credential") {
+        void refreshCredential(socket, frame.token);
+
+        return;
+      }
       if (frame.type !== "hello") {
         if (socket.data.key) settleReply(socket.data.key, frame);
 
@@ -191,6 +208,7 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
     },
     close: function (socket): void {
       socket.data.closed = true;
+      clearTimeout(socket.data.expiry);
       const key = socket.data.key;
       const connection = key ? connections.get(key) : undefined;
       // A replaced socket must not tear down its successor's registration.
@@ -306,13 +324,18 @@ export async function upgradeMachineSocket(
   // So the embeddable runtime key is refused (it sits in frontends), and so
   // is a stage ticket any org member can mint in the dashboard: only one
   // minted for a member who may write the stage's sandboxes gets through.
+  // The bearer stays with the socket so each heartbeat resolves it again: a
+  // revoked key, an ended role session or a suspended account loses the
+  // claim within a minute, and a ticket closes the socket when it expires.
+  const authorization = request.headers.get("authorization") ?? "";
   let data: MachineSocketData = {};
   if (auth?.kind === "account") {
-    data = { accountId: auth.account.accountId };
+    data = { accountId: auth.account.accountId, authorization: authorization };
   } else if (auth?.kind === "role") {
     const { projectId, stageId } = auth.role;
     data = {
       accountId: auth.account.accountId,
+      authorization: authorization,
       role: auth.role,
       // A stage-pinned role claims like a ticket for its stage.
       ...(projectId && stageId
@@ -325,6 +348,8 @@ export async function upgradeMachineSocket(
   ) {
     data = {
       accountId: auth.account.accountId,
+      authorization: authorization,
+      expiresAt: auth.stageTicket.expiresAt,
       stage: {
         projectId: auth.stageTicket.projectId,
         stageId: auth.stageTicket.stageId,
@@ -335,6 +360,17 @@ export async function upgradeMachineSocket(
   return server.upgrade(request, { data: data })
     ? undefined
     : Response.json({ error: "WebSocket upgrade failed" }, { status: 400 });
+}
+
+function armExpiry(socket: Bun.ServerWebSocket<MachineSocketData>): void {
+  const expiresAt = socket.data.expiresAt;
+  if (expiresAt === undefined) return;
+  clearTimeout(socket.data.expiry);
+  socket.data.expiry = setTimeout(
+    (): void =>
+      socket.close(MACHINE_CLOSE.expired.code, MACHINE_CLOSE.expired.reason),
+    expiresAt - Date.now(),
+  );
 }
 
 async function claimSandbox(
@@ -365,19 +401,20 @@ async function claimSandbox(
     : named[0];
   // Claiming a machine is a write on that sandbox, so a role session needs
   // sandboxes:write for it. The name only arrives in the hello, hence here.
+  const claim: ApiResource | undefined = record && {
+    type: "sandboxes",
+    id: record.sandboxId,
+    projectId: record.projectId,
+    stageId: record.stageId,
+  };
   const denied =
-    record !== undefined &&
+    claim !== undefined &&
     socket.data.role !== undefined &&
-    !authorize(rolePrincipal(socket.data.role), "sandboxes:write", {
-      type: "sandboxes",
-      id: record.sandboxId,
-      projectId: record.projectId,
-      stageId: record.stageId,
-    }).allow;
+    !authorize(rolePrincipal(socket.data.role), "sandboxes:write", claim).allow;
   if (denied) {
     logWarn("Machine sandbox claim refused", {
       accountId: accountId,
-      sandbox: record.name,
+      sandbox: hello.sandbox,
       roleId: socket.data.role?.roleId,
       host: hello.hostname,
     });
@@ -422,6 +459,7 @@ async function claimSandbox(
     );
   }
   socket.data.key = key;
+  socket.data.claim = claim;
   const ref: MachineConnectionRef = {
     accountId: accountId,
     connectionId: crypto.randomUUID(),
@@ -437,11 +475,7 @@ async function claimSandbox(
     ref: ref,
     socket: socket,
   });
-  const ready: MachineReadyFrame = {
-    type: "ready",
-    sandboxId: record.sandboxId,
-  };
-  socket.send(JSON.stringify(ready));
+  sendReady(socket, record.sandboxId);
   mirrorConnection(() =>
     getStorage().machineConnections.connected({
       ...ref,
@@ -523,6 +557,62 @@ function mirrorConnection(write: () => Promise<void>): void {
     });
 }
 
+// Only a ticket socket's own account and stage, still allowed to write its
+// sandboxes, moves the deadline: anything else closes, so a refresh never
+// reaches what the socket could not claim. An outage keeps the old deadline
+// and the daemon tries again.
+async function refreshCredential(
+  socket: Bun.ServerWebSocket<MachineSocketData>,
+  token: string,
+): Promise<void> {
+  const authorization = `Bearer ${token}`;
+  let auth: Awaited<ReturnType<typeof resolveBearerAuth>>;
+  try {
+    auth = await resolveBearerAuth({ authorization: authorization });
+  } catch (error: unknown) {
+    logWarn("Machine sandbox credential refresh failed", {
+      accountId: socket.data.accountId,
+      error: toErrorMessage(error),
+    });
+
+    return;
+  }
+  if (socket.data.closed) return;
+  const ticket =
+    auth?.kind === "deployment" &&
+    auth.account.accountId === socket.data.accountId
+      ? auth.stageTicket
+      : undefined;
+  const stage = socket.data.stage;
+  if (
+    socket.data.expiresAt === undefined ||
+    ticket?.sandboxWrite !== true ||
+    ticket.projectId !== stage?.projectId ||
+    ticket.stageId !== stage?.stageId
+  ) {
+    logWarn("Machine sandbox credential refresh refused", {
+      accountId: socket.data.accountId,
+    });
+    socket.close(
+      MACHINE_CLOSE.unauthorized.code,
+      MACHINE_CLOSE.unauthorized.reason,
+    );
+
+    return;
+  }
+  // Two refreshes can resolve out of order; the older ticket never wins.
+  if (ticket.expiresAt <= socket.data.expiresAt) return;
+  socket.data.authorization = authorization;
+  socket.data.expiresAt = ticket.expiresAt;
+  armExpiry(socket);
+  const connection = socket.data.key
+    ? connections.get(socket.data.key)
+    : undefined;
+  if (connection?.socket === socket) {
+    sendReady(socket, connection.ref.sandboxConfigId);
+  }
+}
+
 function registryKey(accountId: string, sandboxConfigId: string): string {
   return `${accountId}:${sandboxConfigId}`;
 }
@@ -541,6 +631,22 @@ function sendFrame(
   timeoutMs: number,
 ): Promise<MachineReply> {
   return new Promise((resolve, reject): void => {
+    // Timers run late under load, so a frame never waits on the expiry one: a
+    // daemon past its credential gets no exec, env or anything else.
+    const expiresAt = connection.socket.data.expiresAt;
+    if (expiresAt !== undefined && expiresAt <= Date.now()) {
+      connection.socket.close(
+        MACHINE_CLOSE.expired.code,
+        MACHINE_CLOSE.expired.reason,
+      );
+      reject(
+        new Error(
+          `machine sandbox "${connection.name}" is reconnecting with a fresh credential`,
+        ),
+      );
+
+      return;
+    }
     const timer = setTimeout((): void => {
       connection.pending.delete(frame.id);
       reject(
@@ -563,7 +669,63 @@ function sendHeartbeats(): void {
     mirrorConnection(() =>
       getStorage().machineConnections.seen(connection.ref),
     );
+    void revalidate(connection.socket);
   }
+}
+
+// An outage keeps the daemon: only a bearer that no longer resolves to the
+// socket's account closes it, and an expired ticket closes as expired so the
+// daemon reconnects with a fresh one instead of stopping.
+async function revalidate(
+  socket: Bun.ServerWebSocket<MachineSocketData>,
+): Promise<void> {
+  const authorization = socket.data.authorization ?? "";
+  let auth: Awaited<ReturnType<typeof resolveBearerAuth>>;
+  try {
+    auth = await resolveBearerAuth({ authorization: authorization });
+  } catch (error: unknown) {
+    logWarn("Machine sandbox revalidation failed", {
+      accountId: socket.data.accountId,
+      error: toErrorMessage(error),
+    });
+
+    return;
+  }
+  // A refresh that landed meanwhile is the bearer to judge now, not this one.
+  if (socket.data.closed || socket.data.authorization !== authorization) {
+    return;
+  }
+  // A role keeps its claim only while its policy still lets it write there.
+  const claim = socket.data.claim;
+  if (
+    auth &&
+    auth.kind !== "admin" &&
+    auth.account.accountId === socket.data.accountId &&
+    (auth.kind !== "role" ||
+      claim === undefined ||
+      authorize(rolePrincipal(auth.role), "sandboxes:write", claim).allow)
+  )
+    return;
+  const expiresAt = socket.data.expiresAt;
+  const close =
+    expiresAt !== undefined && expiresAt <= Date.now()
+      ? MACHINE_CLOSE.expired
+      : MACHINE_CLOSE.unauthorized;
+  socket.close(close.code, close.reason);
+}
+
+// A ticket socket learns how long it has, so the daemon refreshes in time.
+function sendReady(
+  socket: Bun.ServerWebSocket<MachineSocketData>,
+  sandboxId: string,
+): void {
+  const expiresAt = socket.data.expiresAt;
+  const ready: MachineReadyFrame = {
+    type: "ready",
+    sandboxId: sandboxId,
+    ...(expiresAt === undefined ? {} : { expiresInMs: expiresAt - Date.now() }),
+  };
+  socket.send(JSON.stringify(ready));
 }
 
 function settleReply(key: string, reply: MachineReply): void {

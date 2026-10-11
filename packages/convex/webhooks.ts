@@ -24,7 +24,7 @@ import {
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getProjectForRole } from "./model/ownership/project";
+import { getProjectForWrite } from "./model/ownership/project";
 
 // Webhook URLs and signing secrets can point agent events at any host, so
 // editing them is an org admin operation. The secret itself is write-only.
@@ -206,7 +206,7 @@ async function mutateAgentWebhooks(
 ): Promise<void> {
   const config = await ctx.db.get(agentConfigId);
   if (!config) throw new Error("Agent config not found.");
-  if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
+  if (!(await getProjectForWrite(ctx, authId, config.projectId, "admin"))) {
     throw new Error(WEBHOOK_ADMIN_REQUIRED);
   }
 
