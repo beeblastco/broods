@@ -74,7 +74,8 @@ export interface MatrixAccountOptions {
   apiUrl: string;
   /**
    * Awaited per event, so delivery keeps timeline order. Resolves false to have
-   * the event held back and offered again, like one that cannot be decrypted yet.
+   * the event held back and offered again, like one that cannot be decrypted
+   * yet; a held event then lands after the ones that went through meanwhile.
    */
   onEvent: (event: MatrixForwardedEvent) => Promise<boolean>;
   storeDir: string;

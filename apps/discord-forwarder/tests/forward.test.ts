@@ -146,15 +146,20 @@ describe("forwarding a gateway message", () => {
   // The backoff alone waits at least 800ms before the second attempt.
   it("waits as long as Retry-After asks instead of the backoff", async (): Promise<void> => {
     let calls = 0;
-    globalThis.fetch = (async (): Promise<Response> => {
-      calls += 1;
+    using server = Bun.serve({
+      port: 0,
+      fetch: (): Response => {
+        calls += 1;
 
-      return calls === 1
-        ? new Response("", { headers: { "retry-after": "0" }, status: 429 })
-        : new Response("", { status: 200 });
-    }) as unknown as typeof fetch;
+        return calls === 1
+          ? new Response("", { headers: { "retry-after": "0" }, status: 429 })
+          : new Response("", { status: 200 });
+      },
+    });
     const started = performance.now();
-    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+    await forwardMessageCreate(MESSAGE, null, "token-a", [
+      { ...TARGETS[0]!, webhookUrl: `http://localhost:${server.port}/` },
+    ]);
 
     expect(calls).toBe(2);
     expect(performance.now() - started).toBeLessThan(500);
