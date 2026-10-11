@@ -1536,6 +1536,8 @@ export async function runAgentLoop(
           },
         );
       const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
+      const toolInput =
+        tracked.attributes["tool.input"] ?? traceAttribute(toolCall.input);
       const outputErrorText = toolOutputErrorText(output);
       const toolSucceeded =
         toolOutput.type === "tool-result" && !outputErrorText;
@@ -1562,7 +1564,7 @@ export async function runAgentLoop(
         "tool.duration_ms": toolDurationMs,
         "tool.success": toolSucceeded,
         "tool.state": toolSucceeded ? "completed" : "failed",
-        "tool.input": traceAttribute(toolCall.input),
+        "tool.input": toolInput,
         ...computeAttributes,
         ...outputAttributes,
       });
@@ -1593,7 +1595,7 @@ export async function runAgentLoop(
         attributes: {
           ...tracked.attributes,
           "tool.state": toolSucceeded ? "completed" : "failed",
-          "tool.input": traceAttribute(toolCall.input),
+          "tool.input": toolInput,
           ...computeAttributes,
           ...outputAttributes,
           ...(stepNumber !== undefined
