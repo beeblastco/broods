@@ -80,6 +80,7 @@ const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 // rides each model request as base64, and providers cap a request (Anthropic at
 // 32 MB, after base64's third), while the pod holds them all at once. Past it a
 // link stays a link and the provider fetches it, as it did before replay read.
+// One file inlines only up to the picture cap, so a big PDF stays a link too.
 const MAX_REPLAY_BYTES_PER_TURN = 20 * 1024 * 1024;
 
 // A bound on one message, not on the conversation. Every attachment past it is
@@ -669,8 +670,8 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * The bytes behind a sealed link, read once per turn and kept in the media
  * cache. A link left for the provider is fetched by it again on every model
  * step, and a file the agent deleted would 404 there and fail the whole turn.
- * Null keeps the link: not a sealed link, another account's link, a file past
- * the turn's budget, or a read error (a file over the media cap among them),
+ * Null keeps the link: not a sealed link, another account's link, a file over
+ * the picture cap or past the turn's budget, or a read error (a file over the media cap among them),
  * which is not proof of a deletion. The account check matters because this
  * read runs on core's own credentials and meters the ticket's account, and
  * nothing else ties a link pasted into a conversation to the account running it.
@@ -691,7 +692,7 @@ async function readSealedMedia(
   }
   const cached = cachedMedia(link);
   if (cached) {
-    if (cached.byteLength > replay.remainingBytes) {
+    if (cached.byteLength > Math.min(MAX_IMAGE_BYTES, replay.remainingBytes)) {
       return null;
     }
     replay.remainingBytes -= cached.byteLength;
@@ -706,7 +707,10 @@ async function readSealedMedia(
     // The head's length is charged before the read, so links read side by
     // side never pass the budget together; the read itself caps the object.
     const size = object.head.contentLength;
-    if (size === undefined || size > replay.remainingBytes) {
+    if (
+      size === undefined ||
+      size > Math.min(MAX_IMAGE_BYTES, replay.remainingBytes)
+    ) {
       return null;
     }
     replay.remainingBytes -= size;

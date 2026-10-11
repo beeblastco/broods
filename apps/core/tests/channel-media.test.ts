@@ -855,20 +855,29 @@ describe("rehydrateStoredMedia", () => {
     expect(meterWrites).toEqual([]);
   });
 
-  // Every inlined picture rides each model request, so a turn inlines a
-  // bounded amount and leaves the rest as links for the provider to fetch.
-  it("leaves links past the turn's byte budget for the provider", async (): Promise<void> => {
+  // Every inlined file rides each model request, so a turn inlines a bounded
+  // amount, one file at most a picture's cap, and leaves the rest as links.
+  it("leaves big files and links past the turn's byte budget for the provider", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
-    const size = 15 * 1024 * 1024;
-    headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
-      contentLength: size,
-    }));
+    const sizeOf = (key: string): number =>
+      (key.includes("big") ? 7 : 5) * 1024 * 1024;
+    headS3ObjectMock.mockImplementation(
+      async (_bucket: string, key: string): Promise<S3ObjectHead> => ({
+        contentLength: sizeOf(key),
+      }),
+    );
     readS3BytesMock.mockImplementation(
-      async (): Promise<Uint8Array> => new Uint8Array(size),
+      async (_bucket: string, key: string): Promise<Uint8Array> =>
+        new Uint8Array(sizeOf(key)),
     );
     const stored = [
-      sealedImageMessage({ accountId: ACCOUNT, path: "media/b1/a.jpeg" }),
-      sealedImageMessage({ accountId: ACCOUNT, path: "media/b2/b.jpeg" }),
+      sealedImageMessage({ accountId: ACCOUNT, path: "media/b0/big.jpeg" }),
+      ...[1, 2, 3, 4, 5].map((index) =>
+        sealedImageMessage({
+          accountId: ACCOUNT,
+          path: `media/b${index}/a.jpeg`,
+        }),
+      ),
     ];
 
     const messages = await rehydrateStoredMedia(
@@ -887,8 +896,9 @@ describe("rehydrateStoredMedia", () => {
         "image" in part &&
         Buffer.isBuffer(part.image),
     );
-    expect(inlined).toHaveLength(1);
-    expect(readS3BytesMock).toHaveBeenCalledTimes(1);
+    // The 7 MB file is over the cap; four 5 MB files fill the 20 MB budget.
+    expect(inlined).toHaveLength(4);
+    expect(readS3BytesMock).toHaveBeenCalledTimes(4);
   });
 
   it("leaves a conversation with no references untouched", async () => {
