@@ -36,6 +36,7 @@ import {
   type AsyncAgentOutcome,
 } from "./async-agent-result.ts";
 import {
+  DEADLINE_WIND_DOWN_MS,
   readAgentFullStream,
   runAgentLoop,
   USER_STOP_MESSAGE,
@@ -84,6 +85,12 @@ const STILL_RUNNING_NOTE =
 // child's result event id, so a later turn's get_subagent_status read reaches
 // it. Core runs one replica, so every reader is in this process.
 const detachedResults = new Map<string, SubagentCoordinator>();
+// Wall clock one child turn may take. The loop winds it down to a tools-off
+// answer DEADLINE_WIND_DOWN_MS before; a turn still running that long past the
+// budget, stuck in a tool call, is aborted.
+const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
+const SUBAGENT_BUDGET_INSTRUCTION = `You are a subagent with a ${SUBAGENT_BUDGET_MS / 60_000}-minute budget for this task. Pace yourself: near the end your tools are turned off and you must answer with what you have.`;
+const SUBAGENT_BUDGET_EXCEEDED = `Subagent ran far past its ${SUBAGENT_BUDGET_MS / 60_000}-minute budget and was cut off before it answered.`;
 
 interface SubagentCompletion {
   taskId: string;
@@ -176,6 +183,8 @@ export class SubagentCoordinator {
   >();
   // Read, but that tool result is not saved to the parent yet.
   private readonly readUnsaved = new Set<string>();
+  // The parent's user stop, which every child run listens to.
+  private readonly childStop = new AbortController();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -296,14 +305,22 @@ export class SubagentCoordinator {
         Date.now() + HEARTBEAT_INTERVAL_MS,
         this.waitUntilMs,
       );
-      await Promise.race([
-        this.nextStateChange(),
-        sleep(Math.max(heartbeatAt - Date.now(), 0)),
+      const timerWoke = await Promise.race([
+        this.nextStateChange().then((): boolean => false),
+        sleep(Math.max(heartbeatAt - Date.now(), 0)).then((): boolean => true),
       ]);
 
       if (this.pending.size > 0) {
         // Awaited, so a heartbeat that finds the run lost ends the wait.
         await options.onHeartbeat?.(this.pending.size);
+        // No step boundary runs while the parent waits, so a user stop reaches
+        // the children here, once per heartbeat interval.
+        if (
+          timerWoke &&
+          (await this.parentSession.renewConversationLease()) === "stopped"
+        ) {
+          this.stopChildren();
+        }
       }
     }
 
@@ -478,6 +495,14 @@ export class SubagentCoordinator {
     }
 
     return result;
+  }
+
+  /**
+   * The parent's user stop: aborts every running child at once, so each ends
+   * as stopped rather than working on for a request nobody waits for.
+   */
+  stopChildren(): void {
+    this.childStop.abort(new Error(USER_STOP_MESSAGE));
   }
 
   /**
@@ -807,6 +832,12 @@ export class SubagentCoordinator {
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
+    const deadlineMs = Date.now() + SUBAGENT_BUDGET_MS;
+    const budget = new AbortController();
+    const budgetTimer = setTimeout((): void => {
+      budget.abort(new Error(SUBAGENT_BUDGET_EXCEEDED));
+    }, SUBAGENT_BUDGET_MS + DEADLINE_WIND_DOWN_MS);
+    budgetTimer.unref?.();
     try {
       // Persistent mode writes the task prompt first so the child model response
       // and tool messages append to that conversation.
@@ -833,6 +864,10 @@ export class SubagentCoordinator {
         {
           ...(subagentParent ? { subagentParent: subagentParent } : {}),
           isolatedSandbox: task.isolatedSandbox,
+          // Never yields: the child holds no worker slot, so near its budget
+          // it winds down to an answer instead.
+          deadlineMs: deadlineMs,
+          abortSignal: AbortSignal.any([budget.signal, this.childStop.signal]),
           ...(task.persistent
             ? {
                 askParent: (
@@ -896,6 +931,8 @@ export class SubagentCoordinator {
         });
       });
       throw error;
+    } finally {
+      clearTimeout(budgetTimer);
     }
   }
 
@@ -975,10 +1012,10 @@ export class SubagentCoordinator {
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
-    // Past the parent's wait budget there is no live parent turn left to inject
-    // into, so hand the envelope to a standalone worker instead of running it
-    // here and dropping the answer.
-    if (Date.now() >= this.waitUntilMs) {
+    // Past the parent's wait budget, or after its stop, there is no live
+    // parent turn left to inject into, so hand the envelope to a standalone
+    // worker instead of running it here and dropping the answer.
+    if (Date.now() >= this.waitUntilMs || this.childStop.signal.aborted) {
       await this.transferChildConversation(childSession, task);
 
       return;
@@ -1107,10 +1144,15 @@ export class SubagentCoordinator {
     task: ResolvedSubagentTask,
     incoming: ModelMessage[],
   ): Promise<TurnContextSnapshot> {
+    // The child is told its budget so it can pace itself.
+    const ephemeralSystem: SystemModelMessage[] = [
+      ...task.parentEphemeralSystem,
+      { role: "system", content: SUBAGENT_BUDGET_INSTRUCTION },
+    ];
     if (!task.persistent) {
       return childSession.createEphemeralTurnContext(
         [...(task.inheritedContext ? task.parentMessages : []), ...incoming],
-        task.parentEphemeralSystem,
+        ephemeralSystem,
       );
     }
 
@@ -1119,12 +1161,12 @@ export class SubagentCoordinator {
     // That is enough to load prior child history; when omitted, this is a new
     // persistent child conversation with a generated public key.
     if (task.resuming || !task.inheritedContext) {
-      return childSession.createTurnContext(task.parentEphemeralSystem);
+      return childSession.createTurnContext(ephemeralSystem);
     }
 
     return childSession.createEphemeralTurnContext(
       [...task.parentMessages, ...incoming],
-      task.parentEphemeralSystem,
+      ephemeralSystem,
     );
   }
 
