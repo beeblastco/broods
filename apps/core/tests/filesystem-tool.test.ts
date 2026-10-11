@@ -1,4 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ToolApprovalStatus } from "ai";
 import type { SandboxToolContext } from "../src/harness/tools/filesystem-utils.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
@@ -1111,12 +1120,92 @@ describe("sandbox tool set", () => {
     expect(lastSandboxExec().payload.code).toContain("fs.readdirSync");
   });
 
-  it("grep uses ripgrep", async () => {
+  it("grep runs ripgrep when the image has it, else grep -E", async () => {
     const grep = await tool("grep", workspaceCtx());
     await grep.execute({ pattern: "TODO" });
     const { code } = lastSandboxExec().payload;
-    expect(code).toContain("rg");
-    expect(code).toContain("'TODO'");
+    expect(code).toStartWith("if command -v rg >/dev/null 2>&1; then 'rg' ");
+    expect(code).toContain("else 'grep' '-rIE'");
+    expect(code).toContain("'-e' 'TODO'");
+  });
+
+  it("grep still searches in an image without ripgrep", async () => {
+    // A PATH holding only grep stands in for an image that never installed rg,
+    // and the guest exec runs the tool's script for real in a temp workspace.
+    const root = mkdtempSync(join(tmpdir(), "grep-fallback-"));
+    const bin = join(root, "bin");
+    const workspace = join(root, "ws");
+    mkdirSync(bin);
+    mkdirSync(join(workspace, "src"), { recursive: true });
+    symlinkSync(Bun.which("grep") ?? "/usr/bin/grep", join(bin, "grep"));
+    writeFileSync(join(workspace, "src", "a.ts"), "one\nhas TODO here\n");
+    writeFileSync(join(workspace, "notes.md"), "TODO too\n");
+    writeFileSync(join(workspace, "empty.ts"), "nothing\n");
+    mkdirSync(join(workspace, "dist"));
+    writeFileSync(join(workspace, "dist", "out.js"), "TODO built\n");
+    mkdirSync(join(workspace, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(workspace, "node_modules", "dep", "x.js"), "TODO\n");
+    microvmFetchMock.mockImplementation(
+      async (url: string, init: { body: string }): Promise<Response> => {
+        const { code } = JSON.parse(init.body);
+        if (code.includes("mountpoint -q ")) {
+          return microvmFetchResponse(url, init);
+        }
+        const run = Bun.spawnSync(["/bin/bash", "-c", code], {
+          cwd: workspace,
+          env: { PATH: bin },
+        });
+
+        return Response.json({
+          ok: run.exitCode === 0,
+          runtime: "bash",
+          exit_code: run.exitCode,
+          timed_out: false,
+          duration_ms: 1,
+          stdout: run.stdout.toString(),
+          stderr: run.stderr.toString(),
+        });
+      },
+    );
+    const grep = await tool("grep", workspaceCtx());
+    const search = async (input: Record<string, unknown>): Promise<string> => {
+      const output = String(await grep.execute({ pattern: "TO+DO", ...input }));
+
+      // GNU grep names files bare; ugrep (macOS dev boxes) prefixes `./`.
+      return output
+        .split("\n")
+        .map((line): string => line.replace(/^\.\//, ""))
+        .sort()
+        .join("\n");
+    };
+
+    try {
+      expect(await search({})).toBe("dist/out.js\nnotes.md\nsrc/a.ts");
+      expect(await search({ glob: "**/*.ts", output_mode: "count" })).toBe(
+        "src/a.ts:1",
+      );
+      expect(await search({ glob: "!dist/**" })).toBe("notes.md\nsrc/a.ts");
+      expect(await search({ glob: "!*.md" })).toBe("dist/out.js\nsrc/a.ts");
+      expect(await search({ glob: "src/*" })).toBe("src/a.ts");
+      expect(await search({ path: "node_modules/dep" })).toBe(
+        "node_modules/dep/x.js",
+      );
+      expect(
+        await search({
+          path: "src",
+          output_mode: "content",
+          line_numbers: true,
+          case_insensitive: true,
+        }),
+      ).toBe("src/a.ts:2:has TODO here");
+      expect(await search({ pattern: "absent" })).toBe("No matches found");
+      expect(
+        grep.execute({ pattern: "(", output_mode: "count" }),
+      ).rejects.toThrow();
+    } finally {
+      microvmFetchMock.mockImplementation(microvmFetchResponse);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("rejects unknown named workspaces", async () => {
