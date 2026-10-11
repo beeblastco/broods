@@ -317,15 +317,16 @@ describe("logging helpers", () => {
         SECRET_NAME: "secret-name-value",
       },
       runtimeVariables: [
-        { key: "BOT_NAME", value: "tracy-bot" },
         { key: "SMTP_USER", value: "smtp-key-value" },
-        { key: "WEBHOOK", value: "webhook-secret-value" },
+        { key: "KAFKA_SASL_USER_NAME", value: "sasl-key-value" },
+        { name: "WEBHOOK", value: "webhook-secret-value" },
       ],
     });
 
     expect(secrets.sort()).toEqual([
       "github-token-value",
       "postgres://u:db-password@host/db",
+      "sasl-key-value",
       "secret-name-value",
       "smtp-key-value",
       "webhook-secret-value",

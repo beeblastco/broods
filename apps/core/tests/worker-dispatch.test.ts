@@ -213,7 +213,7 @@ describe("in-process worker dispatch", () => {
       jest.advanceTimersByTime(5_000);
       expect(signal?.aborted).toBe(true);
       expect((signal?.reason as Error).message).toBe(
-        "Run exceeded the worker deadline",
+        "I ran out of time on this turn.",
       );
       await drainInProcessWorkers();
     } finally {

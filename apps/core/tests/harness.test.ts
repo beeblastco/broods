@@ -1005,13 +1005,13 @@ describe("runAgentLoop", () => {
       abortSignal: slot.signal,
     });
     setTimeout(
-      () => slot.abort(new Error("Run exceeded the worker deadline")),
+      () => slot.abort(new Error("I ran out of time on this turn.")),
       100,
     );
     await stream.consumeStream();
 
     expect(stream.didFail()).toBe(true);
-    expect(stream.failureText()).toBe("Run exceeded the worker deadline");
+    expect(stream.failureText()).toBe("I ran out of time on this turn.");
     // The abort reached the provider call, and the second step never started.
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
     expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(
@@ -1152,34 +1152,11 @@ describe("runAgentLoop", () => {
   it("meters the turn total when it counts more than the steps", async () => {
     const writes: TaskUsageInput[] = [];
     setStorageForTests(usageStorage(writes));
-    streamTextScenario = "multi-step-text";
-    installHarnessEnv();
-    const { runAgentLoop } = await import("../src/harness/harness.ts");
-    const stream = await runAgentLoop(
-      {
-        conversationKey: "direct:conversation",
-        eventId: "direct-event",
-        filesystemNamespace: () => "fs-test",
-        resolvedWorkspaces: () => [],
-        sandboxes: () => [],
-        environmentText: () => "<environment>",
-        persistModelMessages: async () => {},
-        loadRefreshedSystemPromptParts: async () => ({
-          systemContextSnapshot: { cursor: null, messages: [] },
-          system: [],
-        }),
-      } as never,
-      {
-        messages: [{ role: "user", content: "hello" }],
-        system: [],
-        ephemeralSystem: [],
-        systemContextSnapshot: { cursor: null, messages: [] },
-      },
-      {
-        provider: { google: { apiKey: "google-key" } },
-        model: { provider: "google", modelId: "gemini-custom" },
-      },
-      { onFinalText: async () => {}, onErrorText: async () => {} },
+    const stream = await startTwoStepTurn(
+      undefined,
+      {},
+      undefined,
+      "multi-step-text",
     );
     await stream.consumeStream();
 
@@ -3450,7 +3427,7 @@ function installHarnessEnv(): void {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
 }
 
-// Starts the "real-two-step" weather turn on the real SDK loop.
+// Starts a two-step turn, by default the "real-two-step" weather turn on the real SDK loop.
 async function startTwoStepTurn(
   persistModelMessages: () => Promise<string[]> = async () => [],
   loopOptions: AgentLoopOptions = {},
@@ -3458,9 +3435,10 @@ async function startTwoStepTurn(
     renewal: "renewed",
     steering: null,
   }),
+  scenario: StreamTextScenario = "real-two-step",
 ): Promise<AgentLoopStream> {
   installHarnessEnv();
-  streamTextScenario = "real-two-step";
+  streamTextScenario = scenario;
   const { runAgentLoop } = await import("../src/harness/harness.ts");
 
   return runAgentLoop(
@@ -3723,6 +3701,7 @@ async function firstStepCall(
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
         system: system,
+        storedSystemEnd: 1,
       }),
     } as never,
     {
