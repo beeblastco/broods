@@ -17,6 +17,9 @@ import {
 import { shellQuote } from "../sandbox/utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
+// Vendored trees grep skips like rg does, unless the search path is inside one.
+const VENDORED_DIRS = [".git", "node_modules"];
+
 type OutputMode = "content" | "files_with_matches" | "count";
 
 interface GrepInput {
@@ -32,7 +35,7 @@ interface GrepInput {
 export default function grepTool(context: SandboxToolContext): ToolSet {
   return {
     grep: tool({
-      description: `A powerful content search tool over the workspace, built on ripgrep (GNU grep -E on images without it).
+      description: `A powerful content search tool over the workspace, built on ripgrep.
 
 Usage notes:
 - pattern is a regular expression, e.g. \`function\\s+\\w+\` or \`log.*Error\`. Images without ripgrep run it as \`grep -E\`, so prefer portable syntax (\`[0-9]\` over \`\\d\`).
@@ -40,7 +43,7 @@ Usage notes:
 - Filter files with the \`glob\` parameter (e.g. \`*.ts\`) and narrow the search root with \`path\`.
 - Prefer this over \`bash grep\`/\`rg\` for searching file contents.`,
       inputSchema: jsonSchema<GrepInput>(inputSchema(context)),
-      execute: async function (input) {
+      execute: async function (input): Promise<string> {
         const { pattern, workspace } = input;
         try {
           if (typeof pattern !== "string" || pattern.length === 0) {
@@ -89,21 +92,15 @@ Usage notes:
   };
 }
 
-// An rg glob as grep --include/--exclude flags. grep matches the file name only, so
-// `**/*.py` narrows to `*.py`; `!` excludes like rg, and one `{a,b}` group expands,
-// since grep's fnmatch has no braces.
-function grepGlobFlags(glob: string): string[] {
+// An rg glob as one grep flag. grep matches names only, so `**/*.py` narrows to
+// `*.py` (lossy); a negated directory glob like `!dist/**` skips that directory.
+function grepGlobFlag(glob: string): string {
   const exclude = glob.startsWith("!");
-  const name = glob.replace(/^!/, "").split("/").pop() || "*";
-  const [, before, options, after] = /^(.*)\{([^{}]*)\}(.*)$/.exec(name) ?? [];
-  const names =
-    options === undefined
-      ? [name]
-      : options.split(",").map((part): string => `${before}${part}${after}`);
+  const pattern = glob.replace(/^!/, "");
+  const dir = /(?:^|\/)([^/*]+)\/(?:\*\*)?$/.exec(pattern)?.[1];
+  if (exclude && dir) return `--exclude-dir=${dir}`;
 
-  return names.map(
-    (each): string => `--${exclude ? "exclude" : "include"}=${each}`,
-  );
+  return `--${exclude ? "exclude" : "include"}=${pattern.split("/").pop() || "*"}`;
 }
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
@@ -114,8 +111,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
     properties: {
       pattern: {
         type: "string",
-        description:
-          "Regular expression to search for (ripgrep syntax, or grep -E where ripgrep is missing).",
+        description: "Regular expression to search for.",
       },
       path: {
         type: "string",
@@ -151,32 +147,31 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
 // with the same flags, so a custom image without rg still searches.
 function searchCommand(input: GrepInput): string {
   const mode: OutputMode = input.output_mode ?? "files_with_matches";
-  const rg = ["rg"];
-  // Like rg, skip binaries and the usual vendored trees. No path searches the
-  // cwd with clean relative names.
+  const flags: string[] = [];
+  if (input.case_insensitive) flags.push("-i");
+  if (mode === "files_with_matches") flags.push("-l");
+  else if (mode === "count") flags.push("-c");
+  else if (input.line_numbers) flags.push("-n");
+  const path = input.path ? toWorkspaceRelative(input.path) : undefined;
+  const tail = ["-e", input.pattern, ...(path ? ["--", path] : [])];
+  const inside = new Set(path?.split("/"));
+  const rg = [
+    "rg",
+    ...flags,
+    ...(input.glob ? ["-g", input.glob] : []),
+    ...tail,
+  ];
+  // -I skips binaries like rg; no path searches the cwd with clean relative names.
   const grep = [
     "grep",
     "-rIE",
-    "--exclude-dir=.git",
-    "--exclude-dir=node_modules",
+    ...VENDORED_DIRS.filter((dir): boolean => !inside.has(dir)).map(
+      (dir): string => `--exclude-dir=${dir}`,
+    ),
+    ...flags,
+    ...(input.glob ? [grepGlobFlag(input.glob)] : []),
+    ...tail,
   ];
-  const shared: string[] = [];
-  if (input.case_insensitive) shared.push("-i");
-  if (mode === "files_with_matches") shared.push("-l");
-  else if (mode === "count") shared.push("-c");
-  else if (input.line_numbers) shared.push("-n");
-  rg.push(...shared);
-  grep.push(...shared);
-  if (input.glob) {
-    rg.push("-g", input.glob);
-    grep.push(...grepGlobFlags(input.glob));
-  }
-  for (const args of [rg, grep]) {
-    args.push("-e", input.pattern);
-    if (input.path) args.push("--", toWorkspaceRelative(input.path));
-  }
-  const ripgrep = rg.map(shellQuote).join(" ");
-  const fallback = grep.map(shellQuote).join(" ");
 
-  return `if command -v rg >/dev/null 2>&1; then ${ripgrep}; else ${fallback}; fi`;
+  return `if command -v rg >/dev/null 2>&1; then ${rg.map(shellQuote).join(" ")}; else ${grep.map(shellQuote).join(" ")}; fi`;
 }
