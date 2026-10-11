@@ -17,7 +17,7 @@ The system prompt shown on a trace is the whole assembled prompt, meaning your `
 
 Members and admins can both read logs and traces. See [Security](security.md).
 
-The search, range and selected run are in the page URL, so a link opens the same view. See [Dashboard links](dashboard-links.md).
+The search, range and selected run are in the page URL, so a link opens the same view.
 
 ## In the terminal
 
