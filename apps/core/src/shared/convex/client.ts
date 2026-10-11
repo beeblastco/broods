@@ -6,15 +6,53 @@
  * JWTs; deploy keys (`prod:...|...` / `dev:...|...`) are admin credentials and
  * Convex parses them via a separate header.
  *
- * TODO: the Convex package currently exposes only internalQuery /
- * internalMutation; HTTP client typings reject internal function refs.
- * The provider casts the function refs to `any` at the call site. A
- * follow-up should add public action wrappers in the submodule so the
- * types line up.
+ * Every adapter reaches the backend's internal functions through `internal`
+ * and `adminQuery` / `adminMutation` here. The HTTP client's typings accept
+ * public refs only, but the deploy key may call internal ones, so these take an
+ * internal ref and check the call against that function's own args and result.
  */
 
 import { ConvexHttpClient } from "convex/browser";
+import type { HttpMutationOptions } from "convex/browser";
+import {
+  getFunctionName,
+  makeFunctionReference,
+  type DefaultFunctionArgs,
+  type FunctionArgs,
+  type FunctionReference,
+  type FunctionReturnType,
+} from "convex/server";
+import type { GenericId } from "convex/values";
+import type { internal as InternalApi } from "@broods/convex/_generated/api";
 import { requireEnv } from "../env.ts";
+
+/**
+ * The backend's internal functions, reached with require() on purpose: core
+ * imports no backend module for its value. The type is the generated API,
+ * which `codegen.staticApi` (packages/convex/convex.json) writes from each
+ * function's args and returns validators, so it pulls no backend source into
+ * this package's stricter typecheck.
+ */
+export const internal: typeof InternalApi =
+  require("@broods/convex/_generated/api").internal;
+
+/**
+ * Args as they travel: a document id is a plain string on the wire, which the
+ * function's `v.id(...)` validator checks, and core holds every id as one.
+ */
+type WireArgs<Args> =
+  Args extends GenericId<string>
+    ? string
+    : Args extends readonly unknown[]
+      ? { [Index in keyof Args]: WireArgs<Args[Index]> }
+      : Args extends object
+        ? { [Key in keyof Args]: WireArgs<Args[Key]> }
+        : Args;
+
+type AdminRef<Type extends "query" | "mutation"> = FunctionReference<
+  Type,
+  "internal"
+>;
 
 let cached: ConvexHttpClient | null = null;
 
@@ -48,4 +86,36 @@ export function getConvexClient(): ConvexHttpClient {
 
 export function resetConvexClientForTests(): void {
   cached = null;
+}
+
+/** Runs internal query `ref` with the deploy key. */
+export function adminQuery<Ref extends AdminRef<"query">>(
+  ref: Ref,
+  args: WireArgs<FunctionArgs<Ref>>,
+): Promise<FunctionReturnType<Ref>> {
+  return getConvexClient().query(
+    makeFunctionReference<
+      "query",
+      DefaultFunctionArgs,
+      FunctionReturnType<Ref>
+    >(getFunctionName(ref)),
+    args,
+  );
+}
+
+/** Runs internal mutation `ref` with the deploy key. */
+export function adminMutation<Ref extends AdminRef<"mutation">>(
+  ref: Ref,
+  args: WireArgs<FunctionArgs<Ref>>,
+  options?: HttpMutationOptions,
+): Promise<FunctionReturnType<Ref>> {
+  return getConvexClient().mutation(
+    makeFunctionReference<
+      "mutation",
+      DefaultFunctionArgs,
+      FunctionReturnType<Ref>
+    >(getFunctionName(ref)),
+    args,
+    options,
+  );
 }

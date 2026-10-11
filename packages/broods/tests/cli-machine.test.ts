@@ -171,7 +171,7 @@ test("the daemon hands core a fresh ticket before the one it holds expires", asy
   let calls = 0;
   const startedAt = Date.now();
 
-  await expect(
+  expect(
     runMachineDaemon({
       baseUrl: core.url,
       credential: async (): Promise<string> => {

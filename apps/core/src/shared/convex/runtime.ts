@@ -1,8 +1,7 @@
 /** Runtime-persistence calls shared by the harness and account cleanup. */
 
-import { getConvexClient } from "./client.ts";
-
-const internal: any = require("@broods/convex/_generated/api").internal;
+import type { FunctionReturnType } from "convex/server";
+import { adminMutation, adminQuery, internal } from "./client.ts";
 
 // Exported so tests can verify each reference against the actual registered
 // Convex module export as well as the exact function path sent to Convex.
@@ -60,8 +59,8 @@ export const runtimeMutations = {
   takeNextIngress: internal.runtimeIngress.takeNext,
 } as const;
 
-type RuntimeQueryName = keyof typeof runtimeQueries;
-type RuntimeMutationName = keyof typeof runtimeMutations;
+type RuntimeQueries = typeof runtimeQueries;
+type RuntimeMutations = typeof runtimeMutations;
 
 /**
  * Mutable call boundary used by focused core tests without a live deployment.
@@ -69,21 +68,16 @@ type RuntimeMutationName = keyof typeof runtimeMutations;
  * wait on each other; a caller that needs an order awaits it.
  */
 export const runtime = {
-  query: function <T>(
-    name: RuntimeQueryName,
-    args: Record<string, unknown>,
-  ): Promise<T> {
-    return getConvexClient().query(
-      runtimeQueries[name],
-      args as any,
-    ) as Promise<T>;
+  query: function <Name extends keyof RuntimeQueries>(
+    name: Name,
+    args: Parameters<typeof adminQuery<RuntimeQueries[Name]>>[1],
+  ): Promise<FunctionReturnType<RuntimeQueries[Name]>> {
+    return adminQuery(runtimeQueries[name], args);
   },
-  mutate: function <T>(
-    name: RuntimeMutationName,
-    args: Record<string, unknown>,
-  ): Promise<T> {
-    return getConvexClient().mutation(runtimeMutations[name], args as any, {
-      skipQueue: true,
-    }) as Promise<T>;
+  mutate: function <Name extends keyof RuntimeMutations>(
+    name: Name,
+    args: Parameters<typeof adminMutation<RuntimeMutations[Name]>>[1],
+  ): Promise<FunctionReturnType<RuntimeMutations[Name]>> {
+    return adminMutation(runtimeMutations[name], args, { skipQueue: true });
   },
 };

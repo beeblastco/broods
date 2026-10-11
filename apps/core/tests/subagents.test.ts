@@ -745,7 +745,7 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_1", "first"));
     internals.completions.push(completion("subagent_2", "second"));
 
-    await expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
+    expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
       "convex down",
     );
     expect(persistModelMessages.mock.calls[0]?.[0]).toHaveLength(2);
@@ -783,9 +783,9 @@ describe("SubagentCoordinator", () => {
     });
 
     expect(await coordinator.waitForIdle()).toBe("timeout");
-    await expect(
-      coordinator.drainCompletionsAndDetachToParent(),
-    ).rejects.toThrow("convex down");
+    expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
+      "convex down",
+    );
     // The retry writes both, once, in order; nothing is left to write again.
     expect(await coordinator.drainCompletionsToParent()).toBe(2);
     expect(await coordinator.drainCompletionsToParent()).toBe(0);
@@ -858,9 +858,9 @@ describe("SubagentCoordinator", () => {
     runtime.mutate = mock(async () => true) as never;
     try {
       await coordinator.dispatch([{ prompt: "research" }], []);
-      await expect(
-        coordinator.drainCompletionsAndDetachToParent(),
-      ).rejects.toThrow("convex down");
+      expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
+        "convex down",
+      );
       finish();
       while (coordinator.runningCount > 0) await Bun.sleep(1);
 
@@ -1104,7 +1104,7 @@ describe("SubagentCoordinator", () => {
 
     // A key the runtime never minted could name another caller's direct-API
     // conversation with the child agent.
-    await expect(
+    expect(
       internals.resolveTask(
         { prompt: "recount", conversationKey: "user-123" },
         [],
@@ -1118,7 +1118,7 @@ describe("SubagentCoordinator", () => {
       `-${"0".repeat(32)}`,
     );
     for (const conversationKey of ["subagent-persistent-alice", forged]) {
-      await expect(
+      expect(
         internals.resolveTask(
           { prompt: "recount", conversationKey: conversationKey },
           [],

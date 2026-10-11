@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
   getConvexClient,
+  internal,
   resetConvexClientForTests,
 } from "../src/shared/convex/client.ts";
 import { convexStorage } from "../src/shared/convex/storage.ts";
@@ -109,7 +110,6 @@ it("registers agent/crons.remove as an internal mutation", () => {
     string,
     { isInternal?: boolean; isMutation?: boolean } | undefined
   >;
-  const internal = require("@broods/convex/_generated/api").internal;
 
   expect(registered.remove).toMatchObject({
     isInternal: true,
@@ -203,8 +203,8 @@ it("releases a live reservation without the expiry condition before the cascade"
   expect(takes.some((args): boolean => args.onlyExpired === true)).toBe(false);
 });
 
-// The adapter reaches this reference through an any-typed require, so nothing
-// but this check catches a rewire that stops descheduling deleted crons.
+// The type checks the call's args and result, not which function it names, so
+// only this check catches a rewire that stops descheduling deleted crons.
 it("crons.remove delegates to internal.agent.crons.remove via mutation", async () => {
   process.env.CONVEX_URL ||= "https://example.convex.cloud";
   process.env.CONVEX_DEPLOY_KEY ||= "test-deploy-key";

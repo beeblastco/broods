@@ -237,7 +237,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    await expect(
+    expect(
       resolveAgentRuntime({ sandboxes: ["sb_old"] }, { accountId: "acct_1" }),
     ).rejects.toThrow(
       "config.options.template was removed; set config.snapshot",

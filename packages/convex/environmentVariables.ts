@@ -10,10 +10,8 @@ import { authKit } from "./auth";
 import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
-import {
-  assertEnvironmentVariableUnreferenced,
-  upsertEnvironmentVariable,
-} from "./model/environmentValues";
+import { assertEnvironmentVariableUnreferenced } from "./model/environmentValues";
+import { upsertEnvironmentVariable } from "./model/environmentWrites";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 import {
   accountIdForProject,

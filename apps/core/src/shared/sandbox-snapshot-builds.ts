@@ -6,7 +6,6 @@
  */
 
 import { providerExecutor } from "../harness/sandbox/index.ts";
-import type { SandboxProvider } from "../harness/sandbox/types.ts";
 import { runtime } from "./convex/runtime.ts";
 import { upsertSandboxSnapshot } from "./convex/sandbox-snapshots.ts";
 import { positiveIntegerEnv } from "./env.ts";
@@ -14,14 +13,6 @@ import { toErrorMessage } from "./errors.ts";
 import { logWarn } from "./log.ts";
 
 const DEFAULT_INTERVAL_SECONDS = 60;
-
-interface BuildingSnapshot {
-  accountId: string;
-  name: string;
-  provider: SandboxProvider;
-  baseImage: string;
-  externalImageId: string;
-}
 
 let watcher: ReturnType<typeof setInterval> | undefined;
 let refreshing = false;
@@ -53,10 +44,7 @@ export function stopSnapshotBuildWatcher(): void {
  * @returns the number of snapshots whose build finished
  */
 export async function refreshBuildingSnapshots(): Promise<number> {
-  const building = await runtime.query<BuildingSnapshot[]>(
-    "listBuildingSandboxSnapshots",
-    {},
-  );
+  const building = await runtime.query("listBuildingSandboxSnapshots", {});
   let finished = 0;
   for (const snapshot of building) {
     const executor = providerExecutor({ provider: snapshot.provider });

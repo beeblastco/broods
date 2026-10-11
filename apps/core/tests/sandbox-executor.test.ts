@@ -3095,7 +3095,7 @@ describe("createSandboxExecutor", () => {
       status: "failed",
     }));
 
-    await expect(
+    expect(
       createSandboxExecutor({
         provider: "vercel",
         persistent: true,
@@ -3671,7 +3671,7 @@ describe("conditional release", () => {
       persistent: true,
     });
 
-    await expect(
+    expect(
       executor.release({ namespace: NS, expectedExternalId: "sbx-old" }),
     ).rejects.toThrow("failed to terminate MicroVM sbx-old");
     expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();

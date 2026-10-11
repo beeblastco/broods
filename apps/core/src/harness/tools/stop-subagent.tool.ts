@@ -41,10 +41,7 @@ export default function stopSubagentTool(
           return toolError(subagentNotFound(input.taskId));
         }
 
-        const stopped = await runtime.mutate<{
-          stopped: boolean;
-          queuedCount: number;
-        }>("stopIngressOwner", {
+        const stopped = await runtime.mutate("stopIngressOwner", {
           accountId: context.accountId,
           agentId: input.agentId,
           conversationKey: record.conversationKey,

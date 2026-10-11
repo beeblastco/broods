@@ -6,7 +6,6 @@
  * never fails the lifecycle request, the same pattern as usage.ts.
  */
 
-const internal: any = require("@broods/convex/_generated/api").internal;
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { logError } from "../log.ts";
 import type {
@@ -14,7 +13,12 @@ import type {
   SandboxRunMetadata,
   SandboxSpecs,
 } from "../sandbox-sizes.ts";
-import { getConvexClient } from "./client.ts";
+import {
+  adminMutation,
+  adminQuery,
+  getConvexClient,
+  internal,
+} from "./client.ts";
 
 // A lost remove leaves a row the meter keeps billing, so it is retried
 // through a Convex blip. The remove is idempotent, so a repeat is harmless.
@@ -56,17 +60,17 @@ export async function upsertSandboxInstance(
   try {
     // The Convex client drops undefined object fields, so an unset optional
     // stays absent on the row rather than becoming null.
-    await getConvexClient().mutation(internal.sandbox.instances.upsert, {
-      accountId: controlPlane.accountId as any,
-      projectId: controlPlane.projectId as any,
-      stageId: controlPlane.stageId as any,
+    await adminMutation(internal.sandbox.instances.upsert, {
+      accountId: controlPlane.accountId,
+      projectId: controlPlane.projectId,
+      stageId: controlPlane.stageId,
       provider: provider,
       reservationKey: reservationKey,
       externalId: externalId,
       name: controlPlane.name,
       specs: options?.specs ?? controlPlane.specs,
       specsVerified: options?.specs !== undefined ? true : undefined,
-      sandboxConfigId: controlPlane.sandboxConfigId as any,
+      sandboxConfigId: controlPlane.sandboxConfigId,
       snapshotId: controlPlane.snapshotId,
       egress: controlPlane.egress,
       permissionMode: controlPlane.permissionMode,
@@ -102,7 +106,7 @@ export async function setSandboxInstanceSpecs(
   specs: SandboxSpecs,
 ): Promise<void> {
   try {
-    await getConvexClient().mutation(internal.sandbox.instances.setSpecs, {
+    await adminMutation(internal.sandbox.instances.setSpecs, {
       accountId: accountId,
       reservationKey: reservationKey,
       externalId: externalId,
@@ -130,10 +134,10 @@ export async function setSandboxInstanceStatus(
   options?: { observed?: boolean; errorMessage?: string },
 ): Promise<boolean> {
   try {
-    const changed: boolean = await getConvexClient().mutation(
+    const changed: boolean = await adminMutation(
       internal.sandbox.instances.setStatus,
       {
-        accountId: accountId as any,
+        accountId: accountId,
         reservationKey: reservationKey,
         status: status,
         observed: options?.observed === true,
@@ -160,11 +164,11 @@ export async function sandboxInstanceIsControllable(
   sandboxConfigId: string,
   reservationKey: string,
 ): Promise<boolean> {
-  const controllable = await getConvexClient().query(
+  const controllable = await adminQuery(
     internal.sandbox.instances.isControllable,
     {
-      accountId: accountId as any,
-      sandboxConfigId: sandboxConfigId as any,
+      accountId: accountId,
+      sandboxConfigId: sandboxConfigId,
       reservationKey: reservationKey,
     },
   );
@@ -184,15 +188,12 @@ export async function recordSandboxBurst(
   totals: { vcpuSeconds: number; gbSeconds: number },
 ): Promise<boolean> {
   try {
-    return await getConvexClient().mutation(
-      internal.sandbox.instances.recordBurst,
-      {
-        accountId: accountId,
-        externalId: externalId,
-        vcpuSeconds: totals.vcpuSeconds,
-        gbSeconds: totals.gbSeconds,
-      },
-    );
+    return await adminMutation(internal.sandbox.instances.recordBurst, {
+      accountId: accountId,
+      externalId: externalId,
+      vcpuSeconds: totals.vcpuSeconds,
+      gbSeconds: totals.gbSeconds,
+    });
   } catch (err) {
     logError("Sandbox burst mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
@@ -213,13 +214,13 @@ export async function removeSandboxInstance(
   externalId?: string,
 ): Promise<void> {
   try {
-    // Built once, outside the retries: a missing Convex config is not a blip.
-    const client = getConvexClient();
+    // Built before the retries: a missing Convex config is not a blip.
+    getConvexClient();
     for (const [attempt, delayMs] of REMOVE_RETRY_DELAYS_MS.entries()) {
       await Bun.sleep(delayMs);
       try {
-        await client.mutation(internal.sandbox.instances.remove, {
-          accountId: accountId as any,
+        await adminMutation(internal.sandbox.instances.remove, {
+          accountId: accountId,
           reservationKey: reservationKey,
           externalId: externalId,
         });

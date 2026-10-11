@@ -302,7 +302,7 @@ export async function acceptIngress(
   );
 
   const { channelTarget, ...admitted } = candidate;
-  const admission = await runtime.mutate<IngressAdmission>("acceptIngress", {
+  const admission = await runtime.mutate("acceptIngress", {
     ...admitted,
     ...(candidate.delivery.kind === "channel" && channelTarget
       ? {
@@ -609,10 +609,7 @@ export async function prepareSessionMessage(options: {
 export async function recoverQueuedIngress(
   afterConversationKey?: string,
 ): Promise<{ recovered: RecoveredIngress[]; continueAfter: string | null }> {
-  const page = await runtime.mutate<{
-    recovered: RecoveredIngress[];
-    continueAfter: string | null;
-  }>("recoverQueuedIngress", {
+  const page = await runtime.mutate("recoverQueuedIngress", {
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
     ...(afterConversationKey === undefined
       ? {}
@@ -689,7 +686,7 @@ export async function takeNextIngress(
   options: LiveOwner,
   settle?: IngressSettlement,
 ): Promise<AppliedIngress | null> {
-  const next = await runtime.mutate<AppliedIngress | null>("takeNextIngress", {
+  const next = await runtime.mutate("takeNextIngress", {
     ...options,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
     ...(settle ? { settle: settle } : {}),

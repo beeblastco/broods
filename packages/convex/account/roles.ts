@@ -28,6 +28,7 @@ import {
 import { createRoleId } from "../model/roleRules";
 import { accountRolesFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
+import { policyDocumentValidator } from "../model/policyDocument";
 
 const DEFAULT_PRUNE_BATCH_SIZE = 100;
 
@@ -39,16 +40,10 @@ const roleDoc = v.object({
 
 const roleFields = v.object(accountRolesFields);
 
-const rolePolicyValidator = v.object({
-  version: v.number(),
-  mode: v.optional(v.union(v.literal("enforce"), v.literal("audit"))),
-  rules: v.array(v.any()),
-});
-
 const rolePrincipalValidator = v.object({
   accountId: v.id("accounts"),
   roleId: v.string(),
-  policy: rolePolicyValidator,
+  policy: policyDocumentValidator,
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
 });

@@ -123,10 +123,10 @@ export function formatQuestionsText(questions: ChannelQuestion[]): string {
 export async function listOpenQuestions(
   conversationKey: string,
 ): Promise<OpenQuestion[]> {
-  const rows = await runtime.query<AsyncToolResultRecord[]>(
-    "listPendingAsyncToolResults",
-    { conversationKey: conversationKey, toolName: ASK_QUESTIONS_TOOL_NAME },
-  );
+  const rows = await runtime.query("listPendingAsyncToolResults", {
+    conversationKey: conversationKey,
+    toolName: ASK_QUESTIONS_TOOL_NAME,
+  });
 
   return rows
     .map((row): OpenQuestion | undefined => openQuestion(row, conversationKey))
