@@ -248,6 +248,25 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject caps an agent at 32 distinct skills", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  skills: { allowed: Array.from({ length: 33 }, (_, index) => \`skill-\${index}\`) },
+});
+`,
+  );
+
+  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.skills.allowed must list at most 32 skills',
+  );
+});
+
 test("compileProject maps agent sandboxes to their names in order", async () => {
   const cwd = await fixtureProject(
     "",
