@@ -402,7 +402,14 @@ export class SubagentCoordinator {
    * them. The parent's step boundary calls it, so they reach the model mid-pass.
    */
   async takeParentMessages(): Promise<UserModelMessage[]> {
-    const completions = this.completions.splice(0);
+    // A running notice put back by a failed write is stale once its child has
+    // finished: that child resumed the parent with its result itself.
+    const completions = this.completions
+      .splice(0)
+      .filter(
+        ({ status, taskId }): boolean =>
+          status !== "running" || this.detached.has(taskId),
+      );
     const questions = this.questions.splice(0);
     const messages = [
       ...completions.map(completionToParentMessage),
@@ -517,8 +524,11 @@ export class SubagentCoordinator {
       if (answered.has(metadata.taskId)) continue;
       this.detached.add(metadata.taskId);
       detachedResults.set(metadata.eventId, this);
-      // Queued like a result, so a failed write puts the notice back too.
-      this.completions.push({ ...metadata, status: "running" });
+      // Queued like a result, so a failed write puts the notice back too. A
+      // child whose result the model already read is not still working news.
+      if (!this.delivered.has(metadata.eventId)) {
+        this.completions.push({ ...metadata, status: "running" });
+      }
     }
     this.pending.clear();
     this.pendingMetadata.clear();

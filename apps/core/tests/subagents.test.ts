@@ -735,7 +735,7 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_1", "first"));
     internals.completions.push(completion("subagent_2", "second"));
 
-    expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
+    await expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
       "convex down",
     );
     expect(persistModelMessages.mock.calls[0]?.[0]).toHaveLength(2);
@@ -772,9 +772,9 @@ describe("SubagentCoordinator", () => {
     });
 
     expect(await coordinator.waitForIdle()).toBe("timeout");
-    expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
-      "convex down",
-    );
+    await expect(
+      coordinator.drainCompletionsAndDetachToParent(),
+    ).rejects.toThrow("convex down");
     // The retry writes both, once, in order; nothing is left to write again.
     expect(await coordinator.drainCompletionsToParent()).toBe(2);
     expect(await coordinator.drainCompletionsToParent()).toBe(0);
@@ -783,6 +783,80 @@ describe("SubagentCoordinator", () => {
     expect(retried).toHaveLength(2);
     expect(messageText(retried[0])).toContain("finished report");
     expect(messageText(retried[1])).toContain("status: running");
+  });
+
+  it("sends no running notice for a child whose result the model already read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      {},
+      Date.now() + 10,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    // Still settling its lease after get_subagent_status showed its result.
+    internals.pending.set("subagent_1", new Promise(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_subagent_1",
+      agentId: "agent_research",
+      conversationKey: "subagent-subagent_1",
+    });
+    coordinator.markDelivered("event_subagent_1");
+    coordinator.confirmDelivered();
+
+    expect(await coordinator.waitForIdle()).toBe("timeout");
+    expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(0);
+    expect(persistModelMessages).not.toHaveBeenCalled();
+    expect(coordinator.runningCount).toBe(1);
+  });
+
+  it("drops a put-back running notice once its child has finished", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
+    let finish = (): void => {};
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      { subagent: { enabled: true } },
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.runTask = mock(
+      (): Promise<void> =>
+        new Promise<void>((resolve): void => {
+          finish = resolve;
+        }),
+    );
+    const originalMutation = runtime.mutate.bind(runtime);
+    runtime.mutate = mock(async () => true) as never;
+    try {
+      await coordinator.dispatch([{ prompt: "research" }], []);
+      await expect(
+        coordinator.drainCompletionsAndDetachToParent(),
+      ).rejects.toThrow("convex down");
+      finish();
+      while (coordinator.runningCount > 0) await Bun.sleep(1);
+
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+      expect(persistModelMessages).toHaveBeenCalledTimes(1);
+    } finally {
+      runtime.mutate = originalMutation;
+    }
   });
 
   it("ends the wait when a heartbeat finds the run lost", async () => {

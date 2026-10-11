@@ -15,6 +15,13 @@ interface SubagentStartedLog {
   message: string;
   parentEventId: string;
   resuming: boolean;
+  taskId: string;
+}
+
+interface ContextPreparedLog {
+  eventId: string;
+  eventType: string;
+  historyRows: number;
 }
 
 /**
@@ -48,9 +55,8 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     },
   ];
   const started: SubagentStartedLog[] = [];
-  let answer: AsyncStatus | null = null;
   for (const turn of turns) {
-    answer = await context.measure(
+    const answer = await context.measure(
       `parent turn ${turn.eventId}`,
       (): Promise<AsyncStatus> =>
         runToTerminal(context, {
@@ -88,9 +94,17 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
       resumed.conversationKey === first.conversationKey,
     JSON.stringify(started),
   );
+  // The child's own context, not the parent's answer: the parent's history
+  // holds the code too, so only this shows the child kept its first task.
+  const prepared = lastJsonLine<ContextPreparedLog>(
+    context.coreLogPath,
+    (record: ContextPreparedLog): boolean =>
+      record.eventType === "session.context.prepared" &&
+      record.eventId.endsWith(`:${resumed.taskId}`),
+  );
   assertStep(
-    "the resumed virtual subagent remembers its first task",
-    JSON.stringify(answer?.response ?? answer?.result).includes(CODE),
-    JSON.stringify(answer),
+    "the resumed virtual subagent loaded its first task's prompt and answer",
+    prepared !== null && prepared.historyRows >= 3,
+    JSON.stringify(prepared),
   );
 }
