@@ -134,8 +134,8 @@ beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = "media-ticket-secret";
   process.env.PUBLIC_BASE_URL = "https://core.example";
-  headS3ObjectMock.mockClear();
-  readS3BytesMock.mockClear();
+  headS3ObjectMock.mockReset();
+  readS3BytesMock.mockReset();
   writeS3ObjectMock.mockClear();
   transcribeAudioMock.mockClear();
   meterWrites.length = 0;
@@ -806,8 +806,6 @@ describe("rehydrateStoredMedia", () => {
     expect(readS3BytesMock).toHaveBeenCalledTimes(2);
     const egress = { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } };
     expect(meterWrites).toEqual([egress, egress]);
-    headS3ObjectMock.mockReset();
-    readS3BytesMock.mockReset();
   });
 
   // The read runs on core's credentials and meters the ticket's account, so a
@@ -855,8 +853,6 @@ describe("rehydrateStoredMedia", () => {
     expect(headS3ObjectMock).not.toHaveBeenCalled();
     expect(readS3BytesMock).not.toHaveBeenCalled();
     expect(meterWrites).toEqual([]);
-    headS3ObjectMock.mockReset();
-    readS3BytesMock.mockReset();
   });
 
   // Every inlined picture rides each model request, so a turn inlines a
@@ -893,8 +889,6 @@ describe("rehydrateStoredMedia", () => {
     );
     expect(inlined).toHaveLength(1);
     expect(readS3BytesMock).toHaveBeenCalledTimes(1);
-    headS3ObjectMock.mockReset();
-    readS3BytesMock.mockReset();
   });
 
   it("leaves a conversation with no references untouched", async () => {

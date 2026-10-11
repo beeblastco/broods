@@ -33,11 +33,7 @@ import {
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
-import {
-  locateMediaObject,
-  MAX_MEDIA_BYTES,
-  readMediaObject,
-} from "../media.ts";
+import { locateMediaObject, readMediaObject } from "../media.ts";
 import {
   attachmentStoreKey,
   MEDIA_PATH_PREFIX,
@@ -157,7 +153,7 @@ interface IngestedAttachment {
 }
 
 /**
- * One ingested message in its two forms. `turn` is what the model reads now:
+ * One ingested message in its two forms. `turn` is what the turn starts from:
  * sealed links, and raw bytes for an agent with no workspace. `stored` is what
  * the row keeps: the same sealed links, or a reference that reads the bytes
  * again later. Bytes never appear in `stored`, where a 6 MB picture would
@@ -324,8 +320,8 @@ export async function readAttachmentBytes(
  * week is still a picture this turn.
  *
  * Every reference is resolved through the channel that delivered it, with that
- * channel's own credentials, and a sealed link into a workspace is checked,
- * since the agent can delete that file. Either one gone becomes a line of text
+ * channel's own credentials, and every sealed link is read into bytes, which
+ * also catches a workspace file the agent deleted. Either one gone becomes a line of text
  * saying so: a photo the sender deleted must cost that message its picture, not
  * cost the conversation every turn from here on.
  */
@@ -673,11 +669,11 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * The bytes behind a sealed link, read once per turn and kept in the media
  * cache. A link left for the provider is fetched by it again on every model
  * step, and a file the agent deleted would 404 there and fail the whole turn.
- * Null keeps the link: not a sealed link, another account's link, a file over
- * the media cap or past the turn's budget, or a storage error, which is not
- * proof of a deletion. The account check matters because this read runs on
- * core's own credentials and meters the ticket's account, and nothing else ties
- * a link pasted into a conversation to the account running it.
+ * Null keeps the link: not a sealed link, another account's link, a file past
+ * the turn's budget, or a read error (a file over the media cap among them),
+ * which is not proof of a deletion. The account check matters because this
+ * read runs on core's own credentials and meters the ticket's account, and
+ * nothing else ties a link pasted into a conversation to the account running it.
  */
 async function readSealedMedia(
   part: UserContentPart,
@@ -707,12 +703,10 @@ async function readSealedMedia(
     if (!object) {
       return { gone: basename(ticket.path) };
     }
+    // The head's length is charged before the read, so links read side by
+    // side never pass the budget together; the read itself caps the object.
     const size = object.head.contentLength;
-    if (
-      size === undefined ||
-      size > MAX_MEDIA_BYTES ||
-      size > replay.remainingBytes
-    ) {
+    if (size === undefined || size > replay.remainingBytes) {
       return null;
     }
     replay.remainingBytes -= size;
