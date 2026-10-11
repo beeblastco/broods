@@ -8,7 +8,7 @@
 import type { Tool as McpTool } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
-import type { ToolContext } from "../tools/index.ts";
+import type { SandboxCpuSample } from "../sandbox/types.ts";
 import { normalizeToolResultOutput } from "../tools/utils.ts";
 import { callMcpTool, type McpConnection } from "./client.ts";
 
@@ -16,10 +16,8 @@ import { callMcpTool, type McpConnection } from "./client.ts";
 export function mcpTools(
   connection: McpConnection,
   remoteTools: McpTool[],
-  {
-    onSandboxCpu,
-    onToolRetry,
-  }: Pick<ToolContext, "onSandboxCpu" | "onToolRetry">,
+  onSandboxCpu?: (sample: SandboxCpuSample) => void,
+  onToolRetry?: (toolCallId: string, waitMs: number) => void,
 ): ToolSet {
   const tools: ToolSet = {};
   for (const remote of remoteTools) {

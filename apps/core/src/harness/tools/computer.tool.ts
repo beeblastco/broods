@@ -17,6 +17,8 @@ import { runMachineComputerAction } from "../sandbox/machine-executor.ts";
 import { computerSandboxTarget } from "./filesystem-utils.ts";
 import { toolError } from "./utils.ts";
 
+export const COMPUTER_TOOL_NAME = "computer";
+
 const DESCRIPTION = `Use the mouse and keyboard of the user's computer and see its screen.
 
 Usage notes:
@@ -39,7 +41,7 @@ export default function computerTool(
   const picks = machines.length > 1;
 
   return {
-    computer: tool({
+    [COMPUTER_TOOL_NAME]: tool({
       description: picks
         ? `${DESCRIPTION}\n${machinesNote(machines)}`
         : DESCRIPTION,

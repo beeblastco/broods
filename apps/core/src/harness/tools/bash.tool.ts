@@ -11,6 +11,7 @@ import { toErrorMessage } from "../../shared/errors.ts";
 import { logDebug, logInfo, logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
+import { S3_MOUNT_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import {
   bindAsyncToolResultSandbox,
   createDetachedAsyncToolResult,
@@ -49,9 +50,6 @@ import { toolError, toolText } from "./utils.ts";
 // What every no-mount run has in common, so the schema and the notes never drift.
 const THROWAWAY_NOTE =
   "Nothing written there reaches durable storage, so use it for throwaway work";
-// Providers whose workspace is a mount-s3 FUSE mount, which has no rename or append.
-const S3_MOUNT_PROVIDERS: ReadonlySet<SandboxExecutorConfig["provider"]> =
-  new Set<SandboxExecutorConfig["provider"]>(["daytona", "lambda", "sandbox"]);
 
 interface BashInput {
   command: string;
@@ -193,8 +191,7 @@ function description(context: SandboxToolContext): string {
 Usage notes:
 - ${runtimes}
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by \`[exit code N]\` when the command fails; very large output is truncated.
-- ${timeoutNote(context)}
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by \`[exit code N]\` when the command fails; very large output is truncated.${timeoutNote(context)}
 - ${state}${sandboxesNote(context)}`;
   }
 
@@ -204,8 +201,7 @@ Usage notes:
 - The selected workspace's sandbox may restrict runtimes; commands using disallowed runtimes are rejected before execution.
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by \`[exit code N]\` when the command fails; very large output is truncated.
-- ${timeoutNote(context)}
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together, followed by \`[exit code N]\` when the command fails; very large output is truncated.${timeoutNote(context)}
 - Each command starts in the current workspace directory; use relative paths.${s3MountNote(context)}
 - DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
@@ -428,7 +424,7 @@ function s3MountNote(context: SandboxToolContext): string {
   const mounted = context.workspaces.some(
     (workspace): boolean =>
       workspace.sandbox !== undefined &&
-      S3_MOUNT_PROVIDERS.has(workspace.sandbox.provider),
+      S3_MOUNT_SANDBOX_PROVIDERS.has(workspace.sandbox.provider),
   );
   if (!mounted) {
     return "";
@@ -483,20 +479,28 @@ function sandboxParamSchema(
   };
 }
 
-// The per-call limit the model plans around, one figure per distinct limit among
-// the sandboxes a call can reach.
+// Scenario note: the per-call limit the model plans around, one figure per
+// distinct limit among the sandboxes a call can reach; none, no note.
 function timeoutNote(context: SandboxToolContext): string {
   const reachable = [
-    ...context.workspaces.map((workspace) => workspace.sandbox),
-    ...selectableSandboxes(context).map((entry) => entry.sandbox),
+    ...context.workspaces.map(
+      (workspace): SandboxExecutorConfig | undefined => workspace.sandbox,
+    ),
+    ...selectableSandboxes(context).map(
+      (entry): SandboxExecutorConfig => entry.sandbox,
+    ),
   ].filter((sandbox): sandbox is SandboxExecutorConfig => Boolean(sandbox));
   const limits = [
     ...new Set(
       reachable.map((sandbox): number => sandboxTimeoutSeconds(sandbox)),
     ),
   ].sort((a, b): number => a - b);
+  if (limits.length === 0) {
+    return "";
+  }
 
-  return `Each call is limited to ${limits.map((seconds): string => `${seconds}s`).join(" or ")}; past it the call fails.`;
+  return `
+- Each call is limited to ${limits.map((seconds): string => `${seconds}s`).join(" or ")}; past it the call fails.`;
 }
 
 // The write guard is not on everywhere: it steps aside on the agent's own reserved

@@ -30,3 +30,7 @@ export const STATELESS_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 // Snapshot action captures with. A snapshot boots only on the provider that made it.
 export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda", "daytona", "e2b", "vercel"]);
+
+// Providers whose workspace is a mount-s3 FUSE mount, which has no rename or append.
+export const S3_MOUNT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
+  new Set<SandboxProvider>(["daytona", "lambda", "sandbox"]);

@@ -66,10 +66,9 @@ it("reports each wait against the tool call, for its span", async () => {
   const tools = mcpTools(
     mcpConnection(record, undefined),
     [{ name: "search", inputSchema: { type: "object" } }],
-    {
-      onToolRetry: (toolCallId, waitMs): void => {
-        retries.push([toolCallId, waitMs]);
-      },
+    undefined,
+    (toolCallId, waitMs): void => {
+      retries.push([toolCallId, waitMs]);
     },
   );
 

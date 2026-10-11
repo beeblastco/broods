@@ -22,7 +22,11 @@ import {
   positiveIntegerEnv,
   requireEnv,
 } from "../../shared/env.ts";
-import { isUnreachableError, toErrorMessage } from "../../shared/errors.ts";
+import {
+  isTimeoutError,
+  isUnreachableError,
+  toErrorMessage,
+} from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
 import { FrameQueue, toolBundlesBucket, type RunnerFrame } from "../frames.ts";
@@ -300,8 +304,8 @@ async function drainBridgeStream(
     ]),
   }).catch((error: unknown): never => {
     if (
-      error instanceof DOMException &&
-      (error.name === "TimeoutError" || error.name === "AbortError")
+      isTimeoutError(error) ||
+      (error instanceof DOMException && error.name === "AbortError")
     ) {
       onInvoked(startedAt);
     }
