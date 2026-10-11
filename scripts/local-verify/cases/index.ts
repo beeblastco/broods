@@ -25,6 +25,7 @@ import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { skillLimit } from "./skill-limit.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
+import { subagentResume } from "./subagent-resume.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { workToolWebhooks } from "./work-tool-webhooks.ts";
@@ -37,6 +38,7 @@ export const verifyCases: readonly VerifyCase[] = [
   queuedFollowup,
   queuedCompact,
   steerAtBoundary,
+  subagentResume,
   autoCompaction,
   machineSandbox,
   bashTimeout,
