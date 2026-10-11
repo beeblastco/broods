@@ -203,6 +203,7 @@ const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
+const WORKER_QUEUE_FULL = "In-process worker queue is full";
 // A queued run holds its lease from admission, so the queue renews it well
 // inside the TTL until a slot starts the run.
 const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
@@ -499,8 +500,7 @@ async function handleRequest(
   return routeIncomingEvent(
     event,
     {
-      handleDirectRequest: (directEvent) =>
-        handleDirectRequest(directEvent, context),
+      handleDirectRequest: handleDirectRequest,
       handleAsyncRequest: handleAsyncRequest,
       handleStatusRequest: handleStatusRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
@@ -1015,7 +1015,6 @@ async function settleChannelQuestion(
 
 async function handleDirectRequest(
   event: DirectInboundEvent,
-  context?: RequestContext,
 ): Promise<Response> {
   const { refusal } = await admitRun(event.accountId);
   if (refusal) {
@@ -1103,54 +1102,130 @@ async function handleDirectRequest(
     );
   }
 
-  return directTurnResponse(ownedEvent, context);
+  return directTurnResponse(ownedEvent);
 }
 
 /**
- * The sync SSE answer for a run that owns its conversation: a queued command's
- * reply, or the model turn streaming.
+ * The sync SSE answer for a run that owns its conversation. The turn, a queued
+ * command's reply or the model streaming, runs on a worker slot like every
+ * other run, so MAX_INPROCESS_WORKERS bounds streamed runs too. The stream
+ * opens at once and keeps alive while the run waits, the queue renewing its
+ * lease. A full queue fails the run with a 503 before any stream opens; a
+ * client that left before its slot came starts nothing.
  */
 async function directTurnResponse(
   ownedEvent: DirectInboundEvent,
-  context?: RequestContext,
 ): Promise<Response> {
-  const command = queuedCommand(ownedEvent.events);
-  if (command) {
-    return commandSseResponse(ownedEvent, command);
-  }
-  try {
-    const turn = await prepareDirectTurn(ownedEvent);
-    if (!turn) {
-      return emptySseResponse();
-    }
+  if (workerQueueFull()) {
+    await failOwnedIngress(ownedEvent, WORKER_QUEUE_FULL);
 
-    const { session, turnContext } = turn;
-    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await settleFailedIngressAndDrain(
-        session,
-        "Request did not produce pending model input",
-        () => dispatchNextIngress(session, ownedEvent),
+    return errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS);
+  }
+  // A queued run starts from whichever run frees its slot, so it takes this
+  // request's observability context rather than inheriting that one.
+  const observability = getObservabilityContext();
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start: (controller): void => {
+      // Bun closes a response that writes nothing for its idleTimeout, and a
+      // queued run or one silent bash call can outlast it. A comment line is
+      // ignored by every SSE parser.
+      keepalive = setInterval((): void => {
+        try {
+          controller.enqueue(textEncoder.encode(": keepalive\n\n"));
+        } catch {
+          clearInterval(keepalive);
+        }
+      }, SSE_KEEPALIVE_INTERVAL_MS);
+      const frame = (chunk: unknown): Uint8Array =>
+        textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`);
+      dispatchInProcessWorker(
+        "direct-sse",
+        (context): Promise<void> =>
+          runWithObservabilityScope(async (): Promise<void> => {
+            try {
+              if (cancelled) {
+                await failOwnedIngress(
+                  ownedEvent,
+                  "The client disconnected before the run started",
+                );
+
+                return;
+              }
+              const command = queuedCommand(ownedEvent.events);
+              if (command) {
+                await runCommandTurn({
+                  event: ownedEvent,
+                  command: command,
+                  // A client that left takes nothing more; the command already
+                  // ran, so its outcome stays the run's own.
+                  send: async (chunk): Promise<void> => {
+                    try {
+                      controller.enqueue(frame(chunk));
+                    } catch {}
+                  },
+                });
+
+                return;
+              }
+              const turn = await prepareDirectTurn(ownedEvent).catch(
+                (err: unknown): null => {
+                  // prepareDirectTurn already settled the run as failed.
+                  const error =
+                    err instanceof Error ? err.message : String(err);
+                  logError("Direct request pre-processing failed", {
+                    eventId: ownedEvent.eventId,
+                    error: error,
+                  });
+                  controller.enqueue(frame({ type: "error", error: error }));
+
+                  return null;
+                },
+              );
+              if (!turn) return;
+              const { session, turnContext } = turn;
+              if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+                await settleFailedIngressAndDrain(
+                  session,
+                  "Request did not produce pending model input",
+                  () => dispatchNextIngress(session, ownedEvent),
+                );
+
+                return;
+              }
+              await streamDirectContinuation(
+                ownedEvent,
+                session,
+                turnContext,
+                controller,
+                context,
+              );
+            } finally {
+              clearInterval(keepalive);
+              try {
+                controller.close();
+              } catch {}
+            }
+          }, observability),
+        ownedEvent.ownerGeneration === undefined
+          ? undefined
+          : {
+              conversationKey: ownedEvent.conversationKey,
+              ownerEventId: ownedEvent.eventId,
+              ownerGeneration: ownedEvent.ownerGeneration,
+            },
       );
+    },
+    cancel: (): void => {
+      cancelled = true;
+    },
+  });
 
-      return emptySseResponse();
-    }
-
-    return new Response(
-      createDirectContinuationSseBody(
-        ownedEvent,
-        session,
-        turnContext,
-        context,
-      ),
-      { status: 200, headers: { "content-type": "text/event-stream" } },
-    );
-  } catch (err) {
-    logError("Direct request pre-processing failed", {
-      eventId: ownedEvent.eventId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
 }
 
 /** Answer a direct async request with 202 and hand it to an in-process worker. */
@@ -2785,6 +2860,14 @@ async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
   }
 }
 
+/** True when a new run would neither start nor fit in the queue. */
+function workerQueueFull(): boolean {
+  return (
+    activeInProcessWorkers >= MAX_INPROCESS_WORKERS &&
+    pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS
+  );
+}
+
 /** Starts a worker now when a slot is free, else queues it FIFO. */
 function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
   if (activeInProcessWorkers < MAX_INPROCESS_WORKERS) {
@@ -2792,10 +2875,10 @@ function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
 
     return;
   }
-  if (loadShed && pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
+  if (loadShed && workerQueueFull()) {
     // Load-shed: the awaiting caller surfaces the error instead of the queue
     // growing without bound.
-    throw new Error("In-process worker queue is full");
+    throw new Error(WORKER_QUEUE_FULL);
   }
   pendingWorkerRuns.push(entry);
   if (!queuedLeaseTimer) {
@@ -3059,113 +3142,93 @@ async function resolveReentryTarget(options: {
   };
 }
 
-function createDirectContinuationSseBody(
+/** The direct model turn on its worker slot, streamed to the client. */
+async function streamDirectContinuation(
   event: DirectInboundEvent,
   session: Session,
   initialTurnContext: DirectTurn["turnContext"],
-  context?: RequestContext,
-): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    // This callback runs during stream consumption, after handler() has already
-    // returned and its observability scope has closed, so open a fresh one here
-    // to keep the continuation's redaction/routing tenant-private.
-    start: function (controller) {
-      return runWithObservabilityScope(async () => {
-        const subagentCoordinator = new SubagentCoordinator(
-          session,
-          event.agentConfig,
-          (): number => waitUntilMs(context),
-          SUBAGENT_DEPENDENCIES,
-        );
-        const asyncToolCoordinator = new AsyncToolCoordinator(
-          session,
-          (): number => waitUntilMs(context),
-        );
-        let transferred = false;
-        let terminalFailureDrained = false;
-        const checkOwner = ownerCheckForStream(session);
-        // Bun closes a response that writes nothing for its idleTimeout, and one
-        // bash call can run silent for longer. A comment line is ignored by
-        // every SSE parser.
-        const keepalive = setInterval((): void => {
-          try {
-            controller.enqueue(textEncoder.encode(": keepalive\n\n"));
-          } catch {
-            clearInterval(keepalive);
-          }
-        }, SSE_KEEPALIVE_INTERVAL_MS);
-        // Once the client is gone the enqueue below throws about its closed
-        // controller, which says nothing about the run. The run's own reason is
-        // the one worth storing and logging.
-        let streamFailureText: string | null = null;
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  context: RequestContext,
+): Promise<void> {
+  const subagentCoordinator = new SubagentCoordinator(
+    session,
+    event.agentConfig,
+    (): number => waitUntilMs(context),
+    SUBAGENT_DEPENDENCIES,
+  );
+  const asyncToolCoordinator = new AsyncToolCoordinator(session, (): number =>
+    waitUntilMs(context),
+  );
+  let transferred = false;
+  let terminalFailureDrained = false;
+  const checkOwner = ownerCheckForStream(session);
+  // Once the client is gone the enqueue below throws about its closed
+  // controller, which says nothing about the run. The run's own reason is
+  // the one worth storing and logging.
+  let streamFailureText: string | null = null;
 
+  try {
+    const result = await runParentContinuationLoop({
+      session: session,
+      subagentCoordinator: subagentCoordinator,
+      asyncToolCoordinator: asyncToolCoordinator,
+      initialTurnContext: initialTurnContext,
+      agentConfig: event.agentConfig,
+      context: context,
+      consumeStream: async (stream): Promise<void> => {
         try {
-          const result = await runParentContinuationLoop({
-            session: session,
-            subagentCoordinator: subagentCoordinator,
-            asyncToolCoordinator: asyncToolCoordinator,
-            initialTurnContext: initialTurnContext,
-            agentConfig: event.agentConfig,
-            consumeStream: async (stream): Promise<void> => {
-              try {
-                await pipeAgentStream(stream, async (chunk): Promise<void> => {
-                  await checkOwner(chunk);
-                  controller.enqueue(
-                    textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-                  );
-                });
-              } finally {
-                streamFailureText = stream.failureText();
-              }
-            },
-            onHeartbeat: async (pendingCount) => {
-              await session.assertCurrentOwner();
-              controller.enqueue(
-                textEncoder.encode(
-                  `: waiting for async work pending=${pendingCount}\n\n`,
-                ),
-              );
-            },
+          await pipeAgentStream(stream, async (chunk): Promise<void> => {
+            await checkOwner(chunk);
+            controller.enqueue(
+              textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+            );
           });
-          transferred = await dispatchNextIngress(
-            session,
-            event,
-            turnSettlement(result),
-          );
-        } catch (err) {
-          const error =
-            streamFailureText ??
-            (err instanceof Error ? err.message : String(err));
-          logError("Direct continuation stream failed", {
-            eventId: event.eventId,
-            error: error,
-          });
-          // Emit before draining: promoting queued work moves the owner
-          // generation, so a later assertCurrentOwner() would drop this frame.
-          await session
-            .assertCurrentOwner()
-            .then(() => {
-              controller.enqueue(
-                textEncoder.encode(
-                  `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
-                ),
-              );
-            })
-            .catch(() => {});
-          transferred = await settleFailedIngressAndDrain(session, error, () =>
-            dispatchNextIngress(session, event),
-          );
-          terminalFailureDrained = true;
         } finally {
-          clearInterval(keepalive);
-          if (!terminalFailureDrained && !transferred) {
-            await session.releaseConversationLease().catch(() => {});
-          }
-          controller.close();
+          streamFailureText = stream.failureText();
         }
-      });
-    },
-  });
+      },
+      onHeartbeat: async (pendingCount) => {
+        await session.assertCurrentOwner();
+        controller.enqueue(
+          textEncoder.encode(
+            `: waiting for async work pending=${pendingCount}\n\n`,
+          ),
+        );
+      },
+    });
+    transferred = await dispatchNextIngress(
+      session,
+      event,
+      turnSettlement(result),
+    );
+  } catch (err) {
+    const error =
+      streamFailureText ?? (err instanceof Error ? err.message : String(err));
+    logError("Direct continuation stream failed", {
+      eventId: event.eventId,
+      error: error,
+    });
+    // Emit before draining: promoting queued work moves the owner
+    // generation, so a later assertCurrentOwner() would drop this frame.
+    await session
+      .assertCurrentOwner()
+      .then(() => {
+        controller.enqueue(
+          textEncoder.encode(
+            `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
+          ),
+        );
+      })
+      .catch(() => {});
+    transferred = await settleFailedIngressAndDrain(session, error, () =>
+      dispatchNextIngress(session, event),
+    );
+    terminalFailureDrained = true;
+  } finally {
+    if (!terminalFailureDrained && !transferred) {
+      await session.releaseConversationLease().catch(() => {});
+    }
+  }
 }
 
 async function runAgentLoopUntilSubagentsIdle(
@@ -3681,39 +3744,6 @@ function isErrorStreamChunk(chunk: unknown): boolean {
   );
 }
 
-/** A sync HTTP run whose input is a queued command: streams its reply. */
-function commandSseResponse(
-  event: DirectInboundEvent,
-  command: QueuedCommand,
-): Response {
-  return new Response(
-    new ReadableStream({
-      start: async function (controller): Promise<void> {
-        // A client that left takes nothing more; the command already ran, so
-        // its outcome stays the run's own.
-        const send = (
-          chunk: TextStreamPart<ToolSet> | { type: "error"; error: string },
-        ): void => {
-          try {
-            controller.enqueue(
-              textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-            );
-          } catch {}
-        };
-        await runCommandTurn({
-          event: event,
-          command: command,
-          send: async (chunk): Promise<void> => send(chunk),
-        });
-        try {
-          controller.close();
-        } catch {}
-      },
-    }),
-    { status: 200, headers: { "content-type": "text/event-stream" } },
-  );
-}
-
 function emptySseResponse(): Response {
   return new Response(
     new ReadableStream({
@@ -3725,7 +3755,11 @@ function emptySseResponse(): Response {
   );
 }
 
-function errorSseResponse(error: string, statusCode = 200): Response {
+function errorSseResponse(
+  error: string,
+  statusCode = 200,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(
     new ReadableStream({
       start: function (controller) {
@@ -3737,7 +3771,10 @@ function errorSseResponse(error: string, statusCode = 200): Response {
         controller.close();
       },
     }),
-    { status: statusCode, headers: { "content-type": "text/event-stream" } },
+    {
+      status: statusCode,
+      headers: { ...headers, "content-type": "text/event-stream" },
+    },
   );
 }
 

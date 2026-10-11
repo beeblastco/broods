@@ -211,6 +211,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          description: Streamed run only. A streamed run waits for a free worker slot like a background run, with keepalive comments meanwhile; when the deployment's run queue is full too, nothing runs and the request answers 503 with `Retry-After` and one SSE `error` frame.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
         "402":
           description: The account has reached one of its monthly resource caps (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces caps.
           content:
@@ -453,6 +463,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          description: The deployment's run queue is full, as for `POST /v1/runs`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
         "401":
           description: The runtime key does not match this project and stage
           content:
@@ -1592,6 +1609,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          description: The deployment's run queue is full, as for `POST /v1/runs`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
         "401":
           description: The runtime key does not match the endpoint
           content:
