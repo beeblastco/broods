@@ -49,7 +49,7 @@
   },
   "scripts": {
     "build": "bun scripts/build.ts && rollup -c rollup.dts.config.mjs && rm -rf .dts-temp",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
     "pack:check": "bun run build && publint && attw --pack .",
     "prepublishOnly": "bun run build",
     "test": "bun test"
