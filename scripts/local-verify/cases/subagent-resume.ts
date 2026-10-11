@@ -44,55 +44,32 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
       subagent: { enabled: true },
     },
   });
-  const turns = [
-    {
-      eventId: `${key}-first`,
-      text: `Call run_subagent with this exact prompt: 'Remember the release code ${CODE}. Reply OK.'`,
-    },
-    {
-      eventId: `${key}-resume`,
-      text: "Call run_subagent with the conversationKey your earlier run_subagent call returned, and this exact prompt: 'What release code did I ask you to remember? Reply with the code only.'",
-    },
-  ];
-  const started: SubagentStartedLog[] = [];
-  for (const turn of turns) {
-    const answer = await context.measure(
-      `parent turn ${turn.eventId}`,
-      (): Promise<AsyncStatus> =>
-        runToTerminal(context, {
-          agentId: agentId,
-          conversationKey: key,
-          eventId: turn.eventId,
-          text: turn.text,
-        }),
-    );
-    assertStep(
-      `parent turn ${turn.eventId} completed`,
-      answer.status === "completed",
-      JSON.stringify(answer),
-    );
-    const child = lastJsonLine<SubagentStartedLog>(
-      context.coreLogPath,
-      (record: SubagentStartedLog): boolean =>
-        record.message === "Subagent task started" &&
-        record.parentEventId.endsWith(`:${turn.eventId}`),
-    );
-    if (!child) {
-      console.log("  skip subagent resume (the parent answered without one)");
-      return;
-    }
-    started.push(child);
+  const first = await startedChild(context, agentId, key, {
+    eventId: `${key}-first`,
+    text: `Call run_subagent with this exact prompt: 'Remember the release code ${CODE}. Reply OK.'`,
+  });
+  if (!first) {
+    console.log("  skip subagent resume (the parent answered without one)");
+    return;
   }
-  const [first, resumed] = started;
-  if (resumed?.resuming !== true) {
+  // The model gets the exact key, so the check does not hang on it recalling
+  // the key from history: it once started a fresh child and resumed that one.
+  // Matching the resume on this key still catches it reaching another child.
+  const childKey = publicKey(first.conversationKey);
+  const resumed = await startedChild(context, agentId, key, {
+    eventId: `${key}-resume`,
+    text: `Call run_subagent once, with conversationKey "${childKey}" exactly and this exact prompt: 'What release code did I ask you to remember? Reply with the code only.'`,
+    resumes: childKey,
+  });
+  if (!resumed) {
     console.log("  skip subagent resume (the parent did not pass the key)");
     return;
   }
   assertStep(
     "the resumed virtual subagent is the same child",
-    resumed.agentId === first?.agentId &&
+    resumed.agentId === first.agentId &&
       resumed.conversationKey === first.conversationKey,
-    JSON.stringify(started),
+    JSON.stringify([first, resumed]),
   );
   // The child's own context, not the parent's answer: the parent's history
   // holds the code too, so only this shows the child kept its first task.
@@ -106,5 +83,49 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     "the resumed virtual subagent loaded its first task's prompt and answer",
     prepared !== null && prepared.historyRows >= 3,
     JSON.stringify(prepared),
+  );
+}
+
+/**
+ * Runs one parent turn to completion and returns the child it started, or,
+ * with `resumes`, the child it resumed under that key.
+ */
+async function startedChild(
+  context: VerifyContext,
+  agentId: string,
+  key: string,
+  turn: { eventId: string; text: string; resumes?: string },
+): Promise<SubagentStartedLog | null> {
+  const answer = await context.measure(
+    `parent turn ${turn.eventId}`,
+    (): Promise<AsyncStatus> =>
+      runToTerminal(context, {
+        agentId: agentId,
+        conversationKey: key,
+        eventId: turn.eventId,
+        text: turn.text,
+      }),
+  );
+  assertStep(
+    `parent turn ${turn.eventId} completed`,
+    answer.status === "completed",
+    JSON.stringify(answer),
+  );
+
+  return lastJsonLine<SubagentStartedLog>(
+    context.coreLogPath,
+    (record: SubagentStartedLog): boolean =>
+      record.message === "Subagent task started" &&
+      record.parentEventId.endsWith(`:${turn.eventId}`) &&
+      (turn.resumes === undefined ||
+        (record.resuming &&
+          publicKey(record.conversationKey) === turn.resumes)),
+  );
+}
+
+/** The key run_subagent returned, read from the child's scoped conversation key. */
+function publicKey(conversationKey: string): string {
+  return conversationKey.slice(
+    conversationKey.indexOf(":api:") + ":api:".length,
   );
 }
