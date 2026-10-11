@@ -5,14 +5,17 @@ import {
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import { BroodsWebSocketClient } from "../../../packages/broods/src/websocket.ts";
+import { sealStageSessionTicket } from "../../../packages/convex/model/stageSessionTicket.ts";
 import { assertStep, pollUntil, type VerifyContext } from "../harness.ts";
 
 const ATTACH_TIMEOUT_MS = 15_000;
 
 /**
- * BroodsWebSocketClient.attach through the gateway on a stage's runtime key:
- * a plain attach replays a finished run, while an attach aborted on its first
- * frame, or before it opens, delivers nothing more and reports one abort.
+ * BroodsWebSocketClient.attach through the gateway: a plain attach replays a
+ * finished run, while an attach aborted on its first frame, or before it
+ * opens, delivers nothing more and reports one abort. The gateway takes a
+ * member's stage ticket on agent sockets, not the runtime key, so the case
+ * seals one with this stack's secret, as the dashboard's test chat holds.
  * Runs without a model key: a run that fails at the provider still replays.
  */
 export async function websocketAttachAbort(
@@ -35,7 +38,6 @@ export async function websocketAttachAbort(
             config: {
               model: context.model.model,
               agent: { system: "Reply with OK." },
-              publicAccess: true,
             },
           },
         ],
@@ -46,7 +48,7 @@ export async function websocketAttachAbort(
   const { deployment } = deployed;
   const agentId = deployed.ids.agents.chat;
   assertStep(
-    "the deploy returned a runtime key and the agent id",
+    "the deploy returned its endpoint and the agent id",
     deployment != null && agentId !== undefined,
     JSON.stringify(deployed.ids),
   );
@@ -60,8 +62,20 @@ export async function websocketAttachAbort(
     projectSlug: deployment.projectSlug,
     stageSlug: deployment.stageSlug,
   };
+  const ticket = await sealStageSessionTicket(
+    {
+      accountId: deployment.accountId,
+      endpointId: deployment.endpointId,
+      projectId: project,
+      projectSlug: deployment.projectSlug,
+      stageId: deployment.stageSlug,
+      stageSlug: deployment.stageSlug,
+      expiresAt: Date.now() + 15 * 60_000,
+    },
+    context.stageTicketSecret,
+  );
   const accepted = await new BroodsClient({
-    apiKey: deployment.apiKey,
+    apiKey: ticket,
     baseUrl: context.edgeUrl,
   }).runAsync(agent, { conversationKey: project, input: "Say OK." });
   await context.measure("run to terminal", (): Promise<AsyncStatus> =>
@@ -69,7 +83,7 @@ export async function websocketAttachAbort(
   );
   const client = new BroodsWebSocketClient({
     baseUrl: context.edgeUrl,
-    apiKey: deployment.apiKey,
+    apiKey: ticket,
   });
   /**
    * Attaches until the replay ends (`done` or an error frame) or, for an
