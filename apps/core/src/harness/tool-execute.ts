@@ -37,6 +37,73 @@ export function isStreamingExecute(execute: ToolExecute): boolean {
   return execute instanceof AsyncGeneratorFunction;
 }
 
+/**
+ * Runs one non-streaming tool's calls one at a time, in the order `reserve` saw
+ * them. Hooks and the owner fence run inside the turn; only awaited
+ * onToolExecutionStart callbacks can reorder calls, so reserve before those.
+ */
+export function serializeToolCalls(
+  tools: ToolSet,
+  name: string,
+): {
+  tools: ToolSet;
+  reserve: (toolCall: { toolName: string; toolCallId: string }) => void;
+} {
+  const tool = tools[name];
+  if (typeof tool?.execute !== "function" || isStreamingExecute(tool.execute)) {
+    return { tools: tools, reserve: (): void => {} };
+  }
+  const call = tool.execute;
+  const turns = new Map<string, ReturnType<typeof takeTurn>>();
+  let last: Promise<void> = Promise.resolve();
+
+  return {
+    tools: {
+      ...tools,
+      [name]: {
+        ...tool,
+        execute: async (...args: Parameters<ToolExecute>): Promise<unknown> => {
+          const [, { toolCallId, abortSignal }] = args;
+          const turn = turns.get(toolCallId) ?? takeTurn(toolCallId);
+          turns.delete(toolCallId);
+          const stopped = Promise.withResolvers<void>();
+          const stop = (): void => stopped.resolve();
+          abortSignal?.addEventListener("abort", stop, { once: true });
+          try {
+            if (!abortSignal?.aborted) {
+              await Promise.race([turn.after, stopped.promise]);
+            }
+            // A stopped run must not fire the actions still waiting their turn.
+            abortSignal?.throwIfAborted();
+
+            return await call(...args);
+          } finally {
+            abortSignal?.removeEventListener("abort", stop);
+            // A dropped call still frees the next only after the one before it.
+            void turn.after.then(turn.done);
+          }
+        },
+      } as ToolSet[string],
+    },
+    reserve: (toolCall: { toolName: string; toolCallId: string }): void => {
+      if (toolCall.toolName === name) takeTurn(toolCall.toolCallId);
+    },
+  };
+
+  // Queues a call: `after` settles once the call before it is done.
+  function takeTurn(toolCallId: string): {
+    after: Promise<void>;
+    done: () => void;
+  } {
+    const done = Promise.withResolvers<void>();
+    const turn = { after: last, done: done.resolve };
+    turns.set(toolCallId, turn);
+    last = done.promise;
+
+    return turn;
+  }
+}
+
 // `after` applies to a streaming tool's last yield, which is the value the SDK
 // takes as its result.
 export function wrapToolExecute(

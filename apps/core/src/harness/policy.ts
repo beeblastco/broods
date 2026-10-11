@@ -45,6 +45,7 @@ import {
   targetsAgentSandbox,
   toWorkspaceRelative,
 } from "./tools/filesystem-utils.ts";
+import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
 // httpPolicyClient exposes no timeout/AbortSignal, and the OPA round-trip sits
@@ -137,7 +138,7 @@ export function compatibilityApprovalStatus(
 
   // Looking is free; any other action asks like bash does, on the computer the
   // call names rather than on whatever the agent's own sandbox happens to be.
-  if (toolName === "computer") {
+  if (toolName === COMPUTER_TOOL_NAME) {
     if (COMPUTER_READ_ACTIONS.has(String(record.action))) {
       return undefined;
     }

@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
-import type { ToolExecuteFunction } from "ai";
+import {
+  simulateReadableStream,
+  streamText,
+  tool,
+  type ToolExecuteFunction,
+} from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import { z } from "zod";
 import {
   callMcpTool,
   listMcpTools,
@@ -13,6 +21,10 @@ import {
   runMachineComputerAction,
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
+import {
+  serializeToolCalls,
+  type ToolExecute,
+} from "../src/harness/tool-execute.ts";
 import computerTool from "../src/harness/tools/computer.tool.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
@@ -21,6 +33,7 @@ import {
   occupiedReason,
   parseCoreFrame,
   parseDaemonFrame,
+  type ComputerInput,
   type MachineComputerFrame,
   type MachineExecFrame,
   type MachineHelloFrame,
@@ -465,6 +478,127 @@ test("a name from a longer list is refused once one computer is left", async () 
   });
 });
 
+test("one step's computer actions reach the daemon one at a time, in the model's order", async () => {
+  const server = core();
+  const sent: string[] = [];
+  let inFlight = 0;
+  let overlapped = false;
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: (frame, socket): void => {
+      sent.push(frame.action);
+      overlapped ||= inFlight > 0;
+      inFlight += 1;
+      setTimeout((): void => {
+        inFlight -= 1;
+        answersWith("OK")(frame, socket);
+      }, 10);
+    },
+  });
+  const { tools, reserve } = serializeToolCalls(
+    computerTool([machine()]),
+    "computer",
+  );
+  const actions: ComputerInput[] = [
+    { action: "left_click", coordinate: [10, 20] },
+    { action: "type", text: "hello" },
+    { action: "screenshot" },
+  ];
+
+  await streamText({
+    model: computerStepModel(actions),
+    prompt: "type hello into the field",
+    tools: tools,
+    // Like the harness: reserve first, then await. The click's start (a
+    // lifecycle webhook) resolves last, as in the trace where the text was
+    // typed before the click that focused the field.
+    onToolExecutionStart: async ({ toolCall }): Promise<void> => {
+      reserve(toolCall);
+      if (toolCall.toolCallId === "call-0") await Bun.sleep(50);
+    },
+  }).consumeStream();
+
+  expect(sent).toEqual(["left_click", "type", "screenshot"]);
+  expect(overlapped).toBe(false);
+});
+
+test("a stopped run drops queued computer actions without waiting for the running one", async () => {
+  const click = Promise.withResolvers<string>();
+  const ran: string[] = [];
+  const { tools, reserve } = serializeToolCalls(
+    {
+      computer: tool({
+        inputSchema: z.object({ action: z.string() }),
+        execute: async ({ action }): Promise<string> => {
+          ran.push(action);
+
+          return action === "left_click" ? click.promise : action;
+        },
+      }),
+    },
+    "computer",
+  );
+  const execute = tools.computer?.execute;
+  const controller = new AbortController();
+  const options = (toolCallId: string): Parameters<ToolExecute>[1] => ({
+    toolCallId: toolCallId,
+    messages: [],
+    abortSignal: controller.signal,
+    context: undefined,
+  });
+  reserve({ toolName: "computer", toolCallId: "click" });
+  reserve({ toolName: "computer", toolCallId: "type" });
+  const clicked = Promise.resolve(
+    execute?.({ action: "left_click" }, options("click")),
+  );
+  const typed = Promise.resolve(execute?.({ action: "type" }, options("type")));
+  await Bun.sleep(1);
+
+  controller.abort();
+  const outcome = await Promise.race([
+    typed.then(
+      (): string => "ran",
+      (): string => "dropped",
+    ),
+    Bun.sleep(50).then((): string => "still waiting"),
+  ]);
+  click.resolve("clicked");
+  await clicked;
+
+  expect(outcome).toBe("dropped");
+  expect(ran).toEqual(["left_click"]);
+});
+
+test("a computer call the SDK never runs does not hold up the next one", async () => {
+  const sent: string[] = [];
+  const server = core();
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: (frame, socket): void => {
+      sent.push(frame.action);
+      answersWith("OK")(frame, socket);
+    },
+  });
+  const { tools, reserve } = serializeToolCalls(
+    computerTool([machine()]),
+    "computer",
+  );
+
+  // call-0 is denied, call-1 is not valid input, so neither starts.
+  await streamText({
+    model: computerStepModel([
+      { action: "left_click", coordinate: [10, 20] },
+      { action: "dance" },
+      { action: "screenshot" },
+    ]),
+    prompt: "look at the screen",
+    tools: tools,
+    toolApproval: ({ toolCall }): "denied" | "approved" =>
+      toolCall.toolCallId === "call-0" ? "denied" : "approved",
+    onToolExecutionStart: ({ toolCall }): void => reserve(toolCall),
+  }).consumeStream();
+
+  expect(sent).toEqual(["screenshot"]);
+});
+
 test("an MCP row lists and calls through the daemon that serves that server", async () => {
   const server = core();
   const connection = mcpConnection(machineMcpRecord(), undefined);
@@ -684,6 +818,39 @@ function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
       JSON.stringify({ type: "computer-result", id: frame.id, text: text }),
     );
   };
+}
+
+// One model step that calls the computer tool with each input, in order.
+function computerStepModel(
+  inputs: Record<string, unknown>[],
+): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    doStream: {
+      stream: simulateReadableStream<LanguageModelV4StreamPart>({
+        chunks: [
+          ...inputs.map((input, index): LanguageModelV4StreamPart => ({
+            type: "tool-call",
+            toolCallId: `call-${index}`,
+            toolName: "computer",
+            input: JSON.stringify(input),
+          })),
+          {
+            type: "finish",
+            finishReason: { unified: "tool-calls", raw: "tool_use" },
+            usage: {
+              inputTokens: {
+                total: 1,
+                noCache: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 1, text: 1, reasoning: 0 },
+            },
+          },
+        ],
+      }),
+    },
+  });
 }
 
 function connectDaemon(
