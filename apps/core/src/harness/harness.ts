@@ -86,13 +86,17 @@ import {
   createConfiguredHarnessAgent,
   harnessReservationKey,
   harnessSteersMidTurn,
-  MID_TURN_STEERING_UNSUPPORTED,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
+} from "./ai-sdk-harness/index.ts";
+// Straight from the module, not the entrypoint: tests mock the entrypoint as a
+// whole, and this is run-loop plumbing they keep real.
+import {
+  MID_TURN_STEERING_UNSUPPORTED,
   requireHarnessSandbox,
   startHarnessLeaseMonitor,
   steerHarnessTurn,
-} from "./ai-sdk-harness/index.ts";
+} from "./ai-sdk-harness/session.ts";
 import {
   agentSandboxStatus,
   formatSandboxStatus,

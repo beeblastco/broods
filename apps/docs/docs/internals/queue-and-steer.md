@@ -4,17 +4,18 @@ What happens to a message that arrives while its conversation is busy. One contr
 
 ## Where it lives
 
-| File                                    | Owns                                                                                                                                       |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages/convex/runtimeIngress.ts`     | The coordinator: `accept`, `stepBoundary`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `maintain`, `recoverQueued`, `acquireClear` |
-| `apps/core/src/harness/ingress.ts`      | Candidate and delivery types, limits and TTLs, admission helpers                                                                           |
-| `apps/core/src/harness/harness.ts`      | `prepareStep`, where a steer joins a running turn                                                                                          |
-| `apps/core/src/harness/handler.ts`      | HTTP, async and channel admission, the drain loops                                                                                         |
-| `apps/core/src/harness/responses.ts`    | The `409` and `429` admission answers, the `202` bodies, SSE error frames                                                                  |
-| `apps/core/src/harness/worker-queue.ts` | The worker slots, the FIFO queue behind them, lease renewal while a run waits                                                              |
-| `apps/core/src/shared/commands.ts`      | `/steer`, `/queue`, `/stop` and `/cancel`, `/new` and `/clear`, `/compact`                                                                 |
-| `apps/gateway/src/agent.ts`             | WebSocket `execute`, `control`, `attach` and `cancel`, `ack` and `status` relay                                                            |
-| `verification/Broods/Ingress.lean`      | The envelope lifecycle model and its proofs. Change the mutations, update the model.                                                       |
+| File                                              | Owns                                                                                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/convex/runtimeIngress.ts`               | The coordinator: `accept`, `stepBoundary`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `maintain`, `recoverQueued`, `acquireClear` |
+| `apps/core/src/harness/ingress.ts`                | Candidate and delivery types, limits and TTLs, admission helpers                                                                           |
+| `apps/core/src/harness/harness.ts`                | `prepareStep`, where a steer joins a running turn                                                                                          |
+| `apps/core/src/harness/ai-sdk-harness/session.ts` | `steerHarnessTurn`, where a steer joins a running `config.harness` turn                                                                    |
+| `apps/core/src/harness/handler.ts`                | HTTP, async and channel admission, the drain loops                                                                                         |
+| `apps/core/src/harness/responses.ts`              | The `409` and `429` admission answers, the `202` bodies, SSE error frames                                                                  |
+| `apps/core/src/harness/worker-queue.ts`           | The worker slots, the FIFO queue behind them, lease renewal while a run waits                                                              |
+| `apps/core/src/shared/commands.ts`                | `/steer`, `/queue`, `/stop` and `/cancel`, `/new` and `/clear`, `/compact`                                                                 |
+| `apps/gateway/src/agent.ts`                       | WebSocket `execute`, `control`, `attach` and `cancel`, `ack` and `status` relay                                                            |
+| `verification/Broods/Ingress.lean`                | The envelope lifecycle model and its proofs. Change the mutations, update the model.                                                       |
 
 ## Modes
 

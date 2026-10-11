@@ -43,11 +43,6 @@ await mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
     },
   }),
   parkAiSdkHarnessSession: async () => {},
-  // The real turn plumbing the run loop drives, unmocked.
-  MID_TURN_STEERING_UNSUPPORTED: realHarnessIndex.MID_TURN_STEERING_UNSUPPORTED,
-  requireHarnessSandbox: realHarnessIndex.requireHarnessSandbox,
-  startHarnessLeaseMonitor: realHarnessIndex.startHarnessLeaseMonitor,
-  steerHarnessTurn: realHarnessIndex.steerHarnessTurn,
 }));
 
 // mock.module is process-wide; restore the real harness for later test files.
