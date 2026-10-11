@@ -161,6 +161,39 @@ test("the daemon retries when minting a stage session fails in transit", async (
   expect(lines[0]).toStartWith("stage session unavailable (network down)");
 });
 
+test("the daemon hands core a fresh ticket before the one it holds expires", async () => {
+  const core = startFakeCore((frame) =>
+    frame.type === "hello"
+      ? { type: "ready", sandboxId: "sbx_1", expiresInMs: 2_000 }
+      : null,
+  );
+  servers.push(core.server);
+  let calls = 0;
+  const startedAt = Date.now();
+
+  await expect(
+    runMachineDaemon({
+      baseUrl: core.url,
+      credential: async (): Promise<string> => {
+        calls += 1;
+
+        return `ticket-${calls}`;
+      },
+      cwd: process.cwd(),
+      log: (): void => {},
+      sandbox: "my-mac",
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow("Replaced by a newer connection");
+
+  expect(core.received.map((frame) => frame.type)).toEqual([
+    "hello",
+    "credential",
+  ]);
+  expect(core.received[1]).toEqual({ type: "credential", token: "ticket-2" });
+  expect(Date.now() - startedAt).toBeLessThan(2_000);
+});
+
 function exec(overrides: Partial<MachineExecFrame>): MachineExecFrame {
   return {
     type: "exec",

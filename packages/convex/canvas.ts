@@ -16,7 +16,10 @@ import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
 import { hasReservation } from "./model/cliSyncResources";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage, getProjectStage } from "./model/ownership/stage";
-import { getProjectForRole } from "./model/ownership/project";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "./model/ownership/project";
 import {
   normalizeWorkspaceConfig,
   workspaceEnvRefFields,
@@ -257,7 +260,7 @@ export const saveLayout = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       projectId,

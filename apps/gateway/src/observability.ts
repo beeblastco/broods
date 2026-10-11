@@ -11,6 +11,7 @@ import {
   readObservabilityStream,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
+import { resolveSocketScope } from "./upstream.ts";
 import {
   decoder,
   errorMessage,
@@ -23,11 +24,15 @@ export type ObservabilityScope = {
   projectSlug: string;
   stageSlug: string;
   endpointIds: string[];
+  /** Unix ms the stage ticket dies at, as core verified it. */
+  expiresAt: number;
 };
 
 export type ObservabilityGatewayData = {
   kind: "observability";
   scope: ObservabilityScope;
+  /** The ticket it upgraded with, asked of core again every minute. */
+  token: string;
 };
 
 // A NATS consumer for the deployment's own stream, or the Loki poll loop that
@@ -59,6 +64,8 @@ type ObservabilitySocketState = {
   backfills: Record<ObservabilityStream, Promise<void>>;
   // One fetchTrace at a time per socket; a second one is refused.
   fetchingTrace: boolean;
+  // The next expiry or revocation check.
+  lifetime?: ReturnType<typeof setTimeout>;
 };
 type OtelValue = {
   stringValue?: string;
@@ -148,6 +155,15 @@ const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
 // Span relay backpressure: re-check cadence and cap before shedding.
 const OBS_DRAIN_POLL_MS = 20;
 const OBS_DRAIN_MAX_WAIT_MS = 5_000;
+// Not fatal: the client reconnects with a fresh ticket.
+const OBS_EXPIRED_CLOSE = { code: 4419, reason: "Stage session expired" };
+// Fatal for the CLI, which stops on "unauthorized".
+const OBS_REVOKED_CLOSE = {
+  code: 4401,
+  reason: "Unauthorized; the stage session was revoked",
+};
+// How long a suspended account keeps a tail its ticket has not outlived.
+const OBS_REVALIDATE_MS = 60_000;
 const obsState = new WeakMap<
   Bun.ServerWebSocket<ObservabilityGatewayData>,
   ObservabilitySocketState
@@ -161,6 +177,7 @@ export async function handleObservabilityMessage(
   rawMessage: string | Buffer,
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
+  if (closeIfExpired(socket)) return;
   const text =
     typeof rawMessage === "string" ? rawMessage : decoder.decode(rawMessage);
   const parsed = parseJson(text);
@@ -260,9 +277,39 @@ export function openObservabilitySocket(
   });
 }
 
+/**
+ * The ticket is checked once, at the upgrade, so the socket closes when it
+ * expires, and until then core is asked again every minute so a suspended
+ * account does not keep its tail for the rest of the ticket. An outage keeps
+ * the socket: only a refusal closes it.
+ */
+export function watchObservabilityLifetime(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  coreBaseUrl: string,
+): void {
+  const state = obsState.get(socket);
+  if (!state) return;
+  state.lifetime = setTimeout(
+    async (): Promise<void> => {
+      if (closeIfExpired(socket)) return;
+      const resolved = await resolveSocketScope(socket.data.token, coreBaseUrl);
+      // Closed while core answered: nothing left to close or watch.
+      if (!obsState.has(socket) || closeIfExpired(socket)) return;
+      if (resolved.kind === "invalid") {
+        socket.close(OBS_REVOKED_CLOSE.code, OBS_REVOKED_CLOSE.reason);
+
+        return;
+      }
+      watchObservabilityLifetime(socket, coreBaseUrl);
+    },
+    Math.min(socket.data.scope.expiresAt - Date.now(), OBS_REVALIDATE_MS),
+  );
+}
+
 export function cleanupObservabilitySocket(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
 ): void {
+  clearTimeout(obsState.get(socket)?.lifetime);
   cleanupObservabilityStream(socket, "logs");
   cleanupObservabilityStream(socket, "traces");
   obsState.delete(socket);
@@ -1063,7 +1110,8 @@ function sendObs(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   payload: ObservabilityServerMessage,
 ): boolean {
-  if (socket.readyState !== WebSocket.OPEN) return false;
+  if (socket.readyState !== WebSocket.OPEN || closeIfExpired(socket))
+    return false;
   if (
     (payload.type === "log" || payload.type === "span") &&
     socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES
@@ -1076,6 +1124,16 @@ function sendObs(
   } catch {
     return false;
   }
+
+  return true;
+}
+
+// Timers run late under load, so every send checks the deadline itself.
+function closeIfExpired(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+): boolean {
+  if (Date.now() < socket.data.scope.expiresAt) return false;
+  socket.close(OBS_EXPIRED_CLOSE.code, OBS_EXPIRED_CLOSE.reason);
 
   return true;
 }
