@@ -121,8 +121,11 @@ describe("SubagentCoordinator", () => {
       }
 
       expect(task.taskId.startsWith("subagent~")).toBe(true);
-      expect(task.agentId).toBe(`virtual_subagent_${task.taskId}`);
-      expect(task.conversationKey.startsWith("subagent-")).toBe(true);
+      // A persistent virtual child is named by its key, not its task.
+      const keyUuid = /^subagent-persistent-([0-9a-f-]{36})-/.exec(
+        task.conversationKey,
+      )?.[1];
+      expect(task.agentId).toBe(`virtual_subagent_${keyUuid}`);
       // The dispatch hands the parent a run id, not the task's own event id.
       expect(task.statusPath).toMatch(/^\/v1\/runs\/run_[0-9a-f]{32}$/);
       expect(timeline.slice(0, 3)).toEqual([
@@ -934,7 +937,10 @@ describe("SubagentCoordinator", () => {
     const created = await internals.resolveTask({ prompt: "start" }, [], []);
     expect(created.taskId.startsWith("subagent~")).toBe(true);
     expect(created.eventId).toContain(`:api:${created.taskId}`);
-    expect(created.agentId).toContain(created.taskId);
+    const keyUuid = /^subagent-persistent-([0-9a-f-]{36})-/.exec(
+      created.publicConversationKey,
+    )?.[1];
+    expect(created.agentId).toBe(`virtual_subagent_${keyUuid}`);
     expect(
       created.publicConversationKey.startsWith("subagent-persistent-"),
     ).toBe(true);
@@ -953,9 +959,10 @@ describe("SubagentCoordinator", () => {
       [],
     );
     expect(resumed.publicConversationKey).toBe(created.publicConversationKey);
-    expect(resumed.conversationKey).toContain(
-      `api:${created.publicConversationKey}`,
-    );
+    // The resumed virtual child is the same child, on the same history.
+    expect(resumed.taskId).not.toBe(created.taskId);
+    expect(resumed.agentId).toBe(created.agentId);
+    expect(resumed.conversationKey).toBe(created.conversationKey);
     expect(resumed.persistent).toBe(true);
     expect(resumed.resuming).toBe(true);
 

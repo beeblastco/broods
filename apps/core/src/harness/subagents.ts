@@ -598,7 +598,9 @@ export class SubagentCoordinator {
       };
     }
 
-    const virtualAgentId = `${VIRTUAL_AGENT_PREFIX}${taskId}`;
+    // A persistent virtual child is named by its key's UUID, so resuming the
+    // key reaches the same child and its history. A one-off child by its task.
+    const virtualAgentId = `${VIRTUAL_AGENT_PREFIX}${PERSISTENT_SUBAGENT_KEY.exec(publicConversationKey)?.[1] ?? taskId}`;
 
     return {
       taskId: taskId,
