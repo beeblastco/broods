@@ -735,12 +735,13 @@ export async function runAgentLoop(
       sandboxes: sandboxes,
     },
   );
-  const toolApproval = createRuntimeToolApproval({
-    configuredApprovals: configuredApprovals,
-    workspaces: resolvedWorkspaces,
-    sandboxes: sandboxes,
-    ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
-  });
+  const { approval: toolApproval, startStep: startApprovalStep } =
+    createRuntimeToolApproval({
+      configuredApprovals: configuredApprovals,
+      workspaces: resolvedWorkspaces,
+      sandboxes: sandboxes,
+      ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
+    });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(agentConfig);
   const modelOutput = modelOutputFromModelConfig(agentConfig);
@@ -1364,6 +1365,7 @@ export async function runAgentLoop(
       }
     },
     onStepStart: async ({ stepNumber, messages }) => {
+      startApprovalStep();
       const now = Date.now();
       stepStartedAt.set(stepNumber, now);
       activeStepNumber = stepNumber;

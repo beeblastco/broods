@@ -5,7 +5,12 @@ import {
   simulateReadableStream,
   streamText,
   tool,
+  type ModelMessage,
+  type ToolApprovalRequestOutput,
+  type ToolApprovalResponse,
+  type ToolApprovalStatus,
   type ToolExecuteFunction,
+  type ToolSet,
 } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
@@ -14,7 +19,10 @@ import {
   listMcpTools,
   mcpConnection,
 } from "../src/harness/mcp/client.ts";
-import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
+import {
+  compatibilityApprovalStatus,
+  createRuntimeToolApproval,
+} from "../src/harness/policy.ts";
 import {
   MachineSandboxExecutor,
   isMachineUpgrade,
@@ -522,19 +530,10 @@ test("one step's computer actions reach the daemon one at a time, in the model's
 });
 
 test("a stopped run drops queued computer actions without waiting for the running one", async () => {
-  const click = Promise.withResolvers<string>();
+  const click = Promise.withResolvers<void>();
   const ran: string[] = [];
   const { tools, reserve } = serializeToolCalls(
-    {
-      computer: tool({
-        inputSchema: z.object({ action: z.string() }),
-        execute: async ({ action }): Promise<string> => {
-          ran.push(action);
-
-          return action === "left_click" ? click.promise : action;
-        },
-      }),
-    },
+    recordingComputer(ran, click.promise),
     "computer",
   );
   const execute = tools.computer?.execute;
@@ -561,7 +560,7 @@ test("a stopped run drops queued computer actions without waiting for the runnin
     ),
     Bun.sleep(50).then((): string => "still waiting"),
   ]);
-  click.resolve("clicked");
+  click.resolve();
   await clicked;
 
   expect(outcome).toBe("dropped");
@@ -597,6 +596,63 @@ test("a computer call the SDK never runs does not hold up the next one", async (
   }).consumeStream();
 
   expect(sent).toEqual(["screenshot"]);
+});
+
+test("in ask mode, a screenshot after a click waiting for approval waits with it and runs after it", async () => {
+  const ran: string[] = [];
+  const asked = await askedClickThenScreenshot(ran);
+
+  expect(ran).toEqual([]);
+  expect(
+    asked.requests.map((request): [string, boolean] => [
+      request.toolCall.toolCallId,
+      request.isAutomatic === true,
+    ]),
+  ).toEqual([
+    ["call-0", false],
+    ["call-1", false],
+  ]);
+
+  await resumed(
+    ran,
+    asked,
+    [true, true],
+    [{ action: "screenshot" }],
+  ).consumeStream();
+
+  // The hold ends with its step: the next step's screenshot does not ask.
+  expect(ran).toEqual(["left_click", "screenshot", "screenshot"]);
+});
+
+test("a denied click does not hold up the screenshot that waited with it", async () => {
+  const ran: string[] = [];
+  const asked = await askedClickThenScreenshot(ran);
+  const outcome = await Promise.race([
+    resumed(ran, asked, [false, true], [])
+      .consumeStream()
+      .then((): string => "settled"),
+    Bun.sleep(500).then((): string => "hung"),
+  ]);
+
+  expect(outcome).toBe("settled");
+  expect(ran).toEqual(["screenshot"]);
+});
+
+test("a stopped run drops the screenshot queued behind an approved click", async () => {
+  const ran: string[] = [];
+  const asked = await askedClickThenScreenshot(ran);
+  const stop = new AbortController();
+  const outcome = Promise.race([
+    resumed(ran, asked, [true, true], [], stop)
+      .consumeStream({ onError: (): void => {} })
+      .then((): string => "settled"),
+    Bun.sleep(500).then((): string => "hung"),
+  ]);
+  await waitFor((): boolean => ran.length > 0);
+  stop.abort();
+
+  expect(await outcome).toBe("settled");
+  expect(ran).toEqual(["left_click"]);
 });
 
 test("an MCP row lists and calls through the daemon that serves that server", async () => {
@@ -679,6 +735,30 @@ test("core records each daemon connection, and a disconnect names that same conn
     specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },
   });
   expect(second?.ref.connectionId).not.toBe(first?.ref.connectionId);
+});
+
+test("a policy deny stands in ask mode instead of becoming a prompt", async () => {
+  const { approval } = createRuntimeToolApproval({
+    configuredApprovals: new Map(),
+    workspaces: [],
+    sandboxes: [machine()],
+    policyApproval: async (): Promise<ToolApprovalStatus> => "denied",
+  });
+
+  expect(
+    await approval?.({
+      toolCall: {
+        type: "tool-call",
+        toolCallId: "call-0",
+        toolName: "computer",
+        input: { action: "left_click" },
+      },
+      tools: {},
+      toolsContext: {},
+      runtimeContext: {},
+      messages: [],
+    }),
+  ).toBe("denied");
 });
 
 test("looking at the screen is free, anything else asks unless the sandbox is bypass", () => {
@@ -820,6 +900,61 @@ function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
   };
 }
 
+// One ask-mode pass where the model clicks, then takes a screenshot.
+async function askedClickThenScreenshot(ran: string[]): Promise<{
+  messages: ModelMessage[];
+  requests: ToolApprovalRequestOutput<ToolSet>[];
+}> {
+  const prompt: ModelMessage[] = [
+    { role: "user", content: "click the field, then look" },
+  ];
+  const step = askModeStream(ran, Bun.sleep(10), {
+    model: computerStepModel([
+      { action: "left_click", coordinate: [10, 20] },
+      { action: "screenshot" },
+    ]),
+    messages: prompt,
+  });
+  const content = await step.content;
+
+  return {
+    messages: [...prompt, ...(await step.response).messages],
+    requests: content.flatMap((part): ToolApprovalRequestOutput<ToolSet>[] =>
+      part.type === "tool-approval-request" ? [part] : [],
+    ),
+  };
+}
+
+// One streamText pass over a recording computer on an `ask` machine, wired
+// like the harness. A click lasts until `clicked` settles.
+function askModeStream(
+  ran: string[],
+  clicked: Promise<void>,
+  options: {
+    model: MockLanguageModelV4;
+    messages: ModelMessage[];
+    abortSignal?: AbortSignal;
+  },
+): ReturnType<typeof streamText> {
+  const { tools, reserve } = serializeToolCalls(
+    recordingComputer(ran, clicked),
+    "computer",
+  );
+  const { approval, startStep } = createRuntimeToolApproval({
+    configuredApprovals: new Map(),
+    workspaces: [],
+    sandboxes: [machine()],
+  });
+
+  return streamText({
+    ...options,
+    tools: tools,
+    ...(approval ? { toolApproval: approval } : {}),
+    onStepStart: startStep,
+    onToolExecutionStart: ({ toolCall }): void => reserve(toolCall),
+  });
+}
+
 // One model step that calls the computer tool with each input, in order.
 function computerStepModel(
   inputs: Record<string, unknown>[],
@@ -928,6 +1063,22 @@ function openSocket(
   return socket;
 }
 
+// A computer tool that records each action as it starts. A click lasts until
+// `clicked` settles.
+function recordingComputer(ran: string[], clicked: Promise<void>): ToolSet {
+  return {
+    computer: tool({
+      inputSchema: z.object({ action: z.string() }).loose(),
+      execute: async ({ action }): Promise<string> => {
+        ran.push(action);
+        if (action === "left_click") await clicked;
+
+        return action;
+      },
+    }),
+  };
+}
+
 function result(
   id: string,
   overrides: Partial<MachineResultFrame>,
@@ -943,4 +1094,37 @@ function result(
     truncated: false,
     ...overrides,
   };
+}
+
+// The next pass after a person answers each request of `asked`, in order, where
+// the model then calls `next`. The click lasts until `stop` aborts when one is
+// given.
+function resumed(
+  ran: string[],
+  asked: Awaited<ReturnType<typeof askedClickThenScreenshot>>,
+  answers: boolean[],
+  next: Record<string, unknown>[],
+  stop?: AbortController,
+): ReturnType<typeof streamText> {
+  const clicked = stop
+    ? new Promise<void>((resolve): void => {
+        stop.signal.addEventListener("abort", (): void => resolve());
+      })
+    : Bun.sleep(10);
+
+  return askModeStream(ran, clicked, {
+    model: computerStepModel(next),
+    messages: [
+      ...asked.messages,
+      {
+        role: "tool",
+        content: asked.requests.map((request, index): ToolApprovalResponse => ({
+          type: "tool-approval-response",
+          approvalId: request.approvalId,
+          approved: answers[index] === true,
+        })),
+      },
+    ],
+    ...(stop ? { abortSignal: stop.signal } : {}),
+  });
 }
