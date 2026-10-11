@@ -1058,6 +1058,9 @@ export const runtimeConversationEventsFields = {
   accountId: v.id("accounts"),
   conversationKey: v.string(),
   cursor: v.string(),
+  // Set by a writer that may retry an append whose reply was lost: a row whose
+  // key this conversation already stores is skipped, so it is stored once.
+  dedupeKey: v.optional(v.string()),
   event: v.any(),
 };
 /** Resumable checkpoint for one AI SDK Harness conversation. */
@@ -1686,6 +1689,7 @@ export default defineSchema({
     .index("by_expiresAt", ["expiresAt"]),
   runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
     .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])
+    .index("by_conversationKey_and_dedupeKey", ["conversationKey", "dedupeKey"])
     .index("by_accountId", ["accountId"]),
   runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
     .index("by_conversationKey", ["conversationKey"])

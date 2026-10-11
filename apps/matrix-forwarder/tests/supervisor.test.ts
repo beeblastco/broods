@@ -1,5 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import type { MatrixForwardedEvent } from "../../core/src/shared/matrix-wire.ts";
+import { describe, expect, it } from "bun:test";
 import type { AccountState, MatrixAccountOptions } from "../src/account.ts";
 import type { MatrixConnection } from "../src/connections.ts";
 import {
@@ -7,26 +6,6 @@ import {
   groupConnectionsByToken,
   type ForwarderAccount,
 } from "../src/supervisor.ts";
-
-const EVENT: MatrixForwardedEvent = {
-  type: "MATRIX_ROOM_EVENT",
-  encrypted: false,
-  event: {
-    content: { body: "hi", msgtype: "m.text" },
-    event_id: "$event-1",
-    origin_server_ts: 1,
-    sender: "@ada:example.org",
-    type: "m.room.message",
-  },
-  roomId: "!room:example.org",
-  userId: "@bot:example.org",
-};
-
-const realFetch = globalThis.fetch;
-
-afterEach((): void => {
-  globalThis.fetch = realFetch;
-});
 
 describe("grouping connections", () => {
   // The same account deployed to dev and prod is one sync loop and one crypto
@@ -154,15 +133,7 @@ describe("reconcile", () => {
     expect(forwarder.status().accounts).toHaveLength(0);
   });
 
-  it("delivers to where reconcile last pointed the token", async () => {
-    const posted: string[] = [];
-    globalThis.fetch = (async (
-      input: string | URL | Request,
-    ): Promise<Response> => {
-      posted.push(input instanceof Request ? input.url : input.toString());
-
-      return new Response("", { status: 200 });
-    }) as typeof fetch;
+  it("delivers to where reconcile last pointed the token", () => {
     const { accounts, forwarder } = stubbedForwarder();
     forwarder.reconcile([
       connection({ webhookUrl: "https://gateway.example.com/old" }),
@@ -170,9 +141,10 @@ describe("reconcile", () => {
     forwarder.reconcile([
       connection({ webhookUrl: "https://gateway.example.com/new" }),
     ]);
-    await accounts[0]?.options.onEvent(EVENT);
 
-    expect(posted).toEqual(["https://gateway.example.com/new"]);
+    expect(
+      accounts[0]?.options.targets().map((target): string => target.webhookUrl),
+    ).toEqual(["https://gateway.example.com/new"]);
   });
 });
 

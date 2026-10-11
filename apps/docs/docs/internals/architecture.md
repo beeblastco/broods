@@ -67,7 +67,7 @@ sequenceDiagram
 
 - Also `POST /v1/projects/:p/stages/:s/agents/:endpointId`. `ENABLE_DIRECT_API` gates both, default `true`.
 - A duplicate idempotency key answers with the first admission's run id. The same key with a different payload is `409 idempotency_conflict`.
-- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8, streamed and background runs alike. A full worker queue fails a streamed run with `503`. Queue modes: [queue and steer](queue-and-steer.md).
+- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8, streamed and background runs alike. A full worker queue turns a new streamed or background run away with `503` and `Retry-After` before the plan counts it or ingress records it, so a retry with the same `eventId` starts it; a request that got past that check holds one queue place while it is admitted (`withQueuePlace`), so concurrent requests never admit more runs than the queue takes and its run is never shed once recorded. Queue modes: [queue and steer](queue-and-steer.md).
 
 ### WebSocket run
 
@@ -308,7 +308,7 @@ flowchart LR
 | NATS `WS_RESPONSES`     | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
 | NATS `OBSERVABILITY`    | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
 | Loki, Tempo             | Long-term logs and traces, via the OTel collector                        | Per collector config                |
-| Matrix forwarder volume | Each Matrix account's crypto store and sync token                        | Durable                             |
+| Matrix forwarder volume | Each Matrix account's crypto store, sync token and outbox                | Durable; an outbox event 12 hours   |
 
 Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). Byte layout: [storage](storage.md).
 
