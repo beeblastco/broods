@@ -610,6 +610,8 @@ describe("telegram channel adapter", () => {
         mimeType: "image/webp",
       }),
     ]);
+    // The file_id is what send-sticker takes to send the same sticker back.
+    expect(parsed.content).toBe("🎉 [sticker file_id: st-1]");
 
     // A .tgs or .webm sticker is not a picture any model can read, and the
     // emoji says more than a failed download would.
@@ -639,7 +641,7 @@ describe("telegram channel adapter", () => {
       },
     });
 
-    expect(parsed.content).toBe("😅");
+    expect(parsed.content).toBe("😅 [sticker file_id: st-3]");
     expect(parsed.attachments).toBeUndefined();
   });
 

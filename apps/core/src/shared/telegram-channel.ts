@@ -43,6 +43,9 @@ const TELEGRAM_API_URL = "https://api.telegram.org";
 const TELEGRAM_MEDIA_GROUP_MAX = 10;
 // Telegram serves every static sticker as WebP whatever the set was built from.
 const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
+// A Bot API file_id is URL-safe base64, so anything else (a path) is refused here
+// rather than by Telegram's "wrong HTTP URL specified".
+const TELEGRAM_FILE_ID_PATTERN = /^[\w-]+$/;
 // A quote is context for the turn, not the turn itself; Telegram allows 4096.
 const TELEGRAM_REPLY_QUOTE_MAX = 500;
 // callback_data on a reply button: the reply itself, sent as the person's message.
@@ -301,7 +304,7 @@ export function createTelegramChannel(
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
           content: withReplyContext(
-            parsed.text || skippedStickerText(message.sticker),
+            parsed.text || stickerText(message.sticker),
             parsed.replyTo,
           ),
           ...(attachments.length > 0 ? { attachments: attachments } : {}),
@@ -378,13 +381,12 @@ export function createTelegramChannel(
         },
         sendSticker: async function (sticker): Promise<void> {
           const value = sticker.trim();
-          if (!value) {
-            throw new Error(
-              "Telegram sendSticker needs a file id or public http(s) URL",
-            );
-          }
           if (value.includes("://")) {
             assertTelegramStickerUrl(value);
+          } else if (!TELEGRAM_FILE_ID_PATTERN.test(value)) {
+            throw new Error(
+              "Telegram sendSticker needs a sticker file_id or a public http(s) URL, not a file path",
+            );
           }
           await callTelegramBotApi(apiUrl, botToken, "sendSticker", {
             chat_id: source.chatId,
@@ -509,15 +511,15 @@ function questionKeyboard(
   );
 }
 
-// The stand-in text for a sticker `telegramAttachments` skips: an animated or
-// video sticker carries no caption, so without its emoji the turn would arrive
-// entirely empty.
-function skippedStickerText(sticker: TelegramSticker | undefined): string {
-  if (!sticker || (!sticker.is_animated && !sticker.is_video)) {
+// The text a sticker arrives as, since it carries no caption: its emoji, which
+// is all an animated or video sticker says once `telegramAttachments` skips it,
+// and the file_id send-sticker takes to send the same sticker back.
+function stickerText(sticker: TelegramSticker | undefined): string {
+  if (!sticker) {
     return "";
   }
 
-  return sticker.emoji ?? "[sticker]";
+  return `${sticker.emoji ?? ""} [sticker file_id: ${sticker.file_id}]`.trim();
 }
 
 /**
@@ -530,7 +532,7 @@ function skippedStickerText(sticker: TelegramSticker | undefined): string {
  * turns a file id back into a download.
  *
  * Animated and video stickers (.tgs, .webm) are left alone. Neither is a picture
- * a model can read; `skippedStickerText` carries their emoji as the message text
+ * a model can read; `stickerText` carries their emoji as the message text
  * instead, which says more than a failed download would.
  */
 function telegramAttachments(

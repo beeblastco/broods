@@ -115,6 +115,7 @@ Quoted text over 500 characters is cut. A reply to a message with no text, such 
 - Private chats stream the answer as a live draft, then persist the final message. Groups get one final reply.
 - Replies stay in the current forum topic.
 - `ask_questions` renders as an inline keyboard with one button per option.
-- The agent can send images, documents and stickers by file id or URL. Telegram fetches URLs itself.
+- The agent can send images, documents and stickers by file id or URL. Telegram fetches URLs itself. A workspace path is refused for a sticker.
+- An incoming sticker arrives as its emoji and `[sticker file_id: …]`, so the agent can send the same sticker back. A static sticker also arrives as an image.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.
