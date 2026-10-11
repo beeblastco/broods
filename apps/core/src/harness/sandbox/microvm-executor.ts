@@ -565,6 +565,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const result = await this.#shell(microvmId, endpoint, script, {
       timeoutSeconds: 30,
       env: callbackEnv(request.callback),
+      home: workDir,
     });
     if (result.exitCode !== null && result.exitCode !== 0) {
       throw new Error(
@@ -1360,6 +1361,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   #execPayload(request: SandboxRunRequest): SandboxExecRequest {
+    // A persistent run with no workspace has no namespace to keep `~` in, so it
+    // gets the same HOME as its hooks and jobs.
+    const home =
+      this.#persistent(request) && !request.namespace
+        ? this.#workDir(this.#workspaceKey(request))
+        : undefined;
+
     return {
       runtime: request.runtime ?? "bash",
       code: request.code,
@@ -1373,7 +1381,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       ...(request.args && request.args.length > 0
         ? { args: request.args }
         : {}),
-      env: this.#sandboxEnvVars(request.envVars, request.principal),
+      env: {
+        ...this.#sandboxEnvVars(request.envVars, request.principal),
+        ...homeEnv(home),
+      },
     };
   }
 
@@ -1586,7 +1597,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   // Control/lifecycle bash for onCreate/onResume hooks and background-job marker
-  // scripts. No workspace cwd, since those scripts use absolute paths.
+  // scripts. No workspace cwd, since those scripts use absolute paths. With no
+  // namespace the guest points HOME and TMPDIR at a dir it deletes on return, so
+  // `home` (the workspace) keeps what a hook installs or a job runs under `~`.
   async #shell(
     microvmId: string,
     endpoint: string,
@@ -1595,6 +1608,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       timeoutSeconds?: number;
       budgetMs?: number;
       env?: Record<string, string>;
+      home?: string;
     } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
     const response = await this.#exec(
@@ -1604,7 +1618,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         runtime: "bash",
         code: script,
         timeout_ms: (options.timeoutSeconds ?? 60) * 1000,
-        env: { ...this.#sandboxEnvVars(), ...options.env },
+        env: {
+          ...this.#sandboxEnvVars(),
+          ...options.env,
+          ...homeEnv(options.home),
+        },
       },
       options.budgetMs ?? WARMUP_BUDGET_MS,
     );
@@ -1758,6 +1776,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const result = await this.#shell(microvmId, endpoint, script, {
       timeoutSeconds: this.#config.timeout ?? 120,
       budgetMs: budgetMs,
+      home: workDir,
     });
     if (result.exitCode !== null && result.exitCode !== 0) {
       throw new Error(
@@ -1886,6 +1905,11 @@ function evictToCap<T extends { expiresAt: number }>(
   if (cache.size < CACHE_MAX_ENTRIES) return;
   const oldest = cache.keys().next().value;
   if (oldest) cache.delete(oldest);
+}
+
+// HOME and TMPDIR for an exec the guest would otherwise give a throwaway home.
+function homeEnv(home: string | undefined): Record<string, string> {
+  return home ? { HOME: home, TMPDIR: "/tmp" } : {};
 }
 
 function isMicrovmGone(error: unknown): boolean {
