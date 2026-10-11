@@ -12,6 +12,7 @@ import {
   parseSkillMarkdown,
   validateSkillDescription,
   validateSkillName,
+  MAX_SKILL_METADATA_BYTES,
   SKILL_FILE,
 } from "./skillRules";
 import {
@@ -366,7 +367,12 @@ export function validateSkillBundle(
   }
 
   return {
-    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
+    // Parsed from the head core reads, so a skill that uploads also lists.
+    metadata: parseSkillMarkdown(
+      new TextDecoder().decode(
+        skillFile.bytes.subarray(0, MAX_SKILL_METADATA_BYTES),
+      ),
+    ),
     files: files,
   };
 }

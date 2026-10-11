@@ -337,6 +337,7 @@ describe("stage session tickets", () => {
         projectId: "proj_shop",
         stageId: "stage_dev",
         sandboxWrite: false,
+        expiresAt: ticket.expiresAt,
       },
     });
   });

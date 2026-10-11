@@ -9,6 +9,11 @@ import { ClientError } from "./clientError";
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
+/**
+ * The head of SKILL.md that must hold its frontmatter: core reads only this
+ * much of each configured skill for the per-turn skill list.
+ */
+export const MAX_SKILL_METADATA_BYTES = 64 * 1024;
 
 /**
  * Assert a skill name is lowercase kebab-case without reserved words.

@@ -1,6 +1,7 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
 import { auditLedger } from "./audit-ledger.ts";
+import { authFailures } from "./auth-failures.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { bashTimeout } from "./bash-timeout.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
@@ -22,6 +23,7 @@ import { r2Workspace } from "./r2-workspace.ts";
 import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
+import { skillLimit } from "./skill-limit.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { subagentModel } from "./subagent-model.ts";
 import { subagentStop } from "./subagent-stop.ts";
@@ -62,4 +64,7 @@ export const verifyCases: readonly VerifyCase[] = [
   auditLedger,
   runToken,
   workspaceIsolation,
+  skillLimit,
+  // Last: it blocks a source address on the config plane for 15 minutes.
+  authFailures,
 ];

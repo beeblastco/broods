@@ -36,10 +36,13 @@ export async function resolveSocketScope(
       },
     );
     if (response.ok) {
-      return {
-        kind: "resolved",
-        scope: (await response.json()) as ObservabilityScope,
-      };
+      const scope = (await response.json()) as ObservabilityScope;
+
+      // The socket closes at this instant; a core that names none is not
+      // trusted with an open-ended one.
+      return Number.isFinite(scope.expiresAt)
+        ? { kind: "resolved", scope: scope }
+        : { kind: "unavailable" };
     }
 
     return response.status === 401 || response.status === 403

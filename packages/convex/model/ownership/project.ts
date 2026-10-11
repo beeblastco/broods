@@ -1,5 +1,6 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import { requireActiveOrgAccount } from "../activeAccount";
 import {
   getOrgMembership,
   orgRoleMeets,
@@ -28,6 +29,23 @@ export async function getProjectForRole(
   const membership = await getOrgMembership(ctx, project.orgId, user._id);
   if (!membership) return null;
   if (!orgRoleMeets(membership.role, requiredRole)) return null;
+
+  return project;
+}
+
+/**
+ * `getProjectForRole` for a write, upload or compute call: a suspended
+ * account stays readable but takes no change, as on the config HTTP API.
+ * @throws when the project's account is disabled.
+ */
+export async function getProjectForWrite(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+  projectId: Id<"projects">,
+  requiredRole?: OrgRole,
+): Promise<Doc<"projects"> | null> {
+  const project = await getProjectForRole(ctx, authId, projectId, requiredRole);
+  if (project) await requireActiveOrgAccount(ctx, project.orgId);
 
   return project;
 }

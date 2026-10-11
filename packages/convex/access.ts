@@ -29,6 +29,7 @@ import {
 } from "./model/access";
 import { randomToken } from "./model/accountSecrets";
 import { actorsOf, actorValidator, type Actor } from "./model/actor";
+import { requireActiveAccount } from "./model/activeAccount";
 import { ClientError } from "./model/clientError";
 import { orgIdOf } from "./model/ownership/org";
 import { assertPolicyUnreferenced } from "./model/policyReferences";
@@ -661,13 +662,14 @@ export const removeRole = mutation({
   },
 });
 
-/** The caller, who must hold `access:write` in the active org. */
+/** The caller, who must hold `access:write` in the active, enabled org. */
 async function requireAccessWriter(ctx: MutationCtx): Promise<ActiveAccount> {
   const caller = await getActiveCaller(ctx);
   const orgId = caller ? orgIdOf(ctx, caller.account) : null;
   if (!caller || !orgId) {
     throw new ClientError("No permission for this", "unauthorized");
   }
+  await requireActiveAccount(ctx, caller.account._id);
   await requireDashboardPermission(ctx, orgId, caller.user, "access:write");
 
   return caller;

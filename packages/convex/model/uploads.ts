@@ -6,6 +6,7 @@
 import type { SystemDataModel } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { requireActiveAccount } from "./activeAccount";
 import { jsonError, rateLimitHeaders } from "./httpJson";
 
 export const OPEN_UPLOADS_PER_HOUR = 20;
@@ -44,6 +45,8 @@ export async function grantUpload(
   accountId: Id<"accounts">,
   kind: UploadKind,
 ): Promise<UploadGrant> {
+  // Every surface mints through here, so a suspended account gets no URL.
+  await requireActiveAccount(ctx, accountId);
   const now = Date.now();
   const stale = await ctx.db
     .query("uploadGrants")
