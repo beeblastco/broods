@@ -17,6 +17,7 @@ import {
   asyncAgentOutcomeValidator,
   asyncAgentResultRow,
   conversationEventsValidator,
+  markAsyncAgentResultSeen,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -206,13 +207,6 @@ export const accept = internalMutation({
     if (priorAdmission) {
       return priorAdmission;
     }
-    // A get_subagent_status read and this resume race to deliver one result;
-    // whichever marks it seen first wins, so the parent is told it once.
-    const result = await asyncAgentResultRow(ctx, args.resultEventId);
-    if (result?.observed === true) {
-      return { outcome: "duplicate" as const, eventId: args.eventId };
-    }
-
     const prepared = await prepareAdmissionCoordinator(ctx, args, now);
     let coordinator = prepared.coordinator;
     const queue = prepared.queue;
@@ -261,7 +255,7 @@ export const accept = internalMutation({
       };
     }
 
-    if (result) await ctx.db.patch(result._id, { observed: true });
+    await markAsyncAgentResultSeen(ctx, args.resultEventId);
     const sequence = coordinator.nextSequence;
     const baseEnvelope = buildAdmissionEnvelope(args, identity, sequence, now);
     if (busy) {
@@ -1087,7 +1081,7 @@ async function canonicalIdentity(options: {
  */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,
-  args: { eventId: string; payloadDigest: string },
+  args: { eventId: string; payloadDigest: string; resultEventId?: string },
   identity: string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
   const existing = await ctx.db
@@ -1116,6 +1110,12 @@ async function checkDuplicateAdmission(
     .unique();
   if (existingEvent) {
     return { outcome: "conflict" as const, eventId: existingEvent.eventId };
+  }
+  // A get_subagent_status read and a late resume race to deliver one result;
+  // whichever marks it seen first wins, so the parent is told it once.
+  const result = await asyncAgentResultRow(ctx, args.resultEventId);
+  if (result?.observed === true) {
+    return { outcome: "duplicate" as const, eventId: args.eventId };
   }
 
   return null;

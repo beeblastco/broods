@@ -512,6 +512,15 @@ export async function asyncAgentResultRow(
     .unique();
 }
 
+/** Marks a subagent result seen inside the transaction that delivers it (`accept`). */
+export async function markAsyncAgentResultSeen(
+  ctx: MutationCtx,
+  eventId: string | undefined,
+): Promise<void> {
+  const row = await asyncAgentResultRow(ctx, eventId);
+  if (row) await ctx.db.patch(row._id, { observed: true });
+}
+
 /**
  * Patches the polling row for `eventId` with a run's outcome.
  * @returns false when the row no longer exists
