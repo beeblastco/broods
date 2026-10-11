@@ -1318,13 +1318,15 @@ describe("SubagentCoordinator", () => {
     };
 
     try {
-      internals.pending.set("subagent~task_1", Promise.resolve());
-      await internals.completeTask({
-        ...failure,
-        error: "Stopped by user at the model boundary",
-      });
+      for (const stopped of [
+        "Stopped by user at the model boundary",
+        "Stopped by the parent agent at the model boundary",
+      ]) {
+        internals.pending.set("subagent~task_1", Promise.resolve());
+        await internals.completeTask({ ...failure, error: stopped });
 
-      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+        expect(await coordinator.drainCompletionsToParent()).toBe(0);
+      }
 
       // A genuine failure is still reported, so the parent can react to it.
       internals.pending.set("subagent~task_1", Promise.resolve());

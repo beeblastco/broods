@@ -46,7 +46,7 @@ In persistent mode the parent also gets:
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `get_subagent_status` | Reads a child's status. On a child this turn started, it first waits up to 60s for it to finish. A result read this way is not injected again |
 | `update_subagent`     | `steer` changes the running child's direction, or answers its open `ask_parent` question. `continue` queues a follow-up turn                  |
-| `stop_subagent`       | Stops the child at its next step. A stopped child's partial work is not sent to the parent.                                                   |
+| `stop_subagent`       | Stops the child at its next step. A stopped child sends no report: its partial work is not sent to the parent.                                |
 
 A persistent child gets `ask_parent`: it asks the parent one question and waits up to 5 minutes for the answer. The question reaches the parent at its next step, or wakes it if it is waiting on children. The parent answers with `update_subagent` in `steer` mode. With no answer in time, the child is told to continue on its best judgment.
 

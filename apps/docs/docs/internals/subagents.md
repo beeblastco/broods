@@ -122,7 +122,7 @@ stateDiagram-v2
   failed --> running: takeNext finds a queued continue
   completed --> [*]: nothing queued, lease released
   failed --> [*]: nothing queued, lease released
-  note right of stopping: a seen stop settles failed with stoppedByUser and is not injected
+  note right of stopping: a seen stop settles failed as stopped by the parent agent, without stoppedByUser, and is not injected
 ```
 
 - A busy child conversation makes `accept` answer `rejected`, and the task fails with `Subagent conversation is not available: rejected`, injected like any failure.
