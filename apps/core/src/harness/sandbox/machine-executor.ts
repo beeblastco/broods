@@ -80,9 +80,14 @@ interface MachineConnection {
 export interface MachineSocketData {
   /** Unset for a bearer with no account. */
   accountId?: string;
+  /** The bearer it upgraded with, resolved again every heartbeat. */
+  authorization?: string;
   claimed?: boolean;
   /** Set once the socket closes, so a claim still awaiting its lookup drops it. */
   closed?: boolean;
+  /** Unix ms a stage ticket dies at, and the timer that closes the socket then. */
+  expiresAt?: number;
+  expiry?: ReturnType<typeof setTimeout>;
   key?: string;
   /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
@@ -154,6 +159,18 @@ export function isMachineUpgrade(request: Request): boolean {
 export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
   {
     maxPayloadLength: MACHINE_MAX_FRAME_BYTES,
+    open: function (socket): void {
+      const expiresAt = socket.data.expiresAt;
+      if (expiresAt === undefined) return;
+      socket.data.expiry = setTimeout(
+        (): void =>
+          socket.close(
+            MACHINE_CLOSE.expired.code,
+            MACHINE_CLOSE.expired.reason,
+          ),
+        expiresAt - Date.now(),
+      );
+    },
     message: function (socket, raw): void {
       const accountId = socket.data.accountId;
       if (!accountId) {
@@ -191,6 +208,7 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
     },
     close: function (socket): void {
       socket.data.closed = true;
+      clearTimeout(socket.data.expiry);
       const key = socket.data.key;
       const connection = key ? connections.get(key) : undefined;
       // A replaced socket must not tear down its successor's registration.
@@ -306,13 +324,18 @@ export async function upgradeMachineSocket(
   // So the embeddable runtime key is refused (it sits in frontends), and so
   // is a stage ticket any org member can mint in the dashboard: only one
   // minted for a member who may write the stage's sandboxes gets through.
+  // The bearer stays with the socket so each heartbeat resolves it again: a
+  // revoked key, an ended role session or a suspended account loses the
+  // claim within a minute, and a ticket closes the socket when it expires.
+  const authorization = request.headers.get("authorization") ?? "";
   let data: MachineSocketData = {};
   if (auth?.kind === "account") {
-    data = { accountId: auth.account.accountId };
+    data = { accountId: auth.account.accountId, authorization: authorization };
   } else if (auth?.kind === "role") {
     const { projectId, stageId } = auth.role;
     data = {
       accountId: auth.account.accountId,
+      authorization: authorization,
       role: auth.role,
       // A stage-pinned role claims like a ticket for its stage.
       ...(projectId && stageId
@@ -325,6 +348,8 @@ export async function upgradeMachineSocket(
   ) {
     data = {
       accountId: auth.account.accountId,
+      authorization: authorization,
+      expiresAt: auth.stageTicket.expiresAt,
       stage: {
         projectId: auth.stageTicket.projectId,
         stageId: auth.stageTicket.stageId,
@@ -541,6 +566,22 @@ function sendFrame(
   timeoutMs: number,
 ): Promise<MachineReply> {
   return new Promise((resolve, reject): void => {
+    // Timers run late under load, so a frame never waits on the expiry one: a
+    // daemon past its credential gets no exec, env or anything else.
+    const expiresAt = connection.socket.data.expiresAt;
+    if (expiresAt !== undefined && expiresAt <= Date.now()) {
+      connection.socket.close(
+        MACHINE_CLOSE.expired.code,
+        MACHINE_CLOSE.expired.reason,
+      );
+      reject(
+        new Error(
+          `machine sandbox "${connection.name}" is reconnecting with a fresh credential`,
+        ),
+      );
+
+      return;
+    }
     const timer = setTimeout((): void => {
       connection.pending.delete(frame.id);
       reject(
@@ -563,7 +604,42 @@ function sendHeartbeats(): void {
     mirrorConnection(() =>
       getStorage().machineConnections.seen(connection.ref),
     );
+    void revalidate(connection.socket);
   }
+}
+
+// An outage keeps the daemon: only a bearer that no longer resolves to the
+// socket's account closes it, and an expired ticket closes as expired so the
+// daemon reconnects with a fresh one instead of stopping.
+async function revalidate(
+  socket: Bun.ServerWebSocket<MachineSocketData>,
+): Promise<void> {
+  let auth: Awaited<ReturnType<typeof resolveBearerAuth>>;
+  try {
+    auth = await resolveBearerAuth({
+      authorization: socket.data.authorization ?? "",
+    });
+  } catch (error: unknown) {
+    logWarn("Machine sandbox revalidation failed", {
+      accountId: socket.data.accountId,
+      error: toErrorMessage(error),
+    });
+
+    return;
+  }
+  if (
+    socket.data.closed ||
+    (auth &&
+      auth.kind !== "admin" &&
+      auth.account.accountId === socket.data.accountId)
+  )
+    return;
+  const expiresAt = socket.data.expiresAt;
+  const close =
+    expiresAt !== undefined && expiresAt <= Date.now()
+      ? MACHINE_CLOSE.expired
+      : MACHINE_CLOSE.unauthorized;
+  socket.close(close.code, close.reason);
 }
 
 function settleReply(key: string, reply: MachineReply): void {

@@ -21,6 +21,7 @@ import {
   cleanupObservabilitySocket,
   handleObservabilityMessage,
   openObservabilitySocket,
+  watchObservabilityLifetime,
   type ObservabilityGatewayData,
 } from "./observability.ts";
 import {
@@ -203,7 +204,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
                 { code: "scope_mismatch" },
               );
             }
-            data = { kind: "observability", scope: scope };
+            data = { kind: "observability", scope: scope, token: token };
           } else if (agentWebSocketPath) {
             // Bind the socket to the key's own endpoint scope: attach never posts
             // through the core run path, so the door check must happen here.
@@ -291,10 +292,12 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
     idleTimeout: config.limits.idleTimeoutSeconds,
     open: function (socket): void {
       sockets.add(socket);
-      if (socket.data.kind === "observability")
-        openObservabilitySocket(
-          socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
-        );
+      if (socket.data.kind === "observability") {
+        const observability =
+          socket as Bun.ServerWebSocket<ObservabilityGatewayData>;
+        openObservabilitySocket(observability);
+        watchObservabilityLifetime(observability, config.coreBaseUrl);
+      }
       if (socket.data.kind === "terminal" || socket.data.kind === "machine")
         openTerminalUpstream(socket as Bun.ServerWebSocket<RelayGatewayData>);
     },

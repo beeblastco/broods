@@ -41,6 +41,8 @@ const HOLDER_MAX_BYTES = 40;
 
 export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
+  // Not fatal: the daemon reconnects with a fresh credential.
+  expired: { code: 4419, reason: "Credential expired" },
   occupied: { code: 4423, reason: "Already connected from another daemon" },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
   unauthorized: { code: 4401, reason: "Unauthorized; run broods login" },

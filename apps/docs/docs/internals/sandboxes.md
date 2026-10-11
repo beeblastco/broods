@@ -555,6 +555,7 @@ sequenceDiagram
 ```
 
 - One daemon holds a record. A second is closed with `4423` naming the holder's host; `--force` replaces the holder, which gets `4409`. Bad credentials close with `4401`, an unknown sandbox name with `4404`, a malformed frame with `4400`.
+- A stage ticket's socket closes with `4419` the moment the ticket expires, and core sends no frame to it after that, even if the timer runs late. `4419` is not fatal: the daemon reconnects with a freshly minted ticket and reclaims its record, and a command still running then fails like any disconnect. Every heartbeat also resolves the daemon's bearer again; one that no longer resolves to the account (key rotated, role session ended or revoked, account suspended) closes with `4401`. A heartbeat that cannot reach Convex keeps the daemon.
 - The socket accepts a stage ticket minted from `broods login`, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key or the dashboard's member ticket.
 - Frames cap at 4 MiB. A computer action has 30 s, an MCP call 60 s, `bash` its timeout plus 5 s.
 - Validation rejects `persistent`, `size`, `snapshot` and any network mode but `allow-all`, and a machine cannot back a workspace.

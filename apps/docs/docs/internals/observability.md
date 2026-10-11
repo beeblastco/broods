@@ -64,7 +64,7 @@ sequenceDiagram
 
   C->>G: WS upgrade to /v1/projects/:project/stages/:stage/observability/ws
   G->>Core: POST /v1/internal/observability-scope
-  Core-->>G: account, project, stage
+  Core-->>G: account, project, stage, ticket expiry
   G->>G: 403 scope_mismatch if the path differs
   C->>G: subscribe logs, backfill: n
   G->>N: ordered consumer, last 30 minutes
@@ -79,7 +79,8 @@ Traces take the same path with a Tempo search in place of the Loki query.
 
 | Limit               | Value                                                                                               |
 | ------------------- | --------------------------------------------------------------------------------------------------- |
-| Credential          | stage ticket `bdts_` (15 min). The runtime key is refused                                           |
+| Credential          | stage ticket `bdts_` (15 min). The runtime key is refused. Closes `4419` at expiry; reconnect fresh |
+| Revalidation        | core asked again every minute; a refusal closes `4401`, an outage keeps the socket                  |
 | Loki backfill steps | 1 h in 5 s, 1 day in 10 s, 30 days in 15 s. Stops at the first step that fills a page or times out  |
 | Tempo backfill      | 7 day search in 15 s, then 6 trace lookups at a time, 5 s each, sent newest first in chunks of 12   |
 | `fetchTrace`        | one trace by id, filtered to the socket's scope (Tempo's lookup is not tenant-scoped), shared 5 min |
