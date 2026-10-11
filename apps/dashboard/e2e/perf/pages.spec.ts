@@ -212,8 +212,8 @@ test("a live log burst on Monitoring reaches the screen without blocking the pag
   const now = Date.now();
   const socket = new Promise<WebSocketRoute>((resolve) => {
     void page.routeWebSocket(/\/observability\/ws$/, (route) => {
-      route.onMessage((raw) => {
-        if (JSON.parse(String(raw)).type !== "subscribe") return;
+      // The panel's only message on this socket is its subscribe.
+      route.onMessage(() => {
         route.send(JSON.stringify({ type: "ready" }));
         route.send(
           JSON.stringify({
@@ -242,15 +242,15 @@ test("a live log burst on Monitoring reaches the screen without blocking the pag
   await waitForReady(detail);
 
   const burst = Array.from({ length: BURST_EVENTS }, (_, index) => {
-    // Every 25th line is a straggler, older than everything since the
-    // backfill; every 50th repeats the line before it.
-    const at = index % 25 === 12 ? now - 30_000 + index : now + index;
-    const name = index % 50 === 49 ? `burst ${index - 1}` : `burst ${index}`;
-    const repeatAt = index % 50 === 49 ? now + index - 1 : at;
+    // Every 50th line repeats the one before it, never the last, so the
+    // newest line is a new one. Every 25th is a straggler, older than every
+    // burst line before it.
+    const line = index % 50 === 25 ? index - 1 : index;
+    const at = line % 25 === 12 ? now - 30_000 + line : now + line;
 
     return JSON.stringify({
       type: "log",
-      entry: logLine(name, repeatAt, index % 100 === 0 ? 8_000 : 300),
+      entry: logLine(`burst ${line}`, at, line % 100 === 0 ? 8_000 : 300),
     });
   });
   const longTasks = await page.evaluateHandle(() => {

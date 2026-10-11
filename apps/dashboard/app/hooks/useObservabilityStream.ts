@@ -151,17 +151,20 @@ export function useObservabilityStream(
   // Live entries received since the last frame, and that frame's request.
   const liveRef = useRef<(ObservabilityLogEntry | ObservabilitySpanRow)[]>([]);
   const frameRef = useRef<number | null>(null);
-  // Live entries still queued belong to the scope they arrived in. Dropped at
-  // commit, on a scope change or unmount, before the next frame could fold
-  // them into another scope's list.
-  useLayoutEffect(
-    () => () => {
+  // The scope on screen, set at commit. The old scope's socket closes only in
+  // the passive effect cleanup, after paint, so until then its messages are
+  // dropped here, and what it queued is dropped at commit, before the next
+  // frame could fold it into the new scope's list. Also on unmount.
+  const scopeRef = useRef(connKey);
+  useLayoutEffect(() => {
+    scopeRef.current = connKey;
+
+    return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
       liveRef.current = [];
-    },
-    [connKey],
-  );
+    };
+  }, [connKey]);
 
   // Persist the latest list so the next mount with the same scope can seed from it.
   useEffect(() => {
@@ -265,7 +268,13 @@ export function useObservabilityStream(
     };
 
     socket.onmessage = (event) => {
-      if (destroyedRef.current || socketRef.current !== socket) return;
+      if (
+        destroyedRef.current ||
+        socketRef.current !== socket ||
+        scopeRef.current !== connKey
+      ) {
+        return;
+      }
       if (typeof event.data !== "string") return;
 
       let msg: ObservabilityServerMessage;
@@ -350,6 +359,7 @@ export function useObservabilityStream(
     backfill,
     minLevel,
     sandboxId,
+    connKey,
     closeSocket,
     clearReconnect,
     flushLive,
