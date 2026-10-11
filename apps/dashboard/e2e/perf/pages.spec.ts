@@ -4,11 +4,19 @@
  * destination by client-side navigation. Each is timed until its own content
  * is on screen; anything over the render budget fails the run. The
  * dashboard sub-tabs (Monitoring, Tracing, Usage, Billing) are covered by the
- * cold loads; sidebar navigation covers the top-level routes. The session and
- * project come from `auth.setup.ts`.
+ * cold loads; sidebar navigation covers the top-level routes. A second test
+ * loads Monitoring with history and drives a live log burst through it. The
+ * session and project come from `auth.setup.ts`.
  */
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { PAGE_RENDER_BUDGET_MS } from "../../app/lib/perfReport";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type WebSocketRoute,
+} from "@playwright/test";
+import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts";
+import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
 import {
   BASE_URL,
   CANVAS_READY,
@@ -33,6 +41,9 @@ interface Sample {
 }
 
 const COLD_VISITS = 2;
+// The live burst: the hook's whole retention, the most one burst can show.
+const BURST_EVENTS = 2_000;
+const BACKFILL_ROWS = 200;
 
 /**
  * A deployment is probed from a GitHub runner on another continent, so the
@@ -185,3 +196,116 @@ test("every page renders cold within budget, and every sidebar destination by na
     `pages over the ${RENDER_BUDGET_MS} ms render budget`,
   ).toEqual([]);
 });
+
+// A busy stage on Monitoring: history on screen and a line open, then a burst
+// of live lines with the mix a real stream carries (mostly short lines, an
+// occasional large payload, stragglers older than what is shown, and lines
+// that arrive twice). The socket is answered here, so the numbers are the
+// page's own: how long until the newest line is on screen, and how long the
+// main thread was blocked on the way.
+test("a live log burst on Monitoring reaches the screen without blocking the page", async ({
+  browser,
+}) => {
+  const projectId = readProjectId();
+  const context = await browser.newContext(SIGNED_IN_CONTEXT);
+  const page = await context.newPage();
+  const now = Date.now();
+  const socket = new Promise<WebSocketRoute>((resolve) => {
+    void page.routeWebSocket(/\/observability\/ws$/, (route) => {
+      route.onMessage((raw) => {
+        if (JSON.parse(String(raw)).type !== "subscribe") return;
+        route.send(JSON.stringify({ type: "ready" }));
+        route.send(
+          JSON.stringify({
+            type: "backfill",
+            stream: "logs",
+            entries: Array.from({ length: BACKFILL_ROWS }, (_, index) =>
+              logLine(`backfill ${index}`, now - 60_000 + index * 100, 300),
+            ),
+          }),
+        );
+        resolve(route);
+      });
+    });
+  });
+  await page.goto(`/${projectId}/dashboard?tab=monitoring`, {
+    waitUntil: "commit",
+  });
+  const route = await socket;
+  const opened = page.getByRole("cell", {
+    name: `backfill ${BACKFILL_ROWS - 1}`,
+    exact: true,
+  });
+  await waitForReady(opened);
+  await opened.click();
+  const detail = page.getByText("Event type", { exact: true });
+  await waitForReady(detail);
+
+  const burst = Array.from({ length: BURST_EVENTS }, (_, index) => {
+    // Every 25th line is a straggler, older than everything since the
+    // backfill; every 50th repeats the line before it.
+    const at = index % 25 === 12 ? now - 30_000 + index : now + index;
+    const name = index % 50 === 49 ? `burst ${index - 1}` : `burst ${index}`;
+    const repeatAt = index % 50 === 49 ? now + index - 1 : at;
+
+    return JSON.stringify({
+      type: "log",
+      entry: logLine(name, repeatAt, index % 100 === 0 ? 8_000 : 300),
+    });
+  });
+  const longTasks = await page.evaluateHandle(() => {
+    const durations: number[] = [];
+    new PerformanceObserver((list) => {
+      durations.push(...list.getEntries().map((entry) => entry.duration));
+    }).observe({ type: "longtask" });
+
+    return durations;
+  });
+  const start = performance.now();
+  for (const message of burst) route.send(message);
+  await waitForReady(
+    page.getByRole("cell", { name: `burst ${BURST_EVENTS - 1}`, exact: true }),
+  );
+  const visibleMs = performance.now() - start;
+  // A task still running when the row lands is reported when it ends.
+  await page.waitForTimeout(250);
+  const tasks = await longTasks.jsonValue();
+  const longestMs = Math.max(0, ...tasks);
+  await expect(detail).toBeVisible();
+  await context.close();
+
+  const result = {
+    events: BURST_EVENTS,
+    visibleMs: Math.round(visibleMs),
+    longTasks: tasks.length,
+    longestTaskMs: Math.round(longestMs),
+    totalLongTaskMs: Math.round(tasks.reduce((sum, ms) => sum + ms, 0)),
+  };
+  console.log(`Live burst ${JSON.stringify(result)}`);
+  await test.info().attach("burst", {
+    body: JSON.stringify(result, null, 2),
+    contentType: "application/json",
+  });
+  expect(
+    visibleMs,
+    `newest of ${BURST_EVENTS} live lines on screen`,
+  ).toBeLessThanOrEqual(RENDER_BUDGET_MS);
+  expect(longestMs, "longest main-thread task").toBeLessThanOrEqual(
+    PERF_BUDGETS["long-task"],
+  );
+});
+
+/** One log line whose row reads `name`, padded to about `bytes` of message. */
+function logLine(
+  name: string,
+  ts: number,
+  bytes: number,
+): ObservabilityLogEntry {
+  return {
+    ts: ts,
+    level: "INFO",
+    eventType: "",
+    message: JSON.stringify({ message: name, payload: "x".repeat(bytes) }),
+    service: "core",
+  };
+}

@@ -8,7 +8,13 @@
  */
 
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   isRootSpanKind,
   isTraceId,
@@ -85,7 +91,7 @@ interface UseObservabilityStreamResult<T> {
 
 const RECONNECT_DELAY_MS = 3_000;
 // Caps the accumulated list (keeping the most recent) so a long tail can't grow
-// unbounded and the per-message dedup scan stays bounded.
+// unbounded and each merge stays bounded.
 const MAX_ENTRIES = 2_000;
 
 // Module-level cache keyed by the connection key (stream + scope). Switching
@@ -142,6 +148,21 @@ export function useObservabilityStream(
     setError(null);
   }
 
+  // Live entries received since the last frame, and that frame's request.
+  const liveRef = useRef<(ObservabilityLogEntry | ObservabilitySpanRow)[]>([]);
+  const frameRef = useRef<number | null>(null);
+  // Live entries still queued belong to the scope they arrived in. Dropped at
+  // commit, on a scope change or unmount, before the next frame could fold
+  // them into another scope's list.
+  useLayoutEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+      liveRef.current = [];
+    },
+    [connKey],
+  );
+
   // Persist the latest list so the next mount with the same scope can seed from it.
   useEffect(() => {
     cacheEntries(connKey, entries);
@@ -183,6 +204,15 @@ export function useObservabilityStream(
       s.onerror = null;
       s.onclose = null;
     }
+  }, []);
+
+  const flushLive = useCallback(() => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+    const batch = liveRef.current;
+    if (batch.length === 0) return;
+    liveRef.current = [];
+    setEntries((prev) => mergeLive(prev, batch));
   }, []);
 
   const connect = useCallback(() => {
@@ -257,36 +287,21 @@ export function useObservabilityStream(
         // instead of looking empty. Logs and fetchTrace answer in one piece.
         if (!msg.more) setHistory(msg.error ? "failed" : "loaded");
         if (msg.error) setError(msg.error);
+        // Live entries that came first are applied first, as they arrived.
+        flushLive();
         setEntries((prev) => mergeBackfill(prev, msg.entries));
 
         return;
       }
 
       if (msg.type === "log" || msg.type === "span") {
-        const entry = msg.entry;
-        setEntries((prev) => {
-          const key = entryKey(entry);
-          const existingIndex = prev.findIndex(
-            (candidate) => entryKey(candidate) === key,
-          );
-          // A replacement keeps its slot (the dedup key pins the timestamp),
-          // and live entries almost always arrive in order, so the full
-          // re-sort runs only for a genuinely out-of-order arrival instead of
-          // on every message.
-          if (existingIndex !== -1) {
-            return prev.map((candidate, index) =>
-              index === existingIndex
-                ? preferEntry(candidate, entry)
-                : candidate,
-            );
-          }
-          const next = [entry, ...prev];
-          if (prev.length > 0 && entryTime(entry) < entryTime(prev[0])) {
-            next.sort((a, b) => entryTime(b) - entryTime(a));
-          }
-
-          return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
-        });
+        // A burst arrives as one message per entry. Hold them until the next
+        // frame and fold them in at once, so the list is rebuilt once per
+        // frame instead of once per entry. A full frame's worth folds now:
+        // a hidden tab runs no frames, and the queue must not grow there.
+        liveRef.current.push(msg.entry);
+        if (liveRef.current.length >= MAX_ENTRIES) flushLive();
+        else frameRef.current ??= requestAnimationFrame(flushLive);
 
         return;
       }
@@ -337,6 +352,7 @@ export function useObservabilityStream(
     sandboxId,
     closeSocket,
     clearReconnect,
+    flushLive,
   ]);
 
   // Keep the reconnect timer pointed at the latest connect.
@@ -419,6 +435,39 @@ export function mergeBackfill<
   return combined.length > MAX_ENTRIES
     ? combined.slice(0, MAX_ENTRIES)
     : combined;
+}
+
+// Fold one frame's live entries into the list as applying them one by one in
+// arrival order would: a key already listed keeps its slot and the better
+// copy, a new key goes in ahead of every entry no newer than it (so of two at
+// the same time the later arrival leads), newest first. The cap applies once
+// at the end, so an entry the cap would have dropped mid-frame and that
+// re-arrives in the same frame keeps its slot. One key lookup per entry
+// instead of a scan of the list per entry.
+export function mergeLive<
+  T extends ObservabilityLogEntry | ObservabilitySpanRow,
+>(prev: T[], batch: T[]): T[] {
+  const listed = [...prev];
+  const slots = new Map(prev.map((entry, index) => [entryKey(entry), index]));
+  const fresh = new Map<string, T>();
+  for (const entry of batch) {
+    const key = entryKey(entry);
+    const slot = slots.get(key);
+    if (slot !== undefined) {
+      listed[slot] = preferEntry(listed[slot], entry);
+      continue;
+    }
+    const queued = fresh.get(key);
+    fresh.set(key, queued ? preferEntry(queued, entry) : entry);
+  }
+  // A stable sort, so equal times keep this order: later arrivals first,
+  // then what was already listed. An in-order list comes back unchanged.
+  const next = [...fresh.values()]
+    .reverse()
+    .concat(listed)
+    .sort((a, b) => entryTime(b) - entryTime(a));
+
+  return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
 }
 
 function cacheEntries(
