@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "bun:test";
 import { getFunctionName } from "convex/server";
+import { dirname } from "node:path";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
   getConvexClient,
@@ -228,4 +229,14 @@ it("crons.remove delegates to internal.agent.crons.remove via mutation", async (
     accountId: "acct_1",
     cronId: "cron_1",
   });
+});
+
+it("deletes an S3 prefix in bounded batches and fails on a refused key", () => {
+  // Other test files mock shared/s3.ts for the whole run; check the real one alone.
+  const run = Bun.spawnSync(
+    [process.execPath, "test", "./tests/isolated/s3-prefix-delete.ts"],
+    { cwd: dirname(import.meta.dir) },
+  );
+
+  expect(run.exitCode, run.stderr.toString()).toBe(0);
 });
