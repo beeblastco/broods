@@ -21,7 +21,7 @@ import {
   s3ObjectExists,
 } from "../../shared/s3.ts";
 import { getHarnessPublicUrl, requireSecretsEnv } from "../../shared/env.ts";
-import { toErrorMessage } from "../../shared/errors.ts";
+import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import {
   MEDIA_PATH_PREFIX,
@@ -916,27 +916,46 @@ async function runSandboxOn(
     !namespace && config.persistent === true
       ? statelessReservationKeyFor(config)
       : undefined;
+  const startedAt = Date.now();
 
-  return executor.run({
-    code: code,
-    ...(namespace
-      ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
-      : {}),
-    ...(reservationKey
-      ? {
-          reservationKey: reservationKey,
-          workspaceRoot: workspaceRootFor(config),
-        }
-      : {}),
-    ...(options?.metadata ? { metadata: options.metadata } : {}),
-    ...(options?.principal ? { principal: options.principal } : {}),
-    timeoutSeconds: sandboxTimeoutSeconds(config),
-    outputLimitBytes: boundedInteger(
-      config.outputLimitBytes,
-      limits.defaultOutputLimitBytes,
-      limits.maxOutputLimitBytes,
-    ),
-  });
+  return executor
+    .run({
+      code: code,
+      ...(namespace
+        ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
+        : {}),
+      ...(reservationKey
+        ? {
+            reservationKey: reservationKey,
+            workspaceRoot: workspaceRootFor(config),
+          }
+        : {}),
+      ...(options?.metadata ? { metadata: options.metadata } : {}),
+      ...(options?.principal ? { principal: options.principal } : {}),
+      timeoutSeconds: sandboxTimeoutSeconds(config),
+      outputLimitBytes: boundedInteger(
+        config.outputLimitBytes,
+        limits.defaultOutputLimitBytes,
+        limits.maxOutputLimitBytes,
+      ),
+    })
+    .catch((error: unknown): SandboxRunResult => {
+      // The client deadline fired before any executor's guest answered: a
+      // timeout with no output, the same as one the guest stopped itself.
+      if (!isTimeoutError(error)) throw error;
+
+      return {
+        ok: false,
+        runtime: "bash",
+        exitCode: null,
+        stdout: "",
+        stderr:
+          "no answer from the sandbox in time; the command may still be running there",
+        durationMs: Date.now() - startedAt,
+        timedOut: true,
+        provider: config.provider,
+      };
+    });
 }
 
 function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {

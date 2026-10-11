@@ -43,7 +43,7 @@ import type {
 import { waitUntil } from "../../shared/in-flight.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv, requireEnv } from "../../shared/env.ts";
-import { toErrorMessage } from "../../shared/errors.ts";
+import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getObservabilityContext } from "../../shared/otel.ts";
@@ -103,7 +103,6 @@ import {
   configuredSandboxSpecs,
   configString,
   EXEC_GRACE_MS,
-  execDeadlineResponse,
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
@@ -213,8 +212,7 @@ const SHELL_TOKEN_TTL_MINUTES = 30;
 // refused or reset connection is the VM still restoring its snapshot, while a
 // timeout means the command ran past its budget and a retry would run it twice.
 const EXEC_RETRY: GuestRetry = {
-  fetchError: (err: unknown): boolean =>
-    !(err instanceof DOMException && err.name === "TimeoutError"),
+  fetchError: (err: unknown): boolean => !isTimeoutError(err),
   warmingStatus: true,
 };
 // A guest route, probed ready first, retries only a connection that never
@@ -520,9 +518,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
       return execRunResult(
         request,
-        await this.#exec(microvmId, endpoint, payload).catch(
-          execDeadlineResponse,
-        ),
+        await this.#exec(microvmId, endpoint, payload),
         PROVIDER,
         startedAt,
       );
@@ -1158,7 +1154,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         target.endpoint,
         payload,
         CACHED_WARMUP_BUDGET_MS,
-      ).catch(execDeadlineResponse);
+      );
     } catch (error) {
       if (!(error instanceof MicrovmNotReadyError)) throw error;
       const key = sandboxReservationKey(request);

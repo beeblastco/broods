@@ -466,7 +466,7 @@ describe("sandbox tool set", () => {
       }),
     );
     const bash = await tool("bash", workspaceCtx());
-    await expect(bash.execute({ command: "sleep 99" })).rejects.toThrow(
+    expect(bash.execute({ command: "sleep 99" })).rejects.toThrow(
       `partial\n${limit}`,
     );
 
@@ -474,7 +474,7 @@ describe("sandbox tool set", () => {
     microvmFetchMock.mockImplementationOnce(async (): Promise<Response> => {
       throw new DOMException("The operation timed out.", "TimeoutError");
     });
-    await expect(bash.execute({ command: "sleep 99" })).rejects.toThrow(
+    expect(bash.execute({ command: "sleep 99" })).rejects.toThrow(
       `no answer from the sandbox in time; the command may still be running there\n${limit}`,
     );
   });

@@ -120,9 +120,11 @@ describe("HttpSandboxExecutor", () => {
         graceMs: 50,
       });
 
-      expect(executor.run(run({ timeoutSeconds: 0.1 }))).rejects.toThrow(
-        /timed out/,
-      );
+      // A TimeoutError, which runSandbox answers as a timed-out run.
+      expect(executor.run(run({ timeoutSeconds: 0.1 }))).rejects.toMatchObject({
+        name: "TimeoutError",
+        message: "timed out",
+      });
     });
   });
 

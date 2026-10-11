@@ -41,6 +41,11 @@ export function isContextLengthError(message: string): boolean {
   return CONTEXT_LIMIT_PATTERN.test(message);
 }
 
+/** True when a request gave up at its own deadline (`AbortSignal.timeout`, `guardedFetch`). */
+export function isTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.name === "TimeoutError";
+}
+
 /** True when a fetch failed at the socket, before reaching the provider. */
 export function isUnreachableError(err: unknown): boolean {
   return (

@@ -92,28 +92,6 @@ const mirrorWrites = new Map<string, Promise<void>>();
 // the client deadline only covers a server that never answers.
 export const EXEC_GRACE_MS = 15_000;
 
-/**
- * The answer a command's exec takes when that client deadline fires first: the
- * guest never answered, so it reads as a timeout with no output, the same as one
- * the guest stopped itself. Pass it to `.catch` on the exec; any other error is
- * rethrown.
- */
-export function execDeadlineResponse(error: unknown): SandboxExecResponse {
-  if (!(error instanceof DOMException && error.name === "TimeoutError")) {
-    throw error;
-  }
-
-  return {
-    ok: false,
-    exit_code: null,
-    timed_out: true,
-    duration_ms: 0,
-    stdout: "",
-    stderr:
-      "no answer from the sandbox in time; the command may still be running there",
-  };
-}
-
 // A `SandboxExecResponse` (the lambda-sandbox image's and a custom server's
 // answer) as a run result, with the output held to the request's limit.
 export function execRunResult(

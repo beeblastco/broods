@@ -56,7 +56,7 @@ export async function guardedFetch(url, init, opts = {}) {
   const timeoutPromise = new Promise((_, reject) => {
     timeout = setTimeout(() => {
       controller.abort();
-      reject(new Error("timed out"));
+      reject(new DOMException("timed out", "TimeoutError"));
     }, timeoutMs);
   });
   try {
@@ -74,7 +74,7 @@ export async function guardedFetch(url, init, opts = {}) {
     ]);
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new Error("timed out");
+      throw new DOMException("timed out", "TimeoutError");
     }
     throw error;
   } finally {
