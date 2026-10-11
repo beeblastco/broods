@@ -380,3 +380,86 @@ test("websocket client can build scoped URLs from generated agent references", a
     events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
   });
 });
+
+test("websocket attach honors its AbortSignal and stops delivering callbacks", async () => {
+  const sockets = new Set<Bun.ServerWebSocket<undefined>>();
+  const frames: string[] = [];
+  const server = Bun.serve<undefined>({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request, listener): Response | undefined =>
+      listener.upgrade(request, {
+        headers: { "Sec-WebSocket-Protocol": "broods.v1" },
+        data: undefined,
+      })
+        ? undefined
+        : new Response(null, { status: 400 }),
+    websocket: {
+      open: (socket): void => {
+        sockets.add(socket);
+      },
+      message: (_socket, raw): void => {
+        frames.push((JSON.parse(String(raw)) as { type: string }).type);
+      },
+      close: (socket): void => {
+        sockets.delete(socket);
+      },
+    },
+  });
+  const client = new BroodsWebSocketClient({
+    baseUrl: `http://127.0.0.1:${server.port}`,
+    apiKey: "test-key",
+  });
+  const input = {
+    endpointId: "agent_1",
+    agentId: "agent_1",
+    requestId: "attach-1",
+    runId: "run_1",
+    eventId: "event-1",
+    conversationKey: "conversation-1",
+  };
+  const seen: string[] = [];
+  const errors: string[] = [];
+  const handlers = {
+    onMessage: (message: WebSocketServerMessage): void => {
+      seen.push(message.type);
+    },
+    onError: (error: Error): void => {
+      errors.push(error.message);
+    },
+  };
+  try {
+    const abort = new AbortController();
+    client.attach({ ...input, signal: abort.signal }, handlers);
+    await until(() => frames.includes("attach"));
+    const [socket] = sockets;
+    abort.abort();
+    await until(() => sockets.size === 0);
+    socket?.send(JSON.stringify({ type: "text-delta", id: "0", text: "late" }));
+    await Bun.sleep(20);
+    expect(seen).toEqual([]);
+    expect(errors).toEqual(["WebSocket attach aborted."]);
+    // Detaching a viewer is not a request to stop the durable run.
+    expect(frames).toEqual(["attach"]);
+
+    client.attach({ ...input, signal: AbortSignal.abort() }, handlers);
+    await Bun.sleep(50);
+    expect(sockets.size).toBe(0);
+    expect(frames).toEqual(["attach"]);
+    expect(errors).toEqual([
+      "WebSocket attach aborted.",
+      "WebSocket attach aborted.",
+    ]);
+  } finally {
+    for (const socket of sockets) socket.close(1000, "test complete");
+    await server.stop(true);
+  }
+});
+
+async function until(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("condition did not occur");
+    await Bun.sleep(5);
+  }
+}

@@ -256,10 +256,19 @@ export class BroodsWebSocketClient {
     const close = (code = 1000, reason = "client closed") => {
       if (closed) return;
       closed = true;
+      input.signal?.removeEventListener("abort", onAbort);
       if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING)
         socket.close(code, reason);
     };
-    socket.onopen = () =>
+    // Aborting detaches this view only; the durable run keeps going.
+    const onAbort = () => {
+      close(1000, "aborted");
+      handlers.onError?.(new Error("WebSocket attach aborted."));
+    };
+    if (input.signal?.aborted) onAbort();
+    else input.signal?.addEventListener("abort", onAbort, { once: true });
+    socket.onopen = () => {
+      if (closed) return;
       socket.send(
         JSON.stringify({
           type: "attach",
@@ -268,8 +277,9 @@ export class BroodsWebSocketClient {
           agent: undefined,
         }),
       );
+    };
     socket.onmessage = (event) => {
-      if (typeof event.data !== "string") return;
+      if (closed || typeof event.data !== "string") return;
       const payload = parseServerMessage(event.data);
       if (!payload) return;
       const effective = unwrapServerMessage(payload, handlers);
@@ -278,9 +288,11 @@ export class BroodsWebSocketClient {
       if (effective.type === "error")
         handlers.onError?.(new Error(formatWireError(effective.error)));
     };
-    socket.onerror = () =>
-      handlers.onError?.(webSocketAccessError(this.baseUrl));
+    socket.onerror = () => {
+      if (!closed) handlers.onError?.(webSocketAccessError(this.baseUrl));
+    };
     socket.onclose = (event) => {
+      input.signal?.removeEventListener("abort", onAbort);
       if (!closed && event.code !== 1000)
         handlers.onError?.(
           new Error(event.reason || "WebSocket connection closed."),
