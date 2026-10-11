@@ -9,7 +9,6 @@
  */
 
 import type {
-  MatrixForwardedEvent,
   MatrixSendRequest,
   MatrixTypingRequest,
 } from "../../core/src/shared/matrix-wire.ts";
@@ -25,7 +24,6 @@ import {
 } from "../../discord-forwarder/src/supervisor.ts";
 import type { AccountState, MatrixAccountOptions } from "./account.ts";
 import type { MatrixConnection } from "./connections.ts";
-import { forwardRoomEvent } from "./forward.ts";
 import { normalizeApiUrl } from "./matrix.ts";
 
 /** Injected so tests never load the native crypto module; `main.ts` passes `MatrixAccount`. */
@@ -142,17 +140,6 @@ export class Forwarder {
     await Promise.all([...stopping, ...this.detached]);
   }
 
-  private async deliver(
-    accessToken: string,
-    event: MatrixForwardedEvent,
-  ): Promise<boolean> {
-    // Read at delivery, not at start: reconcile replaces the array outright.
-    const targets = this.managed.get(accessToken)?.targets;
-    if (!targets?.length) return true;
-
-    return forwardRoomEvent(event, accessToken, targets);
-  }
-
   /**
    * Lets a removed account close in its own time. The replacement for its
    * device waits on the store lock anyway, so only shutdown needs to know the
@@ -176,9 +163,10 @@ export class Forwarder {
     const account = this.createAccount({
       accessToken: accessToken,
       apiUrl: group.apiUrl,
-      onEvent: (event: MatrixForwardedEvent): Promise<boolean> =>
-        this.deliver(accessToken, event),
       storeDir: this.storeDir,
+      // Read at delivery, not at start: reconcile replaces the array outright.
+      targets: (): readonly ForwardTarget[] =>
+        this.managed.get(accessToken)?.targets ?? [],
     });
     // Registered before the account starts, so its first event finds targets.
     this.managed.set(accessToken, {

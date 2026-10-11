@@ -175,33 +175,34 @@ describe("forwarding a gateway message", () => {
   // Matrix awaits each delivery in its sync loop, so it does not opt in.
   it("tries once for a caller that does not ask for more", async (): Promise<void> => {
     const seen = scriptFetch([503]);
-    const settled = await fanOut([TARGETS[0]!], "{}", {
+    const pending = await fanOut([TARGETS[0]!], "{}", {
       header: "x-token",
       timeoutMs: 1_000,
       token: "token-a",
     });
 
     expect(seen.calls).toBe(1);
-    expect(settled).toBe(false);
+    expect(pending).toEqual([TARGETS[0]!.webhookUrl]);
   });
 
-  // Matrix replays a delivery that resolves false, so a 4xx must not.
-  it("resolves false only while a target could still take it", async (): Promise<void> => {
+  // Matrix retries the targets this resolves, so a 4xx must not be one.
+  it("resolves only the targets that could still take it", async (): Promise<void> => {
     const auth = { header: "x-token", timeoutMs: 1_000, token: "token-a" };
+    const first = [TARGETS[0]!.webhookUrl];
 
     scriptFetch([200, 404]);
-    expect(await fanOut(TARGETS, "{}", auth)).toBe(true);
+    expect(await fanOut(TARGETS, "{}", auth)).toEqual([]);
     scriptFetch([200, 503]);
-    expect(await fanOut(TARGETS, "{}", auth)).toBe(false);
+    expect(await fanOut(TARGETS, "{}", auth)).toEqual([TARGETS[1]!.webhookUrl]);
     scriptFetch(["reset"]);
-    expect(await fanOut([TARGETS[0]!], "{}", auth)).toBe(false);
+    expect(await fanOut([TARGETS[0]!], "{}", auth)).toEqual(first);
     scriptFetch([408]);
-    expect(await fanOut([TARGETS[0]!], "{}", auth)).toBe(false);
+    expect(await fanOut([TARGETS[0]!], "{}", auth)).toEqual(first);
     scriptFetch([429]);
-    expect(await fanOut([TARGETS[0]!], "{}", auth)).toBe(false);
+    expect(await fanOut([TARGETS[0]!], "{}", auth)).toEqual(first);
   });
 
-  it("resolves false when a webhook never answers", async (): Promise<void> => {
+  it("resolves a webhook that never answers", async (): Promise<void> => {
     using server = Bun.serve({
       port: 0,
       fetch: (): Promise<Response> => new Promise((): void => {}),
@@ -214,7 +215,7 @@ describe("forwarding a gateway message", () => {
         "{}",
         { header: "x-token", timeoutMs: 50, token: "token-a" },
       ),
-    ).toBe(false);
+    ).toEqual([`http://localhost:${server.port}/`]);
   });
 });
 
