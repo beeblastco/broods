@@ -277,6 +277,73 @@ describe("logging helpers", () => {
     );
   });
 
+  it("redacts third-party credential formats in logs and span attributes", () => {
+    // Fake tokens in each provider's shape; none is a real credential. The AWS
+    // id is split so the secret scan does not flag it.
+    const tokens = [
+      `ghp_${"a1B2".repeat(9)}`,
+      `ghs_${"a1B2".repeat(9)}`,
+      `github_pat_${"a1B2_".repeat(16)}`,
+      `sk-proj-${"a1B2-_".repeat(8)}`,
+      `sk-ant-api03-${"a1B2".repeat(20)}`,
+      `AKIA${"ABCDEFGHIJ234567"}`,
+      "xoxb-1234-5678-abcdEFGH",
+      `xoxc-1234-5678-${"a1B2".repeat(8)}`,
+      `xoxe-1-${"a1B2".repeat(8)}`,
+      `xapp-1-A0123-${"a1B2".repeat(8)}`,
+      `AIza${"a1B2-".repeat(7)}`,
+      `ya29.a0${"a1B2-_".repeat(6)}`,
+      `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.${"a1B2".repeat(8)}`,
+      `bsk_${"a".repeat(43)}`,
+    ];
+    for (const token of tokens) {
+      expect(redactSensitiveText(`token for the tracy account: ${token}`)).toBe(
+        "token for the tracy account: [redacted]",
+      );
+      expect(redactSerialized({ content: `token:\n${token}` }, [], 1000)).toBe(
+        '{"content":"token:\\n[redacted]"}',
+      );
+      expect(redactSensitiveText(`next=%2Fauth%3D${token}`)).toBe(
+        "next=%2Fauth%3D[redacted]",
+      );
+    }
+    // A prefixed provider token glued to a word by `-` or `_` is still caught.
+    expect(
+      redactSensitiveText(`credential-${tokens[0]} key_${tokens[3]}`),
+    ).toBe("credential-[redacted] key_[redacted]");
+    // Read-back data keeps them: the agent may need a token it was handed.
+    expect(redactWithRunSecrets(tokens[0])).toBe(tokens[0]);
+    // Ids that only contain a prefix stay readable.
+    const ids = `task-${"0f1e2d3c-4b5a-6978".repeat(2)} AKIA${"ABCDEFGHIJ234567"}XY ghp_short`;
+    expect(redactSensitiveText(ids)).toBe(ids);
+  });
+
+  it("treats env values as secret unless the name holds a public identity", () => {
+    const secrets = collectSecretValues({
+      envVars: {
+        GIT_AUTHOR_NAME: "beeblast-tracy",
+        GIT_COMMITTER_EMAIL: "tracy@example.test",
+        DATABASE_URL: "postgres://u:db-password@host/db",
+        GH_TOKEN: "github-token-value",
+        SECRET_NAME: "secret-name-value",
+      },
+      runtimeVariables: [
+        { key: "SMTP_USER", value: "smtp-key-value" },
+        { key: "KAFKA_SASL_USER_NAME", value: "sasl-key-value" },
+        { name: "WEBHOOK", value: "webhook-secret-value" },
+      ],
+    });
+
+    expect(secrets.sort()).toEqual([
+      "github-token-value",
+      "postgres://u:db-password@host/db",
+      "sasl-key-value",
+      "secret-name-value",
+      "smtp-key-value",
+      "webhook-secret-value",
+    ]);
+  });
+
   it("never leaks a secret that straddles a truncated attribute's cut", () => {
     const secret = "s3cr3t-value-long";
     // One straddles the cut itself; the other straddles the scrubbed window's
