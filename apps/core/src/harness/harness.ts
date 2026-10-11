@@ -129,6 +129,7 @@ import {
   type TurnContextSnapshot,
 } from "./session.ts";
 import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
+import { rehydrateStoredMedia } from "./channel-media.ts";
 import {
   formatQuestionsText,
   openQuestion,
@@ -1310,16 +1311,11 @@ export async function runAgentLoop(
         turnContext.ephemeralSystem.push(...steeringSystem);
         stepMessages = [
           ...messages,
-          ...stripEnvelopeFieldsFromMessages(
-            steeringEvents.filter(
-              (
-                event,
-              ): event is Exclude<
-                ConversationIngressEvent,
-                SystemModelMessage
-              > => event.role !== "system",
-            ),
-          ),
+          ...(await steeringModelMessages(
+            steeringEvents,
+            agentConfig,
+            session.accountId,
+          )),
         ];
         logInfo("Steering ingress applied at AI SDK step boundary", {
           eventId: session.eventId,
@@ -2147,7 +2143,7 @@ export async function runAgentLoop(
           "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
         );
       }
-      await applyHarnessSteeringBeforeTurn(session, turnContext);
+      await applyHarnessSteeringBeforeTurn(session, turnContext, agentConfig);
       const harnessType = agentConfig.harness!.type;
       const stored = await session.loadHarnessSession();
       const reservationKey = harnessReservationKey({
@@ -2555,6 +2551,7 @@ function errorMessage(error: unknown): string {
 async function applyHarnessSteeringBeforeTurn(
   session: Session,
   turnContext: TurnContextSnapshot,
+  agentConfig: AgentConfig,
 ): Promise<void> {
   let steeringEventCount = 0;
   for (;;) {
@@ -2566,14 +2563,7 @@ async function applyHarnessSteeringBeforeTurn(
     const ephemeralSystem = await session.appendIngressEvents(events);
     turnContext.ephemeralSystem.push(...ephemeralSystem);
     turnContext.messages.push(
-      ...stripEnvelopeFieldsFromMessages(
-        events.filter(
-          (
-            event,
-          ): event is Exclude<ConversationIngressEvent, SystemModelMessage> =>
-            event.role !== "system",
-        ),
-      ),
+      ...(await steeringModelMessages(events, agentConfig, session.accountId)),
     );
     steeringEventCount += steering.contributingEventIds.length;
   }
@@ -2591,6 +2581,29 @@ async function applyHarnessSteeringBeforeTurn(
     conversationKey: session.conversationKey,
     steeringEventCount: steeringEventCount,
   });
+}
+
+/**
+ * The model messages of a steer, before or during a turn. Its attachments are
+ * read back as the turn's history was, not left for the provider to fetch.
+ */
+async function steeringModelMessages(
+  events: ConversationIngressEvent[],
+  agentConfig: AgentConfig,
+  accountId: string | undefined,
+): Promise<ModelMessage[]> {
+  return await rehydrateStoredMedia(
+    stripEnvelopeFieldsFromMessages(
+      events.filter(
+        (
+          event,
+        ): event is Exclude<ConversationIngressEvent, SystemModelMessage> =>
+          event.role !== "system",
+      ),
+    ),
+    agentConfig,
+    accountId,
+  );
 }
 
 /**
@@ -3192,20 +3205,42 @@ function serializeError(error: unknown): Record<string, unknown> {
 
 // Trace attributes keep a media part's type and size, not its base64: a
 // screenshot would fill the attribute with truncated noise. This covers the
-// tool results in a step's messages.
+// tool results and the user attachments in a step's messages.
 function messagesWithoutMediaBytes(messages: ModelMessage[]): ModelMessage[] {
-  return messages.map((message): ModelMessage =>
-    message.role === "tool"
-      ? {
-          ...message,
-          content: message.content.map((part) =>
-            part.type === "tool-result"
-              ? { ...part, output: toolOutputWithoutMediaBytes(part.output) }
-              : part,
-          ),
+  return messages.map((message): ModelMessage => {
+    if (message.role === "tool") {
+      return {
+        ...message,
+        content: message.content.map((part) =>
+          part.type === "tool-result"
+            ? { ...part, output: toolOutputWithoutMediaBytes(part.output) }
+            : part,
+        ),
+      };
+    }
+    if (message.role !== "user" || typeof message.content === "string") {
+      return message;
+    }
+
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type === "image" && part.image instanceof Uint8Array) {
+          return {
+            ...part,
+            image: `[${part.mediaType ?? "image"}, ${Math.round(part.image.byteLength / 1024)} KB]`,
+          };
         }
-      : message,
-  );
+
+        return part.type === "file" && part.data instanceof Uint8Array
+          ? {
+              ...part,
+              data: `[${part.mediaType}, ${Math.round(part.data.byteLength / 1024)} KB]`,
+            }
+          : part;
+      }),
+    };
+  });
 }
 
 // A tool's own output for its trace span, without media bytes.
