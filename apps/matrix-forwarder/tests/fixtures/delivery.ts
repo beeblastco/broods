@@ -8,7 +8,7 @@
  *
  * `/sync` serves one customer message from `s1` and nothing new from `s2`, then
  * parks on `s3` until the account stops. argv[2] picks what core answers:
- * `transient` 503 then 200, `rejected` 404, `expired` 503 forever with the
+ * `transient` 503 then 200, `ratelimited` 429 then 200, `rejected` 404, `expired` 503 forever with the
  * clock jumping past the retry window, `restart` 503 until the account is
  * replaced by a fresh one on the same store, then 200.
  */
@@ -36,7 +36,8 @@ const deliveries: number[] = [];
 /** What `sync-token` held as each `/sync` arrived, "" before the first write. */
 const tokensAtSync: string[] = [];
 let parked = 0;
-let webhookStatus = MODE === "rejected" ? 404 : 503;
+let webhookStatus =
+  MODE === "rejected" ? 404 : MODE === "ratelimited" ? 429 : 503;
 
 await mock.module("../../src/crypto.ts", (): object => ({
   RoomCrypto: {
@@ -55,7 +56,7 @@ const server = Bun.serve({
     if (url.pathname === "/v1/webhooks/a/matrix") {
       deliveries.push(webhookStatus);
       const status = webhookStatus;
-      if (MODE === "transient") webhookStatus = 200;
+      if (MODE === "transient" || MODE === "ratelimited") webhookStatus = 200;
       if (MODE === "expired") {
         const now = Date.now;
         Date.now = (): number => now() + 6 * 60_000;

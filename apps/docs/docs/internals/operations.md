@@ -249,7 +249,7 @@ Matrix:
 
 - `MATRIX_STORE_DIR` holds each account's crypto store and sync token and must be a persistent volume. Losing it loses the device keys.
 - Core sends replies, reactions and typing through the forwarder's `POST /v1/send` and `POST /v1/typing`, authenticated with the access token, because only the forwarder can encrypt for the room.
-- An undecryptable event waits up to 5 minutes for its room key and holds the stored sync token back, so a restart replays it. An event the channel webhook answered with a 5xx, or not at all, is held back the same way and retried on each sync. A 4xx is final. Past 5 minutes the event is dropped with a log line.
+- An undecryptable event waits up to 5 minutes for its room key and holds the stored sync token back, so a restart replays it. An event the channel webhook answered with a 5xx, a 408 or a 429, or not at all, is held back the same way and retried on each sync. Any other 4xx is final. Past 5 minutes the event is dropped with a log line.
 
 ## Runbooks
 

@@ -48,10 +48,11 @@ export interface ForwardAuth {
  * agent cannot stall the socket or sync loop waiting on it. `fields` adds
  * channel detail to those two log lines.
  *
- * Resolves false when a target ended on a 5xx, a timeout or a network error,
- * which a later delivery of the same body can still get through. A 4xx answers
- * the same way every time, so it counts as settled. Discord has no way to ask
- * for an event again and ignores the result; Matrix replays it from `/sync`.
+ * Resolves false when a target ended on a 5xx, a 408, a 429, a timeout or a
+ * network error, which a later delivery of the same body can still get
+ * through. Any other 4xx answers the same way every time, so it counts as
+ * settled. Discord has no way to ask for an event again and ignores the
+ * result; Matrix replays it from `/sync`.
  */
 export async function fanOut(
   targets: readonly ForwardTarget[],
@@ -92,9 +93,17 @@ async function post(
   fields: LogFields,
 ): Promise<boolean> {
   const attempts = auth.attempts ?? 1;
+  let retryAfterMs = Number.NaN;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (attempt > 1) {
-      await Bun.sleep(backoffDelayMs(attempt - 2, RETRY_CEILING_MS));
+      // Retry-After is honoured up to the ceiling: past it the socket would
+      // stall on one message, and the backoff stands in when it is absent.
+      await Bun.sleep(
+        Number.isFinite(retryAfterMs)
+          ? Math.min(retryAfterMs, RETRY_CEILING_MS)
+          : backoffDelayMs(attempt - 2, RETRY_CEILING_MS),
+      );
+      retryAfterMs = Number.NaN;
     }
     const last = attempt === attempts;
     try {
@@ -111,8 +120,13 @@ async function post(
         signal: AbortSignal.timeout(auth.timeoutMs),
       });
       if (response.ok) return true;
-      // A 4xx answers the same way every time, so only a 5xx earns a retry.
-      if (last || response.status < 500) {
+      // A 4xx answers the same way every time, except a timeout and a rate
+      // limit, so only those and a 5xx earn a retry.
+      const retryable =
+        response.status >= 500 ||
+        response.status === 408 ||
+        response.status === 429;
+      if (last || !retryable) {
         logWarn("Forward rejected by core", {
           ...fields,
           agentId: target.agentId,
@@ -122,8 +136,11 @@ async function post(
           tokenHint: tokenHint(auth.token),
         });
 
-        return response.status < 500;
+        return !retryable;
       }
+      // Seconds only. The HTTP-date form parses to NaN and gets the backoff.
+      retryAfterMs =
+        Number(response.headers.get("retry-after") ?? Number.NaN) * 1_000;
     } catch (error) {
       if (last) {
         logError("Forward failed", {

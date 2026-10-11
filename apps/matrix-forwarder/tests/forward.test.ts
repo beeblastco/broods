@@ -106,6 +106,13 @@ describe("forwarding a room message", () => {
     expect(await forwardRoomEvent(event, "token-a", TARGETS)).toBe(false);
   });
 
+  it("asks for a retry on a timeout or a rate limit", async () => {
+    captureFetch(408);
+    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toBe(false);
+    captureFetch(429);
+    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toBe(false);
+  });
+
   it("settles on a 4xx, which answers the same every time", async () => {
     captureFetch(404);
 

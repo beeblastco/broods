@@ -23,6 +23,13 @@ describe("a message core does not take", () => {
     });
   });
 
+  it("treats a 429 like a 5xx", async () => {
+    expect(await run("ratelimited")).toEqual({
+      deliveries: [429, 200],
+      tokensAtSync: ["", "s1", "s1", "s3"],
+    });
+  });
+
   it("is served again to a restarted account", async () => {
     expect(await run("restart")).toEqual({
       deliveries: [503, 503, 200],

@@ -134,6 +134,32 @@ describe("forwarding a gateway message", () => {
     expect(seen.calls).toBe(3);
   });
 
+  it("retries a 408 and a 429 like a 5xx", async (): Promise<void> => {
+    const seen = scriptFetch([408, 429, 200]);
+    await withoutWaiting(
+      forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]),
+    );
+
+    expect(seen.calls).toBe(3);
+  });
+
+  // The backoff alone waits at least 800ms before the second attempt.
+  it("waits as long as Retry-After asks instead of the backoff", async (): Promise<void> => {
+    let calls = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      calls += 1;
+
+      return calls === 1
+        ? new Response("", { headers: { "retry-after": "0" }, status: 429 })
+        : new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+    const started = performance.now();
+    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+
+    expect(calls).toBe(2);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it("does not retry a 4xx", async (): Promise<void> => {
     const seen = scriptFetch([401]);
     await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
@@ -163,6 +189,10 @@ describe("forwarding a gateway message", () => {
     scriptFetch([200, 503]);
     expect(await fanOut(TARGETS, "{}", auth)).toBe(false);
     scriptFetch(["reset"]);
+    expect(await fanOut([TARGETS[0]!], "{}", auth)).toBe(false);
+    scriptFetch([408]);
+    expect(await fanOut([TARGETS[0]!], "{}", auth)).toBe(false);
+    scriptFetch([429]);
     expect(await fanOut([TARGETS[0]!], "{}", auth)).toBe(false);
   });
 
