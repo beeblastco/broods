@@ -179,7 +179,7 @@ import { SubagentCoordinator } from "./subagents.ts";
 import {
   dispatchInProcessWorker,
   WORKER_QUEUE_FULL,
-  workerQueueFull,
+  withQueuePlace,
 } from "./worker-queue.ts";
 
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
@@ -372,8 +372,17 @@ async function handleRequest(
   return routeIncomingEvent(
     event,
     {
-      handleDirectRequest: handleDirectRequest,
-      handleAsyncRequest: handleAsyncRequest,
+      // A full queue turns a run request away before the plan counts it or
+      // ingress records it, so a retry with the same eventId starts it anew.
+      // Only a new streamed run answers in SSE.
+      handleDirectRequest: async (event): Promise<Response> =>
+        (await withQueuePlace(() => handleDirectRequest(event))) ??
+        (event.connectionId || event.answers?.length || event.continuation
+          ? errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS)
+          : errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS)),
+      handleAsyncRequest: async (event): Promise<Response> =>
+        (await withQueuePlace(() => handleAsyncRequest(event))) ??
+        errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS),
       handleStatusRequest: handleStatusRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
       handleChannelRequest: handleChannelRequest,
@@ -939,17 +948,13 @@ async function handleDirectRequest(
  * command's reply or the model streaming, runs on a worker slot like every
  * other run, so MAX_INPROCESS_WORKERS bounds streamed runs too. The stream
  * opens at once and keeps alive while the run waits, the queue renewing its
- * lease. A full queue fails the run with a 503 before any stream opens; a
- * client that left before its slot came starts nothing.
+ * lease. A full queue answered 503 before the run was recorded, and the place
+ * held for it since is what it queues in; a client that left before its slot
+ * came starts nothing.
  */
 async function directTurnResponse(
   ownedEvent: DirectInboundEvent,
 ): Promise<Response> {
-  if (workerQueueFull()) {
-    await failOwnedIngress(ownedEvent, WORKER_QUEUE_FULL);
-
-    return errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS);
-  }
   // A queued run starts from whichever run frees its slot, so it takes this
   // request's observability context rather than inheriting that one.
   const observability = getObservabilityContext();

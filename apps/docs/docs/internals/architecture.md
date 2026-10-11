@@ -67,7 +67,7 @@ sequenceDiagram
 
 - Also `POST /v1/projects/:p/stages/:s/agents/:endpointId`. `ENABLE_DIRECT_API` gates both, default `true`.
 - A duplicate idempotency key answers with the first admission's run id. The same key with a different payload is `409 idempotency_conflict`.
-- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8, streamed and background runs alike. A full worker queue fails a streamed run with `503`. Queue modes: [queue and steer](queue-and-steer.md).
+- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8, streamed and background runs alike. A full worker queue turns a new streamed or background run away with `503` and `Retry-After` before the plan counts it or ingress records it, so a retry with the same `eventId` starts it; a request that got past that check holds one queue place while it is admitted (`withQueuePlace`), so concurrent requests never admit more runs than the queue takes and its run is never shed once recorded. Queue modes: [queue and steer](queue-and-steer.md).
 
 ### WebSocket run
 
