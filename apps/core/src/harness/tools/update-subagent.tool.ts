@@ -29,6 +29,7 @@ import {
   subagentNotFound,
   toolError,
   VIRTUAL_AGENT_PREFIX,
+  virtualSubagentConfig,
   type SubagentToolContext,
   type SubagentToolInput,
   type SubagentWatch,
@@ -180,7 +181,7 @@ async function resolveSubagentAgentConfig(
   input: UpdateSubagentInput,
 ): Promise<AgentConfig | null> {
   if (input.agentId === `${VIRTUAL_AGENT_PREFIX}${input.taskId}`) {
-    return subagentConfig(context.agentConfig, context.agentConfig);
+    return virtualSubagentConfig(context.agentConfig);
   }
 
   const agent = await getStorage().agents.getById(

@@ -179,6 +179,12 @@ export interface AgentSubagentConfig {
    * `subagent.task.finished` code hook overrides this for custom shaping.
    */
   visibility?: "full" | "result" | "none";
+  /**
+   * Model for virtual subagents (no `agentId`), laid over the parent's
+   * `model` key by key. The child keeps the parent's tools, MCP, sandboxes,
+   * hooks and policies. A registered agent always runs on its own model.
+   */
+  model?: Partial<AgentModelConfig>;
   [key: string]: unknown;
 }
 

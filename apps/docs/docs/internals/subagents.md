@@ -96,6 +96,10 @@ sequenceDiagram
   W-->>In: async result, done frame, or channel reply
 ```
 
+### Child budget
+
+Each child turn runs with `deadlineMs` 15 minutes out (`SUBAGENT_BUDGET_MS`) and no `canYield`: a child holds no worker slot, so instead of yielding, the loop's wind-down gives it one tools-off step `DEADLINE_WIND_DOWN_MS` before the end, and its instructions name the budget so it can pace itself. A timer aborts the turn `DEADLINE_WIND_DOWN_MS` past the budget, for a tool call that never reaches a step boundary. `stopChildren` aborts every child with the user-stop error, so nothing is injected for them. A parent pass that ends in a user stop calls it, and so does `waitForIdle` when a heartbeat's lease renewal answers `stopped`, since no step boundary runs while the parent waits. A queued follow-up on a stopped child goes to its own worker.
+
 ## Context and reasoning
 
 Inherited context (`context: "inherited"`) goes straight into the child model call and is never copied into the child's stored conversation. Reasoning parts are stripped from it first. After a child result is injected, the next parent pass is rebuilt from stored history with completed-turn reasoning stripped. A pending tool-approval resume keeps its tool call, approval request and reasoning, because that step has not finished.
@@ -118,7 +122,7 @@ stateDiagram-v2
   failed --> running: takeNext finds a queued continue
   completed --> [*]: nothing queued, lease released
   failed --> [*]: nothing queued, lease released
-  note right of stopping: a seen stop settles failed with stoppedByUser and is not injected
+  note right of stopping: a seen stop settles failed as stopped by the parent agent, without stoppedByUser, and is not injected
 ```
 
 - A busy child conversation makes `accept` answer `rejected`, and the task fails with `Subagent conversation is not available: rejected`, injected like any failure.
@@ -152,7 +156,7 @@ sequenceDiagram
     T-->>P: stopping
     alt child has another step
       Ch->>CX: stepBoundary answers stopped
-      Ch->>CX: settle failed, stoppedByUser
+      Ch->>CX: settle failed, stopped by the parent, not injected
     else child was on its last step
       Ch->>CX: settle completed, result injected
     end

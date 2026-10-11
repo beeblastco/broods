@@ -9,6 +9,7 @@
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -21,6 +22,14 @@ import { s3Client, type S3Access } from "./aws";
 // present owner/group/permissions to the sandbox guest (uid 993 / gid 990).
 const SANDBOX_GID = "990";
 const SANDBOX_UID = "993";
+// Per-key DeleteObjects codes worth another try, as in core; any other code
+// (AccessDenied) fails the cleanup at once.
+const RETRYABLE_DELETE_CODES = new Set([
+  "InternalError",
+  "ServiceUnavailable",
+  "SlowDown",
+]);
+const DELETE_ATTEMPTS = 3;
 
 export interface S3ObjectInfo {
   key: string;
@@ -77,22 +86,65 @@ export async function deleteS3Object(
 }
 
 /**
+ * Delete every object under a prefix, one listed page (up to 1,000 keys) per
+ * DeleteObjects request, one request at a time, as core's `deleteS3Prefix`.
  * @param bucket target bucket
  * @param prefix key prefix
  * @param access optional overrides for a bring-your-own bucket
  * @returns the number of objects deleted
+ * @throws when any key could not be deleted, so a partial cleanup never reports success
  */
 export async function deleteS3Prefix(
   bucket: string,
   prefix: string,
   access?: S3Access,
 ): Promise<number> {
-  const objects = await listS3Prefix(bucket, prefix, access);
-  await Promise.all(
-    objects.map((object) => deleteS3Object(bucket, object.key, access)),
-  );
+  const client = await s3Client(access);
+  let deleted = 0;
+  let continuationToken: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      }),
+    );
+    let keys = (page.Contents ?? []).flatMap((item) =>
+      item.Key ? [item.Key] : [],
+    );
+    const pageSize = keys.length;
+    for (let attempt = 1; keys.length > 0; attempt += 1) {
+      if (attempt > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
+      }
+      const { Errors: errors = [] } = await client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: true },
+        }),
+      );
+      const [first] = errors;
+      if (
+        first &&
+        (attempt === DELETE_ATTEMPTS ||
+          errors.some(
+            (error) =>
+              !error.Key || !RETRYABLE_DELETE_CODES.has(error.Code ?? ""),
+          ))
+      ) {
+        throw new Error(
+          `S3 could not delete ${errors.length} of ${pageSize} objects under ${prefix} in ${bucket}, first ${first.Key}: ${first.Code} ${first.Message ?? ""}`.trim(),
+        );
+      }
+      keys = errors.flatMap((error) => (error.Key ? [error.Key] : []));
+    }
+    deleted += pageSize;
+    continuationToken = page.NextContinuationToken;
+  } while (continuationToken);
 
-  return objects.length;
+  return deleted;
 }
 
 /**
