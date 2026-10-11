@@ -11,6 +11,7 @@ import {
 import type { SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { optionalEnv } from "../shared/env.ts";
+import { logWarn } from "../shared/log.ts";
 import {
   copyS3Object,
   deleteS3Object,
@@ -76,7 +77,8 @@ export async function listConfiguredSkillMetadata(
 }
 
 // Runs every turn, so it reads only the head of each SKILL.md that holds the
-// frontmatter, a few at a time.
+// frontmatter, a few at a time. A head that does not parse, such as frontmatter
+// running past it, skips that skill rather than failing the turn.
 export async function listSkillMetadataForConfig(
   accountId: string,
   skillPaths: string[] = [],
@@ -84,8 +86,8 @@ export async function listSkillMetadataForConfig(
   const limit = skillReadLimit();
   const metadata = await Promise.all(
     ownedSkillPaths(accountId, skillPaths).map(
-      async (skillPath): Promise<SkillMetadata | null> => {
-        const head = await readSkillOrSkip(
+      async (skillPath): Promise<SkillMetadata | null> =>
+        await readSkillOrSkip(
           skillPath,
           limit(() =>
             readS3TextHead(
@@ -93,11 +95,8 @@ export async function listSkillMetadataForConfig(
               `${skillPath}/${SKILL_FILE}`,
               MAX_SKILL_METADATA_BYTES,
             ),
-          ),
-        );
-
-        return head ? { ...parseSkillMarkdown(head), path: skillPath } : null;
-      },
+          ).then((head) => ({ ...parseSkillMarkdown(head), path: skillPath })),
+        ),
     ),
   );
 
@@ -369,29 +368,37 @@ function mirrorStagePrefixes(
 }
 
 // The skill paths an agent lists, each once, capped and checked for ownership
-// before any is read. Configs stored before the config-time cap land here too.
+// before any is read. A config stored before the config-time cap keeps running
+// on its first MAX_CONFIGURED_SKILLS skills.
 function ownedSkillPaths(accountId: string, skillPaths: string[]): string[] {
   const unique = [...new Set(skillPaths)];
   if (unique.length > MAX_CONFIGURED_SKILLS) {
-    throw new Error(
-      `Agent lists ${unique.length} skills, over the ${MAX_CONFIGURED_SKILLS} skill limit`,
-    );
+    logWarn("Agent lists more skills than the limit; using the first ones", {
+      accountId: accountId,
+      skills: unique.length,
+      limit: MAX_CONFIGURED_SKILLS,
+    });
   }
-  for (const skillPath of unique) parseOwnedSkillPath(accountId, skillPath);
+  const used = unique.slice(0, MAX_CONFIGURED_SKILLS);
+  for (const skillPath of used) parseOwnedSkillPath(accountId, skillPath);
 
-  return unique;
+  return used;
 }
 
 // A SKILL.md read doubles as the existence check: a 404 fails the turn as a
-// missing skill, and any other read error skips the skill.
-async function readSkillOrSkip(
+// missing skill, and any other read or parse error skips the skill.
+async function readSkillOrSkip<T>(
   skillPath: string,
-  read: Promise<string>,
-): Promise<string | null> {
+  read: Promise<T>,
+): Promise<T | null> {
   return read.catch((error: unknown) => {
     if (isMissingS3Error(error)) {
       throw new SkillNotFoundError(skillPath);
     }
+    logWarn("Skipping a skill that could not be read", {
+      skillPath: skillPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     return null;
   });

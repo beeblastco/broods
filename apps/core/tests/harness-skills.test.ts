@@ -880,21 +880,40 @@ describe("configured skill read bounds", () => {
     expect(peak).toBe(8);
   });
 
-  it("refuses more distinct skills than the limit before any read", async () => {
+  it("reads only the first skills up to the limit from a config stored before it", async () => {
     const skillPaths = serveLargeSkills(33);
     const { listSkillMetadataForConfig, loadConfiguredHarnessSkills } =
       await import("../src/harness/skills.ts");
 
-    await expect(
-      listSkillMetadataForConfig("acct_test", skillPaths),
-    ).rejects.toThrow("Agent lists 33 skills, over the 32 skill limit");
+    const metadata = await listSkillMetadataForConfig("acct_test", skillPaths);
     await expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: skillPaths },
       }),
-    ).rejects.toThrow("Agent lists 33 skills, over the 32 skill limit");
-    expect(readS3TextHeadMock).not.toHaveBeenCalled();
-    expect(listS3PrefixMock).not.toHaveBeenCalled();
+    ).rejects.toThrow("Configured harness skills exceed 31457280 bytes");
+
+    expect(metadata.map((skill) => skill.path)).toEqual(
+      skillPaths.slice(0, 32),
+    );
+    expect(readS3TextHeadMock).toHaveBeenCalledTimes(32);
+    expect(listS3PrefixMock).toHaveBeenCalledTimes(32);
+  });
+
+  it("skips a skill whose frontmatter runs past the head", async () => {
+    readS3TextMock.mockImplementation(async (_bucket, key) =>
+      key.includes("long-skill")
+        ? `---\nname: long-skill\ndescription: ${"x".repeat(64 * 1024)}\n---\n`
+        : createSkillMarkdown("short-skill", "Short"),
+    );
+    const { listSkillMetadataForConfig } =
+      await import("../src/harness/skills.ts");
+
+    const metadata = await listSkillMetadataForConfig("acct_test", [
+      "acct_test/long-skill",
+      "acct_test/short-skill",
+    ]);
+
+    expect(metadata.map((skill) => skill.name)).toEqual(["short-skill"]);
   });
 
   it("loads a repeated load_skill resource path once", async () => {
