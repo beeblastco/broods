@@ -596,16 +596,28 @@ export class Session {
     });
   }
 
+  /**
+   * Stores the native checkpoint under the owner fence, in the write itself. An
+   * ephemeral run keeps nothing; a persisted one always runs under an owner, so a
+   * missing one is a bug, not a write to let through unfenced.
+   */
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
     if (!this.persist) return;
+    if (this.ownerGeneration === undefined) {
+      throw new Error("Harness checkpoint needs a conversation owner");
+    }
     const serialized = JSON.stringify(state.resumeState);
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
     }
+    const startedAt = performance.now();
     await runtime.mutate("saveHarnessSession", {
       conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
       ...state,
     });
+    this.confirmOwner(startedAt);
   }
 
   /**
