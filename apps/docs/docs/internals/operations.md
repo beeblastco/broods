@@ -160,14 +160,14 @@ The gateway has its own limit: `GATEWAY_AUTH_FAILURES_PER_MINUTE` (default 20) f
 
 Each secret has one job and none falls back to another. Core refuses to boot without the first four, and the gateway without `TERMINAL_TICKET_SECRET`.
 
-| Secret                             | Job                                       | Set on                    | Format       |
-| ---------------------------------- | ----------------------------------------- | ------------------------- | ------------ |
-| `SERVICE_AUTH_SECRET`              | Service bearer, with `X-Account-Id`       | core, Convex              | single value |
-| `STAGE_TICKET_SECRET`              | Signs `bdts_` stage tickets (15 min)      | Convex signs, core reads  | single value |
-| `TERMINAL_TICKET_SECRET`           | Seals sandbox terminal tickets            | core seals, gateway opens | list         |
-| `MEDIA_TICKET_SECRET`              | Seals `/v1/media/:ticket` links           | core                      | list         |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET` | Wraps each account's data key             | core, Convex              | list         |
-| `ADMIN_ACCOUNT_SECRET`             | Admin bearer for the account admin routes | core, Convex, dashboard   | single value |
+| Secret                             | Job                                                                               | Set on                    | Format       |
+| ---------------------------------- | --------------------------------------------------------------------------------- | ------------------------- | ------------ |
+| `SERVICE_AUTH_SECRET`              | Service bearer, with `X-Account-Id`; keys the config plane's failed-login buckets | core, Convex              | single value |
+| `STAGE_TICKET_SECRET`              | Signs `bdts_` stage tickets (15 min)                                              | Convex signs, core reads  | single value |
+| `TERMINAL_TICKET_SECRET`           | Seals sandbox terminal tickets                                                    | core seals, gateway opens | list         |
+| `MEDIA_TICKET_SECRET`              | Seals `/v1/media/:ticket` links                                                   | core                      | list         |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET` | Wraps each account's data key                                                     | core, Convex              | list         |
+| `ADMIN_ACCOUNT_SECRET`             | Admin bearer for the account admin routes                                         | core, Convex, dashboard   | single value |
 
 A list is comma-separated: the first entry seals, every entry opens.
 

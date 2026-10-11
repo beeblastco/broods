@@ -1,12 +1,12 @@
 /**
- * readS3Bytes' byte limit, run on its own by browse-tool.test.ts: other test
+ * readS3Bytes' byte limit and readS3TextHead's ranged read, run on its own by browse-tool.test.ts: other test
  * files replace shared/s3.ts with a mock for the whole `bun test` process, so
  * the real module is checked in a process of its own.
  */
 
 import { S3Client } from "@aws-sdk/client-s3";
 import { expect, mock, spyOn, test } from "bun:test";
-import { readS3Bytes } from "../../src/shared/s3.ts";
+import { readS3Bytes, readS3TextHead } from "../../src/shared/s3.ts";
 
 test.each([
   [7 * 1024 * 1024, "7340032 bytes"],
@@ -42,3 +42,48 @@ test.each([
     expect(cancel).toHaveBeenCalled();
   },
 );
+
+test("reads only the requested head of an object", async (): Promise<void> => {
+  const send = spyOn(S3Client.prototype, "send").mockImplementation(
+    (async () => ({
+      ContentLength: 65536,
+      Body: { transformToString: async (): Promise<string> => "head" },
+    })) as never,
+  );
+
+  const head = await readS3TextHead("bucket", "acct/skill/SKILL.md", 65536);
+  const input = (send.mock.calls[0]?.[0] as { input: { Range?: string } })
+    .input;
+  send.mockRestore();
+
+  expect(head).toBe("head");
+  expect(input.Range).toBe("bytes=0-65535");
+});
+
+test("refuses a whole object from a store that ignores the range", async (): Promise<void> => {
+  const read = mock(async (): Promise<string> => "");
+  const cancel = mock(async (): Promise<void> => {});
+  const send = spyOn(S3Client.prototype, "send").mockImplementation(
+    (async () => ({
+      ContentLength: 4 * 1024 * 1024,
+      Body: {
+        transformToString: read,
+        transformToWebStream: () => ({ cancel: cancel }),
+      },
+    })) as never,
+  );
+
+  const failure = await readS3TextHead(
+    "bucket",
+    "acct/skill/SKILL.md",
+    65536,
+  ).then(
+    (): string => "read",
+    (error: unknown): string => String(error),
+  );
+  send.mockRestore();
+
+  expect(failure).toContain("is 4194304 bytes, over the 65536 byte limit");
+  expect(read).not.toHaveBeenCalled();
+  expect(cancel).toHaveBeenCalled();
+});

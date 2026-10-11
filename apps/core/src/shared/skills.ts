@@ -3,6 +3,7 @@
  * Keep endpoint CRUD in account-manage and prompt loading in harness-processing.
  */
 
+import { MAX_SKILL_METADATA_BYTES } from "@broods/convex/model/skillRules";
 import { readS3Text } from "./s3.ts";
 import { requireEnv } from "./env.ts";
 import path from "node:path";
@@ -204,13 +205,17 @@ export function parseSkillPath(
   };
 }
 
+/** A skill file's text, refused before download past `maxBytes`. */
 export async function readSkillText(
   skillPath: string,
   resourcePath: string,
+  maxBytes = MAX_SKILL_FILE_BYTES,
 ): Promise<string> {
   return readS3Text(
     skillsBucketName(),
     `${skillPath}/${normalizeBundlePath(resourcePath)}`,
+    undefined,
+    maxBytes,
   );
 }
 
@@ -254,7 +259,12 @@ export function validateSkillBundle(
   }
 
   return {
-    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
+    // Parsed from the head the per-turn skill list reads.
+    metadata: parseSkillMarkdown(
+      new TextDecoder().decode(
+        skillFile.bytes.subarray(0, MAX_SKILL_METADATA_BYTES),
+      ),
+    ),
     files: files,
   };
 }

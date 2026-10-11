@@ -19,6 +19,7 @@ const STAGE_TICKET: StageTicketScope = {
   projectId: "proj_1",
   stageId: "stage_1",
   sandboxWrite: false,
+  expiresAt: 1_900_000_000_000,
 };
 const CHILD_RUN_ID = `run_${"b".repeat(32)}`;
 const TEST_RUN_ID = `run_${"a".repeat(32)}`;
@@ -122,6 +123,7 @@ describe("direct API ingress", () => {
       projectSlug: "demo",
       stageSlug: "development",
       endpointIds: ["env-endpoint"],
+      expiresAt: STAGE_TICKET.expiresAt,
     });
   });
 

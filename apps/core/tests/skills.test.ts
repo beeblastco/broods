@@ -165,6 +165,18 @@ describe("validateSkillBundle", () => {
       ]),
     ).toThrow("Skill file is too large: SKILL.md");
   });
+
+  it("takes metadata only from the SKILL.md head the skill list reads", () => {
+    const large = skillMarkdown("large-skill") + "x".repeat(4 * 1024 * 1024);
+    expect(
+      validateSkillBundle([bundleFile("SKILL.md", large)]).metadata.name,
+    ).toBe("large-skill");
+    const lateFrontmatter = `---\nname: late-skill\ndescription: Late\nnotes: ${"y".repeat(64 * 1024)}\n---\n`;
+    expect(parseSkillMarkdown(lateFrontmatter).name).toBe("late-skill");
+    expect(() =>
+      validateSkillBundle([bundleFile("SKILL.md", lateFrontmatter)]),
+    ).toThrow("SKILL.md must start with YAML frontmatter");
+  });
 });
 
 describe("isExecutableSkillPath", () => {
