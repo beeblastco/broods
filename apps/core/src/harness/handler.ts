@@ -144,6 +144,7 @@ import {
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type IngressDispatchScope,
+  type ReentryTarget,
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
@@ -743,13 +744,15 @@ async function continueAfterAsyncToolSettlement(
  * the parent run stopped waiting for it. The child's task id keeps it to one
  * continuation, which queues behind whatever turn holds the conversation, and
  * none at all once the parent read `resultEventId` itself. The coordinator
- * calls it, and so does the recovery sweep for a result a restart lost.
+ * calls it, and so does the recovery sweep for a result a restart lost, with
+ * the `target` it already loaded.
  */
 export async function resumeAfterSubagentResult(
   parent: SubagentParent,
   taskId: string,
   message: UserModelMessage,
   resultEventId: string,
+  target?: ReentryTarget,
 ): Promise<void> {
   // The task id's own nonce, under the root event, so a chain of late results
   // does not nest every earlier id into the next.
@@ -767,6 +770,34 @@ export async function resumeAfterSubagentResult(
     message: message,
     requestedMode: "followup",
     resultEventId: resultEventId,
+    target: target,
+  });
+}
+
+/**
+ * Where a conversation of this agent re-enters, or null once the agent is
+ * gone. `resumeConversation` and the subagent recovery sweep load it.
+ */
+export async function loadReentryTarget(
+  accountId: string,
+  agentId: string,
+  conversationKey: string,
+): Promise<ReentryTarget | null> {
+  const agent = await getStorage().agents.getById(accountId, agentId);
+  if (!agent) {
+    return null;
+  }
+
+  // A channel session resumes on its record-narrowed config, as a cron does.
+  return await resolveReentryTarget({
+    accountId: accountId,
+    agentId: agentId,
+    publicConversationKey: eventPublicConversationKey(
+      conversationKey,
+      accountId,
+      agentId,
+    ),
+    agentConfig: toRuntimeAgentConfig(agent.config),
   });
 }
 
@@ -786,12 +817,16 @@ async function resumeConversation(options: {
   message: UserModelMessage;
   requestedMode: IngressMode;
   resultEventId?: string;
+  target?: ReentryTarget;
 }): Promise<ContinuationOutcome> {
-  const agent = await getStorage().agents.getById(
-    options.accountId,
-    options.agentId,
-  );
-  if (!agent) {
+  const target =
+    options.target ??
+    (await loadReentryTarget(
+      options.accountId,
+      options.agentId,
+      options.conversationKey,
+    ));
+  if (!target) {
     return { kind: "skip" };
   }
   const publicConversationKey = eventPublicConversationKey(
@@ -799,13 +834,6 @@ async function resumeConversation(options: {
     options.accountId,
     options.agentId,
   );
-  // A channel session resumes on its record-narrowed config, as a cron does.
-  const target = await resolveReentryTarget({
-    accountId: options.accountId,
-    agentId: options.agentId,
-    publicConversationKey: publicConversationKey,
-    agentConfig: toRuntimeAgentConfig(agent.config),
-  });
 
   const continuationEvent: DirectInboundEvent = {
     accountId: options.accountId,
@@ -3086,18 +3114,7 @@ async function resolveReentryTarget(options: {
   publicConversationKey: string;
   agentConfig: AgentConfig;
   configRef?: IngressConfigRef;
-}): Promise<
-  Pick<
-    DirectInboundEvent,
-    | "agentConfig"
-    | "configRef"
-    | "conversationKey"
-    | "replyTarget"
-    | "endpointId"
-    | "projectSlug"
-    | "stageSlug"
-  >
-> {
+}): Promise<ReentryTarget> {
   const sessionConversationKey = accountAgentScopedKey(
     options.accountId,
     options.agentId,

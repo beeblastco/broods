@@ -15,6 +15,7 @@ import {
 import { isPlainObject } from "./model/objects";
 import {
   asyncAgentOutcomeValidator,
+  asyncAgentResultRow,
   conversationEventsValidator,
   writeAsyncAgentResult,
 } from "./runtime";
@@ -207,8 +208,8 @@ export const accept = internalMutation({
     }
     // A get_subagent_status read and this resume race to deliver one result;
     // whichever marks it seen first wins, so the parent is told it once.
-    const result = await lateResultRow(ctx, args.resultEventId);
-    if (result === "seen") {
+    const result = await asyncAgentResultRow(ctx, args.resultEventId);
+    if (result?.observed === true) {
       return { outcome: "duplicate" as const, eventId: args.eventId };
     }
 
@@ -1447,23 +1448,6 @@ function isLateControl(
     args.expectedOwnerTaskId !== undefined &&
     coordinator.ownerTaskId !== args.expectedOwnerTaskId
   );
-}
-
-/**
- * The subagent result row a late-result continuation delivers, for `accept`:
- * "seen" when the parent already has that result, null when there is no row.
- */
-async function lateResultRow(
-  ctx: MutationCtx,
-  resultEventId: string | undefined,
-): Promise<Doc<"runtimeAsyncAgentResults"> | "seen" | null> {
-  if (!resultEventId) return null;
-  const row = await ctx.db
-    .query("runtimeAsyncAgentResults")
-    .withIndex("by_eventId", (q) => q.eq("eventId", resultEventId))
-    .unique();
-
-  return row?.observed === true ? "seen" : row;
 }
 
 /**

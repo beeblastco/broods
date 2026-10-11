@@ -18,15 +18,12 @@ export type AsyncAgentOutcome =
   | { status: "awaiting_approval"; approvals: ToolApprovalSummary[] }
   | { status: "awaiting_input"; questions: PendingQuestionSummary[] };
 /**
- * A subagent task as its parent sees it, and where the parent's conversation
- * answers, so a late result reaches the parent after a restart too.
+ * Where a subagent's parent conversation answers, so a late result reaches the
+ * parent after a restart too. The task, the child agent and its key come from
+ * the row's own `eventId` and `conversationKey`.
  */
 export interface SubagentTaskRecord {
-  taskId: string;
-  agentId: string;
   description?: string;
-  // The child's public key, the one run_subagent returned.
-  conversationKey: string;
   parentConversationKey: string;
   parentDelivery?: AsyncToolDelivery;
 }
@@ -59,10 +56,14 @@ export function getAsyncAgentResult(
 ): Promise<AsyncAgentResultRecord | null> {
   return runtime.query("getAsyncAgentResult", { eventId: eventId });
 }
-/** Subagent results no parent has seen yet, written in the window; the recovery sweep reads them. */
+/**
+ * Subagent results no parent has seen yet, written in the window; a running
+ * one only once it is older than `processingBefore`. The recovery sweep reads them.
+ */
 export function listUnobservedAsyncAgentResults(window: {
   updatedAfter: string;
   updatedBefore: string;
+  processingBefore: string;
 }): Promise<AsyncAgentResultRecord[]> {
   return runtime.query("listUnobservedAsyncAgentResults", window);
 }

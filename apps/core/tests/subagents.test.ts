@@ -1071,17 +1071,15 @@ describe("SubagentCoordinator", () => {
     try {
       await detaching.drainCompletionsAndDetachToParent();
       // A later turn reads the result; its step is not saved yet.
-      const status = getStatus({
+      await getStatus({
         accountId: "account_1",
         eventId: "acct:account_1:agent:agent_parent:api:event_later",
         conversationKey: parentKey,
         watch: laterTurn,
-      }).get_subagent_status;
-      await (
-        status as {
-          execute: (input: unknown, options: unknown) => Promise<unknown>;
-        }
-      ).execute({ taskId: taskId, agentId: "agent_child" }, { messages: [] });
+      }).get_subagent_status?.execute?.(
+        { taskId: taskId, agentId: "agent_child" },
+        { toolCallId: "call-1", messages: [], context: {} },
+      );
       // The child finishes in that gap.
       await detaching["completeTask"]({
         ...child,

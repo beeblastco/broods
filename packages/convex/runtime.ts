@@ -7,6 +7,7 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
@@ -30,6 +31,8 @@ const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
+// One recovery sweep's page of late subagent results.
+const UNOBSERVED_RESULT_PAGE_SIZE = 100;
 
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
@@ -404,30 +407,49 @@ export const getAsyncAgentResult = internalQuery({
   args: { eventId: v.string() },
   returns: v.union(asyncAgentDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults"> | null> =>
-    await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .unique(),
+    await asyncAgentResultRow(ctx, args.eventId),
 });
 
 /**
  * Subagent results the parent stopped waiting for and has not seen, written in
- * the window, oldest first. Core's recovery sweep resumes their parents.
- * @returns up to 100 rows, still running ones included
+ * the window, oldest first per status. Core's recovery sweep resumes their
+ * parents. A row still processing is listed only once it is older than
+ * `processingBefore`, when its child is dead, so live children never crowd
+ * finished rows out.
+ * @returns up to 100 rows
  */
 export const listUnobservedAsyncAgentResults = internalQuery({
-  args: { updatedAfter: v.string(), updatedBefore: v.string() },
+  args: {
+    updatedAfter: v.string(),
+    updatedBefore: v.string(),
+    processingBefore: v.string(),
+  },
   returns: v.array(asyncAgentDoc),
-  handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults">[]> =>
-    await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_observed_and_updatedAt", (q) =>
-        q
-          .eq("observed", false)
-          .gt("updatedAt", args.updatedAfter)
-          .lt("updatedAt", args.updatedBefore),
-      )
-      .take(100),
+  handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults">[]> => {
+    const ranges: Array<[Doc<"runtimeAsyncAgentResults">["status"], string]> = [
+      ["completed", args.updatedBefore],
+      ["failed", args.updatedBefore],
+      ["processing", args.processingBefore],
+    ];
+    const rows: Doc<"runtimeAsyncAgentResults">[] = [];
+    for (const [status, updatedBefore] of ranges) {
+      if (rows.length >= UNOBSERVED_RESULT_PAGE_SIZE) break;
+      rows.push(
+        ...(await ctx.db
+          .query("runtimeAsyncAgentResults")
+          .withIndex("by_observed_and_status_and_updatedAt", (q) =>
+            q
+              .eq("observed", false)
+              .eq("status", status)
+              .gt("updatedAt", args.updatedAfter)
+              .lt("updatedAt", updatedBefore),
+          )
+          .take(UNOBSERVED_RESULT_PAGE_SIZE - rows.length)),
+      );
+    }
+
+    return rows;
+  },
 });
 
 /**
@@ -441,10 +463,7 @@ export const observeAsyncAgentResult = internalMutation({
   args: { eventId: v.string(), observed: v.boolean() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .unique();
+    const row = await asyncAgentResultRow(ctx, args.eventId);
     if (
       !row ||
       row.observed === true ||
@@ -478,6 +497,22 @@ export const updateAsyncAgentResult = internalMutation({
 });
 
 /**
+ * The polling row for `eventId`, or null, also when there is no id. A late
+ * subagent result whose row has `observed === true` is one its parent has.
+ */
+export async function asyncAgentResultRow(
+  ctx: QueryCtx,
+  eventId: string | undefined,
+): Promise<Doc<"runtimeAsyncAgentResults"> | null> {
+  if (eventId === undefined) return null;
+
+  return await ctx.db
+    .query("runtimeAsyncAgentResults")
+    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+    .unique();
+}
+
+/**
  * Patches the polling row for `eventId` with a run's outcome.
  * @returns false when the row no longer exists
  */
@@ -486,10 +521,7 @@ export async function writeAsyncAgentResult(
   eventId: string,
   outcome: Infer<typeof asyncAgentOutcomeValidator>,
 ): Promise<boolean> {
-  const row = await ctx.db
-    .query("runtimeAsyncAgentResults")
-    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
-    .unique();
+  const row = await asyncAgentResultRow(ctx, eventId);
   if (!row) return false;
   await requireActiveAccount(ctx, row.accountId);
   await ctx.db.patch(row._id, {

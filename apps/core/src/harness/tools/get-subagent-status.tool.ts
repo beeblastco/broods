@@ -65,7 +65,9 @@ export default function getSubagentStatusTool(
         // by this turn once the step saves, by a late resume from now on.
         if (record.status === "completed" || record.status === "failed") {
           context.watch?.markDelivered(record.eventId);
-          await observeAsyncAgentResult(record.eventId, true);
+          if (record.observed !== true) {
+            await observeAsyncAgentResult(record.eventId, true);
+          }
         }
 
         return {

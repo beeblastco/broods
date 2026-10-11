@@ -91,8 +91,12 @@ describe("queued ingress recovery", () => {
     // other died with the pod while it ran, long past its budget, so its row
     // is failed and the next sweep tells the parent.
     const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const rows = ["finished", "killed"].map((name) => {
-      const taskId = createSubagentTaskId(parentEventId);
+    const taskIds = [
+      createSubagentTaskId(parentEventId),
+      createSubagentTaskId(parentEventId),
+    ];
+    const rows = ["finished", "killed"].map((name, index) => {
+      const taskId = taskIds[index]!;
 
       return {
         accountId: "account_1",
@@ -103,9 +107,6 @@ describe("queued ingress recovery", () => {
           `subagent-${name}`,
         ),
         subagent: {
-          taskId: taskId,
-          agentId: "agent_child",
-          conversationKey: `subagent-${name}`,
           parentConversationKey: parentKey,
           parentDelivery: { kind: "async" },
         },
@@ -160,7 +161,7 @@ describe("queued ingress recovery", () => {
       ]);
       expect(admitted).toEqual([
         expect.objectContaining({
-          eventId: `${parentEventId}:async-subagent:${subagentTaskNonce(rows[0]!.subagent.taskId)}`,
+          eventId: `${parentEventId}:async-subagent:${subagentTaskNonce(taskIds[0]!)}`,
           conversationKey: parentKey,
           requestedMode: "followup",
           resultEventId: rows[0]!.eventId,

@@ -5171,12 +5171,9 @@ export declare const internal: {
         conversationKey: string;
         eventId: string;
         subagent?: {
-          agentId: string;
-          conversationKey: string;
           description?: string;
           parentConversationKey: string;
           parentDelivery?: any;
-          taskId: string;
         };
       },
       boolean
@@ -5289,12 +5286,9 @@ export declare const internal: {
           | "completed"
           | "failed";
         subagent?: {
-          agentId: string;
-          conversationKey: string;
           description?: string;
           parentConversationKey: string;
           parentDelivery?: any;
-          taskId: string;
         };
         updatedAt: string;
       } | null
@@ -5555,7 +5549,7 @@ export declare const internal: {
     listUnobservedAsyncAgentResults: FunctionReference<
       "query",
       "internal",
-      { updatedAfter: string; updatedBefore: string },
+      { processingBefore: string; updatedAfter: string; updatedBefore: string },
       Array<{
         _creationTime: number;
         _id: Id<"runtimeAsyncAgentResults">;
@@ -5576,12 +5570,9 @@ export declare const internal: {
           | "completed"
           | "failed";
         subagent?: {
-          agentId: string;
-          conversationKey: string;
           description?: string;
           parentConversationKey: string;
           parentDelivery?: any;
-          taskId: string;
         };
         updatedAt: string;
       }>

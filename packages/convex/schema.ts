@@ -1226,16 +1226,12 @@ export const runtimeIngressApplicationsFields = {
   expiresAt: v.number(),
 };
 /**
- * A subagent task as its parent sees it, and where the parent's conversation
- * answers, so a result the parent stopped waiting for can still reach it after
- * a restart.
+ * Where a subagent's parent conversation answers, so a result the parent
+ * stopped waiting for can still reach it after a restart. The task, the child
+ * agent and its key come from the row's own `eventId` and `conversationKey`.
  */
 export const subagentTaskValidator = v.object({
-  taskId: v.string(),
-  agentId: v.string(),
   description: v.optional(v.string()),
-  // The child's public key, the one run_subagent returned.
-  conversationKey: v.string(),
   parentConversationKey: v.string(),
   parentDelivery: v.optional(v.any()),
 });
@@ -1748,7 +1744,11 @@ export default defineSchema({
     .index("by_accountId", ["accountId"])
     .index("by_conversationKey", ["conversationKey"])
     .index("by_expiresAt", ["expiresAt"])
-    .index("by_observed_and_updatedAt", ["observed", "updatedAt"]),
+    .index("by_observed_and_status_and_updatedAt", [
+      "observed",
+      "status",
+      "updatedAt",
+    ]),
   runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
     .index("by_resultId", ["resultId"])
     .index("by_accountId", ["accountId"])

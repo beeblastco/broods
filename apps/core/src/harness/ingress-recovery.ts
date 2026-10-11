@@ -12,6 +12,7 @@ import { logError, logInfo } from "../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../shared/runtime-keys.ts";
 import {
   dispatchAppliedIngress,
+  loadReentryTarget,
   resumeAfterSubagentResult,
 } from "./handler.ts";
 import { recoverQueuedIngress, type RecoveredIngress } from "./ingress.ts";
@@ -110,7 +111,10 @@ async function sweepQueuedIngress(): Promise<void> {
       resumeAfter = continueAfter ?? undefined;
       if (continueAfter === null) break;
     }
-    await resumeLostSubagentResults(resumeAfterSubagentResult);
+    await resumeLostSubagentResults(
+      loadReentryTarget,
+      resumeAfterSubagentResult,
+    );
   } catch (err) {
     logError("Queued ingress recovery failed", {
       error: err instanceof Error ? err.message : String(err),

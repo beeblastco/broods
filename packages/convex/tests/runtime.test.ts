@@ -352,11 +352,15 @@ describe("runtime persistence", () => {
         observed: true,
       });
     }
+    const window = {
+      updatedAfter: new Date(Date.now() - 60_000).toISOString(),
+      updatedBefore: new Date(Date.now() + 60_000).toISOString(),
+    };
     const listed = await t.query(
       internal.runtime.listUnobservedAsyncAgentResults,
       {
-        updatedAfter: new Date(Date.now() - 60_000).toISOString(),
-        updatedBefore: new Date(Date.now() + 60_000).toISOString(),
+        ...window,
+        processingBefore: new Date(Date.now() + 60_000).toISOString(),
       },
     );
 
@@ -364,10 +368,20 @@ describe("runtime persistence", () => {
       "running",
       "unseen",
     ]);
+    // A child still inside its budget is no news yet.
+    expect(
+      (
+        await t.query(internal.runtime.listUnobservedAsyncAgentResults, {
+          ...window,
+          processingBefore: new Date(Date.now() - 30_000).toISOString(),
+        })
+      ).map((row) => row.eventId),
+    ).toEqual(["unseen"]);
     expect(
       await t.query(internal.runtime.listUnobservedAsyncAgentResults, {
         updatedAfter: new Date(Date.now() - 60_000).toISOString(),
         updatedBefore: new Date(Date.now() - 30_000).toISOString(),
+        processingBefore: new Date(Date.now() - 30_000).toISOString(),
       }),
     ).toEqual([]);
   });

@@ -12,11 +12,11 @@ import type {
 } from "ai";
 import {
   resolveSubagentMode,
-  toRuntimeAgentConfig,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { delegatedChain, runPrincipal } from "../shared/domain/principal.ts";
+import { toErrorMessage } from "../shared/errors.ts";
 import { collectSecretValues, logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
@@ -27,6 +27,8 @@ import {
   createRunId,
   createSubagentTaskId,
   parseAccountAgentScopedKey,
+  publicConversationKeyFromScoped,
+  publicEventIdForScope,
   scopedDirectConversationKey,
   scopedDirectEventId,
   subagentParentEventId,
@@ -55,7 +57,7 @@ import {
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
 import { acceptIngress, outcomeSettlement } from "./ingress.ts";
-import type { IngressDispatchScope } from "./integrations.ts";
+import type { IngressDispatchScope, ReentryTarget } from "./integrations.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   createAgentLifecycleEmitter,
@@ -155,14 +157,22 @@ export type SubagentParent = Pick<
 >;
 /**
  * Starts a new parent turn with a child's result, once per `taskId`, unless
- * the parent already read the result row `resultEventId`.
+ * the parent already read the result row `resultEventId`. The recovery sweep
+ * passes the `target` it already resolved.
  */
 type SubagentParentResumer = (
   parent: SubagentParent,
   taskId: string,
   message: UserModelMessage,
   resultEventId: string,
+  target?: ReentryTarget,
 ) => Promise<void>;
+/** Where a parent conversation re-enters, or null once its agent is gone. */
+type SubagentParentLoader = (
+  accountId: string,
+  agentId: string,
+  conversationKey: string,
+) => Promise<ReentryTarget | null>;
 
 // Collaborators the handler owns. Every one has a working default, so tests and
 // non-handler callers override only what they exercise.
@@ -274,10 +284,7 @@ export class SubagentCoordinator {
           eventId: task.eventId,
           conversationKey: task.conversationKey,
           subagent: {
-            taskId: task.taskId,
-            agentId: task.agentId,
             ...(task.description ? { description: task.description } : {}),
-            conversationKey: task.publicConversationKey,
             parentConversationKey: this.parentSession.conversationKey,
             ...(this.parentSession.delivery
               ? { parentDelivery: this.parentSession.delivery }
@@ -572,11 +579,11 @@ export class SubagentCoordinator {
 
     // A child whose result is in this batch is only settling its lease.
     const answered = new Set(this.completions.map(({ taskId }) => taskId));
-    const detachedRows: string[] = [];
-    for (const metadata of this.pendingMetadata.values()) {
-      if (answered.has(metadata.taskId)) continue;
+    const detaching = [...this.pendingMetadata.values()].filter(
+      ({ taskId }): boolean => !answered.has(taskId),
+    );
+    for (const metadata of detaching) {
       this.detached.add(metadata.taskId);
-      detachedRows.push(metadata.eventId);
       // Queued like a result, so a failed write puts the notice back too. A
       // child whose result the model already read is not still working news.
       if (!this.delivered.has(metadata.eventId)) {
@@ -590,15 +597,8 @@ export class SubagentCoordinator {
     // Only the recovery sweep reads this, for a result this process never
     // delivers; the live resume needs none of it.
     await Promise.all(
-      detachedRows.map((eventId): Promise<void> =>
-        observeAsyncAgentResult(eventId, false).catch(
-          (error: unknown): void => {
-            logError("Failed to record a detached subagent", {
-              eventId: eventId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          },
-        ),
+      detaching.map(({ eventId }): Promise<void> =>
+        recordObserved(eventId, false),
       ),
     );
 
@@ -1254,14 +1254,7 @@ export class SubagentCoordinator {
       }
     } else if (detached) {
       // Never told, so the recovery sweep must not tell it either.
-      await observeAsyncAgentResult(completion.eventId, true).catch(
-        (error: unknown): void => {
-          logError("Failed to record a withheld subagent result", {
-            taskId: completion.taskId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        },
-      );
+      await recordObserved(completion.eventId, true);
     }
     this.notifyCompletion();
     logInfo(
@@ -1367,22 +1360,27 @@ export class SubagentCoordinator {
 /**
  * Resumes each parent whose detached subagent result no live run delivered:
  * the run that detached it died with its pod, or its resume failed. The
- * ingress recovery sweep calls it on its timer.
+ * ingress recovery sweep calls it on its timer, with the handler's re-entry.
  */
 export async function resumeLostSubagentResults(
+  loadParent: SubagentParentLoader,
   resumeParent: SubagentParentResumer,
 ): Promise<void> {
   const now = Date.now();
   const rows = await listUnobservedAsyncAgentResults({
     updatedAfter: new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString(),
     updatedBefore: new Date(now - LATE_RESULT_GRACE_MS).toISOString(),
+    // A child still running this long past its budget died with its pod.
+    processingBefore: new Date(
+      now - SUBAGENT_BUDGET_MS - DEADLINE_WIND_DOWN_MS - LATE_RESULT_GRACE_MS,
+    ).toISOString(),
   });
   for (const row of rows) {
-    await resumeLostSubagentResult(row, now, resumeParent).catch(
+    await resumeLostSubagentResult(row, loadParent, resumeParent).catch(
       (error: unknown): void => {
         logError("Failed to resume the parent with a lost subagent result", {
           eventId: row.eventId,
-          error: error instanceof Error ? error.message : String(error),
+          error: toErrorMessage(error),
         });
       },
     );
@@ -1464,7 +1462,7 @@ async function parentVisibleCompletion(
   } catch (error) {
     logError("Subagent finish hook failed", {
       taskId: completion.taskId,
-      error: error instanceof Error ? error.message : String(error),
+      error: toErrorMessage(error),
     });
   }
   if (visibleResult !== undefined) {
@@ -1477,55 +1475,79 @@ async function parentVisibleCompletion(
 }
 
 /**
- * One row of `resumeLostSubagentResults`. A child still running long past its
- * budget died with its pod: its row is failed, and the next sweep tells the
+ * Records whether a detached child's parent has its result. The row already
+ * holds the result, so a failed write is only logged.
+ */
+async function recordObserved(
+  eventId: string,
+  observed: boolean,
+): Promise<void> {
+  await observeAsyncAgentResult(eventId, observed).catch(
+    (error: unknown): void => {
+      logError("Failed to record whether the parent saw a subagent result", {
+        eventId: eventId,
+        observed: observed,
+        error: toErrorMessage(error),
+      });
+    },
+  );
+}
+
+/**
+ * One row of `resumeLostSubagentResults`. A child the sweep lists still
+ * running died with its pod: its row is failed, and the next sweep tells the
  * parent. A finished one resumes the parent, unless the parent is never told.
+ * The row's `eventId` is `scopedDirectEventId(account, child agent, taskId)`.
  */
 async function resumeLostSubagentResult(
   row: AsyncAgentResultRecord,
-  now: number,
+  loadParent: SubagentParentLoader,
   resumeParent: SubagentParentResumer,
 ): Promise<void> {
   const task = row.subagent;
-  const parentEventId = task ? subagentParentEventId(task.taskId) : null;
+  const child = parseAccountAgentScopedKey(row.eventId);
+  const taskId = child
+    ? publicEventIdForScope(row.eventId, child.accountId, child.agentId, "")
+    : "";
+  const parentEventId = subagentParentEventId(taskId);
   const scope = parentEventId
     ? parseAccountAgentScopedKey(parentEventId)
     : null;
-  if (!task || !parentEventId || !scope) return;
+  if (!task || !child || !parentEventId || !scope) return;
   if (row.status === "processing") {
-    const deadBefore =
-      now - SUBAGENT_BUDGET_MS - DEADLINE_WIND_DOWN_MS - LATE_RESULT_GRACE_MS;
-    if (Date.parse(row.createdAt) < deadBefore) {
-      await recordAsyncAgentResult(row.eventId, {
-        status: "failed",
-        error: LOST_SUBAGENT_ERROR,
-      });
-    }
+    await recordAsyncAgentResult(row.eventId, {
+      status: "failed",
+      error: LOST_SUBAGENT_ERROR,
+    });
 
     return;
   }
-  const parent = await getStorage().agents.getById(
+  const target = await loadParent(
     scope.accountId,
     scope.agentId,
+    task.parentConversationKey,
   );
-  const parentConfig = parent ? toRuntimeAgentConfig(parent.config) : null;
-  const visible = parentConfig
+  const visible = target
     ? await parentVisibleCompletion(
         {
-          taskId: task.taskId,
+          taskId: taskId,
           eventId: row.eventId,
-          agentId: task.agentId,
+          agentId: child.agentId,
           ...(task.description ? { description: task.description } : {}),
-          conversationKey: task.conversationKey,
+          conversationKey: publicConversationKeyFromScoped(
+            row.conversationKey,
+            child.accountId,
+            child.agentId,
+          ),
           status: row.status === "completed" ? "completed" : "failed",
           ...(row.response !== undefined ? { response: row.response } : {}),
           ...(row.error !== undefined ? { error: row.error } : {}),
         },
-        parentConfig,
-        createAgentHookDispatcher(scope.accountId, parentConfig),
+        target.agentConfig,
+        createAgentHookDispatcher(scope.accountId, target.agentConfig),
       )
     : null;
-  if (!visible) {
+  if (!target || !visible) {
     await observeAsyncAgentResult(row.eventId, true);
 
     return;
@@ -1538,13 +1560,14 @@ async function resumeLostSubagentResult(
       conversationKey: task.parentConversationKey,
       delivery: task.parentDelivery,
     },
-    task.taskId,
+    taskId,
     completionToParentMessage(visible),
     row.eventId,
+    target,
   );
   logInfo("Resumed the parent with a lost subagent result", {
     parentEventId: parentEventId,
-    taskId: task.taskId,
+    taskId: taskId,
   });
 }
 

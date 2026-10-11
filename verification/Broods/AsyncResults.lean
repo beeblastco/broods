@@ -12,14 +12,14 @@ to the run's envelope, and the detached tool row (`runtimeAsyncToolResults`) und
 
 An async run settles its envelope and its polling rows in one `runtimeIngress.settle`
 mutation, which writes the rows only when it finishes the owner's own envelope, so the
-two change together or not at all.
+two change together or not at all. A handler is a list of `Act`s; any await may throw,
+so a run is the program plus the index of the await that throws, if any, and the catch
+block then runs as `recover`.
 
 A subagent's row also carries `observed`: whether its parent has the result. The parent's
 `get_subagent_status` read (`observeAsyncAgentResult`) and a late result's resume
 (`runtimeIngress.accept` with `resultEventId`) both set it, and the resume is admitted
-only while it is unset, so the parent is told a result once. A handler is a list of `Act`s; any await may throw,
-so a run is the program plus the index of the await that throws, if any, and the catch
-block then runs as `recover`.
+only while it is unset, so the parent is told a result once.
 -/
 
 namespace Broods.AsyncResults
@@ -353,9 +353,8 @@ theorem resume_at_most_once (o : Observed) (cs : List ObserveCall) : o.admitted 
     · simp [h, step_admits_seen o c h, seen_admits_none]
     · simp [h, ih]
 
-/-- A status read of a finished result shuts out every later resume: the race CodeAnt
-flagged, a child finishing after the read but before the read's step saved, tells the
-parent nothing more. -/
+/-- A status read of a finished result shuts out every later resume: a child finishing
+after the read but before the read's step saved tells the parent nothing more. -/
 theorem read_shuts_out_resume (o : Observed) (cs : List ObserveCall) :
     (o.step (.read true)).1.admitted cs = 0 := by
   cases o <;> simp [Observed.step, seen_admits_none]

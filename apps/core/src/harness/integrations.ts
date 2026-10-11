@@ -208,6 +208,21 @@ type ChannelCredentialHolder =
   | { kind: "unverified" }
   | { kind: "unavailable" };
 
+/**
+ * Where a re-entered conversation runs and answers: its record-narrowed
+ * config, key, reply target and deployment scope.
+ */
+export type ReentryTarget = Pick<
+  DirectInboundEvent,
+  | "agentConfig"
+  | "configRef"
+  | "conversationKey"
+  | "replyTarget"
+  | "endpointId"
+  | "projectSlug"
+  | "stageSlug"
+>;
+
 export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
