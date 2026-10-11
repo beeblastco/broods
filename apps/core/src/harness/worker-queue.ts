@@ -4,6 +4,7 @@
  * does once it has its slot stays with the handler.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   MAX_RUN_SLOTS,
   positiveIntegerEnv,
@@ -34,6 +35,9 @@ type PendingWorkerRun = [
 const pendingWorkerRuns: PendingWorkerRun[] = [];
 
 let activeInProcessWorkers = 0;
+// Places `withQueuePlace` holds for requests still being admitted.
+let heldQueuePlaces = 0;
+const queuePlace = new AsyncLocalStorage<{ held: boolean }>();
 let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
 let renewingQueuedLeases = false;
 
@@ -47,14 +51,11 @@ type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
  * and carry on with a fresh budget, up to MAX_RUN_SLOTS slots.
  * @param kind a label for logs
  * @param lease the conversation lease the run already holds, renewed while it waits
- * @param loadShed false when the caller already turned a full queue away
- *   before it recorded the run, so the run queues past the cap instead
  */
 export function dispatchInProcessWorker(
   kind: string,
   run: InProcessWorkerRun,
   lease?: LiveOwner,
-  loadShed = true,
 ): void {
   const runAbort = new AbortController();
   let slotsUsed = 0;
@@ -117,6 +118,13 @@ export function dispatchInProcessWorker(
       );
     });
   };
+  // A run its request held a place for takes that place and is never shed.
+  const place = queuePlace.getStore();
+  const placed = place?.held === true;
+  if (place && placed) {
+    place.held = false;
+    heldQueuePlaces -= 1;
+  }
   enqueueWorker(
     [
       kind,
@@ -144,8 +152,30 @@ export function dispatchInProcessWorker(
       },
       lease,
     ],
-    loadShed,
+    !placed,
   );
+}
+
+/**
+ * Holds one queue place while `admit` counts and records a run, so concurrent
+ * requests can never admit more runs than the queue takes. The first dispatch
+ * inside `admit` takes the place and is never shed; a place no run took is
+ * given back. Undefined, with nothing called, when the queue is full.
+ */
+export async function withQueuePlace<T>(
+  admit: () => Promise<T>,
+): Promise<T | undefined> {
+  if (workerQueueFull()) return undefined;
+  const place = { held: true };
+  heldQueuePlaces += 1;
+  try {
+    return await queuePlace.run(place, admit);
+  } finally {
+    if (place.held) {
+      place.held = false;
+      heldQueuePlaces -= 1;
+    }
+  }
 }
 
 /** Awaited by the container bootstrap on shutdown so queued work is not lost. */
@@ -207,8 +237,8 @@ async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
 /** True when a new run would neither start nor fit in the queue. */
 export function workerQueueFull(): boolean {
   return (
-    activeInProcessWorkers >= MAX_INPROCESS_WORKERS &&
-    pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS
+    activeInProcessWorkers + pendingWorkerRuns.length + heldQueuePlaces >=
+    MAX_INPROCESS_WORKERS + MAX_PENDING_WORKER_RUNS
   );
 }
 

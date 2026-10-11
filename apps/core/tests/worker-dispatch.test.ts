@@ -17,7 +17,7 @@ import { getStorage, resetStorageForTests } from "../src/shared/storage.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const { handler } = await import("../src/harness/handler.ts");
-const { dispatchInProcessWorker, drainInProcessWorkers } =
+const { dispatchInProcessWorker, drainInProcessWorkers, workerQueueFull } =
   await import("../src/harness/worker-queue.ts");
 const QUEUED_LEASE_RENEW_INTERVAL_MS = 5 * 60 * 1000;
 const WORKER_SLOTS = 8;
@@ -390,8 +390,9 @@ describe("streamed runs", (): void => {
     );
   }
 
-  function fillWorkerQueue(): void {
-    for (let index = 0; index < MAX_PENDING_WORKER_RUNS; index += 1) {
+  /** Queues runs until `leave` places are left. */
+  function fillWorkerQueue(leave = 0): void {
+    for (let index = leave; index < MAX_PENDING_WORKER_RUNS; index += 1) {
       dispatchInProcessWorker("queued", async (): Promise<void> => {});
     }
   }
@@ -498,10 +499,11 @@ describe("streamed runs", (): void => {
   });
 
   it("queues a streamed run that passed the door even when the queue filled behind it", async (): Promise<void> => {
-    // A burst fills the queue while this run is being recorded.
+    // A burst fills the queue while this run is being recorded, all but the
+    // place the run holds.
     spyOn(ingress, "acceptIngress").mockImplementation(
       async (): Promise<ingress.IngressAdmission> => {
-        fillWorkerQueue();
+        fillWorkerQueue(1);
 
         return { outcome: "owner", ownerGeneration: 1 };
       },
@@ -513,6 +515,53 @@ describe("streamed runs", (): void => {
     expect(settles()).toEqual([]);
     await drainWorkerQueue();
     expect(await response.text()).toContain("model pass reached");
+  });
+
+  it("queues a background run that passed the door even when the queue filled behind it", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    // Every mutation succeeds, so the run's polling row is created.
+    spyOn(runtime, "mutate").mockResolvedValue(true);
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        fillWorkerQueue(1);
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+    try {
+      const response = await streamedRun(1, true);
+
+      expect(response.status).toBe(202);
+      expect(settles()).toEqual([]);
+      await drainWorkerQueue();
+      expect(modelPasses).toBe(1);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("admits only as many concurrent requests as the queue has places", async (): Promise<void> => {
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        await Bun.sleep(5);
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+    fillWorkerQueue(2);
+
+    const responses = await Promise.all(
+      [1, 2, 3, 4, 5].map((index): Promise<Response> => streamedRun(index)),
+    );
+
+    expect(responses.map((response): number => response.status).sort()).toEqual(
+      [200, 200, 503, 503, 503],
+    );
+    expect(ingress.acceptIngress).toHaveBeenCalledTimes(2);
+    expect(settles()).toEqual([]);
+    expect(workerQueueFull()).toBe(true);
+    await drainWorkerQueue();
+    expect(modelPasses).toBe(2);
   });
 
   it("turns a background run away the same way when the queue is full", async (): Promise<void> => {
