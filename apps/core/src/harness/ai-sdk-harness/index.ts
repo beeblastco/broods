@@ -17,8 +17,12 @@ export {
 } from "./adapters/index.ts";
 export {
   harnessReservationKey,
+  MID_TURN_STEERING_UNSUPPORTED,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
+  requireHarnessSandbox,
+  startHarnessLeaseMonitor,
+  steerHarnessTurn,
 } from "./session.ts";
 export type {
   AiSdkHarnessSettings,
