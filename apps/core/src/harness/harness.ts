@@ -33,10 +33,7 @@ import {
   type TypedToolCall,
   type UserModelMessage,
 } from "ai";
-import {
-  HarnessCapabilityUnsupportedError,
-  type HarnessAgentSession,
-} from "@ai-sdk/harness/agent";
+import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type {
   ObservabilitySpanRow,
   TaskWaitingOn,
@@ -91,8 +88,15 @@ import {
   harnessSteersMidTurn,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
-  type AiSdkHarnessType,
 } from "./ai-sdk-harness/index.ts";
+// Straight from the module, not the entrypoint: tests mock the entrypoint as a
+// whole, and this is run-loop plumbing they keep real.
+import {
+  MID_TURN_STEERING_UNSUPPORTED,
+  requireHarnessSandbox,
+  startHarnessLeaseMonitor,
+  steerHarnessTurn,
+} from "./ai-sdk-harness/session.ts";
 import {
   agentSandboxStatus,
   formatSandboxStatus,
@@ -118,10 +122,7 @@ import {
   type ModelAttempt,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
-import type {
-  SandboxCpuSample,
-  SandboxExecutorConfig,
-} from "./sandbox/types.ts";
+import type { SandboxCpuSample } from "./sandbox/types.ts";
 import {
   stripEnvelopeFieldsFromMessages,
   type ConversationIngressEvent,
@@ -167,7 +168,6 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "send-reactions",
   "send-sticker",
 ]);
-const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
 // How long a model may stay silent before its run fails; overridable by
 // MODEL_FIRST_CHUNK_TIMEOUT_MS and MODEL_CHUNK_TIMEOUT_MS.
 const DEFAULT_MODEL_FIRST_CHUNK_TIMEOUT_MS = 300_000;
@@ -189,8 +189,6 @@ export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 /** Failure text of a persistent subagent run its parent stopped with stop_subagent. */
 export const PARENT_STOP_MESSAGE =
   "Stopped by the parent agent at the model boundary";
-// Harness types whose runtime refused a mid-turn message in this process.
-const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
 // Per-attribute cap on serialized trace payloads. Generous so reasoning and
 // tool I/O show in full on the dashboard, still well under the NATS 1MB
 // max-payload ceiling.
@@ -2643,51 +2641,6 @@ async function steeringModelMessages(
 }
 
 /**
- * Saves steering that arrived during a HarnessAgent turn, then hands it to the
- * running turn, which takes it at its next safe input boundary. Only for
- * adapters that accept mid-turn messages; the rest get it before their next
- * turn. A hand-over that fails throws and fails the run; the steer is already
- * in history, so a retry still reads it.
- */
-async function steerHarnessTurn(
-  session: Session,
-  harnessSession: HarnessAgentSession,
-  type: AiSdkHarnessType,
-): Promise<void> {
-  // Only plain-text steers can be handed over; the rest stay queued for the
-  // next turn, which takes them whole.
-  const steering = await session.applySteeringIngress({ textOnly: true });
-  if (!steering) {
-    return;
-  }
-  const events = steering.events as ConversationIngressEvent[];
-  const text = events
-    .flatMap((event): string[] =>
-      event.role === "user" ? [extractText(event.content).trim()] : [],
-    )
-    .filter(Boolean)
-    .join("\n\n");
-  await session.appendIngressEvents(events);
-  if (text) {
-    await harnessSession
-      .experimental_steerTurn(text)
-      .catch((error: unknown): never => {
-        // This runtime cannot take one at all, so later turns in this process
-        // leave steers queued for the next turn instead.
-        if (error instanceof HarnessCapabilityUnsupportedError) {
-          MID_TURN_STEERING_UNSUPPORTED.add(type);
-        }
-        throw error;
-      });
-  }
-  logInfo("Steering ingress applied during HarnessAgent turn", {
-    eventId: session.eventId,
-    conversationKey: session.conversationKey,
-    steeringEventCount: steering.contributingEventIds.length,
-  });
-}
-
-/**
  * The history with the live environment after it. It rides on the person's
  * latest message when that comes last, so the model still reads one request,
  * and comes as its own message after a tool result. With `providerOptions`
@@ -2793,60 +2746,6 @@ function harnessPromptMessages(
       : [{ role: "user", content: content }],
     environment,
   );
-}
-
-/** The agent's first sandbox, which a harness run needs to run on. */
-function requireHarnessSandbox(
-  sandbox: SandboxExecutorConfig | undefined,
-): SandboxExecutorConfig {
-  if (!sandbox) {
-    throw new Error(
-      "config.harness needs a sandbox to run on; list one first in config.sandboxes",
-    );
-  }
-
-  return sandbox;
-}
-
-/**
- * Renews the conversation lease every second during a HarnessAgent turn and
- * aborts the run on a stop, a lost lease or repeated renewal failures.
- * Returns the function that stops the monitor.
- */
-function startHarnessLeaseMonitor(
-  session: Session,
-  abortController: AbortController,
-  stopMessage: string,
-): () => void {
-  let checking = false;
-  let consecutiveFailures = 0;
-  const timer = setInterval(async () => {
-    if (checking || abortController.signal.aborted) {
-      return;
-    }
-    checking = true;
-    try {
-      const renewal = await session.renewConversationLease();
-      consecutiveFailures = 0;
-      if (renewal === "stopped") {
-        abortController.abort(new Error(stopMessage));
-      } else if (renewal === "stale") {
-        abortController.abort(
-          new Error("Conversation ownership changed during HarnessAgent turn"),
-        );
-      }
-    } catch (error) {
-      consecutiveFailures += 1;
-      if (consecutiveFailures >= HARNESS_LEASE_RENEWAL_FAILURE_LIMIT) {
-        abortController.abort(error);
-      }
-    } finally {
-      checking = false;
-    }
-  }, 1_000);
-  timer.unref();
-
-  return () => clearInterval(timer);
 }
 
 /**
