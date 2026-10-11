@@ -47,11 +47,14 @@ type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
  * and carry on with a fresh budget, up to MAX_RUN_SLOTS slots.
  * @param kind a label for logs
  * @param lease the conversation lease the run already holds, renewed while it waits
+ * @param loadShed false when the caller already turned a full queue away
+ *   before it recorded the run, so the run queues past the cap instead
  */
 export function dispatchInProcessWorker(
   kind: string,
   run: InProcessWorkerRun,
   lease?: LiveOwner,
+  loadShed = true,
 ): void {
   const runAbort = new AbortController();
   let slotsUsed = 0;
@@ -114,32 +117,35 @@ export function dispatchInProcessWorker(
       );
     });
   };
-  enqueueWorker([
-    kind,
-    (): void => {
-      takeSlot();
-      const execution = run(context).then(
-        (): void => undefined,
-        (err): void => {
-          logError("In-process worker failed", {
-            kind: kind,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        },
-      );
-      const worker: Promise<void> = Promise.race([
-        execution,
-        new Promise<void>((resolve): void => {
-          abandon = resolve;
-        }),
-      ]).finally((): void => {
-        releaseSlot?.();
-        inProcessWorkers.delete(worker);
-      });
-      inProcessWorkers.add(worker);
-    },
-    lease,
-  ]);
+  enqueueWorker(
+    [
+      kind,
+      (): void => {
+        takeSlot();
+        const execution = run(context).then(
+          (): void => undefined,
+          (err): void => {
+            logError("In-process worker failed", {
+              kind: kind,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          },
+        );
+        const worker: Promise<void> = Promise.race([
+          execution,
+          new Promise<void>((resolve): void => {
+            abandon = resolve;
+          }),
+        ]).finally((): void => {
+          releaseSlot?.();
+          inProcessWorkers.delete(worker);
+        });
+        inProcessWorkers.add(worker);
+      },
+      lease,
+    ],
+    loadShed,
+  );
 }
 
 /** Awaited by the container bootstrap on shutdown so queued work is not lost. */

@@ -10,6 +10,7 @@ import {
 } from "bun:test";
 import * as harness from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
+import { resetPlanLimitsForTests } from "../src/harness/plan-limits.ts";
 import { Session } from "../src/harness/session.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import { getStorage, resetStorageForTests } from "../src/shared/storage.ts";
@@ -365,10 +366,11 @@ describe("streamed runs", (): void => {
     await drainInProcessWorkers();
     mock.restore();
     resetStorageForTests();
+    resetPlanLimitsForTests();
     delete process.env.SERVICE_AUTH_SECRET;
   });
 
-  function streamedRun(index: number): Promise<Response> {
+  function streamedRun(index: number, background = false): Promise<Response> {
     return handler(
       coreRequest(
         "POST",
@@ -382,9 +384,21 @@ describe("streamed runs", (): void => {
           eventId: `event-${index}`,
           conversationKey: `conversation-${index}`,
           events: [{ role: "user", content: "hi" }],
+          ...(background ? { background: true } : {}),
         },
       ),
     );
+  }
+
+  function fillWorkerQueue(): void {
+    for (let index = 0; index < MAX_PENDING_WORKER_RUNS; index += 1) {
+      dispatchInProcessWorker("queued", async (): Promise<void> => {});
+    }
+  }
+
+  async function drainWorkerQueue(): Promise<void> {
+    for (const release of releases.splice(0)) release();
+    await drainInProcessWorkers();
   }
 
   function settles(): unknown[] {
@@ -423,23 +437,103 @@ describe("streamed runs", (): void => {
     ]);
   });
 
-  it("answers 503 and fails the run when the worker queue is full", async (): Promise<void> => {
-    for (let index = 0; index < MAX_PENDING_WORKER_RUNS; index += 1) {
-      dispatchInProcessWorker("queued", async (): Promise<void> => {});
-    }
+  it("answers a full queue with 503 and records nothing, so a retry with the same eventId starts a new run", async (): Promise<void> => {
+    // Like Convex: an eventId already recorded replays as that run.
+    const recorded = new Set<string>();
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (candidate): Promise<ingress.IngressAdmission> => {
+        if (recorded.has(candidate.eventId)) {
+          return {
+            outcome: "duplicate",
+            eventId: candidate.eventId,
+            runId: candidate.runId,
+            status: "failed",
+          };
+        }
+        recorded.add(candidate.eventId);
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+    fillWorkerQueue();
 
     const response = await streamedRun(1);
 
     expect(response.status).toBe(503);
     expect(response.headers.get("retry-after")).toBe("5");
     expect(await response.text()).toContain("In-process worker queue is full");
-    expect(modelPasses).toBe(0);
-    expect(prepared).toBe(0);
-    expect(settles()).toEqual([
-      expect.objectContaining({
-        status: "failed",
-        error: "In-process worker queue is full",
-      }),
-    ]);
+    const recordedBy503 = recorded.size;
+    const settledBy503 = settles().length;
+
+    await drainWorkerQueue();
+    const retry = await streamedRun(1);
+
+    expect(retry.status).toBe(200);
+    expect(retry.headers.get("content-type")).toBe("text/event-stream");
+    expect(await retry.text()).toContain("model pass reached");
+    expect(modelPasses).toBe(1);
+    expect(recordedBy503).toBe(0);
+    expect(settledBy503).toBe(0);
+  });
+
+  it("does not count a run the full queue turned away against the plan", async (): Promise<void> => {
+    // One run a minute: a 503 that kept its count would refuse the retry.
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      runsPerMinute: 1,
+      warned: false,
+    });
+    fillWorkerQueue();
+
+    expect((await streamedRun(1)).status).toBe(503);
+
+    await drainWorkerQueue();
+    const retry = await streamedRun(1);
+
+    expect(retry.status).toBe(200);
+    expect(await retry.text()).toContain("model pass reached");
+  });
+
+  it("queues a streamed run that passed the door even when the queue filled behind it", async (): Promise<void> => {
+    // A burst fills the queue while this run is being recorded.
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        fillWorkerQueue();
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(200);
+    expect(settles()).toEqual([]);
+    await drainWorkerQueue();
+    expect(await response.text()).toContain("model pass reached");
+  });
+
+  it("turns a background run away the same way when the queue is full", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    try {
+      fillWorkerQueue();
+
+      const response = await streamedRun(1, true);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("retry-after")).toBe("5");
+      expect(await response.json()).toMatchObject({
+        error: {
+          message: "In-process worker queue is full",
+          code: "service_unavailable",
+        },
+      });
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+      expect(settles()).toEqual([]);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
   });
 });

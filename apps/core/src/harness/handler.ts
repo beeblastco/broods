@@ -845,6 +845,13 @@ async function settleChannelQuestion(
 async function handleDirectRequest(
   event: DirectInboundEvent,
 ): Promise<Response> {
+  // A full queue turns the request away before the plan counts it or ingress
+  // records it, so a client retrying with the same eventId starts a new run.
+  if (workerQueueFull()) {
+    return event.connectionId
+      ? errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS)
+      : errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS);
+  }
   const { refusal } = await admitRun(event.accountId);
   if (refusal) {
     return planRefusalResponse(refusal);
@@ -939,17 +946,13 @@ async function handleDirectRequest(
  * command's reply or the model streaming, runs on a worker slot like every
  * other run, so MAX_INPROCESS_WORKERS bounds streamed runs too. The stream
  * opens at once and keeps alive while the run waits, the queue renewing its
- * lease. A full queue fails the run with a 503 before any stream opens; a
- * client that left before its slot came starts nothing.
+ * lease. A full queue answered 503 at the door, so a run that got this far
+ * queues even when a burst filled the queue meanwhile; a client that left
+ * before its slot came starts nothing.
  */
 async function directTurnResponse(
   ownedEvent: DirectInboundEvent,
 ): Promise<Response> {
-  if (workerQueueFull()) {
-    await failOwnedIngress(ownedEvent, WORKER_QUEUE_FULL);
-
-    return errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS);
-  }
   // A queued run starts from whichever run frees its slot, so it takes this
   // request's observability context rather than inheriting that one.
   const observability = getObservabilityContext();
@@ -1044,6 +1047,7 @@ async function directTurnResponse(
               ownerEventId: ownedEvent.eventId,
               ownerGeneration: ownedEvent.ownerGeneration,
             },
+        false,
       );
     },
     cancel: (): void => {
@@ -1061,6 +1065,10 @@ async function directTurnResponse(
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
+  // Turned away like a streamed run: nothing counted, nothing recorded.
+  if (workerQueueFull()) {
+    return errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS);
+  }
   const { refusal } = await admitRun(event.accountId);
   if (refusal) {
     return planRefusalResponse(refusal);
