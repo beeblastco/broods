@@ -25,6 +25,8 @@ structure Coord where
   ownerEventId : Option Nat
   leaseExpiresAt : Option Nat
   stopRequestedGeneration : Option Nat
+  /-- `stopRequestedByParent`: the stop came from a parent's `stop_subagent`. -/
+  stopRequestedByParent : Bool := false
   deriving DecidableEq, Repr
 
 /-- The envelope fields the lifecycle reads and writes. -/
@@ -109,7 +111,8 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
         e.status == .processing then
       { e with
         status := o.status
-        stoppedByUser := e.stoppedByUser || (o == .failed && c.stopRequestedGeneration == some g) }
+        stoppedByUser := e.stoppedByUser ||
+          (o == .failed && c.stopRequestedGeneration == some g && !c.stopRequestedByParent) }
     else e
   | .expireQueued, e =>
     if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired } else e
@@ -176,7 +179,8 @@ theorem step_allowed {c : Coord} {now : Nat} {e : Envelope} (s : Step) :
       | (cases hst : e.status <;> simp_all [Status.terminal] <;> constructor)
 
 /-- A settle writes only for the fenced owner, and `stoppedByUser` only for the
-generation that `/stop` targeted, which is the owner's own generation. -/
+generation that `/stop` targeted, which is the owner's own generation, and only
+when no parent agent asked for that stop. -/
 theorem settle_fenced {c : Coord} {now owner g : Nat} {o : Outcome} {e : Envelope}
     (h : step c now (.settle owner g o) e ≠ e) :
     requireOwner c owner g now = true := by
@@ -188,7 +192,8 @@ theorem settle_fenced {c : Coord} {now owner g : Nat} {o : Outcome} {e : Envelop
 theorem stop_scoped {c : Coord} {now owner g : Nat} {o : Outcome} {e : Envelope}
     (hb : e.stoppedByUser = false)
     (h : (step c now (.settle owner g o) e).stoppedByUser = true) :
-    c.stopRequestedGeneration = some g ∧ c.ownerGeneration = g ∧ o = .failed := by
+    c.stopRequestedGeneration = some g ∧ c.ownerGeneration = g ∧ o = .failed ∧
+      c.stopRequestedByParent = false := by
   simp only [step] at h
   split at h
   · rename_i hc
@@ -270,7 +275,7 @@ theorem proof_covers {c : Coord} {owner t n L : Nat} {e : Envelope}
 /-- At `now = leaseExpiresAt` the fence accepts the owner, `maintain` defers its
 running row, and the owner's settle completes the run. -/
 example :
-    let c : Coord := ⟨1, some 7, some 10, none⟩
+    let c : Coord := ⟨1, some 7, some 10, none, false⟩
     let e : Envelope := ⟨7, .processing, 10, some 1, some 7, false⟩
     requireOwner c 7 1 10 = true ∧
       (step c 10 .maintain e).status = .processing ∧
@@ -280,7 +285,7 @@ example :
 /-- A stopped boundary claims no steer and leaves the lease as it was; without the
 stop, the same boundary claims it, unless it is winding down. -/
 example :
-    let c : Coord := ⟨1, some 7, some 10, some 1⟩
+    let c : Coord := ⟨1, some 7, some 10, some 1, false⟩
     let e : Envelope := ⟨8, .queued, 20, none, none, false⟩
     step c 5 (.stepBoundary 7 1 true) e = e ∧ c.stepBoundary 7 1 5 100 = c ∧
       (step { c with stopRequestedGeneration := none } 5 (.stepBoundary 7 1 true) e).status =
@@ -290,7 +295,7 @@ example :
 
 /-- A queued row that names the owner is left queued by its settle. -/
 example :
-    let c : Coord := ⟨1, some 7, some 10, none⟩
+    let c : Coord := ⟨1, some 7, some 10, none, false⟩
     let e : Envelope := ⟨8, .queued, 20, none, some 7, false⟩
     (step c 5 (.settle 7 1 .completed) e).status = .queued := by
   decide

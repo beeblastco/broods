@@ -1152,6 +1152,9 @@ export const runtimeConversationCoordinatorsFields = {
   ownerEventId: v.optional(v.string()),
   ownerTaskId: v.optional(v.string()),
   stopRequestedGeneration: v.optional(v.number()),
+  // Written with stopRequestedGeneration and read only with it: true when a
+  // parent agent's stop_subagent asked, so that stop is not the user's.
+  stopRequestedByParent: v.optional(v.boolean()),
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),

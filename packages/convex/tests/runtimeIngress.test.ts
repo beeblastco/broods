@@ -1123,6 +1123,42 @@ describe("runtime ingress", () => {
     ).toEqual({ stopped: true, queuedCount: 0 });
   });
 
+  test("a subagent its parent stopped is not flagged stoppedByUser", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+        ownerTaskId: "task-a",
+      }),
+    );
+    await t.mutation(internal.runtimeIngress.stopOwner, {
+      accountId: accountId,
+      agentId: "test-agent",
+      conversationKey: conversationKey,
+      expectedOwnerTaskId: "task-a",
+    });
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "failed",
+      error: "Stopped by the parent agent at the model boundary",
+    });
+
+    const status = await t.query(internal.runtimeIngress.getStatus, {
+      accountId: accountId,
+      runId: "run_owner",
+    });
+    expect(status).toMatchObject({ status: "failed" });
+    expect(status?.stoppedByUser).toBeUndefined();
+  });
+
   test("a genuine failure is not flagged stoppedByUser", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

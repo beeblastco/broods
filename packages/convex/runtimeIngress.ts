@@ -913,6 +913,8 @@ export const stopOwner = internalMutation({
     }
     await ctx.db.patch(coordinator._id, {
       stopRequestedGeneration: coordinator.ownerGeneration,
+      // Only a parent's stop_subagent names the task it stops.
+      stopRequestedByParent: args.expectedOwnerTaskId !== undefined,
       updatedAt: now,
     });
 
@@ -1695,9 +1697,11 @@ async function settleAppliedEnvelopes(
   const now = Date.now();
   // A failed settle that was preceded by /stop for this generation is a
   // deliberate stop, not a fault, so mark it and pollers can tell them apart.
+  // A subagent its parent stopped was not stopped by the user.
   const stoppedByUser =
     args.status === "failed" &&
-    coordinator.stopRequestedGeneration === args.ownerGeneration;
+    coordinator.stopRequestedGeneration === args.ownerGeneration &&
+    coordinator.stopRequestedByParent !== true;
   const ids = new Set<Id<"runtimeIngressEnvelopes">>();
   // Page by sequence so more than one drain batch of contributors still
   // settles; a fixed take() would leave the tail stuck in processing.
