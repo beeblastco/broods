@@ -58,6 +58,7 @@ export type AgentConfig = Record<string, unknown> & {
     mode?: "ephemeral" | "persistent";
     stream?: boolean;
     visibility?: "full" | "result" | "none";
+    model?: Record<string, unknown>;
     [key: string]: unknown;
   };
   scheduler?: { enabled?: boolean; [key: string]: unknown };
@@ -218,7 +219,7 @@ export function normalizeAgentConfig(
   const config = value as AgentConfig;
   normalizeAgentBehaviorConfig(config.agent);
   normalizeHarnessConfig(config.harness);
-  normalizeModelConfig(config.model);
+  normalizeModelConfig(config.model, "config.model");
   normalizeProviderConfig(config.provider);
   assertAgentRuntimeRefs(config, options);
   normalizeSessionConfig(config.session);
@@ -247,15 +248,20 @@ export function normalizeAgentConfig(
       "config.policies is not supported with config.harness",
     );
   }
-  if (
-    isPlainObject(config.harness) &&
-    isPlainObject(config.model) &&
-    isPlainObject(config.model.output) &&
-    config.model.output.type !== "text"
-  ) {
-    throw new ClientError(
-      "config.model.output structured output is not supported with config.harness",
-    );
+  for (const [model, label] of [
+    [config.model, "config.model"],
+    [config.subagent?.model, "config.subagent.model"],
+  ] as const) {
+    if (
+      isPlainObject(config.harness) &&
+      isPlainObject(model) &&
+      isPlainObject(model.output) &&
+      model.output.type !== "text"
+    ) {
+      throw new ClientError(
+        `${label}.output structured output is not supported with config.harness`,
+      );
+    }
   }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
   assertOptionalBoolean(config.allowRunOverrides, "config.allowRunOverrides");
@@ -584,10 +590,10 @@ function normalizeHarnessDebugConfig(value: unknown): void {
   );
 }
 
-function normalizeModelConfig(value: unknown): void {
+function normalizeModelConfig(value: unknown, label: string): void {
   if (value == null) return;
   if (!isPlainObject(value))
-    throw new ClientError("config.model must be an object");
+    throw new ClientError(`${label} must be an object`);
   const config = value as Record<string, unknown>;
   for (const key of Object.keys(config)) {
     if (
@@ -596,17 +602,17 @@ function normalizeModelConfig(value: unknown): void {
       )
     ) {
       throw new ClientError(
-        `config.model.${key} is not supported; use config.model.providerOptions for provider-specific settings`,
+        `${label}.${key} is not supported; use ${label}.providerOptions for provider-specific settings`,
       );
     }
   }
-  assertOptionalProviderName(config.provider, "config.model.provider");
-  assertOptionalString(config.modelId, "config.model.modelId");
+  assertOptionalProviderName(config.provider, `${label}.provider`);
+  assertOptionalString(config.modelId, `${label}.modelId`);
   assertOptionalString(
     config.transcriptionModelId,
-    "config.model.transcriptionModelId",
+    `${label}.transcriptionModelId`,
   );
-  assertOptionalEnum(config.reasoning, "config.model.reasoning", [
+  assertOptionalEnum(config.reasoning, `${label}.reasoning`, [
     "provider-default",
     "none",
     "minimal",
@@ -619,17 +625,17 @@ function normalizeModelConfig(value: unknown): void {
     config.providerOptions !== undefined &&
     !isPlainObject(config.providerOptions)
   ) {
-    throw new ClientError("config.model.providerOptions must be an object");
+    throw new ClientError(`${label}.providerOptions must be an object`);
   }
-  normalizeModelOutputConfig(config.output);
+  normalizeModelOutputConfig(config.output, label);
 }
 
-function normalizeModelOutputConfig(value: unknown): void {
+function normalizeModelOutputConfig(value: unknown, label: string): void {
   if (value === undefined) return;
   if (!isPlainObject(value))
-    throw new ClientError("config.model.output must be an object");
+    throw new ClientError(`${label}.output must be an object`);
   const config = value as Record<string, unknown>;
-  assertOptionalEnum(config.type, "config.model.output.type", [
+  assertOptionalEnum(config.type, `${label}.output.type`, [
     "text",
     "object",
     "array",
@@ -638,14 +644,14 @@ function normalizeModelOutputConfig(value: unknown): void {
   ]);
   if (config.type === undefined)
     throw new ClientError(
-      "config.model.output.type must be one of: text, object, array, choice, json",
+      `${label}.output.type must be one of: text, object, array, choice, json`,
     );
-  assertOptionalString(config.name, "config.model.output.name");
-  assertOptionalString(config.description, "config.model.output.description");
+  assertOptionalString(config.name, `${label}.output.name`);
+  assertOptionalString(config.description, `${label}.output.description`);
   if (config.type === "object" && !isPlainObject(config.schema))
-    throw new ClientError("config.model.output.schema must be an object");
+    throw new ClientError(`${label}.output.schema must be an object`);
   if (config.type === "array" && !isPlainObject(config.element))
-    throw new ClientError("config.model.output.element must be an object");
+    throw new ClientError(`${label}.output.element must be an object`);
   if (
     config.type === "choice" &&
     (!Array.isArray(config.options) ||
@@ -653,7 +659,7 @@ function normalizeModelOutputConfig(value: unknown): void {
       !config.options.every((entry) => typeof entry === "string"))
   ) {
     throw new ClientError(
-      "config.model.output.options must be a non-empty array of strings",
+      `${label}.output.options must be a non-empty array of strings`,
     );
   }
 }
@@ -1027,6 +1033,7 @@ function normalizeSubagentConfig(value: unknown): void {
     "result",
     "none",
   ]);
+  normalizeModelConfig(config.model, "config.subagent.model");
 }
 
 // A feature switch such as `config.scheduler` or `config.browser`: an object

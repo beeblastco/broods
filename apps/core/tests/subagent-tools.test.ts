@@ -88,7 +88,10 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
       taskId: taskId,
       agentId: AGENT_ID,
     }),
-  ).resolves.toEqual({ status: "stopping" });
+  ).resolves.toEqual({
+    status: "stopping",
+    note: expect.stringContaining("sends no report"),
+  });
 
   expect(mutations.map(({ name }) => name)).toEqual([
     "acceptIngress",
@@ -316,6 +319,28 @@ it("reports a late stop as not running without trusting stale task status", asyn
       agentId: AGENT_ID,
     }),
   ).resolves.toEqual({ status: "not_running" });
+});
+
+it("tells the parent a follow-up queued on a stopped child still reports", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  spyOn(runtime, "query").mockResolvedValue({
+    accountId: ACCOUNT_ID,
+    eventId: scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId),
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "q"),
+    status: "processing",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  });
+  spyOn(runtime, "mutate").mockResolvedValue({ queuedCount: 1, stopped: true });
+  const tools = await subagentTools(PARENT_EVENT_ID);
+
+  await expect(
+    execute(tools.stop_subagent, { taskId: taskId, agentId: AGENT_ID }),
+  ).resolves.toEqual({
+    status: "stopping",
+    note: expect.stringContaining("1 follow-up turn(s) queued on it still run"),
+  });
 });
 
 it("rejects another account's task before reading durable state", async () => {
