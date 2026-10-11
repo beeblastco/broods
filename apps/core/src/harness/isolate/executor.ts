@@ -313,7 +313,10 @@ class IsolateWorker {
   busy = false;
   alive = true;
   idleSince = Date.now();
-  ready: Promise<void>;
+  // Rejects when the worker dies before its `ready` frame, so a runner that can
+  // never start is told apart from a ready worker that died later.
+  readonly #ready = Promise.withResolvers<void>();
+  readonly ready = this.#ready.promise;
 
   #buffer = "";
   #stdoutBytes = 0;
@@ -322,12 +325,15 @@ class IsolateWorker {
     push: (frame: IsolateFrame) => void;
     fail: (error: Error) => void;
   } | null = null;
-  #resolveReady!: () => void;
+  // A runner that neither says ready nor exits would hold its caller forever.
+  readonly #startup = setTimeout(() => {
+    this.#ready.reject(new Error("isolate worker did not become ready"));
+    this.kill();
+  }, runnerTimeoutMs());
 
   constructor() {
-    this.ready = new Promise<void>((resolve) => {
-      this.#resolveReady = resolve;
-    });
+    // prewarmIsolatePool may drop a failed start; acquireWorker reads the reason.
+    this.ready.catch(() => {});
     this.child = spawn(isolateRunnerNode(), [isolateRunnerPath(), "--pool"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: RUNNER_ENV,
@@ -338,13 +344,16 @@ class IsolateWorker {
     this.child.stderr.on("data", () => {});
     const die = (error: Error): void => {
       this.alive = false;
-      this.#resolveReady();
+      clearTimeout(this.#startup);
+      this.#ready.reject(error);
       this.#sink?.fail(error);
     };
     this.child.once("error", (error) =>
       die(error instanceof Error ? error : new Error(String(error))),
     );
-    this.child.once("exit", () => die(new Error("isolate worker exited")));
+    this.child.once("exit", (code, signal) =>
+      die(new Error(`isolate worker exited (${signal ?? code})`)),
+    );
     this.child.stdin.once("error", (error) =>
       die(error instanceof Error ? error : new Error(String(error))),
     );
@@ -371,7 +380,8 @@ class IsolateWorker {
         continue;
       }
       if (frame.t === "ready") {
-        this.#resolveReady();
+        clearTimeout(this.#startup);
+        this.#ready.resolve();
         continue;
       }
       this.#sink?.push(frame);
@@ -430,6 +440,10 @@ class IsolateWorker {
 }
 
 const pool: IsolateWorker[] = [];
+// Spawns one call makes before giving up on a runner that never says ready,
+// with the backoff doubling from WORKER_START_BACKOFF_MS between them.
+const WORKER_START_ATTEMPTS = 3;
+const WORKER_START_BACKOFF_MS = 100;
 const poolWaiters: Array<() => void> = [];
 let reaper: ReturnType<typeof setInterval> | undefined;
 
@@ -459,7 +473,7 @@ export function shutdownIsolatePool(): void {
 }
 
 async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
-  for (;;) {
+  for (let startFailures = 0; ;) {
     dropDeadWorkers();
     // Tenant affinity first: that worker already holds a warm isolate for this
     // account, which is the whole point of keeping the process around.
@@ -472,13 +486,27 @@ async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
       (pool.length < poolSize() ? spawnWorker() : undefined);
     if (worker) {
       worker.busy = true;
-      await worker.ready.catch(() => {});
-      if (!worker.alive) {
-        worker.busy = false;
-        continue;
+      const startFailure = await worker.ready.then(
+        () => undefined,
+        (error: Error) => error,
+      );
+      if (worker.alive) return worker;
+      worker.busy = false;
+      // A worker that died after ready is replaced at once. One that never
+      // started (missing addon, broken runner) will likely fail again, so it is
+      // retried with backoff and then fails this call, which a hook logs and
+      // skips. The next call tries again, so a fixed runner recovers on its own.
+      if (startFailure === undefined) continue;
+      startFailures += 1;
+      if (startFailures >= WORKER_START_ATTEMPTS) {
+        // A queued call waits for a release that this failed slot never sends.
+        poolWaiters.shift()?.();
+        throw new Error(
+          `isolate worker failed to start: ${startFailure.message}`,
+        );
       }
-
-      return worker;
+      await Bun.sleep(WORKER_START_BACKOFF_MS * 2 ** (startFailures - 1));
+      continue;
     }
     await new Promise<void>((resolve) => poolWaiters.push(resolve));
   }

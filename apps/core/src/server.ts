@@ -175,8 +175,8 @@ if (import.meta.main) {
   );
   const { handler: accountHandler } = await import("./accounts/handler.ts");
   const { handleMediaRequest, routesToMedia } = await import("./media.ts");
-  const { drainInProcessWorkers, handler: harnessHandler } =
-    await import("./harness/handler.ts");
+  const { handler: harnessHandler } = await import("./harness/handler.ts");
+  const { drainInProcessWorkers } = await import("./harness/worker-queue.ts");
   const { interruptLiveOwners } = await import("./harness/ingress.ts");
   const { startIngressRecovery, stopIngressRecovery } =
     await import("./harness/ingress-recovery.ts");

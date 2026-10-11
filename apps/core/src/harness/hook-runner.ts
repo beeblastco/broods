@@ -9,6 +9,7 @@
  */
 
 import type { JSONValue } from "ai";
+import { createHash } from "node:crypto";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
 import type {
   AgentHookEventName,
@@ -43,6 +44,17 @@ const HOOK_MUTABLE_FIELDS = {
   "channel.message.received": ["drop", "text", "metadata"],
   "channel.message.sending": ["drop", "text"],
 } as const satisfies Partial<Record<AgentHookEventName, readonly string[]>>;
+
+// A hook bundle never changes under its sha256 and hooks fire several times a
+// turn, so the encoded source is kept instead of read from S3 at every fire.
+// Past this many base64 characters (one byte each) the least recently used
+// goes first: at most six 1 MB bundles, the upload cap, stay resident.
+const HOOK_BUNDLE_CACHE_BYTES = 8 * 1024 * 1024;
+const hookBundles = new Map<
+  string,
+  { source: Promise<string>; bytes: number }
+>();
+let hookBundleBytes = 0;
 
 export type HookMutableEvent = keyof typeof HOOK_MUTABLE_FIELDS;
 
@@ -141,15 +153,53 @@ export function sanitizeHookResult(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-/** Loads the hook bundle from S3 and builds the isolate runner payload. */
+/**
+ * Builds the isolate runner payload around the hook bundle, read from S3 once
+ * per account, storage key and sha256 while it stays in the cache.
+ */
 async function createHookRunnerPayload(
   params: RunCodeHookParams,
 ): Promise<Record<string, unknown>> {
   const { record, event, payload, config } = params;
-  const bytes = await readS3Bytes(toolBundlesBucket(), record.bundleStorageKey);
+  const key = `${record.accountId}:${record.bundleStorageKey}:${record.sha256}`;
+  const cached = hookBundles.get(key);
+  // Deleting and setting again keeps the Map's order least recently used first.
+  hookBundles.delete(key);
+  const entry = cached ?? {
+    source: readS3Bytes(toolBundlesBucket(), record.bundleStorageKey).then(
+      (bytes) => {
+        // The runner checks the sha256 again; this keeps a bad read out of the cache.
+        if (createHash("sha256").update(bytes).digest("hex") !== record.sha256)
+          throw new Error("hook bundle does not match its sha256");
+
+        return Buffer.from(bytes).toString("base64");
+      },
+    ),
+    bytes: 0,
+  };
+  hookBundles.set(key, entry);
+  if (!cached) {
+    // Concurrent fires share this one read. A failed read is dropped so the
+    // next fire reads again; a finished one counts against the budget.
+    entry.source.then(
+      (source) => {
+        if (hookBundles.get(key) !== entry) return;
+        entry.bytes = source.length;
+        hookBundleBytes += source.length;
+        for (const [oldKey, old] of hookBundles) {
+          if (hookBundleBytes <= HOOK_BUNDLE_CACHE_BYTES) break;
+          hookBundles.delete(oldKey);
+          hookBundleBytes -= old.bytes;
+        }
+      },
+      () => {
+        if (hookBundles.get(key) === entry) hookBundles.delete(key);
+      },
+    );
+  }
 
   return {
-    bundleSourceB64: Buffer.from(bytes).toString("base64"),
+    bundleSourceB64: await entry.source,
     expectedSha256: record.sha256,
     toolName: record.name,
     hookEvent: event,

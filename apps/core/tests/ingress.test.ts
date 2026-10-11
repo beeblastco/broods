@@ -8,12 +8,11 @@ import {
   spyOn,
 } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import { handleChannelRequest, handler } from "../src/harness/handler.ts";
 import {
   dispatchInProcessWorker,
   drainInProcessWorkers,
-  handleChannelRequest,
-  handler,
-} from "../src/harness/handler.ts";
+} from "../src/harness/worker-queue.ts";
 import {
   acceptIngress,
   interruptLiveOwners,
