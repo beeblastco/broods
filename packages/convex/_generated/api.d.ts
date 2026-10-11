@@ -5167,7 +5167,18 @@ export declare const internal: {
     createAsyncAgentResult: FunctionReference<
       "mutation",
       "internal",
-      { conversationKey: string; eventId: string },
+      {
+        conversationKey: string;
+        eventId: string;
+        subagent?: {
+          agentId: string;
+          conversationKey: string;
+          description?: string;
+          parentConversationKey: string;
+          parentDelivery?: any;
+          taskId: string;
+        };
+      },
       boolean
     >;
     createAsyncToolResult: FunctionReference<
@@ -5268,6 +5279,7 @@ export declare const internal: {
         error?: string;
         eventId: string;
         expiresAt: number;
+        observed?: boolean;
         questions?: Array<any>;
         response?: any;
         status:
@@ -5276,6 +5288,14 @@ export declare const internal: {
           | "awaiting_input"
           | "completed"
           | "failed";
+        subagent?: {
+          agentId: string;
+          conversationKey: string;
+          description?: string;
+          parentConversationKey: string;
+          parentDelivery?: any;
+          taskId: string;
+        };
         updatedAt: string;
       } | null
     >;
@@ -5532,6 +5552,46 @@ export declare const internal: {
         updatedAt: string;
       }>
     >;
+    listUnobservedAsyncAgentResults: FunctionReference<
+      "query",
+      "internal",
+      { updatedAfter: string; updatedBefore: string },
+      Array<{
+        _creationTime: number;
+        _id: Id<"runtimeAsyncAgentResults">;
+        accountId: Id<"accounts">;
+        approvals?: Array<any>;
+        conversationKey: string;
+        createdAt: string;
+        error?: string;
+        eventId: string;
+        expiresAt: number;
+        observed?: boolean;
+        questions?: Array<any>;
+        response?: any;
+        status:
+          | "processing"
+          | "awaiting_approval"
+          | "awaiting_input"
+          | "completed"
+          | "failed";
+        subagent?: {
+          agentId: string;
+          conversationKey: string;
+          description?: string;
+          parentConversationKey: string;
+          parentDelivery?: any;
+          taskId: string;
+        };
+        updatedAt: string;
+      }>
+    >;
+    observeAsyncAgentResult: FunctionReference<
+      "mutation",
+      "internal",
+      { eventId: string; observed: boolean },
+      null
+    >;
     observeAsyncToolResult: FunctionReference<
       "mutation",
       "internal",
@@ -5663,6 +5723,7 @@ export declare const internal: {
         ownerTaskId?: string;
         payloadDigest: string;
         requestedMode: "reject" | "followup" | "collect" | "steer";
+        resultEventId?: string;
         runId: string;
         sizeBytes: number;
         statusTtlMs: number;
