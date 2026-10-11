@@ -15,6 +15,11 @@ import type { RoomEvent } from "./matrix.ts";
 
 /** Under core's 24 hour claim on an event id, so a retry that did land the first time is still dropped there. */
 const TTL_MS = 12 * 60 * 60_000;
+/**
+ * How long an event that never decrypted waits for its room key. Short, because
+ * the events after it in its room wait too.
+ */
+const KEY_WAIT_MS = 5 * 60_000;
 const MAX_ROWS = 5_000;
 const MAX_BYTES = 50 * 1024 * 1024;
 
@@ -22,8 +27,13 @@ export interface OutboxEntry {
   attempts: number;
   eventId: string;
   firstSeenMs: number;
+  nextAttemptMs: number;
   roomId: string;
-  /** Webhook URLs still owed the event. Null until its first try: every target. */
+  /**
+   * Agent ids still owed the event. Null until its first delivery: every
+   * target. Null with attempts made means it waits on its room key. Agent ids,
+   * not webhook URLs, so a webhook path that moves still reaches its agent.
+   */
   targetsLeft: string[] | null;
 }
 
@@ -33,11 +43,13 @@ export interface OutboxEvent {
   roomId: string;
 }
 
+export type DropReason = "expired" | "overflow" | "removed" | "undecryptable";
+
 interface OutboxRow {
   attempts: number;
   event_id: string;
-  event_json: string;
   first_seen_ms: number;
+  next_attempt_ms: number;
   room_id: string;
   targets_left_json: string | null;
 }
@@ -79,55 +91,70 @@ export class Outbox {
     this.db.close();
   }
 
-  /** What is due now, oldest first. */
-  due(): Array<OutboxEntry & { event: RoomEvent }> {
+  /** Every held event, oldest first, without its body: most of them wait. */
+  entries(): OutboxEntry[] {
     return this.db
-      .query<OutboxRow, [number]>(
-        `SELECT event_id, room_id, event_json, first_seen_ms, attempts, targets_left_json
-          FROM outbox WHERE next_attempt_ms <= ?1 ORDER BY rowid`,
+      .query<OutboxRow, []>(
+        `SELECT event_id, room_id, first_seen_ms, next_attempt_ms, attempts, targets_left_json
+          FROM outbox ORDER BY rowid`,
       )
-      .all(Date.now())
-      .map((row): OutboxEntry & { event: RoomEvent } => {
-        const event: RoomEvent = JSON.parse(row.event_json);
-
-        return { ...entry(row), event: event };
-      });
+      .all()
+      .map(entry);
   }
 
-  /** When the next held event is due, or null when there is none. */
-  nextAttemptMs(): number | null {
-    return (
-      this.db
-        .query<{ next: number | null }, []>(
-          "SELECT MIN(next_attempt_ms) AS next FROM outbox",
-        )
-        .get()?.next ?? null
-    );
+  /** The body of a held event, read only when it is tried. */
+  event(eventId: string): RoomEvent | null {
+    const row = this.db
+      .query<{ event_json: string }, [string]>(
+        "SELECT event_json FROM outbox WHERE event_id = ?1",
+      )
+      .get(eventId);
+    if (row === null) return null;
+    const event: RoomEvent = JSON.parse(row.event_json);
+
+    return event;
   }
 
   /**
-   * Deletes and returns what is past its TTL, then the oldest events beyond the
-   * row or byte cap, so a target that never comes back cannot fill the volume.
+   * Deletes and returns what waited too long, for its targets or for its room
+   * key, then the oldest events beyond the row or byte cap, so a target that
+   * never comes back cannot fill the volume.
    */
-  prune(): Array<OutboxEntry & { expired: boolean }> {
+  prune(): Array<OutboxEntry & { reason: DropReason }> {
     const expiredBeforeMs = Date.now() - TTL_MS;
+    const keyGoneBeforeMs = Date.now() - KEY_WAIT_MS;
 
     return this.db
-      .query<Omit<OutboxRow, "event_json">, [number, number, number]>(
-        `DELETE FROM outbox WHERE first_seen_ms <= ?1 OR rowid IN (
-          SELECT rowid FROM (
-            SELECT rowid,
-              ROW_NUMBER() OVER newest AS position,
-              SUM(LENGTH(CAST(event_json AS BLOB))) OVER newest AS bytes
-            FROM outbox WINDOW newest AS (ORDER BY rowid DESC)
-          ) WHERE position > ?2 OR bytes > ?3
-        ) RETURNING event_id, room_id, first_seen_ms, attempts, targets_left_json`,
+      .query<OutboxRow, [number, number, number, number]>(
+        `DELETE FROM outbox WHERE first_seen_ms <= ?1
+          OR (targets_left_json IS NULL AND attempts > 0 AND first_seen_ms <= ?2)
+          OR rowid IN (
+            SELECT rowid FROM (
+              SELECT rowid,
+                ROW_NUMBER() OVER newest AS position,
+                SUM(LENGTH(CAST(event_json AS BLOB))) OVER newest AS bytes
+              FROM outbox WINDOW newest AS (ORDER BY rowid DESC)
+            ) WHERE position > ?3 OR bytes > ?4
+          )
+          RETURNING event_id, room_id, first_seen_ms, next_attempt_ms, attempts, targets_left_json`,
       )
-      .all(expiredBeforeMs, MAX_ROWS, MAX_BYTES)
-      .map((row): OutboxEntry & { expired: boolean } => ({
-        ...entry(row),
-        expired: row.first_seen_ms <= expiredBeforeMs,
-      }));
+      .all(expiredBeforeMs, keyGoneBeforeMs, MAX_ROWS, MAX_BYTES)
+      .map((row): OutboxEntry & { reason: DropReason } => {
+        const waitedOnKey =
+          row.targets_left_json === null &&
+          row.attempts > 0 &&
+          row.first_seen_ms <= keyGoneBeforeMs;
+
+        return {
+          ...entry(row),
+          reason:
+            row.first_seen_ms <= expiredBeforeMs
+              ? "expired"
+              : waitedOnKey
+                ? "undecryptable"
+                : "overflow",
+        };
+      });
   }
 
   /** Records a try that left targets owed, and when to try them again. */
@@ -158,7 +185,7 @@ export class Outbox {
   }
 }
 
-function entry(row: Omit<OutboxRow, "event_json">): OutboxEntry {
+function entry(row: OutboxRow): OutboxEntry {
   const targetsLeft: string[] | null =
     row.targets_left_json === null ? null : JSON.parse(row.targets_left_json);
 
@@ -166,6 +193,7 @@ function entry(row: Omit<OutboxRow, "event_json">): OutboxEntry {
     attempts: row.attempts,
     eventId: row.event_id,
     firstSeenMs: row.first_seen_ms,
+    nextAttemptMs: row.next_attempt_ms,
     roomId: row.room_id,
     targetsLeft: targetsLeft,
   };

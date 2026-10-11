@@ -18,12 +18,15 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { MatrixForwardedEvent } from "../../../core/src/shared/matrix-wire.ts";
 import type { ForwardTarget } from "../../../discord-forwarder/src/forward.ts";
 
 /** One webhook answer, and what happens once it is sent. */
 interface Answer {
   /** Moves the clock forward, as if that much time passed. */
   clockMs?: number;
+  /** Moves this target's webhook to `/v1/webhooks/<moveTo>/matrix`: a new path, same agent. */
+  moveTo?: string;
   status: number | "hang";
   /** Stops the account before it can try again. */
   stop?: boolean;
@@ -34,6 +37,8 @@ interface Script {
   answers: Record<string, Answer[]>;
   /** Body size of each customer message, to fill the outbox by bytes. */
   bodyBytes?: number;
+  /** The first message arrives encrypted, and its room key one try late. */
+  encryptedFirst?: boolean;
   events?: number;
   /** Starts a fresh account on the same store once the first stops, this much later. */
   restartAfterMs?: number;
@@ -48,6 +53,8 @@ const SCRIPTS: Record<string, Script> = {
   },
   expired: { answers: { a: [{ clockMs: 13 * 60 * 60_000, status: 503 }] } },
   healthy: { answers: { a: [], b: [{ status: 503 }] } },
+  locked: { answers: { a: [] }, encryptedFirst: true, events: 2 },
+  moved: { answers: { a: [{ moveTo: "moved", status: 503 }] } },
   outage: {
     answers: {
       a: [
@@ -78,10 +85,13 @@ const storePath = join(
   storeDir,
   createHash("sha256").update(`${USER_ID}|${DEVICE_ID}`).digest("hex"),
 );
-/** What each target answered, in order. */
+/** What each webhook path answered, in order. */
 const deliveries: Record<string, Array<number | "hang">> = Object.fromEntries(
   Object.keys(script.answers).map((target): [string, []] => [target, []]),
 );
+/** The event id of every POST, in order, whatever the answer. */
+const posted: string[] = [];
+let decrypts = 0;
 const realNow = Date.now;
 let clockMs = 0;
 Date.now = (): number => realNow() + clockMs;
@@ -92,6 +102,13 @@ await mock.module("../../src/crypto.ts", (): object => ({
   RoomCrypto: {
     open: async (): Promise<object> => ({
       close: async (): Promise<void> => {},
+      // The room key arrives after the first try.
+      decrypt: async (_roomId: string, event: object): Promise<object> => {
+        decrypts += 1;
+        if (decrypts === 1) throw new Error("no room key yet");
+
+        return { ...event, type: "m.room.message" };
+      },
       receiveSync: async (): Promise<void> => {},
     }),
   },
@@ -101,13 +118,26 @@ const { MatrixAccount } = await import("../../src/account.ts");
 const server = Bun.serve({
   maxRequestBodySize: 256 * 1024 * 1024,
   port: 0,
-  fetch: (request: Request): Response | Promise<Response> => {
+  fetch: async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const target = /^\/v1\/webhooks\/(\w+)\/matrix$/.exec(url.pathname)?.[1];
     if (target !== undefined) {
+      const body: MatrixForwardedEvent = JSON.parse(await request.text());
+      posted.push(body.event.event_id);
       const answer = script.answers[target]?.shift() ?? { status: 200 };
-      deliveries[target]?.push(answer.status);
+      (deliveries[target] ??= []).push(answer.status);
       clockMs += answer.clockMs ?? 0;
+      // A new object, as reconcile hands over: the account keeps the old one.
+      const moving = targets.findIndex(
+        (candidate): boolean => candidate.webhookUrl === url.href,
+      );
+      const movedFrom = targets[moving];
+      if (answer.moveTo !== undefined && movedFrom !== undefined) {
+        targets[moving] = {
+          ...movedFrom,
+          webhookUrl: `${url.origin}/v1/webhooks/${answer.moveTo}/matrix`,
+        };
+      }
       // Aborted before the answer lands, so the account stops right after
       // recording it rather than racing on to its next try.
       if (answer.stop) stopping = account.stop();
@@ -173,6 +203,7 @@ try {
     JSON.stringify({
       deliveries: deliveries,
       held: heldEvents(),
+      posted: posted,
       token: readFileSync(join(storePath, "sync-token"), "utf8"),
     }),
   );
@@ -231,6 +262,10 @@ function timeline(): object[] {
     event_id: `$customer-${index}`,
     origin_server_ts: index,
     sender: "@ada:example.org",
-    type: "m.room.message",
+    // The stub decrypts by renaming the type, so the content stays readable.
+    type:
+      script.encryptedFirst && index === 0
+        ? "m.room.encrypted"
+        : "m.room.message",
   }));
 }

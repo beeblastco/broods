@@ -250,7 +250,8 @@ Matrix:
 - `MATRIX_STORE_DIR` holds each account's crypto store, sync token and outbox and must be a persistent volume. Losing it loses the device keys and any event still waiting.
 - Core sends replies, reactions and typing through the forwarder's `POST /v1/send` and `POST /v1/typing`, authenticated with the access token, because only the forwarder can encrypt for the room.
 - Every synced event lands in the account's outbox, `outbox.sqlite` next to the sync token, before the token moves past it. It stays there, still encrypted for an encrypted room, until each channel webhook took it, so a restart or a core outage loses nothing.
-- A webhook that answered a 5xx, a 408 or a 429, or not at all, is retried with backoff up to 60 seconds; the others are not posted again. Any other 4xx is final. An undecryptable event is retried the same way until its room key arrives.
+- A webhook that answered a 5xx, a 408 or a 429, or not at all, is retried with backoff up to 60 seconds, in order: later events for it wait behind the oldest. Agents that took the event are not posted again. Any other 4xx is final.
+- An undecryptable event is retried the same way for up to 5 minutes while its room key arrives, and the later events of its room wait behind it.
 - An event leaves the outbox after 12 hours, or oldest first past 5,000 events or 50 MB per account, with one `Matrix event dropped from the outbox` error line naming the event, room, agents and attempts. Size the volume for that cap.
 
 ## Runbooks

@@ -12,9 +12,12 @@ import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 
 interface DeliveryRun {
+  /** What each webhook path answered, in order. */
   deliveries: Record<string, Array<number | "hang">>;
   /** Rows left in the outbox. */
   held: number;
+  /** The event id of every POST, in order. */
+  posted: string[];
   /** The `Matrix event dropped from the outbox` log lines. */
   dropped: Array<Record<string, unknown>>;
   token: string;
@@ -26,6 +29,7 @@ describe("a message core does not take", () => {
       deliveries: { a: [503, 200] },
       dropped: [],
       held: 0,
+      posted: ["$customer-0", "$customer-0"],
       token: "s3",
     });
   });
@@ -35,6 +39,7 @@ describe("a message core does not take", () => {
       deliveries: { a: [429, 200] },
       dropped: [],
       held: 0,
+      posted: ["$customer-0", "$customer-0"],
       token: "s3",
     });
   });
@@ -44,6 +49,7 @@ describe("a message core does not take", () => {
       deliveries: { a: [404] },
       dropped: [],
       held: 0,
+      posted: ["$customer-0"],
       token: "s3",
     });
   });
@@ -55,6 +61,7 @@ describe("a message core does not take", () => {
       deliveries: { a: [503, 503, 200] },
       dropped: [],
       held: 0,
+      posted: ["$customer-0", "$customer-0", "$customer-0"],
       token: "s3",
     });
   });
@@ -64,15 +71,38 @@ describe("a message core does not take", () => {
       deliveries: { a: ["hang", 200] },
       dropped: [],
       held: 0,
+      posted: ["$customer-0", "$customer-0"],
       token: "s3",
     });
   }, 30_000);
+
+  // An agent's webhook path can move while an event waits for it.
+  it("follows its agent to a new webhook path", async () => {
+    expect(await run("moved")).toEqual({
+      deliveries: { a: [503], moved: [200] },
+      dropped: [],
+      held: 0,
+      posted: ["$customer-0", "$customer-0"],
+      token: "s3",
+    });
+  });
+
+  it("holds the later messages of its room while it waits for its room key", async () => {
+    expect(await run("locked")).toEqual({
+      deliveries: { a: [200, 200] },
+      dropped: [],
+      held: 0,
+      posted: ["$customer-0", "$customer-1"],
+      token: "s3",
+    });
+  });
 
   it("is posted again only to the target that did not take it", async () => {
     expect(await run("healthy")).toEqual({
       deliveries: { a: [200], b: [503, 200] },
       dropped: [],
       held: 0,
+      posted: ["$customer-0", "$customer-0", "$customer-0"],
       token: "s3",
     });
   });
@@ -91,6 +121,7 @@ describe("the outbox bounds", () => {
         },
       ],
       held: 0,
+      posted: ["$customer-0"],
       token: "s3",
     });
   });
@@ -107,6 +138,7 @@ describe("the outbox bounds", () => {
         },
       ],
       held: 5_000,
+      posted: ["$customer-1"],
       token: "s2",
     });
   });
@@ -123,6 +155,7 @@ describe("the outbox bounds", () => {
         },
       ],
       held: 1,
+      posted: ["$customer-1"],
       token: "s2",
     });
   });
