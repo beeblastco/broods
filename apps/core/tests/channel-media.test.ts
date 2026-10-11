@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ModelMessage, UserContent } from "ai";
+import type { ImagePart, ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
@@ -36,6 +36,10 @@ const meterWrites: Array<{
 
 const headS3ObjectMock = mock(
   async (_bucket: string, _key: string): Promise<S3ObjectHead | null> => null,
+);
+const readS3BytesMock = mock(
+  async (_bucket: string, _key: string): Promise<Uint8Array> =>
+    new Uint8Array(),
 );
 const writeS3ObjectMock = mock(
   async (
@@ -76,7 +80,7 @@ await mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
   headS3Object: headS3ObjectMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).
-  readS3Bytes: mock(async () => new Uint8Array()),
+  readS3Bytes: readS3BytesMock,
   readS3Text: mock(async () => ""),
   s3ObjectExists: mock(async () => true),
   getS3ObjectUrl: mock(async () => ""),
@@ -131,6 +135,7 @@ beforeEach(() => {
   process.env.MEDIA_TICKET_SECRET = "media-ticket-secret";
   process.env.PUBLIC_BASE_URL = "https://core.example";
   headS3ObjectMock.mockClear();
+  readS3BytesMock.mockClear();
   writeS3ObjectMock.mockClear();
   transcribeAudioMock.mockClear();
   meterWrites.length = 0;
@@ -745,24 +750,47 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
-  it("keeps a sealed link whose file is still there", async (): Promise<void> => {
+  // A link left in the prompt is fetched by the provider again on every model
+  // step, so the turn reads it once and the model is handed bytes.
+  it("hands the model a sealed link's bytes, read once per link", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
-    headS3ObjectMock.mockImplementationOnce(
-      async (): Promise<S3ObjectHead> => ({ contentLength: 12 }),
+    headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
+      contentLength: 3,
+    }));
+    readS3BytesMock.mockImplementation(
+      async (): Promise<Uint8Array> => new Uint8Array([1, 2, 3]),
     );
     const stored = [
-      sealedImageMessage(workspaceTicket()),
+      sealedImageMessage({
+        ...workspaceTicket(),
+        path: "media/ef56/0-image-1.jpeg",
+      }),
       sealedImageMessage({
         accountId: ACCOUNT,
         path: "media/cd34/0-image-1.jpeg",
       }),
     ];
 
-    expect(await rehydrateStoredMedia(stored, modelConfig("openai"))).toEqual(
-      stored,
-    );
-    // No sandbox mounts the attachment store, so only the workspace link is checked.
-    expect(headS3ObjectMock).toHaveBeenCalledTimes(1);
+    const first = await rehydrateStoredMedia(stored, modelConfig("openai"));
+    const replay = await rehydrateStoredMedia(stored, modelConfig("openai"));
+
+    const bytes = Buffer.from([1, 2, 3]);
+    const image: ImagePart = {
+      type: "image",
+      image: bytes,
+      mediaType: "image/jpeg",
+    };
+    expect(first).toEqual([
+      { role: "user", content: [image] },
+      { role: "user", content: [image] },
+    ]);
+    expect(replay).toEqual(first);
+    // Both links are read once; the replay comes from the media cache. Bytes
+    // out of the managed bucket are metered as egress, as the media route did.
+    expect(readS3BytesMock).toHaveBeenCalledTimes(2);
+    expect(meterWrites.length).toBeGreaterThan(0);
+    headS3ObjectMock.mockReset();
+    readS3BytesMock.mockReset();
   });
 
   it("leaves a conversation with no references untouched", async () => {
@@ -1050,6 +1078,14 @@ function sealedImageMessage(ticket: MediaTicket): ModelMessage {
 
 function storageWithWorkspace(): Storage {
   return {
+    budgets: {
+      record: async function (
+        accountId: string,
+        usage: Parameters<Storage["budgets"]["record"]>[1],
+      ): Promise<void> {
+        meterWrites.push({ accountId: accountId, usage: usage });
+      },
+    },
     workspaceConfigs: {
       getById: async (): Promise<{
         config: { storage: { provider: string } };

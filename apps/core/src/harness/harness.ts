@@ -129,6 +129,7 @@ import {
   type TurnContextSnapshot,
 } from "./session.ts";
 import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
+import { rehydrateStoredMedia } from "./channel-media.ts";
 import {
   formatQuestionsText,
   openQuestion,
@@ -1307,18 +1308,23 @@ export async function runAgentLoop(
         const steeringSystem =
           await session.appendIngressEvents(steeringEvents);
         turnContext.ephemeralSystem.push(...steeringSystem);
+        // A steer carries its attachments as stored, so they are read back
+        // here as the turn's history was, not left for the provider to fetch.
         stepMessages = [
           ...messages,
-          ...stripEnvelopeFieldsFromMessages(
-            steeringEvents.filter(
-              (
-                event,
-              ): event is Exclude<
-                ConversationIngressEvent,
-                SystemModelMessage
-              > => event.role !== "system",
+          ...(await rehydrateStoredMedia(
+            stripEnvelopeFieldsFromMessages(
+              steeringEvents.filter(
+                (
+                  event,
+                ): event is Exclude<
+                  ConversationIngressEvent,
+                  SystemModelMessage
+                > => event.role !== "system",
+              ),
             ),
-          ),
+            agentConfig,
+          )),
         ];
         logInfo("Steering ingress applied at AI SDK step boundary", {
           eventId: session.eventId,

@@ -1,11 +1,13 @@
 /**
  * Inbound channel media, the mirror of the outbound `send-files` / `send-images` path.
  *
- * With a workspace, each attachment is read once and written twice. The model is handed a sealed,
+ * With a workspace, each attachment is read once and written twice. The row keeps a sealed,
  * non-expiring media ticket into the attachment store, a managed-bucket prefix
  * no sandbox mounts, so replayed turns keep working even after the agent tidies
- * its files. The agent's own copy goes under `media/` in its default workspace,
- * for what the model cannot read natively.
+ * its files. Each turn reads the bytes behind it once and hands the model those,
+ * so the provider never fetches the link again on every step. The agent's own
+ * copy goes under `media/` in its default workspace, for what the model cannot
+ * read natively.
  *
  * With no workspace the row keeps a `broods-media:` reference instead, and the
  * channel is asked for the bytes again on replay, for as long as it keeps them.
@@ -31,7 +33,7 @@ import {
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
-import { locateMediaObject } from "../media.ts";
+import { locateMediaObject, readMediaObject } from "../media.ts";
 import {
   attachmentStoreKey,
   MEDIA_PATH_PREFIX,
@@ -190,6 +192,9 @@ interface StoredAttachment {
   /** Bytes read from the channel, metered as ingress even when a later step failed. */
   receivedBytes: number;
 }
+
+/** A sealed link read back: its bytes, or the name of the file that is gone. */
+type SealedMedia = { bytes: Buffer } | { gone: string };
 
 type UserContentPart = Exclude<UserContent, string>[number];
 
@@ -491,37 +496,6 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * The name of the workspace file a sealed link points at, when that file is
- * gone. The provider fetches the link itself, and its 404 fails the whole turn.
- * Attachment store links are trusted without a round trip: no sandbox mounts
- * that prefix. A storage error is not proof of a deletion, so the link stays.
- */
-async function goneWorkspaceFile(
-  part: UserContentPart,
-): Promise<string | null> {
-  const link = sealedMediaLink(part);
-  const ticket = link
-    ? openMediaTicket(
-        link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
-        requireSecretsEnv("MEDIA_TICKET_SECRET"),
-      )
-    : null;
-  if (!ticket || !("workspaceId" in ticket)) {
-    return null;
-  }
-  try {
-    return (await locateMediaObject(ticket)) ? null : basename(ticket.path);
-  } catch (err) {
-    logWarn("Stored media link could not be checked", {
-      path: ticket.path,
-      error: err instanceof Error ? err.message : String(err),
-    });
-
-    return null;
-  }
-}
-
-/**
  * A part this module stored: a channel reference or a sealed media link. Tool
  * results and subagent output are file parts too, and must not be re-gated.
  */
@@ -674,6 +648,49 @@ function parseMediaReference(value: unknown): MediaReference | null {
 }
 
 /**
+ * The bytes behind a sealed link, read once per turn and kept in the media
+ * cache. A link left for the provider is fetched by it again on every model
+ * step, and a file the agent deleted would 404 there and fail the whole turn.
+ * Null keeps the link: not a sealed link, or a storage error, which is not
+ * proof of a deletion.
+ */
+async function readSealedMedia(
+  part: UserContentPart,
+): Promise<SealedMedia | null> {
+  const link = sealedMediaLink(part);
+  const ticket = link
+    ? openMediaTicket(
+        link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
+        requireSecretsEnv("MEDIA_TICKET_SECRET"),
+      )
+    : null;
+  if (!link || !ticket) {
+    return null;
+  }
+  const cached = cachedMedia(link);
+  if (cached) {
+    return { bytes: cached };
+  }
+  try {
+    const object = await locateMediaObject(ticket);
+    if (!object) {
+      return { gone: basename(ticket.path) };
+    }
+    const bytes = Buffer.from(await readMediaObject(object, ticket.accountId));
+    cacheMedia(link, bytes);
+
+    return { bytes: bytes };
+  } catch (err) {
+    logWarn("Stored media link could not be read", {
+      path: ticket.path,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return null;
+  }
+}
+
+/**
  * One stored message with its references read back. A reference the channel
  * will not serve, or a workspace link whose file is gone, becomes text in the
  * same position, so the turn still says a file was there and the model stops
@@ -708,11 +725,20 @@ async function rehydrateMessage(
       }
       const reference = mediaReferenceOf(part);
       if (!reference) {
-        const gone = await goneWorkspaceFile(part);
+        const sealed = await readSealedMedia(part);
+        if (!sealed) {
+          return part;
+        }
+        if ("gone" in sealed) {
+          return {
+            type: "text",
+            text: `[${sealed.gone} is no longer available]`,
+          };
+        }
 
-        return gone
-          ? { type: "text", text: `[${gone} is no longer available]` }
-          : part;
+        return part.type === "image"
+          ? { ...part, image: sealed.bytes }
+          : { ...part, data: sealed.bytes };
       }
       const bytes = await resolveMediaReference(reference, agentConfig);
       if (!bytes) {
