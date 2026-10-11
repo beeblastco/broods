@@ -16,7 +16,6 @@ import {
   extractText,
   formatChannelErrorText,
   sendChannelFailure,
-  WORKER_DEADLINE_MESSAGE,
 } from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import {
@@ -309,7 +308,8 @@ export function dispatchInProcessWorker(
         kind: kind,
         budgetMs: WORKER_TIMEOUT_BUDGET_MS,
       });
-      runAbort.abort(new Error(WORKER_DEADLINE_MESSAGE));
+      // The reason is what the chat shows; the log line above stays technical.
+      runAbort.abort(new Error("I ran out of time on this turn."));
       releaseSlot?.();
       abandon?.();
     }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);

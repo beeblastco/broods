@@ -18,23 +18,20 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-// Every Broods credential: its b-prefix plus a long base64url body (signed
-// tickets add a dot), so short identifiers like `bsk_id` stay readable. It
-// starts a word or follows an escaped `\n`, `\r` or `\t`, as in a serialized
-// span attribute. Identical in apps/lambda/sandbox-log-forwarder.mjs; keep
-// them in step.
+// Every Broods credential (b-prefix, long base64url body) at a word start or
+// after an escaped `\n`, `\r` or `\t`, so short ids like `bsk_id` stay readable.
+// Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
 const BROODS_CREDENTIAL_PATTERN =
-  /(?<=^|[^A-Za-z0-9_]|\\[nrt])b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
-// Well-known third-party credentials (GitHub, OpenAI, Anthropic, AWS, Slack,
-// Google, JWT). Same boundary as above, except a token never starts after a
-// `-` either: never starting inside a `-`/`_` run keeps the JWT branch
-// linear. The lookahead skips most positions on one char. Identical in
-// apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
+  /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt])b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
+// GitHub, OpenAI, Anthropic, AWS, Slack, Google and JWT tokens, never starting
+// inside a `-`/`_` run so the JWT branch stays linear.
+// Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
 const PROVIDER_CREDENTIAL_PATTERN =
   /(?=[gsAxe])(?<=^|[^A-Za-z0-9_-]|\\[nrt])(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abpors]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
-// Env names that hold who someone is, never a credential: GIT_AUTHOR_NAME,
-// GIT_COMMITTER_EMAIL. Not *_USER: a SASL or SMTP username is often a key.
-const PUBLIC_ENV_NAME_PATTERN = /(?:^|[^a-z0-9])(?:email|name)$/i;
+// Env names that hold who someone is, never a credential. Not every `*_NAME`:
+// a SASL or SMTP user name is often a key.
+const PUBLIC_ENV_NAME_PATTERN =
+  /(?:^|[^a-z0-9])email$|^GIT_(?:AUTHOR|COMMITTER)_NAME$/i;
 const WHITESPACE_PATTERN = /\s/g;
 
 const ENCODER = new TextEncoder();
@@ -51,12 +48,7 @@ export function collectSecretValues(value: unknown): string[] {
     }
 
     const record = current as Record<string, unknown>;
-    const namedKey =
-      typeof record.key === "string"
-        ? record.key
-        : typeof record.name === "string"
-          ? record.name
-          : undefined;
+    const namedKey = entryName(record);
     if (
       namedKey &&
       isSecretName(namedKey) &&
@@ -76,17 +68,19 @@ export function collectSecretValues(value: unknown): string[] {
       ) {
         // A `{ NAME: value }` map, or `[{ key, value }]` entries. Every value
         // is secret unless its name holds a public identity.
-        const entries = Array.isArray(nested)
-          ? nested.map(
-              (
-                entry: { key?: unknown; value?: unknown } | null,
-              ): [string, unknown] => [String(entry?.key), entry?.value],
+        const entries: [string | undefined, unknown][] = Array.isArray(nested)
+          ? nested.map((entry: unknown): [string | undefined, unknown] =>
+              entry && typeof entry === "object" && "value" in entry
+                ? [entryName(entry), entry.value]
+                : [undefined, undefined],
             )
           : Object.entries(nested);
         for (const [envName, envValue] of entries) {
           if (
             typeof envValue === "string" &&
-            (isSecretName(envName) || !PUBLIC_ENV_NAME_PATTERN.test(envName))
+            (!envName ||
+              isSecretName(envName) ||
+              !PUBLIC_ENV_NAME_PATTERN.test(envName))
           ) {
             secrets.add(envValue);
           }
@@ -269,6 +263,15 @@ function emit(
     };
     publishNats(level as "INFO" | "WARN" | "ERROR", obsEntry);
   }
+}
+
+/** The `key` or `name` an env entry or secret record is listed under. */
+function entryName(record: object): string | undefined {
+  if ("key" in record && typeof record.key === "string") return record.key;
+
+  return "name" in record && typeof record.name === "string"
+    ? record.name
+    : undefined;
 }
 
 function isSensitiveEnvName(name: string): boolean {
