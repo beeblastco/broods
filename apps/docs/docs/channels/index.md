@@ -118,7 +118,7 @@ On a channel turn the agent gets these tools automatically. Do not add them to `
 | Tool             | Use                                                         |
 | ---------------- | ----------------------------------------------------------- |
 | `send-update`    | post a progress note before the turn ends. Always available |
-| `send-message`   | message another conversation, which runs it as a follow-up  |
+| `send-message`   | message a chat that has messaged the agent, as a follow-up  |
 | `send-images`    | send pictures from workspace `file_paths` or from `urls`    |
 | `send-files`     | send workspace documents such as PDFs and spreadsheets      |
 | `send-sticker`   | send a sticker                                              |
