@@ -121,6 +121,9 @@ export interface ToolContext {
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
   // (agent bash/fs => role "agent"; hosted MCP servers => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
+  // Reports each wait a tool sat out before it retried (a rate-limited MCP
+  // call), so the harness can put it on that call's tool.call span.
+  onToolRetry?: (toolCallId: string, waitMs: number) => void;
   // A blocking ask_questions call, so the loop ends the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
   // Every row a tool leaves to settle later (an open question, a background
@@ -562,6 +565,7 @@ async function registerMcpTools(
       server.connection,
       server.remoteTools,
       context.onSandboxCpu,
+      context.onToolRetry,
     );
     // Sanitized names collapsing within one server surface here too: the map
     // then has fewer keys than the listing had tools.
