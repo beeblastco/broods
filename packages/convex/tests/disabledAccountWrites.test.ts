@@ -1,0 +1,552 @@
+/// <reference types="vite/client" />
+/**
+ * A disabled account is read-only on the direct Convex surface, as it is on
+ * the config HTTP surface: no skill writes, upload URLs, workspace storage
+ * changes, MCP calls, crons, connections, access, project, stage, agent, key,
+ * env, policy, webhook, canvas or workspace file changes, removals included.
+ * Reads stay open, and deleting the org stays open.
+ */
+
+import cronsComponent from "@convex-dev/crons/test";
+import workosTest from "@convex-dev/workos-authkit/test";
+import { convexTest, type TestConvex } from "convex-test";
+import { afterEach, expect, test, vi } from "vitest";
+import { api, components, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import { sha256Hex } from "../model/accountSecrets";
+import schema from "../schema";
+
+const AUTH_ID = "user_disabled_account_owner";
+const ACCOUNT_KEY = "bask_disabled_account_fixture_key";
+const BUCKET = "disabled-account-fixture-bucket";
+const NOT_ACTIVE = /Account is not active/;
+const modules = import.meta.glob("../**/*.ts");
+const storageCalls = vi.hoisted(() => ({
+  deletePrefix: vi.fn().mockResolvedValue(0),
+  listPrefix: vi.fn(async (_bucket: string, prefix: string) => [
+    { key: `${prefix}notes.md`, size: 2 },
+  ]),
+  writeObject: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Only the external S3 boundary is replaced; auth, key lookup, validation
+// and every database write stay real.
+vi.mock("../model/s3", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../model/s3")>();
+
+  return {
+    ...original,
+    deleteS3Prefix: storageCalls.deletePrefix,
+    listS3Prefix: storageCalls.listPrefix,
+    writeS3Object: storageCalls.writeObject,
+  };
+});
+
+type T = TestConvex<typeof schema>;
+
+afterEach((): void => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.clearAllMocks();
+});
+
+test("a disabled account cannot write skills or mint upload URLs", async (): Promise<void> => {
+  const { t, caller, orgId, accountId } = await setup();
+  const skill = {
+    bearerToken: ACCOUNT_KEY,
+    name: "fixture-skill",
+    description: "A harmless fixture",
+    content: "Fixture instructions.",
+  };
+
+  // While active, the same key and caller write.
+  expect(
+    await caller.mutation(api.workspace.files.generateUploadUrl, {}),
+  ).toBeTruthy();
+  expect(
+    (await caller.action(api.skillsPublic.createFromJson, skill)).path,
+  ).toBe(`${accountId}/fixture-skill`);
+  expect(storageCalls.writeObject).toHaveBeenCalledTimes(1);
+  storageCalls.deletePrefix.mockClear();
+  storageCalls.writeObject.mockClear();
+
+  await disable(t, accountId);
+  expect(
+    (
+      await t.fetch("/v1/skills", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${ACCOUNT_KEY}` },
+      })
+    ).status,
+  ).toBe(401);
+
+  await expect(
+    caller.mutation(api.workspace.files.generateUploadUrl, {}),
+  ).rejects.toThrow(NOT_ACTIVE);
+  expect(
+    await t.run(async (ctx) => ctx.db.query("uploadGrants").collect()),
+  ).toHaveLength(1);
+
+  await expect(
+    caller.action(api.skillsPublic.createFromJson, skill),
+  ).rejects.toThrow("Invalid Bearer token");
+  await expect(
+    caller.action(api.skillsPublic.createFromGithub, {
+      bearerToken: ACCOUNT_KEY,
+      githubUrl: "https://github.com/example/skills/tree/main/fixture",
+    }),
+  ).rejects.toThrow("Invalid Bearer token");
+  const projectId = await seedProject(t, orgId);
+  await expect(
+    caller.action(api.skillsPublic.publishSkill, {
+      projectId: projectId,
+      nodeId: "skill-node",
+      bearerToken: ACCOUNT_KEY,
+    }),
+  ).rejects.toThrow("Invalid Bearer token");
+
+  // Anonymous callers and unknown keys stay refused.
+  await expect(
+    t.action(api.skillsPublic.createFromJson, skill),
+  ).rejects.toThrow("not authenticated");
+  await expect(
+    caller.action(api.skillsPublic.createFromJson, {
+      ...skill,
+      bearerToken: "bask_unknown_fixture_key",
+    }),
+  ).rejects.toThrow("Invalid Bearer token");
+  expect(storageCalls.deletePrefix).not.toHaveBeenCalled();
+  expect(storageCalls.writeObject).not.toHaveBeenCalled();
+});
+
+test("a disabled account cannot reach workspace storage or MCP servers", async (): Promise<void> => {
+  const { t, caller, orgId, accountId } = await setup();
+  const projectId = await seedProject(t, orgId);
+  const { stageId, workspaceId } = await t.run(async (ctx) => {
+    const now = Date.now();
+
+    return {
+      stageId: await ctx.db.insert("stages", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        name: "Development",
+        kind: "development" as const,
+        isDefault: true,
+        updatedAt: now,
+      }),
+      workspaceId: await ctx.db.insert("workspaceConfigs", {
+        accountId: accountId,
+        projectId: projectId,
+        name: "fixture-workspace",
+        config: { storage: { provider: "s3" } },
+        createdAt: now,
+        updatedAt: now,
+      }),
+    };
+  });
+  await disable(t, accountId);
+
+  const workspace = { projectId: projectId, workspaceId: workspaceId };
+  await expect(
+    caller.action(api.workspace.filesPublic.upload, {
+      ...workspace,
+      path: "notes.md",
+      contentBase64: "aGk=",
+    }),
+  ).rejects.toThrow(NOT_ACTIVE);
+  await expect(
+    caller.action(api.workspace.filesPublic.rename, {
+      ...workspace,
+      path: "notes.md",
+      newPath: "moved.md",
+    }),
+  ).rejects.toThrow(NOT_ACTIVE);
+  await expect(
+    caller.action(api.workspace.filesPublic.remove, {
+      ...workspace,
+      path: "notes.md",
+    }),
+  ).rejects.toThrow(NOT_ACTIVE);
+  // Listing is a read, so it stays open.
+  vi.stubEnv("FILESYSTEM_BUCKET_NAME", BUCKET);
+  expect(
+    await caller.action(api.workspace.filesPublic.list, workspace),
+  ).toMatchObject([{ path: "notes.md", isFolder: false }]);
+
+  const node = { projectId: projectId, stageId: stageId, nodeId: "mcp-node" };
+  await expect(
+    caller.action(api.mcp.saveForNode, {
+      ...node,
+      nodeLabel: "Fixture MCP",
+      bundle: "export default {};",
+    }),
+  ).rejects.toThrow(NOT_ACTIVE);
+  await expect(
+    caller.action(api.mcp.callTool, { ...node, toolName: "echo" }),
+  ).rejects.toThrow(NOT_ACTIVE);
+  await expect(caller.action(api.mcp.removeForNode, node)).rejects.toThrow(
+    NOT_ACTIVE,
+  );
+  expect(storageCalls.writeObject).not.toHaveBeenCalled();
+  expect(storageCalls.deletePrefix).not.toHaveBeenCalled();
+});
+
+test("a disabled account cannot change or remove project config, and can still read it", async (): Promise<void> => {
+  const { t, caller, orgId, accountId } = await setup();
+  const projectId = await seedProject(t, orgId);
+  const ids = await t.run(async (ctx) => {
+    const now = Date.now();
+    const stage = { authId: AUTH_ID, projectId: projectId, updatedAt: now };
+    const stageId = await ctx.db.insert("stages", {
+      ...stage,
+      name: "Development",
+      kind: "development" as const,
+      isDefault: true,
+    });
+    const scope = { projectId: projectId, stageId: stageId };
+
+    return {
+      stageId: stageId,
+      previewStageId: await ctx.db.insert("stages", {
+        ...stage,
+        name: "preview",
+        kind: "custom" as const,
+        isDefault: false,
+      }),
+      configId: await ctx.db.insert("agentConfigs", {
+        ...scope,
+        authId: AUTH_ID,
+        name: "planner",
+        updatedAt: now,
+      }),
+      policyId: await ctx.db.insert("agentPolicies", {
+        ...scope,
+        accountId: accountId,
+        name: "guardrails",
+        document: { version: 1 as const, rules: [] },
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      }),
+      deployKeyId: await ctx.db.insert("deployKeys", {
+        ...scope,
+        accountId: accountId,
+        name: "ci",
+        keyHash: "hash-deploy",
+        keyHint: "bd_…wxyz",
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      }),
+      variableId: await ctx.db.insert("environmentVariables", {
+        ...scope,
+        name: "FIXTURE_KEY",
+        ciphertext: "ct",
+        iv: "iv",
+        tag: "tag",
+        valueDigest: "digest",
+        updatedAt: now,
+      }),
+      fileId: await ctx.db.insert("workspaceFiles", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        nodeId: "workspace-node",
+        path: "docs/notes.md",
+        name: "notes.md",
+        isFolder: false,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    };
+  });
+  const project = { projectId: projectId };
+  const scope = { ...project, stageId: ids.stageId };
+  const config = { configId: ids.configId };
+  const policy = { policyId: ids.policyId };
+  const variable = { variableId: ids.variableId };
+  const file = { fileId: ids.fileId };
+
+  // While active, the same caller writes.
+  await caller.mutation(api.project.update, { ...project, name: "renamed" });
+  await disable(t, accountId);
+
+  const refused: Array<() => Promise<unknown>> = [
+    () => caller.mutation(api.project.create, { name: "another" }),
+    () => caller.mutation(api.project.update, { ...project, name: "again" }),
+    () => caller.mutation(api.project.remove, project),
+    () => caller.mutation(api.stage.create, { ...project, name: "staging" }),
+    () => caller.mutation(api.stage.ensureDefault, project),
+    () =>
+      caller.mutation(api.stage.initializeProduction, {
+        ...project,
+        sourceStageId: ids.stageId,
+        deploymentRegion: "eu-west-1",
+      }),
+    () => caller.mutation(api.stage.remove, { stageId: ids.previewStageId }),
+    () =>
+      caller.mutation(api.canvas.saveLayout, {
+        ...scope,
+        nodes: [],
+        edges: [],
+      }),
+    () => caller.mutation(api.agent.config.create, { ...scope, name: "coder" }),
+    () => caller.mutation(api.agent.config.update, { ...config, name: "x" }),
+    () => caller.mutation(api.agent.config.remove, config),
+    () =>
+      caller.mutation(api.agent.config.updateRuntimeRefs, {
+        ...config,
+        sandboxes: [],
+        workspaces: null,
+      }),
+    () =>
+      caller.mutation(api.agent.config.updateSubagentRefs, {
+        ...config,
+        calleeConfigIds: [],
+      }),
+    () => caller.mutation(api.agent.deployments.ensureForStage, scope),
+    () => caller.mutation(api.agent.deployments.rotate, scope),
+    () => caller.mutation(api.agent.deployments.mintStageSession, scope),
+    () =>
+      caller.mutation(api.agent.policies.create, {
+        ...scope,
+        name: "another",
+        document: { version: 1, rules: [] },
+      }),
+    () => caller.mutation(api.agent.policies.update, { ...policy, name: "x" }),
+    () => caller.mutation(api.agent.policies.remove, policy),
+    () => caller.mutation(api.deployKeys.create, { ...scope, name: "ci-2" }),
+    () =>
+      caller.mutation(api.deployKeys.remove, { deployKeyId: ids.deployKeyId }),
+    () =>
+      caller.mutation(api.environmentVariables.set, {
+        ...scope,
+        name: "OTHER_KEY",
+        value: "value",
+      }),
+    () => caller.mutation(api.environmentVariables.remove, variable),
+    () =>
+      caller.mutation(api.environmentVariables.reveal, {
+        ...scope,
+        ...variable,
+      }),
+    () =>
+      caller.mutation(api.webhooks.addAgentWebhook, {
+        agentConfigId: ids.configId,
+        url: "https://example.invalid/hook",
+        secret: "fixture-secret",
+      }),
+    () =>
+      caller.mutation(api.webhooks.removeAgentWebhook, {
+        agentConfigId: ids.configId,
+        index: 0,
+      }),
+    () =>
+      caller.mutation(api.webhooks.setAgentWebhookEnabled, {
+        agentConfigId: ids.configId,
+        index: 0,
+        enabled: false,
+      }),
+    () =>
+      caller.mutation(api.workspace.files.create, {
+        ...project,
+        nodeId: "workspace-node",
+        path: "docs/new.md",
+        name: "new.md",
+        isFolder: false,
+      }),
+    () =>
+      caller.mutation(api.workspace.files.rename, { ...file, newName: "x" }),
+    () => caller.mutation(api.workspace.files.remove, file),
+    () =>
+      caller.mutation(api.workspace.files.removeFolder, {
+        ...project,
+        nodeId: "workspace-node",
+        folderPath: "docs",
+      }),
+  ];
+  for (const call of refused) await expect(call()).rejects.toThrow(NOT_ACTIVE);
+  expect(await t.run(async (ctx) => ctx.db.get(projectId))).toMatchObject({
+    name: "renamed",
+  });
+
+  // Reads stay open so the owner can still see what the account holds.
+  expect(await caller.query(api.agent.config.getById, config)).toMatchObject({
+    _id: ids.configId,
+    name: "planner",
+  });
+});
+
+test("a disabled account cannot change crons, connections or access, and can still delete its org", async (): Promise<void> => {
+  const { t, caller, orgId, accountId } = await setup();
+  const policyId = await caller.mutation(api.access.createPolicy, {
+    name: "fixture-policy",
+    mode: "enforce",
+  });
+  const permissionId = await caller.mutation(api.access.createPermission, {
+    name: "fixture:read",
+    resource: "fixture",
+  });
+  const roleId = await caller.mutation(api.access.createRole, {
+    name: "fixture-role",
+    policyIds: [],
+  });
+  const agentId = await t.run(async (ctx) =>
+    ctx.db.insert("agents", {
+      accountId: accountId,
+      name: "fixture-agent",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  );
+  await disable(t, accountId);
+
+  const refused: Array<() => Promise<unknown>> = [
+    () =>
+      caller.mutation(api.agent.cronsPublic.create, {
+        name: "nightly",
+        agentId: agentId,
+        input: "run",
+        scheduleExpression: "rate(1 day)",
+        status: "active",
+      }),
+    () =>
+      caller.mutation(api.agent.cronsPublic.update, {
+        cronId: "fixture-cron",
+        input: "run again",
+      }),
+    () =>
+      caller.mutation(api.agent.cronsPublic.remove, { cronId: "fixture-cron" }),
+    () =>
+      caller.mutation(api.account.connectionsPublic.disconnect, {
+        type: "chatgpt",
+      }),
+    () =>
+      caller.mutation(api.access.createPermission, {
+        name: "fixture:write",
+        resource: "fixture",
+      }),
+    () =>
+      caller.mutation(api.access.removePermission, {
+        permissionId: permissionId,
+      }),
+    () =>
+      caller.mutation(api.access.createPolicy, {
+        name: "another-policy",
+        mode: "audit",
+      }),
+    () =>
+      caller.mutation(api.access.updatePolicy, {
+        policyId: policyId,
+        mode: "audit",
+      }),
+    () =>
+      caller.mutation(api.access.addRule, {
+        policyId: policyId,
+        permission: "fixture:read",
+        scope: {},
+      }),
+    () =>
+      caller.mutation(api.access.removeRule, {
+        policyId: policyId,
+        ruleId: "fixture-rule",
+      }),
+    () => caller.mutation(api.access.removePolicy, { policyId: policyId }),
+    () =>
+      caller.mutation(api.access.createRole, {
+        name: "another-role",
+        policyIds: [],
+      }),
+    () =>
+      caller.mutation(api.access.updateRole, {
+        roleId: roleId,
+        name: "renamed",
+      }),
+    () => caller.mutation(api.access.removeRole, { roleId: roleId }),
+  ];
+  for (const call of refused) await expect(call()).rejects.toThrow(NOT_ACTIVE);
+
+  // Reads stay open so the dashboard can show the account and its state.
+  expect(await caller.query(api.org.orgs.getActiveAccount, {})).toMatchObject({
+    accountId: accountId,
+    status: "disabled",
+  });
+
+  // The owner can still delete the org, which takes the account with it.
+  vi.useFakeTimers();
+  await caller.mutation(api.org.orgs.remove, { orgId: orgId });
+  await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+  expect(await t.run(async (ctx) => ctx.db.get(accountId))).toBeNull();
+});
+
+/** A signed-in owner of an org whose account is active until `disable`. */
+async function setup(): Promise<{
+  t: T;
+  caller: ReturnType<T["withIdentity"]>;
+  orgId: Id<"orgs">;
+  accountId: Id<"accounts">;
+}> {
+  vi.stubEnv("SKILLS_BUCKET_NAME", BUCKET);
+  vi.stubEnv("SERVICE_AUTH_SECRET", "test-service-secret");
+  const t = convexTest(schema, modules);
+  workosTest.register(t);
+  cronsComponent.register(t);
+  await seedAuthUser(t);
+  const caller = t.withIdentity({ subject: AUTH_ID });
+  const orgId = await caller.mutation(api.org.orgs.create, {
+    name: "Disabled fixture",
+  });
+  const account = await t.mutation(internal.account.accounts.create, {
+    orgId: orgId,
+    username: "disabled-fixture",
+    secretHash: await sha256Hex(ACCOUNT_KEY),
+  });
+
+  return { t: t, caller: caller, orgId: orgId, accountId: account._id };
+}
+
+async function disable(t: T, accountId: Id<"accounts">): Promise<void> {
+  await t.run(async (ctx): Promise<void> => {
+    await ctx.db.patch(accountId, { status: "disabled" });
+  });
+}
+
+async function seedProject(t: T, orgId: Id<"orgs">): Promise<Id<"projects">> {
+  return await t.run(async (ctx) =>
+    ctx.db.insert("projects", {
+      authId: AUTH_ID,
+      orgId: orgId,
+      name: "fixture",
+      slug: "fixture",
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
+async function seedAuthUser(t: T): Promise<void> {
+  const now = new Date().toISOString();
+  await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
+    apiKey: "sk_test_fixture",
+    event: {
+      id: "evt_disabled_account_signup",
+      event: "user.created",
+      createdAt: now,
+      data: {
+        id: AUTH_ID,
+        email: "disabled-account@example.invalid",
+        emailVerified: true,
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+  });
+  await t.run(async (ctx): Promise<void> => {
+    await ctx.db.insert("users", {
+      authId: AUTH_ID,
+      email: "disabled-account@example.invalid",
+      name: "Disabled account owner",
+      plan: "free",
+    });
+  });
+}

@@ -13,9 +13,13 @@ import {
 import { readyStageDeployment } from "./agent/deployments";
 import { authKit, type AuthUser } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
+import { requireActiveOrgAccount } from "./model/activeAccount";
 import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
-import { getProjectForRole } from "./model/ownership/project";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "./model/ownership/project";
 import { getOrgMembership, orgRoleMeets } from "./model/ownership/org";
 import {
   getOrCreateActiveOrg,
@@ -164,6 +168,7 @@ export const create = mutation({
     if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) {
       throw new Error("Projects can only be created by an org admin.");
     }
+    await requireActiveOrgAccount(ctx, orgId);
     const projectId = await ctx.db.insert("projects", {
       authId: authUser.id,
       orgId: orgId,
@@ -258,7 +263,7 @@ export const remove = mutation({
   handler: async (ctx, { projectId }): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       projectId,
@@ -285,7 +290,7 @@ export const update = mutation({
   ): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       projectId,

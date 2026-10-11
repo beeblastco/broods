@@ -206,7 +206,7 @@ export const publishSkill = action({
  * @param ctx action context for the lookup query
  * @param bearerToken the caller's account key
  * @returns the matching account document
- * @throws when the token is not an account key or matches no account
+ * @throws when the token is not an account key or matches no active account
  */
 async function requireAccountForToken(
   ctx: ActionCtx,
@@ -221,7 +221,10 @@ async function requireAccountForToken(
       secretHash: await sha256Hex(bearerToken),
     },
   );
-  if (!account) throw new Error("Invalid Bearer token.");
+  // A disabled account's key is refused here as on the config HTTP surface.
+  if (!account || account.status !== "active") {
+    throw new Error("Invalid Bearer token.");
+  }
 
   return account;
 }

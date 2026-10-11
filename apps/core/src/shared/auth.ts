@@ -70,6 +70,8 @@ export interface StageTicketScope {
   stageId: string;
   /** The minter may write the stage's sandboxes, so may claim a machine. */
   sandboxWrite: boolean;
+  /** Unix ms the ticket dies at; a socket it opened closes then too. */
+  expiresAt: number;
 }
 
 /**
@@ -273,6 +275,7 @@ async function resolveStageSessionAuth(
       projectId: ticket.projectId,
       stageId: ticket.stageId,
       sandboxWrite: ticket.sandboxWrite === true,
+      expiresAt: ticket.expiresAt,
     },
   };
 }

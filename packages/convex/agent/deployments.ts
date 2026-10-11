@@ -37,8 +37,8 @@ import {
 } from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { userByAuthId } from "../model/ownership/org";
-import { getOwnedStage } from "../model/ownership/stage";
-import { getProjectForRole } from "../model/ownership/project";
+import { getOwnedStage, getStageForWrite } from "../model/ownership/stage";
+import { getProjectForWrite } from "../model/ownership/project";
 import {
   sealStageSessionTicket,
   STAGE_SESSION_TICKET_TTL_MS,
@@ -114,7 +114,7 @@ export const ensureForStage = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    const project = await getProjectForWrite(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
     const member = await userByAuthId(ctx, authUser.id);
     if (!member) throw new Error("User row not found");
@@ -260,7 +260,7 @@ export const mintStageSession = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    const stage = await getStageForWrite(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
     const session = await mintStageSessionTicket(ctx, projectId, stageId);
 
@@ -386,7 +386,7 @@ export const rotate = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    const project = await getProjectForWrite(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
     const member = await userByAuthId(ctx, authUser.id);
     if (!member) throw new Error("User row not found");
