@@ -772,6 +772,108 @@ describe("streamIsolatePayload cross-process abort", () => {
       shutdownIsolatePool();
     }
   });
+
+  it("fails calls whose runner never starts after three spawns, then recovers once it does", async () => {
+    // A missing addon or broken runner exits before `ready`; the pool used to
+    // respawn it forever and the hook waiting on it never settled.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-start-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "broken-runner.mjs");
+    await writeFile(
+      stubPath,
+      `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(marker)}, "x"); process.exit(1);`,
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_WORKER_POOL_SIZE = "1";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    const call = async (): Promise<unknown[]> => {
+      const outputs: unknown[] = [];
+      for await (const output of streamIsolatePayload("acct_start", {
+        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+        expectedSha256: sha256("export default {};"),
+        toolName: "stub",
+        input: {},
+        config: {},
+      })) {
+        outputs.push(output);
+      }
+
+      return outputs;
+    };
+    try {
+      const started = performance.now();
+      // The second call queues behind the first on the one-worker pool, so it
+      // also proves a queued call is not left waiting on the failed slot.
+      const failures = await Promise.all(
+        [call(), call()].map((pending) =>
+          pending.then(String, (error: Error) => error.message),
+        ),
+      );
+
+      expect(failures).toEqual([
+        "isolate worker failed to start: isolate worker exited (1)",
+        "isolate worker failed to start: isolate worker exited (1)",
+      ]);
+      expect(await readFile(marker, "utf8")).toBe("x".repeat(6));
+      expect(performance.now() - started).toBeLessThan(3_000);
+
+      await writeFile(
+        stubPath,
+        [
+          "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (line) => process.stdout.write(JSON.stringify({ t: 'final', callId: JSON.parse(line).callId, result: { ok: true } }) + '\\n'));",
+        ].join("\n"),
+        "utf8",
+      );
+      expect(await call()).toEqual([{ ok: true }]);
+    } finally {
+      delete process.env.ISOLATE_WORKER_POOL_SIZE;
+      shutdownIsolatePool();
+    }
+  }, 10_000);
+
+  it("fails a call whose runner never says ready within the run timeout", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-hang-"));
+    created.push(dir);
+    const stubPath = join(dir, "silent-runner.mjs");
+    await writeFile(stubPath, "setInterval(() => {}, 1000);", "utf8");
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+    process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS = "1";
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      const failure = await (async (): Promise<string> => {
+        for await (const output of streamIsolatePayload("acct_hang", {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          return String(output);
+        }
+
+        return "no output";
+      })().catch((error: Error) => error.message);
+
+      expect(failure).toBe(
+        "isolate worker failed to start: isolate worker did not become ready",
+      );
+    } finally {
+      delete process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS;
+      shutdownIsolatePool();
+    }
+  }, 10_000);
 });
 
 // A fixed timer here raced the runner's startup: abort before the stub installs
