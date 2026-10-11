@@ -1,37 +1,74 @@
-import type { CreateAgentResult } from "../../../packages/broods/src/account.ts";
+import {
+  BroodsClient,
+  type AgentReference,
+} from "../../../packages/broods/src/client.ts";
+import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
+import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import { BroodsWebSocketClient } from "../../../packages/broods/src/websocket.ts";
-import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
+import { assertStep, type VerifyContext } from "../harness.ts";
 
 const SETTLE_MS = 1_500;
 
 /**
- * BroodsWebSocketClient.attach through the gateway: a plain attach replays a
- * finished run, while an attach aborted on its first frame, or before it
- * opens, delivers nothing more and reports one abort. Runs without a model
- * key, since a run that fails at the provider still has frames to replay.
+ * BroodsWebSocketClient.attach through the gateway on a stage's runtime key:
+ * a plain attach replays a finished run, while an attach aborted on its first
+ * frame, or before it opens, delivers nothing more and reports one abort.
+ * Runs without a model key: a run that fails at the provider still replays.
  */
 export async function websocketAttachAbort(
   context: VerifyContext,
 ): Promise<void> {
-  const key = `attach-${context.runId}`;
-  const { agentId } = await context.measure(
-    "create agent",
-    (): Promise<CreateAgentResult> =>
-      context.account.createAgent({
-        name: key,
-        config: { ...context.model, instructions: "Reply with OK." },
-      }),
+  const project = `attach-${context.runId}`;
+  const deployed = await context.measure("deploy stage", () =>
+    new BroodsSyncClient({
+      baseUrl: context.edgeUrl,
+      token: context.accountSecret,
+    }).putManifest(
+      {
+        version: 1,
+        project: project,
+        stage: "development",
+        resources: [
+          {
+            kind: "agent",
+            name: "chat",
+            config: {
+              model: context.model.model,
+              agent: { system: "Reply with OK." },
+            },
+          },
+        ],
+      },
+      true,
+    ),
   );
-  const { runId } = await runToTerminal(context, {
-    agentId: agentId,
-    conversationKey: key,
-    eventId: key,
-    text: "Say OK.",
-  });
-  assertStep("the run to attach to has an id", runId !== undefined, key);
+  const { deployment } = deployed;
+  const agentId = deployed.ids.agents.chat;
+  assertStep(
+    "the deploy returned a runtime key and the agent id",
+    deployment != null && agentId !== undefined,
+    JSON.stringify(deployed.ids),
+  );
+  const agent: AgentReference = {
+    kind: "agent",
+    name: "chat",
+    id: agentId,
+    project: project,
+    stage: "development",
+    endpointId: deployment.endpointId,
+    projectSlug: deployment.projectSlug,
+    stageSlug: deployment.stageSlug,
+  };
+  const accepted = await new BroodsClient({
+    apiKey: deployment.apiKey,
+    baseUrl: context.edgeUrl,
+  }).runAsync(agent, { conversationKey: project, input: "Say OK." });
+  await context.measure("run to terminal", (): Promise<AsyncStatus> =>
+    accepted.wait({ intervalMs: 200, timeoutMs: 120_000 }),
+  );
   const client = new BroodsWebSocketClient({
     baseUrl: context.edgeUrl,
-    apiKey: context.accountSecret,
+    apiKey: deployment.apiKey,
   });
   const attach = async (
     signal: AbortSignal | undefined,
@@ -41,12 +78,12 @@ export async function websocketAttachAbort(
     const errors: string[] = [];
     const subscription = client.attach(
       {
-        endpointId: agentId,
+        agent: agent,
         agentId: agentId,
-        requestId: `${key}-${crypto.randomUUID()}`,
-        runId: runId,
-        eventId: key,
-        conversationKey: key,
+        requestId: crypto.randomUUID(),
+        runId: accepted.runId,
+        eventId: accepted.eventId,
+        conversationKey: accepted.conversationKey,
         signal: signal,
       },
       {
