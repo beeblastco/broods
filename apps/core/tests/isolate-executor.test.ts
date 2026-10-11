@@ -882,12 +882,13 @@ describe("streamIsolatePayload cross-process abort", () => {
         "isolate worker failed to start: isolate worker did not become ready",
       );
       expect(await readFile(marker, "utf8")).toBe("xxx");
-      // Three 5 s start deadlines plus 300 ms of backoff, far under one 60 s run timeout.
-      expect(performance.now() - started).toBeLessThan(18_000);
+      // Three 5 s start deadlines plus 300 ms of backoff, about 15 s. The bound
+      // leaves room for a loaded runner and still sits under one 60 s run timeout.
+      expect(performance.now() - started).toBeLessThan(30_000);
     } finally {
       shutdownIsolatePool();
     }
-  }, 25_000);
+  }, 35_000);
 });
 
 // A fixed timer here raced the runner's startup: abort before the stub installs

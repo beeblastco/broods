@@ -181,7 +181,7 @@ Inline [code hooks](../guides/hooks.md) run in a V8 `isolated-vm` isolate. Bun c
 - Pool of `ISOLATE_WORKER_POOL_SIZE` (4) warm workers, reaped after `ISOLATE_WORKER_IDLE_SECONDS` (120). `ISOLATE_POOL=0` spawns per call, at most `ISOLATE_RUNNER_CONCURRENCY` (8).
 - 128 MB and 30 s per isolate, 1 MiB output. A runner gets only `PATH` and the isolate settings from core's env.
 - No filesystem, no imports. Network only through `ctx.fetch` (`runner/pinned-fetch.mjs`): resolves, refuses private and metadata ranges, connects to the validated address, caps bodies at 5 MB and requests at 30 s.
-- A runner that never says ready (missing addon, broken runner, or silent for 5 s) is retried 3 times with backoff, then that hook is skipped. The next fire tries again. The 30 s run limit starts once the runner is ready.
+- A pooled runner that never says ready (missing addon, broken runner, or silent for 5 s) is spawned 3 times in all, 100 ms then 200 ms apart, then that hook is skipped. The next fire tries again. The 30 s run limit starts once the runner is ready. A one-shot runner (`ISOLATE_POOL=0`) has no ready step: its 30 s starts at spawn.
 - A bundle is read from S3 once per account, storage key and sha256 and reused across fire points, up to 8 MiB of encoded source, least recently used out first. Only bytes matching the sha256 are kept, and the runner checks it again.
 - A hook that throws or times out is skipped, so a hook deny is best effort. Anything that must hold belongs in an enforced policy.
 
