@@ -153,6 +153,18 @@ describe("redact", () => {
       `ticket [redacted] role brole_${BODY}`,
     );
   });
+
+  it("redacts third-party credentials and leaves ids that contain a prefix", () => {
+    // Fake tokens; none is a real credential.
+    const id = `task-${"0f1e2d3c".repeat(4)}`;
+    expect(
+      redact(
+        `export GH_TOKEN=ghp_${"a1B2".repeat(9)} key sk-${"a1B2".repeat(8)} slack xoxc-1-${"a1B2".repeat(8)} google ya29.${"a1B2".repeat(6)} url %3Dghp_${"a1B2".repeat(9)} glued credential-ghp_${"a1B2".repeat(9)} token_sk-${"a1B2".repeat(8)} id ${id}`,
+      ),
+    ).toBe(
+      `export GH_TOKEN=[redacted] key [redacted] slack [redacted] google [redacted] url %3D[redacted] glued credential-[redacted] token_[redacted] id ${id}`,
+    );
+  });
 });
 
 describe("otlpLogsRequest", () => {
