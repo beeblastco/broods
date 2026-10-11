@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import {
   harnessReservationKey,
   openAiSdkHarnessSession,
@@ -214,14 +214,10 @@ describe("Session.saveHarnessSession", () => {
   async function saved(options: {
     ownerGeneration?: number;
     persist?: boolean;
-  }): Promise<[string, Record<string, unknown>][]> {
+  }): Promise<unknown[][]> {
     const { Session } = await import("../src/harness/session.ts");
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const originalMutate = runtime.mutate.bind(runtime);
-    const mutate = mock(
-      async (_name: string, _args: Record<string, unknown>) => null,
-    );
-    runtime.mutate = mutate as typeof runtime.mutate;
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(null);
     try {
       await new Session({
         eventId: "event",
@@ -231,11 +227,10 @@ describe("Session.saveHarnessSession", () => {
         agentConfig: {},
         ...options,
       }).saveHarnessSession(state);
+      return mutate.mock.calls;
     } finally {
-      runtime.mutate = originalMutate;
+      mutate.mockRestore();
     }
-
-    return mutate.mock.calls;
   }
 
   it("writes the checkpoint under the run's owner fence", async () => {
@@ -253,7 +248,7 @@ describe("Session.saveHarnessSession", () => {
   });
 
   it("refuses a persisted checkpoint with no owner instead of writing it unfenced", async () => {
-    await expect(saved({})).rejects.toThrow(
+    expect(await saved({}).catch(String)).toContain(
       "Harness checkpoint needs a conversation owner",
     );
   });
