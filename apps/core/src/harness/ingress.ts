@@ -211,6 +211,9 @@ export interface IngressCandidate {
   // Set on a turn a channel delivered: pins this conversation's channel target
   // so a later cron or inter-session message can reach it.
   channelTarget?: ChannelTargetRefs;
+  // A late subagent result's row: admitted only while the parent has not seen
+  // that result, and marks it seen in the same transaction.
+  resultEventId?: string;
 }
 
 export interface AppliedIngress {

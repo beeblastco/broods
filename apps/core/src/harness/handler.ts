@@ -170,7 +170,7 @@ import {
   type PendingQuestionSummary,
   type QuestionAnswerResult,
 } from "./questions.ts";
-import { SubagentCoordinator } from "./subagents.ts";
+import { SubagentCoordinator, type SubagentParent } from "./subagents.ts";
 
 // A queue at capacity drains on the order of seconds, not minutes.
 const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
@@ -741,12 +741,15 @@ async function continueAfterAsyncToolSettlement(
 /**
  * Resumes the parent conversation with a subagent result that came in after
  * the parent run stopped waiting for it. The child's task id keeps it to one
- * continuation, which queues behind whatever turn holds the conversation.
+ * continuation, which queues behind whatever turn holds the conversation, and
+ * none at all once the parent read `resultEventId` itself. The coordinator
+ * calls it, and so does the recovery sweep for a result a restart lost.
  */
-async function resumeAfterSubagentResult(
-  parent: Session,
+export async function resumeAfterSubagentResult(
+  parent: SubagentParent,
   taskId: string,
   message: UserModelMessage,
+  resultEventId: string,
 ): Promise<void> {
   // The task id's own nonce, under the root event, so a chain of late results
   // does not nest every earlier id into the next.
@@ -763,6 +766,7 @@ async function resumeAfterSubagentResult(
     delivery: parent.delivery,
     message: message,
     requestedMode: "followup",
+    resultEventId: resultEventId,
   });
 }
 
@@ -781,6 +785,7 @@ async function resumeConversation(options: {
   asyncResultEventId?: string;
   message: UserModelMessage;
   requestedMode: IngressMode;
+  resultEventId?: string;
 }): Promise<ContinuationOutcome> {
   const agent = await getStorage().agents.getById(
     options.accountId,
@@ -839,6 +844,7 @@ async function resumeConversation(options: {
   const { owned: ownedContinuation } = await admitInternalContinuation(
     continuationEvent,
     continuationDelivery(onSocket(continuationEvent, options.delivery)),
+    options.resultEventId,
   );
   if (!ownedContinuation) {
     return {
@@ -2729,8 +2735,10 @@ async function dispatchSessionMessage(
 async function admitInternalContinuation(
   event: DirectInboundEvent,
   delivery: IngressDelivery,
+  resultEventId?: string,
 ): Promise<{ admission: IngressAdmission; owned: DirectInboundEvent | null }> {
   const admission = await acceptIngress({
+    ...(resultEventId ? { resultEventId: resultEventId } : {}),
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,

@@ -4,6 +4,11 @@ import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { NatsPublisher } from "../src/shared/nats.ts";
+import {
+  createSubagentTaskId,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
+} from "../src/shared/runtime-keys.ts";
 import { setStorageForTests } from "../src/shared/storage.ts";
 
 const originalFetch = globalThis.fetch;
@@ -947,6 +952,7 @@ describe("SubagentCoordinator", () => {
         _parent: unknown,
         _taskId: string,
         _message: UserModelMessage,
+        _resultEventId: string,
       ): Promise<void> => {},
     );
     const session = parentSession();
@@ -967,9 +973,12 @@ describe("SubagentCoordinator", () => {
       await coordinator["completeTask"]({ ...late, status: "completed" });
 
       expect(resumeParent).toHaveBeenCalledTimes(1);
-      const [parent, taskId, message] = resumeParent.mock.calls[0]!;
+      const [parent, taskId, message, resultEventId] =
+        resumeParent.mock.calls[0]!;
       expect(parent).toBe(session);
       expect(taskId).toBe(late.taskId);
+      // Convex admits it only while the parent has not read this row.
+      expect(resultEventId).toBe(late.eventId);
       expect(messageText(message)).toContain("status: completed");
       expect(messageText(message)).toContain("the late answer");
       // Nothing queues for a parent pass that will never drain it.
@@ -979,32 +988,110 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("does not resume the parent with a late result a later turn already read", async () => {
-    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
+  it("does not tell a late result a later turn read before its step saved", async () => {
+    const parentEventId = "acct:account_1:agent:agent_parent:api:event_parent";
+    const parentKey = "acct:account_1:agent:agent_parent:api:chat";
+    const taskId = createSubagentTaskId(parentEventId);
+    const childEventId = scopedDirectEventId(
+      "account_1",
+      "agent_child",
+      taskId,
+    );
+    const child = {
+      taskId: taskId,
+      eventId: childEventId,
+      agentId: "agent_child",
+      conversationKey: "subagent-child",
+    };
+    // The result rows the parent has seen, as Convex keeps them: a late resume
+    // is admitted only for a row not in here (runtimeIngress.accept).
+    const seen = new Set<string>();
+    const query = spyOn(runtime, "query").mockImplementation(
+      async <T>(name: string): Promise<T> =>
+        (name === "getIngressStatusByEventId"
+          ? { conversationKey: parentKey }
+          : {
+              accountId: "account_1",
+              eventId: childEventId,
+              conversationKey: scopedDirectConversationKey(
+                "account_1",
+                "agent_child",
+                "subagent-child",
+              ),
+              status: "completed",
+              response: "the late answer",
+              createdAt: "2026-10-11T00:00:00.000Z",
+              updatedAt: "2026-10-11T00:00:00.000Z",
+              expiresAt: Date.now() + 60_000,
+            }) as T,
+    );
+    const mutate = spyOn(runtime, "mutate").mockImplementation(
+      async <T>(name: string, args: Record<string, unknown>): Promise<T> => {
+        if (name === "observeAsyncAgentResult" && args.observed === true) {
+          seen.add(String(args.eventId));
+        }
+
+        return true as T;
+      },
+    );
+    const told: string[] = [];
+    const resumeParent = async (
+      _parent: unknown,
+      resumedTaskId: string,
+      _message: UserModelMessage,
+      resultEventId?: string,
+    ): Promise<void> => {
+      if (resultEventId === undefined || !seen.has(resultEventId)) {
+        told.push(resumedTaskId);
+      }
+    };
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const resumeParent = mock(async (): Promise<void> => {});
-    const detaching = new SubagentCoordinator(parentSession(), {}, Date.now(), {
-      lifecycle: { emit: async (): Promise<void> => {} },
-      resumeParent: resumeParent,
-    });
+    const { default: getStatus } =
+      await import("../src/harness/tools/get-subagent-status.tool.ts");
+    const detaching = new SubagentCoordinator(
+      parentSession({ conversationKey: parentKey }),
+      {},
+      Date.now(),
+      {
+        lifecycle: { emit: async (): Promise<void> => {} },
+        resumeParent: resumeParent,
+      },
+    );
     const laterTurn = new SubagentCoordinator(
-      parentSession(),
+      parentSession({
+        eventId: "acct:account_1:agent:agent_parent:api:event_later",
+        conversationKey: parentKey,
+      }),
       {},
       Date.now() + 60_000,
     );
-    const late = lateChild();
-    detaching["pending"].set(late.taskId, new Promise((): void => {}));
-    detaching["pendingMetadata"].set(late.taskId, late);
+    detaching["pending"].set(taskId, new Promise((): void => {}));
+    detaching["pendingMetadata"].set(taskId, child);
 
     try {
       await detaching.drainCompletionsAndDetachToParent();
-      // The later turn's get_subagent_status read, saved with its step.
-      laterTurn.markDelivered(late.eventId);
-      laterTurn.confirmDelivered();
-      await detaching["completeTask"]({ ...late, status: "completed" });
+      // A later turn reads the result; its step is not saved yet.
+      const status = getStatus({
+        accountId: "account_1",
+        eventId: "acct:account_1:agent:agent_parent:api:event_later",
+        conversationKey: parentKey,
+        watch: laterTurn,
+      }).get_subagent_status;
+      await (
+        status as {
+          execute: (input: unknown, options: unknown) => Promise<unknown>;
+        }
+      ).execute({ taskId: taskId, agentId: "agent_child" }, { messages: [] });
+      // The child finishes in that gap.
+      await detaching["completeTask"]({
+        ...child,
+        status: "completed",
+        response: "the late answer",
+      });
 
-      expect(resumeParent).not.toHaveBeenCalled();
+      expect(told).toEqual([]);
     } finally {
+      query.mockRestore();
       mutate.mockRestore();
     }
   });

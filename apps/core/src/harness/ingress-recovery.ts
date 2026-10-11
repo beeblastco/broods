@@ -2,15 +2,21 @@
  * Starts queued work that no live owner will drain. Admission recovers a
  * conversation when its next message arrives; this covers the ones nobody
  * writes to again, such as the queue behind a run a previous pod handed back
- * at shutdown or died holding. Runs on boot and on a timer; Convex promotes
- * each queue atomically, so an overlapping pod never runs one twice.
+ * at shutdown or died holding, and a late subagent result whose run died
+ * before it resumed the parent. Runs on boot and on a timer; Convex promotes
+ * each queue and admits each late result atomically, so an overlapping pod
+ * never runs one twice.
  */
 
 import { logError, logInfo } from "../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../shared/runtime-keys.ts";
-import { dispatchAppliedIngress } from "./handler.ts";
+import {
+  dispatchAppliedIngress,
+  resumeAfterSubagentResult,
+} from "./handler.ts";
 import { recoverQueuedIngress, type RecoveredIngress } from "./ingress.ts";
 import type { IngressDispatchScope } from "./integrations.ts";
+import { resumeLostSubagentResults } from "./subagents.ts";
 
 // A lease handed back at shutdown is picked up within this, or on boot.
 const RECOVERY_INTERVAL_MS = 30_000;
@@ -72,7 +78,8 @@ function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
  * One pass: promote orphaned queues and dispatch what they return, a page of
  * queued conversations at a time, from where the last pass stopped. Each entry
  * is its own conversation, so a page dispatches together. A dispatch that
- * fails settles its envelope and drains on, like any other.
+ * fails settles its envelope and drains on, like any other. Then resume the
+ * parents of late subagent results no live run delivered.
  */
 async function sweepQueuedIngress(): Promise<void> {
   if (sweeping) return;
@@ -103,6 +110,7 @@ async function sweepQueuedIngress(): Promise<void> {
       resumeAfter = continueAfter ?? undefined;
       if (continueAfter === null) break;
     }
+    await resumeLostSubagentResults(resumeAfterSubagentResult);
   } catch (err) {
     logError("Queued ingress recovery failed", {
       error: err instanceof Error ? err.message : String(err),

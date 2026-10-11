@@ -6,6 +6,7 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
 import {
   getAsyncAgentResult,
+  observeAsyncAgentResult,
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
 import {
@@ -60,9 +61,11 @@ export default function getSubagentStatusTool(
           // Ownership is settled; only the row can have changed.
           record = (await getAsyncAgentResult(record.eventId)) ?? record;
         }
-        // The model now holds the outcome, so it is not injected a second time.
+        // The model now holds the outcome, so it is not injected a second time:
+        // by this turn once the step saves, by a late resume from now on.
         if (record.status === "completed" || record.status === "failed") {
           context.watch?.markDelivered(record.eventId);
+          await observeAsyncAgentResult(record.eventId, true);
         }
 
         return {

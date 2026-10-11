@@ -16,6 +16,7 @@ import {
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
   sandboxProviderValidator,
+  subagentTaskValidator,
 } from "./schema";
 import {
   accountIdFromKey,
@@ -366,7 +367,11 @@ export const clearConversation = internalMutation({
  * @returns whether a new result row was created
  */
 export const createAsyncAgentResult = internalMutation({
-  args: { eventId: v.string(), conversationKey: v.string() },
+  args: {
+    eventId: v.string(),
+    conversationKey: v.string(),
+    subagent: v.optional(subagentTaskValidator),
+  },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
     const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
@@ -403,6 +408,55 @@ export const getAsyncAgentResult = internalQuery({
       .query("runtimeAsyncAgentResults")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
       .unique(),
+});
+
+/**
+ * Subagent results the parent stopped waiting for and has not seen, written in
+ * the window, oldest first. Core's recovery sweep resumes their parents.
+ * @returns up to 100 rows, still running ones included
+ */
+export const listUnobservedAsyncAgentResults = internalQuery({
+  args: { updatedAfter: v.string(), updatedBefore: v.string() },
+  returns: v.array(asyncAgentDoc),
+  handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults">[]> =>
+    await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_observed_and_updatedAt", (q) =>
+        q
+          .eq("observed", false)
+          .gt("updatedAt", args.updatedAfter)
+          .lt("updatedAt", args.updatedBefore),
+      )
+      .take(100),
+});
+
+/**
+ * Records whether a subagent's parent has its result: false when the parent
+ * stops waiting on it, true when the parent reads it or is never told. A row
+ * the parent has stays that way, and a running row is never marked seen. A
+ * late result's admission sets it too, inside `runtimeIngress.accept`.
+ * @returns null after the row is marked or skipped
+ */
+export const observeAsyncAgentResult = internalMutation({
+  args: { eventId: v.string(), observed: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
+      .unique();
+    if (
+      !row ||
+      row.observed === true ||
+      (args.observed && row.status === "processing")
+    ) {
+      return null;
+    }
+    await requireActiveAccount(ctx, row.accountId);
+    await ctx.db.patch(row._id, { observed: args.observed });
+
+    return null;
+  },
 });
 
 /**

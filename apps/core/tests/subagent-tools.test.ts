@@ -126,6 +126,7 @@ it("waits for a running subagent before answering its status", async () => {
       status: "completed",
       response: "done",
     } as never);
+  const mutate = spyOn(runtime, "mutate").mockResolvedValue(null);
   const waits: Array<{ taskId: string; timeoutMs: number }> = [];
   const delivered: string[] = [];
   const { default: getStatus } =
@@ -149,6 +150,10 @@ it("waits for a running subagent before answering its status", async () => {
   ).resolves.toEqual({ status: "completed", response: "done" });
   expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
   expect(delivered).toEqual([childEventId]);
+  // Seen in Convex at once, so a late resume never tells it again.
+  expect(mutate.mock.calls).toEqual([
+    ["observeAsyncAgentResult", { eventId: childEventId, observed: true }],
+  ]);
 });
 
 it("does not wait on a task paired with the wrong agent", async () => {
@@ -199,6 +204,7 @@ it("preserves a completed subagent response as structured output", async () => {
     updatedAt: "2026-08-13T00:00:00.000Z",
     expiresAt: Date.now() + 1_000,
   })) as never;
+  runtime.mutate = mock(async () => null) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   expect(
@@ -415,6 +421,7 @@ it("reads a task an earlier turn of this conversation started", async () => {
       updatedAt: "2026-08-13T00:00:00.000Z",
       expiresAt: Date.now() + 1_000,
     } as never);
+  runtime.mutate = mock(async () => null) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   expect(

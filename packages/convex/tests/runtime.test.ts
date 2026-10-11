@@ -322,6 +322,56 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("lists late subagent results no parent has seen, in their window", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const eventId of ["running", "unseen", "seen", "in-turn"]) {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: eventId,
+        conversationKey: conversationKey,
+      });
+    }
+    for (const eventId of ["running", "unseen", "seen"]) {
+      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+        eventId: eventId,
+        observed: false,
+      });
+    }
+    for (const eventId of ["unseen", "seen", "in-turn"]) {
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: eventId,
+        status: "completed",
+        response: "answer",
+      });
+    }
+    // Only a finished row can be seen.
+    for (const eventId of ["running", "seen"]) {
+      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+        eventId: eventId,
+        observed: true,
+      });
+    }
+    const listed = await t.query(
+      internal.runtime.listUnobservedAsyncAgentResults,
+      {
+        updatedAfter: new Date(Date.now() - 60_000).toISOString(),
+        updatedBefore: new Date(Date.now() + 60_000).toISOString(),
+      },
+    );
+
+    expect(listed.map((row) => row.eventId).sort()).toEqual([
+      "running",
+      "unseen",
+    ]);
+    expect(
+      await t.query(internal.runtime.listUnobservedAsyncAgentResults, {
+        updatedAfter: new Date(Date.now() - 60_000).toISOString(),
+        updatedBefore: new Date(Date.now() - 30_000).toISOString(),
+      }),
+    ).toEqual([]);
+  });
+
   test("settles async tools once and keeps the callback token hashed", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

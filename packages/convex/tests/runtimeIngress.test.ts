@@ -1249,6 +1249,80 @@ describe("runtime ingress", () => {
     ).toMatchObject({ status: "completed", response: "answer" });
   });
 
+  test("admits a late subagent result only while its parent has not seen it", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const childKey = `acct:${accountId}:agent:child:api:subagent-child`;
+    for (const eventId of ["read-first", "resumed-first"]) {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: eventId,
+        conversationKey: childKey,
+      });
+      // The parent stops waiting, then the child finishes.
+      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+        eventId: eventId,
+        observed: false,
+      });
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: eventId,
+        status: "completed",
+        response: "answer",
+      });
+    }
+    const resume = (eventId: string, resultEventId: string) => ({
+      ...admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: eventId,
+        mode: "followup",
+      }),
+      resultEventId: resultEventId,
+    });
+
+    // get_subagent_status read it first: the resume admits nothing.
+    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      eventId: "read-first",
+      observed: true,
+    });
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        resume("resume-read", "read-first"),
+      ),
+    ).toMatchObject({ outcome: "duplicate" });
+    expect(
+      await t.query(internal.runtimeIngress.getStatusByEventId, {
+        accountId: accountId,
+        agentId: "test-agent",
+        eventId: "resume-read",
+      }),
+    ).toBeNull();
+
+    // The resume went first: admitted once, and nothing after it is.
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        resume("resume-first", "resumed-first"),
+      ),
+    ).toMatchObject({ outcome: "owner" });
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        resume("resume-again", "resumed-first"),
+      ),
+    ).toMatchObject({ outcome: "duplicate" });
+    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      eventId: "resumed-first",
+      observed: false,
+    });
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: "resumed-first",
+      }),
+    ).toMatchObject({ observed: true });
+  });
+
   test("settles the envelope when a polling row is missing, and writes rows only on the settle that finished it", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
