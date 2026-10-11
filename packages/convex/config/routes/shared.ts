@@ -439,10 +439,16 @@ export async function writeAudit(
  * directly writes that header itself, so the source is hashed into a fixed set
  * of buckets: the table never holds more than `AUTH_FAILURE_BUCKETS` rows, and
  * a spoofed address only lands in a bucket another address already counts in.
+ * The hash is an HMAC under `SERVICE_AUTH_SECRET`, so that caller cannot work
+ * out which addresses share a victim's bucket and fill it.
  * @param req incoming HTTP request
  * @returns limiter key
  */
 export async function authFailureKey(req: Request): Promise<string> {
+  const secret = process.env.SERVICE_AUTH_SECRET;
+  if (!secret) {
+    throw new Error("SERVICE_AUTH_SECRET is required to count failed logins");
+  }
   const forwarded = req.headers.get("x-forwarded-for") ?? "";
   const ip =
     forwarded
@@ -450,9 +456,22 @@ export async function authFailureKey(req: Request): Promise<string> {
       .map((entry) => entry.trim())
       .filter(Boolean)
       .pop() ?? "unknown";
-  const digest = await sha256Hex(sourcePrefix(ip));
+  const encoder = new TextEncoder();
+  const algorithm = { name: "HMAC", hash: "SHA-256" };
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    algorithm,
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign(
+    algorithm,
+    key,
+    encoder.encode(sourcePrefix(ip)),
+  );
 
-  return `source:${parseInt(digest.slice(0, 8), 16) % AUTH_FAILURE_BUCKETS}`;
+  return `source:${new DataView(mac).getUint32(0) % AUTH_FAILURE_BUCKETS}`;
 }
 
 /**
@@ -467,7 +486,11 @@ function sourcePrefix(ip: string): string {
   const headGroups = head ? head.split(":") : [];
   const tailGroups = tail ? tail.split(":") : [];
   const zeros = Math.max(0, 8 - headGroups.length - tailGroups.length);
-  const groups = [...headGroups, ...Array(zeros).fill("0"), ...tailGroups];
+  const groups = [
+    ...headGroups,
+    ...Array<string>(zeros).fill("0"),
+    ...tailGroups,
+  ];
 
   return `${groups
     .slice(0, 4)

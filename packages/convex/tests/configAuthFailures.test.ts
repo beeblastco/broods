@@ -20,6 +20,7 @@ type T = TestConvex<typeof schema>;
 
 beforeEach((): void => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  vi.stubEnv("SERVICE_AUTH_SECRET", "test-service-secret");
 });
 
 afterEach((): void => {
@@ -89,6 +90,25 @@ test("a source is the hop the edge appended, and an IPv6 /64 is one source", asy
     await key("2001:DB8:1:2:ffff:ffff:ffff:ffff"),
   );
   expect(await key("2001:db8:1:2::1")).not.toBe(await key("2001:db8:1:3::1"));
+});
+
+test("a source's bucket depends on the server secret", async (): Promise<void> => {
+  const sources = Array.from({ length: 16 }, (_, i) => `192.0.2.${i}`);
+  const buckets = (): Promise<string[]> =>
+    Promise.all(
+      sources.map((source) =>
+        authFailureKey(
+          new Request("https://config.test/v1/agents", {
+            headers: { "x-forwarded-for": source },
+          }),
+        ),
+      ),
+    );
+
+  const first = await buckets();
+  vi.stubEnv("SERVICE_AUTH_SECRET", "another-service-secret");
+
+  expect(await buckets()).not.toEqual(first);
 });
 
 test("failed-auth rows stay bounded however many sources fail", async (): Promise<void> => {

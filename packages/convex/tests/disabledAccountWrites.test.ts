@@ -292,6 +292,7 @@ async function setup(): Promise<{
   accountId: Id<"accounts">;
 }> {
   vi.stubEnv("SKILLS_BUCKET_NAME", BUCKET);
+  vi.stubEnv("SERVICE_AUTH_SECRET", "test-service-secret");
   const t = convexTest(schema, modules);
   workosTest.register(t);
   cronsComponent.register(t);
