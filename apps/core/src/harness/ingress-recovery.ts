@@ -111,18 +111,21 @@ async function sweepQueuedIngress(): Promise<void> {
       resumeAfter = continueAfter ?? undefined;
       if (continueAfter === null) break;
     }
-    await resumeLostSubagentResults(
-      loadReentryTarget,
-      resumeAfterSubagentResult,
-    );
   } catch (err) {
     logError("Queued ingress recovery failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-  } finally {
-    sweeping = false;
-    if (count > 0) {
-      logInfo("Recovered queued ingress", { count: count });
-    }
   }
+  if (count > 0) {
+    logInfo("Recovered queued ingress", { count: count });
+  }
+  await resumeLostSubagentResults(
+    loadReentryTarget,
+    resumeAfterSubagentResult,
+  ).catch((err: unknown): void => {
+    logError("Lost subagent result recovery failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  sweeping = false;
 }

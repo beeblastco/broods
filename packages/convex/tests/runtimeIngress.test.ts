@@ -1270,7 +1270,10 @@ describe("runtime ingress", () => {
         response: "answer",
       });
     }
-    const resume = (eventId: string, resultEventId: string) => ({
+    const resume = (
+      eventId: string,
+      resultEventId: string,
+    ): ReturnType<typeof admission> & { resultEventId: string } => ({
       ...admission({
         accountId: accountId,
         conversationKey: conversationKey,
@@ -1321,6 +1324,49 @@ describe("runtime ingress", () => {
         eventId: "resumed-first",
       }),
     ).toMatchObject({ observed: true });
+  });
+
+  test("leaves another account's late result row alone", async (): Promise<void> => {
+    const t = runtimeTest();
+    const ownerId = await createActiveAccount(t);
+    const otherId = await createActiveAccount(t);
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "owner-result",
+      conversationKey: `acct:${ownerId}:agent:child:api:subagent-child`,
+    });
+    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      eventId: "owner-result",
+      observed: false,
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "owner-result",
+      status: "completed",
+      response: "answer",
+    });
+    const accept = async (eventId: string): Promise<{ outcome: string }> =>
+      await t.mutation(internal.runtimeIngress.accept, {
+        ...admission({
+          accountId: otherId,
+          conversationKey: conversationKeyFor(otherId),
+          eventId: eventId,
+          mode: "followup",
+        }),
+        resultEventId: "owner-result",
+      });
+
+    // Another account naming the row neither marks it seen...
+    expect(await accept("other-first")).toMatchObject({ outcome: "owner" });
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: "owner-result",
+      }),
+    ).toMatchObject({ observed: false });
+    // ...nor is refused once its owner has seen it.
+    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      eventId: "owner-result",
+      observed: true,
+    });
+    expect(await accept("other-second")).toMatchObject({ outcome: "queued" });
   });
 
   test("settles the envelope when a polling row is missing, and writes rows only on the settle that finished it", async () => {

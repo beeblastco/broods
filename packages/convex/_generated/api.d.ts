@@ -5173,7 +5173,27 @@ export declare const internal: {
         subagent?: {
           description?: string;
           parentConversationKey: string;
-          parentDelivery?: any;
+          parentDelivery?:
+            | { kind: "async" }
+            | {
+                connectionId: string;
+                kind: "nats";
+                publicConversationKey: string;
+                publicEventId: string;
+              }
+            | {
+                channelName: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source: Record<string, any>;
+              };
         };
       },
       boolean
@@ -5288,7 +5308,27 @@ export declare const internal: {
         subagent?: {
           description?: string;
           parentConversationKey: string;
-          parentDelivery?: any;
+          parentDelivery?:
+            | { kind: "async" }
+            | {
+                connectionId: string;
+                kind: "nats";
+                publicConversationKey: string;
+                publicEventId: string;
+              }
+            | {
+                channelName: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source: Record<string, any>;
+              };
         };
         updatedAt: string;
       } | null
@@ -5549,33 +5589,67 @@ export declare const internal: {
     listUnobservedAsyncAgentResults: FunctionReference<
       "query",
       "internal",
-      { processingBefore: string; updatedAfter: string; updatedBefore: string },
-      Array<{
-        _creationTime: number;
-        _id: Id<"runtimeAsyncAgentResults">;
-        accountId: Id<"accounts">;
-        approvals?: Array<any>;
-        conversationKey: string;
-        createdAt: string;
-        error?: string;
-        eventId: string;
-        expiresAt: number;
-        observed?: boolean;
-        questions?: Array<any>;
-        response?: any;
+      {
+        cursor: string | null;
         status:
           | "processing"
           | "awaiting_approval"
           | "awaiting_input"
           | "completed"
           | "failed";
-        subagent?: {
-          description?: string;
-          parentConversationKey: string;
-          parentDelivery?: any;
-        };
-        updatedAt: string;
-      }>
+        updatedAfter: string;
+        updatedBefore: string;
+      },
+      {
+        cursor: string;
+        isDone: boolean;
+        page: Array<{
+          _creationTime: number;
+          _id: Id<"runtimeAsyncAgentResults">;
+          accountId: Id<"accounts">;
+          approvals?: Array<any>;
+          conversationKey: string;
+          createdAt: string;
+          error?: string;
+          eventId: string;
+          expiresAt: number;
+          observed?: boolean;
+          questions?: Array<any>;
+          response?: any;
+          status:
+            | "processing"
+            | "awaiting_approval"
+            | "awaiting_input"
+            | "completed"
+            | "failed";
+          subagent?: {
+            description?: string;
+            parentConversationKey: string;
+            parentDelivery?:
+              | { kind: "async" }
+              | {
+                  connectionId: string;
+                  kind: "nats";
+                  publicConversationKey: string;
+                  publicEventId: string;
+                }
+              | {
+                  channelName: string;
+                  identity?: {
+                    channelId?: string;
+                    threadId?: string;
+                    userId?: string;
+                    userName?: string;
+                    userRoles?: Array<string>;
+                    workspaceRef?: string;
+                  };
+                  kind: "channel";
+                  source: Record<string, any>;
+                };
+          };
+          updatedAt: string;
+        }>;
+      }
     >;
     observeAsyncAgentResult: FunctionReference<
       "mutation",
@@ -5623,6 +5697,7 @@ export declare const internal: {
         approvals?: Array<any>;
         error?: string;
         eventId: string;
+        onlyWhileProcessing?: boolean;
         questions?: Array<any>;
         response?: any;
         status:

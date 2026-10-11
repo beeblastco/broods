@@ -10,7 +10,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { sha256Hex } from "./model/accountSecrets";
 import {
   reservedSandboxValidator,
@@ -411,44 +411,55 @@ export const getAsyncAgentResult = internalQuery({
 });
 
 /**
- * Subagent results the parent stopped waiting for and has not seen, written in
- * the window, oldest first per status. Core's recovery sweep resumes their
- * parents. A row still processing is listed only once it is older than
- * `processingBefore`, when its child is dead, so live children never crowd
- * finished rows out.
- * @returns up to 100 rows
+ * One page of subagent results in `status` that the parent stopped waiting for
+ * and has not seen, written inside the window, oldest first. Core's recovery
+ * sweep resumes their parents, walking every page each pass so rows it must
+ * retry never crowd others out. A row of an inactive account is left out: no
+ * resume of it can be admitted.
+ * @returns the page and the cursor for the next one
  */
 export const listUnobservedAsyncAgentResults = internalQuery({
   args: {
+    status: runtimeAsyncAgentResultsFields.status,
     updatedAfter: v.string(),
     updatedBefore: v.string(),
-    processingBefore: v.string(),
+    cursor: v.union(v.string(), v.null()),
   },
-  returns: v.array(asyncAgentDoc),
-  handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults">[]> => {
-    const ranges: Array<[Doc<"runtimeAsyncAgentResults">["status"], string]> = [
-      ["completed", args.updatedBefore],
-      ["failed", args.updatedBefore],
-      ["processing", args.processingBefore],
-    ];
-    const rows: Doc<"runtimeAsyncAgentResults">[] = [];
-    for (const [status, updatedBefore] of ranges) {
-      if (rows.length >= UNOBSERVED_RESULT_PAGE_SIZE) break;
-      rows.push(
-        ...(await ctx.db
-          .query("runtimeAsyncAgentResults")
-          .withIndex("by_observed_and_status_and_updatedAt", (q) =>
-            q
-              .eq("observed", false)
-              .eq("status", status)
-              .gt("updatedAt", args.updatedAfter)
-              .lt("updatedAt", updatedBefore),
-          )
-          .take(UNOBSERVED_RESULT_PAGE_SIZE - rows.length)),
-      );
+  returns: v.object({
+    page: v.array(asyncAgentDoc),
+    cursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    page: Doc<"runtimeAsyncAgentResults">[];
+    cursor: string;
+    isDone: boolean;
+  }> => {
+    const result = await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_observed_and_status_and_updatedAt", (q) =>
+        q
+          .eq("observed", false)
+          .eq("status", args.status)
+          .gt("updatedAt", args.updatedAfter)
+          .lt("updatedAt", args.updatedBefore),
+      )
+      .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
+    const page: Doc<"runtimeAsyncAgentResults">[] = [];
+    for (const row of result.page) {
+      if ((await ctx.db.get(row.accountId))?.status === "active") {
+        page.push(row);
+      }
     }
 
-    return rows;
+    return {
+      page: page,
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
   },
 });
 
@@ -481,13 +492,25 @@ export const observeAsyncAgentResult = internalMutation({
 /**
  * Records an async run's outcome on its polling row. Used by subagents and by
  * async runs without a live ingress owner; `runtimeIngress.settle` writes the
- * same row in the envelope's transaction.
- * @returns null after the result is updated
+ * same row in the envelope's transaction. With `onlyWhileProcessing` a row
+ * that already has its outcome, or is gone, is left alone: the recovery sweep
+ * fails a dead child's row that way.
+ * @returns null after the result is updated or left alone
  */
 export const updateAsyncAgentResult = internalMutation({
-  args: { eventId: v.string(), ...asyncAgentOutcomeValidator.fields },
+  args: {
+    eventId: v.string(),
+    ...asyncAgentOutcomeValidator.fields,
+    onlyWhileProcessing: v.optional(v.boolean()),
+  },
   returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (ctx, { onlyWhileProcessing, ...args }): Promise<null> => {
+    if (
+      onlyWhileProcessing &&
+      (await asyncAgentResultRow(ctx, args.eventId))?.status !== "processing"
+    ) {
+      return null;
+    }
     if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
       throw new Error("Async agent result not found");
     }
@@ -512,13 +535,19 @@ export async function asyncAgentResultRow(
     .unique();
 }
 
-/** Marks a subagent result seen inside the transaction that delivers it (`accept`). */
+/**
+ * Marks a subagent result seen inside the transaction that delivers it
+ * (`accept`), only when the row is `accountId`'s own.
+ */
 export async function markAsyncAgentResultSeen(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   eventId: string | undefined,
 ): Promise<void> {
   const row = await asyncAgentResultRow(ctx, eventId);
-  if (row) await ctx.db.patch(row._id, { observed: true });
+  if (row?.accountId === accountId) {
+    await ctx.db.patch(row._id, { observed: true });
+  }
 }
 
 /**

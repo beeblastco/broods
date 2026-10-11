@@ -1,4 +1,12 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import * as asyncAgentResults from "../src/harness/async-agent-result.ts";
+import type { AsyncAgentResultRecord } from "../src/harness/async-agent-result.ts";
+import * as handler from "../src/harness/handler.ts";
+import * as ingress from "../src/harness/ingress.ts";
+import type {
+  IngressAdmission,
+  IngressCandidate,
+} from "../src/harness/ingress.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   createSubagentTaskId,
@@ -6,7 +14,6 @@ import {
   scopedDirectEventId,
   subagentTaskNonce,
 } from "../src/shared/runtime-keys.ts";
-import { setStorageForTests } from "../src/shared/storage.ts";
 
 const { startIngressRecovery, stopIngressRecovery } =
   await import("../src/harness/ingress-recovery.ts");
@@ -76,7 +83,28 @@ describe("queued ingress recovery", () => {
     }
   });
 
-  it("resumes the parent with late subagent results a restart lost", async () => {
+  it("still resumes lost subagent results when the queue pass fails", async (): Promise<void> => {
+    const queued = spyOn(ingress, "recoverQueuedIngress").mockRejectedValue(
+      new Error("convex down"),
+    );
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockResolvedValue({ page: [], cursor: "end", isDone: true });
+    try {
+      startIngressRecovery();
+      for (let i = 0; i < 100 && pages.mock.calls.length < 3; i += 1) {
+        await Bun.sleep(1);
+      }
+
+      expect(pages).toHaveBeenCalledTimes(3);
+    } finally {
+      queued.mockRestore();
+      pages.mockRestore();
+    }
+  });
+
+  it("resumes the parent with late subagent results a restart lost", async (): Promise<void> => {
     const parentEventId = scopedDirectEventId(
       "account_1",
       "agent_parent",
@@ -95,12 +123,14 @@ describe("queued ingress recovery", () => {
       createSubagentTaskId(parentEventId),
       createSubagentTaskId(parentEventId),
     ];
-    const rows = ["finished", "killed"].map((name, index) => {
-      const taskId = taskIds[index]!;
-
-      return {
+    const rows = ["finished", "killed"].map(
+      (name, index): AsyncAgentResultRecord => ({
         accountId: "account_1",
-        eventId: scopedDirectEventId("account_1", "agent_child", taskId),
+        eventId: scopedDirectEventId(
+          "account_1",
+          "agent_child",
+          taskIds[index]!,
+        ),
         conversationKey: scopedDirectConversationKey(
           "account_1",
           "agent_child",
@@ -116,48 +146,62 @@ describe("queued ingress recovery", () => {
         createdAt: longAgo,
         updatedAt: longAgo,
         expiresAt: Date.now() + 60_000,
-      };
-    });
-    setStorageForTests({
-      agents: {
-        getById: async () => ({ agentId: "agent_parent", config: {} }),
-      },
-      agentDeployments: {},
-    } as never);
-    const query = spyOn(runtime, "query").mockImplementation(
-      async <T>(name: string): Promise<T> =>
-        (name === "listUnobservedAsyncAgentResults" ? rows : null) as T,
+      }),
     );
-    const admitted: Array<Record<string, unknown>> = [];
-    const failed: Array<Record<string, unknown>> = [];
-    const mutate = spyOn(runtime, "mutate").mockImplementation(
-      async <T>(name: string, args: Record<string, unknown>): Promise<T> => {
-        if (name === "acceptIngress") {
-          admitted.push(args);
+    const spies = [
+      spyOn(
+        asyncAgentResults,
+        "listUnobservedAsyncAgentResults",
+      ).mockImplementation(
+        async (options: {
+          status: string;
+        }): Promise<{
+          page: AsyncAgentResultRecord[];
+          cursor: string;
+          isDone: boolean;
+        }> => ({
+          page: rows.filter((row): boolean => row.status === options.status),
+          cursor: "end",
+          isDone: true,
+        }),
+      ),
+      spyOn(handler, "loadReentryTarget").mockResolvedValue({
+        agentConfig: {},
+        conversationKey: parentKey,
+      }),
+      spyOn(ingress, "recoverQueuedIngress").mockResolvedValue({
+        recovered: [],
+        continueAfter: null,
+      }),
+    ];
+    const failed = spyOn(
+      asyncAgentResults,
+      "recordAsyncAgentResult",
+    ).mockResolvedValue();
+    const admitted: IngressCandidate[] = [];
+    const accept = spyOn(ingress, "acceptIngress").mockImplementation(
+      async (candidate: IngressCandidate): Promise<IngressAdmission> => {
+        admitted.push(candidate);
 
-          return { outcome: "queued" } as T;
-        }
-        if (name === "updateAsyncAgentResult") failed.push(args);
-
-        return { recovered: [], continueAfter: null } as T;
+        return { outcome: "queued" };
       },
     );
     try {
       startIngressRecovery();
       for (
         let i = 0;
-        i < 200 && (admitted.length < 1 || failed.length < 1);
+        i < 200 && (admitted.length < 1 || failed.mock.calls.length < 1);
         i += 1
       ) {
         await Bun.sleep(1);
       }
 
-      expect(failed).toEqual([
-        expect.objectContaining({
-          eventId: rows[1]!.eventId,
-          status: "failed",
-          error: expect.stringContaining("restarted"),
-        }),
+      expect(failed.mock.calls).toEqual([
+        [
+          rows[1]!.eventId,
+          { status: "failed", error: expect.stringContaining("restarted") },
+          { onlyWhileProcessing: true },
+        ],
       ]);
       expect(admitted).toEqual([
         expect.objectContaining({
@@ -169,9 +213,9 @@ describe("queued ingress recovery", () => {
       ]);
       expect(JSON.stringify(admitted[0]?.events)).toContain("the late answer");
     } finally {
-      query.mockRestore();
-      mutate.mockRestore();
-      setStorageForTests(null);
+      for (const spy of spies) spy.mockRestore();
+      failed.mockRestore();
+      accept.mockRestore();
     }
   });
 });

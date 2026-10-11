@@ -1225,6 +1225,31 @@ export const runtimeIngressApplicationsFields = {
   createdAt: v.number(),
   expiresAt: v.number(),
 };
+/** Where a run answers once its async work settles: core's `AsyncToolDelivery`. */
+export const asyncToolDeliveryValidator = v.union(
+  v.object({ kind: v.literal("async") }),
+  v.object({
+    kind: v.literal("nats"),
+    connectionId: v.string(),
+    publicEventId: v.string(),
+    publicConversationKey: v.string(),
+  }),
+  v.object({
+    kind: v.literal("channel"),
+    channelName: v.string(),
+    identity: v.optional(
+      v.object({
+        workspaceRef: v.optional(v.string()),
+        channelId: v.optional(v.string()),
+        threadId: v.optional(v.string()),
+        userId: v.optional(v.string()),
+        userName: v.optional(v.string()),
+        userRoles: v.optional(v.array(v.string())),
+      }),
+    ),
+    source: v.record(v.string(), v.any()),
+  }),
+);
 /**
  * Where a subagent's parent conversation answers, so a result the parent
  * stopped waiting for can still reach it after a restart. The task, the child
@@ -1233,7 +1258,7 @@ export const runtimeIngressApplicationsFields = {
 export const subagentTaskValidator = v.object({
   description: v.optional(v.string()),
   parentConversationKey: v.string(),
-  parentDelivery: v.optional(v.any()),
+  parentDelivery: v.optional(asyncToolDeliveryValidator),
 });
 /** Public async-agent polling and approval state. */
 export const runtimeAsyncAgentResultsFields = {

@@ -2,6 +2,8 @@
 
 import type { JSONValue } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
+import { toErrorMessage } from "../shared/errors.ts";
+import { logError } from "../shared/log.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
 import type { PendingQuestionSummary } from "./questions.ts";
@@ -57,36 +59,55 @@ export function getAsyncAgentResult(
   return runtime.query("getAsyncAgentResult", { eventId: eventId });
 }
 /**
- * Subagent results no parent has seen yet, written in the window; a running
- * one only once it is older than `processingBefore`. The recovery sweep reads them.
+ * One page of subagent results in `status` no parent has seen yet, written in
+ * the window, from `cursor`. The recovery sweep walks every page.
  */
-export function listUnobservedAsyncAgentResults(window: {
+export function listUnobservedAsyncAgentResults(options: {
+  status: AsyncAgentStatus;
   updatedAfter: string;
   updatedBefore: string;
-  processingBefore: string;
-}): Promise<AsyncAgentResultRecord[]> {
-  return runtime.query("listUnobservedAsyncAgentResults", window);
+  cursor: string | null;
+}): Promise<{
+  page: AsyncAgentResultRecord[];
+  cursor: string;
+  isDone: boolean;
+}> {
+  return runtime.query("listUnobservedAsyncAgentResults", options);
 }
 /**
  * Records whether a subagent's parent has its result: false when the parent
- * stops waiting on it, true when the parent reads it or is never told.
+ * stops waiting on it, true when the parent reads it or is never told. The
+ * row already holds the result, so a failed write is only logged.
  */
 export async function observeAsyncAgentResult(
   eventId: string,
   observed: boolean,
 ): Promise<void> {
-  await runtime.mutate("observeAsyncAgentResult", {
-    eventId: eventId,
-    observed: observed,
-  });
+  try {
+    await runtime.mutate("observeAsyncAgentResult", {
+      eventId: eventId,
+      observed: observed,
+    });
+  } catch (error) {
+    logError("Failed to record whether the parent saw a subagent result", {
+      eventId: eventId,
+      observed: observed,
+      error: toErrorMessage(error),
+    });
+  }
 }
-/** Records a run's outcome on its polling row, outside any envelope settle. */
+/**
+ * Records a run's outcome on its polling row, outside any envelope settle.
+ * `onlyWhileProcessing` leaves a row that already has its outcome alone.
+ */
 export async function recordAsyncAgentResult(
   eventId: string,
   outcome: AsyncAgentOutcome,
+  guard: { onlyWhileProcessing?: boolean } = {},
 ): Promise<void> {
   await runtime.mutate("updateAsyncAgentResult", {
     eventId: eventId,
     ...outcome,
+    ...guard,
   });
 }

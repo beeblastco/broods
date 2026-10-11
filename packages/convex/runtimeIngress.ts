@@ -255,7 +255,7 @@ export const accept = internalMutation({
       };
     }
 
-    await markAsyncAgentResultSeen(ctx, args.resultEventId);
+    await markAsyncAgentResultSeen(ctx, args.accountId, args.resultEventId);
     const sequence = coordinator.nextSequence;
     const baseEnvelope = buildAdmissionEnvelope(args, identity, sequence, now);
     if (busy) {
@@ -1081,7 +1081,12 @@ async function canonicalIdentity(options: {
  */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,
-  args: { eventId: string; payloadDigest: string; resultEventId?: string },
+  args: {
+    accountId: Id<"accounts">;
+    eventId: string;
+    payloadDigest: string;
+    resultEventId?: string;
+  },
   identity: string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
   const existing = await ctx.db
@@ -1112,9 +1117,10 @@ async function checkDuplicateAdmission(
     return { outcome: "conflict" as const, eventId: existingEvent.eventId };
   }
   // A get_subagent_status read and a late resume race to deliver one result;
-  // whichever marks it seen first wins, so the parent is told it once.
+  // whichever marks it seen first wins, so the parent is told it once. Only
+  // the caller's own account's row counts.
   const result = await asyncAgentResultRow(ctx, args.resultEventId);
-  if (result?.observed === true) {
+  if (result?.observed === true && result.accountId === args.accountId) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
 

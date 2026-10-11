@@ -24,7 +24,12 @@ export const CONVERSATION_BUSY =
   "Conversation is already processing another turn. Try again when the current turn finishes.";
 
 export type ContinuationOutcome =
-  | { kind: "ready"; invoked: boolean; publicEventId: string }
+  | {
+      kind: "ready";
+      admission: IngressAdmission["outcome"];
+      invoked: boolean;
+      publicEventId: string;
+    }
   | { kind: "skip" };
 
 export function continuationResponse(

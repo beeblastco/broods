@@ -176,7 +176,11 @@ import {
   pipeAgentStream,
   type ContinuationOutcome,
 } from "./responses.ts";
-import { SubagentCoordinator, type SubagentParent } from "./subagents.ts";
+import {
+  SubagentCoordinator,
+  type SubagentParent,
+  type SubagentResumeOutcome,
+} from "./subagents.ts";
 import {
   dispatchInProcessWorker,
   WORKER_QUEUE_FULL,
@@ -617,7 +621,7 @@ async function continueAfterAsyncToolSettlement(
  * continuation, which queues behind whatever turn holds the conversation, and
  * none at all once the parent read `resultEventId` itself. The coordinator
  * calls it, and so does the recovery sweep for a result a restart lost, with
- * the `target` it already loaded.
+ * the `target` it already loaded; the sweep reads the admission it returns.
  */
 export async function resumeAfterSubagentResult(
   parent: SubagentParent,
@@ -625,14 +629,14 @@ export async function resumeAfterSubagentResult(
   message: UserModelMessage,
   resultEventId: string,
   target?: ReentryTarget,
-): Promise<void> {
+): Promise<SubagentResumeOutcome> {
   // The task id's own nonce, under the root event, so a chain of late results
   // does not nest every earlier id into the next.
   const nonce = subagentTaskNonce(taskId);
   if (!parent.accountId || !parent.agentId || !nonce) {
-    return;
+    return "skip";
   }
-  await resumeConversation({
+  const outcome = await resumeConversation({
     accountId: parent.accountId,
     agentId: parent.agentId,
     eventId: `${rootEventId(parent.eventId)}:async-subagent:${nonce}`,
@@ -644,6 +648,8 @@ export async function resumeAfterSubagentResult(
     resultEventId: resultEventId,
     target: target,
   });
+
+  return outcome.kind === "skip" ? "skip" : outcome.admission;
 }
 
 /**
@@ -741,14 +747,16 @@ async function resumeConversation(options: {
   };
 
   // Queued behind a socket turn, it still answers on that socket.
-  const { owned: ownedContinuation } = await admitInternalContinuation(
-    continuationEvent,
-    continuationDelivery(onSocket(continuationEvent, options.delivery)),
-    options.resultEventId,
-  );
+  const { admission, owned: ownedContinuation } =
+    await admitInternalContinuation(
+      continuationEvent,
+      continuationDelivery(onSocket(continuationEvent, options.delivery)),
+      options.resultEventId,
+    );
   if (!ownedContinuation) {
     return {
       kind: "ready",
+      admission: admission.outcome,
       invoked: false,
       publicEventId: continuationEvent.publicEventId,
     };
@@ -761,6 +769,7 @@ async function resumeConversation(options: {
 
   return {
     kind: "ready",
+    admission: admission.outcome,
     invoked: true,
     publicEventId: continuationEvent.publicEventId,
   };
