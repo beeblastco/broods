@@ -33,7 +33,7 @@ export const lead = defineAgent({
 | `visibility` | `"result"`     | What the parent sees of a result, `"full"`, `"result"` or `"none"`. The `onSubagentFinish` [hook](hooks.md) can reshape it. |
 | `model`      | parent's       | Model for virtual subagents, merged key by key over the parent's `model`. A predefined agent runs on its own model.         |
 
-A virtual subagent on another model keeps everything else of the parent, its tools, MCP servers, sandboxes and hooks included:
+A virtual subagent on another model keeps everything else of the parent, its tools, MCP servers, sandboxes and hooks included. Provider-defined `tools` resolve on the child's provider, so switch `provider` only when it has them:
 
 ```ts title="broods/index.ts"
 export const lead = defineAgent({

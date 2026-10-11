@@ -247,15 +247,20 @@ export function normalizeAgentConfig(
       "config.policies is not supported with config.harness",
     );
   }
-  if (
-    isPlainObject(config.harness) &&
-    isPlainObject(config.model) &&
-    isPlainObject(config.model.output) &&
-    config.model.output.type !== "text"
-  ) {
-    throw new ClientError(
-      "config.model.output structured output is not supported with config.harness",
-    );
+  for (const [model, label] of [
+    [config.model, "config.model"],
+    [config.subagent?.model, "config.subagent.model"],
+  ] as const) {
+    if (
+      isPlainObject(config.harness) &&
+      isPlainObject(model) &&
+      isPlainObject(model.output) &&
+      model.output.type !== "text"
+    ) {
+      throw new ClientError(
+        `${label}.output structured output is not supported with config.harness`,
+      );
+    }
   }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
   assertOptionalBoolean(config.allowRunOverrides, "config.allowRunOverrides");

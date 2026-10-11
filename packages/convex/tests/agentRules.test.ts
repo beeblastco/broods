@@ -849,6 +849,17 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex" },
+        subagent: {
+          model: { output: { type: "object", schema: { type: "object" } } },
+        },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.subagent.model.output structured output is not supported with config.harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex" },
         policies: ["policy_1"],
         sandboxes: ["sandbox_1"],
       }),
