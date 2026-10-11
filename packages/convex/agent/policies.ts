@@ -14,7 +14,10 @@ import {
 import { authKit } from "../auth";
 import { accountIdForProject } from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
-import { getProjectForRole } from "../model/ownership/project";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "../model/ownership/project";
 import { isPlainObject, stableJson } from "../model/objects";
 import { roleHoldingPolicy } from "../model/access";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
@@ -54,7 +57,7 @@ export const create = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       user.id,
       args.projectId,
@@ -442,7 +445,7 @@ async function requireEditablePolicy(
   ) {
     throw new Error("Policy not found.");
   }
-  const project = await getProjectForRole(
+  const project = await getProjectForWrite(
     ctx,
     authId,
     policy.projectId,

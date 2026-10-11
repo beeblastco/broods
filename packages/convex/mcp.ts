@@ -23,6 +23,7 @@ import {
   ACCOUNT_ENV_PLACEHOLDER_PATTERN,
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./model/envRefs";
+import { requireActiveAccount } from "./model/activeAccount";
 import { REDACTED_SECRET_VALUE } from "./model/configValues";
 import { normalizeMcpInput, type McpInput } from "./model/mcp";
 import { stripUndefined } from "./model/objects";
@@ -257,6 +258,7 @@ export const nodeContext = internalQuery({
       .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
       .first();
     if (!account) throw new Error("Account not found for project org");
+    await requireActiveAccount(ctx, account._id);
 
     return {
       accountId: account._id,
