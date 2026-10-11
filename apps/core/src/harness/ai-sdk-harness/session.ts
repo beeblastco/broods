@@ -115,7 +115,7 @@ export async function parkAiSdkHarnessSession(
       options.successful && harnessSessionParking(options.type) === "detach"
         ? await options.nativeSession.detach()
         : await options.nativeSession.stop();
-    await options.broodsSession.assertCurrentOwner();
+    // The save itself is owner-fenced: a stale run's write is refused there.
     await options.broodsSession.saveHarnessSession({
       harnessType: options.type,
       sessionId: options.nativeSession.sessionId,

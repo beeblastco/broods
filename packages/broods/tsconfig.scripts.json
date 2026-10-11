@@ -1,0 +1,6 @@
+{
+  // The build and release scripts run on Bun and never ship, so they get their
+  // own project instead of joining the published source in tsconfig.json.
+  "extends": "./tsconfig.json",
+  "include": ["scripts/**/*.ts"]
+}

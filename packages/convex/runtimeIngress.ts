@@ -23,10 +23,14 @@ import {
   ingressConfigRefValidator,
   ingressModeValidator,
   ingressStatusValidator,
+  runtimeHarnessSessionsFields,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 
 const CLEAR_BATCH_SIZE = 100;
+// AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
+// coordinates, never chat history. Keep adapter regressions out of Convex rows.
+const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
 
 // Statuses maintenance may still expire. Terminal rows (completed/failed/
 // expired) are excluded at the index, not filtered after the read: they retain
@@ -419,6 +423,62 @@ export const clearConversation = internalMutation({
       deleted: batch.length,
       hasMore: rows.length > CLEAR_BATCH_SIZE,
     };
+  },
+});
+
+/**
+ * Stores the native harness checkpoint for the current fenced owner, in the same
+ * transaction as the owner check: a run whose lease lapsed and was reassigned
+ * cannot overwrite the newer owner's resume state.
+ */
+export const saveHarnessSession = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+    harnessType: runtimeHarnessSessionsFields.harnessType,
+    sessionId: v.string(),
+    resumeState: v.any(),
+    reservationKey: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const coordinator = await requireOwner(ctx, args);
+    await requireActiveAccount(ctx, coordinator.accountId);
+    const serializedResumeState = JSON.stringify(args.resumeState);
+    if (serializedResumeState === undefined) {
+      throw new Error("Harness resume state must be JSON serializable");
+    }
+    const resumeStateBytes = new TextEncoder().encode(
+      serializedResumeState,
+    ).byteLength;
+    if (resumeStateBytes > MAX_HARNESS_RESUME_STATE_BYTES) {
+      throw new Error(
+        `Harness resume state is ${resumeStateBytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
+      );
+    }
+    const existing = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .unique();
+    const value = {
+      accountId: coordinator.accountId,
+      conversationKey: args.conversationKey,
+      harnessType: args.harnessType,
+      sessionId: args.sessionId,
+      resumeState: args.resumeState,
+      reservationKey: args.reservationKey,
+      updatedAt: Date.now(),
+    };
+    if (existing) {
+      await ctx.db.replace(existing._id, value);
+    } else {
+      await ctx.db.insert("runtimeHarnessSessions", value);
+    }
+
+    return null;
   },
 });
 
@@ -853,6 +913,8 @@ export const stopOwner = internalMutation({
     }
     await ctx.db.patch(coordinator._id, {
       stopRequestedGeneration: coordinator.ownerGeneration,
+      // Only a parent's stop_subagent names the task it stops.
+      stopRequestedByParent: args.expectedOwnerTaskId !== undefined,
       updatedAt: now,
     });
 
@@ -1635,9 +1697,11 @@ async function settleAppliedEnvelopes(
   const now = Date.now();
   // A failed settle that was preceded by /stop for this generation is a
   // deliberate stop, not a fault, so mark it and pollers can tell them apart.
+  // A subagent its parent stopped was not stopped by the user.
   const stoppedByUser =
     args.status === "failed" &&
-    coordinator.stopRequestedGeneration === args.ownerGeneration;
+    coordinator.stopRequestedGeneration === args.ownerGeneration &&
+    coordinator.stopRequestedByParent !== true;
   const ids = new Set<Id<"runtimeIngressEnvelopes">>();
   // Page by sequence so more than one drain batch of contributors still
   // settles; a fixed take() would leave the tail stuck in processing.

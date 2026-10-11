@@ -225,78 +225,6 @@ describe("runtime persistence", () => {
     expect(second).toMatchObject({ isDone: true, continueCursor: null });
   });
 
-  test("persists one resumable harness session per conversation", async () => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
-    expect(
-      await t.query(internal.runtime.getHarnessSession, {
-        conversationKey: conversationKey,
-      }),
-    ).toBeNull();
-
-    await t.mutation(internal.runtime.saveHarnessSession, {
-      conversationKey: conversationKey,
-      harnessType: "codex",
-      sessionId: "codex-session",
-      resumeState: {
-        type: "resume-session",
-        harnessId: "codex",
-        specificationVersion: "harness-v1",
-        data: { threadId: "thread-1" },
-      },
-    });
-    expect(
-      await t.query(internal.runtime.getHarnessSession, {
-        conversationKey: conversationKey,
-      }),
-    ).toEqual({
-      harnessType: "codex",
-      sessionId: "codex-session",
-      resumeState: {
-        type: "resume-session",
-        harnessId: "codex",
-        specificationVersion: "harness-v1",
-        data: { threadId: "thread-1" },
-      },
-    });
-
-    await t.mutation(internal.runtime.saveHarnessSession, {
-      conversationKey: conversationKey,
-      harnessType: "codex",
-      sessionId: "codex-session-replaced",
-      resumeState: {
-        type: "resume-session",
-        harnessId: "codex",
-        specificationVersion: "harness-v1",
-        data: { threadId: "thread-2" },
-      },
-    });
-    expect(
-      await t.query(internal.runtime.getHarnessSession, {
-        conversationKey: conversationKey,
-      }),
-    ).toEqual({
-      harnessType: "codex",
-      sessionId: "codex-session-replaced",
-      resumeState: {
-        type: "resume-session",
-        harnessId: "codex",
-        specificationVersion: "harness-v1",
-        data: { threadId: "thread-2" },
-      },
-    });
-
-    await t.mutation(internal.runtime.clearConversation, {
-      conversationKey: conversationKey,
-    });
-    expect(
-      await t.query(internal.runtime.getHarnessSession, {
-        conversationKey: conversationKey,
-      }),
-    ).toBeNull();
-  });
-
   test("rejects a harness checkpoint stored under another account", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -325,31 +253,6 @@ describe("runtime persistence", () => {
     ).rejects.toThrow(
       "Harness session does not belong to conversation account",
     );
-  });
-
-  test("rejects an oversized harness checkpoint before writing Convex", async () => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
-
-    await expect(
-      t.mutation(internal.runtime.saveHarnessSession, {
-        conversationKey: conversationKey,
-        harnessType: "opencode",
-        sessionId: "opencode-session",
-        resumeState: {
-          type: "resume-session",
-          harnessId: "opencode",
-          specificationVersion: "harness-v1",
-          data: { oversized: "x".repeat(64 * 1_024) },
-        },
-      }),
-    ).rejects.toThrow("Harness resume state is");
-    expect(
-      await t.query(internal.runtime.getHarnessSession, {
-        conversationKey: conversationKey,
-      }),
-    ).toBeNull();
   });
 
   test("reports whether a bounded conversation clear has more events", async () => {
@@ -1252,11 +1155,11 @@ describe("sandbox reservation expiry", () => {
     });
 
     // The oldest row is ephemeral; it must not take the page's only slot.
-    expect(
-      await t.query(internal.runtime.listOrphanedSandboxInstances, {
-        limit: 1,
-      }),
-    ).toEqual([
+    const first = await t.query(internal.runtime.listOrphanedSandboxInstances, {
+      cursor: null,
+      limit: 1,
+    });
+    expect(first.page).toEqual([
       {
         accountId: accountId,
         provider: "sandbox",
@@ -1264,6 +1167,74 @@ describe("sandbox reservation expiry", () => {
         externalId: "sbx-orphan",
       },
     ]);
+    // The reserved row follows, then the recent one ends the idle range.
+    const second = await t.query(
+      internal.runtime.listOrphanedSandboxInstances,
+      { cursor: first.cursor, limit: 2 },
+    );
+    expect(second).toEqual({ page: [], cursor: null, isDone: true });
+  });
+
+  test("pages past a run of reserved mirrors longer than a page", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const idle = Date.now() - 10 * 24 * 60 * 60 * 1000;
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 101; index += 1) {
+        const key = `sandbox-${String(index).padStart(3, "0")}`;
+        await ctx.db.insert("sandboxInstances", {
+          accountId: accountId,
+          provider: "sandbox",
+          reservationKey: key,
+          externalId: `sbx-${key}`,
+          name: key,
+          status: "running",
+          specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+          createdAt: idle + index,
+          lastUsedAt: idle + index,
+        });
+        // A deferred teardown keeps its reservation and pushes its deadline,
+        // but leaves the mirror's age alone.
+        if (index === 100) continue;
+        await ctx.db.insert("sandboxReservations", {
+          accountId: accountId,
+          provider: "sandbox",
+          reservationKey: key,
+          externalId: `sbx-${key}`,
+          expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+        });
+      }
+    });
+
+    const first = await t.query(internal.runtime.listOrphanedSandboxInstances, {
+      cursor: null,
+      limit: 100,
+    });
+    expect(first.page).toEqual([]);
+    expect(first.isDone).toBe(false);
+    // A row deleted between pages does not cost the cursor its place.
+    await t.run(async (ctx) => {
+      const gone = await ctx.db
+        .query("sandboxInstances")
+        .withIndex("by_reservationKey", (q) =>
+          q.eq("reservationKey", "sandbox-099"),
+        )
+        .unique();
+      await ctx.db.delete(gone!._id);
+    });
+    const second = await t.query(
+      internal.runtime.listOrphanedSandboxInstances,
+      { cursor: first.cursor, limit: 100 },
+    );
+    expect(second.page).toEqual([
+      {
+        accountId: accountId,
+        provider: "sandbox",
+        reservationKey: "sandbox-100",
+        externalId: "sbx-sandbox-100",
+      },
+    ]);
+    expect(second.isDone).toBe(true);
   });
 });
 

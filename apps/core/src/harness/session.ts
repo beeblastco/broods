@@ -583,9 +583,17 @@ export class Session {
     return next;
   }
 
-  async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
+  /**
+   * @param onSaved called after each append Convex accepts, with how many of
+   * the stored events are saved so far. A large batch takes several appends,
+   * so a caller that retries a failure can skip what is already saved.
+   */
+  async persistModelMessages(
+    messages: ModelMessage[],
+    onSaved?: (saved: number) => void,
+  ): Promise<string[]> {
     const events = this.storedEvents(messages);
-    await this.appendStoredEvents(events);
+    await this.appendStoredEvents(events, onSaved);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -596,16 +604,28 @@ export class Session {
     });
   }
 
+  /**
+   * Stores the native checkpoint under the owner fence, in the write itself. An
+   * ephemeral run keeps nothing; a persisted one always runs under an owner, so a
+   * missing one is a bug, not a write to let through unfenced.
+   */
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
     if (!this.persist) return;
+    if (this.ownerGeneration === undefined) {
+      throw new Error("Harness checkpoint needs a conversation owner");
+    }
     const serialized = JSON.stringify(state.resumeState);
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
     }
+    const startedAt = performance.now();
     await runtime.mutate("saveHarnessSession", {
       conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
       ...state,
     });
+    this.confirmOwner(startedAt);
   }
 
   /**
@@ -861,10 +881,14 @@ export class Session {
   /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
   private async appendStoredEvents(
     events: { cursor: string; event: StoredConversationEvent }[],
+    onSaved?: (saved: number) => void,
   ): Promise<void> {
     if (events.length === 0) return;
+    let saved = 0;
     for (const batch of storedEventBatches(events)) {
       await this.appendConversationEvents(batch);
+      saved += batch.length;
+      onSaved?.(saved);
     }
     this.trackSystemCursor(events);
   }
@@ -1597,7 +1621,7 @@ ${predefined}
 Tool guidance:
 1. Use the exact agentId from the predefined list when a listed subagent is suitable for the task.
 2. Omit agentId only when no predefined subagent is suitable or the user explicitly asks for a virtual one-shot subagent.
-3. A virtual one-shot subagent uses this agent's model and tool configuration.
+3. A virtual one-shot subagent runs with this agent's tools and configuration.
 </subagent>`;
 }
 

@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { purgeWorkspaceFilesystem } from "../model/workspaceFs";
 import { workspaceNamespace } from "../model/workspaceRules";
@@ -7,7 +7,7 @@ const { bucketKeys, mockSend } = vi.hoisted(() => {
   const bucketKeys = new Set<string>();
   const mockSend = vi.fn(
     async (
-      command: ListObjectsV2Command | DeleteObjectCommand,
+      command: ListObjectsV2Command | DeleteObjectsCommand,
     ): Promise<{ Contents?: { Key: string }[] }> => {
       // Only the managed bucket holds objects, so a purge aimed at any other
       // bucket deletes nothing and fails the assertions.
@@ -21,7 +21,9 @@ const { bucketKeys, mockSend } = vi.hoisted(() => {
             .map((key) => ({ Key: key })),
         };
       }
-      bucketKeys.delete(command.input.Key ?? "");
+      for (const object of command.input.Delete?.Objects ?? []) {
+        bucketKeys.delete(object.Key ?? "");
+      }
 
       return {};
     },

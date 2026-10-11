@@ -36,6 +36,8 @@ import {
   type AsyncAgentOutcome,
 } from "./async-agent-result.ts";
 import {
+  DEADLINE_WIND_DOWN_MS,
+  PARENT_STOP_MESSAGE,
   readAgentFullStream,
   runAgentLoop,
   USER_STOP_MESSAGE,
@@ -67,6 +69,7 @@ import {
   prependTextToUserParts,
   subagentConfig,
   VIRTUAL_AGENT_PREFIX,
+  virtualSubagentConfig,
 } from "./tools/utils.ts";
 
 const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
@@ -84,6 +87,12 @@ const STILL_RUNNING_NOTE =
 // child's result event id, so a later turn's get_subagent_status read reaches
 // it. Core runs one replica, so every reader is in this process.
 const detachedResults = new Map<string, SubagentCoordinator>();
+// Wall clock one child turn may take. The loop winds it down to a tools-off
+// answer DEADLINE_WIND_DOWN_MS before; a turn still running that long past the
+// budget, stuck in a tool call, is aborted.
+const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
+const SUBAGENT_BUDGET_INSTRUCTION = `You are a subagent with a ${SUBAGENT_BUDGET_MS / 60_000}-minute budget for this task. Pace yourself: near the end your tools are turned off and you must answer with what you have.`;
+const SUBAGENT_BUDGET_EXCEEDED = `Subagent ran far past its ${SUBAGENT_BUDGET_MS / 60_000}-minute budget and was cut off before it answered.`;
 
 interface SubagentCompletion {
   taskId: string;
@@ -176,6 +185,8 @@ export class SubagentCoordinator {
   >();
   // Read, but that tool result is not saved to the parent yet.
   private readonly readUnsaved = new Set<string>();
+  // The parent's user stop, which every child run listens to.
+  private readonly childStop = new AbortController();
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
@@ -296,14 +307,22 @@ export class SubagentCoordinator {
         Date.now() + HEARTBEAT_INTERVAL_MS,
         this.waitUntilMs,
       );
-      await Promise.race([
-        this.nextStateChange(),
-        sleep(Math.max(heartbeatAt - Date.now(), 0)),
+      const timerWoke = await Promise.race([
+        this.nextStateChange().then((): boolean => false),
+        sleep(Math.max(heartbeatAt - Date.now(), 0)).then((): boolean => true),
       ]);
 
       if (this.pending.size > 0) {
         // Awaited, so a heartbeat that finds the run lost ends the wait.
         await options.onHeartbeat?.(this.pending.size);
+        // No step boundary runs while the parent waits, so a user stop reaches
+        // the children here, once per heartbeat interval.
+        if (
+          timerWoke &&
+          (await this.parentSession.renewConversationLease()) === "stopped"
+        ) {
+          this.stopChildren();
+        }
       }
     }
 
@@ -402,32 +421,37 @@ export class SubagentCoordinator {
    * them. The parent's step boundary calls it, so they reach the model mid-pass.
    */
   async takeParentMessages(): Promise<UserModelMessage[]> {
-    const completions = this.completions.splice(0);
+    // A running notice put back by a failed write is stale once its child has
+    // finished: that child resumed the parent with its result itself.
+    const completions = this.completions
+      .splice(0)
+      .filter(
+        ({ status, taskId }): boolean =>
+          status !== "running" || this.detached.has(taskId),
+      );
     const questions = this.questions.splice(0);
-    // One write each, so a failure puts back only what was not saved yet, and a
-    // later step or drain delivers it without repeating the rest.
-    for (const [index, completion] of completions.entries()) {
-      await this.parentSession
-        .persistModelMessages([completionToParentMessage(completion)])
-        .catch((error: unknown): never => {
-          this.completions.unshift(...completions.slice(index));
-          this.restoreQuestions(questions);
-          throw error;
-        });
-    }
-    for (const [index, question] of questions.entries()) {
-      await this.parentSession
-        .persistModelMessages([question.message])
-        .catch((error: unknown): never => {
-          this.restoreQuestions(questions.slice(index));
-          throw error;
-        });
-    }
-
-    return [
+    const messages = [
       ...completions.map(completionToParentMessage),
       ...questions.map((question): UserModelMessage => question.message),
     ];
+    if (messages.length === 0) return messages;
+    // One write for all of them. Each is one stored event, and a large write
+    // takes several appends, so a failure puts back only what no append saved,
+    // and a later step or drain delivers it without repeating the rest.
+    let saved = 0;
+    await this.parentSession
+      .persistModelMessages(messages, (count): void => {
+        saved = count;
+      })
+      .catch((error: unknown): never => {
+        this.completions.unshift(...completions.slice(saved));
+        this.restoreQuestions(
+          questions.slice(Math.max(saved - completions.length, 0)),
+        );
+        throw error;
+      });
+
+    return messages;
   }
 
   /**
@@ -481,6 +505,14 @@ export class SubagentCoordinator {
   }
 
   /**
+   * The parent's user stop: aborts every running child at once, so each ends
+   * as stopped rather than working on for a request nobody waits for.
+   */
+  stopChildren(): void {
+    this.childStop.abort(new Error(USER_STOP_MESSAGE));
+  }
+
+  /**
    * For a parent that cannot run another pass: every open question resolves
    * with no answer, and later ones return at once.
    */
@@ -513,29 +545,24 @@ export class SubagentCoordinator {
       return 0;
     }
 
-    const completions = this.completions.splice(0);
     // A child whose result is in this batch is only settling its lease.
-    const answered = new Set(completions.map(({ taskId }) => taskId));
-    const running = [...this.pendingMetadata.values()]
-      .filter(({ taskId }): boolean => !answered.has(taskId))
-      .map((metadata): SubagentCompletion => ({
-        ...metadata,
-        status: "running",
-      }));
-    for (const { taskId, eventId } of running) {
-      this.detached.add(taskId);
-      detachedResults.set(eventId, this);
+    const answered = new Set(this.completions.map(({ taskId }) => taskId));
+    for (const metadata of this.pendingMetadata.values()) {
+      if (answered.has(metadata.taskId)) continue;
+      this.detached.add(metadata.taskId);
+      detachedResults.set(metadata.eventId, this);
+      // Queued like a result, so a failed write puts the notice back too. A
+      // child whose result the model already read is not still working news.
+      if (!this.delivered.has(metadata.eventId)) {
+        this.completions.push({ ...metadata, status: "running" });
+      }
     }
     this.pending.clear();
     this.pendingMetadata.clear();
     // The parent stops waiting, so no answer is coming.
     this.closeQuestions();
-    const batch = [...completions, ...running];
-    await this.parentSession.persistModelMessages(
-      batch.map(completionToParentMessage),
-    );
 
-    return batch.length;
+    return this.drainCompletionsToParent();
   }
 
   private async resolveTask(
@@ -598,17 +625,16 @@ export class SubagentCoordinator {
       };
     }
 
-    const virtualAgentId = `${VIRTUAL_AGENT_PREFIX}${taskId}`;
+    // A persistent virtual child is named by its key's UUID, so resuming the
+    // key reaches the same child and its history. A one-off child by its task.
+    const virtualAgentId = `${VIRTUAL_AGENT_PREFIX}${PERSISTENT_SUBAGENT_KEY.exec(publicConversationKey)?.[1] ?? taskId}`;
 
     return {
       taskId: taskId,
       runId: runId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
-      agentConfig: subagentConfig(
-        this.parentAgentConfig,
-        this.parentAgentConfig,
-      ),
+      agentConfig: virtualSubagentConfig(this.parentAgentConfig),
       publicConversationKey: publicConversationKey,
       conversationKey: scopedDirectConversationKey(
         accountId,
@@ -807,6 +833,12 @@ export class SubagentCoordinator {
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
+    const deadlineMs = Date.now() + SUBAGENT_BUDGET_MS;
+    const budget = new AbortController();
+    const budgetTimer = setTimeout((): void => {
+      budget.abort(new Error(SUBAGENT_BUDGET_EXCEEDED));
+    }, SUBAGENT_BUDGET_MS + DEADLINE_WIND_DOWN_MS);
+    budgetTimer.unref?.();
     try {
       // Persistent mode writes the task prompt first so the child model response
       // and tool messages append to that conversation.
@@ -833,6 +865,10 @@ export class SubagentCoordinator {
         {
           ...(subagentParent ? { subagentParent: subagentParent } : {}),
           isolatedSandbox: task.isolatedSandbox,
+          // Never yields: the child holds no worker slot, so near its budget
+          // it winds down to an answer instead.
+          deadlineMs: deadlineMs,
+          abortSignal: AbortSignal.any([budget.signal, this.childStop.signal]),
           ...(task.persistent
             ? {
                 askParent: (
@@ -840,6 +876,7 @@ export class SubagentCoordinator {
                   abortSignal?: AbortSignal,
                 ): Promise<string | null> =>
                   this.askParent(task.taskId, question, abortSignal),
+                stopMessage: PARENT_STOP_MESSAGE,
               }
             : {}),
         },
@@ -896,6 +933,8 @@ export class SubagentCoordinator {
         });
       });
       throw error;
+    } finally {
+      clearTimeout(budgetTimer);
     }
   }
 
@@ -975,10 +1014,10 @@ export class SubagentCoordinator {
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
-    // Past the parent's wait budget there is no live parent turn left to inject
-    // into, so hand the envelope to a standalone worker instead of running it
-    // here and dropping the answer.
-    if (Date.now() >= this.waitUntilMs) {
+    // Past the parent's wait budget, or after its stop, there is no live
+    // parent turn left to inject into, so hand the envelope to a standalone
+    // worker instead of running it here and dropping the answer.
+    if (Date.now() >= this.waitUntilMs || this.childStop.signal.aborted) {
       await this.transferChildConversation(childSession, task);
 
       return;
@@ -1107,10 +1146,15 @@ export class SubagentCoordinator {
     task: ResolvedSubagentTask,
     incoming: ModelMessage[],
   ): Promise<TurnContextSnapshot> {
+    // The child is told its budget so it can pace itself.
+    const ephemeralSystem: SystemModelMessage[] = [
+      ...task.parentEphemeralSystem,
+      { role: "system", content: SUBAGENT_BUDGET_INSTRUCTION },
+    ];
     if (!task.persistent) {
       return childSession.createEphemeralTurnContext(
         [...(task.inheritedContext ? task.parentMessages : []), ...incoming],
-        task.parentEphemeralSystem,
+        ephemeralSystem,
       );
     }
 
@@ -1119,12 +1163,12 @@ export class SubagentCoordinator {
     // That is enough to load prior child history; when omitted, this is a new
     // persistent child conversation with a generated public key.
     if (task.resuming || !task.inheritedContext) {
-      return childSession.createTurnContext(task.parentEphemeralSystem);
+      return childSession.createTurnContext(ephemeralSystem);
     }
 
     return childSession.createEphemeralTurnContext(
       [...task.parentMessages, ...incoming],
-      task.parentEphemeralSystem,
+      ephemeralSystem,
     );
   }
 
@@ -1154,12 +1198,16 @@ export class SubagentCoordinator {
 
     // A stopped child was cancelled on purpose, so its partial progress is not
     // an answer the parent asked for. Record it, but keep it out of the transcript.
-    if (completion.error === USER_STOP_MESSAGE) {
+    if (
+      completion.error === PARENT_STOP_MESSAGE ||
+      completion.error === USER_STOP_MESSAGE
+    ) {
       this.notifyCompletion();
       logInfo("Subagent task stopped", {
         parentEventId: this.parentSession.eventId,
         taskId: completion.taskId,
         agentId: completion.agentId,
+        error: completion.error,
       });
       await this.emitTaskFinished({
         taskId: completion.taskId,

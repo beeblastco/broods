@@ -1123,6 +1123,42 @@ describe("runtime ingress", () => {
     ).toEqual({ stopped: true, queuedCount: 0 });
   });
 
+  test("a subagent its parent stopped is not flagged stoppedByUser", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+        ownerTaskId: "task-a",
+      }),
+    );
+    await t.mutation(internal.runtimeIngress.stopOwner, {
+      accountId: accountId,
+      agentId: "test-agent",
+      conversationKey: conversationKey,
+      expectedOwnerTaskId: "task-a",
+    });
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "failed",
+      error: "Stopped by the parent agent at the model boundary",
+    });
+
+    const status = await t.query(internal.runtimeIngress.getStatus, {
+      accountId: accountId,
+      runId: "run_owner",
+    });
+    expect(status).toMatchObject({ status: "failed" });
+    expect(status?.stoppedByUser).toBeUndefined();
+  });
+
   test("a genuine failure is not flagged stoppedByUser", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -1971,5 +2007,155 @@ describe("runtime ingress", () => {
         runId: "run_overdue-queued",
       }),
     ).toMatchObject({ status: "expired" });
+  });
+});
+
+describe("harness checkpoints", () => {
+  const resumeState = (threadId: string) => ({
+    type: "resume-session",
+    harnessId: "codex",
+    specificationVersion: "harness-v1",
+    data: { threadId: threadId },
+  });
+
+  test("the current owner stores, replaces and clears one checkpoint per conversation", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = { ownerEventId: "owner", ownerGeneration: 1 };
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+
+    for (const threadId of ["thread-1", "thread-2"]) {
+      await t.mutation(internal.runtimeIngress.saveHarnessSession, {
+        conversationKey: conversationKey,
+        ...owner,
+        harnessType: "codex",
+        sessionId: `codex-${threadId}`,
+        resumeState: resumeState(threadId),
+      });
+      expect(
+        await t.query(internal.runtime.getHarnessSession, {
+          conversationKey: conversationKey,
+        }),
+      ).toEqual({
+        harnessType: "codex",
+        sessionId: `codex-${threadId}`,
+        resumeState: resumeState(threadId),
+      });
+    }
+
+    await t.mutation(internal.runtimeIngress.clearConversation, {
+      conversationKey: conversationKey,
+      ...owner,
+    });
+    expect(
+      await t.query(internal.runtime.getHarnessSession, {
+        conversationKey: conversationKey,
+      }),
+    ).toBeNull();
+  });
+
+  test("rejects an oversized checkpoint before writing Convex", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+
+    await expect(
+      t.mutation(internal.runtimeIngress.saveHarnessSession, {
+        conversationKey: conversationKey,
+        ownerEventId: "owner",
+        ownerGeneration: 1,
+        harnessType: "opencode",
+        sessionId: "opencode-session",
+        resumeState: {
+          type: "resume-session",
+          harnessId: "opencode",
+          specificationVersion: "harness-v1",
+          data: { oversized: "x".repeat(64 * 1_024) },
+        },
+      }),
+    ).rejects.toThrow("Harness resume state is");
+    expect(
+      await t.query(internal.runtime.getHarnessSession, {
+        conversationKey: conversationKey,
+      }),
+    ).toBeNull();
+  });
+
+  test("a delayed save from a lapsed owner keeps the newer owner's checkpoint", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: "first",
+          mode: "reject",
+        }),
+      );
+      // The first run's lease lapses and a second message takes the conversation.
+      vi.setSystemTime(Date.now() + 60_001);
+      expect(
+        await t.mutation(
+          internal.runtimeIngress.accept,
+          admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: "second",
+            mode: "reject",
+          }),
+        ),
+      ).toMatchObject({ ownerGeneration: 2 });
+      await t.mutation(internal.runtimeIngress.saveHarnessSession, {
+        conversationKey: conversationKey,
+        ownerEventId: "second",
+        ownerGeneration: 2,
+        harnessType: "codex",
+        sessionId: "native-newer",
+        resumeState: resumeState("newer"),
+      });
+
+      await expect(
+        t.mutation(internal.runtimeIngress.saveHarnessSession, {
+          conversationKey: conversationKey,
+          ownerEventId: "first",
+          ownerGeneration: 1,
+          harnessType: "codex",
+          sessionId: "native-older",
+          resumeState: resumeState("older"),
+        }),
+      ).rejects.toThrow("Stale conversation owner generation");
+      expect(
+        await t.query(internal.runtime.getHarnessSession, {
+          conversationKey: conversationKey,
+        }),
+      ).toMatchObject({
+        sessionId: "native-newer",
+        resumeState: resumeState("newer"),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
