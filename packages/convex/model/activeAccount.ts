@@ -27,6 +27,21 @@ export async function requireActiveAccount(
 }
 
 /**
+ * @throws when the org's account is disabled. An org with no account yet has
+ * nothing to suspend.
+ */
+export async function requireActiveOrgAccount(
+  ctx: QueryCtx,
+  orgId: Id<"orgs">,
+): Promise<void> {
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .unique();
+  if (account) await requireActiveAccount(ctx, account._id);
+}
+
+/**
  * The active account a runtime key belongs to.
  * @throws when the key is unscoped or its account is missing or disabled.
  */

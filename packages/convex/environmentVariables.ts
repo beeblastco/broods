@@ -7,7 +7,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { getOwnedStage } from "./model/ownership/stage";
+import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import {
@@ -81,7 +81,12 @@ export const remove = mutation({
     const variable = await ctx.db.get(variableId);
     if (!variable) throw new Error("Variable not found.");
 
-    const stage = await getOwnedStage(ctx, user.id, variable.stageId, "admin");
+    const stage = await getStageForWrite(
+      ctx,
+      user.id,
+      variable.stageId,
+      "admin",
+    );
     if (!stage) throw new Error(ADMIN_REQUIRED);
     await assertEnvironmentVariableUnreferenced(
       ctx,
@@ -141,7 +146,7 @@ export const reveal = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const stage = await getOwnedStage(ctx, user.id, stageId, "admin");
+    const stage = await getStageForWrite(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
       throw new Error(ADMIN_REQUIRED);
     }
@@ -193,7 +198,7 @@ export const set = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const stage = await getOwnedStage(ctx, user.id, stageId, "admin");
+    const stage = await getStageForWrite(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
       throw new Error(ADMIN_REQUIRED);
     }

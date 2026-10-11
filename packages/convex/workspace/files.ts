@@ -20,7 +20,10 @@ import {
 import { authKit } from "../auth";
 import { requireActiveAccount } from "../model/activeAccount";
 import { deleteWorkspaceFile } from "../model/cascade";
-import { getProjectForRole } from "../model/ownership/project";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "../model/ownership/project";
 import {
   claimUploadedBlob,
   grantUpload,
@@ -125,7 +128,7 @@ export const create = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(ctx, user.id, projectId, "admin");
+    const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
     if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
     const blob = storageId ? await claimUploadedBlob(ctx, storageId) : null;
@@ -310,7 +313,7 @@ export const remove = mutation({
 
     const file = await ctx.db.get(fileId);
     if (!file) throw new Error("File not found.");
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       user.id,
       file.projectId,
@@ -346,7 +349,7 @@ export const removeFolder = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(ctx, user.id, projectId, "admin");
+    const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
     if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
     const descendants = await ctx.db
@@ -392,7 +395,7 @@ export const rename = mutation({
 
     const file = await ctx.db.get(fileId);
     if (!file) throw new Error("File not found.");
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       user.id,
       file.projectId,
@@ -467,6 +470,7 @@ export const resolveByHash = internalQuery({
  * @param authId WorkOS auth id of the caller
  * @param projectId owning project
  * @param workspaceId workspaceConfigs document ID stored on the canvas node
+ * @param requiredRole passed only by a change, which a disabled account may not make
  * @returns runtime account/workspace identifiers, or null when inaccessible
  */
 export const resolveRuntimeWorkspaceInternal = internalQuery({
@@ -501,8 +505,7 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     if (!workspaceId) return null;
     const workspace = await ctx.db.get(workspaceId);
     if (!workspace || workspace.projectId !== args.projectId) return null;
-    // Every caller goes on to mint storage credentials for this account.
-    await requireActiveAccount(ctx, workspace.accountId);
+    if (args.requiredRole) await requireActiveAccount(ctx, workspace.accountId);
 
     return {
       accountId: workspace.accountId,

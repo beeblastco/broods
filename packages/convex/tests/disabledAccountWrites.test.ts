@@ -1,8 +1,10 @@
 /// <reference types="vite/client" />
 /**
  * A disabled account is read-only on the direct Convex surface, as it is on
- * the config HTTP surface: no skill writes, upload URLs, workspace storage,
- * MCP calls, crons, connections or access changes. Deleting the org stays open.
+ * the config HTTP surface: no skill writes, upload URLs, workspace storage
+ * changes, MCP calls, crons, connections, access, project, stage, agent, key,
+ * env, policy, webhook, canvas or workspace file changes, removals included.
+ * Reads stay open, and deleting the org stays open.
  */
 
 import cronsComponent from "@convex-dev/crons/test";
@@ -21,6 +23,9 @@ const NOT_ACTIVE = /Account is not active/;
 const modules = import.meta.glob("../**/*.ts");
 const storageCalls = vi.hoisted(() => ({
   deletePrefix: vi.fn().mockResolvedValue(0),
+  listPrefix: vi.fn(async (_bucket: string, prefix: string) => [
+    { key: `${prefix}notes.md`, size: 2 },
+  ]),
   writeObject: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -32,6 +37,7 @@ vi.mock("../model/s3", async (importOriginal) => {
   return {
     ...original,
     deleteS3Prefix: storageCalls.deletePrefix,
+    listS3Prefix: storageCalls.listPrefix,
     writeS3Object: storageCalls.writeObject,
   };
 });
@@ -161,9 +167,11 @@ test("a disabled account cannot reach workspace storage or MCP servers", async (
       path: "notes.md",
     }),
   ).rejects.toThrow(NOT_ACTIVE);
-  await expect(
-    caller.action(api.workspace.filesPublic.list, workspace),
-  ).rejects.toThrow(NOT_ACTIVE);
+  // Listing is a read, so it stays open.
+  vi.stubEnv("FILESYSTEM_BUCKET_NAME", BUCKET);
+  expect(
+    await caller.action(api.workspace.filesPublic.list, workspace),
+  ).toMatchObject([{ path: "notes.md", isFolder: false }]);
 
   const node = { projectId: projectId, stageId: stageId, nodeId: "mcp-node" };
   await expect(
@@ -180,6 +188,192 @@ test("a disabled account cannot reach workspace storage or MCP servers", async (
     NOT_ACTIVE,
   );
   expect(storageCalls.writeObject).not.toHaveBeenCalled();
+  expect(storageCalls.deletePrefix).not.toHaveBeenCalled();
+});
+
+test("a disabled account cannot change or remove project config, and can still read it", async (): Promise<void> => {
+  const { t, caller, orgId, accountId } = await setup();
+  const projectId = await seedProject(t, orgId);
+  const ids = await t.run(async (ctx) => {
+    const now = Date.now();
+    const stage = { authId: AUTH_ID, projectId: projectId, updatedAt: now };
+    const stageId = await ctx.db.insert("stages", {
+      ...stage,
+      name: "Development",
+      kind: "development" as const,
+      isDefault: true,
+    });
+    const scope = { projectId: projectId, stageId: stageId };
+
+    return {
+      stageId: stageId,
+      previewStageId: await ctx.db.insert("stages", {
+        ...stage,
+        name: "preview",
+        kind: "custom" as const,
+        isDefault: false,
+      }),
+      configId: await ctx.db.insert("agentConfigs", {
+        ...scope,
+        authId: AUTH_ID,
+        name: "planner",
+        updatedAt: now,
+      }),
+      policyId: await ctx.db.insert("agentPolicies", {
+        ...scope,
+        accountId: accountId,
+        name: "guardrails",
+        document: { version: 1 as const, rules: [] },
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      }),
+      deployKeyId: await ctx.db.insert("deployKeys", {
+        ...scope,
+        accountId: accountId,
+        name: "ci",
+        keyHash: "hash-deploy",
+        keyHint: "bd_…wxyz",
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      }),
+      variableId: await ctx.db.insert("environmentVariables", {
+        ...scope,
+        name: "FIXTURE_KEY",
+        ciphertext: "ct",
+        iv: "iv",
+        tag: "tag",
+        valueDigest: "digest",
+        updatedAt: now,
+      }),
+      fileId: await ctx.db.insert("workspaceFiles", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        nodeId: "workspace-node",
+        path: "docs/notes.md",
+        name: "notes.md",
+        isFolder: false,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    };
+  });
+  const project = { projectId: projectId };
+  const scope = { ...project, stageId: ids.stageId };
+  const config = { configId: ids.configId };
+  const policy = { policyId: ids.policyId };
+  const variable = { variableId: ids.variableId };
+  const file = { fileId: ids.fileId };
+
+  // While active, the same caller writes.
+  await caller.mutation(api.project.update, { ...project, name: "renamed" });
+  await disable(t, accountId);
+
+  const refused: Array<() => Promise<unknown>> = [
+    () => caller.mutation(api.project.create, { name: "another" }),
+    () => caller.mutation(api.project.update, { ...project, name: "again" }),
+    () => caller.mutation(api.project.remove, project),
+    () => caller.mutation(api.stage.create, { ...project, name: "staging" }),
+    () => caller.mutation(api.stage.ensureDefault, project),
+    () =>
+      caller.mutation(api.stage.initializeProduction, {
+        ...project,
+        sourceStageId: ids.stageId,
+        deploymentRegion: "eu-west-1",
+      }),
+    () => caller.mutation(api.stage.remove, { stageId: ids.previewStageId }),
+    () =>
+      caller.mutation(api.canvas.saveLayout, {
+        ...scope,
+        nodes: [],
+        edges: [],
+      }),
+    () => caller.mutation(api.agent.config.create, { ...scope, name: "coder" }),
+    () => caller.mutation(api.agent.config.update, { ...config, name: "x" }),
+    () => caller.mutation(api.agent.config.remove, config),
+    () =>
+      caller.mutation(api.agent.config.updateRuntimeRefs, {
+        ...config,
+        sandboxes: [],
+        workspaces: null,
+      }),
+    () =>
+      caller.mutation(api.agent.config.updateSubagentRefs, {
+        ...config,
+        calleeConfigIds: [],
+      }),
+    () => caller.mutation(api.agent.deployments.ensureForStage, scope),
+    () => caller.mutation(api.agent.deployments.rotate, scope),
+    () => caller.mutation(api.agent.deployments.mintStageSession, scope),
+    () =>
+      caller.mutation(api.agent.policies.create, {
+        ...scope,
+        name: "another",
+        document: { version: 1, rules: [] },
+      }),
+    () => caller.mutation(api.agent.policies.update, { ...policy, name: "x" }),
+    () => caller.mutation(api.agent.policies.remove, policy),
+    () => caller.mutation(api.deployKeys.create, { ...scope, name: "ci-2" }),
+    () =>
+      caller.mutation(api.deployKeys.remove, { deployKeyId: ids.deployKeyId }),
+    () =>
+      caller.mutation(api.environmentVariables.set, {
+        ...scope,
+        name: "OTHER_KEY",
+        value: "value",
+      }),
+    () => caller.mutation(api.environmentVariables.remove, variable),
+    () =>
+      caller.mutation(api.environmentVariables.reveal, {
+        ...scope,
+        ...variable,
+      }),
+    () =>
+      caller.mutation(api.webhooks.addAgentWebhook, {
+        agentConfigId: ids.configId,
+        url: "https://example.invalid/hook",
+        secret: "fixture-secret",
+      }),
+    () =>
+      caller.mutation(api.webhooks.removeAgentWebhook, {
+        agentConfigId: ids.configId,
+        index: 0,
+      }),
+    () =>
+      caller.mutation(api.webhooks.setAgentWebhookEnabled, {
+        agentConfigId: ids.configId,
+        index: 0,
+        enabled: false,
+      }),
+    () =>
+      caller.mutation(api.workspace.files.create, {
+        ...project,
+        nodeId: "workspace-node",
+        path: "docs/new.md",
+        name: "new.md",
+        isFolder: false,
+      }),
+    () =>
+      caller.mutation(api.workspace.files.rename, { ...file, newName: "x" }),
+    () => caller.mutation(api.workspace.files.remove, file),
+    () =>
+      caller.mutation(api.workspace.files.removeFolder, {
+        ...project,
+        nodeId: "workspace-node",
+        folderPath: "docs",
+      }),
+  ];
+  for (const call of refused) await expect(call()).rejects.toThrow(NOT_ACTIVE);
+  expect(await t.run(async (ctx) => ctx.db.get(projectId))).toMatchObject({
+    name: "renamed",
+  });
+
+  // Reads stay open so the owner can still see what the account holds.
+  expect(await caller.query(api.agent.config.getById, config)).toMatchObject({
+    _id: ids.configId,
+    name: "planner",
+  });
 });
 
 test("a disabled account cannot change crons, connections or access, and can still delete its org", async (): Promise<void> => {
