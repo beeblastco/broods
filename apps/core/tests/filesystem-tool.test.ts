@@ -427,10 +427,6 @@ describe("sandbox tool set", () => {
       { exit_code: 2, stdout: "", stderr: "ls: nope" },
       "ls: nope\n[exit code 2]",
     ],
-    [
-      { exit_code: 124, timed_out: true, stdout: "partial\n", stderr: "" },
-      "partial\n[timed out, exit code 124]",
-    ],
   ])("bash reports a failed run %#", async (response, expected) => {
     microvmFetchMock.mockImplementationOnce(microvmFetchResponse);
     microvmFetchMock.mockImplementationOnce(
@@ -452,6 +448,46 @@ describe("sandbox tool set", () => {
     const bash = await tool("bash", workspaceCtx());
 
     expect(await bash.execute({ command: "test -f missing" })).toBe(expected);
+  });
+
+  it("bash fails a timed-out call the same way whether the guest or core stopped it", async () => {
+    const limit =
+      "[timed out after 30s, the per-call limit; any output past it is lost]";
+    microvmFetchMock.mockImplementationOnce(microvmFetchResponse);
+    microvmFetchMock.mockImplementationOnce(async (): Promise<Response> =>
+      Response.json({
+        ok: false,
+        runtime: "bash",
+        exit_code: null,
+        timed_out: true,
+        duration_ms: 60_000,
+        stdout: "partial\n",
+        stderr: "",
+      }),
+    );
+    const bash = await tool("bash", workspaceCtx());
+    expect(bash.execute({ command: "sleep 99" })).rejects.toThrow(
+      `partial\n${limit}`,
+    );
+
+    microvmFetchMock.mockImplementationOnce(microvmFetchResponse);
+    microvmFetchMock.mockImplementationOnce(async (): Promise<Response> => {
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    });
+    expect(bash.execute({ command: "sleep 99" })).rejects.toThrow(
+      `no answer from the sandbox in time; the command may still be running there\n${limit}`,
+    );
+  });
+
+  it("bash states the per-call limit and the workspace's missing rename", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    expect(bash.description).toContain("Each call is limited to 30s");
+    expect(bash.description).toContain(
+      "`sed -i`, `mv` and `>>` on its files fail",
+    );
+    const stateless = await tool("bash", statelessCtx());
+    expect(stateless.description).toContain("Each call is limited to 30s");
+    expect(stateless.description).not.toContain("sed -i");
   });
 
   it("bash pty:true attaches the command to a real guest pseudo-terminal", async () => {

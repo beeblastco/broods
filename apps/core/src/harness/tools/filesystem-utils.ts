@@ -21,7 +21,7 @@ import {
   s3ObjectExists,
 } from "../../shared/s3.ts";
 import { getHarnessPublicUrl, requireSecretsEnv } from "../../shared/env.ts";
-import { toErrorMessage } from "../../shared/errors.ts";
+import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import {
   MEDIA_PATH_PREFIX,
@@ -692,11 +692,20 @@ export async function workspaceMediaBytes(
   );
 }
 
-// Bash tool result text: stdout then stderr, with a trailing `[exit code N]`
-// (`[timed out, exit code N]` on a timeout) when the run failed so a silent
-// failure never reads as success.
-export function formatRunText(result: SandboxRunResult): string {
+// Bash and browse result text: stdout then stderr, with a trailing `[exit code N]`
+// when the run failed so a silent failure never reads as success. A run past
+// `timeoutSeconds` throws, so the call fails with whatever output came back.
+export function formatRunText(
+  result: SandboxRunResult,
+  timeoutSeconds: number,
+): string {
   const output = `${result.stdout}${result.stderr}`;
+  const separator = output === "" || output.endsWith("\n") ? "" : "\n";
+  if (result.timedOut) {
+    throw new Error(
+      `${output}${separator}[timed out after ${timeoutSeconds}s, the per-call limit; any output past it is lost]`,
+    );
+  }
   const failed = !result.ok || (result.exitCode ?? 0) !== 0;
   if (!failed) {
     return output;
@@ -708,12 +717,10 @@ export function formatRunText(result: SandboxRunResult): string {
       throw new Error(error);
     }
   }
-  const code =
-    result.exitCode === null ? undefined : `exit code ${result.exitCode}`;
-  const status = result.timedOut
-    ? ["timed out", code].filter(Boolean).join(", ")
-    : (code ?? "command failed");
-  const separator = output === "" || output.endsWith("\n") ? "" : "\n";
+  const status =
+    result.exitCode === null
+      ? "command failed"
+      : `exit code ${result.exitCode}`;
 
   return `${output}${separator}[${status}]`;
 }
@@ -909,27 +916,46 @@ async function runSandboxOn(
     !namespace && config.persistent === true
       ? statelessReservationKeyFor(config)
       : undefined;
+  const startedAt = Date.now();
 
-  return executor.run({
-    code: code,
-    ...(namespace
-      ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
-      : {}),
-    ...(reservationKey
-      ? {
-          reservationKey: reservationKey,
-          workspaceRoot: workspaceRootFor(config),
-        }
-      : {}),
-    ...(options?.metadata ? { metadata: options.metadata } : {}),
-    ...(options?.principal ? { principal: options.principal } : {}),
-    timeoutSeconds: sandboxTimeoutSeconds(config),
-    outputLimitBytes: boundedInteger(
-      config.outputLimitBytes,
-      limits.defaultOutputLimitBytes,
-      limits.maxOutputLimitBytes,
-    ),
-  });
+  return executor
+    .run({
+      code: code,
+      ...(namespace
+        ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
+        : {}),
+      ...(reservationKey
+        ? {
+            reservationKey: reservationKey,
+            workspaceRoot: workspaceRootFor(config),
+          }
+        : {}),
+      ...(options?.metadata ? { metadata: options.metadata } : {}),
+      ...(options?.principal ? { principal: options.principal } : {}),
+      timeoutSeconds: sandboxTimeoutSeconds(config),
+      outputLimitBytes: boundedInteger(
+        config.outputLimitBytes,
+        limits.defaultOutputLimitBytes,
+        limits.maxOutputLimitBytes,
+      ),
+    })
+    .catch((error: unknown): SandboxRunResult => {
+      // The client deadline fired before any executor's guest answered: a
+      // timeout with no output, the same as one the guest stopped itself.
+      if (!isTimeoutError(error)) throw error;
+
+      return {
+        ok: false,
+        runtime: "bash",
+        exitCode: null,
+        stdout: "",
+        stderr:
+          "no answer from the sandbox in time; the command may still be running there",
+        durationMs: Date.now() - startedAt,
+        timedOut: true,
+        provider: config.provider,
+      };
+    });
 }
 
 function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {

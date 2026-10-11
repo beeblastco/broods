@@ -43,7 +43,7 @@ import type {
 import { waitUntil } from "../../shared/in-flight.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv, requireEnv } from "../../shared/env.ts";
-import { toErrorMessage } from "../../shared/errors.ts";
+import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getObservabilityContext } from "../../shared/otel.ts";
@@ -212,8 +212,7 @@ const SHELL_TOKEN_TTL_MINUTES = 30;
 // refused or reset connection is the VM still restoring its snapshot, while a
 // timeout means the command ran past its budget and a retry would run it twice.
 const EXEC_RETRY: GuestRetry = {
-  fetchError: (err: unknown): boolean =>
-    !(err instanceof DOMException && err.name === "TimeoutError"),
+  fetchError: (err: unknown): boolean => !isTimeoutError(err),
   warmingStatus: true,
 };
 // A guest route, probed ready first, retries only a connection that never
