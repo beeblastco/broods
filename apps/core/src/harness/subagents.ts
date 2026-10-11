@@ -37,6 +37,7 @@ import {
 } from "./async-agent-result.ts";
 import {
   DEADLINE_WIND_DOWN_MS,
+  PARENT_STOP_MESSAGE,
   readAgentFullStream,
   runAgentLoop,
   USER_STOP_MESSAGE,
@@ -875,6 +876,7 @@ export class SubagentCoordinator {
                   abortSignal?: AbortSignal,
                 ): Promise<string | null> =>
                   this.askParent(task.taskId, question, abortSignal),
+                stopMessage: PARENT_STOP_MESSAGE,
               }
             : {}),
         },
@@ -1196,12 +1198,16 @@ export class SubagentCoordinator {
 
     // A stopped child was cancelled on purpose, so its partial progress is not
     // an answer the parent asked for. Record it, but keep it out of the transcript.
-    if (completion.error === USER_STOP_MESSAGE) {
+    if (
+      completion.error === PARENT_STOP_MESSAGE ||
+      completion.error === USER_STOP_MESSAGE
+    ) {
       this.notifyCompletion();
       logInfo("Subagent task stopped", {
         parentEventId: this.parentSession.eventId,
         taskId: completion.taskId,
         agentId: completion.agentId,
+        error: completion.error,
       });
       await this.emitTaskFinished({
         taskId: completion.taskId,

@@ -186,6 +186,9 @@ const MODEL_CALL_BOUNDARY_PART_TYPES: ReadonlySet<string> = new Set([
 const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
 /** Failure text of a stopped run; handler and subagents match on it to treat a stop as intended, not a failure. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
+/** Failure text of a persistent subagent run its parent stopped with stop_subagent. */
+export const PARENT_STOP_MESSAGE =
+  "Stopped by the parent agent at the model boundary";
 // Harness types whose runtime refused a mid-turn message in this process.
 const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
 // Per-attribute cap on serialized trace payloads. Generous so reasoning and
@@ -284,6 +287,9 @@ export interface AgentLoopOptions {
   // Aborts the run from outside, as the worker pool does when it reclaims an
   // overrunning run's slot.
   abortSignal?: AbortSignal;
+  // What a stop at a step boundary fails the run with. A persistent subagent's
+  // run passes PARENT_STOP_MESSAGE, since its parent's stop_subagent stops it.
+  stopMessage?: string;
   // When the request or worker budget ends; the run yields or winds down
   // before it.
   deadlineMs?: number;
@@ -360,6 +366,7 @@ export async function runAgentLoop(
 ): Promise<AgentLoopStream> {
   let didFail = false;
   let failureText: string | null = null;
+  const stopMessage = options.stopMessage ?? USER_STOP_MESSAGE;
   let systemContextSnapshot = turnContext.systemContextSnapshot;
   const configuredModel = resolveConfiguredModel(
     agentConfig,
@@ -1312,7 +1319,7 @@ export async function runAgentLoop(
         { claimSteering: !windingDown },
       );
       if (renewal === "stopped") {
-        throw new Error(USER_STOP_MESSAGE);
+        throw new Error(stopMessage);
       }
       if (renewal === "stale") {
         throw new Error(
@@ -2227,7 +2234,11 @@ export async function runAgentLoop(
         stored: stored,
         type: harnessType,
       });
-      stopHarnessLeaseMonitor = startHarnessLeaseMonitor(session, runAbort);
+      stopHarnessLeaseMonitor = startHarnessLeaseMonitor(
+        session,
+        runAbort,
+        stopMessage,
+      );
       harnessEnvironment = session.environmentText(
         formatSandboxStatus({
           name: sandboxes[0]!.name,
@@ -2805,6 +2816,7 @@ function requireHarnessSandbox(
 function startHarnessLeaseMonitor(
   session: Session,
   abortController: AbortController,
+  stopMessage: string,
 ): () => void {
   let checking = false;
   let consecutiveFailures = 0;
@@ -2817,7 +2829,7 @@ function startHarnessLeaseMonitor(
       const renewal = await session.renewConversationLease();
       consecutiveFailures = 0;
       if (renewal === "stopped") {
-        abortController.abort(new Error(USER_STOP_MESSAGE));
+        abortController.abort(new Error(stopMessage));
       } else if (renewal === "stale") {
         abortController.abort(
           new Error("Conversation ownership changed during HarnessAgent turn"),
