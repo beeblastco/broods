@@ -399,7 +399,8 @@ test("websocket attach honors its AbortSignal and stops delivering callbacks", a
         sockets.add(socket);
       },
       message: (_socket, raw): void => {
-        frames.push((JSON.parse(String(raw)) as { type: string }).type);
+        const frame: { type: string } = JSON.parse(String(raw));
+        frames.push(frame.type);
       },
       close: (socket): void => {
         sockets.delete(socket);
