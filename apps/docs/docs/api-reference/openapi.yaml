@@ -5558,6 +5558,9 @@ components:
           enum: [full, result, none]
           default: result
           description: What the parent sees when a child finishes. `none` hides the result from the parent; an `onSubagentFinish` hook overrides it.
+        model:
+          $ref: "#/components/schemas/ModelConfig"
+          description: Model for virtual subagents (no `agentId`), merged key by key over the parent's `model`. The child keeps the parent's tools. A predefined agent runs on its own model.
 
     SessionConfig:
       type: object

@@ -6,7 +6,10 @@
 import type { JSONValue } from "@ai-sdk/provider";
 import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
 import type { JSONSchema7, UserContent, UserModelMessage } from "ai";
-import type { AgentConfig } from "../../shared/domain/agent-config.ts";
+import {
+  applyRunOverrides,
+  type AgentConfig,
+} from "../../shared/domain/agent-config.ts";
 import { MAX_IMAGE_BYTES } from "../../shared/media-types.ts";
 import {
   parseAccountAgentScopedKey,
@@ -229,6 +232,14 @@ export const toolError = (value: string): never => {
 
 /** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
+
+// A virtual child (no agentId) is the parent itself, on `subagent.model` when set.
+export function virtualSubagentConfig(parent: AgentConfig): AgentConfig {
+  return subagentConfig(
+    applyRunOverrides(parent, { model: parent.subagent?.model }),
+    parent,
+  );
+}
 
 /**
  * A tool result's content parts with every image the model cannot read, or past
