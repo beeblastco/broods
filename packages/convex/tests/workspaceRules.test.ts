@@ -17,7 +17,7 @@ import {
   normalizeWorkspaceConfig,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
-import { upsertEnvironmentVariable } from "../model/environmentValues";
+import { upsertEnvironmentVariable } from "../model/environmentWrites";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");

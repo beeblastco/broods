@@ -6,6 +6,7 @@
   },
   "rules": {
     "complexity": ["warn", 20],
+    "import/no-cycle": "error",
     "object-shorthand": ["error", "never"],
     "typescript/explicit-module-boundary-types": "error"
   },
