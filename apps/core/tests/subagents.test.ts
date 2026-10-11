@@ -1,9 +1,21 @@
 import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as ai from "ai";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
+import * as asyncAgentResults from "../src/harness/async-agent-result.ts";
+import type { AsyncAgentResultRecord } from "../src/harness/async-agent-result.ts";
+import * as hookDispatcher from "../src/harness/hook-dispatcher.ts";
+import type { ReentryTarget } from "../src/harness/integrations.ts";
+import type { SubagentResumeOutcome } from "../src/harness/subagents.ts";
+import * as subagentToolUtils from "../src/harness/tools/utils.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import * as log from "../src/shared/log.ts";
 import type { NatsPublisher } from "../src/shared/nats.ts";
+import {
+  createSubagentTaskId,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
+} from "../src/shared/runtime-keys.ts";
 import { setStorageForTests } from "../src/shared/storage.ts";
 
 const originalFetch = globalThis.fetch;
@@ -1013,7 +1025,8 @@ describe("SubagentCoordinator", () => {
         _parent: unknown,
         _taskId: string,
         _message: UserModelMessage,
-      ): Promise<void> => {},
+        _resultEventId: string,
+      ): Promise<SubagentResumeOutcome> => "queued",
     );
     const session = parentSession();
     const coordinator = new SubagentCoordinator(session, {}, Date.now(), {
@@ -1033,9 +1046,12 @@ describe("SubagentCoordinator", () => {
       await coordinator["completeTask"]({ ...late, status: "completed" });
 
       expect(resumeParent).toHaveBeenCalledTimes(1);
-      const [parent, taskId, message] = resumeParent.mock.calls[0]!;
+      const [parent, taskId, message, resultEventId] =
+        resumeParent.mock.calls[0]!;
       expect(parent).toBe(session);
       expect(taskId).toBe(late.taskId);
+      // Convex admits it only while the parent has not read this row.
+      expect(resultEventId).toBe(late.eventId);
       expect(messageText(message)).toContain("status: completed");
       expect(messageText(message)).toContain("the late answer");
       // Nothing queues for a parent pass that will never drain it.
@@ -1045,33 +1061,331 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("does not resume the parent with a late result a later turn already read", async () => {
-    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const resumeParent = mock(async (): Promise<void> => {});
-    const detaching = new SubagentCoordinator(parentSession(), {}, Date.now(), {
-      lifecycle: { emit: async (): Promise<void> => {} },
-      resumeParent: resumeParent,
+  it("does not tell a late result a later turn read before its step saved", async () => {
+    const parentEventId = "acct:account_1:agent:agent_parent:api:event_parent";
+    const parentKey = "acct:account_1:agent:agent_parent:api:chat";
+    const taskId = createSubagentTaskId(parentEventId);
+    const childEventId = scopedDirectEventId(
+      "account_1",
+      "agent_child",
+      taskId,
+    );
+    const child = {
+      taskId: taskId,
+      eventId: childEventId,
+      agentId: "agent_child",
+      conversationKey: "subagent-child",
+    };
+    // The result rows the parent has seen, as Convex keeps them: a late resume
+    // is admitted only for a row not in here (runtimeIngress.accept).
+    const seen = new Set<string>();
+    // The row as the later turn reads it, once the detach marked it unseen.
+    const owned = spyOn(
+      subagentToolUtils,
+      "getOwnedSubagent",
+    ).mockResolvedValue({
+      accountId: "account_1",
+      eventId: childEventId,
+      conversationKey: scopedDirectConversationKey(
+        "account_1",
+        "agent_child",
+        "subagent-child",
+      ),
+      observed: false,
+      status: "completed",
+      response: "the late answer",
+      createdAt: "2026-10-11T00:00:00.000Z",
+      updatedAt: "2026-10-11T00:00:00.000Z",
+      expiresAt: Date.now() + 60_000,
     });
+    const observe = spyOn(
+      asyncAgentResults,
+      "observeAsyncAgentResult",
+    ).mockImplementation(
+      async (eventId: string, observed: boolean): Promise<void> => {
+        if (observed) seen.add(eventId);
+      },
+    );
+    const told: string[] = [];
+    const resumeParent = async (
+      _parent: unknown,
+      resumedTaskId: string,
+      _message: UserModelMessage,
+      resultEventId: string,
+    ): Promise<SubagentResumeOutcome> => {
+      if (seen.has(resultEventId)) return "duplicate";
+      told.push(resumedTaskId);
+
+      return "queued";
+    };
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const { default: getStatus } =
+      await import("../src/harness/tools/get-subagent-status.tool.ts");
+    const detaching = new SubagentCoordinator(
+      parentSession({ conversationKey: parentKey }),
+      {},
+      Date.now(),
+      {
+        lifecycle: { emit: async (): Promise<void> => {} },
+        resumeParent: resumeParent,
+      },
+    );
     const laterTurn = new SubagentCoordinator(
-      parentSession(),
+      parentSession({
+        eventId: "acct:account_1:agent:agent_parent:api:event_later",
+        conversationKey: parentKey,
+      }),
       {},
       Date.now() + 60_000,
     );
-    const late = lateChild();
-    detaching["pending"].set(late.taskId, new Promise((): void => {}));
-    detaching["pendingMetadata"].set(late.taskId, late);
+    detaching["pending"].set(taskId, new Promise((): void => {}));
+    detaching["pendingMetadata"].set(taskId, child);
 
     try {
       await detaching.drainCompletionsAndDetachToParent();
-      // The later turn's get_subagent_status read, saved with its step.
-      laterTurn.markDelivered(late.eventId);
-      laterTurn.confirmDelivered();
-      await detaching["completeTask"]({ ...late, status: "completed" });
+      // A later turn reads the result; its step is not saved yet.
+      await getStatus({
+        accountId: "account_1",
+        eventId: "acct:account_1:agent:agent_parent:api:event_later",
+        conversationKey: parentKey,
+        watch: laterTurn,
+      }).get_subagent_status?.execute?.(
+        { taskId: taskId, agentId: "agent_child" },
+        { toolCallId: "call-1", messages: [], context: {} },
+      );
+      // The child finishes in that gap.
+      await detaching["completeTask"]({
+        ...child,
+        status: "completed",
+        response: "the late answer",
+      });
 
-      expect(resumeParent).not.toHaveBeenCalled();
+      expect(told).toEqual([]);
     } finally {
-      mutate.mockRestore();
+      owned.mockRestore();
+      observe.mockRestore();
+    }
+  });
+
+  it("keeps a result the parent already has seen when its child detaches on a follow-up", async (): Promise<void> => {
+    const observe = spyOn(
+      asyncAgentResults,
+      "observeAsyncAgentResult",
+    ).mockResolvedValue();
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      {},
+      Date.now() + 60_000,
+      { lifecycle: { emit: async (): Promise<void> => {} } },
+    );
+    const answered = lateChild();
+    const running = {
+      ...lateChild(),
+      taskId: "subagent_2",
+      eventId: "event_2",
+    };
+    for (const child of [answered, running]) {
+      coordinator["pending"].set(child.taskId, new Promise((): void => {}));
+      coordinator["pendingMetadata"].set(child.taskId, child);
+    }
+
+    try {
+      // The first turn's result goes in; the same task then drains a follow-up.
+      await coordinator["completeTask"]({ ...answered, status: "completed" });
+      expect(await coordinator.drainCompletionsToParent()).toBe(1);
+      await coordinator.drainCompletionsAndDetachToParent();
+
+      // Only the child the parent has nothing from is left to the sweep.
+      expect(observe.mock.calls).toEqual([["event_2", false]]);
+    } finally {
+      observe.mockRestore();
+    }
+  });
+
+  it("walks every page of lost results and retries a full conversation without rerunning its hook", async (): Promise<void> => {
+    const rows = [lostRow("event_full"), lostRow("event_other")];
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        status: string;
+        cursor: string | null;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => {
+        const unseen = rows.filter(
+          (row): boolean => row.status === options.status,
+        );
+        // One row a page, so the second is only reached through the cursor.
+        const index = options.cursor === null ? 0 : 1;
+
+        return {
+          page: unseen.slice(index, index + 1),
+          cursor: "next",
+          isDone: index + 1 >= unseen.length,
+        };
+      },
+    );
+    const observe = spyOn(
+      asyncAgentResults,
+      "observeAsyncAgentResult",
+    ).mockResolvedValue();
+    let hookRuns = 0;
+    const hooks = spyOn(
+      hookDispatcher,
+      "createAgentHookDispatcher",
+    ).mockResolvedValue({
+      hasHooksFor: (): boolean => true,
+      runMutation: async (): Promise<Record<string, unknown>> => {
+        hookRuns += 1;
+
+        return { visibleResult: `rewritten ${hookRuns}` };
+      },
+    });
+    const info = spyOn(log, "logInfo");
+    // The first conversation's queue is full on the first pass only.
+    const full = [true];
+    const resumed: Array<{ eventId: string; message: string }> = [];
+    const resumeParent = async (
+      _parent: unknown,
+      _taskId: string,
+      message: UserModelMessage,
+      resultEventId: string,
+    ): Promise<SubagentResumeOutcome> => {
+      if (resultEventId === rows[0]!.eventId && full.shift()) {
+        return "capacity";
+      }
+      resumed.push({ eventId: resultEventId, message: messageText(message) });
+      rows.splice(
+        rows.findIndex((row): boolean => row.eventId === resultEventId),
+        1,
+      );
+
+      return "queued";
+    };
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(lostParent, resumeParent);
+      expect(resumed).toEqual([
+        {
+          eventId: lostRow("event_other").eventId,
+          message: expect.stringContaining("rewritten 2"),
+        },
+      ]);
+      await resumeLostSubagentResults(lostParent, resumeParent);
+
+      // The retry carries the first pass's rewrite; the hook ran once a row.
+      expect(hookRuns).toBe(2);
+      expect(resumed[1]).toEqual({
+        eventId: lostRow("event_full").eventId,
+        message: expect.stringContaining("rewritten 1"),
+      });
+      expect(observe).not.toHaveBeenCalled();
+      // A resume is logged only once a conversation admitted it.
+      expect(
+        info.mock.calls.filter(
+          ([message]): boolean =>
+            message === "Resumed the parent with a lost subagent result",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      pages.mockRestore();
+      observe.mockRestore();
+      hooks.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  it("gives up once on lost results no resume can deliver, and fails only a still-running dead child", async (): Promise<void> => {
+    const otherAccountTask = createSubagentTaskId(
+      scopedDirectEventId("account_2", "agent_parent", "event_parent"),
+    );
+    const rows: AsyncAgentResultRecord[] = [
+      lostRow("event_gone"),
+      lostRow("event_conflict"),
+      {
+        ...lostRow("event_foreign"),
+        eventId: scopedDirectEventId(
+          "account_1",
+          "agent_child",
+          otherAccountTask,
+        ),
+      },
+      { ...lostRow("event_dead"), status: "processing", response: undefined },
+    ];
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        status: string;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => ({
+        page: rows.filter((row): boolean => row.status === options.status),
+        cursor: "end",
+        isDone: true,
+      }),
+    );
+    const observe = spyOn(
+      asyncAgentResults,
+      "observeAsyncAgentResult",
+    ).mockResolvedValue();
+    const record = spyOn(
+      asyncAgentResults,
+      "recordAsyncAgentResult",
+    ).mockResolvedValue();
+    const resumed: string[] = [];
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(
+        async (
+          accountId: string,
+          agentId: string,
+          conversationKey: string,
+        ): Promise<ReentryTarget | null> =>
+          conversationKey ===
+          lostRow("event_gone").subagent?.parentConversationKey
+            ? null
+            : lostParent(accountId, agentId, conversationKey),
+        async (
+          _parent: unknown,
+          _taskId: string,
+          _message: UserModelMessage,
+          resultEventId: string,
+        ): Promise<SubagentResumeOutcome> => {
+          resumed.push(resultEventId);
+
+          return "conflict";
+        },
+      );
+
+      expect(resumed).toEqual([lostRow("event_conflict").eventId]);
+      expect(observe.mock.calls.map(([eventId]) => eventId).sort()).toEqual(
+        [rows[0]!.eventId, rows[1]!.eventId, rows[2]!.eventId].sort(),
+      );
+      // An outcome that lands after the list is never overwritten.
+      expect(record.mock.calls).toEqual([
+        [
+          rows[3]!.eventId,
+          { status: "failed", error: expect.stringContaining("restarted") },
+          { onlyWhileProcessing: true },
+        ],
+      ]);
+    } finally {
+      pages.mockRestore();
+      observe.mockRestore();
+      record.mockRestore();
     }
   });
 
@@ -1945,6 +2259,52 @@ function lateChild(): {
     conversationKey: "conversation_subagent_1",
     response: "the late answer",
   };
+}
+
+const LOST_TASK_IDS = new Map<string, string>();
+
+// A finished subagent row a parent stopped waiting on, the same for each
+// `name`: its task, and so its parent conversation, is its own.
+function lostRow(name: string): AsyncAgentResultRecord {
+  const taskId =
+    LOST_TASK_IDS.get(name) ??
+    createSubagentTaskId(
+      scopedDirectEventId("account_1", "agent_parent", "event_parent"),
+    );
+  LOST_TASK_IDS.set(name, taskId);
+  const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+  return {
+    accountId: "account_1",
+    eventId: scopedDirectEventId("account_1", "agent_child", taskId),
+    conversationKey: scopedDirectConversationKey(
+      "account_1",
+      "agent_child",
+      `subagent-${name}`,
+    ),
+    subagent: {
+      parentConversationKey: scopedDirectConversationKey(
+        "account_1",
+        "agent_parent",
+        name,
+      ),
+    },
+    observed: false,
+    status: "completed",
+    response: `the answer of ${name}`,
+    createdAt: longAgo,
+    updatedAt: longAgo,
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+// Every lost result's parent agent still exists.
+async function lostParent(
+  _accountId: string,
+  _agentId: string,
+  conversationKey: string,
+): Promise<ReentryTarget> {
+  return { agentConfig: {}, conversationKey: conversationKey };
 }
 
 const CHILD_RUN_ID = `run_${"c".repeat(32)}`;

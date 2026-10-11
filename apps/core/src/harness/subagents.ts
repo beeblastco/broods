@@ -16,6 +16,7 @@ import {
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { delegatedChain, runPrincipal } from "../shared/domain/principal.ts";
+import { toErrorMessage } from "../shared/errors.ts";
 import { collectSecretValues, logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
 import {
@@ -25,15 +26,23 @@ import {
 import {
   createRunId,
   createSubagentTaskId,
+  parseAccountAgentScopedKey,
+  publicConversationKeyFromScoped,
+  publicEventIdForScope,
   scopedDirectConversationKey,
   scopedDirectEventId,
+  subagentParentEventId,
 } from "../shared/runtime-keys.ts";
 import { subagentKeyTag } from "../shared/run-token.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
+  listUnobservedAsyncAgentResults,
+  observeAsyncAgentResult,
   recordAsyncAgentResult,
   type AsyncAgentOutcome,
+  type AsyncAgentResultRecord,
+  type AsyncAgentStatus,
 } from "./async-agent-result.ts";
 import {
   DEADLINE_WIND_DOWN_MS,
@@ -48,8 +57,12 @@ import {
   createAgentHookDispatcher,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
-import { acceptIngress, outcomeSettlement } from "./ingress.ts";
-import type { IngressDispatchScope } from "./integrations.ts";
+import {
+  acceptIngress,
+  outcomeSettlement,
+  type IngressAdmission,
+} from "./ingress.ts";
+import type { IngressDispatchScope, ReentryTarget } from "./integrations.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   createAgentLifecycleEmitter,
@@ -83,10 +96,15 @@ const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 // What the parent model reads for a child it stopped waiting for.
 const STILL_RUNNING_NOTE =
   "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
-// The coordinator of the run that detached each child still working, by the
-// child's result event id, so a later turn's get_subagent_status read reaches
-// it. Core runs one replica, so every reader is in this process.
-const detachedResults = new Map<string, SubagentCoordinator>();
+// How long the run that detached a child has to deliver its result before the
+// recovery sweep takes it over, and the age past which nobody waits for it.
+const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
+const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const LOST_SUBAGENT_ERROR =
+  "Subagent stopped without a result: the runtime restarted while it was running.";
+// The parent message of each lost result a sweep pass could not resume yet, so
+// the next pass retries it without running its finish hook again.
+let heldLostResults = new Map<string, UserModelMessage>();
 // Wall clock one child turn may take. The loop winds it down to a tools-off
 // answer DEADLINE_WIND_DOWN_MS before; a turn still running that long past the
 // budget, stuck in a tool call, is aborted.
@@ -140,12 +158,31 @@ type SubagentIngressDispatcher = (
   session: Session,
   scope: IngressDispatchScope,
 ) => Promise<boolean>;
-/** Starts a new parent turn with a child's result, once per `taskId`. */
+/** Where a late result resumes its parent: its run's session, or what the result row kept. */
+export type SubagentParent = Pick<
+  Session,
+  "accountId" | "agentId" | "eventId" | "conversationKey" | "delivery"
+>;
+/** What a late result's resume did: its admission, or "skip" with no parent to resume. */
+export type SubagentResumeOutcome = IngressAdmission["outcome"] | "skip";
+/**
+ * Starts a new parent turn with a child's result, once per `taskId`, unless
+ * the parent already read the result row `resultEventId`. The recovery sweep
+ * passes the `target` it already resolved.
+ */
 type SubagentParentResumer = (
-  parent: Session,
+  parent: SubagentParent,
   taskId: string,
   message: UserModelMessage,
-) => Promise<void>;
+  resultEventId: string,
+  target?: ReentryTarget,
+) => Promise<SubagentResumeOutcome>;
+/** Where a parent conversation re-enters, or null once its agent is gone. */
+type SubagentParentLoader = (
+  accountId: string,
+  agentId: string,
+  conversationKey: string,
+) => Promise<ReentryTarget | null>;
 
 // Collaborators the handler owns. Every one has a working default, so tests and
 // non-handler callers override only what they exercise.
@@ -171,6 +208,10 @@ export class SubagentCoordinator {
   private readonly recorded = new Set<string>();
   // Result rows the model already read through get_subagent_status.
   private readonly delivered = new Set<string>();
+  // Result rows this pass already decided for the parent: queued for it, read
+  // by it, or kept from it. A child still in `pendingMetadata` after its result
+  // is one draining a follow-up, and the parent stopping is no news of that row.
+  private readonly handled = new Set<string>();
   // Questions children asked, queued for the parent's next step.
   private readonly questions: Array<{
     taskId: string;
@@ -213,7 +254,9 @@ export class SubagentCoordinator {
     this.dispatchNextIngress =
       dependencies.dispatchNextIngress ?? (async () => false);
     // Without a resumer a late result is only recorded on its status row.
-    this.resumeParent = dependencies.resumeParent ?? (async () => {});
+    this.resumeParent =
+      dependencies.resumeParent ??
+      (async (): Promise<SubagentResumeOutcome> => "skip");
   }
 
   // A getter follows the worker's budget as a yielding run moves to a new slot.
@@ -257,6 +300,13 @@ export class SubagentCoordinator {
         createPendingAsyncAgentResult({
           eventId: task.eventId,
           conversationKey: task.conversationKey,
+          subagent: {
+            ...(task.description ? { description: task.description } : {}),
+            parentConversationKey: this.parentSession.conversationKey,
+            ...(this.parentSession.delivery
+              ? { parentDelivery: this.parentSession.delivery }
+              : {}),
+          },
         }),
       ),
     );
@@ -383,7 +433,8 @@ export class SubagentCoordinator {
   /**
    * Records that get_subagent_status showed the model this run's outcome, by
    * the result row's event id. It counts once `confirmDelivered` runs after
-   * that tool result is saved, so a failed save still gets the injection.
+   * that tool result is saved, so a failed save still gets this turn's
+   * injection. The row's durable `observed` flag keeps a late resume away.
    */
   markDelivered(eventId: string): void {
     this.readUnsaved.add(eventId);
@@ -397,9 +448,6 @@ export class SubagentCoordinator {
   confirmDelivered(): void {
     for (const eventId of this.readUnsaved) {
       this.delivered.add(eventId);
-      // A later turn read a child an earlier run detached: that run's resume
-      // would answer it a second time.
-      detachedResults.get(eventId)?.delivered.add(eventId);
       // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
         (completion): boolean =>
@@ -560,10 +608,11 @@ export class SubagentCoordinator {
 
     // A child whose result is in this batch is only settling its lease.
     const answered = new Set(this.completions.map(({ taskId }) => taskId));
-    for (const metadata of this.pendingMetadata.values()) {
-      if (answered.has(metadata.taskId)) continue;
+    const detaching = [...this.pendingMetadata.values()].filter(
+      ({ taskId }): boolean => !answered.has(taskId),
+    );
+    for (const metadata of detaching) {
       this.detached.add(metadata.taskId);
-      detachedResults.set(metadata.eventId, this);
       // Queued like a result, so a failed write puts the notice back too. A
       // child whose result the model already read is not still working news.
       if (!this.delivered.has(metadata.eventId)) {
@@ -574,6 +623,15 @@ export class SubagentCoordinator {
     this.pendingMetadata.clear();
     // The parent stops waiting, so no answer is coming.
     this.closeQuestions();
+    // Only the recovery sweep reads this, for a result this process never
+    // delivers; the live resume needs none of it.
+    await Promise.all(
+      detaching
+        .filter(({ eventId }): boolean => !this.handled.has(eventId))
+        .map(({ eventId }): Promise<void> =>
+          observeAsyncAgentResult(eventId, false),
+        ),
+    );
 
     return this.drainCompletionsToParent();
   }
@@ -747,7 +805,6 @@ export class SubagentCoordinator {
         this.pending.delete(task.taskId);
         this.pendingMetadata.delete(task.taskId);
         this.detached.delete(task.taskId);
-        detachedResults.delete(task.eventId);
         this.notifyCompletion();
       });
 
@@ -1209,73 +1266,41 @@ export class SubagentCoordinator {
       return;
     }
 
-    // A stopped child was cancelled on purpose, so its partial progress is not
-    // an answer the parent asked for. Record it, but keep it out of the transcript.
+    const visible = await parentVisibleCompletion(
+      completion,
+      this.parentAgentConfig,
+      this.getHooks(),
+    );
+    // Read after the hook: the parent may have stopped waiting meanwhile.
+    const detached = this.detached.has(completion.taskId);
     if (
-      completion.error === PARENT_STOP_MESSAGE ||
-      completion.error === USER_STOP_MESSAGE
+      visible &&
+      (visible.visibleResult !== undefined ||
+        !this.delivered.has(visible.eventId))
     ) {
-      this.notifyCompletion();
-      logInfo("Subagent task stopped", {
+      if (detached) {
+        await this.resumeParentWith(visible);
+      } else {
+        this.completions.push(visible);
+      }
+    } else if (detached) {
+      // Never told, so the recovery sweep must not tell it either.
+      await observeAsyncAgentResult(completion.eventId, true);
+    }
+    this.handled.add(completion.eventId);
+    this.notifyCompletion();
+    logInfo(
+      stoppedOnPurpose(completion)
+        ? "Subagent task stopped"
+        : "Subagent task completed",
+      {
         parentEventId: this.parentSession.eventId,
         taskId: completion.taskId,
         agentId: completion.agentId,
-        error: completion.error,
-      });
-      await this.emitTaskFinished({
-        taskId: completion.taskId,
-        agentId: completion.agentId,
-        conversationKey: completion.conversationKey,
-        status: "failed",
-        error: completion.error,
-      });
-
-      return;
-    }
-
-    // Decide what the parent sees from this child: an onSubagentFinish hook wins;
-    // otherwise subagent.visibility ("none" hides it, "result"/"full" show it).
-    let inject = true;
-    if (completion.status === "completed") {
-      // The durable result is already written, so a hook that cannot load or
-      // that throws only loses its override. It never fails the child.
-      const hookVisible = await this.runSubagentFinishHook(completion).catch(
-        (error) => {
-          logError("Subagent finish hook failed", {
-            taskId: completion.taskId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-
-          return undefined;
-        },
-      );
-      if (hookVisible !== undefined) {
-        completion.visibleResult = hookVisible;
-      } else if (
-        (this.parentAgentConfig.subagent?.visibility ?? "result") === "none"
-      ) {
-        inject = false;
-      }
-    }
-    if (
-      inject &&
-      (completion.visibleResult !== undefined ||
-        !this.delivered.has(completion.eventId))
-    ) {
-      // Read after the hook: the parent may have stopped waiting meanwhile.
-      if (this.detached.has(completion.taskId)) {
-        await this.resumeParentWith(completion);
-      } else {
-        this.completions.push(completion);
-      }
-    }
-    this.notifyCompletion();
-    logInfo("Subagent task completed", {
-      parentEventId: this.parentSession.eventId,
-      taskId: completion.taskId,
-      agentId: completion.agentId,
-      status: completion.status,
-    });
+        status: completion.status,
+        ...(completion.error ? { error: completion.error } : {}),
+      },
+    );
     await this.emitTaskFinished({
       taskId: completion.taskId,
       agentId: completion.agentId,
@@ -1319,26 +1344,9 @@ export class SubagentCoordinator {
     return this.hooksPromise;
   }
 
-  // Runs an onSubagentFinish (subagent.task.finished) hook and returns what it
-  // wants the parent to see, or undefined when there is no such hook / no override.
-  private async runSubagentFinishHook(
-    completion: SubagentCompletion,
-  ): Promise<JSONValue | undefined> {
-    const hooks = await this.getHooks();
-    const mutation = await hooks.runMutation("subagent.task.finished", {
-      taskId: completion.taskId,
-      agentId: completion.agentId,
-      result:
-        completion.response === undefined
-          ? null
-          : toLifecycleValue(completion.response),
-    });
-
-    return mutation?.visibleResult as JSONValue | undefined;
-  }
-
   // A result the parent stopped waiting for starts its own parent turn. Its
-  // row already holds the result, so a failed resume is only logged.
+  // row already holds the result, so a failed resume is only logged, and the
+  // recovery sweep retries it.
   private async resumeParentWith(
     completion: SubagentCompletion,
   ): Promise<void> {
@@ -1346,6 +1354,7 @@ export class SubagentCoordinator {
       this.parentSession,
       completion.taskId,
       completionToParentMessage(completion),
+      completion.eventId,
     ).catch((error: unknown): void => {
       logError("Failed to resume the parent with a late subagent result", {
         parentEventId: this.parentSession.eventId,
@@ -1376,6 +1385,74 @@ export class SubagentCoordinator {
     }
     this.waiters.clear();
   }
+}
+
+/**
+ * Resumes each parent whose detached subagent result no live run delivered:
+ * the run that detached it died with its pod, or its resume failed. Each pass
+ * walks every page, so rows it must retry never crowd the rest out. The
+ * ingress recovery sweep calls it on its timer, with the handler's re-entry.
+ */
+export async function resumeLostSubagentResults(
+  loadParent: SubagentParentLoader,
+  resumeParent: SubagentParentResumer,
+): Promise<void> {
+  const now = Date.now();
+  const updatedAfter = new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString();
+  const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();
+  const ranges: Array<[AsyncAgentStatus, string]> = [
+    ["completed", settledBefore],
+    ["failed", settledBefore],
+    // A child still running this long past its budget died with its pod.
+    [
+      "processing",
+      new Date(
+        now - SUBAGENT_BUDGET_MS - DEADLINE_WIND_DOWN_MS - LATE_RESULT_GRACE_MS,
+      ).toISOString(),
+    ],
+  ];
+  const held = new Map<string, UserModelMessage>();
+  for (const [status, updatedBefore] of ranges) {
+    let cursor: string | null = null;
+    let isDone = false;
+    while (!isDone) {
+      const result = await listUnobservedAsyncAgentResults({
+        status: status,
+        updatedAfter: updatedAfter,
+        updatedBefore: updatedBefore,
+        cursor: cursor,
+      });
+      for (const row of result.page) {
+        // A child listed still running died with its pod: its row is failed,
+        // unless its outcome landed since, and a later pass tells the parent.
+        if (row.status === "processing") {
+          await recordAsyncAgentResult(
+            row.eventId,
+            { status: "failed", error: LOST_SUBAGENT_ERROR },
+            { onlyWhileProcessing: true },
+          );
+          continue;
+        }
+        const retry = await resumeLostSubagentResult(
+          row,
+          loadParent,
+          resumeParent,
+          heldLostResults.get(row.eventId),
+        ).catch((error: unknown): UserModelMessage | undefined => {
+          logError("Failed to resume the parent with a lost subagent result", {
+            eventId: row.eventId,
+            error: toErrorMessage(error),
+          });
+
+          return heldLostResults.get(row.eventId);
+        });
+        if (retry) held.set(row.eventId, retry);
+      }
+      cursor = result.cursor;
+      isDone = result.isDone;
+    }
+  }
+  heldLostResults = held;
 }
 
 export async function pipeSubagentNatsStream(
@@ -1421,6 +1498,170 @@ function bestEffortSubagentPublisher(
       });
     },
   };
+}
+
+/**
+ * What the parent sees of a finished child, or null when it is not told. A
+ * stopped child was cancelled on purpose, so its progress is no answer. An
+ * onSubagentFinish hook's rewrite wins, otherwise subagent.visibility decides.
+ * The result is already recorded, so a hook that cannot load or throws only
+ * loses its override.
+ */
+async function parentVisibleCompletion(
+  completion: SubagentCompletion,
+  parentAgentConfig: AgentConfig,
+  hooks: Promise<HookDispatcher>,
+): Promise<SubagentCompletion | null> {
+  if (stoppedOnPurpose(completion)) return null;
+  if (completion.status !== "completed") return completion;
+  let visibleResult: JSONValue | undefined;
+  try {
+    const mutation = await (
+      await hooks
+    ).runMutation("subagent.task.finished", {
+      taskId: completion.taskId,
+      agentId: completion.agentId,
+      result:
+        completion.response === undefined
+          ? null
+          : toLifecycleValue(completion.response),
+    });
+    visibleResult = toLifecycleValue(mutation?.visibleResult);
+  } catch (error) {
+    logError("Subagent finish hook failed", {
+      taskId: completion.taskId,
+      error: toErrorMessage(error),
+    });
+  }
+  if (visibleResult !== undefined) {
+    return { ...completion, visibleResult: visibleResult };
+  }
+
+  return (parentAgentConfig.subagent?.visibility ?? "result") === "none"
+    ? null
+    : completion;
+}
+
+/**
+ * Marks a lost result seen without resuming its parent, logged once: the row
+ * then leaves the sweep's list.
+ */
+async function giveUpLostSubagentResult(
+  eventId: string,
+  reason: string,
+): Promise<void> {
+  await observeAsyncAgentResult(eventId, true);
+  logInfo("Gave up on a lost subagent result", {
+    eventId: eventId,
+    reason: reason,
+  });
+}
+
+/**
+ * One finished row of `resumeLostSubagentResults`: it resumes the parent,
+ * from `held` when an earlier pass already ran its finish hook. A row no
+ * resume can ever deliver is given up. The row's `eventId` is
+ * `scopedDirectEventId(account, child agent, taskId)`.
+ * @returns the parent message to retry on the next pass, when the
+ *   conversation had no room for it or the resume failed
+ */
+async function resumeLostSubagentResult(
+  row: AsyncAgentResultRecord,
+  loadParent: SubagentParentLoader,
+  resumeParent: SubagentParentResumer,
+  held: UserModelMessage | undefined,
+): Promise<UserModelMessage | undefined> {
+  const task = row.subagent;
+  const child = parseAccountAgentScopedKey(row.eventId);
+  const taskId = child
+    ? publicEventIdForScope(row.eventId, child.accountId, child.agentId, "")
+    : "";
+  const parentEventId = subagentParentEventId(taskId);
+  const scope = parentEventId
+    ? parseAccountAgentScopedKey(parentEventId)
+    : null;
+  // Only a parent of the row's own account is ever resumed.
+  if (!task || !child || !parentEventId || scope?.accountId !== row.accountId) {
+    await giveUpLostSubagentResult(
+      row.eventId,
+      "no parent of the row's account to resume",
+    );
+
+    return undefined;
+  }
+  const target = await loadParent(
+    scope.accountId,
+    scope.agentId,
+    task.parentConversationKey,
+  );
+  if (!target) {
+    await giveUpLostSubagentResult(row.eventId, "parent agent is gone");
+
+    return undefined;
+  }
+  const message =
+    held ??
+    (await parentVisibleCompletion(
+      {
+        taskId: taskId,
+        eventId: row.eventId,
+        agentId: child.agentId,
+        ...(task.description ? { description: task.description } : {}),
+        conversationKey: publicConversationKeyFromScoped(
+          row.conversationKey,
+          child.accountId,
+          child.agentId,
+        ),
+        status: row.status === "completed" ? "completed" : "failed",
+        ...(row.response !== undefined ? { response: row.response } : {}),
+        ...(row.error !== undefined ? { error: row.error } : {}),
+      },
+      target.agentConfig,
+      createAgentHookDispatcher(scope.accountId, target.agentConfig),
+    ).then((visible): UserModelMessage | undefined =>
+      visible ? completionToParentMessage(visible) : undefined,
+    ));
+  if (!message) {
+    await giveUpLostSubagentResult(row.eventId, "hidden from the parent");
+
+    return undefined;
+  }
+  let outcome: SubagentResumeOutcome;
+  try {
+    outcome = await resumeParent(
+      {
+        accountId: scope.accountId,
+        agentId: scope.agentId,
+        eventId: parentEventId,
+        conversationKey: task.parentConversationKey,
+        delivery: task.parentDelivery,
+      },
+      taskId,
+      message,
+      row.eventId,
+      target,
+    );
+  } catch (error) {
+    logError("Failed to resume the parent with a lost subagent result", {
+      eventId: row.eventId,
+      error: toErrorMessage(error),
+    });
+
+    return message;
+  }
+  if (outcome === "owner" || outcome === "queued") {
+    logInfo("Resumed the parent with a lost subagent result", {
+      parentEventId: parentEventId,
+      taskId: taskId,
+      admission: outcome,
+    });
+
+    return undefined;
+  }
+  if (outcome === "capacity") return message;
+  await giveUpLostSubagentResult(row.eventId, `resume ${outcome}`);
+
+  return undefined;
 }
 
 function questionToParentMessage(
@@ -1509,6 +1750,14 @@ function requireParentAccountId(session: Session): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A child its parent or the user stopped, as opposed to one that failed.
+function stoppedOnPurpose(completion: SubagentCompletion): boolean {
+  return (
+    completion.error === PARENT_STOP_MESSAGE ||
+    completion.error === USER_STOP_MESSAGE
+  );
 }
 
 function subagentStatusPath(task: ResolvedSubagentTask): string {

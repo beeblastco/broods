@@ -322,6 +322,111 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("lists late subagent results no parent has seen, in their window, of active accounts only", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const disabledId = await createActiveAccount(t);
+    const rows: Array<[string, Id<"accounts">]> = [
+      ["running", accountId],
+      ["unseen", accountId],
+      ["seen", accountId],
+      ["in-turn", accountId],
+      ["disabled", disabledId],
+    ];
+    for (const [eventId, owner] of rows) {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: eventId,
+        conversationKey: conversationKeyFor(owner),
+      });
+    }
+    for (const eventId of ["running", "unseen", "seen", "disabled"]) {
+      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+        eventId: eventId,
+        observed: false,
+      });
+    }
+    for (const eventId of ["unseen", "seen", "in-turn", "disabled"]) {
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: eventId,
+        status: "completed",
+        response: "answer",
+      });
+    }
+    // Only a finished row can be seen.
+    for (const eventId of ["running", "seen"]) {
+      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+        eventId: eventId,
+        observed: true,
+      });
+    }
+    // No resume of a disabled account's row can be admitted.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch(disabledId, {
+          status: "disabled",
+          updatedAt: Date.now(),
+        }),
+    );
+    const listed = async (
+      status: "completed" | "processing",
+      updatedBefore: number,
+    ): Promise<string[]> => {
+      const result = await t.query(
+        internal.runtime.listUnobservedAsyncAgentResults,
+        {
+          status: status,
+          updatedAfter: new Date(Date.now() - 60_000).toISOString(),
+          updatedBefore: new Date(updatedBefore).toISOString(),
+          cursor: null,
+        },
+      );
+      expect(result.isDone).toBe(true);
+
+      return result.page.map((row) => row.eventId);
+    };
+
+    expect(await listed("completed", Date.now() + 60_000)).toEqual(["unseen"]);
+    expect(await listed("processing", Date.now() + 60_000)).toEqual([
+      "running",
+    ]);
+    // Nothing written inside the grace before `updatedBefore` yet.
+    expect(await listed("completed", Date.now() - 30_000)).toEqual([]);
+  });
+
+  test("fails a dead child's row only while it is still processing", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    for (const eventId of ["dead", "landed"]) {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: eventId,
+        conversationKey: conversationKeyFor(accountId),
+      });
+    }
+    // The child's own outcome lands after the sweep listed its row.
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "landed",
+      status: "completed",
+      response: "answer",
+    });
+    for (const eventId of ["dead", "landed"]) {
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: eventId,
+        status: "failed",
+        error: "lost",
+        onlyWhileProcessing: true,
+      });
+    }
+
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, { eventId: "dead" }),
+    ).toMatchObject({ status: "failed", error: "lost" });
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: "landed",
+      }),
+    ).toMatchObject({ status: "completed", response: "answer" });
+  });
+
   test("settles async tools once and keeps the callback token hashed", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

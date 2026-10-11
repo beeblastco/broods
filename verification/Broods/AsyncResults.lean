@@ -15,6 +15,11 @@ mutation, which writes the rows only when it finishes the owner's own envelope, 
 two change together or not at all. A handler is a list of `Act`s; any await may throw,
 so a run is the program plus the index of the await that throws, if any, and the catch
 block then runs as `recover`.
+
+A subagent's row also carries `observed`: whether its parent has the result. The parent's
+`get_subagent_status` read (`observeAsyncAgentResult`) and a late result's resume
+(`runtimeIngress.accept` with `resultEventId`) both set it, and the resume is admitted
+only while it is unset, so the parent is told a result once.
 -/
 
 namespace Broods.AsyncResults
@@ -211,6 +216,37 @@ def ToolRow.changes (row : ToolRow) : List ToolCall → Nat
   | c :: cs =>
     (if (row.update c).status == row.status then 0 else 1) + (row.update c).changes cs
 
+/-- `runtimeAsyncAgentResults.observed` on a subagent's row: unset, `false` once the
+parent stopped waiting on the child, `true` once the parent has its result. -/
+inductive Observed where
+  | unset | waiting | seen
+  deriving DecidableEq, Repr
+
+/-- The calls that touch `observed`, in any order a race gives them. -/
+inductive ObserveCall where
+  /-- `observeAsyncAgentResult` with `false`, when the parent stops waiting. -/
+  | detach
+  /-- `observeAsyncAgentResult` with `true`: `get_subagent_status`, or a result the
+  parent is never told. `finished` is whether the row has its outcome yet. -/
+  | read (finished : Bool)
+  /-- `runtimeIngress.accept` with `resultEventId`, the late resume; `room` is whether
+  the conversation's queue has room for it. -/
+  | resume (room : Bool)
+  deriving DecidableEq, Repr
+
+/-- One call in its own transaction: the new flag, and whether it admitted a resume.
+A seen row stays seen, and a resume is admitted only while the row is not seen. -/
+def Observed.step : Observed → ObserveCall → Observed × Bool
+  | .seen, _ => (.seen, false)
+  | _, .detach => (.waiting, false)
+  | o, .read finished => (if finished then .seen else o, false)
+  | o, .resume room => if room then (.seen, true) else (o, false)
+
+/-- How many resumes `cs` admits from flag `o`. -/
+def Observed.admitted : Observed → List ObserveCall → Nat
+  | _, [] => 0
+  | o, c :: cs => (if (o.step c).2 then 1 else 0) + (o.step c).1.admitted cs
+
 /-! ## Properties -/
 
 /-- The model's settle moves the envelope as the owner's settle in `Broods.Ingress`. -/
@@ -293,6 +329,35 @@ theorem tool_settles_once (row : ToolRow) (cs : List ToolCall) : row.changes cs 
         Decidable.byContradiction fun hp => hc (tool_terminal_absorbing c hp)
       have hdone : (row.update c).status ≠ .processing := fun h => hc (h.trans hp.symm)
       simp [hc, tool_no_changes hdone]
+
+/-- An admitted resume leaves the row seen. -/
+theorem step_admits_seen (o : Observed) (c : ObserveCall) (h : (o.step c).2 = true) :
+    (o.step c).1 = .seen := by
+  cases o <;> cases c <;> simp_all [Observed.step] <;> split at h <;> simp_all
+
+/-- Nothing admits a resume for a row the parent has seen. -/
+theorem seen_admits_none : ∀ cs : List ObserveCall, Observed.seen.admitted cs = 0
+  | [] => rfl
+  | c :: cs => by
+    simp only [Observed.admitted, Observed.step]
+    simp [seen_admits_none cs]
+
+/-- However the status reads, detaches and resumes interleave, the parent is resumed
+with a late result at most once. -/
+theorem resume_at_most_once (o : Observed) (cs : List ObserveCall) : o.admitted cs ≤ 1 := by
+  induction cs generalizing o with
+  | nil => simp [Observed.admitted]
+  | cons c cs ih =>
+    simp only [Observed.admitted]
+    by_cases h : (o.step c).2 = true
+    · simp [h, step_admits_seen o c h, seen_admits_none]
+    · simp [h, ih]
+
+/-- A status read of a finished result shuts out every later resume: a child finishing
+after the read but before the read's step saved tells the parent nothing more. -/
+theorem read_shuts_out_resume (o : Observed) (cs : List ObserveCall) :
+    (o.step (.read true)).1.admitted cs = 0 := by
+  cases o <;> simp [Observed.step, seen_admits_none]
 
 /-! ## Witnesses -/
 

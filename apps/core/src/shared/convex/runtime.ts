@@ -22,6 +22,8 @@ export const runtimeQueries = {
     internal.runtime.listExpiredSandboxReservations,
   listOrphanedSandboxInstances: internal.runtime.listOrphanedSandboxInstances,
   listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
+  listUnobservedAsyncAgentResults:
+    internal.runtime.listUnobservedAsyncAgentResults,
   getIngressStatus: internal.runtimeIngress.getStatus,
   getIngressStatusByEventId: internal.runtimeIngress.getStatusByEventId,
   isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,
@@ -38,6 +40,7 @@ export const runtimeMutations = {
   deferSandboxReservations: internal.runtime.deferSandboxReservations,
   deleteAccountRuntimeData: internal.runtime.deleteAccountRuntimeData,
   deleteSandboxReservation: internal.runtime.deleteSandboxReservation,
+  observeAsyncAgentResult: internal.runtime.observeAsyncAgentResult,
   observeAsyncToolResult: internal.runtime.observeAsyncToolResult,
   releaseClaim: internal.runtime.releaseClaim,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,

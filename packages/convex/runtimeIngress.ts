@@ -15,8 +15,10 @@ import {
 import { isPlainObject } from "./model/objects";
 import {
   asyncAgentOutcomeValidator,
+  asyncAgentResultRow,
   conversationEventsValidator,
   insertConversationEvents,
+  markAsyncAgentResultSeen,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -187,6 +189,9 @@ export const accept = internalMutation({
     statusTtlMs: v.number(),
     maxQueuedCount: v.number(),
     maxQueuedBytes: v.number(),
+    // The subagent result row a late-result continuation delivers. It is
+    // admitted only while the parent has not seen that result, and marks it seen.
+    resultEventId: v.optional(v.string()),
   },
   returns: admissionResultValidator,
   handler: async (
@@ -203,7 +208,6 @@ export const accept = internalMutation({
     if (priorAdmission) {
       return priorAdmission;
     }
-
     const prepared = await prepareAdmissionCoordinator(ctx, args, now);
     let coordinator = prepared.coordinator;
     const queue = prepared.queue;
@@ -252,6 +256,7 @@ export const accept = internalMutation({
       };
     }
 
+    await markAsyncAgentResultSeen(ctx, args.accountId, args.resultEventId);
     const sequence = coordinator.nextSequence;
     const baseEnvelope = buildAdmissionEnvelope(args, identity, sequence, now);
     if (busy) {
@@ -1077,7 +1082,12 @@ async function canonicalIdentity(options: {
  */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,
-  args: { eventId: string; payloadDigest: string },
+  args: {
+    accountId: Id<"accounts">;
+    eventId: string;
+    payloadDigest: string;
+    resultEventId?: string;
+  },
   identity: string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
   const existing = await ctx.db
@@ -1106,6 +1116,13 @@ async function checkDuplicateAdmission(
     .unique();
   if (existingEvent) {
     return { outcome: "conflict" as const, eventId: existingEvent.eventId };
+  }
+  // A get_subagent_status read and a late resume race to deliver one result;
+  // whichever marks it seen first wins, so the parent is told it once. Only
+  // the caller's own account's row counts.
+  const result = await asyncAgentResultRow(ctx, args.resultEventId);
+  if (result?.observed === true && result.accountId === args.accountId) {
+    return { outcome: "duplicate" as const, eventId: args.eventId };
   }
 
   return null;

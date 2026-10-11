@@ -7,6 +7,7 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -17,6 +18,7 @@ import {
   runtimeAsyncToolResultsFields,
   runtimeConversationEventsFields,
   sandboxProviderValidator,
+  subagentTaskValidator,
 } from "./schema";
 import {
   accountIdFromKey,
@@ -30,6 +32,8 @@ const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
+// One recovery sweep's page of late subagent results.
+const UNOBSERVED_RESULT_PAGE_SIZE = 100;
 
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
@@ -402,7 +406,11 @@ export const clearConversation = internalMutation({
  * @returns whether a new result row was created
  */
 export const createAsyncAgentResult = internalMutation({
-  args: { eventId: v.string(), conversationKey: v.string() },
+  args: {
+    eventId: v.string(),
+    conversationKey: v.string(),
+    subagent: v.optional(subagentTaskValidator),
+  },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
     const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
@@ -435,22 +443,110 @@ export const getAsyncAgentResult = internalQuery({
   args: { eventId: v.string() },
   returns: v.union(asyncAgentDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults"> | null> =>
-    await ctx.db
+    await asyncAgentResultRow(ctx, args.eventId),
+});
+
+/**
+ * One page of subagent results in `status` that the parent stopped waiting for
+ * and has not seen, written inside the window, oldest first. Core's recovery
+ * sweep resumes their parents, walking every page each pass so rows it must
+ * retry never crowd others out. A row of an inactive account is left out: no
+ * resume of it can be admitted.
+ * @returns the page and the cursor for the next one
+ */
+export const listUnobservedAsyncAgentResults = internalQuery({
+  args: {
+    status: runtimeAsyncAgentResultsFields.status,
+    updatedAfter: v.string(),
+    updatedBefore: v.string(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.object({
+    page: v.array(asyncAgentDoc),
+    cursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    page: Doc<"runtimeAsyncAgentResults">[];
+    cursor: string;
+    isDone: boolean;
+  }> => {
+    const result = await ctx.db
       .query("runtimeAsyncAgentResults")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .unique(),
+      .withIndex("by_observed_and_status_and_updatedAt", (q) =>
+        q
+          .eq("observed", false)
+          .eq("status", args.status)
+          .gt("updatedAt", args.updatedAfter)
+          .lt("updatedAt", args.updatedBefore),
+      )
+      .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
+    const page: Doc<"runtimeAsyncAgentResults">[] = [];
+    for (const row of result.page) {
+      if ((await ctx.db.get(row.accountId))?.status === "active") {
+        page.push(row);
+      }
+    }
+
+    return {
+      page: page,
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
+/**
+ * Records whether a subagent's parent has its result: false when the parent
+ * stops waiting on it, true when the parent reads it or is never told. A row
+ * the parent has stays that way, and a running row is never marked seen. A
+ * late result's admission sets it too, inside `runtimeIngress.accept`.
+ * @returns null after the row is marked or skipped
+ */
+export const observeAsyncAgentResult = internalMutation({
+  args: { eventId: v.string(), observed: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const row = await asyncAgentResultRow(ctx, args.eventId);
+    if (
+      !row ||
+      row.observed === true ||
+      (args.observed && row.status === "processing")
+    ) {
+      return null;
+    }
+    await requireActiveAccount(ctx, row.accountId);
+    await ctx.db.patch(row._id, { observed: args.observed });
+
+    return null;
+  },
 });
 
 /**
  * Records an async run's outcome on its polling row. Used by subagents and by
  * async runs without a live ingress owner; `runtimeIngress.settle` writes the
- * same row in the envelope's transaction.
- * @returns null after the result is updated
+ * same row in the envelope's transaction. With `onlyWhileProcessing` a row
+ * that already has its outcome, or is gone, is left alone: the recovery sweep
+ * fails a dead child's row that way.
+ * @returns null after the result is updated or left alone
  */
 export const updateAsyncAgentResult = internalMutation({
-  args: { eventId: v.string(), ...asyncAgentOutcomeValidator.fields },
+  args: {
+    eventId: v.string(),
+    ...asyncAgentOutcomeValidator.fields,
+    onlyWhileProcessing: v.optional(v.boolean()),
+  },
   returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (ctx, { onlyWhileProcessing, ...args }): Promise<null> => {
+    if (
+      onlyWhileProcessing &&
+      (await asyncAgentResultRow(ctx, args.eventId))?.status !== "processing"
+    ) {
+      return null;
+    }
     if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
       throw new Error("Async agent result not found");
     }
@@ -458,6 +554,37 @@ export const updateAsyncAgentResult = internalMutation({
     return null;
   },
 });
+
+/**
+ * The polling row for `eventId`, or null, also when there is no id. A late
+ * subagent result whose row has `observed === true` is one its parent has.
+ */
+export async function asyncAgentResultRow(
+  ctx: QueryCtx,
+  eventId: string | undefined,
+): Promise<Doc<"runtimeAsyncAgentResults"> | null> {
+  if (eventId === undefined) return null;
+
+  return await ctx.db
+    .query("runtimeAsyncAgentResults")
+    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+    .unique();
+}
+
+/**
+ * Marks a subagent result seen inside the transaction that delivers it
+ * (`accept`), only when the row is `accountId`'s own.
+ */
+export async function markAsyncAgentResultSeen(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  eventId: string | undefined,
+): Promise<void> {
+  const row = await asyncAgentResultRow(ctx, eventId);
+  if (row?.accountId === accountId) {
+    await ctx.db.patch(row._id, { observed: true });
+  }
+}
 
 /**
  * Patches the polling row for `eventId` with a run's outcome.
@@ -468,10 +595,7 @@ export async function writeAsyncAgentResult(
   eventId: string,
   outcome: Infer<typeof asyncAgentOutcomeValidator>,
 ): Promise<boolean> {
-  const row = await ctx.db
-    .query("runtimeAsyncAgentResults")
-    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
-    .unique();
+  const row = await asyncAgentResultRow(ctx, eventId);
   if (!row) return false;
   await requireActiveAccount(ctx, row.accountId);
   await ctx.db.patch(row._id, {

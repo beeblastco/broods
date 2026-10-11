@@ -1,6 +1,7 @@
 import { afterEach, expect, it, mock, spyOn } from "bun:test";
 import type { UserModelMessage } from "ai";
 import type { Session } from "../src/harness/session.ts";
+import * as subagentToolUtils from "../src/harness/tools/utils.ts";
 import type { SubagentWatch } from "../src/harness/tools/utils.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
@@ -126,6 +127,7 @@ it("waits for a running subagent before answering its status", async () => {
       status: "completed",
       response: "done",
     } as never);
+  const mutate = spyOn(runtime, "mutate").mockResolvedValue(null);
   const waits: Array<{ taskId: string; timeoutMs: number }> = [];
   const delivered: string[] = [];
   const { default: getStatus } =
@@ -149,6 +151,49 @@ it("waits for a running subagent before answering its status", async () => {
   ).resolves.toEqual({ status: "completed", response: "done" });
   expect(waits).toEqual([{ taskId: taskId, timeoutMs: 60_000 }]);
   expect(delivered).toEqual([childEventId]);
+  // This turn started it and never stopped waiting: no late resume to fence.
+  expect(mutate).not.toHaveBeenCalled();
+});
+
+it("marks a detached child's result seen at read, and a failed mark keeps the read", async (): Promise<void> => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
+  const owned = spyOn(subagentToolUtils, "getOwnedSubagent").mockResolvedValue({
+    accountId: ACCOUNT_ID,
+    eventId: childEventId,
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "late"),
+    observed: false,
+    status: "completed",
+    response: "late answer",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  });
+  const mutate = spyOn(runtime, "mutate").mockRejectedValue(
+    new Error("convex down"),
+  );
+  const { default: getStatus } =
+    await import("../src/harness/tools/get-subagent-status.tool.ts");
+  const tools = getStatus({
+    accountId: ACCOUNT_ID,
+    eventId: PARENT_EVENT_ID,
+    conversationKey: PARENT_CONVERSATION_KEY,
+  });
+
+  try {
+    expect(
+      await execute(tools.get_subagent_status, {
+        taskId: taskId,
+        agentId: AGENT_ID,
+      }),
+    ).toEqual({ status: "completed", response: "late answer" });
+    // A parent run stopped waiting on it, so the read fences its late resume.
+    expect(mutate.mock.calls).toEqual([
+      ["observeAsyncAgentResult", { eventId: childEventId, observed: true }],
+    ]);
+  } finally {
+    owned.mockRestore();
+  }
 });
 
 it("does not wait on a task paired with the wrong agent", async () => {
