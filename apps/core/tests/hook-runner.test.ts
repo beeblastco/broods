@@ -85,7 +85,7 @@ describe("sanitizeHookResult", () => {
 
 describe("hook bundle reuse", () => {
   it("reads each immutable bundle once across fire points, within a byte budget", () => {
-    // Other test files mock shared/s3.ts for the whole run; count real reads alone.
+    // Its shared/s3.ts stand-in would reach every test file in this process.
     const run = Bun.spawnSync(
       [process.execPath, "test", "./tests/isolated/hook-bundle-cache.ts"],
       { cwd: dirname(import.meta.dir) },

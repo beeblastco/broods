@@ -1,17 +1,15 @@
 /**
  * Hook bundle reuse across fire points, run on its own by hook-runner.test.ts:
- * other test files replace shared/s3.ts for the whole `bun test` process, so
- * the real read path is counted here at the S3 client, against a stub pooled
- * runner that answers each call with the sha256 of the bundle it was handed.
+ * its shared/s3.ts stand-in counts reads, and replacing that module would
+ * reach every other test file in the same `bun test` process. A stub pooled
+ * runner answers each call with the sha256 of the bundle it was handed.
  */
 
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { afterAll, beforeEach, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCodeHook } from "../../src/harness/hook-runner.ts";
 import { shutdownIsolatePool } from "../../src/harness/isolate/executor.ts";
 import type { AccountHookRecord } from "../../src/shared/domain/account-hooks.ts";
 
@@ -42,20 +40,17 @@ delete process.env.ISOLATE_POOL;
 // Each key's next answers; an Error entry fails that read, and the last entry repeats.
 const objects = new Map<string, Array<Uint8Array | Error>>();
 const reads: string[] = [];
-spyOn(S3Client.prototype, "send").mockImplementation((async (
-  command: GetObjectCommand,
-) => {
-  const key = command.input.Key!;
-  reads.push(key);
-  const answers = objects.get(key)!;
-  const answer = answers.length > 1 ? answers.shift()! : answers[0]!;
-  if (answer instanceof Error) throw answer;
+await mock.module("../../src/shared/s3.ts", () => ({
+  readS3Bytes: async (_bucket: string, key: string): Promise<Uint8Array> => {
+    reads.push(key);
+    const answers = objects.get(key)!;
+    const answer = answers.length > 1 ? answers.shift()! : answers[0]!;
+    if (answer instanceof Error) throw answer;
 
-  return {
-    ContentLength: answer.byteLength,
-    Body: { transformToByteArray: async () => answer },
-  };
-}) as never);
+    return answer;
+  },
+}));
+const { runCodeHook } = await import("../../src/harness/hook-runner.ts");
 
 beforeEach((): void => {
   reads.length = 0;
