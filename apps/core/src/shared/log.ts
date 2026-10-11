@@ -19,15 +19,18 @@ const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
 // Every Broods credential (b-prefix, long base64url body) at a word start or
-// after an escaped `\n`, `\r` or `\t`, so short ids like `bsk_id` stay readable.
+// after an escaped `\n`, `\r`, `\t` or a `%XX` byte, so short ids like `bsk_id`
+// stay readable.
 // Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
 const BROODS_CREDENTIAL_PATTERN =
-  /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt])b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
-// GitHub, OpenAI, Anthropic, AWS, Slack, Google and JWT tokens, never starting
-// inside a `-`/`_` run so the JWT branch stays linear.
+  /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt]|%[0-9A-Fa-f]{2})b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
+// GitHub, OpenAI, Anthropic, AWS, Slack (bot, user, session, refresh, app),
+// Google (API key, OAuth access token) and JWT tokens. A prefixed token may
+// follow `-` or `_` (`credential-ghp_...`); a JWT never starts inside a `-`/`_`
+// run, so its branch stays linear.
 // Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
 const PROVIDER_CREDENTIAL_PATTERN =
-  /(?=[gsAxe])(?<=^|[^A-Za-z0-9_-]|\\[nrt])(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abpors]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
+  /(?=[gsAxey])(?:(?<=^|[^A-Za-z0-9]|\\[nrt]|%[0-9A-Fa-f]{2})(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abcdeoprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|ya29\.[A-Za-z0-9_-]{20,})|(?<=^|[^A-Za-z0-9_-]|\\[nrt]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
 // Env names that hold who someone is, never a credential. Not every `*_NAME`:
 // a SASL or SMTP user name is often a key.
 const PUBLIC_ENV_NAME_PATTERN =
