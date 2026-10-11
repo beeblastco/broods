@@ -9,15 +9,10 @@ import {
   spyOn,
 } from "bun:test";
 import * as harness from "../src/harness/harness.ts";
+import * as ingress from "../src/harness/ingress.ts";
 import { Session } from "../src/harness/session.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
-import type { AccountRecord } from "../src/shared/domain/accounts.ts";
-import type { AgentRecord } from "../src/shared/domain/agents.ts";
-import {
-  resetStorageForTests,
-  setStorageForTests,
-  type Storage,
-} from "../src/shared/storage.ts";
+import { getStorage, resetStorageForTests } from "../src/shared/storage.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const { dispatchInProcessWorker, drainInProcessWorkers, handler } =
@@ -297,23 +292,7 @@ describe("in-process worker dispatch", () => {
 });
 
 describe("streamed runs", (): void => {
-  const account: AccountRecord = {
-    accountId: "acct_1",
-    username: "ada",
-    secretHash: "hash",
-    status: "active",
-    createdAt: "2026-10-01T00:00:00.000Z",
-    updatedAt: "2026-10-01T00:00:00.000Z",
-  };
-  const agent: AgentRecord = {
-    accountId: "acct_1",
-    agentId: "agent_1",
-    name: "agent",
-    config: {},
-    createdAt: "2026-10-01T00:00:00.000Z",
-    updatedAt: "2026-10-01T00:00:00.000Z",
-  };
-  let mutations: [string, unknown][];
+  let settle: ReturnType<typeof spyOn<typeof ingress, "settleIngress">>;
   let modelPasses: number;
   // Turns prepared: loading history and storing the new input.
   let prepared: number;
@@ -321,30 +300,35 @@ describe("streamed runs", (): void => {
 
   beforeEach((): void => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
-    mutations = [];
     modelPasses = 0;
     prepared = 0;
     releases = [];
-    setStorageForTests({
-      accounts: { getById: async (): Promise<AccountRecord> => account },
-      agents: { getById: async (): Promise<AgentRecord> => agent },
-      budgets: { get: async (): Promise<null> => null },
-    } as unknown as Storage);
-    spyOn(runtime, "mutate").mockImplementation(
-      async <T>(name: string, args: unknown): Promise<T> => {
-        mutations.push([name, args]);
-
-        return (
-          name === "acceptIngress"
-            ? { outcome: "owner", ownerGeneration: 1 }
-            : null
-        ) as T;
-      },
-    );
-    spyOn(runtime, "query").mockImplementation(
-      async <T>(name: string): Promise<T> =>
-        (name === "isCurrentIngressOwner" ? true : null) as T,
-    );
+    const storage = getStorage();
+    spyOn(storage.accounts, "getById").mockResolvedValue({
+      accountId: "acct_1",
+      username: "ada",
+      secretHash: "hash",
+      status: "active",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    spyOn(storage.agents, "getById").mockResolvedValue({
+      accountId: "acct_1",
+      agentId: "agent_1",
+      name: "agent",
+      config: {},
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    spyOn(storage.budgets, "get").mockResolvedValue(null);
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(runtime, "query").mockResolvedValue(null);
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "owner",
+      ownerGeneration: 1,
+    });
+    settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(Session.prototype, "assertCurrentOwner").mockResolvedValue();
     spyOn(Session.prototype, "createTurnContext").mockImplementation(
       async (): ReturnType<Session["createTurnContext"]> => {
         prepared += 1;
@@ -403,9 +387,7 @@ describe("streamed runs", (): void => {
   }
 
   function settles(): unknown[] {
-    return mutations
-      .filter(([name]): boolean => name === "settleIngress")
-      .map(([, args]): unknown => args);
+    return settle.mock.calls.map(([settlement]): unknown => settlement);
   }
 
   it("waits for a worker slot like every other run, streaming meanwhile", async (): Promise<void> => {
