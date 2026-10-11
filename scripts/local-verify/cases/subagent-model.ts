@@ -66,11 +66,31 @@ export async function subagentModel(context: VerifyContext): Promise<void> {
       status.status === "completed",
       JSON.stringify(status),
     );
-    const started = lastJsonLine<SubagentStartedLog>(
+    const delegated = lastJsonLine<ModelStepLog>(
       context.coreLogPath,
-      (record: SubagentStartedLog): boolean =>
-        record.message === "Subagent task started" &&
-        record.parentEventId.endsWith(`:${key}`),
+      (record: ModelStepLog): boolean =>
+        record.eventType === "model.step.finished" &&
+        record.agentId === agentId &&
+        record.toolCalls?.some(
+          (call: { toolName: string }): boolean =>
+            call.toolName === "run_subagent",
+        ) === true,
+    );
+    if (!delegated) {
+      console.log(
+        "  skip subagent model (the parent answered without a subagent)",
+      );
+      return;
+    }
+    const started = await pollUntil(
+      { initialIntervalMs: 200, maxIntervalMs: 1_000, timeoutMs: 10_000 },
+      async (): Promise<SubagentStartedLog | null> =>
+        lastJsonLine<SubagentStartedLog>(
+          context.coreLogPath,
+          (record: SubagentStartedLog): boolean =>
+            record.message === "Subagent task started" &&
+            record.parentEventId.endsWith(`:${key}`),
+        ),
     );
     assertStep(
       "the parent started a virtual subagent",
