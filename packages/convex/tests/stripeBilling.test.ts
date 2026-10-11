@@ -126,7 +126,7 @@ describe("stripe webhook ordering", () => {
     expect(subs.map((sub) => sub.status)).toEqual(["canceled"]);
   });
 
-  test("a redelivered event is acknowledged and not applied again", async () => {
+  test("a redelivered event reads Stripe again and cannot restore Pro", async () => {
     const t = billingTest();
     await seedPayer(t);
     await sendEvent(t, "customer.subscription.created", subscription("active"));
@@ -146,7 +146,31 @@ describe("stripe webhook ordering", () => {
     );
 
     expect(again.status).toBe(200);
-    expect(stripeCalls.retrieveSubscription).not.toHaveBeenCalled();
+    expect(stripeCalls.retrieveSubscription).toHaveBeenCalledWith(
+      SUBSCRIPTION_ID,
+    );
+    expect(await plans(t)).toEqual({ user: "free", org: "free" });
+  });
+
+  test("a redelivered checkout cannot restore Pro after cancellation", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(t, "checkout.session.completed", checkout(AUTH_ID));
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    await sendEvent(
+      t,
+      "customer.subscription.deleted",
+      subscription("canceled"),
+    );
+
+    const again = await deliver(
+      t,
+      "evt_checkout.session.completed",
+      "checkout.session.completed",
+      checkout(AUTH_ID),
+    );
+
+    expect(again.status).toBe(200);
     expect(await plans(t)).toEqual({ user: "free", org: "free" });
   });
 
@@ -421,6 +445,19 @@ describe("payment link checkout", () => {
 
     expect(stripeCalls.subscriptions).not.toHaveBeenCalled();
     expect(stripeCalls.customers).not.toHaveBeenCalled();
+  });
+
+  test("a resent checkout links the user once their account has synced", async () => {
+    const t = billingTest();
+    await sendEvent(t, "checkout.session.completed", checkout(AUTH_ID));
+    expect(stripeCalls.subscriptions).not.toHaveBeenCalled();
+    await seedPayer(t);
+
+    await sendEvent(t, "checkout.session.completed", checkout(AUTH_ID));
+
+    expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
+      metadata: { userId: AUTH_ID },
+    });
   });
 });
 

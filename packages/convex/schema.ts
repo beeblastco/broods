@@ -984,12 +984,6 @@ export const auditSinksFields = {
   updatedAt: v.number(),
 };
 
-/** Stripe webhook event ids already handled; a redelivery is acknowledged and skipped. */
-export const stripeEventsFields = {
-  eventId: v.string(),
-  processedAt: v.number(),
-};
-
 /**
  * Orders the reads of one Stripe subscription. A webhook claims the next
  * ticket before it reads the subscription from Stripe, and its read lands only
@@ -1788,9 +1782,6 @@ export default defineSchema({
   usageWrites: defineTable(usageWritesFields)
     .index("by_writeId", ["writeId"])
     .index("by_createdAt", ["createdAt"]),
-  stripeEvents: defineTable(stripeEventsFields).index("by_eventId", [
-    "eventId",
-  ]),
   stripeSubscriptionSyncs: defineTable(stripeSubscriptionSyncsFields).index(
     "by_stripeSubscriptionId",
     ["stripeSubscriptionId"],

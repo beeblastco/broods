@@ -157,40 +157,6 @@ export const getLiveSubscriptionIdsInternal = internalQuery({
   },
 });
 
-/** Whether the webhook already handled this Stripe event id. */
-export const isEventProcessedInternal = internalQuery({
-  args: { eventId: v.string() },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
-    const seen = await ctx.db
-      .query("stripeEvents")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .first();
-
-    return seen !== null;
-  },
-});
-
-/** Record a handled Stripe event id, after its work committed. */
-export const markEventProcessedInternal = internalMutation({
-  args: { eventId: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const seen = await ctx.db
-      .query("stripeEvents")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .first();
-    if (!seen) {
-      await ctx.db.insert("stripeEvents", {
-        eventId: args.eventId,
-        processedAt: Date.now(),
-      });
-    }
-
-    return null;
-  },
-});
-
 /**
  * Take the next read ticket for a subscription. The webhook claims it before
  * it reads the subscription from Stripe, so ticket order is read start order.

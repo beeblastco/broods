@@ -341,15 +341,8 @@ async function handleStripeWebhook(
     return Response.json({ received: true });
   }
 
-  // Stripe redelivers events it already sent; a handled one is acknowledged.
-  if (
-    await ctx.runQuery(internal.stripe.isEventProcessedInternal, {
-      eventId: event.id,
-    })
-  ) {
-    return Response.json({ received: true });
-  }
-
+  // Each branch is safe to run again, so a redelivery or a dashboard Resend
+  // needs no record of handled event ids.
   try {
     // Plan sync needs no checkout case: Stripe also sends
     // customer.subscription.created for the subscription a checkout starts.
@@ -366,9 +359,6 @@ async function handleStripeWebhook(
     if (event.type === "checkout.session.completed") {
       await linkCheckoutToUser(ctx, stripe, event.data.object);
     }
-    await ctx.runMutation(internal.stripe.markEventProcessedInternal, {
-      eventId: event.id,
-    });
   } catch (error) {
     console.error("Stripe webhook processing failed", error);
 
