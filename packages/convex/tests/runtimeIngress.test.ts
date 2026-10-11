@@ -1388,6 +1388,55 @@ describe("runtime ingress", () => {
     expect(stored.page.map((row) => row.cursor)).toEqual(["001", "002", "003"]);
   });
 
+  test("stores a retried append once by its dedupe key, still behind the owner fence", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    const fence = {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+    };
+    const result = { role: "user", content: "subagent result" };
+    await t.mutation(internal.runtimeIngress.appendConversationEvent, {
+      ...fence,
+      events: [{ cursor: "001", dedupeKey: "result", event: result }],
+    });
+    // The reply was lost, so core retries with a fresh cursor and the same key.
+    await t.mutation(internal.runtimeIngress.appendConversationEvent, {
+      ...fence,
+      events: [
+        { cursor: "002", dedupeKey: "result", event: result },
+        { cursor: "003", dedupeKey: "question", event: result },
+      ],
+    });
+    await t.mutation(internal.runtime.appendConversationEvent, {
+      conversationKey: conversationKey,
+      events: [{ cursor: "004", dedupeKey: "question", event: result }],
+    });
+    await expect(
+      t.mutation(internal.runtimeIngress.appendConversationEvent, {
+        ...fence,
+        ownerGeneration: fence.ownerGeneration + 1,
+        events: [{ cursor: "005", dedupeKey: "stale", event: result }],
+      }),
+    ).rejects.toThrow("Stale conversation owner generation");
+
+    const stored = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
+    expect(stored.page.map((row) => row.cursor)).toEqual(["001", "003"]);
+  });
+
   test("returns capacity without silently dropping accepted FIFO rows", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
