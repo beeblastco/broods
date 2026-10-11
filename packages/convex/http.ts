@@ -341,12 +341,16 @@ async function handleStripeWebhook(
     return Response.json({ received: true });
   }
 
-  try {
-    await processEvent(ctx, components.stripe, event, stripe);
+  // Stripe redelivers events it already sent; a handled one is acknowledged.
+  if (
+    await ctx.runQuery(internal.stripe.isEventProcessedInternal, {
+      eventId: event.id,
+    })
+  ) {
+    return Response.json({ received: true });
+  }
 
-    if (event.type === "checkout.session.completed") {
-      await linkCheckoutToUser(ctx, stripe, event.data.object);
-    }
+  try {
     // Plan sync needs no checkout case: Stripe also sends
     // customer.subscription.created for the subscription a checkout starts.
     if (
@@ -354,13 +358,17 @@ async function handleStripeWebhook(
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      const authId = event.data.object.metadata.userId;
-      if (authId) {
-        await ctx.runMutation(internal.stripe.syncPlanInternal, {
-          authId: authId,
-        });
-      }
+      await reconcileSubscription(ctx, stripe, event.data.object.id);
+    } else {
+      await processEvent(ctx, components.stripe, event, stripe);
     }
+
+    if (event.type === "checkout.session.completed") {
+      await linkCheckoutToUser(ctx, stripe, event.data.object);
+    }
+    await ctx.runMutation(internal.stripe.markEventProcessedInternal, {
+      eventId: event.id,
+    });
   } catch (error) {
     console.error("Stripe webhook processing failed", error);
 
@@ -368,6 +376,38 @@ async function handleStripeWebhook(
   }
 
   return Response.json({ received: true });
+}
+
+/**
+ * Read a subscription from Stripe and store that, never the event's snapshot:
+ * a late or repeated event carries an old state. The ticket claimed before the
+ * read keeps an older read from landing over a newer one.
+ */
+async function reconcileSubscription(
+  ctx: ActionCtx,
+  stripe: Stripe,
+  subscriptionId: string,
+): Promise<void> {
+  const ticket = await ctx.runMutation(
+    internal.stripe.claimSubscriptionSyncInternal,
+    { stripeSubscriptionId: subscriptionId },
+  );
+  const live = await stripe.subscriptions.retrieve(subscriptionId);
+  const item = live.items.data[0];
+  await ctx.runMutation(internal.stripe.applySubscriptionInternal, {
+    ticket: ticket,
+    subscription: {
+      stripeSubscriptionId: live.id,
+      stripeCustomerId: stripeId(live.customer) ?? "",
+      status: live.status,
+      currentPeriodEnd: item?.current_period_end ?? 0,
+      cancelAtPeriodEnd: live.cancel_at_period_end,
+      cancelAt: live.cancel_at ?? undefined,
+      quantity: item?.quantity ?? 1,
+      priceId: item?.price.id ?? "",
+      metadata: live.metadata,
+    },
+  });
 }
 
 /**

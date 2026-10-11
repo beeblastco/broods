@@ -5,7 +5,7 @@ import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 
-/** Billing tier. After insert, only the Stripe plan sync (`stripe:syncPlanInternal`) changes it. */
+/** Billing tier. After insert, only the Stripe plan sync (`stripe:applySubscriptionInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
 
 /** Synced from WorkOS AuthKit webhooks, with app-specific extensions. */
@@ -984,6 +984,23 @@ export const auditSinksFields = {
   updatedAt: v.number(),
 };
 
+/** Stripe webhook event ids already handled; a redelivery is acknowledged and skipped. */
+export const stripeEventsFields = {
+  eventId: v.string(),
+  processedAt: v.number(),
+};
+
+/**
+ * Orders the reads of one Stripe subscription. A webhook claims the next
+ * ticket before it reads the subscription from Stripe, and its read lands only
+ * when no read with a later ticket has landed already.
+ */
+export const stripeSubscriptionSyncsFields = {
+  stripeSubscriptionId: v.string(),
+  claimed: v.number(),
+  applied: v.number(),
+};
+
 export const configHttpAuthFailuresFields = {
   key: v.string(),
   windowStart: v.number(),
@@ -1771,4 +1788,11 @@ export default defineSchema({
   usageWrites: defineTable(usageWritesFields)
     .index("by_writeId", ["writeId"])
     .index("by_createdAt", ["createdAt"]),
+  stripeEvents: defineTable(stripeEventsFields).index("by_eventId", [
+    "eventId",
+  ]),
+  stripeSubscriptionSyncs: defineTable(stripeSubscriptionSyncsFields).index(
+    "by_stripeSubscriptionId",
+    ["stripeSubscriptionId"],
+  ),
 });
