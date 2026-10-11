@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as ai from "ai";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { NatsPublisher } from "../src/shared/nats.ts";
 import { setStorageForTests } from "../src/shared/storage.ts";
@@ -74,6 +75,7 @@ interface CoordinatorInternals {
     taskId: string;
     eventId: string;
     agentId: string;
+    agentConfig: AgentConfig;
     publicConversationKey: string;
     conversationKey: string;
     persistent: boolean;
@@ -121,8 +123,11 @@ describe("SubagentCoordinator", () => {
       }
 
       expect(task.taskId.startsWith("subagent~")).toBe(true);
-      expect(task.agentId).toBe(`virtual_subagent_${task.taskId}`);
-      expect(task.conversationKey.startsWith("subagent-")).toBe(true);
+      // A persistent virtual child is named by its key, not its task.
+      const keyUuid = /^subagent-persistent-([0-9a-f-]{36})-/.exec(
+        task.conversationKey,
+      )?.[1];
+      expect(task.agentId).toBe(`virtual_subagent_${keyUuid}`);
       // The dispatch hands the parent a run id, not the task's own event id.
       expect(task.statusPath).toMatch(/^\/v1\/runs\/run_[0-9a-f]{32}$/);
       expect(timeline.slice(0, 3)).toEqual([
@@ -397,9 +402,9 @@ describe("SubagentCoordinator", () => {
     expect(coordinator.pendingCount).toBe(0);
 
     expect(coordinator.drainCompletionsToParent()).resolves.toBe(2);
-    const messages = persistModelMessages.mock.calls.flatMap(
-      ([batch]): UserModelMessage[] => batch,
-    );
+    // Both results go in one transcript write.
+    expect(persistModelMessages).toHaveBeenCalledTimes(1);
+    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messages).toHaveLength(2);
     expect(messageText(messages[0])).toContain("first result");
     expect(messageText(messages[1])).toContain("second result");
@@ -713,11 +718,18 @@ describe("SubagentCoordinator", () => {
   it("puts back only the results a failed drain did not save", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
-      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+      async (
+        _messages: UserModelMessage[],
+        _onSaved?: (saved: number) => void,
+      ): Promise<never[]> => [],
     );
-    persistModelMessages
-      .mockResolvedValueOnce([])
-      .mockRejectedValueOnce(new Error("convex down"));
+    // A write too large for one append saves its first append, then fails.
+    persistModelMessages.mockImplementationOnce(
+      async (_messages, onSaved): Promise<never[]> => {
+        onSaved?.(1);
+        throw new Error("convex down");
+      },
+    );
     const coordinator = new SubagentCoordinator(
       {
         accountId: "account_1",
@@ -736,10 +748,127 @@ describe("SubagentCoordinator", () => {
     expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
       "convex down",
     );
+    expect(persistModelMessages.mock.calls[0]?.[0]).toHaveLength(2);
     expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
-    expect(messageText(persistModelMessages.mock.calls[2]?.[0]?.[0])).toContain(
-      "second",
+    const retried = persistModelMessages.mock.calls[1]?.[0] ?? [];
+    expect(retried).toHaveLength(1);
+    expect(messageText(retried[0])).toContain("second");
+  });
+
+  it("keeps a finished result and the running notice when the detach write fails", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
     );
+    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "event_parent",
+        persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
+      } as never,
+      {},
+      Date.now() + 10,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completions.push(completion("subagent_1", "finished report"));
+    internals.pending.set("subagent_2", new Promise(() => {}));
+    internals.pendingMetadata.set("subagent_2", {
+      taskId: "subagent_2",
+      eventId: "event_subagent_2",
+      agentId: "agent_research",
+      conversationKey: "subagent-subagent_2",
+    });
+
+    expect(await coordinator.waitForIdle()).toBe("timeout");
+    expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
+      "convex down",
+    );
+    // The retry writes both, once, in order; nothing is left to write again.
+    expect(await coordinator.drainCompletionsToParent()).toBe(2);
+    expect(await coordinator.drainCompletionsToParent()).toBe(0);
+    expect(persistModelMessages).toHaveBeenCalledTimes(2);
+    const retried = persistModelMessages.mock.calls[1]?.[0] ?? [];
+    expect(retried).toHaveLength(2);
+    expect(messageText(retried[0])).toContain("finished report");
+    expect(messageText(retried[1])).toContain("status: running");
+  });
+
+  it("sends no running notice for a child whose result the model already read", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "event_parent",
+        persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
+      } as never,
+      {},
+      Date.now() + 10,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    // Still settling its lease after get_subagent_status showed its result.
+    internals.pending.set("subagent_1", new Promise(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_subagent_1",
+      agentId: "agent_research",
+      conversationKey: "subagent-subagent_1",
+    });
+    coordinator.markDelivered("event_subagent_1");
+    coordinator.confirmDelivered();
+
+    expect(await coordinator.waitForIdle()).toBe("timeout");
+    expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(0);
+    expect(persistModelMessages).not.toHaveBeenCalled();
+    expect(coordinator.runningCount).toBe(1);
+  });
+
+  it("drops a put-back running notice once its child has finished", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
+    let finish = (): void => {};
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      { subagent: { enabled: true } },
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.runTask = mock(
+      (): Promise<void> =>
+        new Promise<void>((resolve): void => {
+          finish = resolve;
+        }),
+    );
+    const originalMutation = runtime.mutate.bind(runtime);
+    runtime.mutate = mock(async () => true) as never;
+    try {
+      await coordinator.dispatch([{ prompt: "research" }], []);
+      expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
+        "convex down",
+      );
+      finish();
+      while (coordinator.runningCount > 0) await Bun.sleep(1);
+
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+      expect(persistModelMessages).toHaveBeenCalledTimes(1);
+    } finally {
+      runtime.mutate = originalMutation;
+    }
   });
 
   it("ends the wait when a heartbeat finds the run lost", async () => {
@@ -944,7 +1073,10 @@ describe("SubagentCoordinator", () => {
     const created = await internals.resolveTask({ prompt: "start" }, [], []);
     expect(created.taskId.startsWith("subagent~")).toBe(true);
     expect(created.eventId).toContain(`:api:${created.taskId}`);
-    expect(created.agentId).toContain(created.taskId);
+    const keyUuid = /^subagent-persistent-([0-9a-f-]{36})-/.exec(
+      created.publicConversationKey,
+    )?.[1];
+    expect(created.agentId).toBe(`virtual_subagent_${keyUuid}`);
     expect(
       created.publicConversationKey.startsWith("subagent-persistent-"),
     ).toBe(true);
@@ -963,9 +1095,10 @@ describe("SubagentCoordinator", () => {
       [],
     );
     expect(resumed.publicConversationKey).toBe(created.publicConversationKey);
-    expect(resumed.conversationKey).toContain(
-      `api:${created.publicConversationKey}`,
-    );
+    // The resumed virtual child is the same child, on the same history.
+    expect(resumed.taskId).not.toBe(created.taskId);
+    expect(resumed.agentId).toBe(created.agentId);
+    expect(resumed.conversationKey).toBe(created.conversationKey);
     expect(resumed.persistent).toBe(true);
     expect(resumed.resuming).toBe(true);
 
@@ -993,6 +1126,48 @@ describe("SubagentCoordinator", () => {
         ),
       ).rejects.toThrow("must be one run_subagent returned to this agent");
     }
+  });
+
+  it("runs a virtual child on subagent.model with the parent's tools", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const parent: AgentConfig = {
+      model: {
+        provider: "deepseek",
+        modelId: "deepseek-flash",
+        temperature: 0,
+      },
+      tools: { webSearch: { enabled: true } },
+      sandboxes: ["sandbox_1"],
+      denyTools: ["bash"],
+      policies: ["policy_room"],
+      subagent: { enabled: true, model: { modelId: "deepseek-v4-pro" } },
+    };
+    const coordinator = new SubagentCoordinator(
+      {
+        accountId: "account_1",
+        agentId: "agent_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+      } as never,
+      parent,
+      Date.now() + 1_000,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    const { agentConfig } = await internals.resolveTask(
+      { prompt: "count" },
+      [],
+      [],
+    );
+
+    expect(agentConfig).toEqual({
+      ...parent,
+      model: {
+        provider: "deepseek",
+        modelId: "deepseek-v4-pro",
+        temperature: 0,
+      },
+      subagent: { ...parent.subagent, enabled: false },
+    });
   });
 
   it("admits a persistent child conversation to own a fencing generation", async () => {

@@ -5474,22 +5474,26 @@ export declare const internal: {
     listOrphanedSandboxInstances: FunctionReference<
       "query",
       "internal",
-      { limit: number },
-      Array<{
-        accountId: Id<"accounts">;
-        externalId: string;
-        provider:
-          | "sandbox"
-          | "lambda"
-          | "e2b"
-          | "daytona"
-          | "vercel"
-          | "cloudflare"
-          | "machine"
-          | "custom";
-        reservationKey: string;
-        ttlSeconds?: number;
-      }>
+      { cursor: string | null; limit: number },
+      {
+        cursor: string | null;
+        isDone: boolean;
+        page: Array<{
+          accountId: Id<"accounts">;
+          externalId: string;
+          provider:
+            | "sandbox"
+            | "lambda"
+            | "e2b"
+            | "daytona"
+            | "vercel"
+            | "cloudflare"
+            | "machine"
+            | "custom";
+          reservationKey: string;
+          ttlSeconds?: number;
+        }>;
+      }
     >;
     listPendingAsyncToolResults: FunctionReference<
       "query",
@@ -5539,18 +5543,6 @@ export declare const internal: {
       "mutation",
       "internal",
       { accountId: Id<"accounts">; key: string },
-      null
-    >;
-    saveHarnessSession: FunctionReference<
-      "mutation",
-      "internal",
-      {
-        conversationKey: string;
-        harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
-        reservationKey?: string;
-        resumeState: any;
-        sessionId: string;
-      },
       null
     >;
     saveSandboxReservation: FunctionReference<
@@ -5927,6 +5919,20 @@ export declare const internal: {
         ownerGeneration: number;
       },
       "renewed" | "stopped" | "stale"
+    >;
+    saveHarnessSession: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        conversationKey: string;
+        harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
+        ownerEventId: string;
+        ownerGeneration: number;
+        reservationKey?: string;
+        resumeState: any;
+        sessionId: string;
+      },
+      null
     >;
     settle: FunctionReference<
       "mutation",

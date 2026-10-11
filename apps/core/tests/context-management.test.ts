@@ -741,6 +741,47 @@ describe("stored item persistence", () => {
     }
   });
 
+  it("reports how much of a split write was saved before an append failed", async () => {
+    const { Session } = await import("../src/harness/session.ts");
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate.bind(runtime);
+    const mutate = mock(
+      async (_name: string, _args: Record<string, unknown>) => null,
+    );
+    mutate
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error("convex down"));
+    runtime.mutate = mutate as typeof runtime.mutate;
+    try {
+      const session = new Session({
+        eventId: "event",
+        conversationKey: "conversation",
+        accountId: "acct",
+        agentId: "agent",
+        agentConfig: {},
+      });
+      const answer = "x".repeat(2 * 1_024 * 1_024);
+      const saved: number[] = [];
+
+      expect(
+        session.persistModelMessages(
+          Array.from({ length: 6 }, () => ({
+            role: "user" as const,
+            content: [{ type: "text" as const, text: answer }],
+          })),
+          (count): void => {
+            saved.push(count);
+          },
+        ),
+      ).rejects.toThrow("convex down");
+      const firstAppend = mutate.mock.calls[0]?.[1].events as unknown[];
+      expect(saved).toEqual([firstAppend.length]);
+      expect(firstAppend.length).toBeLessThan(6);
+    } finally {
+      runtime.mutate = originalMutate;
+    }
+  });
+
   it("drops reasoning nobody sends back rather than storing dead weight", async () => {
     const { createStoredEventFromModelMessage } =
       await import("../src/harness/session.ts");

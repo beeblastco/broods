@@ -594,6 +594,8 @@ paths:
           description: Provider authentication failed
         "404":
           description: Unknown account or channel, or no agent holds credentials for it
+        "503":
+          description: No agent of the account configures this channel, or the lookup of which agent holds it failed. The second clears on its own, so the provider should redeliver.
 
   /v1/webhooks/{accountId}/dev/{endpointId}/{channelName}:
     get:
@@ -671,6 +673,8 @@ paths:
           description: Provider authentication failed
         "404":
           description: Unknown account or channel, or no stage of this account is deployed at that endpointId (`unknown_webhook_stage`). An unknown endpointId never falls back to the account-wide credential scan.
+        "503":
+          description: No agent of the account configures this channel, or the lookup of which agent holds it failed. The second clears on its own, so the provider should redeliver.
 
   /v1/accounts:
     post:
@@ -5558,6 +5562,9 @@ components:
           enum: [full, result, none]
           default: result
           description: What the parent sees when a child finishes. `none` hides the result from the parent; an `onSubagentFinish` hook overrides it.
+        model:
+          $ref: "#/components/schemas/ModelConfig"
+          description: Model for virtual subagents (no `agentId`), merged key by key over the parent's `model`. The child keeps the parent's tools. A predefined agent runs on its own model.
 
     SessionConfig:
       type: object

@@ -54,12 +54,13 @@ export function forwardedEvent(
   };
 }
 
+/** Resolves false when a webhook may still take the event on a later try. */
 export async function forwardRoomEvent(
   event: MatrixForwardedEvent,
   accessToken: string,
   targets: readonly ForwardTarget[],
-): Promise<void> {
-  await fanOut(
+): Promise<boolean> {
+  return fanOut(
     targets,
     JSON.stringify(event),
     {

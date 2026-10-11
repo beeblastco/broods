@@ -22,6 +22,7 @@
     "check": "bun run lint:types && bun run format:check && bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter @broods/gateway check && bun run --filter @broods/edge check && bun run --filter @broods/dashboard check && bun run --filter @broods/discord-forwarder check && bun run --filter @broods/matrix-forwarder check && bun run --filter @broods/cloudflare-mcp check && bun run --filter @broods/cloudflare-sandbox check && bun run --filter broods check && bun run --filter @broods/ai-sdk-sandbox check && bun run scripts:check && bun run bench:types",
     "verification:test": "bun run --filter @broods/convex test -- tests/cliSyncRevision.test.ts tests/cliSyncExternalPrune.test.ts tests/cliSyncPrune.test.ts tests/cliSyncEnvRefs.test.ts tests/cron.test.ts tests/runtimeIngress.test.ts tests/runtime.test.ts && bun test --max-concurrency=1 apps/core/tests/ingress.test.ts apps/core/tests/cron-run.test.ts apps/core/tests/async-tools.test.ts apps/core/tests/subagents.test.ts apps/edge/tests apps/gateway/tests/route.test.ts packages/broods/tests/resources.test.ts packages/broods/tests/cli-env-sync.test.ts packages/broods/tests/sync-revision.test.ts",
     "prepare": "git config core.hooksPath .githooks",
+    "deps:audit": "bun scripts/audit-gate.ts",
     "deps:check": "bun scripts/dependency-watch.ts",
     "scripts:check": "tsc -p scripts/tsconfig.json",
     "test": "bun run --filter @broods/core test && bun run --filter @broods/convex test && bun run --filter broods test",
@@ -45,10 +46,17 @@
     "typescript": "^7.0.2"
   },
   "overrides": {
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.10.2"
+    },
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
+    "katex": "^0.18.2",
+    "pi-mcp-adapter": {
+      "@modelcontextprotocol/client": "2.2.0"
+    },
     "postcss": "^8.5.26",
-    "serialize-javascript": "7.1.1",
+    "serialize-javascript": "7.1.2",
     "stripe": "22.5.0",
     "tar": "7.5.22",
     "tinypool": "2.1.2",

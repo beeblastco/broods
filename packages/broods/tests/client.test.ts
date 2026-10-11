@@ -462,3 +462,29 @@ test("client polls async status by run id", async () => {
     "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   ]);
 });
+
+test("stream cancels the response body when the consumer stops early", async () => {
+  let canceled = 0;
+  const body = new ReadableStream<Uint8Array>({
+    start: (controller): void => {
+      controller.enqueue(
+        new TextEncoder().encode(
+          'data: {"type":"text-delta","id":"0","text":"first"}\n\n',
+        ),
+      );
+    },
+    cancel: (): void => {
+      canceled += 1;
+    },
+  });
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
+  });
+  const stream = client.stream({ agentId: "agent_1", input: "hello" });
+  expect((await stream.next()).value).toMatchObject({ text: "first" });
+  await stream.return(undefined);
+  expect(canceled).toBe(1);
+  expect(body.locked).toBe(false);
+});

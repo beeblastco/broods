@@ -99,12 +99,24 @@ describe("forwarding a room message", () => {
     );
   });
 
-  it("survives a webhook rejecting the delivery", async () => {
+  // False has the account hold the event back and offer it again.
+  it("asks for a retry when a webhook answers 5xx", async () => {
     captureFetch(500);
 
-    expect(
-      forwardRoomEvent(event, "token-a", TARGETS),
-    ).resolves.toBeUndefined();
+    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toBe(false);
+  });
+
+  it("asks for a retry on a timeout or a rate limit", async () => {
+    captureFetch(408);
+    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toBe(false);
+    captureFetch(429);
+    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toBe(false);
+  });
+
+  it("settles on a 4xx, which answers the same every time", async () => {
+    captureFetch(404);
+
+    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toBe(true);
   });
 });
 
