@@ -335,11 +335,11 @@ it("tells the parent a follow-up queued on a stopped child still reports", async
     createdAt: "2026-08-13T00:00:00.000Z",
     updatedAt: "2026-08-13T00:00:00.000Z",
     expiresAt: Date.now() + 1_000,
-  });
+  } as never);
   spyOn(runtime, "mutate").mockResolvedValue({ queuedCount: 1, stopped: true });
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  await expect(
+  expect(
     execute(tools.stop_subagent, { taskId: taskId, agentId: AGENT_ID }),
   ).resolves.toEqual({
     status: "stopping",
