@@ -33,7 +33,7 @@ import {
 
 // Streaming would buy nothing here: chat pictures are small, and the cap exists
 // to stop a large workspace file from sitting in the pod's 1 GiB alongside a run.
-const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+export const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
 interface MediaObject {
   bucket: string;

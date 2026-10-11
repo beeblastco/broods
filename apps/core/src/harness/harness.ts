@@ -1308,23 +1308,9 @@ export async function runAgentLoop(
         const steeringSystem =
           await session.appendIngressEvents(steeringEvents);
         turnContext.ephemeralSystem.push(...steeringSystem);
-        // A steer carries its attachments as stored, so they are read back
-        // here as the turn's history was, not left for the provider to fetch.
         stepMessages = [
           ...messages,
-          ...(await rehydrateStoredMedia(
-            stripEnvelopeFieldsFromMessages(
-              steeringEvents.filter(
-                (
-                  event,
-                ): event is Exclude<
-                  ConversationIngressEvent,
-                  SystemModelMessage
-                > => event.role !== "system",
-              ),
-            ),
-            agentConfig,
-          )),
+          ...(await steeringModelMessages(steeringEvents, agentConfig)),
         ];
         logInfo("Steering ingress applied at AI SDK step boundary", {
           eventId: session.eventId,
@@ -2145,7 +2131,7 @@ export async function runAgentLoop(
           "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
         );
       }
-      await applyHarnessSteeringBeforeTurn(session, turnContext);
+      await applyHarnessSteeringBeforeTurn(session, turnContext, agentConfig);
       const harnessType = agentConfig.harness!.type;
       const stored = await session.loadHarnessSession();
       const reservationKey = harnessReservationKey({
@@ -2553,6 +2539,7 @@ function errorMessage(error: unknown): string {
 async function applyHarnessSteeringBeforeTurn(
   session: Session,
   turnContext: TurnContextSnapshot,
+  agentConfig: AgentConfig,
 ): Promise<void> {
   let steeringEventCount = 0;
   for (;;) {
@@ -2564,14 +2551,7 @@ async function applyHarnessSteeringBeforeTurn(
     const ephemeralSystem = await session.appendIngressEvents(events);
     turnContext.ephemeralSystem.push(...ephemeralSystem);
     turnContext.messages.push(
-      ...stripEnvelopeFieldsFromMessages(
-        events.filter(
-          (
-            event,
-          ): event is Exclude<ConversationIngressEvent, SystemModelMessage> =>
-            event.role !== "system",
-        ),
-      ),
+      ...(await steeringModelMessages(events, agentConfig)),
     );
     steeringEventCount += steering.contributingEventIds.length;
   }
@@ -2589,6 +2569,27 @@ async function applyHarnessSteeringBeforeTurn(
     conversationKey: session.conversationKey,
     steeringEventCount: steeringEventCount,
   });
+}
+
+/**
+ * The model messages of a steer, before or during a turn. Its attachments are
+ * read back as the turn's history was, not left for the provider to fetch.
+ */
+async function steeringModelMessages(
+  events: ConversationIngressEvent[],
+  agentConfig: AgentConfig,
+): Promise<ModelMessage[]> {
+  return await rehydrateStoredMedia(
+    stripEnvelopeFieldsFromMessages(
+      events.filter(
+        (
+          event,
+        ): event is Exclude<ConversationIngressEvent, SystemModelMessage> =>
+          event.role !== "system",
+      ),
+    ),
+    agentConfig,
+  );
 }
 
 /**

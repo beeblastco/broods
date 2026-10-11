@@ -33,7 +33,11 @@ import {
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
-import { locateMediaObject, readMediaObject } from "../media.ts";
+import {
+  locateMediaObject,
+  MAX_MEDIA_BYTES,
+  readMediaObject,
+} from "../media.ts";
 import {
   attachmentStoreKey,
   MEDIA_PATH_PREFIX,
@@ -651,8 +655,8 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * The bytes behind a sealed link, read once per turn and kept in the media
  * cache. A link left for the provider is fetched by it again on every model
  * step, and a file the agent deleted would 404 there and fail the whole turn.
- * Null keeps the link: not a sealed link, or a storage error, which is not
- * proof of a deletion.
+ * Null keeps the link: not a sealed link, a file over the media cap, or a
+ * storage error, which is not proof of a deletion.
  */
 async function readSealedMedia(
   part: UserContentPart,
@@ -675,6 +679,9 @@ async function readSealedMedia(
     const object = await locateMediaObject(ticket);
     if (!object) {
       return { gone: basename(ticket.path) };
+    }
+    if ((object.head.contentLength ?? 0) > MAX_MEDIA_BYTES) {
+      return null;
     }
     const bytes = Buffer.from(await readMediaObject(object, ticket.accountId));
     cacheMedia(link, bytes);

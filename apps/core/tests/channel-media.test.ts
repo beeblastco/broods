@@ -788,7 +788,8 @@ describe("rehydrateStoredMedia", () => {
     // Both links are read once; the replay comes from the media cache. Bytes
     // out of the managed bucket are metered as egress, as the media route did.
     expect(readS3BytesMock).toHaveBeenCalledTimes(2);
-    expect(meterWrites.length).toBeGreaterThan(0);
+    const egress = { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } };
+    expect(meterWrites).toEqual([egress, egress]);
     headS3ObjectMock.mockReset();
     readS3BytesMock.mockReset();
   });
