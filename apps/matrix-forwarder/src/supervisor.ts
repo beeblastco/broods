@@ -145,12 +145,12 @@ export class Forwarder {
   private async deliver(
     accessToken: string,
     event: MatrixForwardedEvent,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Read at delivery, not at start: reconcile replaces the array outright.
     const targets = this.managed.get(accessToken)?.targets;
-    if (!targets?.length) return;
+    if (!targets?.length) return true;
 
-    await forwardRoomEvent(event, accessToken, targets);
+    return forwardRoomEvent(event, accessToken, targets);
   }
 
   /**
@@ -176,7 +176,7 @@ export class Forwarder {
     const account = this.createAccount({
       accessToken: accessToken,
       apiUrl: group.apiUrl,
-      onEvent: (event: MatrixForwardedEvent): Promise<void> =>
+      onEvent: (event: MatrixForwardedEvent): Promise<boolean> =>
         this.deliver(accessToken, event),
       storeDir: this.storeDir,
     });
