@@ -583,9 +583,17 @@ export class Session {
     return next;
   }
 
-  async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
+  /**
+   * @param onSaved called after each append Convex accepts, with how many of
+   * the stored events are saved so far. A large batch takes several appends,
+   * so a caller that retries a failure can skip what is already saved.
+   */
+  async persistModelMessages(
+    messages: ModelMessage[],
+    onSaved?: (saved: number) => void,
+  ): Promise<string[]> {
     const events = this.storedEvents(messages);
-    await this.appendStoredEvents(events);
+    await this.appendStoredEvents(events, onSaved);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -873,10 +881,14 @@ export class Session {
   /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
   private async appendStoredEvents(
     events: { cursor: string; event: StoredConversationEvent }[],
+    onSaved?: (saved: number) => void,
   ): Promise<void> {
     if (events.length === 0) return;
+    let saved = 0;
     for (const batch of storedEventBatches(events)) {
       await this.appendConversationEvents(batch);
+      saved += batch.length;
+      onSaved?.(saved);
     }
     this.trackSystemCursor(events);
   }
