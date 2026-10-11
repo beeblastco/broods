@@ -135,6 +135,7 @@ import {
   type PendingQuestionSummary,
 } from "./questions.ts";
 import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
+import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
@@ -730,7 +731,7 @@ export async function runAgentLoop(
   // order, reserved in onToolExecutionStart.
   const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
     wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
-    "computer",
+    COMPUTER_TOOL_NAME,
   );
   const policyToolApproval = await createPolicyToolApproval(
     agentConfig,
