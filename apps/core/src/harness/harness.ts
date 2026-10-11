@@ -122,7 +122,6 @@ import {
   type ModelAttempt,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
-import type { SandboxCpuSample } from "./sandbox/types.ts";
 import {
   stripEnvelopeFieldsFromMessages,
   type ConversationIngressEvent,
@@ -146,7 +145,11 @@ import {
   type AskParent,
   type SubagentWatch,
 } from "./tools/utils.ts";
-import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
+import {
+  createSandboxCpuLedger,
+  extractCacheWriteTokens,
+  usageTokenTotals,
+} from "./usage-metering.ts";
 
 /** Default step cap when the agent config sets no `agent.maxTurn`. */
 const MAX_AGENT_ITERATIONS = 30;
@@ -381,16 +384,7 @@ export async function runAgentLoop(
 
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
-  // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
-  // sandboxUsage row at finalize. CPU only arrives from sandbox execs and
-  // hosted MCP calls.
-  const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
-  // Per-call compute, so the tool.call span can report what that one call cost.
-  // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
-  const toolComputeByCallId = new Map<
-    string,
-    { type: string; cpuUsec: number }
-  >();
+  const sandboxCpu = createSandboxCpuLedger();
   // Child OTel spans remain open until the corresponding AI SDK finish hook.
   // Their real OTel IDs are reused in the live NATS trace rows.
   const stepSpans = new Map<number, TrackedSpan>();
@@ -408,48 +402,6 @@ export async function runAgentLoop(
     // A fresh object: the running row published at start may still hold the old one.
     tracked.attributes = { ...tracked.attributes, ...retry };
     tracked.otelSpan.setAttributes(retry);
-  };
-  /** Passed to the tool registry as `onSandboxCpu`; folds each CPU sample into the usage buckets. */
-  const recordSandboxCpu = (sample: SandboxCpuSample): void => {
-    if (!(sample.cpuUsec > 0)) return;
-    if (sample.role === "tool" && sample.toolCallId !== undefined) {
-      const call = toolComputeByCallId.get(sample.toolCallId);
-      if (call) call.cpuUsec += sample.cpuUsec;
-      else
-        toolComputeByCallId.set(sample.toolCallId, {
-          type: sample.type,
-          cpuUsec: sample.cpuUsec,
-        });
-    }
-    const key = `${sample.type}|${sample.role}|${sample.toolName ?? ""}`;
-    const existing = sandboxUsageByKey.get(key);
-    if (existing) {
-      existing.cpuUsec += sample.cpuUsec;
-    } else {
-      sandboxUsageByKey.set(key, {
-        type: sample.type,
-        role: sample.role,
-        ...(sample.toolName ? { toolName: sample.toolName } : {}),
-        cpuUsec: sample.cpuUsec,
-      });
-    }
-  };
-  /**
-   * Sandbox CPU so far split by role (agent's own sandbox vs hosted MCP), for
-   * the live root span re-published after each step. Empty until CPU arrives.
-   */
-  const sandboxCpuRoleAttributes = (): Record<string, number> => {
-    let agent = 0;
-    let tool = 0;
-    for (const sample of sandboxUsageByKey.values()) {
-      if (sample.role === "agent") agent += sample.cpuUsec;
-      else if (sample.role === "tool") tool += sample.cpuUsec;
-    }
-
-    return {
-      ...(agent > 0 ? { "sandbox.cpu_usec.role.agent": agent } : {}),
-      ...(tool > 0 ? { "sandbox.cpu_usec.role.tool": tool } : {}),
-    };
   };
 
   // Start the root span up front so one trace id is on every log line, NATS
@@ -703,7 +655,7 @@ export async function runAgentLoop(
         dispatchAsyncTools: options.dispatchAsyncTools,
         dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
-        onSandboxCpu: recordSandboxCpu,
+        onSandboxCpu: sandboxCpu.record,
         onToolRetry: recordToolRetry,
         onBlockingQuestion: (question): void => {
           questionSummaries.push(question);
@@ -1061,19 +1013,7 @@ export async function runAgentLoop(
     stepAttempts.clear();
     // Task totals on the root span: token usage and sandbox CPU split per provider
     // so the dashboard reads final usage straight off the trace stream.
-    const cpuUsecByType = new Map<string, number>();
-    for (const sample of sandboxUsageByKey.values()) {
-      cpuUsecByType.set(
-        sample.type,
-        (cpuUsecByType.get(sample.type) ?? 0) + sample.cpuUsec,
-      );
-    }
-    const sandboxCpuAttributes = Object.fromEntries(
-      [...cpuUsecByType.entries()].map(([type, cpuUsec]) => [
-        `sandbox.cpu_usec.${type}`,
-        cpuUsec,
-      ]),
-    );
+    const sandboxCpuAttributes = sandboxCpu.typeAttributes();
     const rootSpanRow: ObservabilitySpanRow = {
       traceId: traceId,
       spanId: rootSpanId,
@@ -1171,7 +1111,7 @@ export async function runAgentLoop(
             runtimeMemoryMb: Math.round(
               process.memoryUsage().rss / 1024 / 1024,
             ),
-            sandboxUsage: [...sandboxUsageByKey.values()],
+            sandboxUsage: sandboxCpu.usage(),
             stepCount: stepCount,
             toolCallCount: toolCallCount,
             inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
@@ -1550,8 +1490,7 @@ export async function runAgentLoop(
           );
       // Compute is present only for tools that ran off-process, so the pair also
       // tells a reader which runtime served the call.
-      const compute = toolComputeByCallId.get(toolCall.toolCallId);
-      toolComputeByCallId.delete(toolCall.toolCallId);
+      const compute = sandboxCpu.takeToolCompute(toolCall.toolCallId);
       const computeAttributes = compute
         ? {
             "tool.compute.type": compute.type,
@@ -1866,7 +1805,7 @@ export async function runAgentLoop(
       // Re-publish the running root span with the sandbox CPU accumulated so far so
       // the dashboard's Compute chart streams live, not only at finalize. Skipped
       // until a sandbox exec actually reports CPU (keeps NATS traffic minimal).
-      const liveRoleCpu = sandboxCpuRoleAttributes();
+      const liveRoleCpu = sandboxCpu.roleAttributes();
       if (Object.keys(liveRoleCpu).length > 0) {
         // A running span has no known end; keep end == start, as above.
         void publishSpan({
