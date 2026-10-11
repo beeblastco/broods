@@ -835,9 +835,10 @@ async function resumeConversation(options: {
     idempotencyKey: options.eventId,
   };
 
+  // Queued behind a socket turn, it still answers on that socket.
   const { owned: ownedContinuation } = await admitInternalContinuation(
     continuationEvent,
-    continuationDelivery(continuationEvent),
+    continuationDelivery(onSocket(continuationEvent, options.delivery)),
   );
   if (!ownedContinuation) {
     return {
@@ -2412,17 +2413,29 @@ async function invokeContinuationWorker(
   delivery: AsyncToolDelivery | undefined,
 ): Promise<void> {
   if (delivery?.kind === "nats") {
-    await invokeNatsWorker({
-      ...event,
-      publicEventId: delivery.publicEventId,
-      publicConversationKey: delivery.publicConversationKey,
-      connectionId: delivery.connectionId,
-    });
+    await invokeNatsWorker(onSocket(event, delivery));
 
     return;
   }
 
   await invokeAsyncWorker(event);
+}
+
+// A continuation of a socket turn streams under that turn's ids on its connection.
+function onSocket(
+  event: DirectInboundEvent,
+  delivery: AsyncToolDelivery | undefined,
+): DirectInboundEvent {
+  if (delivery?.kind !== "nats") {
+    return event;
+  }
+
+  return {
+    ...event,
+    publicEventId: delivery.publicEventId,
+    publicConversationKey: delivery.publicConversationKey,
+    connectionId: delivery.connectionId,
+  };
 }
 
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
