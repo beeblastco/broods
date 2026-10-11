@@ -364,7 +364,7 @@ broods machine --doctor [--request]
 | `--force`              | Take the record over from another daemon                                                                    |
 | `--doctor [--request]` | Check the Screen Recording and Accessibility grants `--computer` needs. `--request` shows the macOS prompts |
 
-- Needs a `broods login` token and a deployed stage. The daemon uses a 15-minute stage ticket and refreshes it before each reconnect.
+- Needs a `broods login` token and a deployed stage. The daemon uses a 15-minute stage ticket and sends core a fresh one on the open socket before it expires, so a running command is not interrupted. Each reconnect mints a fresh ticket too.
 - It reconnects after a network drop. Another daemon on any computer is refused while this one holds the record, and the refusal names the host. `--force` is only needed after a daemon died while offline.
 - Agent commands and `--mcp` servers never see `BROODS_*` variables.
 

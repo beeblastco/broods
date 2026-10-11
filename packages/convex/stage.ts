@@ -19,7 +19,10 @@ import { accountIdForProject } from "./model/auditEvents";
 import { byDefaultThenName } from "./model/defaultStage";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getProjectForRole } from "./model/ownership/project";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "./model/ownership/project";
 import { agentsInStage, stageNameEquals } from "./model/projectScope";
 import { stagesFields } from "./schema";
 
@@ -54,7 +57,7 @@ export const create = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       projectId,
@@ -123,7 +126,7 @@ export const ensureDefault = mutation({
     const now = Date.now();
     const development = existing.find((stage) => stage.kind === "development");
     // A member reads the current default and never repairs or creates one.
-    if (!(await getProjectForRole(ctx, authUser.id, projectId, "admin"))) {
+    if (!(await getProjectForWrite(ctx, authUser.id, projectId, "admin"))) {
       return development?._id ?? null;
     }
 
@@ -180,7 +183,7 @@ export const initializeProduction = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       projectId,
@@ -268,7 +271,7 @@ export const remove = mutation({
     if (!stage) throw new Error("Stage not found.");
     if (stage.isDefault)
       throw new Error("The default stage cannot be deleted.");
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       stage.projectId,

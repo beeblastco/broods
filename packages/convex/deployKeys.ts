@@ -18,7 +18,7 @@ import {
 } from "./model/accountSecrets";
 import { userByAuthId } from "./model/ownership/org";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getProjectForRole } from "./model/ownership/project";
+import { getProjectForWrite } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
 
 // What `list` sends to the browser: the row minus `keyHash`.
@@ -51,7 +51,7 @@ export const create = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(ctx, user.id, projectId);
+    const project = await getProjectForWrite(ctx, user.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     const stage = await getOwnedStage(ctx, user.id, stageId);
@@ -146,7 +146,7 @@ export const remove = mutation({
     const deployKey = await ctx.db.get(deployKeyId);
     if (!deployKey) throw new Error("Project key not found.");
 
-    const project = await getProjectForRole(ctx, user.id, deployKey.projectId);
+    const project = await getProjectForWrite(ctx, user.id, deployKey.projectId);
     if (!project) throw new Error("Project key not found.");
     const stage = await getOwnedStage(ctx, user.id, deployKey.stageId);
     if (!stage || stage.projectId !== deployKey.projectId)

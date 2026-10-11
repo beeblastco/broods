@@ -48,7 +48,7 @@ export interface MachineDaemonOptions {
   baseUrl: string;
   /** Serve the computer tool through the desktop helper. */
   computer?: boolean;
-  /** Called per connection, so a reconnect can carry a fresh stage ticket. */
+  /** Called per connection and per refresh, each time for a fresh stage ticket. */
   credential: () => Promise<string>;
   /** Working directory for an exec that names none. */
   cwd: string;
@@ -333,8 +333,32 @@ function serveOnce(
     const send = (frame: MachineDaemonFrame): void => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(frame));
     };
+    // Core closes a ticket's socket at its expiry, killing any command still
+    // running, so a fresh ticket goes in at half the time left, and again at
+    // half of what is left then until core answers with a new deadline.
+    let refresh: ReturnType<typeof setTimeout> | undefined;
+    const refreshBefore = (expiresAt: number): void => {
+      clearTimeout(refresh);
+      if (lifetime.signal.aborted) return;
+      refresh = setTimeout(
+        (): void => {
+          void options
+            .credential()
+            .then(
+              (fresh): void => send({ type: "credential", token: fresh }),
+              (error: unknown): void =>
+                options.log(
+                  `credential refresh failed (${error instanceof Error ? error.message : String(error)}), retrying`,
+                ),
+            )
+            .finally((): void => refreshBefore(expiresAt));
+        },
+        Math.max((expiresAt - Date.now()) / 2, RECONNECT_MIN_MS),
+      );
+    };
     const finish = (code: number, reason: string): void => {
       options.signal.removeEventListener("abort", onAbort);
+      clearTimeout(refresh);
       lifetime.abort();
       resolve({ code: code, reason: reason });
     };
@@ -355,7 +379,13 @@ function serveOnce(
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);
       if (frame?.type === "ready") {
-        options.log(`connected as ${options.sandbox} (${frame.sandboxId})`);
+        // A later ready only acknowledges a fresh ticket.
+        if (refresh === undefined) {
+          options.log(`connected as ${options.sandbox} (${frame.sandboxId})`);
+        }
+        if (frame.expiresInMs !== undefined) {
+          refreshBefore(Date.now() + frame.expiresInMs);
+        }
 
         return;
       }
