@@ -376,6 +376,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 1_000,
@@ -464,6 +465,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 1_000,
@@ -492,6 +494,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 1_000,
@@ -522,6 +525,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 1_000,
@@ -545,6 +549,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       { subagent: { enabled: true } },
       Date.now() + 1_000,
@@ -577,6 +582,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 10_000,
@@ -690,6 +696,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 1_000,
@@ -727,6 +734,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 1_000,
@@ -757,6 +765,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 10,
@@ -796,6 +805,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 10,
@@ -890,6 +900,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 10,
@@ -1024,6 +1035,7 @@ describe("SubagentCoordinator", () => {
         agentId: "agent_parent",
         eventId: "event_parent",
         persistModelMessages: persistModelMessages,
+        renewConversationLease: async (): Promise<string> => "renewed",
       } as never,
       {},
       Date.now() + 1_000,
@@ -1437,13 +1449,15 @@ describe("SubagentCoordinator", () => {
     };
 
     try {
-      internals.pending.set("subagent~task_1", Promise.resolve());
-      await internals.completeTask({
-        ...failure,
-        error: "Stopped by user at the model boundary",
-      });
+      for (const stopped of [
+        "Stopped by user at the model boundary",
+        "Stopped by the parent agent at the model boundary",
+      ]) {
+        internals.pending.set("subagent~task_1", Promise.resolve());
+        await internals.completeTask({ ...failure, error: stopped });
 
-      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+        expect(await coordinator.drainCompletionsToParent()).toBe(0);
+      }
 
       // A genuine failure is still reported, so the parent can react to it.
       internals.pending.set("subagent~task_1", Promise.resolve());
@@ -1683,6 +1697,84 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("tells a child its budget and stops it with the parent's user stop", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
+    const { USER_STOP_MESSAGE } = await import("../src/harness/harness.ts");
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "ephemeral" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: async (): Promise<void> => {} } },
+    );
+    let instructions = "";
+    let stopReason: unknown;
+    const previousStreamText = ai.streamText;
+    const streamText = mock(
+      (options: {
+        abortSignal: AbortSignal;
+        instructions: Array<{ content: string }>;
+      }): { stream: ReadableStream; consumeStream(): Promise<void> } => {
+        instructions = options.instructions
+          .map((message): string => message.content)
+          .join("\n");
+        coordinator.stopChildren();
+        stopReason = options.abortSignal.reason;
+
+        return {
+          stream: new ReadableStream({ start: (c): void => c.close() }),
+          consumeStream: async (): Promise<void> => {},
+        };
+      },
+    );
+    await mock.module("ai", (): Record<string, unknown> => ({
+      ...ai,
+      streamText: streamText,
+    }));
+
+    try {
+      await coordinator["runTask"]({
+        ...resolvedTask(),
+        runId: CHILD_RUN_ID,
+        isolatedSandbox: false,
+        agentConfig: {
+          provider: { google: { apiKey: "test-key" } },
+          model: { provider: "google", modelId: "gemini-test" },
+        },
+      }).catch((): void => {});
+
+      expect(instructions).toContain("15-minute budget");
+      expect(stopReason).toEqual(new Error(USER_STOP_MESSAGE));
+    } finally {
+      await mock.module("ai", (): Record<string, unknown> => ({
+        ...ai,
+        streamText: previousStreamText,
+      }));
+      mutate.mockRestore();
+    }
+  });
+
+  it("stops the children when the parent is stopped while it waits", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession({
+        renewConversationLease: async (): Promise<string> => "stopped",
+      }),
+      {},
+      // The first heartbeat comes at the wait budget.
+      Date.now() + 50,
+    );
+    coordinator["pending"].set("subagent_1", new Promise((): void => {}));
+    // The heartbeat ends this wait; a stopped child leaves on its own.
+    coordinator["childStop"].signal.addEventListener("abort", (): void => {
+      coordinator["pending"].delete("subagent_1");
+      coordinator["notifyCompletion"]();
+    });
+
+    expect(await coordinator.waitForIdle()).toBe("idle");
+    expect(coordinator["childStop"].signal.aborted).toBe(true);
+  });
+
   it("rejects coordinator-level conversation keys in ephemeral mode", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
@@ -1766,12 +1858,14 @@ function persistentChildTask() {
   };
 }
 
-function parentSession() {
+function parentSession(overrides: Record<string, unknown> = {}) {
   return {
     accountId: "account_1",
     agentId: "agent_parent",
     eventId: "acct:account_1:agent:agent_parent:api:event_parent",
     persistModelMessages: mock(async () => []),
+    renewConversationLease: async (): Promise<string> => "renewed",
+    ...overrides,
   } as never;
 }
 

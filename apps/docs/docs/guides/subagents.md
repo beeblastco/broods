@@ -46,7 +46,7 @@ In persistent mode the parent also gets:
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `get_subagent_status` | Reads a child's status. On a child this turn started, it first waits up to 60s for it to finish. A result read this way is not injected again |
 | `update_subagent`     | `steer` changes the running child's direction, or answers its open `ask_parent` question. `continue` queues a follow-up turn                  |
-| `stop_subagent`       | Stops the child at its next step. A stopped child's partial work is not sent to the parent.                                                   |
+| `stop_subagent`       | Stops the child at its next step. A stopped child sends no report: its partial work is not sent to the parent.                                |
 
 A persistent child gets `ask_parent`: it asks the parent one question and waits up to 5 minutes for the answer. The question reaches the parent at its next step, or wakes it if it is waiting on children. The parent answers with `update_subagent` in `steer` mode. With no answer in time, the child is told to continue on its best judgment.
 
@@ -79,5 +79,7 @@ A runtime key can attach only to children of a public parent in its own stage. L
 ## Timing
 
 The parent's request stays open while children run. Over SSE it sends heartbeat comments during quiet waits. If the request is about to hit its deadline, the parent stops waiting: it gets the finished results and a note that each other child is still running, and answers with what it has. Those children keep working, and each result later arrives in the parent conversation as a new message, which starts a new parent turn. A channel or WebSocket conversation gets that turn's reply where it asked; an API conversation finds it in its history on the next run. A follow-up queued on a child after the parent's wait expired still runs, but its result stays in the child's conversation.
+
+Each child turn has a 15-minute budget, and its instructions say so. From 3 minutes before the end its tools are off, so it answers with what it has. A turn stuck in a tool call 3 minutes past the budget is cut off and the parent gets a failure. Stopping the parent run stops its children too, also while it waits for them.
 
 The [`subagent` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/subagent) is a runnable example. [Subagent internals](../internals/subagents.md) explains how it works inside.
