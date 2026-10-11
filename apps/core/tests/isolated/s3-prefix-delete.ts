@@ -28,49 +28,49 @@ beforeEach(() => {
   inFlight = 0;
   peakInFlight = 0;
   failures = new Map();
-  spyOn(S3Client.prototype, "send").mockImplementation((async (
-    command: object,
-  ) => {
-    inFlight += 1;
-    peakInFlight = Math.max(peakInFlight, inFlight);
-    await Bun.sleep(1);
-    inFlight -= 1;
-    if (command instanceof ListObjectsV2Command) {
-      calls.push("list");
+  spyOn(S3Client.prototype, "send").mockImplementation(
+    async (command: object) => {
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await Bun.sleep(1);
+      inFlight -= 1;
+      if (command instanceof ListObjectsV2Command) {
+        calls.push("list");
+        expect(command.input.Bucket).toBe(BUCKET);
+        expect(command.input.Prefix).toBe(PREFIX);
+        // The token is the last key of the previous page, like S3's cursor.
+        const after = command.input.ContinuationToken ?? "";
+        const page = [...keys]
+          .filter((key) => key.startsWith(PREFIX) && key > after)
+          .sort()
+          .slice(0, command.input.MaxKeys);
+        const more = [...keys].some(
+          (key) => key.startsWith(PREFIX) && key > (page.at(-1) ?? ""),
+        );
+
+        return {
+          Contents: page.map((key) => ({ Key: key })),
+          ...(more ? { NextContinuationToken: page.at(-1) } : {}),
+        };
+      }
+      if (!(command instanceof DeleteObjectsCommand)) {
+        throw new Error(`unexpected ${command.constructor.name}`);
+      }
       expect(command.input.Bucket).toBe(BUCKET);
-      expect(command.input.Prefix).toBe(PREFIX);
-      // The token is the last key of the previous page, like S3's cursor.
-      const after = command.input.ContinuationToken ?? "";
-      const page = [...keys]
-        .filter((key) => key.startsWith(PREFIX) && key > after)
-        .sort()
-        .slice(0, command.input.MaxKeys);
-      const more = [...keys].some(
-        (key) => key.startsWith(PREFIX) && key > (page.at(-1) ?? ""),
-      );
+      const objects = command.input.Delete?.Objects ?? [];
+      calls.push(`delete:${objects.length}`);
+      expect(objects.length).toBeLessThanOrEqual(1000);
+      const errors = [];
+      for (const { Key: key = "" } of objects) {
+        expect(key.startsWith(PREFIX)).toBe(true);
+        const code = failures.get(key)?.shift();
+        if (code) errors.push({ Key: key, Code: code, Message: code });
+        else keys.delete(key);
+      }
 
-      return {
-        Contents: page.map((key) => ({ Key: key })),
-        ...(more ? { NextContinuationToken: page.at(-1) } : {}),
-      };
-    }
-    if (!(command instanceof DeleteObjectsCommand)) {
-      throw new Error(`unexpected ${command.constructor.name}`);
-    }
-    expect(command.input.Bucket).toBe(BUCKET);
-    const objects = command.input.Delete?.Objects ?? [];
-    calls.push(`delete:${objects.length}`);
-    expect(objects.length).toBeLessThanOrEqual(1000);
-    const errors = [];
-    for (const { Key: key = "" } of objects) {
-      expect(key.startsWith(PREFIX)).toBe(true);
-      const code = failures.get(key)?.shift();
-      if (code) errors.push({ Key: key, Code: code, Message: code });
-      else keys.delete(key);
-    }
-
-    return errors.length > 0 ? { Errors: errors } : {};
-  }) as never);
+      return errors.length > 0 ? { Errors: errors } : {};
+    },
+  );
 });
 
 afterEach(() => {
