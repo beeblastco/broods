@@ -752,6 +752,14 @@ export async function runAgentLoop(
       agentConfig,
     )),
   };
+  // Hooks let tool.call.started deny or edit args and tool.result transform
+  // output; the owner fence rechecks conversation ownership before each call.
+  // Computer actions in one step share a screen, so they run in the model's
+  // order, reserved in onToolExecutionStart.
+  const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
+    wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
+    COMPUTER_TOOL_NAME,
+  );
   const policyToolApproval = await createPolicyToolApproval(
     agentConfig,
     {
@@ -777,25 +785,13 @@ export async function runAgentLoop(
       sandboxes: sandboxes,
     },
   );
-  // Hooks let tool.call.started deny or edit args and tool.result transform
-  // output; the owner fence rechecks conversation ownership before each call.
-  // Computer actions in one step share a screen, so they run in the model's
-  // order, reserved in onToolExecutionStart, and none runs ahead of one that
-  // waits for approval.
-  const {
-    tools,
-    reserve: reserveComputerTurn,
-    approval: toolApproval,
-  } = serializeToolCalls(
-    wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
-    COMPUTER_TOOL_NAME,
+  const { approval: toolApproval, startStep: startApprovalStep } =
     createRuntimeToolApproval({
       configuredApprovals: configuredApprovals,
       workspaces: resolvedWorkspaces,
       sandboxes: sandboxes,
       ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
-    }),
-  );
+    });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(agentConfig);
   const modelOutput = modelOutputFromModelConfig(agentConfig);
@@ -1431,6 +1427,7 @@ export async function runAgentLoop(
       }
     },
     onStepStart: async ({ stepNumber, messages }) => {
+      startApprovalStep();
       const now = Date.now();
       stepStartedAt.set(stepNumber, now);
       activeStepNumber = stepNumber;

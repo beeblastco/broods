@@ -529,19 +529,10 @@ test("one step's computer actions reach the daemon one at a time, in the model's
 });
 
 test("a stopped run drops queued computer actions without waiting for the running one", async () => {
-  const click = Promise.withResolvers<string>();
+  const click = Promise.withResolvers<void>();
   const ran: string[] = [];
   const { tools, reserve } = serializeToolCalls(
-    {
-      computer: tool({
-        inputSchema: z.object({ action: z.string() }),
-        execute: async ({ action }): Promise<string> => {
-          ran.push(action);
-
-          return action === "left_click" ? click.promise : action;
-        },
-      }),
-    },
+    recordingComputer(ran, click.promise),
     "computer",
   );
   const execute = tools.computer?.execute;
@@ -568,7 +559,7 @@ test("a stopped run drops queued computer actions without waiting for the runnin
     ),
     Bun.sleep(50).then((): string => "still waiting"),
   ]);
-  click.resolve("clicked");
+  click.resolve();
   await clicked;
 
   expect(outcome).toBe("dropped");
@@ -621,16 +612,22 @@ test("in ask mode, a screenshot after a click waiting for approval waits with it
     ["call-1", false],
   ]);
 
-  await resumed(ran, asked, [true, true]).consumeStream();
+  await resumed(
+    ran,
+    asked,
+    [true, true],
+    [{ action: "screenshot" }],
+  ).consumeStream();
 
-  expect(ran).toEqual(["left_click", "screenshot"]);
+  // The hold ends with its step: the next step's screenshot does not ask.
+  expect(ran).toEqual(["left_click", "screenshot", "screenshot"]);
 });
 
 test("a denied click does not hold up the screenshot that waited with it", async () => {
   const ran: string[] = [];
   const asked = await askedClickThenScreenshot(ran);
   const outcome = await Promise.race([
-    resumed(ran, asked, [false, true])
+    resumed(ran, asked, [false, true], [])
       .consumeStream()
       .then((): string => "settled"),
     Bun.sleep(500).then((): string => "hung"),
@@ -645,7 +642,7 @@ test("a stopped run drops the screenshot queued behind an approved click", async
   const asked = await askedClickThenScreenshot(ran);
   const stop = new AbortController();
   const outcome = Promise.race([
-    resumed(ran, asked, [true, true], stop)
+    resumed(ran, asked, [true, true], [], stop)
       .consumeStream({ onError: (): void => {} })
       .then((): string => "settled"),
     Bun.sleep(500).then((): string => "hung"),
@@ -878,15 +875,6 @@ function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
   };
 }
 
-// The ask-mode approval the harness builds for one `ask` machine.
-function askApproval(): ReturnType<typeof createRuntimeToolApproval> {
-  return createRuntimeToolApproval({
-    configuredApprovals: new Map(),
-    workspaces: [],
-    sandboxes: [machine()],
-  });
-}
-
 // One ask-mode pass where the model clicks, then takes a screenshot.
 async function askedClickThenScreenshot(ran: string[]): Promise<{
   messages: ModelMessage[];
@@ -895,20 +883,12 @@ async function askedClickThenScreenshot(ran: string[]): Promise<{
   const prompt: ModelMessage[] = [
     { role: "user", content: "click the field, then look" },
   ];
-  const { tools, reserve, approval } = serializeToolCalls(
-    recordingComputer(ran, Bun.sleep(10)),
-    "computer",
-    askApproval(),
-  );
-  const step = streamText({
+  const step = askModeStream(ran, Bun.sleep(10), {
     model: computerStepModel([
       { action: "left_click", coordinate: [10, 20] },
       { action: "screenshot" },
     ]),
     messages: prompt,
-    tools: tools,
-    ...(approval ? { toolApproval: approval } : {}),
-    onToolExecutionStart: ({ toolCall }): void => reserve(toolCall),
   });
   const content = await step.content;
 
@@ -918,6 +898,36 @@ async function askedClickThenScreenshot(ran: string[]): Promise<{
       part.type === "tool-approval-request" ? [part] : [],
     ),
   };
+}
+
+// One streamText pass over a recording computer on an `ask` machine, wired
+// like the harness. A click lasts until `clicked` settles.
+function askModeStream(
+  ran: string[],
+  clicked: Promise<void>,
+  options: {
+    model: MockLanguageModelV4;
+    messages: ModelMessage[];
+    abortSignal?: AbortSignal;
+  },
+): ReturnType<typeof streamText> {
+  const { tools, reserve } = serializeToolCalls(
+    recordingComputer(ran, clicked),
+    "computer",
+  );
+  const { approval, startStep } = createRuntimeToolApproval({
+    configuredApprovals: new Map(),
+    workspaces: [],
+    sandboxes: [machine()],
+  });
+
+  return streamText({
+    ...options,
+    tools: tools,
+    ...(approval ? { toolApproval: approval } : {}),
+    onStepStart: startStep,
+    onToolExecutionStart: ({ toolCall }): void => reserve(toolCall),
+  });
 }
 
 // One model step that calls the computer tool with each input, in order.
@@ -1061,12 +1071,14 @@ function result(
   };
 }
 
-// The next pass after a person answers each request of `asked`, in order. The
-// click lasts until `stop` aborts when one is given.
+// The next pass after a person answers each request of `asked`, in order, where
+// the model then calls `next`. The click lasts until `stop` aborts when one is
+// given.
 function resumed(
   ran: string[],
   asked: Awaited<ReturnType<typeof askedClickThenScreenshot>>,
   answers: boolean[],
+  next: Record<string, unknown>[],
   stop?: AbortController,
 ): ReturnType<typeof streamText> {
   const clicked = stop
@@ -1074,14 +1086,9 @@ function resumed(
         stop.signal.addEventListener("abort", (): void => resolve());
       })
     : Bun.sleep(10);
-  const { tools, reserve, approval } = serializeToolCalls(
-    recordingComputer(ran, clicked),
-    "computer",
-    askApproval(),
-  );
 
-  return streamText({
-    model: computerStepModel([]),
+  return askModeStream(ran, clicked, {
+    model: computerStepModel(next),
     messages: [
       ...asked.messages,
       {
@@ -1093,9 +1100,6 @@ function resumed(
         })),
       },
     ],
-    tools: tools,
-    ...(approval ? { toolApproval: approval } : {}),
     ...(stop ? { abortSignal: stop.signal } : {}),
-    onToolExecutionStart: ({ toolCall }): void => reserve(toolCall),
   });
 }

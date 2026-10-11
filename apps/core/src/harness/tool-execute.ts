@@ -5,8 +5,7 @@
  * wrapToolExecute rather than re-deriving that branch each time.
  */
 
-import type { ModelMessage, ToolApprovalStatus, ToolSet } from "ai";
-import type { RuntimeToolApproval } from "./policy.ts";
+import type { ToolSet } from "ai";
 import type { Session } from "./session.ts";
 
 const AsyncGeneratorFunction = Object.getPrototypeOf(
@@ -42,28 +41,21 @@ export function isStreamingExecute(execute: ToolExecute): boolean {
  * Runs one non-streaming tool's calls one at a time, in the order `reserve` saw
  * them. Hooks and the owner fence run inside the turn; only awaited
  * onToolExecutionStart callbacks can reorder calls, so reserve before those.
- * The returned `approval` holds a call behind an earlier one of the step that
- * waits for a person: it asks in the same round and runs after it, never first.
  */
 export function serializeToolCalls(
   tools: ToolSet,
   name: string,
-  approval?: RuntimeToolApproval,
 ): {
   tools: ToolSet;
   reserve: (toolCall: { toolName: string; toolCallId: string }) => void;
-  approval: RuntimeToolApproval | undefined;
 } {
   const tool = tools[name];
   if (typeof tool?.execute !== "function" || isStreamingExecute(tool.execute)) {
-    return { tools: tools, reserve: (): void => {}, approval: approval };
+    return { tools: tools, reserve: (): void => {} };
   }
   const call = tool.execute;
   const turns = new Map<string, ReturnType<typeof takeTurn>>();
   let last: Promise<void> = Promise.resolve();
-  // The step with a call waiting for a person. The SDK decides a step's calls
-  // in the model's order against that step's one messages array.
-  let waitingStep: ModelMessage[] | undefined;
 
   return {
     tools: {
@@ -96,23 +88,6 @@ export function serializeToolCalls(
     reserve: (toolCall: { toolName: string; toolCallId: string }): void => {
       if (toolCall.toolName === name) takeTurn(toolCall.toolCallId);
     },
-    approval:
-      approval &&
-      (async (event): Promise<ToolApprovalStatus> => {
-        const status = await approval(event);
-        if (event.toolCall.toolName !== name) return status;
-        const decision = typeof status === "object" ? status.type : status;
-        if (decision === "user-approval") {
-          waitingStep = event.messages;
-        } else if (decision !== "denied" && waitingStep === event.messages) {
-          return {
-            type: "user-approval",
-            reason: `Waits for the ${name} call before it, which needs approval.`,
-          };
-        }
-
-        return status;
-      }),
   };
 
   // Queues a call: `after` settles once the call before it is done.
