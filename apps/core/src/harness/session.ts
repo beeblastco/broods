@@ -248,6 +248,14 @@ interface StoredConversationEntry {
   event: StoredConversationEvent;
 }
 
+// A row this session appends. A writer that retries a failed append sets
+// `dedupeKey`, and Convex stores a row once per key in the conversation.
+interface AppendedConversationEvent {
+  cursor: string;
+  dedupeKey?: string;
+  event: StoredConversationEvent;
+}
+
 export interface StoredConversationEventPage {
   page: Array<{ cursor: string; event: StoredConversationEvent }>;
   isDone: boolean;
@@ -862,11 +870,7 @@ export class Session {
 
   /** One append mutation, fenced against the owner generation when there is one. */
   private async appendConversationEvents(
-    events: {
-      cursor: string;
-      dedupeKey?: string;
-      event: StoredConversationEvent;
-    }[],
+    events: AppendedConversationEvent[],
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
       const startedAt = performance.now();
@@ -888,11 +892,7 @@ export class Session {
 
   /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
   private async appendStoredEvents(
-    events: {
-      cursor: string;
-      dedupeKey?: string;
-      event: StoredConversationEvent;
-    }[],
+    events: AppendedConversationEvent[],
     onSaved?: (saved: number) => void,
   ): Promise<void> {
     if (events.length === 0) return;
@@ -1284,40 +1284,31 @@ export class Session {
   private storedEvents(
     messages: ModelMessage[],
     dedupeKeys?: string[],
-  ): { cursor: string; dedupeKey?: string; event: StoredConversationEvent }[] {
+  ): AppendedConversationEvent[] {
     if (!this.persist) return [];
     const producer: MessageProducer = {
       model: modelIdentityFromModelConfig(this.agentConfig),
       retainsReasoning: retainsReasoningParts(this.agentConfig),
     };
 
-    return messages.flatMap(
-      (
+    return messages.flatMap((message, index): AppendedConversationEvent[] => {
+      const event = createStoredEventFromModelMessage(
         message,
-        index,
-      ): {
-        cursor: string;
-        dedupeKey?: string;
-        event: StoredConversationEvent;
-      }[] => {
-        const event = createStoredEventFromModelMessage(
-          message,
-          this.eventId,
-          producer,
-        );
-        const dedupeKey = dedupeKeys?.[index];
+        this.eventId,
+        producer,
+      );
+      const dedupeKey = dedupeKeys?.[index];
 
-        return event
-          ? [
-              {
-                cursor: this.nextCreatedAt(),
-                ...(dedupeKey !== undefined ? { dedupeKey: dedupeKey } : {}),
-                event: event,
-              },
-            ]
-          : [];
-      },
-    );
+      return event
+        ? [
+            {
+              cursor: this.nextCreatedAt(),
+              ...(dedupeKey !== undefined ? { dedupeKey: dedupeKey } : {}),
+              event: event,
+            },
+          ]
+        : [];
+    });
   }
 }
 
@@ -2001,17 +1992,9 @@ function storableToolResultOutput(
  * A step fits one, but a harness run hands over its whole history at once.
  */
 function storedEventBatches(
-  events: {
-    cursor: string;
-    dedupeKey?: string;
-    event: StoredConversationEvent;
-  }[],
-): { cursor: string; dedupeKey?: string; event: StoredConversationEvent }[][] {
-  const batches: {
-    cursor: string;
-    dedupeKey?: string;
-    event: StoredConversationEvent;
-  }[][] = [];
+  events: AppendedConversationEvent[],
+): AppendedConversationEvent[][] {
+  const batches: AppendedConversationEvent[][] = [];
   let batch: typeof events = [];
   let batchBytes = 0;
   for (const entry of events) {
