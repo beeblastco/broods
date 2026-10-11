@@ -156,7 +156,7 @@ sequenceDiagram
     T-->>P: stopping
     alt child has another step
       Ch->>CX: stepBoundary answers stopped
-      Ch->>CX: settle failed, stoppedByUser
+      Ch->>CX: settle failed, stopped by the parent, not injected
     else child was on its last step
       Ch->>CX: settle completed, result injected
     end
