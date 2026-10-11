@@ -792,8 +792,12 @@ async function handleHttpRequest(
 
       return unauthorizedResponse();
     }
+    // The lookup broke, so a redelivery can still succeed: a 404 would tell
+    // the provider, and the Matrix forwarder, to give up on the event.
     if (holder.kind === "unavailable") {
-      return notFoundResponse();
+      return errorResponse(503, "Channel lookup failed, retry the delivery", {
+        code: "channel_lookup_unavailable",
+      });
     }
     return handleChannelWebhook(
       holder.receivers,

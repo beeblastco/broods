@@ -594,6 +594,8 @@ paths:
           description: Provider authentication failed
         "404":
           description: Unknown account or channel, or no agent holds credentials for it
+        "503":
+          description: No agent of the account configures this channel, or the lookup of which agent holds it failed (`channel_lookup_unavailable`). The second clears on its own, so the provider should redeliver.
 
   /v1/webhooks/{accountId}/dev/{endpointId}/{channelName}:
     get:
@@ -671,6 +673,8 @@ paths:
           description: Provider authentication failed
         "404":
           description: Unknown account or channel, or no stage of this account is deployed at that endpointId (`unknown_webhook_stage`). An unknown endpointId never falls back to the account-wide credential scan.
+        "503":
+          description: No agent of the account configures this channel, or the lookup of which agent holds it failed (`channel_lookup_unavailable`). The second clears on its own, so the provider should redeliver.
 
   /v1/accounts:
     post:

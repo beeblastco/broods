@@ -149,6 +149,27 @@ describe("account webhook ingress", () => {
     });
   });
 
+  // A forwarder or provider redelivers on a 5xx and gives up on a 404.
+  it("returns 503 when the agent listing fails, so the delivery is retried", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => TEST_AGENT,
+      agentLister: async () => {
+        throw new Error("convex unavailable");
+      },
+    });
+
+    const response = await routeIncomingEvent(
+      createTelegramEvent(),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(503);
+    expect(responseJson(response)).toMatchObject({
+      error: { code: "channel_lookup_unavailable" },
+    });
+  });
+
   it("returns 401 when account channel authentication fails", async () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
