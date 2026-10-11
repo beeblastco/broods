@@ -2932,8 +2932,39 @@ export declare const internal: {
           accountId: Id<"accounts">;
           policy: {
             mode?: "enforce" | "audit";
-            rules: Array<any>;
-            version: number;
+            rules: Array<{
+              actions: Array<string>;
+              conditions?: Array<{
+                attribute: string;
+                operator:
+                  | "equals"
+                  | "notEquals"
+                  | "in"
+                  | "notIn"
+                  | "prefix"
+                  | "contains";
+                value:
+                  | string
+                  | number
+                  | boolean
+                  | Array<string>
+                  | Array<number>
+                  | Array<boolean>;
+              }>;
+              effect: "allow" | "deny";
+              id: string;
+              resources?: {
+                filePaths?: Array<string>;
+                mcpIds?: Array<string>;
+                resourceIds?: Array<string>;
+                skillPaths?: Array<string>;
+                subagentIds?: Array<string>;
+                toolNames?: Array<string>;
+                workspaceIds?: Array<string>;
+                workspaceNames?: Array<string>;
+              };
+            }>;
+            version: 1;
           };
           projectId?: Id<"projects">;
           roleId: string;
