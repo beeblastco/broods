@@ -288,7 +288,11 @@ describe("logging helpers", () => {
       `sk-ant-api03-${"a1B2".repeat(20)}`,
       `AKIA${"ABCDEFGHIJ234567"}`,
       "xoxb-1234-5678-abcdEFGH",
+      `xoxc-1234-5678-${"a1B2".repeat(8)}`,
+      `xoxe-1-${"a1B2".repeat(8)}`,
+      `xapp-1-A0123-${"a1B2".repeat(8)}`,
       `AIza${"a1B2-".repeat(7)}`,
+      `ya29.a0${"a1B2-_".repeat(6)}`,
       `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.${"a1B2".repeat(8)}`,
       `bsk_${"a".repeat(43)}`,
     ];
@@ -299,7 +303,14 @@ describe("logging helpers", () => {
       expect(redactSerialized({ content: `token:\n${token}` }, [], 1000)).toBe(
         '{"content":"token:\\n[redacted]"}',
       );
+      expect(redactSensitiveText(`next=%2Fauth%3D${token}`)).toBe(
+        "next=%2Fauth%3D[redacted]",
+      );
     }
+    // A prefixed provider token glued to a word by `-` or `_` is still caught.
+    expect(
+      redactSensitiveText(`credential-${tokens[0]} key_${tokens[3]}`),
+    ).toBe("credential-[redacted] key_[redacted]");
     // Read-back data keeps them: the agent may need a token it was handed.
     expect(redactWithRunSecrets(tokens[0])).toBe(tokens[0]);
     // Ids that only contain a prefix stay readable.
