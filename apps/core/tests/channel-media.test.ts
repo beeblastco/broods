@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ModelMessage, UserContent } from "ai";
+import type { ImagePart, ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
@@ -36,6 +36,10 @@ const meterWrites: Array<{
 
 const headS3ObjectMock = mock(
   async (_bucket: string, _key: string): Promise<S3ObjectHead | null> => null,
+);
+const readS3BytesMock = mock(
+  async (_bucket: string, _key: string): Promise<Uint8Array> =>
+    new Uint8Array(),
 );
 const writeS3ObjectMock = mock(
   async (
@@ -76,7 +80,7 @@ await mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
   headS3Object: headS3ObjectMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).
-  readS3Bytes: mock(async () => new Uint8Array()),
+  readS3Bytes: readS3BytesMock,
   readS3Text: mock(async () => ""),
   s3ObjectExists: mock(async () => true),
   getS3ObjectUrl: mock(async () => ""),
@@ -130,7 +134,8 @@ beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = "media-ticket-secret";
   process.env.PUBLIC_BASE_URL = "https://core.example";
-  headS3ObjectMock.mockClear();
+  headS3ObjectMock.mockReset();
+  readS3BytesMock.mockReset();
   writeS3ObjectMock.mockClear();
   transcribeAudioMock.mockClear();
   meterWrites.length = 0;
@@ -626,7 +631,11 @@ describe("rehydrateStoredMedia", () => {
     if (!stored) throw new Error("expected a stored message");
     const fetchMock = telegramFetch();
 
-    const messages = await rehydrateStoredMedia([stored], telegramConfig());
+    const messages = await rehydrateStoredMedia(
+      [stored],
+      telegramConfig(),
+      ACCOUNT,
+    );
 
     const content = messages[0]?.content;
     if (!Array.isArray(content)) throw new Error("expected message parts");
@@ -644,6 +653,7 @@ describe("rehydrateStoredMedia", () => {
     const messages = await rehydrateStoredMedia(
       [storedMessage("file-77")],
       telegramConfig(),
+      ACCOUNT,
     ).finally(restoreDns);
 
     const content = messages[0]?.content;
@@ -677,6 +687,7 @@ describe("rehydrateStoredMedia", () => {
         },
       ],
       modelConfig("openai"),
+      ACCOUNT,
     );
 
     expect(messages[0]?.content).toEqual([
@@ -708,9 +719,9 @@ describe("rehydrateStoredMedia", () => {
       },
     ];
 
-    expect(await rehydrateStoredMedia(messages, modelConfig("openai"))).toBe(
-      messages,
-    );
+    expect(
+      await rehydrateStoredMedia(messages, modelConfig("openai"), ACCOUNT),
+    ).toBe(messages);
   });
 
   it("says a file the channel dropped is gone instead of failing the turn", async () => {
@@ -718,6 +729,7 @@ describe("rehydrateStoredMedia", () => {
     const messages = await rehydrateStoredMedia(
       [storedMessage("file-gone")],
       telegramConfig(),
+      ACCOUNT,
     );
 
     const content = messages[0]?.content;
@@ -738,6 +750,7 @@ describe("rehydrateStoredMedia", () => {
     const messages = await rehydrateStoredMedia(
       [sealedImageMessage(workspaceTicket())],
       modelConfig("openai"),
+      ACCOUNT,
     );
 
     expect(messages[0]?.content).toEqual([
@@ -745,24 +758,147 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
-  it("keeps a sealed link whose file is still there", async (): Promise<void> => {
+  // A link left in the prompt is fetched by the provider again on every model
+  // step, so the turn reads it once and the model is handed bytes.
+  it("hands the model a sealed link's bytes, read once per link", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
-    headS3ObjectMock.mockImplementationOnce(
-      async (): Promise<S3ObjectHead> => ({ contentLength: 12 }),
+    headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
+      contentLength: 3,
+    }));
+    readS3BytesMock.mockImplementation(
+      async (): Promise<Uint8Array> => new Uint8Array([1, 2, 3]),
     );
     const stored = [
-      sealedImageMessage(workspaceTicket()),
+      sealedImageMessage({
+        ...workspaceTicket(),
+        path: "media/ef56/0-image-1.jpeg",
+      }),
       sealedImageMessage({
         accountId: ACCOUNT,
         path: "media/cd34/0-image-1.jpeg",
       }),
     ];
 
-    expect(await rehydrateStoredMedia(stored, modelConfig("openai"))).toEqual(
+    const first = await rehydrateStoredMedia(
       stored,
+      modelConfig("openai"),
+      ACCOUNT,
     );
-    // No sandbox mounts the attachment store, so only the workspace link is checked.
-    expect(headS3ObjectMock).toHaveBeenCalledTimes(1);
+    const replay = await rehydrateStoredMedia(
+      stored,
+      modelConfig("openai"),
+      ACCOUNT,
+    );
+
+    const bytes = Buffer.from([1, 2, 3]);
+    const image: ImagePart = {
+      type: "image",
+      image: bytes,
+      mediaType: "image/jpeg",
+    };
+    expect(first).toEqual([
+      { role: "user", content: [image] },
+      { role: "user", content: [image] },
+    ]);
+    expect(replay).toEqual(first);
+    // Both links are read once; the replay comes from the media cache. Bytes
+    // out of the managed bucket are metered as egress, as the media route did.
+    expect(readS3BytesMock).toHaveBeenCalledTimes(2);
+    const egress = { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } };
+    expect(meterWrites).toEqual([egress, egress]);
+  });
+
+  // The read runs on core's credentials and meters the ticket's account, so a
+  // link sealed for another account is left as the link it was, never opened.
+  it("never opens a sealed link that belongs to another account or was forged", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+    headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
+      contentLength: 3,
+    }));
+    readS3BytesMock.mockImplementation(
+      async (): Promise<Uint8Array> => new Uint8Array([1, 2, 3]),
+    );
+    const stored = [
+      sealedImageMessage({
+        accountId: "acct_other",
+        path: "media/ff00/0-image-1.jpeg",
+      }),
+    ];
+
+    expect(
+      await rehydrateStoredMedia(stored, modelConfig("openai"), ACCOUNT),
+    ).toEqual(stored);
+    expect(
+      await rehydrateStoredMedia(stored, modelConfig("openai"), undefined),
+    ).toEqual(stored);
+    // A link sealed under a key core does not hold opens to nothing.
+    const forged: ModelMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            image: `https://core.example/v1/media/${sealMediaTicket(
+              { accountId: ACCOUNT, path: "media/ff01/0-image-1.jpeg" },
+              "not-the-media-ticket-secret",
+            )}`,
+            mediaType: "image/jpeg",
+          },
+        ],
+      },
+    ];
+    expect(
+      await rehydrateStoredMedia(forged, modelConfig("openai"), ACCOUNT),
+    ).toEqual(forged);
+    expect(headS3ObjectMock).not.toHaveBeenCalled();
+    expect(readS3BytesMock).not.toHaveBeenCalled();
+    expect(meterWrites).toEqual([]);
+  });
+
+  // Every inlined file rides each model request, so a turn inlines a bounded
+  // amount, one file at most a picture's cap, and leaves the rest as links.
+  it("leaves big files and links past the turn's byte budget for the provider", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+    const sizeOf = (key: string): number =>
+      (key.includes("big") ? 7 : 5) * 1024 * 1024;
+    headS3ObjectMock.mockImplementation(
+      async (_bucket: string, key: string): Promise<S3ObjectHead> => ({
+        contentLength: sizeOf(key),
+      }),
+    );
+    readS3BytesMock.mockImplementation(
+      async (_bucket: string, key: string): Promise<Uint8Array> =>
+        new Uint8Array(sizeOf(key)),
+    );
+    const stored = [
+      sealedImageMessage({ accountId: ACCOUNT, path: "media/b0/big.jpeg" }),
+      ...[1, 2, 3, 4, 5].map((index) =>
+        sealedImageMessage({
+          accountId: ACCOUNT,
+          path: `media/b${index}/a.jpeg`,
+        }),
+      ),
+    ];
+
+    const messages = await rehydrateStoredMedia(
+      stored,
+      modelConfig("openai"),
+      ACCOUNT,
+    );
+
+    const parts = messages.flatMap((message): unknown[] =>
+      Array.isArray(message.content) ? message.content : [],
+    );
+    const inlined = parts.filter(
+      (part): boolean =>
+        typeof part === "object" &&
+        part !== null &&
+        "image" in part &&
+        Buffer.isBuffer(part.image),
+    );
+    // The 7 MB file is over the cap; four 5 MB files fill the 20 MB budget.
+    expect(inlined).toHaveLength(4);
+    expect(readS3BytesMock).toHaveBeenCalledTimes(4);
   });
 
   it("leaves a conversation with no references untouched", async () => {
@@ -773,9 +909,9 @@ describe("rehydrateStoredMedia", () => {
       },
     ];
 
-    expect(await rehydrateStoredMedia(messages, telegramConfig())).toBe(
-      messages,
-    );
+    expect(
+      await rehydrateStoredMedia(messages, telegramConfig(), ACCOUNT),
+    ).toBe(messages);
   });
 });
 
@@ -1050,6 +1186,14 @@ function sealedImageMessage(ticket: MediaTicket): ModelMessage {
 
 function storageWithWorkspace(): Storage {
   return {
+    budgets: {
+      record: async function (
+        accountId: string,
+        usage: Parameters<Storage["budgets"]["record"]>[1],
+      ): Promise<void> {
+        meterWrites.push({ accountId: accountId, usage: usage });
+      },
+    },
     workspaceConfigs: {
       getById: async (): Promise<{
         config: { storage: { provider: string } };
