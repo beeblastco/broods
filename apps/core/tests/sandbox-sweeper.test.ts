@@ -38,10 +38,9 @@ interface MutateCall {
 type ExpiredReservation = ReservedSandbox & { accountId: string };
 
 let expired: ExpiredReservation[] = [];
-let orphans: ExpiredReservation[] = [];
-// Cursors the sweeper asked for, and the continuation each page hands back.
+// Each page the orphan listing returns, oldest first, and the cursors it was asked for.
+let orphanPages: ExpiredReservation[][] = [[]];
 let orphanCursors: unknown[] = [];
-let orphanContinuations: string[] = [];
 let mutateCalls: MutateCall[] = [];
 let leaseResult: (accountId: string) => boolean = (
   _accountId: string,
@@ -67,18 +66,22 @@ function reservation(
 
 beforeEach(() => {
   expired = [];
-  orphans = [];
+  orphanPages = [[]];
   orphanCursors = [];
-  orphanContinuations = [];
   mutateCalls = [];
   leaseResult = (_accountId: string): boolean => true;
   releaseMock.mockClear();
   runtime.query = (async (name: string, args: Record<string, unknown>) => {
     if (name === "listExpiredSandboxReservations") return expired;
     orphanCursors.push(args.cursor);
-    const next = orphanContinuations.shift() ?? null;
+    const index = args.cursor === null ? 0 : Number(args.cursor);
+    const isDone = index + 1 >= orphanPages.length;
 
-    return { page: orphans, cursor: next, isDone: next === null };
+    return {
+      page: orphanPages[index],
+      cursor: isDone ? null : String(index + 1),
+      isDone: isDone,
+    };
   }) as never;
   runtime.mutate = (async (name: string, args: Record<string, unknown>) => {
     mutateCalls.push({ name: name, args: args });
@@ -165,7 +168,7 @@ it("leaves an account another replica already holds to that replica", async () =
 });
 
 it("hands an orphaned mirror row to the same teardown, by the id it still holds", async () => {
-  orphans = [reservation("acct-a", "ns-orphan")];
+  orphanPages = [[reservation("acct-a", "ns-orphan")]];
 
   expect(await sweepExpiredSandboxes()).toBe(1);
   expect(releaseMock.mock.calls[0]?.[1]).toEqual([
@@ -173,25 +176,23 @@ it("hands an orphaned mirror row to the same teardown, by the id it still holds"
   ]);
 });
 
-it("reads the next orphan page on each pass and wraps after the last", async () => {
-  // A page of mirrors a deferred reservation still names must not be the only
-  // page every pass reads, or the orphans behind it are never torn down.
-  orphanContinuations = ["page-2", "page-3"];
+it("reads on past pages of reserved mirrors to the orphans behind them", async () => {
+  // Mirrors a deferred reservation still names keep their age, so they can fill
+  // the oldest pages; stopping at the first would never reach the orphan.
+  orphanPages = [[], [], [reservation("acct-a", "ns-orphan")]];
 
-  for (let pass = 0; pass < 4; pass += 1) await sweepExpiredSandboxes();
-  expect(orphanCursors).toEqual([null, "page-2", "page-3", null]);
+  expect(await sweepExpiredSandboxes()).toBe(1);
+  expect(orphanCursors).toEqual([null, "1", "2"]);
 });
 
-it("starts the orphan scan over when a page read fails", async () => {
-  orphanContinuations = ["page-2"];
-  await sweepExpiredSandboxes();
-  const query = runtime.query;
-  runtime.query = (async () => {
-    throw new Error("InvalidCursor");
-  }) as never;
-  await expect(sweepExpiredSandboxes()).rejects.toThrow("InvalidCursor");
-  runtime.query = query;
+it("stops reading once a page's worth of orphans is found", async () => {
+  orphanPages = [
+    Array.from({ length: 100 }, (_, index) =>
+      reservation("acct-a", `ns-${index}`),
+    ),
+    [reservation("acct-a", "ns-next")],
+  ];
 
-  await sweepExpiredSandboxes();
-  expect(orphanCursors).toEqual([null, null]);
+  expect(await sweepExpiredSandboxes()).toBe(100);
+  expect(orphanCursors).toEqual([null]);
 });

@@ -68,11 +68,11 @@ export const convexRuntimeCases: readonly BenchCase[] = [
     // not the admission that made it owner.
     run: async (): Promise<unknown> => {
       checkpointOwner ??= ownedConversation();
-      const { test, conversationKey } = await checkpointOwner;
+      const { test, conversationKey, ownerGeneration } = await checkpointOwner;
       await test.mutation(internal.runtimeIngress.saveHarnessSession, {
         conversationKey: conversationKey,
         ownerEventId: CHECKPOINT_OWNER,
-        ownerGeneration: 1,
+        ownerGeneration: ownerGeneration,
         harnessType: "codex",
         sessionId: `sess_${sequence++}`,
         resumeState: {
@@ -119,7 +119,7 @@ export const convexRuntimeCases: readonly BenchCase[] = [
 ];
 
 let sequence = 0;
-let checkpointOwner: ReturnType<typeof freshConversation> | null = null;
+let checkpointOwner: ReturnType<typeof ownedConversation> | null = null;
 let shared: { test: RuntimeTest; accountId: string } | null = null;
 
 async function freshConversation(): Promise<{
@@ -140,9 +140,13 @@ async function freshConversation(): Promise<{
 }
 
 /** A conversation the checkpoint case's owner holds for longer than any run. */
-async function ownedConversation(): ReturnType<typeof freshConversation> {
+async function ownedConversation(): Promise<{
+  test: RuntimeTest;
+  conversationKey: string;
+  ownerGeneration: number;
+}> {
   const conversation = await freshConversation();
-  await admit(
+  const owner = await admit(
     conversation.test,
     conversation.accountId,
     conversation.conversationKey,
@@ -150,7 +154,7 @@ async function ownedConversation(): ReturnType<typeof freshConversation> {
     STATUS_TTL_MS,
   );
 
-  return conversation;
+  return { ...conversation, ownerGeneration: owner.ownerGeneration! };
 }
 
 function admit(
