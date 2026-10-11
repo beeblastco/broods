@@ -1352,7 +1352,7 @@ export async function runAgentLoop(
       const instructions = withCacheBreakpoint(
         refreshed.system,
         providerOptions,
-        refreshed.system.length - turnContext.ephemeralSystem.length - 1,
+        refreshed.storedSystemEnd,
       );
       // Keep the turn's instructions current: system context grows mid-run
       // (newly persisted rows, steering, skills a tool loaded), and the step and
