@@ -31,6 +31,9 @@ export async function* readSseStream(
       }
     }
   } finally {
+    // A consumer that stops early leaves the response open; cancel it. After
+    // EOF this is a no-op, and a stream that already errored rejects here.
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
