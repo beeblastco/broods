@@ -4,6 +4,10 @@
  */
 
 import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
+import {
+  MAX_CONFIGURED_SKILLS,
+  MAX_SKILL_METADATA_BYTES,
+} from "@broods/convex/model/skillRules";
 import type { SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { optionalEnv } from "../shared/env.ts";
@@ -13,6 +17,7 @@ import {
   ensureS3DirectoryMarkers,
   isMissingS3Error,
   listS3Prefix,
+  readS3TextHead,
 } from "../shared/s3.ts";
 import { workspaceNamespacePrefix } from "../shared/sandbox.ts";
 import {
@@ -39,6 +44,8 @@ import {
 // that expect those locations.
 const SKILL_CANONICAL_DIR = ".claude/skills";
 const SKILL_MIRROR_DIRS = [".agents/skills"];
+// S3 calls one skill load keeps in flight against the skills bucket.
+const SKILL_READ_CONCURRENCY = 8;
 
 interface SkillBundleSandboxStage {
   stagedPath: string;
@@ -46,14 +53,10 @@ interface SkillBundleSandboxStage {
   files: string[];
 }
 
-interface LoadedHarnessSkill {
-  bytes: number;
-  skill: HarnessAgentSkill;
-}
-
 interface SkillSourceFile {
   key: string;
   path: string;
+  size: number;
 }
 
 export type { SkillMetadata } from "../shared/skills.ts";
@@ -72,31 +75,40 @@ export async function listConfiguredSkillMetadata(
   );
 }
 
-// Runs every turn, so every SKILL.md is read at once.
+// Runs every turn, so it reads only the head of each SKILL.md that holds the
+// frontmatter, a few at a time.
 export async function listSkillMetadataForConfig(
   accountId: string,
   skillPaths: string[] = [],
 ): Promise<SkillMetadata[]> {
+  const limit = skillReadLimit();
   const metadata = await Promise.all(
-    skillPaths.map(async (skillPath): Promise<SkillMetadata | null> => {
-      const skillText = await readOwnedSkillFile(
-        accountId,
-        skillPath,
-        SKILL_FILE,
-      );
+    ownedSkillPaths(accountId, skillPaths).map(
+      async (skillPath): Promise<SkillMetadata | null> => {
+        const head = await readSkillOrSkip(
+          skillPath,
+          limit(() =>
+            readS3TextHead(
+              skillsBucketName(),
+              `${skillPath}/${SKILL_FILE}`,
+              MAX_SKILL_METADATA_BYTES,
+            ),
+          ),
+        );
 
-      return skillText
-        ? { ...parseSkillMarkdown(skillText), path: skillPath }
-        : null;
-    }),
+        return head ? { ...parseSkillMarkdown(head), path: skillPath } : null;
+      },
+    ),
   );
 
   return metadata.filter((entry): entry is SkillMetadata => entry !== null);
 }
 
-// Every skill and every bundled file is read at once; the bundle budget is
-// checked over the result. A skill that cannot be read is left out, as in the
-// metadata list; only a missing one fails the run.
+// The listing's sizes hold every configured skill to the bundle budget before
+// any file is read, and each read is refused past its listed size, so a file
+// swapped for a larger one after the listing is not downloaded either. A skill
+// whose SKILL.md cannot be read is left out, as in the metadata list; only a
+// missing one fails the run.
 export async function loadConfiguredHarnessSkills(
   accountId: string | undefined,
   agentConfig: AgentConfig,
@@ -105,53 +117,68 @@ export async function loadConfiguredHarnessSkills(
     return [];
   }
 
-  const loaded = await Promise.all(
-    (agentConfig.skills.allowed ?? []).map(
-      async (skillPath): Promise<LoadedHarnessSkill | null> => {
-        const skillText = await readOwnedSkillFile(
-          accountId,
-          skillPath,
-          SKILL_FILE,
-        );
-        if (!skillText) return null;
-        let bytes = skillFileBytes(skillPath, SKILL_FILE, skillText);
-        const sourceFiles = await listSkillSourceFiles(skillPath);
-        const files = await Promise.all(
-          sourceFiles
-            .filter((sourceFile) => sourceFile.path !== SKILL_FILE)
-            .map(async (file): Promise<{ path: string; content: string }> => ({
-              path: file.path,
-              content: await readSkillText(skillPath, file.path),
-            })),
-        );
-        for (const file of files) {
-          bytes += skillFileBytes(skillPath, file.path, file.content);
-        }
-        const skill = parseSkillMarkdown(skillText);
-
-        return {
-          bytes: bytes,
-          skill: {
-            name: skill.name,
-            description: skill.description,
-            content: skillInstructionsFromMarkdown(skillText),
-            ...(files.length > 0 ? { files: files } : {}),
-          },
-        };
-      },
+  const limit = skillReadLimit();
+  const listed = await Promise.all(
+    ownedSkillPaths(accountId, agentConfig.skills.allowed ?? []).map(
+      async (skillPath) => ({
+        skillPath: skillPath,
+        files: await limit(() => listSkillSourceFiles(skillPath)),
+      }),
     ),
   );
-  const readable = loaded.filter(
-    (entry): entry is LoadedHarnessSkill => entry !== null,
-  );
-  const totalBytes = readable.reduce((sum, entry) => sum + entry.bytes, 0);
+  let totalBytes = 0;
+  for (const { skillPath, files } of listed) {
+    for (const file of files) {
+      if (file.size > MAX_SKILL_FILE_BYTES) {
+        throw new Error(
+          `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${file.path}`,
+        );
+      }
+      totalBytes += file.size;
+    }
+  }
   if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
     throw new Error(
       `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
     );
   }
 
-  return readable.map((entry) => entry.skill);
+  const loaded = await Promise.all(
+    listed.map(
+      async ({ skillPath, files }): Promise<HarnessAgentSkill | null> => {
+        // The listing sorts SKILL.md first.
+        const [skillFile, ...resources] = files;
+        if (skillFile?.path !== SKILL_FILE) {
+          throw new SkillNotFoundError(skillPath);
+        }
+        const skillText = await readSkillOrSkip(
+          skillPath,
+          limit(() => readSkillText(skillPath, SKILL_FILE, skillFile.size)),
+        );
+        if (skillText === null) return null;
+        const skill = parseSkillMarkdown(skillText);
+        const resourceFiles = await Promise.all(
+          resources.map(
+            async (file): Promise<{ path: string; content: string }> => ({
+              path: file.path,
+              content: await limit(() =>
+                readSkillText(skillPath, file.path, file.size),
+              ),
+            }),
+          ),
+        );
+
+        return {
+          name: skill.name,
+          description: skill.description,
+          content: skillInstructionsFromMarkdown(skillText),
+          ...(resourceFiles.length > 0 ? { files: resourceFiles } : {}),
+        };
+      },
+    ),
+  );
+
+  return loaded.filter((skill): skill is HarnessAgentSkill => skill !== null);
 }
 
 export async function loadConfiguredSkillPrompt(
@@ -212,13 +239,15 @@ export async function loadSkillContent(
 
   const skillText = await readSkillText(skillPath, SKILL_FILE);
   const skill = parseSkillMarkdown(skillText);
-  const safeResourcePaths = resourcePaths
-    .map(normalizeBundlePath)
-    .filter((resource) => resource !== SKILL_FILE);
+  // Each bundled file once, so a repeated path cannot multiply the reads.
+  const safeResourcePaths = [
+    ...new Set(resourcePaths.map(normalizeBundlePath)),
+  ].filter((resource) => resource !== SKILL_FILE);
+  const limit = skillReadLimit();
   const resourceParts = await Promise.all(
     safeResourcePaths.map(async (resourcePath) => ({
       path: resourcePath,
-      text: await readSkillText(skillPath, resourcePath),
+      text: await limit(() => readSkillText(skillPath, resourcePath)),
     })),
   );
   const parts = [
@@ -318,6 +347,7 @@ async function listSkillSourceFiles(
         {
           key: object.key,
           path: normalizeBundlePath(object.key.slice(sourcePrefix.length)),
+          size: object.size ?? MAX_SKILL_FILE_BYTES,
         },
       ];
     })
@@ -338,16 +368,27 @@ function mirrorStagePrefixes(
   );
 }
 
-// The read doubles as the existence check: a 404 fails the turn as a missing
-// skill, like the HEAD it replaces, and any other read error skips the skill.
-async function readOwnedSkillFile(
-  accountId: string,
-  skillPath: string,
-  filePath: string,
-): Promise<string | null> {
-  parseOwnedSkillPath(accountId, skillPath);
+// The skill paths an agent lists, each once, capped and checked for ownership
+// before any is read. Configs stored before the config-time cap land here too.
+function ownedSkillPaths(accountId: string, skillPaths: string[]): string[] {
+  const unique = [...new Set(skillPaths)];
+  if (unique.length > MAX_CONFIGURED_SKILLS) {
+    throw new Error(
+      `Agent lists ${unique.length} skills, over the ${MAX_CONFIGURED_SKILLS} skill limit`,
+    );
+  }
+  for (const skillPath of unique) parseOwnedSkillPath(accountId, skillPath);
 
-  return readSkillText(skillPath, filePath).catch((error: unknown) => {
+  return unique;
+}
+
+// A SKILL.md read doubles as the existence check: a 404 fails the turn as a
+// missing skill, and any other read error skips the skill.
+async function readSkillOrSkip(
+  skillPath: string,
+  read: Promise<string>,
+): Promise<string | null> {
+  return read.catch((error: unknown) => {
     if (isMissingS3Error(error)) {
       throw new SkillNotFoundError(skillPath);
     }
@@ -356,19 +397,23 @@ async function readOwnedSkillFile(
   });
 }
 
-function skillFileBytes(
-  skillPath: string,
-  filePath: string,
-  content: string,
-): number {
-  const bytes = Buffer.byteLength(content, "utf-8");
-  if (bytes > MAX_SKILL_FILE_BYTES) {
-    throw new Error(
-      `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${filePath}`,
-    );
-  }
+// Holds one load's S3 calls to SKILL_READ_CONCURRENCY in flight. A finished
+// call hands its slot straight to the next waiting one.
+function skillReadLimit(): <T>(call: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiting: Array<() => void> = [];
 
-  return bytes;
+  return async <T>(call: () => Promise<T>): Promise<T> => {
+    if (active < SKILL_READ_CONCURRENCY) active += 1;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await call();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
 }
 
 async function stageSkillBundleForSandbox(

@@ -596,6 +596,19 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ skills: { allowed: [1] } })).toThrow(
       "config.skills.allowed must be an array of non-empty strings",
     );
+    const repeated = Array.from({ length: 1_000 }, () => "acct/skill");
+    expect(
+      normalizeAgentConfig({ skills: { allowed: repeated } }).skills?.allowed,
+    ).toEqual(["acct/skill"]);
+    const distinct = (count: number): string[] =>
+      Array.from({ length: count }, (_, index) => `acct/skill-${index}`);
+    expect(
+      normalizeAgentConfig({ skills: { allowed: distinct(32) } }).skills
+        ?.allowed,
+    ).toHaveLength(32);
+    expect(() =>
+      normalizeAgentConfig({ skills: { allowed: distinct(33) } }),
+    ).toThrow("config.skills.allowed must list at most 32 skills");
     expect(() =>
       normalizeAgentConfig({ subagent: { context: "same" } }),
     ).toThrow("config.subagent.context must be one of: new, inherited");

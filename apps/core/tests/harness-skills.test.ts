@@ -20,9 +20,19 @@ const s3Deletes: Array<{ bucket: string; key: string }> = [];
 
 const s3ObjectExistsMock = mock(async (_bucket: string, _key: string) => false);
 const readS3TextMock = mock(
-  async (_bucket: string, _key: string): Promise<string> => {
+  async (
+    _bucket: string,
+    _key: string,
+    _access?: unknown,
+    _maxBytes?: number,
+  ): Promise<string> => {
     throw new Error("NoSuchKey");
   },
+);
+// A ranged read: the head of whatever readS3TextMock serves.
+const readS3TextHeadMock = mock(
+  async (bucket: string, key: string, maxBytes: number): Promise<string> =>
+    (await readS3TextMock(bucket, key)).slice(0, maxBytes),
 );
 const readS3BytesMock = mock(
   async (_bucket: string, _key: string): Promise<Uint8Array> =>
@@ -75,6 +85,7 @@ await mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: (error: unknown) =>
     error instanceof Error && error.message === "NoSuchKey",
   readS3Text: readS3TextMock,
+  readS3TextHead: readS3TextHeadMock,
   readS3Bytes: readS3BytesMock,
   listS3Prefix: listS3PrefixMock,
   writeS3Object: writeS3ObjectMock,
@@ -91,6 +102,7 @@ beforeEach(() => {
   s3Deletes.length = 0;
   s3ObjectExistsMock.mockClear();
   readS3TextMock.mockClear();
+  readS3TextHeadMock.mockClear();
   readS3BytesMock.mockClear();
   listS3PrefixMock.mockClear();
   writeS3ObjectMock.mockClear();
@@ -742,7 +754,11 @@ describe("loadConfiguredHarnessSkills", () => {
 
       return createSkillMarkdown("open-skill", "Readable");
     });
-    listS3PrefixMock.mockResolvedValue([]);
+    listS3PrefixMock.mockImplementation(async (_bucket, prefix) =>
+      prefix.includes("missing")
+        ? []
+        : [{ key: `${prefix}SKILL.md`, size: 64, etag: "skill-etag" }],
+    );
 
     const { loadConfiguredHarnessSkills } =
       await import("../src/harness/skills.ts");
@@ -761,19 +777,161 @@ describe("loadConfiguredHarnessSkills", () => {
     ).rejects.toThrow("Skill not found: acct_test/missing-skill");
   });
 
-  it("rejects an oversized SKILL.md before building a harness skill", async () => {
-    readS3TextMock.mockResolvedValue("x".repeat(5 * 1024 * 1024 + 1));
+  it("rejects an oversized SKILL.md from its listed size before reading it", async () => {
+    listS3PrefixMock.mockResolvedValue([
+      {
+        key: "acct_test/oversized-skill/SKILL.md",
+        size: 5 * 1024 * 1024 + 1,
+        etag: "skill-etag",
+      },
+    ]);
 
     const { loadConfiguredHarnessSkills } =
       await import("../src/harness/skills.ts");
 
-    expect(
+    await expect(
       loadConfiguredHarnessSkills("acct_test", {
         skills: { enabled: true, allowed: ["acct_test/oversized-skill"] },
       }),
     ).rejects.toThrow(
       "Skill file exceeds 5242880 bytes: acct_test/oversized-skill/SKILL.md",
     );
+    expect(readS3TextMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("configured skill read bounds", () => {
+  const SKILL_BYTES = 4 * 1024 * 1024;
+  let active = 0;
+  let peak = 0;
+
+  // Serves `count` distinct 4 MiB skills and counts the S3 calls in flight.
+  function serveLargeSkills(count: number): string[] {
+    active = 0;
+    peak = 0;
+    const track = async <T>(value: T): Promise<T> => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await Bun.sleep(1);
+      active -= 1;
+
+      return value;
+    };
+    readS3TextMock.mockImplementation(async (_bucket, key) => {
+      const header = createSkillMarkdown(key.split("/")[1] ?? "", "Large", "");
+
+      return track(header + "x".repeat(SKILL_BYTES - header.length));
+    });
+    listS3PrefixMock.mockImplementation(async (_bucket, prefix) =>
+      track([{ key: `${prefix}SKILL.md`, size: SKILL_BYTES, etag: "etag" }]),
+    );
+
+    return Array.from(
+      { length: count },
+      (_, index) => `acct_test/large-skill-${index}`,
+    );
+  }
+
+  it("lists metadata from a bounded head of each SKILL.md, a few at a time", async () => {
+    const skillPaths = serveLargeSkills(16);
+    const { listSkillMetadataForConfig } =
+      await import("../src/harness/skills.ts");
+
+    const metadata = await listSkillMetadataForConfig("acct_test", skillPaths);
+
+    expect(metadata).toHaveLength(16);
+    expect(readS3TextHeadMock).toHaveBeenCalledTimes(16);
+    for (const [, , maxBytes] of readS3TextHeadMock.mock.calls) {
+      expect(maxBytes).toBe(64 * 1024);
+    }
+    expect(peak).toBe(8);
+  });
+
+  it("reads a repeated skill reference once", async () => {
+    const [skillPath = ""] = serveLargeSkills(1);
+    const { listSkillMetadataForConfig, loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+    const repeated = Array.from({ length: 16 }, () => skillPath);
+
+    const metadata = await listSkillMetadataForConfig("acct_test", repeated);
+    const skills = await loadConfiguredHarnessSkills("acct_test", {
+      skills: { enabled: true, allowed: repeated },
+    });
+
+    expect(metadata).toHaveLength(1);
+    expect(skills).toHaveLength(1);
+    expect(readS3TextHeadMock).toHaveBeenCalledTimes(1);
+    expect(listS3PrefixMock).toHaveBeenCalledTimes(1);
+    // The SKILL.md read is held to the size the listing reported.
+    expect(readS3TextMock.mock.calls.at(-1)?.[3]).toBe(SKILL_BYTES);
+  });
+
+  it("refuses harness skills over the budget from their listed sizes before downloading any", async () => {
+    const skillPaths = serveLargeSkills(16);
+    const { loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+
+    await expect(
+      loadConfiguredHarnessSkills("acct_test", {
+        skills: { enabled: true, allowed: skillPaths },
+      }),
+    ).rejects.toThrow("Configured harness skills exceed 31457280 bytes");
+    expect(readS3TextMock).not.toHaveBeenCalled();
+    expect(peak).toBe(8);
+  });
+
+  it("refuses more distinct skills than the limit before any read", async () => {
+    const skillPaths = serveLargeSkills(33);
+    const { listSkillMetadataForConfig, loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+
+    await expect(
+      listSkillMetadataForConfig("acct_test", skillPaths),
+    ).rejects.toThrow("Agent lists 33 skills, over the 32 skill limit");
+    await expect(
+      loadConfiguredHarnessSkills("acct_test", {
+        skills: { enabled: true, allowed: skillPaths },
+      }),
+    ).rejects.toThrow("Agent lists 33 skills, over the 32 skill limit");
+    expect(readS3TextHeadMock).not.toHaveBeenCalled();
+    expect(listS3PrefixMock).not.toHaveBeenCalled();
+  });
+
+  it("loads a repeated load_skill resource path once", async () => {
+    readS3TextMock.mockImplementation(async (_bucket, key) =>
+      key.endsWith("SKILL.md")
+        ? createSkillMarkdown("guide-skill", "Guide")
+        : "Reference text.",
+    );
+    const { loadSkillContent } = await import("../src/harness/skills.ts");
+
+    const loaded = await loadSkillContent(
+      "acct_test/guide-skill",
+      Array.from({ length: 16 }, () => "references/guide.md"),
+    );
+
+    expect(loaded.parts.map((part) => part.path)).toEqual([
+      "SKILL.md",
+      "references/guide.md",
+    ]);
+    expect(readS3TextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses another account's skill before reading any listed skill", async () => {
+    const [skillPath = ""] = serveLargeSkills(1);
+    const { listSkillMetadataForConfig, loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+    const allowed = [skillPath, "acct_other/large-skill"];
+
+    await expect(
+      listSkillMetadataForConfig("acct_test", allowed),
+    ).rejects.toThrow("Skill path belongs to another account");
+    await expect(
+      loadConfiguredHarnessSkills("acct_test", {
+        skills: { enabled: true, allowed: allowed },
+      }),
+    ).rejects.toThrow("Skill path belongs to another account");
+    expect(readS3TextHeadMock).not.toHaveBeenCalled();
     expect(listS3PrefixMock).not.toHaveBeenCalled();
   });
 });

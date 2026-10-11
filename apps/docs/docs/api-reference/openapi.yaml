@@ -5521,7 +5521,7 @@ components:
           type: array
           items:
             type: string
-          description: Account-scoped skill paths (e.g., `acct_.../support-flow`)
+          description: Account-scoped skill paths (e.g., `acct_.../support-flow`). Repeats are dropped; at most 32 distinct skills.
 
     SchedulerConfig:
       type: object

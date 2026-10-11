@@ -19,6 +19,7 @@ import {
   type AccountModelProviderName,
 } from "./modelProviders";
 import { ClientError } from "./clientError";
+import { MAX_CONFIGURED_SKILLS } from "./skillRules";
 
 export type AgentStatus = "active" | "disabled";
 export type { AccountModelProviderName } from "./modelProviders";
@@ -993,6 +994,16 @@ function normalizeSkillsConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.skills.enabled");
   assertOptionalStringArray(config.allowed, "config.skills.allowed");
+  if (config.allowed === undefined) return;
+  // Every listed skill is read on every turn, so a repeat buys nothing and
+  // only multiplies the reads.
+  const allowed = [...new Set(config.allowed)];
+  config.allowed = allowed;
+  if (allowed.length > MAX_CONFIGURED_SKILLS) {
+    throw new ClientError(
+      `config.skills.allowed must list at most ${MAX_CONFIGURED_SKILLS} skills`,
+    );
+  }
 }
 
 function normalizeSubagentConfig(value: unknown): void {
