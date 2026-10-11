@@ -52,6 +52,9 @@
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
     "katex": "^0.18.2",
+    "pi-mcp-adapter": {
+      "@modelcontextprotocol/client": "2.2.0"
+    },
     "postcss": "^8.5.26",
     "serialize-javascript": "7.1.2",
     "stripe": "22.5.0",
