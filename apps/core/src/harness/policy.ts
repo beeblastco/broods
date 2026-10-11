@@ -76,7 +76,7 @@ const UNRESOLVED_POLICY: PolicyDocument = {
   ],
 };
 
-type RuntimeToolApproval = Extract<
+export type RuntimeToolApproval = Extract<
   ToolApprovalConfiguration<ToolSet, unknown>,
   (...args: never[]) => unknown
 >;
