@@ -78,7 +78,13 @@ export async function subagentStop(context: VerifyContext): Promise<void> {
     assertStep(
       "parent was told a stopped subagent sends no report",
       status.status === "completed" &&
-        NO_REPORT.test(JSON.stringify(status.response ?? "")),
+        // The raw text: JSON.stringify turns a newline into `\n`, gluing an
+        // "n" to the next word so `\bNo` no longer matches.
+        NO_REPORT.test(
+          typeof status.response === "string"
+            ? status.response
+            : JSON.stringify(status.response ?? ""),
+        ),
       JSON.stringify(status),
     );
     assertStep(

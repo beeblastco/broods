@@ -1609,7 +1609,7 @@ ${predefined}
 Tool guidance:
 1. Use the exact agentId from the predefined list when a listed subagent is suitable for the task.
 2. Omit agentId only when no predefined subagent is suitable or the user explicitly asks for a virtual one-shot subagent.
-3. A virtual one-shot subagent uses this agent's model and tool configuration.
+3. A virtual one-shot subagent runs with this agent's tools and configuration.
 </subagent>`;
 }
 
