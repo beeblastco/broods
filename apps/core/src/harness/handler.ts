@@ -196,7 +196,6 @@ const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
 const WORKER_SLOT_GRACE_MS = 5_000;
-const WORKER_DEADLINE_MESSAGE = "Run exceeded the worker deadline";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
@@ -309,7 +308,8 @@ export function dispatchInProcessWorker(
         kind: kind,
         budgetMs: WORKER_TIMEOUT_BUDGET_MS,
       });
-      runAbort.abort(new Error(WORKER_DEADLINE_MESSAGE));
+      // The reason is what the chat shows; the log line above stays technical.
+      runAbort.abort(new Error("I ran out of time on this turn."));
       releaseSlot?.();
       abandon?.();
     }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);

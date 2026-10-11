@@ -156,6 +156,14 @@ describe("formatChannelErrorText", () => {
     );
   });
 
+  it("says a worker deadline overrun in the user's words", () => {
+    expect(
+      formatChannelErrorText("I ran out of time on this turn.", "telegram"),
+    ).toBe(
+      "⚠️ I ran out of time on this turn. Send a message to continue where I left off.",
+    );
+  });
+
   it("adds a retry hint to a bare rate limit", () => {
     expect(formatChannelErrorText("Rate limited (429)")).toBe(
       "⚠️ Rate limited (429). Try again in a moment.",

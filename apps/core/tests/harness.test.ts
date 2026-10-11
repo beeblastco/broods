@@ -1004,13 +1004,13 @@ describe("runAgentLoop", () => {
       abortSignal: slot.signal,
     });
     setTimeout(
-      () => slot.abort(new Error("Run exceeded the worker deadline")),
+      () => slot.abort(new Error("I ran out of time on this turn.")),
       100,
     );
     await stream.consumeStream();
 
     expect(stream.didFail()).toBe(true);
-    expect(stream.failureText()).toBe("Run exceeded the worker deadline");
+    expect(stream.failureText()).toBe("I ran out of time on this turn.");
     // The abort reached the provider call, and the second step never started.
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
     expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(

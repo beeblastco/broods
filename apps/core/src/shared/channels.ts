@@ -34,6 +34,7 @@ const ERROR_HINTS: [RegExp, string | null][] = [
     "Try again in a moment.",
   ],
   [/\btimed? ?out\b|\betimedout\b|\beconnreset\b/i, "Try again."],
+  [/ran out of time/i, "Send a message to continue where I left off."],
 ];
 
 // Channels whose plain messages are parsed for slash commands like /new.
