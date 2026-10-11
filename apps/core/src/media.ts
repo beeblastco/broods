@@ -107,14 +107,7 @@ export async function handleMediaRequest(
     return new Response(null, { status: 200, headers: headers });
   }
 
-  const bytes = object.access
-    ? await readS3Bytes(object.bucket, object.key, object.access)
-    : await readS3Bytes(object.bucket, object.key);
-  // Core is outside AWS, so bytes from the managed bucket are AWS egress. A
-  // tenant's own bucket is the tenant's bill.
-  if (!object.access) {
-    recordUsage(ticket.accountId, { egressGb: bytes.byteLength / 1e9 });
-  }
+  const bytes = await readMediaObject(object, ticket.accountId);
 
   return new Response(bytes, { status: 200, headers: headers });
 }
@@ -122,7 +115,7 @@ export async function handleMediaRequest(
 // The object a ticket names, or null when it is gone. An attachment ticket reads
 // the managed bucket on the harness's own role; a workspace ticket goes through
 // the workspace's storage, which may be a tenant bucket behind an assumed role.
-// Conversation replay asks the same question before a provider fetches a link.
+// Conversation replay asks the same question before it reads a link's bytes.
 export async function locateMediaObject(
   ticket: MediaTicket,
 ): Promise<MediaObject | null> {
@@ -173,6 +166,27 @@ export async function locateMediaObject(
   }
 
   return { bucket: target.bucket, key: key, access: target.access, head: head };
+}
+
+// The bytes of an object `locateMediaObject` found, for the media route and for
+// conversation replay, refused past the media cap or with no known length. Core
+// is outside AWS, so bytes from the managed bucket are AWS egress. A tenant's
+// own bucket is the tenant's bill.
+export async function readMediaObject(
+  object: MediaObject,
+  accountId: string,
+): Promise<Uint8Array> {
+  const bytes = await readS3Bytes(
+    object.bucket,
+    object.key,
+    object.access,
+    MAX_MEDIA_BYTES,
+  );
+  if (!object.access) {
+    recordUsage(accountId, { egressGb: bytes.byteLength / 1e9 });
+  }
+
+  return bytes;
 }
 
 // One answer for a bad ticket, a deleted workspace and a missing file, so the
