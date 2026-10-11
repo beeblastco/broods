@@ -8,6 +8,7 @@
 import {
   authorize,
   rolePrincipal,
+  type ApiResource,
   type RolePrincipal,
 } from "@broods/convex/model/apiAuthorization";
 import { resolveBearerAuth } from "../../shared/auth.ts";
@@ -94,6 +95,8 @@ export interface MachineSocketData {
   key?: string;
   /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
+  /** The sandbox a role session claimed, checked again on every heartbeat. */
+  claim?: ApiResource;
   /** Set for a stage ticket or a stage-pinned role, which claim only their own stage's records. */
   stage?: { projectId: string; stageId: string };
 }
@@ -398,19 +401,20 @@ async function claimSandbox(
     : named[0];
   // Claiming a machine is a write on that sandbox, so a role session needs
   // sandboxes:write for it. The name only arrives in the hello, hence here.
+  const claim: ApiResource | undefined = record && {
+    type: "sandboxes",
+    id: record.sandboxId,
+    projectId: record.projectId,
+    stageId: record.stageId,
+  };
   const denied =
-    record !== undefined &&
+    claim !== undefined &&
     socket.data.role !== undefined &&
-    !authorize(rolePrincipal(socket.data.role), "sandboxes:write", {
-      type: "sandboxes",
-      id: record.sandboxId,
-      projectId: record.projectId,
-      stageId: record.stageId,
-    }).allow;
+    !authorize(rolePrincipal(socket.data.role), "sandboxes:write", claim).allow;
   if (denied) {
     logWarn("Machine sandbox claim refused", {
       accountId: accountId,
-      sandbox: record.name,
+      sandbox: hello.sandbox,
       roleId: socket.data.role?.roleId,
       host: hello.hostname,
     });
@@ -455,6 +459,7 @@ async function claimSandbox(
     );
   }
   socket.data.key = key;
+  socket.data.claim = claim;
   const ref: MachineConnectionRef = {
     accountId: accountId,
     connectionId: crypto.randomUUID(),
@@ -595,6 +600,8 @@ async function refreshCredential(
 
     return;
   }
+  // Two refreshes can resolve out of order; the older ticket never wins.
+  if (ticket.expiresAt <= socket.data.expiresAt) return;
   socket.data.authorization = authorization;
   socket.data.expiresAt = ticket.expiresAt;
   armExpiry(socket);
@@ -685,12 +692,18 @@ async function revalidate(
     return;
   }
   // A refresh that landed meanwhile is the bearer to judge now, not this one.
+  if (socket.data.closed || socket.data.authorization !== authorization) {
+    return;
+  }
+  // A role keeps its claim only while its policy still lets it write there.
+  const claim = socket.data.claim;
   if (
-    socket.data.closed ||
-    socket.data.authorization !== authorization ||
-    (auth &&
-      auth.kind !== "admin" &&
-      auth.account.accountId === socket.data.accountId)
+    auth &&
+    auth.kind !== "admin" &&
+    auth.account.accountId === socket.data.accountId &&
+    (auth.kind !== "role" ||
+      claim === undefined ||
+      authorize(rolePrincipal(auth.role), "sandboxes:write", claim).allow)
   )
     return;
   const expiresAt = socket.data.expiresAt;

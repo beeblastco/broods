@@ -249,6 +249,64 @@ test("a daemon whose bearer stops resolving loses its socket at the next heartbe
   expect((await closed).code).toBe(MACHINE_CLOSE.unauthorized.code);
 });
 
+test("an older ticket that lands after a newer one never moves the deadline back", async (): Promise<void> => {
+  setStorageForTests(machineStorage());
+  const daemon = await connectDaemon(
+    core(),
+    await ticket(Date.now() + 1000),
+    (frame, socket): void => socket.send(JSON.stringify(result(frame.id))),
+  );
+  let closed = false;
+  daemon.onclose = (): void => {
+    closed = true;
+  };
+  const acked = nextReady(daemon);
+
+  daemon.send(
+    JSON.stringify({
+      type: "credential",
+      token: await ticket(Date.now() + 60_000),
+    }),
+  );
+  await acked;
+  daemon.send(
+    JSON.stringify({
+      type: "credential",
+      token: await ticket(Date.now() + 1500),
+    }),
+  );
+  await Bun.sleep(2000);
+
+  expect(closed).toBe(false);
+}, 10_000);
+
+test("a role session whose policy stops granting sandboxes:write loses its socket at the next heartbeat", async (): Promise<void> => {
+  const storage = machineStorage();
+  setStorageForTests(storage);
+  jest.useFakeTimers();
+  let actions = ["sandboxes:write"];
+  storage.roleSessions.resolveByTokenHash = async () => ({
+    accountId: MACHINE_ACCOUNT_ID,
+    roleId: "role_machine",
+    policy: {
+      version: 1,
+      mode: "enforce",
+      rules: [{ id: "machine", effect: "allow", actions: actions }],
+    },
+  });
+  const daemon = await connectDaemon(
+    core(),
+    `bsts_${crypto.randomUUID()}`,
+    (): void => {},
+  );
+  const closed = closeOf(daemon);
+
+  actions = ["sandboxes:read"];
+  jest.advanceTimersByTime(60_000);
+
+  expect((await closed).code).toBe(MACHINE_CLOSE.unauthorized.code);
+});
+
 function core(): Bun.Server<MachineSocketData> {
   const server = startMachineCore();
   servers.push(server);
