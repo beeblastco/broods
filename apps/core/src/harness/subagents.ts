@@ -404,30 +404,28 @@ export class SubagentCoordinator {
   async takeParentMessages(): Promise<UserModelMessage[]> {
     const completions = this.completions.splice(0);
     const questions = this.questions.splice(0);
-    // One write each, so a failure puts back only what was not saved yet, and a
-    // later step or drain delivers it without repeating the rest.
-    for (const [index, completion] of completions.entries()) {
-      await this.parentSession
-        .persistModelMessages([completionToParentMessage(completion)])
-        .catch((error: unknown): never => {
-          this.completions.unshift(...completions.slice(index));
-          this.restoreQuestions(questions);
-          throw error;
-        });
-    }
-    for (const [index, question] of questions.entries()) {
-      await this.parentSession
-        .persistModelMessages([question.message])
-        .catch((error: unknown): never => {
-          this.restoreQuestions(questions.slice(index));
-          throw error;
-        });
-    }
-
-    return [
+    const messages = [
       ...completions.map(completionToParentMessage),
       ...questions.map((question): UserModelMessage => question.message),
     ];
+    if (messages.length === 0) return messages;
+    // One write for all of them. Each is one stored event, and a large write
+    // takes several appends, so a failure puts back only what no append saved,
+    // and a later step or drain delivers it without repeating the rest.
+    let saved = 0;
+    await this.parentSession
+      .persistModelMessages(messages, (count): void => {
+        saved = count;
+      })
+      .catch((error: unknown): never => {
+        this.completions.unshift(...completions.slice(saved));
+        this.restoreQuestions(
+          questions.slice(Math.max(saved - completions.length, 0)),
+        );
+        throw error;
+      });
+
+    return messages;
   }
 
   /**
@@ -513,29 +511,21 @@ export class SubagentCoordinator {
       return 0;
     }
 
-    const completions = this.completions.splice(0);
     // A child whose result is in this batch is only settling its lease.
-    const answered = new Set(completions.map(({ taskId }) => taskId));
-    const running = [...this.pendingMetadata.values()]
-      .filter(({ taskId }): boolean => !answered.has(taskId))
-      .map((metadata): SubagentCompletion => ({
-        ...metadata,
-        status: "running",
-      }));
-    for (const { taskId, eventId } of running) {
-      this.detached.add(taskId);
-      detachedResults.set(eventId, this);
+    const answered = new Set(this.completions.map(({ taskId }) => taskId));
+    for (const metadata of this.pendingMetadata.values()) {
+      if (answered.has(metadata.taskId)) continue;
+      this.detached.add(metadata.taskId);
+      detachedResults.set(metadata.eventId, this);
+      // Queued like a result, so a failed write puts the notice back too.
+      this.completions.push({ ...metadata, status: "running" });
     }
     this.pending.clear();
     this.pendingMetadata.clear();
     // The parent stops waiting, so no answer is coming.
     this.closeQuestions();
-    const batch = [...completions, ...running];
-    await this.parentSession.persistModelMessages(
-      batch.map(completionToParentMessage),
-    );
 
-    return batch.length;
+    return this.drainCompletionsToParent();
   }
 
   private async resolveTask(
