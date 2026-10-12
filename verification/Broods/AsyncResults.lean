@@ -231,7 +231,8 @@ inductive ObserveCall where
   parent is never told. `finished` is whether the row has its outcome yet. -/
   | read (finished : Bool)
   /-- `runtimeIngress.accept` with `resultEventId`, the late resume; `room` is whether
-  the conversation's queue has room for it. -/
+  the conversation's queue has room for it and does not already store the result under
+  its dedupe key (`checkDuplicateAdmission`). -/
   | resume (room : Bool)
   deriving DecidableEq, Repr
 

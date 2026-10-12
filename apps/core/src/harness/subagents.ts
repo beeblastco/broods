@@ -4,6 +4,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
+import { subagentResultDedupeKey } from "@broods/convex/model/subagentResults";
 import type {
   JSONValue,
   ModelMessage,
@@ -470,7 +471,15 @@ export class SubagentCoordinator {
    * them. The parent's step boundary calls it, so they reach the model mid-pass.
    */
   async takeParentMessages(): Promise<UserModelMessage[]> {
-    const completions = this.completions.splice(0);
+    // A running notice is stale once its child has finished: that child
+    // resumed the parent with its result itself, even while the detach that
+    // queued the notice was still writing.
+    const completions = this.completions
+      .splice(0)
+      .filter(
+        ({ status, taskId }): boolean =>
+          status !== "running" || this.detached.has(taskId),
+      );
     const questions = this.questions.splice(0);
     const messages = [
       ...completions.map(completionToParentMessage),
@@ -490,8 +499,8 @@ export class SubagentCoordinator {
           saved = count;
         },
         [
-          ...completions.map(
-            ({ eventId, status }): string => `subagent:${eventId}:${status}`,
+          ...completions.map(({ eventId, status }): string =>
+            subagentResultDedupeKey(eventId, status),
           ),
           ...questions.map(({ dedupeKey }): string => dedupeKey),
         ],

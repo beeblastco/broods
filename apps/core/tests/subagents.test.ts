@@ -1009,6 +1009,45 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("writes no running notice for a child that finishes while the detach records it", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+    );
+    let finish = (): void => {};
+    const coordinator = new SubagentCoordinator(
+      parentSession({ persistModelMessages: persistModelMessages }),
+      { subagent: { enabled: true } },
+      Date.now() + 1_000,
+    );
+    coordinator["runTask"] = mock(
+      (): Promise<void> =>
+        new Promise<void>((resolve): void => {
+          finish = resolve;
+        }),
+    );
+    // The child finishes, and leaves the coordinator, while the detach awaits
+    // its observed write.
+    const mutate = spyOn(runtime, "mutate").mockImplementation(
+      async (name): Promise<true> => {
+        if (name === "observeAsyncAgentResult") {
+          finish();
+          while (coordinator.runningCount > 0) await Bun.sleep(1);
+        }
+
+        return true;
+      },
+    );
+    try {
+      await coordinator.dispatch([{ prompt: "research" }], []);
+
+      expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(0);
+      expect(persistModelMessages).not.toHaveBeenCalled();
+    } finally {
+      mutate.mockRestore();
+    }
+  });
+
   it("ends the wait when a heartbeat finds the run lost", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
