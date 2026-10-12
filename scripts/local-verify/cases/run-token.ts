@@ -53,7 +53,7 @@ export async function runToken(context: VerifyContext): Promise<void> {
   const name = `run-token-${context.runId}`;
   const agentConfig = {
     ...context.model,
-    instructions: "Reply with the single word OK.",
+    agent: { system: "Reply with the single word OK." },
   };
   const [{ accountId }, own, other] = await Promise.all([
     context.account.getAccount(),

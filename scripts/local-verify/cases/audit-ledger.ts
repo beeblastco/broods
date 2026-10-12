@@ -21,7 +21,7 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
     name: name,
     config: {
       ...context.model,
-      instructions: "Reply with the single word OK.",
+      agent: { system: "Reply with the single word OK." },
     },
   });
   await context.measure("audit run", () =>

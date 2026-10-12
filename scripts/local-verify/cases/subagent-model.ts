@@ -9,8 +9,8 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-// A second model the stack's DeepSeek key serves, unlike the parent's.
-const SUBAGENT_MODEL_ID = "deepseek-v4-pro";
+// A second model the stack's OpenAI key serves, unlike the parent's.
+const SUBAGENT_MODEL_ID = "gpt-5.4-mini";
 
 interface SubagentStartedLog {
   agentId: string;
@@ -45,8 +45,10 @@ export async function subagentModel(context: VerifyContext): Promise<void> {
       name: key,
       config: {
         ...context.model,
-        instructions:
-          "Call run_subagent once, with no agentId, and with this exact prompt word for word: 'Use the bash tool to run `echo subagent-model-ok`, then reply with its output.' Then reply with the result it reports.",
+        agent: {
+          system:
+            "Call run_subagent once, with no agentId, and with this exact prompt word for word: 'Use the bash tool to run `echo subagent-model-ok`, then reply with its output.' Then reply with the result it reports.",
+        },
         sandboxes: [machine.sandboxId],
         subagent: { enabled: true, model: { modelId: SUBAGENT_MODEL_ID } },
       },

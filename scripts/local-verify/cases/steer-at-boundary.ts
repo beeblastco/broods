@@ -29,8 +29,10 @@ export async function steerAtBoundary(context: VerifyContext): Promise<void> {
       name: key,
       config: {
         ...context.model,
-        instructions:
-          "First use the bash tool to run `sleep 5`. Then reply with exactly the last word of the latest user message and nothing else.",
+        agent: {
+          system:
+            "First use the bash tool to run `sleep 5`. Then reply with exactly the word a user message gave as 'The word is ...' and nothing else, or NONE if no message gave one.",
+        },
         sandboxes: [machine.sandboxId],
       },
     });
@@ -38,7 +40,7 @@ export async function steerAtBoundary(context: VerifyContext): Promise<void> {
       agentId: agentId,
       conversationKey: key,
       eventId: `${key}-owner`,
-      input: "Run the command.",
+      input: "Run `sleep 5` with the bash tool.",
     });
     const steer = await context.client.runAsync({
       agentId: agentId,

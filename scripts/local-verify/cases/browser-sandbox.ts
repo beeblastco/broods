@@ -28,7 +28,7 @@ export async function browserSandbox(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       ...context.model,
-      instructions: "Reply with the single word OK.",
+      agent: { system: "Reply with the single word OK." },
       sandboxes: [sandbox.sandboxId],
       browser: { enabled: true },
     },
@@ -85,8 +85,10 @@ async function browseKeepsPrivateNetworkGuard(
       name: name,
       config: {
         ...context.model,
-        instructions:
-          "Call the browse tool once with url http://10.0.0.1/ and mode text, then reply with exactly the text it returned and nothing else.",
+        agent: {
+          system:
+            "Call the browse tool once with url http://10.0.0.1/ and mode text, then reply with exactly the text it returned and nothing else.",
+        },
         sandboxes: [machine.sandboxId],
         browser: { enabled: true },
       },

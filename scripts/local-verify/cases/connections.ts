@@ -15,7 +15,7 @@ export async function connections(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       model: { provider: "chatgpt", modelId: "gpt-5.5" },
-      instructions: "Reply with the single word OK.",
+      agent: { system: "Reply with the single word OK." },
     },
   });
   const unsigned = await context.measure(

@@ -43,8 +43,10 @@ export async function subagentStop(context: VerifyContext): Promise<void> {
       name: key,
       config: {
         ...context.model,
-        instructions:
-          "Call run_subagent once, with this exact prompt word for word: 'Use the bash tool to run `sleep 3`, ten times, one call per step. Then reply DONE.' As soon as it returns, call stop_subagent with the taskId and agentId it returned. Then reply with exactly the note field stop_subagent returned and nothing else.",
+        agent: {
+          system:
+            "Call run_subagent once, with this exact prompt word for word: 'Use the bash tool to run `sleep 3`, ten times, one call per step. Then reply DONE.' As soon as it returns, call stop_subagent with the taskId and agentId it returned. Then reply with the note field stop_subagent returned, copied word for word: no summary, no other text.",
+        },
         sandboxes: [machine.sandboxId],
         subagent: { enabled: true, mode: "persistent" },
       },

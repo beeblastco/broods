@@ -27,8 +27,10 @@ export async function bashTimeout(context: VerifyContext): Promise<void> {
       name: name,
       config: {
         ...context.model,
-        instructions:
-          "Call the bash tool exactly once, with the command `sleep 5`. Never call a tool again, whatever it returns. Then reply with exactly the text the tool returned and nothing else.",
+        agent: {
+          system:
+            "Call the bash tool exactly once, with the command `sleep 5`. Never call a tool again, whatever it returns. Then reply with exactly the text the tool returned and nothing else.",
+        },
         sandboxes: [machine.sandboxId],
       },
     });
@@ -47,7 +49,8 @@ export async function bashTimeout(context: VerifyContext): Promise<void> {
       "bash past the per-call limit fails naming the limit",
       status.status === "completed" &&
         machine.output().includes("(timed out)") &&
-        reply.includes("timed out after 2s"),
+        // Models may echo "2s" or write it out as "2 seconds".
+        /timed out after 2 ?s(econds)?\b/.test(reply),
       `${JSON.stringify(status)}\n${machine.output()}`,
     );
   } finally {

@@ -52,6 +52,7 @@ import {
   VerifyFailure,
   assertStep,
   lastJsonLine,
+  PERF_MODEL,
   pollUntil,
   probeHttp,
   smokeModel,
@@ -379,12 +380,15 @@ async function perf(record: boolean): Promise<void> {
     `perf-${runId}`,
   );
   const passed = await runPerf(
-    verifyContext(
-      state,
-      accountSecret,
-      runId,
-      <T>(_step: string, fn: () => Promise<T>): Promise<T> => fn(),
-    ),
+    {
+      ...verifyContext(
+        state,
+        accountSecret,
+        runId,
+        <T>(_step: string, fn: () => Promise<T>): Promise<T> => fn(),
+      ),
+      model: PERF_MODEL,
+    },
     { record: record, tracePath: convexTracePath(state.instanceId) },
   );
   if (!passed) process.exit(1);
@@ -393,7 +397,7 @@ async function perf(record: boolean): Promise<void> {
 /**
  * End-to-end check: verify admin account creation, then run every case
  * through the gateway using an org-backed local fixture. Without
- * DEEPSEEK_API_KEY runs fail at the provider call; reaching that failure still
+ * OPENAI_API_KEY runs fail at the provider call; reaching that failure still
  * proves routing, auth, config encrypt/decrypt, and Convex round-trips.
  */
 async function verify(): Promise<void> {

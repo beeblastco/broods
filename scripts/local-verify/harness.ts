@@ -5,17 +5,31 @@ import { runMachineDaemon } from "../../packages/broods/src/cli/machine.ts";
 import type { BroodsClient } from "../../packages/broods/src/client.ts";
 import type { AsyncStatus } from "../../packages/broods/src/types.ts";
 
-const DEEPSEEK_SMOKE_MODEL = "deepseek-flash";
 const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const RUN_POLL_INTERVAL_MS = 200;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 
-export const MODEL_KEY_HINT = "set DEEPSEEK_API_KEY for the full run";
+export const MODEL_KEY_HINT = "set OPENAI_API_KEY for the full run";
 
-export interface SmokeModel {
-  model: { modelId: string; provider: "deepseek" };
-  provider: { deepseek: { apiKey: string } };
-}
+export type SmokeModel =
+  | {
+      model: {
+        modelId: string;
+        provider: "openai";
+        providerOptions: { openai: { reasoningEffort: "high" } };
+      };
+      provider: { openai: { apiKey: string } };
+    }
+  | {
+      model: { modelId: string; provider: "deepseek" };
+      provider: { deepseek: { apiKey: string } };
+    };
+
+/** What `up --perf` answers in process (`fake-model.ts`), so perf never calls a real model. */
+export const PERF_MODEL: SmokeModel = {
+  model: { provider: "deepseek", modelId: "deepseek-flash" },
+  provider: { deepseek: { apiKey: "none" } },
+};
 
 export interface MachineConnection {
   output: () => string;
@@ -211,15 +225,19 @@ export async function runToTerminal(
   });
 }
 
-/** DeepSeek Flash on DEEPSEEK_API_KEY, or on a dummy key that fails at the provider call. */
+/** OpenAI gpt-6-luna at high reasoning on OPENAI_API_KEY, or on a dummy key that fails at the provider call. */
 export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
 
   return {
     hasModelKey: Boolean(apiKey),
     model: {
-      model: { provider: "deepseek", modelId: DEEPSEEK_SMOKE_MODEL },
-      provider: { deepseek: { apiKey: apiKey || "none" } },
+      model: {
+        provider: "openai",
+        modelId: "gpt-6-luna",
+        providerOptions: { openai: { reasoningEffort: "high" } },
+      },
+      provider: { openai: { apiKey: apiKey || "none" } },
     },
   };
 }

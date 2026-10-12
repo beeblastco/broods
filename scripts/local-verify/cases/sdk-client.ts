@@ -12,7 +12,7 @@ export async function sdkClient(context: VerifyContext): Promise<void> {
     name: name,
     config: {
       ...context.model,
-      instructions: "Reply with the single word OK.",
+      agent: { system: "Reply with the single word OK." },
     },
   });
   const result = await context.measure(
