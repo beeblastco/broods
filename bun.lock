@@ -308,7 +308,7 @@
         "zod": "^4.4.3",
       },
       "peerDependencies": {
-        "ai": "^7.0.127",
+        "ai": "^7.0.137",
       },
     },
     "packages/convex": {
