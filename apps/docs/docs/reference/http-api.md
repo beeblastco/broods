@@ -71,7 +71,7 @@ curl -N -X POST "https://gateway.broods.app/v1/runs" \
 | `answers`         | no                                  | Answers to open `ask_questions` prompts. Cannot be combined with `events`                                                                                 |
 | `continue`        | no                                  | Re-enter a run that stopped on the step cap or a provider fault                                                                                           |
 
-The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. One run can carry several model passes, each ending in its own `finish` part: after subagent or async tool results, or after the run hands its worker slot on near the slot deadline. The run is over when the stream closes, not at a `finish` part. A run that writes nothing for 30 seconds, such as during a long tool call, sends an SSE comment line such as `: keepalive` or `: waiting for async work pending=2`. SSE parsers ignore them, and they keep the connection open. A streamed run waits for a free worker slot like a background run, so on a busy deployment the stream may send only keepalives before its first part. If the run queue itself is full, the request answers `503` with `Retry-After` and one SSE `error` frame. The check runs before plan admission and before the run is recorded, so nothing runs, nothing is recorded or counted against your plan, and retrying with the same `eventId` starts the run. A run that passed the check queues and is never failed for capacity later. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
+The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. One run can carry several model passes, each ending in its own `finish` part: after subagent or async tool results, or after the run hands its worker slot on near the slot deadline. The run is over when the stream closes, not at a `finish` part. A run that writes nothing for 30 seconds, such as during a long tool call, sends an SSE comment line such as `: keepalive` or `: waiting for async work pending=2`. SSE parsers ignore them, and they keep the connection open. A streamed run waits for a free worker slot like a background run, so on a busy deployment the stream may send only keepalives before its first part. If the run queue itself is full, the request answers `503` with `Retry-After` and one SSE `error` frame. Nothing runs, nothing is recorded or counted against your plan, and retrying with the same `eventId` starts the run. An account out of budget or past its runs per minute gets its `402` or `429` instead, even while the queue is full. A run that passed the check queues and is never failed for capacity later. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
 
 The dashboard advertises a scoped form of the same endpoint, `POST /v1/projects/{project}/stages/{stage}/agents/{endpointId}`. It takes the same body and refuses a key from another project or stage with `401`.
 
@@ -96,7 +96,7 @@ curl -X POST "https://gateway.broods.app/v1/runs" \
 }
 ```
 
-Poll `GET /v1/runs/{runId}` until the status settles. Status records stay readable for 7 days. If the run queue is full, the background `POST` answers `503 service_unavailable` with `Retry-After` instead of `202`. The check runs before plan admission and before the run is recorded, so nothing is recorded and a retry with the same `eventId` starts the run. Once you have the `202`, the run is never failed for capacity.
+Poll `GET /v1/runs/{runId}` until the status settles. Status records stay readable for 7 days. If the run queue is full, the background `POST` answers `503 service_unavailable` with `Retry-After` instead of `202`. Nothing is recorded or counted, and a retry with the same `eventId` starts the run. A plan refusal (`402`, `429`) comes first. Once you have the `202`, the run is never failed for capacity.
 
 | `status`                                      | Meaning                                                            |
 | --------------------------------------------- | ------------------------------------------------------------------ |
@@ -162,18 +162,18 @@ A queued request answers `202` with a `statusUrl` instead of a second SSE stream
 
 Branch on `code`, never on `message`. Each response also carries an `X-Request-Id` header. Quote it when reporting a problem.
 
-| Status | `code`                   | Cause                                                                                                                                |
-| ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope                                                                              |
-| 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                                                                                          |
-| 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true`                                                                           |
-| 403    | `run_token_scope`        | A run token did anything but read its own agent's runs                                                                               |
-| 403    | `status_access_denied`   | The run's status is not readable from this deployment, such as a subagent run started under another deployment                       |
-| 404    | `run_not_found`          | Unknown run id                                                                                                                       |
-| 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                                                   |
-| 409    | `idempotency_conflict`   | Same idempotency key, different payload                                                                                              |
-| 429    | `ingress_capacity`       | Conversation queue is full                                                                                                           |
-| 503    | `service_unavailable`    | `POST /v1/runs` when the deployment's run queue is full. Checked before admission, so nothing is recorded; retry after `Retry-After` |
+| Status | `code`                   | Cause                                                                                                                                   |
+| ------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope                                                                                 |
+| 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                                                                                             |
+| 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true`                                                                              |
+| 403    | `run_token_scope`        | A run token did anything but read its own agent's runs                                                                                  |
+| 403    | `status_access_denied`   | The run's status is not readable from this deployment, such as a subagent run started under another deployment                          |
+| 404    | `run_not_found`          | Unknown run id                                                                                                                          |
+| 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                                                      |
+| 409    | `idempotency_conflict`   | Same idempotency key, different payload                                                                                                 |
+| 429    | `ingress_capacity`       | Conversation queue is full                                                                                                              |
+| 503    | `service_unavailable`    | `POST /v1/runs` when the deployment's run queue is full. Nothing is recorded or counted; retry after `Retry-After`. A plan refusal wins |
 
 On a streamed run, these arrive as the first SSE `error` frame instead of a JSON body.
 
