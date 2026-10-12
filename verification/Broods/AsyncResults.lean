@@ -224,23 +224,29 @@ inductive Observed where
 
 /-- The calls that touch `observed`, in any order a race gives them. -/
 inductive ObserveCall where
-  /-- `observeAsyncAgentResult` with `false`, when the parent stops waiting. -/
+  /-- `observeAsyncAgentResult` with `false`, when the parent stops waiting, or when
+  a pass's last write fails, for each result it did not save and each child still
+  working; those then resume. -/
   | detach
   /-- `observeAsyncAgentResult` with `true`: `get_subagent_status`, or a result the
   parent is never told. `finished` is whether the row has its outcome yet. -/
   | read (finished : Bool)
   /-- `runtimeIngress.accept` with `resultEventId`, the late resume; `room` is whether
-  the conversation's queue has room for it. -/
-  | resume (room : Bool)
+  the conversation's queue has room for it, and `stored` whether the conversation
+  already stores the result under its dedupe key (`checkDuplicateAdmission`), a write
+  that committed but lost its reply. -/
+  | resume (room stored : Bool)
   deriving DecidableEq, Repr
 
 /-- One call in its own transaction: the new flag, and whether it admitted a resume.
-A seen row stays seen, and a resume is admitted only while the row is not seen. -/
+A seen row stays seen, and a resume is admitted only while the row is not seen. A
+resume of a result the conversation already stores is refused and marks the row seen. -/
 def Observed.step : Observed → ObserveCall → Observed × Bool
   | .seen, _ => (.seen, false)
   | _, .detach => (.waiting, false)
   | o, .read finished => (if finished then .seen else o, false)
-  | o, .resume room => if room then (.seen, true) else (o, false)
+  | o, .resume room stored =>
+    if stored then (.seen, false) else if room then (.seen, true) else (o, false)
 
 /-- How many resumes `cs` admits from flag `o`. -/
 def Observed.admitted : Observed → List ObserveCall → Nat
@@ -333,7 +339,8 @@ theorem tool_settles_once (row : ToolRow) (cs : List ToolCall) : row.changes cs 
 /-- An admitted resume leaves the row seen. -/
 theorem step_admits_seen (o : Observed) (c : ObserveCall) (h : (o.step c).2 = true) :
     (o.step c).1 = .seen := by
-  cases o <;> cases c <;> simp_all [Observed.step] <;> split at h <;> simp_all
+  cases o <;> cases c <;> simp_all [Observed.step] <;> split at h <;> (try split at h) <;>
+    simp_all
 
 /-- Nothing admits a resume for a row the parent has seen. -/
 theorem seen_admits_none : ∀ cs : List ObserveCall, Observed.seen.admitted cs = 0
@@ -357,6 +364,12 @@ theorem resume_at_most_once (o : Observed) (cs : List ObserveCall) : o.admitted 
 after the read but before the read's step saved tells the parent nothing more. -/
 theorem read_shuts_out_resume (o : Observed) (cs : List ObserveCall) :
     (o.step (.read true)).1.admitted cs = 0 := by
+  cases o <;> simp [Observed.step, seen_admits_none]
+
+/-- A resume refused because the conversation already stores its result shuts out every
+later resume too, so the recovery sweep stops retrying it. -/
+theorem stored_shuts_out_resume (o : Observed) (room : Bool) (cs : List ObserveCall) :
+    (o.step (.resume room true)).1.admitted cs = 0 := by
   cases o <;> simp [Observed.step, seen_admits_none]
 
 /-! ## Witnesses -/

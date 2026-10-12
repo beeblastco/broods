@@ -15,7 +15,7 @@ info:
 
     Every core and config-plane response carries `X-Request-Id`. Every non-2xx body from core and the config plane is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and core and config-plane 429s also carry the IETF `RateLimit-*` fields. The edge may also limit requests per client address, and answers its own 429 as plain text with only `Retry-After`.
 
-    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket. A socket opened with a stage session ticket closes when the ticket expires, with close code `4419` (`Stage session expired` on the observability socket, `Credential expired` on the machine socket); reconnect with a fresh ticket. The machine socket can instead be kept open: its `ready` frame carries `expiresInMs`, and a daemon that sends `{ "type": "credential", "token": "bdts_..." }` with a fresh ticket for the same account and stage before then moves the deadline (core answers with another `ready`); a ticket for anything else closes it with `4401`. A credential that stops resolving while the socket is open (account suspended, key rotated, role session ended) closes it with `4401` within a minute.
+    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The agent sockets take the stage's runtime key or a stage session ticket for their own stage, and check every frame like the matching HTTP call, so a runtime key reaches only agents with `publicAccess: true` there. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket. A socket opened with a stage session ticket closes when the ticket expires, with close code `4419` (`Stage session expired` on the observability socket, `Credential expired` on the machine socket); reconnect with a fresh ticket. The machine socket can instead be kept open: its `ready` frame carries `expiresInMs`, and a daemon that sends `{ "type": "credential", "token": "bdts_..." }` with a fresh ticket for the same account and stage before then moves the deadline (core answers with another `ready`); a ticket for anything else closes it with `4401`. A credential that stops resolving while the socket is open (account suspended, key rotated, role session ended) closes it with `4401` within a minute.
 
     The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
@@ -225,7 +225,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "402":
-          description: The account has reached one of its monthly resource caps (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces caps.
+          description: The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help. A monthly cap clears with an upgrade or at the next UTC month. Storage is a size measured once a day that a new month does not free, so the message names a full storage limit, and it clears once files are deleted (seen at the next daily measurement) or the plan is upgraded. Only the managed BeeBlast service enforces caps.
           content:
             application/json:
               schema:
@@ -235,6 +235,12 @@ paths:
                   value:
                     error:
                       message: This account has reached one of its monthly resource caps for 2026-09 on the free plan. Upgrade to keep running agents, or wait for next month.
+                      type: invalid_request_error
+                      code: budget_exhausted
+                storageFull:
+                  value:
+                    error:
+                      message: "This account has reached its storage limit of 10 GB of workspaces and files on the free plan. Delete files or upgrade to keep running agents; storage is measured once a day."
                       type: invalid_request_error
                       code: budget_exhausted
         "403":
@@ -492,7 +498,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "402":
-          description: The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`
+          description: The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`
           content:
             application/json:
               schema:
@@ -2002,7 +2008,7 @@ paths:
         "200": { description: Running }
         "402":
           {
-            description: "The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
           }
         "403":
           {
@@ -2118,7 +2124,7 @@ paths:
                   websocketPath: { type: string }
         "402":
           {
-            description: "The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
           }
         "403":
           {
@@ -4316,7 +4322,7 @@ components:
                 | `account_not_found` | 404 | The account being deleted no longer exists. |
                 | `agent_name_exists` | 409 | An agent with this name already exists in the account. |
                 | `bad_gateway` | 502 | Default for a 502: an upstream answered with an error. |
-                | `budget_exhausted` | 402 | A monthly plan cap is used up. Upgrade or wait for next month. |
+                | `budget_exhausted` | 402 | A monthly plan cap or the storage limit is used up. Upgrade or wait for next month; for storage, delete files or upgrade. |
                 | `conflict` | 409 | Default for a 409: the request conflicts with current state. |
                 | `conversation_busy` | 409 | Another run holds this conversation. Retry when it finishes. |
                 | `conversation_not_found` | 404 | A `continue` request named a conversation key with no session behind it. |

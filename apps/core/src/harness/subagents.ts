@@ -4,6 +4,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
+import { subagentResultDedupeKey } from "@broods/convex/model/subagentResults";
 import type {
   JSONValue,
   ModelMessage,
@@ -461,8 +462,31 @@ export class SubagentCoordinator {
     this.readUnsaved.clear();
   }
 
+  /**
+   * The pass's last write of results and questions. No pass drains after it,
+   * so when it fails each finished result it did not save resumes the parent
+   * through `resumeParent`, each child still working is detached to resume it
+   * the same way, and the run still fails.
+   */
   async drainCompletionsToParent(): Promise<number> {
-    return (await this.takeParentMessages()).length;
+    try {
+      return (await this.takeParentMessages()).length;
+    } catch (error: unknown) {
+      // A put-back running notice is dropped: its child is detached and
+      // resumes the parent itself. Each result is marked unseen first, so
+      // the recovery sweep retries a resume that fails too.
+      await this.detachPending();
+      const finished = this.completions
+        .splice(0)
+        .filter(({ status }): boolean => status !== "running");
+      await Promise.all(
+        finished.map(async (completion): Promise<void> => {
+          await observeAsyncAgentResult(completion.eventId, false);
+          await this.resumeParentWith(completion);
+        }),
+      );
+      throw error;
+    }
   }
 
   /**
@@ -470,8 +494,9 @@ export class SubagentCoordinator {
    * them. The parent's step boundary calls it, so they reach the model mid-pass.
    */
   async takeParentMessages(): Promise<UserModelMessage[]> {
-    // A running notice put back by a failed write is stale once its child has
-    // finished: that child resumed the parent with its result itself.
+    // A running notice is stale once its child has finished: that child
+    // resumed the parent with its result itself, even while the detach that
+    // queued the notice was still writing.
     const completions = this.completions
       .splice(0)
       .filter(
@@ -497,8 +522,8 @@ export class SubagentCoordinator {
           saved = count;
         },
         [
-          ...completions.map(
-            ({ eventId, status }): string => `subagent:${eventId}:${status}`,
+          ...completions.map(({ eventId, status }): string =>
+            subagentResultDedupeKey(eventId, status),
           ),
           ...questions.map(({ dedupeKey }): string => dedupeKey),
         ],
@@ -606,22 +631,36 @@ export class SubagentCoordinator {
       return 0;
     }
 
-    // A child whose result is in this batch is only settling its lease.
-    const answered = new Set(this.completions.map(({ taskId }) => taskId));
-    const detaching = [...this.pendingMetadata.values()].filter(
-      ({ taskId }): boolean => !answered.has(taskId),
-    );
-    for (const metadata of detaching) {
-      this.detached.add(metadata.taskId);
-      // Queued like a result, so a failed write puts the notice back too. A
-      // child whose result the model already read is not still working news.
+    for (const metadata of await this.detachPending()) {
+      // Queued like a result, so it rides the same write. A child whose
+      // result the model already read is not still working news.
       if (!this.delivered.has(metadata.eventId)) {
         this.completions.push({ ...metadata, status: "running" });
       }
     }
+
+    return this.drainCompletionsToParent();
+  }
+
+  /**
+   * The parent stops waiting on every child still working: each resumes the
+   * parent with its result through `resumeParent` once it finishes, and no
+   * question gets an answer. Returns the children it detached.
+   */
+  private async detachPending(): Promise<
+    Omit<
+      SubagentCompletion,
+      "status" | "response" | "error" | "visibleResult"
+    >[]
+  > {
+    // A child whose result is queued is only settling its lease.
+    const answered = new Set(this.completions.map(({ taskId }) => taskId));
+    const detaching = [...this.pendingMetadata.values()].filter(
+      ({ taskId }): boolean => !answered.has(taskId),
+    );
+    for (const { taskId } of detaching) this.detached.add(taskId);
     this.pending.clear();
     this.pendingMetadata.clear();
-    // The parent stops waiting, so no answer is coming.
     this.closeQuestions();
     // Only the recovery sweep reads this, for a result this process never
     // delivers; the live resume needs none of it.
@@ -633,7 +672,7 @@ export class SubagentCoordinator {
         ),
     );
 
-    return this.drainCompletionsToParent();
+    return detaching;
   }
 
   private async resolveTask(

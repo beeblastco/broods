@@ -1,6 +1,7 @@
 import type { CreateAgentResult } from "../../../packages/broods/src/account.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  OK_AGENT,
   MODEL_KEY_HINT,
   assertStep,
   lastJsonLine,
@@ -36,7 +37,7 @@ export async function agentRun(context: VerifyContext): Promise<void> {
         name: key,
         config: {
           ...context.model,
-          instructions: "Reply with the single word OK.",
+          agent: OK_AGENT,
         },
       }),
   );

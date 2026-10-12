@@ -102,7 +102,7 @@ sequenceDiagram
 | matrix-forwarder  | `deploy-matrix-forwarder.yaml`, `main` or ticked only  | nothing                             |
 
 - A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
-- The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (a scope with no ticket expiry is a 502). A gateway that rolled first would refuse every such socket until core caught up.
+- The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (an observability scope with no ticket expiry is a 502). The agent socket asks `/v1/internal/agent-socket-scope`, which an older core does not serve. A gateway that rolled first would refuse every such socket until core caught up.
 - Images are `ghcr.io/beeblastco/broods-*`, tagged with the commit sha plus a floating `dev` or `main` tag.
 - The rollout job has a 40 minute budget: 20 for prerequisites, 20 for the roll. It needs `INFRA_DISPATCH_TOKEN`.
 
@@ -154,7 +154,7 @@ Environment-scoped values resolve from `development` or `production` by branch.
 | `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, `NEXT_PUBLIC_BROODS_BASE_URL`            | variable, per env         | `build-dashboard`; the Convex URL also `ci`                                                                       |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`                                        | secret                    | `ci` signed-in dashboard tests                                                                                    |
 | `DASHBOARD_E2E_EMAIL`, `DASHBOARD_E2E_PASSWORD`, `DASHBOARD_E2E_PROJECT_ID`                           | secret, variable          | `ci`, `e2e-dashboard`                                                                                             |
-| `DEEPSEEK_API_KEY`                                                                                    | secret                    | `ci`                                                                                                              |
+| `OPENAI_API_KEY`                                                                                      | secret                    | `ci`                                                                                                              |
 | `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                       | variable, secret          | `opa-policy-check`                                                                                                |
 | `DOCS_S3_BUCKET`, `DOCS_DOMAIN`, `DOCS_AWS_REGION`                                                    | variable                  | `deploy-docs`                                                                                                     |
 | `ACCOUNT_*`                                                                                           | secret, variable          | `deploy` still exports these; nothing reads them                                                                  |

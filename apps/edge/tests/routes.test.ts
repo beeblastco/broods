@@ -22,6 +22,7 @@ const CASES: [string, string, Upstream | null][] = [
   ["POST", "/v1/agents/agent_1/async", "core"],
   ["POST", "/v1/sandboxes/sbx_1/terminate", "core"],
   ["POST", "/v1/internal/observability-scope", "core"],
+  ["POST", "/v1/internal/agent-socket-scope", "core"],
   // Channel webhooks, including a retired agent-scoped URL core answers itself.
   ["POST", "/v1/webhooks/acct_1/slack", "core"],
   ["POST", "/v1/webhooks/acct_1/agent_1/slack", "core"],

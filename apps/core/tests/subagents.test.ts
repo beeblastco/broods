@@ -698,7 +698,7 @@ describe("SubagentCoordinator", () => {
     expect(Date.now() - startedAt).toBeLessThan(1_000);
   });
 
-  it("keeps queued results when writing them to the parent fails", async () => {
+  it("keeps queued results when a step's write to the parent fails", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
       async (_messages: UserModelMessage[]): Promise<never[]> => [],
@@ -718,16 +718,15 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.completions.push(completion("subagent_1", "finished"));
 
-    expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
-      "convex down",
-    );
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    // A step boundary's write: the next step retries what it did not save.
+    expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
+    expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
     expect(messageText(persistModelMessages.mock.calls[1]?.[0]?.[0])).toContain(
       "finished",
     );
   });
 
-  it("puts back only the results a failed drain did not save", async () => {
+  it("puts back only the results a failed step write did not save", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
       async (
@@ -757,11 +756,10 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_1", "first"));
     internals.completions.push(completion("subagent_2", "second"));
 
-    expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
-      "convex down",
-    );
+    // A step boundary's write: the next step retries what it did not save.
+    expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
     expect(persistModelMessages.mock.calls[0]?.[0]).toHaveLength(2);
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
     const retried = persistModelMessages.mock.calls[1]?.[0] ?? [];
     expect(retried).toHaveLength(1);
     expect(messageText(retried[0])).toContain("second");
@@ -833,45 +831,168 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("keeps a finished result and the running notice when the detach write fails", async () => {
+  it("resumes the parent once with each finished result a failed expiry write did not save", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
-      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+      async (
+        _messages: UserModelMessage[],
+        _onSaved?: (saved: number) => void,
+      ): Promise<never[]> => [],
     );
-    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
+    // The expiry write saves its first append, then fails.
+    persistModelMessages.mockImplementationOnce(
+      async (_messages, onSaved): Promise<never[]> => {
+        onSaved?.(1);
+        throw new Error("convex down");
+      },
+    );
+    const resumeParent = mock(
+      async (
+        _parent: unknown,
+        _taskId: string,
+        _message: UserModelMessage,
+        _resultEventId: string,
+      ): Promise<SubagentResumeOutcome> => "queued",
+    );
+    const session = parentSession({
+      persistModelMessages: persistModelMessages,
+    });
+    const coordinator = new SubagentCoordinator(session, {}, Date.now() + 10, {
+      lifecycle: { emit: async (): Promise<void> => {} },
+      resumeParent: resumeParent,
+    });
+    const task = (taskId: string) => ({
+      taskId: taskId,
+      eventId: `event_${taskId}`,
+      agentId: "agent_research",
+      conversationKey: `subagent-${taskId}`,
+    });
+    coordinator["completions"].push(
+      { ...task("subagent_1"), status: "completed", response: "saved" },
+      { ...task("subagent_2"), status: "completed", response: "unsaved" },
+      { ...task("subagent_3"), status: "failed", error: "unsaved failure" },
+    );
+    const running = task("subagent_4");
+    coordinator["pending"].set(running.taskId, new Promise((): void => {}));
+    coordinator["pendingMetadata"].set(running.taskId, running);
+
+    try {
+      expect(await coordinator.waitForIdle()).toBe("timeout");
+      // Awaited, so the resumes the failure starts land before the checks.
+      expect(
+        await coordinator
+          .drainCompletionsAndDetachToParent()
+          .catch((error: unknown): string => String(error)),
+      ).toBe("Error: convex down");
+      // The still-running child reports back on its own when it finishes.
+      await coordinator["completeTask"]({
+        ...running,
+        status: "completed",
+        response: "late report",
+      });
+
+      // No pass drains after the expiry write: every result not saved reaches
+      // the parent as its own turn, once, fenced by its own result row.
+      expect(
+        resumeParent.mock.calls.map(
+          ([parent, taskId, message, resultEventId]) => [
+            parent === session,
+            taskId,
+            resultEventId,
+            messageText(message).split("Result:\n")[1],
+          ],
+        ),
+      ).toEqual([
+        [true, "subagent_2", "event_subagent_2", "unsaved"],
+        [true, "subagent_3", "event_subagent_3", "unsaved failure"],
+        [true, "subagent_4", "event_subagent_4", "late report"],
+      ]);
+      // Each unsaved result is left for the recovery sweep should its resume fail.
+      for (const eventId of ["event_subagent_2", "event_subagent_3"]) {
+        expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
+          eventId: eventId,
+          observed: false,
+        });
+      }
+      expect(mutate).not.toHaveBeenCalledWith("observeAsyncAgentResult", {
+        eventId: "event_subagent_1",
+        observed: false,
+      });
+      // Nothing is left queued to be written or resumed again.
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+      expect(persistModelMessages).toHaveBeenCalledTimes(1);
+    } finally {
+      mutate.mockRestore();
+    }
+  });
+
+  it("resumes the parent with each result the pass's last write did not save, and detaches the children still working", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const resumeParent = mock(
+      async (
+        _parent: unknown,
+        _taskId: string,
+      ): Promise<SubagentResumeOutcome> => "queued",
+    );
     const coordinator = new SubagentCoordinator(
-      {
-        accountId: "account_1",
-        agentId: "agent_parent",
-        eventId: "event_parent",
-        persistModelMessages: persistModelMessages,
-        renewConversationLease: async (): Promise<string> => "renewed",
-      } as never,
+      parentSession({
+        persistModelMessages: mock(async (): Promise<never> => {
+          throw new Error("convex down");
+        }),
+      }),
       {},
-      Date.now() + 10,
+      Date.now() + 60_000,
+      { resumeParent: resumeParent },
     );
-    const internals = coordinator as unknown as CoordinatorInternals;
-    internals.completions.push(completion("subagent_1", "finished report"));
-    internals.pending.set("subagent_2", new Promise(() => {}));
-    internals.pendingMetadata.set("subagent_2", {
+    coordinator["completions"].push({
+      taskId: "subagent_1",
+      eventId: "event_subagent_1",
+      agentId: "agent_research",
+      conversationKey: "subagent-subagent_1",
+      status: "completed",
+      response: "idle report",
+    });
+    // A child that asked a question and is still working.
+    const asking = {
       taskId: "subagent_2",
       eventId: "event_subagent_2",
       agentId: "agent_research",
       conversationKey: "subagent-subagent_2",
-    });
+    };
+    coordinator["pending"].set(asking.taskId, new Promise((): void => {}));
+    coordinator["pendingMetadata"].set(asking.taskId, asking);
+    const question = coordinator.askParent(asking.taskId, "Which?");
 
-    expect(await coordinator.waitForIdle()).toBe("timeout");
-    expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
-      "convex down",
-    );
-    // The retry writes both, once, in order; nothing is left to write again.
-    expect(await coordinator.drainCompletionsToParent()).toBe(2);
-    expect(await coordinator.drainCompletionsToParent()).toBe(0);
-    expect(persistModelMessages).toHaveBeenCalledTimes(2);
-    const retried = persistModelMessages.mock.calls[1]?.[0] ?? [];
-    expect(retried).toHaveLength(2);
-    expect(messageText(retried[0])).toContain("finished report");
-    expect(messageText(retried[1])).toContain("status: running");
+    try {
+      expect(
+        await coordinator
+          .drainCompletionsToParent()
+          .catch((error: unknown): string => String(error)),
+      ).toBe("Error: convex down");
+      // No pass follows to answer the question it did not save.
+      expect(await question).toBeNull();
+      // The working child is detached, so its result resumes the parent too.
+      await coordinator["completeTask"]({
+        ...asking,
+        status: "completed",
+        response: "after the failure",
+      });
+      expect(resumeParent.mock.calls.map(([, taskId]) => taskId)).toEqual([
+        "subagent_1",
+        "subagent_2",
+      ]);
+      for (const eventId of ["event_subagent_1", "event_subagent_2"]) {
+        expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
+          eventId: eventId,
+          observed: false,
+        });
+      }
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+    } finally {
+      mutate.mockRestore();
+    }
   });
 
   it("sends no running notice for a child whose result the model already read", async () => {
@@ -908,44 +1029,42 @@ describe("SubagentCoordinator", () => {
     expect(coordinator.runningCount).toBe(1);
   });
 
-  it("drops a put-back running notice once its child has finished", async () => {
+  it("writes no running notice for a child that finishes while the detach records it", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
       async (_messages: UserModelMessage[]): Promise<never[]> => [],
     );
-    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
     let finish = (): void => {};
     const coordinator = new SubagentCoordinator(
-      {
-        accountId: "account_1",
-        agentId: "agent_parent",
-        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
-        persistModelMessages: persistModelMessages,
-      } as never,
+      parentSession({ persistModelMessages: persistModelMessages }),
       { subagent: { enabled: true } },
       Date.now() + 1_000,
     );
-    const internals = coordinator as unknown as CoordinatorInternals;
-    internals.runTask = mock(
+    coordinator["runTask"] = mock(
       (): Promise<void> =>
         new Promise<void>((resolve): void => {
           finish = resolve;
         }),
     );
-    const originalMutation = runtime.mutate.bind(runtime);
-    runtime.mutate = mock(async () => true) as never;
+    // The child finishes, and leaves the coordinator, while the detach awaits
+    // its observed write.
+    const mutate = spyOn(runtime, "mutate").mockImplementation(
+      async (name): Promise<true> => {
+        if (name === "observeAsyncAgentResult") {
+          finish();
+          while (coordinator.runningCount > 0) await Bun.sleep(1);
+        }
+
+        return true;
+      },
+    );
     try {
       await coordinator.dispatch([{ prompt: "research" }], []);
-      expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
-        "convex down",
-      );
-      finish();
-      while (coordinator.runningCount > 0) await Bun.sleep(1);
 
-      expect(await coordinator.drainCompletionsToParent()).toBe(0);
-      expect(persistModelMessages).toHaveBeenCalledTimes(1);
+      expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(0);
+      expect(persistModelMessages).not.toHaveBeenCalled();
     } finally {
-      runtime.mutate = originalMutation;
+      mutate.mockRestore();
     }
   });
 

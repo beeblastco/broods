@@ -5,16 +5,19 @@ import { runMachineDaemon } from "../../packages/broods/src/cli/machine.ts";
 import type { BroodsClient } from "../../packages/broods/src/client.ts";
 import type { AsyncStatus } from "../../packages/broods/src/types.ts";
 
-const DEEPSEEK_SMOKE_MODEL = "deepseek-flash";
+const OPENAI_SMOKE_MODEL = "gpt-6-luna";
 const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const RUN_POLL_INTERVAL_MS = 200;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 
-export const MODEL_KEY_HINT = "set DEEPSEEK_API_KEY for the full run";
+/** The prompt for a case that only needs the run to answer. */
+export const OK_AGENT = { system: "Reply with the single word OK." } as const;
+
+export const MODEL_KEY_HINT = "set OPENAI_API_KEY for the full run";
 
 export interface SmokeModel {
-  model: { modelId: string; provider: "deepseek" };
-  provider: { deepseek: { apiKey: string } };
+  model: { modelId: string; provider: "openai"; reasoning: "high" };
+  provider: { openai: { apiKey: string } };
 }
 
 export interface MachineConnection {
@@ -213,15 +216,19 @@ export async function runToTerminal(
   });
 }
 
-/** DeepSeek Flash on DEEPSEEK_API_KEY, or on a dummy key that fails at the provider call. */
+/** GPT-6 Luna at high reasoning on OPENAI_API_KEY, or on a dummy key that fails at the provider call. */
 export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
 
   return {
     hasModelKey: Boolean(apiKey),
     model: {
-      model: { provider: "deepseek", modelId: DEEPSEEK_SMOKE_MODEL },
-      provider: { deepseek: { apiKey: apiKey || "none" } },
+      model: {
+        provider: "openai",
+        modelId: OPENAI_SMOKE_MODEL,
+        reasoning: "high",
+      },
+      provider: { openai: { apiKey: apiKey || "none" } },
     },
   };
 }

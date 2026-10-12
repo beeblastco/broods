@@ -94,6 +94,72 @@ test("a fast move into the opening rail keeps it open", async ({ page }) => {
     .toMatchObject({ width: SIDEBAR_WIDTH });
 });
 
+// When the node under a resting pointer goes away (a panel swapping its
+// loading state for data), Chrome's next move sends the rail a pointerover
+// with no pointerout before it. React builds pointerenter from that pointerout,
+// so the rail once stayed shut. One open and close first, so React owns the
+// rail and the pointer rests on the page.
+test("the rail opens after the page under the pointer re-rendered", async ({
+  page,
+}) => {
+  await page.goto("/ui-gallery?tab=monitoring");
+  const container = page.locator('[data-slot="sidebar-container"]');
+  await expect(container).toBeInViewport();
+  await page.mouse.move(20, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+  await page.mouse.move(800, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
+  // A move once the rail has closed, so the node under the pointer is current.
+  await page.mouse.move(800, 410);
+  await page.evaluate(() => document.elementFromPoint(800, 410)?.remove());
+
+  await page.mouse.move(20, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+});
+
+// The sidebar collapsed from the keyboard under a resting pointer, then a
+// nudge onto the next item, still inside the rail, once opened it again.
+test("collapsing under the pointer keeps the rail shut", async ({ page }) => {
+  await page.goto("/ui-gallery?tab=monitoring");
+  const container = page.locator('[data-slot="sidebar-container"]');
+  await expect(container).toBeInViewport();
+  const trigger = page.locator('[data-slot="sidebar-trigger"]');
+  await trigger.click();
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+  const items = container.locator('[data-slot="sidebar-menu-button"]');
+  const first = await items.nth(0).boundingBox();
+  const second = await items.nth(1).boundingBox();
+  if (!first || !second) throw new Error("The rail items have no box.");
+  await page.mouse.move(20, first.y + first.height / 2);
+
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
+  await page.mouse.move(24, second.y + second.height / 2, { steps: 4 });
+  // A reopen would have rendered and started growing by the second frame.
+  await container.evaluate(async (el) => {
+    for (let frame = 0; frame < 2; frame++) {
+      await new Promise(requestAnimationFrame);
+    }
+    await Promise.all(el.getAnimations().map((a) => a.finished));
+  });
+  await expect(page.locator('[data-slot="sidebar"]')).toHaveAttribute(
+    "data-collapsible",
+    "icon",
+  );
+  expect((await container.boundingBox())?.width).toBe(RAIL_WIDTH);
+});
+
 // A pointer that left the window straight from the open rail sent no further
 // move, so nothing closed it.
 test("leaving the window from the open rail closes it", async ({ page }) => {
@@ -111,7 +177,7 @@ test("leaving the window from the open rail closes it", async ({ page }) => {
     .toMatchObject({ width: RAIL_WIDTH });
 });
 
-// A tap fires pointerenter but no pointer ever moves away, so a peek opened by
+// A tap fires pointerover but no pointer ever moves away, so a peek opened by
 // touch stayed over the page.
 test.describe("on a touch screen", () => {
   test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } });

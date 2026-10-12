@@ -662,11 +662,13 @@ async function attachCoreStream(
 
       return;
     }
-    // The run's own agent, not the client's claim, names the NATS subject. A
-    // core that omits it fails closed.
+    // The run's own agent, conversation and event, not the client's claim, name
+    // what is replayed, so the attach reads only the run core let this
+    // credential read. A core that omits them fails closed.
     if (
       status.agentId !== message.agentId ||
-      status.conversationKey !== message.conversationKey
+      status.conversationKey !== message.conversationKey ||
+      status.eventId !== message.eventId
     ) {
       sendAgentTest(socket, {
         type: "replay_unavailable",

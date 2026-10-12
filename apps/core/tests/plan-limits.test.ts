@@ -47,6 +47,7 @@ beforeEach(() => {
     plan: "free",
     month: "2026-09",
     usedPercent: 20,
+    shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
     runsPerMinute: 600,
     warned: false,
   };
@@ -113,6 +114,41 @@ describe("admitRun", () => {
 
     expect(refusal?.kind).toBe("budget");
     expect(refusal?.message).toContain("monthly resource caps for 2026-09");
+  });
+
+  it("names the storage limit when storage is what is full", async () => {
+    budget.usedPercent = 100;
+    budget.shares = { ...budget.shares, storageGb: 100 };
+
+    const { refusal } = await admitRun(ACCOUNT_ID);
+
+    expect(refusal?.kind).toBe("budget");
+    expect(refusal?.message).toBe(
+      "This account has reached its storage limit of 10 GB of workspaces and files on the free plan. Delete files or upgrade to keep running agents; storage is measured once a day.",
+    );
+  });
+
+  it("names both when storage and a monthly cap are full", async () => {
+    budget.usedPercent = 130;
+    budget.shares = { ...budget.shares, sandboxHours: 130, storageGb: 110 };
+
+    const { refusal } = await admitRun(ACCOUNT_ID);
+
+    expect(refusal?.message).toBe(
+      "This account has reached its storage limit of 10 GB of workspaces and files and one of its monthly resource caps for 2026-09 on the free plan. Delete files, then upgrade or wait for next month, to keep running agents; storage is measured once a day.",
+    );
+  });
+
+  it("does not tell a pro account to upgrade when storage and a monthly cap are full", async () => {
+    budget.plan = "pro";
+    budget.usedPercent = 120;
+    budget.shares = { ...budget.shares, egressGb: 120, storageGb: 100 };
+
+    const { refusal } = await admitRun(ACCOUNT_ID);
+
+    expect(refusal?.message).toBe(
+      "This account has reached its storage limit of 50 GB of workspaces and files and one of its monthly resource caps for 2026-09 on the pro plan. Delete files, then wait for next month, to keep running agents; storage is measured once a day.",
+    );
   });
 
   it("refuses a burst past the plan's runs per minute", async () => {
@@ -187,6 +223,17 @@ describe("admitRun", () => {
     expect(first.warning).toContain("80% of one of its monthly resource caps");
     expect(second.warning).toBeNull();
     expect(warningClaims).toBe(1);
+  });
+
+  it("names the storage limit when storage passes 80%", async () => {
+    budget.usedPercent = 80;
+    budget.shares = { ...budget.shares, storageGb: 80 };
+
+    const { warning } = await admitRun(ACCOUNT_ID, { claimWarning: true });
+
+    expect(warning).toContain(
+      "80% of its storage limit of 10 GB of workspaces and files on the free plan",
+    );
   });
 
   it("admits the run when claiming the notice fails", async () => {

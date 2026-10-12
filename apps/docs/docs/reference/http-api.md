@@ -12,14 +12,15 @@ The base URL is `https://gateway.broods.app`, or your own gateway when self-host
 
 Every request sends `Authorization: Bearer <credential>`.
 
-| Endpoint                                           | Accepts                                               |
-| -------------------------------------------------- | ----------------------------------------------------- |
-| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Runtime key, account key, or a stage session ticket   |
-| `GET /v1/runs/{runId}`                             | Also a run token, from inside a sandbox               |
-| `/v1/*` config routes                              | Account key, or a role session within its policy      |
-| Logs and traces socket                             | Stage session ticket only. The runtime key is refused |
+| Endpoint                                | Accepts                                               |
+| --------------------------------------- | ----------------------------------------------------- |
+| `POST /v1/runs`, `GET /v1/runs/{runId}` | Runtime key, account key, or a stage session ticket   |
+| `GET /v1/runs/{runId}`                  | Also a run token, from inside a sandbox               |
+| Agent WebSocket                         | Runtime key or a stage session ticket                 |
+| `/v1/*` config routes                   | Account key, or a role session within its policy      |
+| Logs and traces socket                  | Stage session ticket only. The runtime key is refused |
 
-The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`brt_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md). Every credential starts with `b` (`bsk_`, `bask_`, ...).
+The runtime key only reaches agents with `publicAccess: true` in its own stage, over HTTP and on the agent WebSocket alike. A run token (`brt_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md). Every credential starts with `b` (`bsk_`, `bask_`, ...).
 
 ### Calling the API from a sandbox
 
@@ -212,6 +213,8 @@ Sec-WebSocket-Protocol: broods.v1, broods.token.<runtime key>
 
 The server answers `broods.v1`. A proxy in front of the gateway must not log request headers. A `?token=` query parameter is ignored.
 
+The key opens a socket for its own stage only; another stage's path answers `403` before the upgrade. Each frame on the socket is checked like the matching HTTP call: an `execute` on an agent without `publicAccess: true` gets an `error` frame with `status: 403`, and an `attach` to its run gets `replay_unavailable`.
+
 ### Client frames
 
 | Frame     | Purpose                                                                                                                          |
@@ -253,7 +256,7 @@ A socket holds up to 8 `control` inputs that have not yet reached `applied` or a
 
 ### Resume after a disconnect
 
-Output is kept for about 3 minutes, up to 2,000 frames per conversation. Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`. Later frames are live. When the cursor is too old or belongs to another event, or the attach names an `agentId` or `conversationKey` that is not the run's own, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
+Output is kept for about 3 minutes, up to 2,000 frames per conversation. Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`. Later frames are live. When the cursor is too old or belongs to another event, or the attach names an `agentId`, `conversationKey` or `eventId` that is not the run's own, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
 
 ## Channel webhooks
 

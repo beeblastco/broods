@@ -443,7 +443,10 @@ describe("budget", () => {
       accountId: accountId,
     });
 
-    expect(budget).toMatchObject({ enforced: false, usedPercent: 0 });
+    expect(budget).toMatchObject({
+      enforced: false,
+      usedPercent: 0,
+    });
   });
 
   test("measures the closest cap and warns once at 80%", async () => {
@@ -468,7 +471,16 @@ describe("budget", () => {
       }),
     ];
 
-    expect(budget).toMatchObject({ enforced: true, plan: "free" });
+    expect(budget).toMatchObject({
+      enforced: true,
+      plan: "free",
+      shares: {
+        sandboxHours: 0,
+        hostedMcpHours: 0,
+        storageGb: 10,
+        egressGb: 80,
+      },
+    });
     expect(budget?.usedPercent).toBe(80);
     expect(claims).toEqual([true, false]);
   });
@@ -485,12 +497,18 @@ describe("budget", () => {
           usage: { storageGbMonths: 10 / 30 },
         });
 
-        return await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+        return {
+          budget: await t.query(internal.account.budget.get, {
+            accountId: accountId,
+          }),
+          usage: await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW)),
+        };
       }),
     );
 
-    expect(free).toMatchObject({ usedPercent: 100, level: "exhausted" });
-    expect(pro).toMatchObject({ usedPercent: 10, level: "ok" });
+    expect(free.usage).toMatchObject({ usedPercent: 100, level: "exhausted" });
+    expect(free.budget?.shares.storageGb).toBe(100);
+    expect(pro.usage).toMatchObject({ usedPercent: 20, level: "ok" });
   });
 
   test("reaches the dashboard as amounts and percentages with no euro figures", async () => {
@@ -555,6 +573,30 @@ describe("budget", () => {
       { day: "2026-09-21", storageGb: 3 },
       { day: "2026-09-22", storageGb: 0 },
     ]);
+  });
+
+  test("keeps last month's storage until this month's first snapshot", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const october = Date.UTC(2026, 9, 1, 0, 30);
+    vi.useFakeTimers({ now: october });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { storageGbMonths: 10 / 30 },
+      at: Date.UTC(2026, 8, 30, 12),
+    });
+
+    const budget = await t.query(internal.account.budget.get, {
+      accountId: accountId,
+    });
+    const usage = await t.run(async (ctx) =>
+      budgetUsage(ctx, accountId, october),
+    );
+
+    expect(budget).toMatchObject({ month: "2026-10", usedPercent: 100 });
+    expect(budget?.shares.storageGb).toBe(100);
+    expect(usage.totals.storageGb).toBe(10);
   });
 
   test("reads an empty account's first snapshot as 0 GB, not unknown", async () => {
