@@ -33,7 +33,12 @@ const budgetStatusValidator = v.object({
   plan: planValidator,
   month: v.string(),
   usedPercent: v.number(),
-  storageFull: v.boolean(),
+  limitedBy: v.union(
+    v.literal("sandboxHours"),
+    v.literal("hostedMcpHours"),
+    v.literal("storageGb"),
+    v.literal("egressGb"),
+  ),
   runsPerMinute: v.number(),
   warned: v.boolean(),
 });

@@ -70,8 +70,8 @@ export interface BudgetStatus {
   month: string;
   /** The closest cap's share used, in percent. Runs stop at 100. */
   usedPercent: number;
-  /** The latest storage snapshot is at or over the plan's storage cap. */
-  storageFull: boolean;
+  /** The resource closest to its cap, the one that stops runs at 100. */
+  limitedBy: keyof ResourceCaps;
   runsPerMinute: number;
   /** The 80% warning already went out this month. */
   warned: boolean;
@@ -196,7 +196,7 @@ export async function budgetStatus(
     plan: plan,
     month: month,
     usedPercent: closestShare(shares),
-    storageFull: shares.storageGb >= 100,
+    limitedBy: closestCap(shares),
     runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
     warned: meter?.warnedAt !== undefined,
   };
@@ -456,6 +456,17 @@ function capShares(
 // The share of the resource closest to its cap, which is what stops runs.
 function closestShare(shares: Record<keyof ResourceCaps, number>): number {
   return Math.max(...Object.values(shares));
+}
+
+// The resource closest to its cap; on a tie, the first in cap order.
+function closestCap(
+  shares: Record<keyof ResourceCaps, number>,
+): keyof ResourceCaps {
+  const caps = Object.keys(shares) as Array<keyof ResourceCaps>;
+
+  return caps.reduce((closest, cap) =>
+    shares[cap] > shares[closest] ? cap : closest,
+  );
 }
 
 // Each resource's share of all usage cost, for an install with no caps.

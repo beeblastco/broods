@@ -446,7 +446,7 @@ describe("budget", () => {
     expect(budget).toMatchObject({
       enforced: false,
       usedPercent: 0,
-      storageFull: false,
+      limitedBy: "sandboxHours",
     });
   });
 
@@ -472,7 +472,11 @@ describe("budget", () => {
       }),
     ];
 
-    expect(budget).toMatchObject({ enforced: true, plan: "free" });
+    expect(budget).toMatchObject({
+      enforced: true,
+      plan: "free",
+      limitedBy: "egressGb",
+    });
     expect(budget?.usedPercent).toBe(80);
     expect(claims).toEqual([true, false]);
   });
@@ -499,9 +503,8 @@ describe("budget", () => {
     );
 
     expect(free.usage).toMatchObject({ usedPercent: 100, level: "exhausted" });
-    expect(free.budget).toMatchObject({ storageFull: true });
+    expect(free.budget).toMatchObject({ limitedBy: "storageGb" });
     expect(pro.usage).toMatchObject({ usedPercent: 20, level: "ok" });
-    expect(pro.budget).toMatchObject({ storageFull: false });
   });
 
   test("reaches the dashboard as amounts and percentages with no euro figures", async () => {

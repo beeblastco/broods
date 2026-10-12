@@ -128,8 +128,7 @@ export async function assertSandboxBudget(accountId: string): Promise<void> {
 /**
  * 402 `budget_exhausted`, or 429 `plan_limit_exceeded` with `Retry-After`.
  * 402, not 429 or 403: waiting a minute does not help and the key is fine;
- * the account has to upgrade, wait for next month, or delete files when its
- * storage is full.
+ * the account has to upgrade or wait for next month.
  */
 export function planRefusalResponse(refusal: PlanRefusal): Response {
   if (refusal.kind === "budget") {
@@ -194,10 +193,15 @@ async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
 function budgetRefusal(status: BudgetStatus): PlanRefusal {
   return {
     kind: "budget",
-    message: status.storageFull
-      ? `This account has reached its storage limit of ${PLAN_LIMITS[status.plan].caps.storageGb} GB of workspaces and files on the ${status.plan} plan. Delete files or upgrade to keep running agents; storage is measured once a day.`
-      : `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
+    message:
+      status.limitedBy === "storageGb"
+        ? `This account has reached its storage limit of ${storageLimit(status)} on the ${status.plan} plan. Delete files or upgrade to keep running agents; storage is measured once a day.`
+        : `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
   };
+}
+
+function storageLimit(status: BudgetStatus): string {
+  return `${PLAN_LIMITS[status.plan].caps.storageGb} GB of workspaces and files`;
 }
 
 async function claimWarning(
@@ -221,7 +225,11 @@ async function claimWarning(
     });
   if (!claimed) return null;
 
-  return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
+  const percent = Math.floor(BUDGET_WARNING_RATIO * 100);
+
+  return status.limitedBy === "storageGb"
+    ? `This account has used ${percent}% of its storage limit of ${storageLimit(status)} on the ${status.plan} plan. Runs stop when it is full.`
+    : `This account has used ${percent}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }
 
 /** @param open start the fresh window when there is none; a read never does */

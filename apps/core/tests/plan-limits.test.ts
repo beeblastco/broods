@@ -47,7 +47,7 @@ beforeEach(() => {
     plan: "free",
     month: "2026-09",
     usedPercent: 20,
-    storageFull: false,
+    limitedBy: "sandboxHours",
     runsPerMinute: 600,
     warned: false,
   };
@@ -118,7 +118,7 @@ describe("admitRun", () => {
 
   it("names the storage limit when storage is what is full", async () => {
     budget.usedPercent = 100;
-    budget.storageFull = true;
+    budget.limitedBy = "storageGb";
 
     const { refusal } = await admitRun(ACCOUNT_ID);
 
@@ -201,6 +201,17 @@ describe("admitRun", () => {
     expect(first.warning).toContain("80% of one of its monthly resource caps");
     expect(second.warning).toBeNull();
     expect(warningClaims).toBe(1);
+  });
+
+  it("names the storage limit when storage passes 80%", async () => {
+    budget.usedPercent = 80;
+    budget.limitedBy = "storageGb";
+
+    const { warning } = await admitRun(ACCOUNT_ID, { claimWarning: true });
+
+    expect(warning).toContain(
+      "80% of its storage limit of 10 GB of workspaces and files on the free plan",
+    );
   });
 
   it("admits the run when claiming the notice fails", async () => {

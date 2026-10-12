@@ -486,7 +486,7 @@ describe("streamed runs", (): void => {
       plan: "free",
       month: "2026-10",
       usedPercent: 0,
-      storageFull: false,
+      limitedBy: "sandboxHours",
       runsPerMinute: 1,
       warned: false,
     });
@@ -597,7 +597,7 @@ describe("streamed runs", (): void => {
       plan: "free",
       month: "2026-10",
       usedPercent: 100,
-      storageFull: false,
+      limitedBy: "sandboxHours",
       runsPerMinute: 60,
       warned: false,
     });
@@ -620,7 +620,7 @@ describe("streamed runs", (): void => {
       plan: "free",
       month: "2026-10",
       usedPercent: 0,
-      storageFull: false,
+      limitedBy: "sandboxHours",
       runsPerMinute: 1,
       warned: false,
     });
@@ -678,7 +678,7 @@ describe("streamed runs", (): void => {
         plan: "free",
         month: "2026-10",
         usedPercent: 0,
-        storageFull: false,
+        limitedBy: "sandboxHours",
         runsPerMinute: 1,
         warned: false,
       });
@@ -726,7 +726,7 @@ describe("streamed runs", (): void => {
         plan: "free",
         month: "2026-10",
         usedPercent: 100,
-        storageFull: false,
+        limitedBy: "sandboxHours",
         runsPerMinute: 60,
         warned: false,
       });

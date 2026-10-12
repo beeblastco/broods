@@ -801,7 +801,7 @@ function createFakeStorage() {
           plan: "free",
           month: "2026-09",
           usedPercent: budgetUsedPercent,
-          storageFull: false,
+          limitedBy: "sandboxHours",
           runsPerMinute: 600,
           warned: false,
         };

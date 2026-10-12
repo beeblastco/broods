@@ -1910,10 +1910,11 @@ export declare const internal: {
         { accountId: string },
         {
           enforced: boolean;
+          limitedBy:
+            "sandboxHours" | "hostedMcpHours" | "storageGb" | "egressGb";
           month: string;
           plan: "free" | "pro";
           runsPerMinute: number;
-          storageFull: boolean;
           usedPercent: number;
           warned: boolean;
         } | null
