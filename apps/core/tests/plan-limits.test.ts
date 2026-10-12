@@ -132,6 +132,22 @@ describe("admitRun", () => {
     expect((await admitRun(ACCOUNT_ID)).refusal?.kind).toBe("rate");
   });
 
+  it("reads a refusal without counting the run or claiming the notice", async () => {
+    budget.usedPercent = 80;
+    await admitMany(budget.runsPerMinute - 1);
+
+    for (let read = 0; read < 3; read += 1) {
+      expect(
+        await admitRun(ACCOUNT_ID, { claimWarning: true, count: false }),
+      ).toMatchObject({ refusal: null, warning: null });
+    }
+    expect(warningClaims).toBe(0);
+    expect((await admitRun(ACCOUNT_ID)).refusal).toBeNull();
+    expect((await admitRun(ACCOUNT_ID, { count: false })).refusal?.kind).toBe(
+      "rate",
+    );
+  });
+
   it("does not refund into a window the run was not counted in", async () => {
     setSystemTime(new Date("2026-09-15T00:00:00Z"));
     const stale = await admitRun(ACCOUNT_ID);

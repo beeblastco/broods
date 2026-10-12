@@ -296,6 +296,7 @@ function parseEvent<Event extends MetaMessagingEvent>(
 
   return {
     kind: "message",
+    redelivers: true,
     message: {
       eventId: `${options.prefix}${senderId}:${parsed.id}`,
       conversationKey: `${options.prefix}${found.recipientId}:${senderId}`,

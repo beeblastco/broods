@@ -887,6 +887,7 @@ function parseForwardedGatewayEvent(
 
   return {
     kind: runAgent ? "message" : "context",
+    redelivers: true,
     ack: gatewayAck().response,
     message: {
       eventId: `${DISCORD_INTEGRATION_PREFIX}${data.id}`,

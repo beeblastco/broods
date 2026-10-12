@@ -37,6 +37,8 @@ export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const DEFAULT_INGRESS_MAX_COUNT = 100;
 export const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_CONVERSATION_LEASE_TTL_MS = 15 * 60 * 1000;
+// A queue at capacity drains on the order of seconds, not minutes.
+export const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
 
 // The leases this process holds, keyed by conversation: Convex allows one
 // owner per conversation at a time.

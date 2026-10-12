@@ -50,6 +50,7 @@ describe("whatsapp channel adapter", () => {
 
     expect(parsed).toEqual({
       kind: "message",
+      redelivers: true,
       message: {
         eventId: "whatsapp:wamid.1",
         conversationKey: "whatsapp:phone-1:15551234567",

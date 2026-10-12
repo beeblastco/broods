@@ -213,6 +213,7 @@ export function createTelegramChannel(
 
     return {
       kind: "message",
+      redelivers: true,
       message: {
         eventId: `${TELEGRAM_INTEGRATION_PREFIX}${updateId}`,
         conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
@@ -299,6 +300,7 @@ export function createTelegramChannel(
 
       return {
         kind: runAgent ? "message" : "context",
+        redelivers: true,
         message: {
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,

@@ -58,6 +58,7 @@ describe("messenger channel adapter", () => {
 
     expect(await messenger().parse(delivery(body, sign(body)))).toEqual({
       kind: "message",
+      redelivers: true,
       message: {
         eventId: "messenger:psid-1:mid.1",
         conversationKey: "messenger:page-1:psid-1",
@@ -223,6 +224,7 @@ describe("instagram channel adapter", () => {
 
     expect(await instagram().parse(delivery(body, sign(body)))).toEqual({
       kind: "message",
+      redelivers: true,
       message: {
         eventId: "instagram:igsid-1:ig-mid.1",
         conversationKey: "instagram:ig-1:igsid-1",
