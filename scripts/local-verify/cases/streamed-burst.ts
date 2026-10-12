@@ -1,5 +1,10 @@
 import type { CreateAgentResult } from "../../../packages/broods/src/account.ts";
-import { MODEL_KEY_HINT, assertStep, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  MODEL_KEY_HINT,
+  assertStep,
+  type VerifyContext,
+} from "../harness.ts";
 
 // More than core's default MAX_INPROCESS_WORKERS (8), so some streams queue.
 const STREAMS = 12;
@@ -23,7 +28,7 @@ export async function streamedBurst(context: VerifyContext): Promise<void> {
         name: key,
         config: {
           ...context.model,
-          instructions: "Reply with the single word OK.",
+          agent: OK_AGENT,
         },
       }),
   );
