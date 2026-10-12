@@ -70,8 +70,8 @@ export interface BudgetStatus {
   month: string;
   /** The closest cap's share used, in percent. Runs stop at 100. */
   usedPercent: number;
-  /** The resource closest to its cap, the one that stops runs at 100. */
-  limitedBy: keyof ResourceCaps;
+  /** Each capped resource's share of its cap, in percent. */
+  shares: Record<keyof ResourceCaps, number>;
   runsPerMinute: number;
   /** The 80% warning already went out this month. */
   warned: boolean;
@@ -188,7 +188,10 @@ export async function budgetStatus(
   const plan = await accountPlan(ctx, accountId);
   const month = meterMonth(now);
   const meter = await readMeter(ctx, accountId, month);
-  const amounts = toAmounts(pickUsage(meter), meter?.storageGb ?? null);
+  const amounts = toAmounts(
+    pickUsage(meter),
+    await latestStorageGb(ctx, accountId, month, meter),
+  );
   const shares = capShares(amounts, PLAN_LIMITS[plan].caps);
 
   return {
@@ -196,7 +199,7 @@ export async function budgetStatus(
     plan: plan,
     month: month,
     usedPercent: closestShare(shares),
-    limitedBy: closestCap(shares),
+    shares: shares,
     runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
     warned: meter?.warnedAt !== undefined,
   };
@@ -231,7 +234,12 @@ export async function budgetUsage(
   // Every month in the list is one of `meters` or has no row yet.
   const meter = meters.find((row) => row.month === month) ?? null;
   const usage = pickUsage(meter);
-  const totals = toAmounts(usage, meter?.storageGb ?? null);
+  const totals = toAmounts(
+    usage,
+    month === currentMonth
+      ? await latestStorageGb(ctx, accountId, month, meter)
+      : (meter?.storageGb ?? null),
+  );
   const enforced = isManagedService();
   const caps = PLAN_LIMITS[plan].caps;
   const shares = enforced ? capShares(totals, caps) : costShares(usage);
@@ -458,17 +466,6 @@ function closestShare(shares: Record<keyof ResourceCaps, number>): number {
   return Math.max(...Object.values(shares));
 }
 
-// The resource closest to its cap; on a tie, the first in cap order.
-function closestCap(
-  shares: Record<keyof ResourceCaps, number>,
-): keyof ResourceCaps {
-  const caps = Object.keys(shares) as Array<keyof ResourceCaps>;
-
-  return caps.reduce((closest, cap) =>
-    shares[cap] > shares[closest] ? cap : closest,
-  );
-}
-
 // Each resource's share of all usage cost, for an install with no caps.
 function costShares(
   usage: UsageQuantities,
@@ -534,6 +531,28 @@ function withUsage(
   }
 
   return totals;
+}
+
+/**
+ * Storage is a size: until this month's first daily snapshot, the latest
+ * earlier one still holds, so a new month does not free a full storage cap.
+ */
+async function latestStorageGb(
+  ctx: QueryCtx,
+  accountId: Id<"accounts">,
+  month: string,
+  meter: Doc<"usageMeters"> | null,
+): Promise<number | null> {
+  if (meter?.storageGb !== undefined) return meter.storageGb;
+  const earlier = await ctx.db
+    .query("usageMeters")
+    .withIndex("by_accountId_and_month", (q) =>
+      q.eq("accountId", accountId).lt("month", month),
+    )
+    .order("desc")
+    .first();
+
+  return earlier?.storageGb ?? null;
 }
 
 async function readMeter(

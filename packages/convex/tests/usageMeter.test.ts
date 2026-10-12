@@ -446,7 +446,6 @@ describe("budget", () => {
     expect(budget).toMatchObject({
       enforced: false,
       usedPercent: 0,
-      limitedBy: "sandboxHours",
     });
   });
 
@@ -475,7 +474,12 @@ describe("budget", () => {
     expect(budget).toMatchObject({
       enforced: true,
       plan: "free",
-      limitedBy: "egressGb",
+      shares: {
+        sandboxHours: 0,
+        hostedMcpHours: 0,
+        storageGb: 10,
+        egressGb: 80,
+      },
     });
     expect(budget?.usedPercent).toBe(80);
     expect(claims).toEqual([true, false]);
@@ -503,7 +507,7 @@ describe("budget", () => {
     );
 
     expect(free.usage).toMatchObject({ usedPercent: 100, level: "exhausted" });
-    expect(free.budget).toMatchObject({ limitedBy: "storageGb" });
+    expect(free.budget?.shares.storageGb).toBe(100);
     expect(pro.usage).toMatchObject({ usedPercent: 20, level: "ok" });
   });
 
@@ -569,6 +573,30 @@ describe("budget", () => {
       { day: "2026-09-21", storageGb: 3 },
       { day: "2026-09-22", storageGb: 0 },
     ]);
+  });
+
+  test("keeps last month's storage until this month's first snapshot", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const october = Date.UTC(2026, 9, 1, 0, 30);
+    vi.useFakeTimers({ now: october });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { storageGbMonths: 10 / 30 },
+      at: Date.UTC(2026, 8, 30, 12),
+    });
+
+    const budget = await t.query(internal.account.budget.get, {
+      accountId: accountId,
+    });
+    const usage = await t.run(async (ctx) =>
+      budgetUsage(ctx, accountId, october),
+    );
+
+    expect(budget).toMatchObject({ month: "2026-10", usedPercent: 100 });
+    expect(budget?.shares.storageGb).toBe(100);
+    expect(usage.totals.storageGb).toBe(10);
   });
 
   test("reads an empty account's first snapshot as 0 GB, not unknown", async () => {

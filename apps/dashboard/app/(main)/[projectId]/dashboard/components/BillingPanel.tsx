@@ -14,6 +14,10 @@ import type { PlanTier } from "@/app/lib/pricing";
 import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
+import {
+  BUDGET_WARNING_RATIO,
+  capsReached,
+} from "@broods/convex/model/planLimits";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { ArrowRight, ArrowUpRight, CreditCard } from "lucide-react";
@@ -316,8 +320,12 @@ function pickNotice(
   if (!budget) return null;
   const reset = billingReset(budget.month);
   // Storage is a size: a new month does not free it, deleting files does.
-  if (budget.level !== "ok" && budget.shares.storageGb === budget.usedPercent) {
-    return storageNotice(budget, canUpgrade);
+  const storage = capsReached(
+    budget.shares,
+    budget.level === "exhausted" ? 100 : BUDGET_WARNING_RATIO * 100,
+  );
+  if (budget.level !== "ok" && storage.storage) {
+    return storageNotice(budget, canUpgrade, storage.monthly ? reset : null);
   }
   if (budget.level === "exhausted") {
     return {
@@ -347,15 +355,24 @@ function pickNotice(
   return null;
 }
 
-function storageNotice(budget: BudgetUsage, canUpgrade: boolean): Notice {
+/** @param monthlyReset when a monthly cap is used up too, when it resets */
+function storageNotice(
+  budget: BudgetUsage,
+  canUpgrade: boolean,
+  monthlyReset: string | null,
+): Notice {
   const fix = canUpgrade ? "delete files or upgrade" : "delete files";
+  const monthly =
+    monthlyReset === null
+      ? ""
+      : ` A monthly cap is used up too, until ${monthlyReset}.`;
 
   return {
     tone: budget.level === "exhausted" ? "destructive" : "warning",
     text:
       budget.level === "exhausted"
-        ? `Storage limit reached. Runs are stopped and each channel got a notice. To resume, ${fix}; storage is measured once a day.`
-        : `${formatPercent(budget.usedPercent ?? 0)} of your storage limit used. Runs stop at 100% until you ${fix}.`,
+        ? `Storage limit reached. Runs are stopped and each channel got a notice. To resume, ${fix}; storage is measured once a day.${monthly}`
+        : `${formatPercent(budget.shares.storageGb)} of your storage limit used. Runs stop at 100% until you ${fix}.`,
     ...(canUpgrade ? { action: "upgrade", actionLabel: "Upgrade" } : {}),
   };
 }

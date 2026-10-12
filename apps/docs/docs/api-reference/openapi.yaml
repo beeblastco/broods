@@ -225,7 +225,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "402":
-          description: The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Storage is measured once a day and does not reset with the month, so a full storage limit says so in the message and needs files deleted or an upgrade. Only the managed BeeBlast service enforces caps.
+          description: The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help. A monthly cap clears with an upgrade or at the next UTC month. Storage is a size measured once a day that a new month does not free, so the message names a full storage limit, and it clears once files are deleted (seen at the next daily measurement) or the plan is upgraded. Only the managed BeeBlast service enforces caps.
           content:
             application/json:
               schema:

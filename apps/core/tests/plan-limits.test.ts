@@ -47,7 +47,7 @@ beforeEach(() => {
     plan: "free",
     month: "2026-09",
     usedPercent: 20,
-    limitedBy: "sandboxHours",
+    shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
     runsPerMinute: 600,
     warned: false,
   };
@@ -118,15 +118,25 @@ describe("admitRun", () => {
 
   it("names the storage limit when storage is what is full", async () => {
     budget.usedPercent = 100;
-    budget.limitedBy = "storageGb";
+    budget.shares = { ...budget.shares, storageGb: 100 };
 
     const { refusal } = await admitRun(ACCOUNT_ID);
 
     expect(refusal?.kind).toBe("budget");
-    expect(refusal?.message).toContain(
-      "reached its storage limit of 10 GB of workspaces and files on the free plan",
+    expect(refusal?.message).toBe(
+      "This account has reached its storage limit of 10 GB of workspaces and files on the free plan. Delete files or upgrade to keep running agents; storage is measured once a day.",
     );
-    expect(refusal?.message).not.toContain("next month");
+  });
+
+  it("names both when storage and a monthly cap are full", async () => {
+    budget.usedPercent = 130;
+    budget.shares = { ...budget.shares, sandboxHours: 130, storageGb: 110 };
+
+    const { refusal } = await admitRun(ACCOUNT_ID);
+
+    expect(refusal?.message).toBe(
+      "This account has reached its storage limit of 10 GB of workspaces and files and one of its monthly resource caps for 2026-09 on the free plan. Delete files, then upgrade or wait for next month, to keep running agents; storage is measured once a day.",
+    );
   });
 
   it("refuses a burst past the plan's runs per minute", async () => {
@@ -205,7 +215,7 @@ describe("admitRun", () => {
 
   it("names the storage limit when storage passes 80%", async () => {
     budget.usedPercent = 80;
-    budget.limitedBy = "storageGb";
+    budget.shares = { ...budget.shares, storageGb: 80 };
 
     const { warning } = await admitRun(ACCOUNT_ID, { claimWarning: true });
 

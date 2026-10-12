@@ -12,6 +12,7 @@ import { rateLimitHeaders } from "@broods/convex/model/httpJson";
 import {
   BUDGET_EXHAUSTED,
   BUDGET_WARNING_RATIO,
+  capsReached,
   PLAN_LIMIT_EXCEEDED,
   PLAN_LIMITS,
 } from "@broods/convex/model/planLimits";
@@ -43,7 +44,7 @@ export interface Admission {
   countedIn?: number;
 }
 
-/** A sandbox launch refused because a monthly cap is used up. */
+/** A sandbox launch refused because a monthly cap or the storage limit is used up. */
 export class BudgetExhaustedError extends Error {}
 
 /** One account's fixed one-minute window of admitted runs. */
@@ -128,7 +129,7 @@ export async function assertSandboxBudget(accountId: string): Promise<void> {
 /**
  * 402 `budget_exhausted`, or 429 `plan_limit_exceeded` with `Retry-After`.
  * 402, not 429 or 403: waiting a minute does not help and the key is fine;
- * the account has to upgrade or wait for next month.
+ * the account has to upgrade, wait for next month, or delete files.
  */
 export function planRefusalResponse(refusal: PlanRefusal): Response {
   if (refusal.kind === "budget") {
@@ -189,17 +190,22 @@ async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
   }
 }
 
-// Storage is a size, not a monthly amount: a new month does not free it.
 function budgetRefusal(status: BudgetStatus): PlanRefusal {
+  const reached = capsReached(status.shares);
+  const storage = `its storage limit of ${storageLimit(status)}`;
+  const monthly = `one of its monthly resource caps for ${status.month}`;
+
   return {
     kind: "budget",
-    message:
-      status.limitedBy === "storageGb"
-        ? `This account has reached its storage limit of ${storageLimit(status)} on the ${status.plan} plan. Delete files or upgrade to keep running agents; storage is measured once a day.`
-        : `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
+    message: !reached.storage
+      ? `This account has reached ${monthly} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`
+      : reached.monthly
+        ? `This account has reached ${storage} and ${monthly} on the ${status.plan} plan. Delete files, then upgrade or wait for next month, to keep running agents; storage is measured once a day.`
+        : `This account has reached ${storage} on the ${status.plan} plan. Delete files${status.plan === "free" ? " or upgrade" : ""} to keep running agents; storage is measured once a day.`,
   };
 }
 
+// Storage is a size, not a monthly amount: a new month does not free it.
 function storageLimit(status: BudgetStatus): string {
   return `${PLAN_LIMITS[status.plan].caps.storageGb} GB of workspaces and files`;
 }
@@ -227,7 +233,7 @@ async function claimWarning(
 
   const percent = Math.floor(BUDGET_WARNING_RATIO * 100);
 
-  return status.limitedBy === "storageGb"
+  return capsReached(status.shares, percent).storage
     ? `This account has used ${percent}% of its storage limit of ${storageLimit(status)} on the ${status.plan} plan. Runs stop when it is full.`
     : `This account has used ${percent}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }

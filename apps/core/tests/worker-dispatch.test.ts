@@ -486,7 +486,7 @@ describe("streamed runs", (): void => {
       plan: "free",
       month: "2026-10",
       usedPercent: 0,
-      limitedBy: "sandboxHours",
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
       runsPerMinute: 1,
       warned: false,
     });
@@ -597,7 +597,7 @@ describe("streamed runs", (): void => {
       plan: "free",
       month: "2026-10",
       usedPercent: 100,
-      limitedBy: "sandboxHours",
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
       runsPerMinute: 60,
       warned: false,
     });
@@ -620,7 +620,7 @@ describe("streamed runs", (): void => {
       plan: "free",
       month: "2026-10",
       usedPercent: 0,
-      limitedBy: "sandboxHours",
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
       runsPerMinute: 1,
       warned: false,
     });
@@ -678,7 +678,12 @@ describe("streamed runs", (): void => {
         plan: "free",
         month: "2026-10",
         usedPercent: 0,
-        limitedBy: "sandboxHours",
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
         runsPerMinute: 1,
         warned: false,
       });
@@ -726,7 +731,12 @@ describe("streamed runs", (): void => {
         plan: "free",
         month: "2026-10",
         usedPercent: 100,
-        limitedBy: "sandboxHours",
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
         runsPerMinute: 60,
         warned: false,
       });

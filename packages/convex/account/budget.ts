@@ -28,27 +28,22 @@ import { planValidator, usageQuantityFields } from "../schema";
 const USAGE_WRITE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const USAGE_WRITE_PRUNE_BATCH = 500;
 
-const budgetStatusValidator = v.object({
-  enforced: v.boolean(),
-  plan: planValidator,
-  month: v.string(),
-  usedPercent: v.number(),
-  limitedBy: v.union(
-    v.literal("sandboxHours"),
-    v.literal("hostedMcpHours"),
-    v.literal("storageGb"),
-    v.literal("egressGb"),
-  ),
-  runsPerMinute: v.number(),
-  warned: v.boolean(),
-});
-
 // Also the shape of each resource's share, keyed like its cap.
 const resourceCapsValidator = v.object({
   sandboxHours: v.number(),
   hostedMcpHours: v.number(),
   storageGb: v.number(),
   egressGb: v.number(),
+});
+
+const budgetStatusValidator = v.object({
+  enforced: v.boolean(),
+  plan: planValidator,
+  month: v.string(),
+  usedPercent: v.number(),
+  shares: resourceCapsValidator,
+  runsPerMinute: v.number(),
+  warned: v.boolean(),
 });
 
 const usageAmountsFields = {
