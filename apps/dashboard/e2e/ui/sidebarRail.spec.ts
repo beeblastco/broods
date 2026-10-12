@@ -94,6 +94,35 @@ test("a fast move into the opening rail keeps it open", async ({ page }) => {
     .toMatchObject({ width: SIDEBAR_WIDTH });
 });
 
+// When the node under a resting pointer goes away (a panel swapping its
+// loading state for data), Chrome's next move sends the rail a pointerover
+// with no pointerout before it. React builds pointerenter from that pointerout,
+// so the rail once stayed shut. One open and close first, so React owns the
+// rail and the pointer rests on the page.
+test("the rail opens after the page under the pointer re-rendered", async ({
+  page,
+}) => {
+  await page.goto("/ui-gallery?tab=monitoring");
+  const container = page.locator('[data-slot="sidebar-container"]');
+  await expect(container).toBeInViewport();
+  await page.mouse.move(20, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+  await page.mouse.move(800, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: RAIL_WIDTH });
+  // A move once the rail has closed, so the node under the pointer is current.
+  await page.mouse.move(800, 410);
+  await page.evaluate(() => document.elementFromPoint(800, 410)?.remove());
+
+  await page.mouse.move(20, 400);
+  await expect
+    .poll(() => container.boundingBox())
+    .toMatchObject({ width: SIDEBAR_WIDTH });
+});
+
 // A pointer that left the window straight from the open rail sent no further
 // move, so nothing closed it.
 test("leaving the window from the open rail closes it", async ({ page }) => {

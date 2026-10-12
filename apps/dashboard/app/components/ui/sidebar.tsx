@@ -290,7 +290,10 @@ function Sidebar({
         data-side={side}
         // A collapsed icon rail opens over the page once a mouse or pen is on
         // it. Not on touch: no pointer moves away to close it again.
-        onPointerEnter={(event) => {
+        // Pointerover, not pointerenter: React builds pointerenter from the
+        // pointerout of the node the pointer left, and Chrome sends none when
+        // that node was removed under a resting pointer, so the rail stayed shut.
+        onPointerOver={(event) => {
           if (state === "collapsed" && event.pointerType !== "touch") {
             setPeek(true);
           }
