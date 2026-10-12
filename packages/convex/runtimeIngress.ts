@@ -1126,22 +1126,26 @@ async function checkDuplicateAdmission(
   if (result?.accountId !== args.accountId) {
     return null;
   }
+  if (result.observed === true) {
+    return { outcome: "duplicate" as const, eventId: args.eventId };
+  }
   // A write that stored the result but lost its reply has it in the
-  // conversation already, under the key core wrote it with.
-  if (
-    result.observed === true ||
-    (await ctx.db
-      .query("runtimeConversationEvents")
-      .withIndex("by_conversationKey_and_dedupeKey", (q) =>
-        q
-          .eq("conversationKey", args.conversationKey)
-          .eq(
-            "dedupeKey",
-            subagentResultDedupeKey(result.eventId, result.status),
-          ),
-      )
-      .first())
-  ) {
+  // conversation already, under the key core wrote it with. The parent has
+  // it, so it is marked seen and the recovery sweep stops retrying it.
+  const stored = await ctx.db
+    .query("runtimeConversationEvents")
+    .withIndex("by_conversationKey_and_dedupeKey", (q) =>
+      q
+        .eq("conversationKey", args.conversationKey)
+        .eq(
+          "dedupeKey",
+          subagentResultDedupeKey(result.eventId, result.status),
+        ),
+    )
+    .first();
+  if (stored) {
+    await ctx.db.patch(result._id, { observed: true });
+
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
 

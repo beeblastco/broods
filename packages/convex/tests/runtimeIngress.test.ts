@@ -1342,7 +1342,12 @@ describe("runtime ingress", () => {
         response: "answer",
       });
     }
-    // The parent's write stored one result, then lost its reply.
+    // The parent's write stored one result, then lost its reply, so core
+    // marked it unseen for the recovery sweep.
+    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      eventId: "stored",
+      observed: false,
+    });
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
       events: [
@@ -1370,6 +1375,12 @@ describe("runtime ingress", () => {
     expect(await resume("resume-stored", "stored")).toMatchObject({
       outcome: "duplicate",
     });
+    // Seen now, so the recovery sweep stops retrying it.
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: "stored",
+      }),
+    ).toMatchObject({ observed: true });
     expect(await resume("resume-unsaved", "unsaved")).toMatchObject({
       outcome: "owner",
     });
