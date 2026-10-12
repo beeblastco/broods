@@ -78,7 +78,7 @@ export async function admitRun(
     return { refusal: budgetRefusal(status), warning: null };
   }
   const now = Date.now();
-  const window = currentWindow(accountId, now);
+  const window = currentWindow(accountId, now, options.count !== false);
   if (window.runs >= status.runsPerMinute) {
     return {
       refusal: {
@@ -219,11 +219,16 @@ async function claimWarning(
   return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }
 
-function currentWindow(accountId: string, now: number): AccountWindow {
+/** @param open start the fresh window when there is none; a read never does */
+function currentWindow(
+  accountId: string,
+  now: number,
+  open: boolean,
+): AccountWindow {
   const existing = windows.get(accountId);
   if (existing && now - existing.startedAt < WINDOW_MS) return existing;
   const fresh: AccountWindow = { startedAt: now, runs: 0 };
-  windows.set(accountId, fresh);
+  if (open) windows.set(accountId, fresh);
 
   return fresh;
 }

@@ -114,7 +114,7 @@ sequenceDiagram
   CX-->>W: next queued group, or lease released
 ```
 
-The 2 s budget stays under Slack's and Discord's 3 s retry limit, so a provider retry never races an admitted message. Whatever is still admitting when the budget runs out carries on after the ACK.
+The 2 s budget starts once every receiver has parsed the delivery, so it covers admission only; scan and parse come on top. It stays under Slack's and Discord's 3 s retry limit when those are quick. A provider that times out first treats the delivery as failed and resends it, the same as after a `503`. Whatever is still admitting when the budget runs out carries on after the ACK.
 
 Like an API run, a message holds one run queue place while it is admitted (`withQueuePlace` in `handleChannelRequest`). A full queue turns it away before the plan counts it or ingress records it, and an account out of budget hears its refusal first. A turn whose parse result sets `redelivers` (the provider or its forwarder resends after a 5xx) rejects, and the webhook answers `503` with `Retry-After`; in a `batch` that answers the whole delivery, and the turns already admitted come back as duplicates. Any other turn, or one turned away after the ACK went, says the agent is busy in the channel and is acked. Slack slash commands and buttons, Discord interactions, GitHub, Pancake, Zalo, Teams, Google Chat and Twilio do not resend, so they get the busy reply.
 

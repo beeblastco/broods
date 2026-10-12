@@ -148,6 +148,18 @@ describe("admitRun", () => {
     );
   });
 
+  it("does not start the minute's window with a read", async () => {
+    budget.runsPerMinute = 1;
+    setSystemTime(new Date("2026-09-15T00:00:00Z"));
+    await admitRun(ACCOUNT_ID, { count: false });
+    setSystemTime(new Date("2026-09-15T00:00:59Z"));
+    expect((await admitRun(ACCOUNT_ID)).refusal).toBeNull();
+    // A window the read had opened at :00 would have turned over at :01:00.
+    setSystemTime(new Date("2026-09-15T00:01:01Z"));
+
+    expect((await admitRun(ACCOUNT_ID)).refusal?.kind).toBe("rate");
+  });
+
   it("does not refund into a window the run was not counted in", async () => {
     setSystemTime(new Date("2026-09-15T00:00:00Z"));
     const stale = await admitRun(ACCOUNT_ID);

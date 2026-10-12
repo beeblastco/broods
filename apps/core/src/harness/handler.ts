@@ -1560,11 +1560,16 @@ async function handleNatsWorkerRequest(
  * Like an API run, the message holds a run queue place while it is admitted.
  * A full queue turns it away before the plan counts it or ingress records it:
  * an account out of budget hears its refusal, read without counting; any
- * other rejects with WORKER_QUEUE_FULL, which the webhook answers.
+ * other rejects with WORKER_QUEUE_FULL, which the webhook answers. A command
+ * answered at once (`/stop`, `/new`, `/help`) starts no run and takes no
+ * place, so `/stop` still reaches a run while the queue is full.
  */
 export async function handleChannelRequest(
   event: ChannelInboundEvent,
 ): Promise<void> {
+  if (resolveChannelCommand(event).kind === "reply") {
+    return admitChannelMessage(event);
+  }
   if (
     await withQueuePlace(async (): Promise<true> => {
       await admitChannelMessage(event);

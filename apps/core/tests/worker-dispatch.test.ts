@@ -701,6 +701,21 @@ describe("streamed runs", (): void => {
       );
     });
 
+    it("still runs a command that starts no run, such as /stop, while the queue is full", async (): Promise<void> => {
+      spyOn(runtime, "mutate").mockResolvedValue(true);
+      fillWorkerQueue();
+
+      await handleChannelRequest({
+        ...channelMessage(1),
+        content: "/help",
+        events: [{ role: "user", content: "/help" }],
+        commandToken: "/help",
+      });
+
+      expect(sent).toEqual([expect.stringContaining("/stop")]);
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+    });
+
     it("tells an account out of budget its refusal, not the full queue", async (): Promise<void> => {
       spyOn(getStorage().budgets, "get").mockResolvedValue({
         enforced: true,
