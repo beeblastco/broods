@@ -3744,8 +3744,9 @@ async function startHookServer(
 }
 
 /**
- * The Anthropic Messages body for one run over `history`: runAgentLoop builds
- * the streamText call, and the real Anthropic provider renders it to the wire.
+ * The request body for one run over `history`: runAgentLoop builds the
+ * streamText call, and the real provider the config names (OpenAI Responses,
+ * else Anthropic Messages) renders it to the wire.
  */
 async function providerRequestBody(
   history: ModelMessage[],
