@@ -473,7 +473,9 @@ export class SubagentCoordinator {
       async (error: unknown): Promise<never> => {
         // A put-back running notice is dropped: its child is detached and
         // resumes the parent itself. Each result is marked unseen first, so
-        // the recovery sweep retries a resume that fails too.
+        // the recovery sweep retries a resume that fails too. A put-back
+        // question has no pass to answer it, so its child stops waiting.
+        this.closeQuestions();
         const finished = this.completions
           .splice(0)
           .filter(({ status }): boolean => status !== "running");

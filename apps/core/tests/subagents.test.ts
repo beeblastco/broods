@@ -927,7 +927,7 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("resumes the parent with a result the pass's last write did not save", async () => {
+  it("resumes the parent with a result the pass's last write did not save, and closes its question", async () => {
     const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const resumeParent = mock(
@@ -940,7 +940,7 @@ describe("SubagentCoordinator", () => {
         }),
       }),
       {},
-      Date.now() + 10,
+      Date.now() + 60_000,
       { resumeParent: resumeParent },
     );
     coordinator["completions"].push({
@@ -951,15 +951,23 @@ describe("SubagentCoordinator", () => {
       status: "completed",
       response: "idle report",
     });
+    coordinator["pendingMetadata"].set("subagent_2", {
+      taskId: "subagent_2",
+      eventId: "event_subagent_2",
+      agentId: "agent_research",
+      conversationKey: "subagent-subagent_2",
+    });
+    const question = coordinator.askParent("subagent_2", "Which?");
 
     try {
-      // The parent waited for every child, so no detach runs before the write.
       expect(
         await coordinator
           .drainCompletionsToParent()
           .catch((error: unknown): string => String(error)),
       ).toBe("Error: convex down");
       expect(resumeParent).toHaveBeenCalledTimes(1);
+      // No pass follows to answer the question it did not save.
+      expect(await question).toBeNull();
       expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
         eventId: "event_subagent_1",
         observed: false,
