@@ -79,6 +79,27 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         org.includes('"plan": "pro"'),
         org,
       );
+      // What the dashboard's Billing tab, invite dialog and Account settings read.
+      const billing = must(
+        asAdmin("stripe:getBillingInfo", {}),
+        "read the org's billing",
+      );
+      assertStep(
+        "billing shows every member the paid seats, and no Stripe ids",
+        billing.includes('"seats": 2') && !billing.includes("cus_"),
+        billing,
+      );
+      const owned = must(
+        asAdmin("stripe:listOwnedOrgs", {}),
+        "list the owner's orgs",
+      );
+      assertStep(
+        "Account settings lists the org as Pro with its seats",
+        new RegExp(`"orgId": "${orgId}",\\s+"plan": "pro",\\s+"seats": 2`).test(
+          owned,
+        ),
+        owned,
+      );
       must(
         asAdmin("org/members:add", { orgId: orgId, email: invitee("first") }),
         "the invite lands on the paid seat",

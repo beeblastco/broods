@@ -19,7 +19,7 @@ import { isManagedService } from "./planLimits";
 export const FREE_ORGS_PER_OWNER = 1;
 
 /** Seats a free org has: the owner's. */
-const FREE_ORG_SEATS = 1;
+export const FREE_ORG_SEATS = 1;
 
 // A subscription in one of these statuses is over: it no longer blocks a new
 // checkout and is not the one billing shows.
@@ -42,6 +42,15 @@ export function isEnded(status: string): boolean {
 /** Whether a subscription status grants the paid plan. */
 export function isPaid(status: string): boolean {
   return PAID_STATUSES.some((paid) => paid === status);
+}
+
+/** The seats an org's subscriptions give it: the paid quantity, else the owner's seat. */
+export function seatsOf(
+  subs: ReadonlyArray<{ status: string; quantity?: number }>,
+): number {
+  const paid = subs.find((sub) => isPaid(sub.status));
+
+  return paid ? (paid.quantity ?? FREE_ORG_SEATS) : FREE_ORG_SEATS;
 }
 
 /** How many members an org has, owner included. */
@@ -70,12 +79,10 @@ export async function assertFreeSeat(
     components.stripe.public.listSubscriptionsByOrgId,
     { orgId: org._id },
   );
-  const paid = subs.find((sub) => isPaid(sub.status));
-  const seats = paid ? (paid.quantity ?? FREE_ORG_SEATS) : FREE_ORG_SEATS;
-  if ((await orgMemberCount(ctx, org._id)) < seats) return;
+  if ((await orgMemberCount(ctx, org._id)) < seatsOf(subs)) return;
 
   throw new ClientError(
-    paid
+    subs.some((sub) => isPaid(sub.status))
       ? `Every seat in ${org.name} is taken. The owner adds a seat in Billing first.`
       : `${org.name} is on the free plan, which has one seat. The owner upgrades it to invite members.`,
     "payment_required",

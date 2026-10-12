@@ -1543,7 +1543,28 @@ export declare const api: {
       { returnUrl: string },
       { url: string }
     >;
-    getBillingInfo: FunctionReference<"query", "public", {}, null | any>;
+    getBillingInfo: FunctionReference<
+      "query",
+      "public",
+      {},
+      null | {
+        cancelAtPeriodEnd: boolean;
+        currentPeriodEnd: number;
+        seats: number;
+        status: string;
+      }
+    >;
+    listOwnedOrgs: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        name: string;
+        orgId: Id<"orgs">;
+        plan: "free" | "pro";
+        seats: number;
+      }>
+    >;
   };
   user: {
     ensureSynced: FunctionReference<"action", "public", {}, null>;

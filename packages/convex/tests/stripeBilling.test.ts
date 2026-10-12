@@ -530,8 +530,13 @@ describe("per-org billing", () => {
 
     const info = await t.query(api.stripe.getBillingInfo, {});
 
-    expect(info?.status).toBe("past_due");
-    expect(info?.orgId).toBe(payerOrgId);
+    // The seats count only while it is paid; who pays stays with the owner.
+    expect(info).toEqual({
+      status: "past_due",
+      currentPeriodEnd: expect.any(Number),
+      cancelAtPeriodEnd: false,
+      seats: 1,
+    });
   });
 
   test("getBillingInfo returns null once the subscription is canceled", async () => {
@@ -606,6 +611,27 @@ describe("seats", () => {
         email: "third@example.com",
       }),
     ).rejects.toThrow("Every seat");
+  });
+
+  test("billing shows every member the paid seats, and the owner each org they own", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("active", SUBSCRIPTION_ID, 3),
+    );
+    const second = await t.mutation(api.org.orgs.create, { name: "Second" });
+    await addMember(t, "auth_member", "member@example.com");
+
+    expect(await t.query(api.stripe.listOwnedOrgs, {})).toEqual([
+      { orgId: payerOrgId, name: "Payer Org", plan: "pro", seats: 3 },
+      { orgId: second, name: "Second", plan: "free", seats: 1 },
+    ]);
+    caller.authId = "auth_member";
+    expect((await t.query(api.stripe.getBillingInfo, {}))?.seats).toBe(3);
+    expect(await t.query(api.stripe.listOwnedOrgs, {})).toEqual([]);
   });
 
   test("a self-hosted install invites without seats", async () => {

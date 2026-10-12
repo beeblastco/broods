@@ -25,10 +25,12 @@ import {
   isEnded,
   isPaid,
   orgMemberCount,
+  seatsOf,
   syncOrgPlan,
   syncUserPlan,
 } from "./model/orgBilling";
 import { getActiveOrgForUser, userByAuthId } from "./model/ownership/org";
+import { planValidator } from "./schema";
 
 export const stripeClient = new StripeSubscriptions(components.stripe);
 
@@ -150,10 +152,22 @@ export const createPortalSession = action({
   },
 });
 
-/** The caller's active org's subscription that has not ended, for any member. */
+/**
+ * The caller's active org's subscription that has not ended, for any member:
+ * its status, period and the seats invites count against. Who pays and the
+ * Stripe ids stay with the owner.
+ */
 export const getBillingInfo = query({
   args: {},
-  returns: v.union(v.null(), v.any()),
+  returns: v.union(
+    v.null(),
+    v.object({
+      status: v.string(),
+      currentPeriodEnd: v.number(),
+      cancelAtPeriodEnd: v.boolean(),
+      seats: v.number(),
+    }),
+  ),
   handler: async (ctx) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) return null;
@@ -165,10 +179,56 @@ export const getBillingInfo = query({
       components.stripe.public.listSubscriptionsByOrgId,
       { orgId: org._id },
     );
-
     // Any subscription that is not over, including past_due and unpaid ones,
     // so the dashboard offers the portal to fix payment instead of checkout.
-    return subs.find((sub) => !isEnded(sub.status)) ?? null;
+    const live = subs.find((sub) => !isEnded(sub.status));
+
+    return live
+      ? {
+          status: live.status,
+          currentPeriodEnd: live.currentPeriodEnd,
+          cancelAtPeriodEnd: live.cancelAtPeriodEnd,
+          seats: seatsOf(subs),
+        }
+      : null;
+  },
+});
+
+/** The orgs the caller owns, each with its plan and seats, for Account settings. */
+export const listOwnedOrgs = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      orgId: v.id("orgs"),
+      name: v.string(),
+      plan: planValidator,
+      seats: v.number(),
+    }),
+  ),
+  handler: async (ctx) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+    const owned = await ctx.db
+      .query("orgs")
+      .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", user.id))
+      .collect();
+
+    return await Promise.all(
+      owned.map(async (org) => ({
+        orgId: org._id,
+        name: org.name,
+        plan: org.plan,
+        seats: seatsOf(
+          await ctx.runQuery(
+            components.stripe.public.listSubscriptionsByOrgId,
+            { orgId: org._id },
+          ),
+        ),
+      })),
+    );
   },
 });
 
