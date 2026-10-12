@@ -115,6 +115,7 @@ import {
 } from "./policy.ts";
 import {
   attemptRecordingMiddleware,
+  cacheBreakpointFromProviderOptions,
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
   providerOptionsFromModelConfig,
@@ -749,6 +750,10 @@ export async function runAgentLoop(
     agentConfig,
     session.conversationKey,
   );
+  const cacheBreakpoint = cacheBreakpointFromProviderOptions(
+    agentConfig,
+    providerOptions,
+  );
   let approvalSummaries: ToolApprovalSummary[] = [];
   const questionSummaries: PendingQuestionSummary[] = [];
   const detachedResultIds: string[] = [];
@@ -1228,7 +1233,7 @@ export async function runAgentLoop(
     messages: withEnvironment(
       stripEnvelopeFieldsFromMessages(turnContext.messages),
       environment,
-      providerOptions,
+      cacheBreakpoint,
     ),
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
@@ -1311,7 +1316,7 @@ export async function runAgentLoop(
       // system prompt, which ends before this run's ephemeral system.
       const instructions = withCacheBreakpoint(
         refreshed.system,
-        providerOptions,
+        cacheBreakpoint,
         refreshed.storedSystemEnd,
       );
       // Keep the turn's instructions current: system context grows mid-run
@@ -2584,18 +2589,38 @@ async function steeringModelMessages(
 /**
  * The history with the live environment after it. It rides on the person's
  * latest message when that comes last, so the model still reads one request,
- * and comes as its own message after a tool result. With `providerOptions`
- * the end of the history, right before the environment, is a cache breakpoint.
+ * and comes as its own message after a tool result. With a `breakpoint` the
+ * end of the history, right before the environment, is a cache breakpoint.
  */
 function withEnvironment(
   messages: ModelMessage[],
   environment: string,
-  providerOptions?: ProviderOptions,
+  breakpoint?: ProviderOptions,
 ): ModelMessage[] {
   const last = messages.at(-1);
+  if (last?.role === "tool" && breakpoint !== undefined) {
+    // OpenAI reads a tool result's breakpoint off the part, never the message;
+    // Anthropic takes the last part's mark as the message's.
+    const index = last.content.findLastIndex(
+      (part): boolean => part.type === "tool-result",
+    );
+
+    return [
+      ...messages.slice(0, -1),
+      {
+        ...last,
+        content: last.content.map((part, partIndex) =>
+          partIndex === index && part.type === "tool-result"
+            ? markedForCache(part, breakpoint)
+            : part,
+        ),
+      },
+      { role: "user", content: environment },
+    ];
+  }
   if (last?.role !== "user") {
     return [
-      ...withCacheBreakpoint(messages, providerOptions),
+      ...withCacheBreakpoint(messages, breakpoint),
       { role: "user", content: environment },
     ];
   }
@@ -2609,7 +2634,7 @@ function withEnvironment(
     {
       ...last,
       content: [
-        ...withCacheBreakpoint(content, providerOptions),
+        ...withCacheBreakpoint(content, breakpoint),
         { type: "text", text: environment },
       ],
     },
@@ -2617,31 +2642,34 @@ function withEnvironment(
 }
 
 /**
- * Marks the item at `index` (the last by default) as an Anthropic cache
+ * Marks the item at `index` (the last by default) as a prompt cache
  * breakpoint, at the ends of the stored system prompt and history the next run
- * reads back. Unchanged when the run has no Anthropic cacheControl.
+ * reads back. Unchanged when the run's model takes no breakpoint.
  */
 function withCacheBreakpoint<T extends { providerOptions?: ProviderOptions }>(
   items: T[],
-  providerOptions: ProviderOptions | undefined,
+  breakpoint: ProviderOptions | undefined,
   index: number = items.length - 1,
 ): T[] {
-  const cacheControl = providerOptions?.anthropic?.cacheControl;
   const item = items[index];
-  if (cacheControl === undefined || item === undefined) {
+  if (breakpoint === undefined || item === undefined) {
     return items;
   }
 
-  return items.with(index, {
-    ...item,
-    providerOptions: {
-      ...item.providerOptions,
-      anthropic: {
-        ...item.providerOptions?.anthropic,
-        cacheControl: cacheControl,
-      },
-    },
-  });
+  return items.with(index, markedForCache(item, breakpoint));
+}
+
+/** `item` with the breakpoint's options merged into its own, per provider. */
+function markedForCache<T extends { providerOptions?: ProviderOptions }>(
+  item: T,
+  breakpoint: ProviderOptions,
+): T {
+  const providerOptions = { ...item.providerOptions };
+  for (const [provider, options] of Object.entries(breakpoint)) {
+    providerOptions[provider] = { ...providerOptions[provider], ...options };
+  }
+
+  return { ...item, providerOptions: providerOptions };
 }
 
 /**
