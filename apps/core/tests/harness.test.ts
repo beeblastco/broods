@@ -2112,6 +2112,58 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("marks the tool result that ends an OpenAI tool continuation", async () => {
+    const body = await providerRequestBody(
+      [
+        { role: "user", content: "check the build" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "bash",
+              input: { command: "make" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "bash",
+              output: { type: "text", value: "ok" },
+            },
+          ],
+        },
+      ],
+      {
+        provider: { openai: { apiKey: "openai-key" } },
+        model: { provider: "openai", modelId: "gpt-6-luna" },
+      },
+    );
+
+    expect((body.input as unknown[]).slice(-2)).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call-1",
+        output: [
+          {
+            type: "input_text",
+            text: "ok",
+            prompt_cache_breakpoint: { mode: "explicit" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "<environment>" }],
+      },
+    ]);
+  });
+
   it("leaves OpenAI models before GPT-5.6 unmarked", async () => {
     const call = await firstStepCall([{ role: "user", content: "hello" }], {
       provider: { openai: { apiKey: "openai-key" } },

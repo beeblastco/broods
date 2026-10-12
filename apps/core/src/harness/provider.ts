@@ -83,8 +83,9 @@ const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
 const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
-// An OpenAI model id's GPT major and minor version, like `gpt-6-luna` or `gpt-5.6`.
-const GPT_VERSION_PATTERN = /^gpt-(\d+)(?:\.(\d+))?(?:-|$)/;
+// An OpenAI model id's GPT major and minor version, like `gpt-6-luna`,
+// `gpt-5.6` or the fine-tune `ft:gpt-6-luna:org::id`.
+const GPT_VERSION_PATTERN = /^(?:ft:)?gpt-(\d+)(?:\.(\d+))?(?:[-:]|$)/i;
 
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
@@ -352,30 +353,41 @@ export function providerOptionsFromModelConfig(
  * What one prompt cache breakpoint carries in a conversation run, or undefined
  * when the run's model takes none. The harness marks the ends of the stored
  * system prompt and of the history with it: the prefix the next run sends
- * again. Anthropic's is the run's cacheControl. OpenAI's own breakpoint only
- * ever ends the latest message, after the live environment no later run sends
- * again, so without this mark each run started with nothing cached to read.
+ * again. OpenAI's own breakpoint only ever ends the latest message, after the
+ * live environment no later run sends again, so without this mark each run
+ * started with nothing cached to read. Anthropic's is the run's cacheControl.
+ * Only `openai` gets the OpenAI mark: Azure reads its options under its own
+ * name and a deployment name, and ChatGPT plan usage documents no such field.
  */
 export function cacheBreakpointFromProviderOptions(
   agentConfig: AgentConfig,
   providerOptions: AgentModelProviderOptions | undefined,
 ): AgentModelProviderOptions | undefined {
-  const cacheControl = providerOptions?.anthropic?.cacheControl;
-  if (cacheControl !== undefined) {
-    return { anthropic: { cacheControl: cacheControl } };
-  }
-  // Explicit breakpoints start at GPT-5.6. Earlier models cache at intervals
-  // of their own and document no breakpoint field.
-  const version = GPT_VERSION_PATTERN.exec(agentConfig.model?.modelId ?? "");
-  const major = Number(version?.[1]);
   if (
-    providerOptions?.openai?.promptCacheKey === undefined ||
-    !(major > 5 || (major === 5 && Number(version?.[2] ?? 0) >= 6))
+    agentConfig.model?.provider === "openai" &&
+    providerOptions?.openai?.promptCacheKey !== undefined &&
+    takesPromptCacheBreakpoints(agentConfig.model.modelId)
   ) {
-    return undefined;
+    return { openai: { promptCacheBreakpoint: { mode: "explicit" } } };
   }
+  const cacheControl = providerOptions?.anthropic?.cacheControl;
 
-  return { openai: { promptCacheBreakpoint: { mode: "explicit" } } };
+  return cacheControl === undefined
+    ? undefined
+    : { anthropic: { cacheControl: cacheControl } };
+}
+
+// Explicit breakpoints start at GPT-5.6, fine-tunes of it included. Earlier
+// models cache at intervals of their own and document no breakpoint field.
+function takesPromptCacheBreakpoints(modelId: string | undefined): boolean {
+  const version = GPT_VERSION_PATTERN.exec(modelId ?? "");
+  if (!version) {
+    return false;
+  }
+  const major = Number(version[1]);
+  const minor = Number(version[2] ?? 0);
+
+  return major > 5 || (major === 5 && minor >= 6);
 }
 
 /**

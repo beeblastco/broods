@@ -95,7 +95,7 @@ describe("cacheBreakpointFromProviderOptions", () => {
     });
   });
 
-  test("openai and chatgpt mark an explicit breakpoint from GPT-5.6 on", () => {
+  test("openai marks an explicit breakpoint from GPT-5.6 on", () => {
     const explicit = {
       openai: { promptCacheBreakpoint: { mode: "explicit" } },
     };
@@ -103,13 +103,33 @@ describe("cacheBreakpointFromProviderOptions", () => {
     expect(breakpointFor("openai", "gpt-6-luna")).toEqual(explicit);
     expect(breakpointFor("openai", "gpt-5.6-luna")).toEqual(explicit);
     expect(breakpointFor("openai", "gpt-7")).toEqual(explicit);
-    expect(breakpointFor("chatgpt", "gpt-6-sol")).toEqual(explicit);
+    expect(breakpointFor("openai", "ft:gpt-6-luna:org::abc")).toEqual(explicit);
   });
 
-  test("models before GPT-5.6 get none", () => {
+  test("models before GPT-5.6 and ChatGPT plan usage get none", () => {
     expect(breakpointFor("openai", "gpt-5.5")).toBeUndefined();
     expect(breakpointFor("openai", "gpt-5-mini")).toBeUndefined();
     expect(breakpointFor("openai", "o4-mini")).toBeUndefined();
+    expect(breakpointFor("chatgpt", "gpt-6-sol")).toBeUndefined();
+  });
+
+  test("openai wins over an anthropic cacheControl left in the config", () => {
+    const config: AgentConfig = {
+      model: {
+        provider: "openai",
+        modelId: "gpt-6-luna",
+        providerOptions: {
+          anthropic: { cacheControl: { type: "ephemeral" } },
+        },
+      },
+    };
+
+    expect(
+      cacheBreakpointFromProviderOptions(
+        config,
+        providerOptionsFromModelConfig(config, CONVERSATION_KEY),
+      ),
+    ).toEqual({ openai: { promptCacheBreakpoint: { mode: "explicit" } } });
   });
 
   test("a call without a conversation gets none", () => {

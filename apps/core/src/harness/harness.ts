@@ -2598,6 +2598,26 @@ function withEnvironment(
   breakpoint?: ProviderOptions,
 ): ModelMessage[] {
   const last = messages.at(-1);
+  if (last?.role === "tool" && breakpoint !== undefined) {
+    // OpenAI reads a tool result's breakpoint off the part, never the message;
+    // Anthropic takes the last part's mark as the message's.
+    const index = last.content.findLastIndex(
+      (part): boolean => part.type === "tool-result",
+    );
+
+    return [
+      ...messages.slice(0, -1),
+      {
+        ...last,
+        content: last.content.map((part, partIndex) =>
+          partIndex === index && part.type === "tool-result"
+            ? markedForCache(part, breakpoint)
+            : part,
+        ),
+      },
+      { role: "user", content: environment },
+    ];
+  }
   if (last?.role !== "user") {
     return [
       ...withCacheBreakpoint(messages, breakpoint),
@@ -2635,12 +2655,21 @@ function withCacheBreakpoint<T extends { providerOptions?: ProviderOptions }>(
   if (breakpoint === undefined || item === undefined) {
     return items;
   }
+
+  return items.with(index, markedForCache(item, breakpoint));
+}
+
+/** `item` with the breakpoint's options merged into its own, per provider. */
+function markedForCache<T extends { providerOptions?: ProviderOptions }>(
+  item: T,
+  breakpoint: ProviderOptions,
+): T {
   const providerOptions = { ...item.providerOptions };
   for (const [provider, options] of Object.entries(breakpoint)) {
     providerOptions[provider] = { ...providerOptions[provider], ...options };
   }
 
-  return items.with(index, { ...item, providerOptions: providerOptions });
+  return { ...item, providerOptions: providerOptions };
 }
 
 /**
