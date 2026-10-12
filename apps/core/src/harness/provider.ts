@@ -83,6 +83,9 @@ const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
 const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
+// An OpenAI model id's GPT major and minor version, like `gpt-6-luna` or `gpt-5.6`.
+const GPT_VERSION_PATTERN = /^gpt-(\d+)(?:\.(\d+))?(?:-|$)/;
+
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
 
@@ -361,26 +364,18 @@ export function cacheBreakpointFromProviderOptions(
   if (cacheControl !== undefined) {
     return { anthropic: { cacheControl: cacheControl } };
   }
+  // Explicit breakpoints start at GPT-5.6. Earlier models cache at intervals
+  // of their own and document no breakpoint field.
+  const version = GPT_VERSION_PATTERN.exec(agentConfig.model?.modelId ?? "");
+  const major = Number(version?.[1]);
   if (
     providerOptions?.openai?.promptCacheKey === undefined ||
-    !takesPromptCacheBreakpoints(agentConfig.model?.modelId)
+    !(major > 5 || (major === 5 && Number(version?.[2] ?? 0) >= 6))
   ) {
     return undefined;
   }
 
   return { openai: { promptCacheBreakpoint: { mode: "explicit" } } };
-}
-
-// Explicit prompt cache breakpoints start at GPT-5.6. Earlier models cache at
-// intervals of their own and document no breakpoint field.
-function takesPromptCacheBreakpoints(modelId: string | undefined): boolean {
-  const version = /^gpt-(\d+)(?:\.(\d+))?(?:-|$)/.exec(modelId ?? "");
-  if (!version) {
-    return false;
-  }
-  const major = Number(version[1]);
-
-  return major > 5 || (major === 5 && Number(version[2] ?? 0) >= 6);
 }
 
 /**
