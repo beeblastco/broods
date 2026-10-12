@@ -113,7 +113,7 @@ An ordinary message sent while the agent is busy steers the running turn. See [C
 
 ## When the deployment is full
 
-When every worker slot is busy and the run queue behind them is full, a new message is turned away before it is counted against the plan or recorded. Where the provider sends a delivery again after a server error, Broods answers `503` with `Retry-After` and the message is admitted when it comes back. Everywhere else the chat is told the agent is busy, so the sender can try again.
+When every worker slot is busy and the run queue behind them is full, a new message is turned away before it is counted against the plan or recorded. Where the provider sends a delivery again after a server error, Broods answers `503` with `Retry-After`, and the message is admitted on the first retry that finds room; a retry that arrives while the queue is still full gets another `503`. Everywhere else the chat is told the agent is busy, so the sender can try again.
 
 | Provider                                                                                     | A message the full queue turns away           |
 | -------------------------------------------------------------------------------------------- | --------------------------------------------- |
