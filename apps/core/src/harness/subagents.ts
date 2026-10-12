@@ -462,8 +462,30 @@ export class SubagentCoordinator {
     this.readUnsaved.clear();
   }
 
+  /**
+   * The pass's last write of results and questions. No pass drains after it,
+   * so when it fails each finished result it did not save resumes the parent
+   * through `resumeParent`, and the run still fails.
+   */
   async drainCompletionsToParent(): Promise<number> {
-    return (await this.takeParentMessages()).length;
+    return this.takeParentMessages().then(
+      ({ length }): number => length,
+      async (error: unknown): Promise<never> => {
+        // A put-back running notice is dropped: its child is detached and
+        // resumes the parent itself. Each result is marked unseen first, so
+        // the recovery sweep retries a resume that fails too.
+        const finished = this.completions
+          .splice(0)
+          .filter(({ status }): boolean => status !== "running");
+        await Promise.all(
+          finished.map(async (completion): Promise<void> => {
+            await observeAsyncAgentResult(completion.eventId, false);
+            await this.resumeParentWith(completion);
+          }),
+        );
+        throw error;
+      },
+    );
   }
 
   /**
@@ -601,9 +623,7 @@ export class SubagentCoordinator {
   /**
    * The parent stops waiting: finished results go in as usual, and each child
    * still working is reported as running. Those keep running and later resume
-   * the parent conversation with their result through `resumeParent`. No pass
-   * drains after this write, so when it fails each finished result it did not
-   * save resumes the parent the same way, and the run still fails.
+   * the parent conversation with their result through `resumeParent`.
    */
   async drainCompletionsAndDetachToParent(): Promise<number> {
     if (this.completions.length === 0 && this.pending.size === 0) {
@@ -637,23 +657,7 @@ export class SubagentCoordinator {
         ),
     );
 
-    return this.drainCompletionsToParent().catch(
-      async (error: unknown): Promise<never> => {
-        // A put-back running notice is dropped: its child is detached and
-        // resumes the parent itself. Each result is marked unseen first, so
-        // the recovery sweep retries a resume that fails too.
-        const finished = this.completions
-          .splice(0)
-          .filter(({ status }): boolean => status !== "running");
-        await Promise.all(
-          finished.map(async (completion): Promise<void> => {
-            await observeAsyncAgentResult(completion.eventId, false);
-            await this.resumeParentWith(completion);
-          }),
-        );
-        throw error;
-      },
-    );
+    return this.drainCompletionsToParent();
   }
 
   private async resolveTask(

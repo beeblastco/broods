@@ -698,7 +698,7 @@ describe("SubagentCoordinator", () => {
     expect(Date.now() - startedAt).toBeLessThan(1_000);
   });
 
-  it("keeps queued results when writing them to the parent fails", async () => {
+  it("keeps queued results when a step's write to the parent fails", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
       async (_messages: UserModelMessage[]): Promise<never[]> => [],
@@ -718,16 +718,15 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.completions.push(completion("subagent_1", "finished"));
 
-    expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
-      "convex down",
-    );
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    // A step boundary's write: the next step retries what it did not save.
+    expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
+    expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
     expect(messageText(persistModelMessages.mock.calls[1]?.[0]?.[0])).toContain(
       "finished",
     );
   });
 
-  it("puts back only the results a failed drain did not save", async () => {
+  it("puts back only the results a failed step write did not save", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
       async (
@@ -757,11 +756,10 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_1", "first"));
     internals.completions.push(completion("subagent_2", "second"));
 
-    expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
-      "convex down",
-    );
+    // A step boundary's write: the next step retries what it did not save.
+    expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
     expect(persistModelMessages.mock.calls[0]?.[0]).toHaveLength(2);
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
     const retried = persistModelMessages.mock.calls[1]?.[0] ?? [];
     expect(retried).toHaveLength(1);
     expect(messageText(retried[0])).toContain("second");
@@ -864,23 +862,18 @@ describe("SubagentCoordinator", () => {
       lifecycle: { emit: async (): Promise<void> => {} },
       resumeParent: resumeParent,
     });
-    const finished = (taskId: string) => ({
+    const task = (taskId: string) => ({
       taskId: taskId,
       eventId: `event_${taskId}`,
       agentId: "agent_research",
       conversationKey: `subagent-${taskId}`,
     });
     coordinator["completions"].push(
-      { ...finished("subagent_1"), status: "completed", response: "saved" },
-      { ...finished("subagent_2"), status: "completed", response: "unsaved" },
-      { ...finished("subagent_3"), status: "failed", error: "unsaved failure" },
+      { ...task("subagent_1"), status: "completed", response: "saved" },
+      { ...task("subagent_2"), status: "completed", response: "unsaved" },
+      { ...task("subagent_3"), status: "failed", error: "unsaved failure" },
     );
-    const running = {
-      taskId: "subagent_4",
-      eventId: "event_subagent_4",
-      agentId: "agent_research",
-      conversationKey: "subagent-subagent_4",
-    };
+    const running = task("subagent_4");
     coordinator["pending"].set(running.taskId, new Promise((): void => {}));
     coordinator["pendingMetadata"].set(running.taskId, running);
 
@@ -934,6 +927,49 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("resumes the parent with a result the pass's last write did not save", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const resumeParent = mock(
+      async (): Promise<SubagentResumeOutcome> => "queued",
+    );
+    const coordinator = new SubagentCoordinator(
+      parentSession({
+        persistModelMessages: mock(async (): Promise<never> => {
+          throw new Error("convex down");
+        }),
+      }),
+      {},
+      Date.now() + 10,
+      { resumeParent: resumeParent },
+    );
+    coordinator["completions"].push({
+      taskId: "subagent_1",
+      eventId: "event_subagent_1",
+      agentId: "agent_research",
+      conversationKey: "subagent-subagent_1",
+      status: "completed",
+      response: "idle report",
+    });
+
+    try {
+      // The parent waited for every child, so no detach runs before the write.
+      expect(
+        await coordinator
+          .drainCompletionsToParent()
+          .catch((error: unknown): string => String(error)),
+      ).toBe("Error: convex down");
+      expect(resumeParent).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
+        eventId: "event_subagent_1",
+        observed: false,
+      });
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+    } finally {
+      mutate.mockRestore();
+    }
+  });
+
   it("sends no running notice for a child whose result the model already read", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
@@ -966,47 +1002,6 @@ describe("SubagentCoordinator", () => {
     expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(0);
     expect(persistModelMessages).not.toHaveBeenCalled();
     expect(coordinator.runningCount).toBe(1);
-  });
-
-  it("drops the running notice a failed expiry write did not save", async () => {
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const persistModelMessages = mock(
-      async (_messages: UserModelMessage[]): Promise<never[]> => [],
-    );
-    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
-    let finish = (): void => {};
-    const coordinator = new SubagentCoordinator(
-      {
-        accountId: "account_1",
-        agentId: "agent_parent",
-        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
-        persistModelMessages: persistModelMessages,
-      } as never,
-      { subagent: { enabled: true } },
-      Date.now() + 1_000,
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
-    internals.runTask = mock(
-      (): Promise<void> =>
-        new Promise<void>((resolve): void => {
-          finish = resolve;
-        }),
-    );
-    const originalMutation = runtime.mutate.bind(runtime);
-    runtime.mutate = mock(async () => true) as never;
-    try {
-      await coordinator.dispatch([{ prompt: "research" }], []);
-      expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
-        "convex down",
-      );
-      finish();
-      while (coordinator.runningCount > 0) await Bun.sleep(1);
-
-      expect(await coordinator.drainCompletionsToParent()).toBe(0);
-      expect(persistModelMessages).toHaveBeenCalledTimes(1);
-    } finally {
-      runtime.mutate = originalMutation;
-    }
   });
 
   it("writes no running notice for a child that finishes while the detach records it", async () => {

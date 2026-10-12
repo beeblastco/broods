@@ -1079,7 +1079,8 @@ async function canonicalIdentity(options: {
  * admission (or conflicts on a different payload digest), and an eventId
  * reused under a different identity is always a conflict. Null means the
  * candidate is new. Rejected busy candidates create neither an envelope nor
- * an identity tombstone, so this is read-only.
+ * an identity tombstone. Its one write marks a late subagent result seen when
+ * the parent's conversation already stores it.
  */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,

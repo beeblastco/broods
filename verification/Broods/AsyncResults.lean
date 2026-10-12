@@ -225,7 +225,7 @@ inductive Observed where
 /-- The calls that touch `observed`, in any order a race gives them. -/
 inductive ObserveCall where
   /-- `observeAsyncAgentResult` with `false`, when the parent stops waiting, or when
-  the write that stops it fails before saving a finished result, which then resumes. -/
+  a pass's last write fails before saving a finished result, which then resumes. -/
   | detach
   /-- `observeAsyncAgentResult` with `true`: `get_subagent_status`, or a result the
   parent is never told. `finished` is whether the row has its outcome yet. -/

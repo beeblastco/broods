@@ -1,3 +1,5 @@
+import type { Doc } from "../_generated/dataModel";
+
 /**
  * The dedupe key core stores a subagent result under in its parent's
  * conversation. Core writes it with the result; `runtimeIngress.accept`
@@ -6,7 +8,7 @@
 
 export function subagentResultDedupeKey(
   eventId: string,
-  status: string,
+  status: Doc<"runtimeAsyncAgentResults">["status"] | "running",
 ): string {
   return `subagent:${eventId}:${status}`;
 }
