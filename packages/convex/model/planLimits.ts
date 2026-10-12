@@ -2,9 +2,9 @@
  * What each billing plan allows, and the account -> org -> plan lookup the
  * limits hang off. Each billed resource has a fixed monthly cap in its own
  * unit, and reaching any one of them stops runs until the month resets, the
- * way Convex's free tier does. The caps split the plan's euro budget evenly,
- * so an account that maxes every one of them costs at most that budget
- * (`tests/usageMeter.test.ts` checks it). Runs per minute is only burst
+ * way Convex's free tier does. The caps together stay within the plan's euro
+ * budget, so an account that maxes every one of them costs at most that
+ * budget (`tests/usageMeter.test.ts` checks it). Runs per minute is only burst
  * protection. Core enforces these numbers. The euro budgets never leave the
  * backend: the dashboard gets caps and percentages from `account/budget.ts`.
  *
@@ -58,25 +58,20 @@ export interface PlanLimits {
   runsPerMinute: number;
 }
 
-// About EUR 1.25 of each resource, a quarter of the free budget: two or three
-// large projects' worth of building. Storage is the exception: free workspaces
-// and files stop at 10 GB (about EUR 0.21). Pro doubles every other cap and
-// keeps 100 GB of storage.
-const FREE_CAPS: ResourceCaps = {
-  sandboxHours: 9,
-  hostedMcpHours: 16,
-  storageGb: 10,
-  egressGb: 15,
-};
-
+// Free: about EUR 1.25 of compute and egress each, two or three large
+// projects' worth of building, and a small storage allowance.
+// Pro: about EUR 2.50 of each resource.
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
-  free: { caps: FREE_CAPS, runsPerMinute: 600 },
+  free: {
+    caps: { sandboxHours: 9, hostedMcpHours: 16, storageGb: 10, egressGb: 15 },
+    runsPerMinute: 600,
+  },
   pro: {
     caps: {
-      sandboxHours: FREE_CAPS.sandboxHours * 2,
-      hostedMcpHours: FREE_CAPS.hostedMcpHours * 2,
+      sandboxHours: 18,
+      hostedMcpHours: 32,
       storageGb: 100,
-      egressGb: FREE_CAPS.egressGb * 2,
+      egressGb: 30,
     },
     runsPerMinute: 5_000,
   },

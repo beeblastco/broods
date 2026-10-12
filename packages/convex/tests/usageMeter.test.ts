@@ -11,6 +11,7 @@ import type { Id } from "../_generated/dataModel";
 import {
   FREE_MONTHLY_BUDGET_EUR,
   PLAN_LIMITS,
+  type Plan,
   PRO_MONTHLY_BUDGET_EUR,
 } from "../model/planLimits";
 import {
@@ -184,7 +185,7 @@ test("an hour of the default MicroVM costs about €0.14", () => {
 });
 
 test("maxing every cap costs no more than the plan's budget", () => {
-  const capsCost = (plan: "free" | "pro"): number => {
+  const capsCost = (plan: Plan): number => {
     const caps = PLAN_LIMITS[plan].caps;
 
     return meterCostEur({
@@ -476,21 +477,18 @@ describe("budget", () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();
-    const accountId = await seedAccount(t);
-    await t.mutation(internal.account.budget.record, {
-      accountId: accountId,
-      usage: { storageGbMonths: 10 / 30 },
-    });
+    const [free, pro] = await Promise.all(
+      (["free", "pro"] as const).map(async (plan) => {
+        const accountId = await seedAccount(t, plan);
+        await t.mutation(internal.account.budget.record, {
+          accountId: accountId,
+          usage: { storageGbMonths: 10 / 30 },
+        });
 
-    const free = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
-    await t.run(async (ctx) => {
-      const account = await ctx.db.get(accountId);
-      const orgId = account && ctx.db.normalizeId("orgs", account.orgId);
-      if (orgId) await ctx.db.patch(orgId, { plan: "pro" });
-    });
-    const pro = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+        return await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+      }),
+    );
 
-    expect(PLAN_LIMITS.free.caps.storageGb).toBe(10);
     expect(free).toMatchObject({ usedPercent: 100, level: "exhausted" });
     expect(pro).toMatchObject({ usedPercent: 10, level: "ok" });
   });
@@ -620,13 +618,13 @@ describe("budget", () => {
   });
 });
 
-async function seedAccount(t: T): Promise<Id<"accounts">> {
+async function seedAccount(t: T, plan: Plan = "free"): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",
       slug: "beeblast",
       ownerAuthId: "auth_owner",
-      plan: "free" as const,
+      plan: plan,
       createdAt: Date.now(),
     });
 
