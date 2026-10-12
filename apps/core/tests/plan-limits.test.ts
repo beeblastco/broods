@@ -47,6 +47,7 @@ beforeEach(() => {
     plan: "free",
     month: "2026-09",
     usedPercent: 20,
+    storageFull: false,
     runsPerMinute: 600,
     warned: false,
   };
@@ -113,6 +114,19 @@ describe("admitRun", () => {
 
     expect(refusal?.kind).toBe("budget");
     expect(refusal?.message).toContain("monthly resource caps for 2026-09");
+  });
+
+  it("names the storage limit when storage is what is full", async () => {
+    budget.usedPercent = 100;
+    budget.storageFull = true;
+
+    const { refusal } = await admitRun(ACCOUNT_ID);
+
+    expect(refusal?.kind).toBe("budget");
+    expect(refusal?.message).toContain(
+      "reached its storage limit of 10 GB of workspaces and files on the free plan",
+    );
+    expect(refusal?.message).not.toContain("next month");
   });
 
   it("refuses a burst past the plan's runs per minute", async () => {

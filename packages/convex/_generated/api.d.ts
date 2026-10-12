@@ -1913,6 +1913,7 @@ export declare const internal: {
           month: string;
           plan: "free" | "pro";
           runsPerMinute: number;
+          storageFull: boolean;
           usedPercent: number;
           warned: boolean;
         } | null

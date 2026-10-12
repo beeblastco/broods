@@ -443,7 +443,11 @@ describe("budget", () => {
       accountId: accountId,
     });
 
-    expect(budget).toMatchObject({ enforced: false, usedPercent: 0 });
+    expect(budget).toMatchObject({
+      enforced: false,
+      usedPercent: 0,
+      storageFull: false,
+    });
   });
 
   test("measures the closest cap and warns once at 80%", async () => {
@@ -485,12 +489,19 @@ describe("budget", () => {
           usage: { storageGbMonths: 10 / 30 },
         });
 
-        return await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+        return {
+          budget: await t.query(internal.account.budget.get, {
+            accountId: accountId,
+          }),
+          usage: await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW)),
+        };
       }),
     );
 
-    expect(free).toMatchObject({ usedPercent: 100, level: "exhausted" });
-    expect(pro).toMatchObject({ usedPercent: 20, level: "ok" });
+    expect(free.usage).toMatchObject({ usedPercent: 100, level: "exhausted" });
+    expect(free.budget).toMatchObject({ storageFull: true });
+    expect(pro.usage).toMatchObject({ usedPercent: 20, level: "ok" });
+    expect(pro.budget).toMatchObject({ storageFull: false });
   });
 
   test("reaches the dashboard as amounts and percentages with no euro figures", async () => {

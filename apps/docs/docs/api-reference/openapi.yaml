@@ -225,7 +225,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "402":
-          description: The account has reached one of its monthly resource caps (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces caps.
+          description: The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Storage is measured once a day and does not reset with the month, so a full storage limit says so in the message and needs files deleted or an upgrade. Only the managed BeeBlast service enforces caps.
           content:
             application/json:
               schema:
@@ -235,6 +235,12 @@ paths:
                   value:
                     error:
                       message: This account has reached one of its monthly resource caps for 2026-09 on the free plan. Upgrade to keep running agents, or wait for next month.
+                      type: invalid_request_error
+                      code: budget_exhausted
+                storageFull:
+                  value:
+                    error:
+                      message: "This account has reached its storage limit of 10 GB of workspaces and files on the free plan. Delete files or upgrade to keep running agents; storage is measured once a day."
                       type: invalid_request_error
                       code: budget_exhausted
         "403":
@@ -4316,7 +4322,7 @@ components:
                 | `account_not_found` | 404 | The account being deleted no longer exists. |
                 | `agent_name_exists` | 409 | An agent with this name already exists in the account. |
                 | `bad_gateway` | 502 | Default for a 502: an upstream answered with an error. |
-                | `budget_exhausted` | 402 | A monthly plan cap is used up. Upgrade or wait for next month. |
+                | `budget_exhausted` | 402 | A monthly plan cap or the storage limit is used up. Upgrade or wait for next month; for storage, delete files or upgrade. |
                 | `conflict` | 409 | Default for a 409: the request conflicts with current state. |
                 | `conversation_busy` | 409 | Another run holds this conversation. Retry when it finishes. |
                 | `conversation_not_found` | 404 | A `continue` request named a conversation key with no session behind it. |

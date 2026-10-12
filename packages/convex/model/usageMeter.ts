@@ -70,6 +70,8 @@ export interface BudgetStatus {
   month: string;
   /** The closest cap's share used, in percent. Runs stop at 100. */
   usedPercent: number;
+  /** The latest storage snapshot is at or over the plan's storage cap. */
+  storageFull: boolean;
   runsPerMinute: number;
   /** The 80% warning already went out this month. */
   warned: boolean;
@@ -187,12 +189,14 @@ export async function budgetStatus(
   const month = meterMonth(now);
   const meter = await readMeter(ctx, accountId, month);
   const amounts = toAmounts(pickUsage(meter), meter?.storageGb ?? null);
+  const shares = capShares(amounts, PLAN_LIMITS[plan].caps);
 
   return {
     enforced: isManagedService(),
     plan: plan,
     month: month,
-    usedPercent: closestShare(capShares(amounts, PLAN_LIMITS[plan].caps)),
+    usedPercent: closestShare(shares),
+    storageFull: shares.storageGb >= 100,
     runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
     warned: meter?.warnedAt !== undefined,
   };

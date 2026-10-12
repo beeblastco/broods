@@ -13,6 +13,7 @@ import {
   BUDGET_EXHAUSTED,
   BUDGET_WARNING_RATIO,
   PLAN_LIMIT_EXCEEDED,
+  PLAN_LIMITS,
 } from "@broods/convex/model/planLimits";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { errorResponse } from "../shared/http.ts";
@@ -127,7 +128,8 @@ export async function assertSandboxBudget(accountId: string): Promise<void> {
 /**
  * 402 `budget_exhausted`, or 429 `plan_limit_exceeded` with `Retry-After`.
  * 402, not 429 or 403: waiting a minute does not help and the key is fine;
- * the account has to upgrade or wait for next month.
+ * the account has to upgrade, wait for next month, or delete files when its
+ * storage is full.
  */
 export function planRefusalResponse(refusal: PlanRefusal): Response {
   if (refusal.kind === "budget") {
@@ -188,10 +190,13 @@ async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
   }
 }
 
+// Storage is a size, not a monthly amount: a new month does not free it.
 function budgetRefusal(status: BudgetStatus): PlanRefusal {
   return {
     kind: "budget",
-    message: `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
+    message: status.storageFull
+      ? `This account has reached its storage limit of ${PLAN_LIMITS[status.plan].caps.storageGb} GB of workspaces and files on the ${status.plan} plan. Delete files or upgrade to keep running agents; storage is measured once a day.`
+      : `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
   };
 }
 

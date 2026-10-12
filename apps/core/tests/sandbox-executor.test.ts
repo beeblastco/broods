@@ -3478,6 +3478,7 @@ describe("MicroVM capacity refusal", () => {
           plan: "free",
           month: "2026-09",
           usedPercent: 100,
+          storageFull: false,
           runsPerMinute: 600,
           warned: true,
         }),
