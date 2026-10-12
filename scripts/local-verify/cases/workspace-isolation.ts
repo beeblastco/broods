@@ -1,6 +1,11 @@
 import type { AccountWorkspace } from "../../../packages/broods/src/account.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
-import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  assertStep,
+  runToTerminal,
+  type VerifyContext,
+} from "../harness.ts";
 
 /**
  * Workspace isolation levels through the config plane and core: a level is
@@ -50,7 +55,7 @@ export async function workspaceIsolation(
     name: key,
     config: {
       ...context.model,
-      agent: { system: "Reply with the single word OK." },
+      agent: OK_AGENT,
       workspaces: [
         { name: "scratch", workspaceId: created.workspaceId, sandbox: null },
       ],

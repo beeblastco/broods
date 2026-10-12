@@ -10,11 +10,11 @@ import { appendFileSync } from "node:fs";
 
 const CONVEX_URL = process.env.CONVEX_URL ?? "";
 const TRACE_PATH = process.env.BROODS_LOCAL_CONVEX_TRACE ?? "";
-const MODEL = "gpt-6-luna";
 const USAGE = { input_tokens: 100, output_tokens: 10, total_tokens: 110 };
 
 interface ResponsesRequest {
   input: { content?: unknown; role?: string }[];
+  model: string;
   stream?: boolean;
   tools?: { name?: string }[];
 }
@@ -54,7 +54,11 @@ function fakeModel(request: ResponsesRequest): Response {
     last?.role === "user" &&
     JSON.stringify(last.content).includes("RUN_BASH") &&
     request.tools?.some((tool) => tool.name === "bash") === true;
-  const response = { id: `resp_${Date.now()}`, created_at: 0, model: MODEL };
+  const response = {
+    id: `resp_${Date.now()}`,
+    created_at: 0,
+    model: request.model,
+  };
   if (!request.stream) {
     return Response.json({
       ...response,
@@ -85,18 +89,20 @@ function fakeModel(request: ResponsesRequest): Response {
   const frames = [
     event("response.created", { response: response }),
     event("response.output_item.added", { output_index: 0, item: item }),
-    ...(wantsBash
-      ? []
-      : [
-          event("response.output_text.delta", {
-            item_id: item.id,
-            output_index: 0,
-            delta: "OK",
-          }),
-        ]),
+  ];
+  if (!wantsBash) {
+    frames.push(
+      event("response.output_text.delta", {
+        item_id: item.id,
+        output_index: 0,
+        delta: "OK",
+      }),
+    );
+  }
+  frames.push(
     event("response.output_item.done", { output_index: 0, item: item }),
     event("response.completed", { response: { ...response, usage: USAGE } }),
-  ];
+  );
 
   return new Response(frames.join(""), {
     status: 200,

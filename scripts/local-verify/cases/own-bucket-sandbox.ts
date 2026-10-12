@@ -1,5 +1,10 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
-import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  assertStep,
+  runToTerminal,
+  type VerifyContext,
+} from "../harness.ts";
 
 /**
  * A workspace on its own bucket behind a deny-all lambda sandbox can never
@@ -30,7 +35,7 @@ export async function ownBucketSandbox(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       ...context.model,
-      agent: { system: "Reply with the single word OK." },
+      agent: OK_AGENT,
       sandboxes: [sandbox.sandboxId],
       workspaces: [{ name: "byo", workspaceId: workspace.workspaceId }],
     },

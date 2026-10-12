@@ -1,6 +1,11 @@
 import type { CreateAgentResult } from "../../../packages/broods/src/account.ts";
 import type { AgentRunResult } from "../../../packages/broods/src/client.ts";
-import { MODEL_KEY_HINT, assertStep, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  MODEL_KEY_HINT,
+  assertStep,
+  type VerifyContext,
+} from "../harness.ts";
 
 // What `/compact` replies when it found history to fold.
 const COMPACTED_REPLY = /^Context compacted\. \d+ message\(s\) summarized\.$/;
@@ -23,7 +28,7 @@ export async function autoCompaction(context: VerifyContext): Promise<void> {
           name: key,
           config: {
             ...context.model,
-            agent: { system: "Reply with the single word OK." },
+            agent: OK_AGENT,
             ...(autoCompaction
               ? { session: { autoCompaction: autoCompaction } }
               : {}),

@@ -4,6 +4,7 @@ import {
   type AuditPage,
 } from "../../../packages/broods/src/account.ts";
 import {
+  OK_AGENT,
   assertStep,
   pollUntil,
   runToTerminal,
@@ -21,7 +22,7 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
     name: name,
     config: {
       ...context.model,
-      agent: { system: "Reply with the single word OK." },
+      agent: OK_AGENT,
     },
   });
   await context.measure("audit run", () =>

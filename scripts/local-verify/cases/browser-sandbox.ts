@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  OK_AGENT,
   MODEL_KEY_HINT,
   assertStep,
   connectMachine,
@@ -28,7 +29,7 @@ export async function browserSandbox(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       ...context.model,
-      agent: { system: "Reply with the single word OK." },
+      agent: OK_AGENT,
       sandboxes: [sandbox.sandboxId],
       browser: { enabled: true },
     },

@@ -1,5 +1,10 @@
 import type { AgentRunResult } from "../../../packages/broods/src/client.ts";
-import { MODEL_KEY_HINT, assertStep, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  MODEL_KEY_HINT,
+  assertStep,
+  type VerifyContext,
+} from "../harness.ts";
 
 /** BroodsClient.run streams a reply over core SSE through the gateway. Needs a model key. */
 export async function sdkClient(context: VerifyContext): Promise<void> {
@@ -12,7 +17,7 @@ export async function sdkClient(context: VerifyContext): Promise<void> {
     name: name,
     config: {
       ...context.model,
-      agent: { system: "Reply with the single word OK." },
+      agent: OK_AGENT,
     },
   });
   const result = await context.measure(
