@@ -2018,8 +2018,8 @@ describe("runAgentLoop", () => {
     ];
     const breakpoint = { type: "ephemeral" };
 
-    const first = await anthropicRequestBody(firstRun, config);
-    const second = await anthropicRequestBody(secondRun, config);
+    const first = await providerRequestBody(firstRun, config);
+    const second = await providerRequestBody(secondRun, config);
 
     // Automatic caching still covers the tail within a run.
     expect(first.cache_control).toEqual(breakpoint);
@@ -2058,6 +2058,67 @@ describe("runAgentLoop", () => {
         ],
       },
     ]);
+  });
+
+  it("marks the system prompt and the stored history so the next OpenAI run reads them from cache", async () => {
+    const config: AgentConfig = {
+      provider: { openai: { apiKey: "openai-key" } },
+      model: { provider: "openai", modelId: "gpt-6-luna" },
+    };
+    const firstRun: ModelMessage[] = [
+      { role: "user", content: "check the build" },
+    ];
+    const secondRun: ModelMessage[] = [
+      ...firstRun,
+      { role: "assistant", content: "The build passes." },
+      { role: "user", content: "thanks" },
+    ];
+    const breakpoint = { mode: "explicit" };
+
+    const first = await providerRequestBody(firstRun, config);
+    const second = await providerRequestBody(secondRun, config);
+
+    // OpenAI's own breakpoint ends the latest message, after the environment;
+    // these mark what the next run sends again.
+    expect(first.input).toEqual([
+      { role: "developer", content: "You are Tracy." },
+      {
+        role: "developer",
+        content: [
+          {
+            type: "input_text",
+            text: "Memory index.",
+            prompt_cache_breakpoint: breakpoint,
+          },
+        ],
+      },
+      { role: "developer", content: "Reply in Dutch." },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "check the build",
+            prompt_cache_breakpoint: breakpoint,
+          },
+          { type: "input_text", text: "<environment>" },
+        ],
+      },
+    ]);
+    // The first run's marked user message ends where the second run's does.
+    expect((second.input as unknown[])[3]).toEqual({
+      role: "user",
+      content: [{ type: "input_text", text: "check the build" }],
+    });
+  });
+
+  it("leaves OpenAI models before GPT-5.6 unmarked", async () => {
+    const call = await firstStepCall([{ role: "user", content: "hello" }], {
+      provider: { openai: { apiKey: "openai-key" } },
+      model: { provider: "openai", modelId: "gpt-5-mini" },
+    });
+
+    expect(JSON.stringify(call)).not.toContain("promptCacheBreakpoint");
   });
 
   it("leaves messages unmarked on providers without Anthropic caching", async () => {
@@ -3634,28 +3695,33 @@ async function startHookServer(
  * The Anthropic Messages body for one run over `history`: runAgentLoop builds
  * the streamText call, and the real Anthropic provider renders it to the wire.
  */
-async function anthropicRequestBody(
+async function providerRequestBody(
   history: ModelMessage[],
   config: AgentConfig,
 ): Promise<Record<string, unknown>> {
   const call = await firstStepCall(history, config);
   let body: Record<string, unknown> = {};
-  const anthropic = realCreateAnthropic({
-    apiKey: "anthropic-key",
-    fetch: Object.assign(
-      async (
-        _input: string | URL | Request,
-        init?: RequestInit,
-      ): Promise<Response> => {
-        body = JSON.parse(requestBodyText(init?.body));
+  const fetch = Object.assign(
+    async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      body = JSON.parse(requestBodyText(init?.body));
 
-        return Response.json({ error: "stop" }, { status: 400 });
-      },
-      { preconnect: originalFetch.preconnect },
-    ),
-  });
+      return Response.json({ error: "stop" }, { status: 400 });
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+  const modelId = config.model?.modelId ?? "";
   await realStreamText({
-    model: anthropic("claude-opus-5-5"),
+    model:
+      config.model?.provider === "openai"
+        ? realOpenAI.createOpenAI({ apiKey: "openai-key", fetch: fetch })(
+            modelId,
+          )
+        : realCreateAnthropic({ apiKey: "anthropic-key", fetch: fetch })(
+            modelId,
+          ),
     ...call,
     maxRetries: 0,
     onError: () => {},

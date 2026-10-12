@@ -346,6 +346,44 @@ export function providerOptionsFromModelConfig(
 }
 
 /**
+ * What one prompt cache breakpoint carries in a conversation run, or undefined
+ * when the run's model takes none. The harness marks the ends of the stored
+ * system prompt and of the history with it: the prefix the next run sends
+ * again. Anthropic's is the run's cacheControl. OpenAI's own breakpoint only
+ * ever ends the latest message, after the live environment no later run sends
+ * again, so without this mark each run started with nothing cached to read.
+ */
+export function cacheBreakpointFromProviderOptions(
+  agentConfig: AgentConfig,
+  providerOptions: AgentModelProviderOptions | undefined,
+): AgentModelProviderOptions | undefined {
+  const cacheControl = providerOptions?.anthropic?.cacheControl;
+  if (cacheControl !== undefined) {
+    return { anthropic: { cacheControl: cacheControl } };
+  }
+  if (
+    providerOptions?.openai?.promptCacheKey === undefined ||
+    !takesPromptCacheBreakpoints(agentConfig.model?.modelId)
+  ) {
+    return undefined;
+  }
+
+  return { openai: { promptCacheBreakpoint: { mode: "explicit" } } };
+}
+
+// Explicit prompt cache breakpoints start at GPT-5.6. Earlier models cache at
+// intervals of their own and document no breakpoint field.
+function takesPromptCacheBreakpoints(modelId: string | undefined): boolean {
+  const version = /^gpt-(\d+)(?:\.(\d+))?(?:-|$)/.exec(modelId ?? "");
+  if (!version) {
+    return false;
+  }
+  const major = Number(version[1]);
+
+  return major > 5 || (major === 5 && Number(version[2] ?? 0) >= 6);
+}
+
+/**
  * Which model an agent is configured on right now, as a value that can be
  * stored beside a message and compared later. Undefined only when the config is
  * incomplete, which `resolveConfiguredModel` refuses anyway.
