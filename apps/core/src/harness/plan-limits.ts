@@ -194,14 +194,15 @@ function budgetRefusal(status: BudgetStatus): PlanRefusal {
   const reached = capsReached(status.shares);
   const storage = `its storage limit of ${storageLimit(status)}`;
   const monthly = `one of its monthly resource caps for ${status.month}`;
+  const canUpgrade = status.plan === "free";
 
   return {
     kind: "budget",
     message: !reached.storage
       ? `This account has reached ${monthly} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`
       : reached.monthly
-        ? `This account has reached ${storage} and ${monthly} on the ${status.plan} plan. Delete files, then upgrade or wait for next month, to keep running agents; storage is measured once a day.`
-        : `This account has reached ${storage} on the ${status.plan} plan. Delete files${status.plan === "free" ? " or upgrade" : ""} to keep running agents; storage is measured once a day.`,
+        ? `This account has reached ${storage} and ${monthly} on the ${status.plan} plan. Delete files, then ${canUpgrade ? "upgrade or " : ""}wait for next month, to keep running agents; storage is measured once a day.`
+        : `This account has reached ${storage} on the ${status.plan} plan. Delete files${canUpgrade ? " or upgrade" : ""} to keep running agents; storage is measured once a day.`,
   };
 }
 

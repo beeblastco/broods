@@ -139,6 +139,18 @@ describe("admitRun", () => {
     );
   });
 
+  it("does not tell a pro account to upgrade when storage and a monthly cap are full", async () => {
+    budget.plan = "pro";
+    budget.usedPercent = 120;
+    budget.shares = { ...budget.shares, egressGb: 120, storageGb: 100 };
+
+    const { refusal } = await admitRun(ACCOUNT_ID);
+
+    expect(refusal?.message).toBe(
+      "This account has reached its storage limit of 50 GB of workspaces and files and one of its monthly resource caps for 2026-09 on the pro plan. Delete files, then wait for next month, to keep running agents; storage is measured once a day.",
+    );
+  });
+
   it("refuses a burst past the plan's runs per minute", async () => {
     await admitMany(budget.runsPerMinute);
 
