@@ -76,7 +76,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "ai": "^7.0.137"
+    "ai": "^7.0.127"
   },
   "engines": {
     "node": ">=22.15"
