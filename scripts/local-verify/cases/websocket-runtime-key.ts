@@ -8,6 +8,7 @@ import { BroodsWebSocketClient } from "../../../packages/broods/src/websocket.ts
 import { sealStageSessionTicket } from "../../../packages/convex/model/stageSessionTicket.ts";
 import {
   MODEL_KEY_HINT,
+  OK_AGENT,
   assertStep,
   pollUntil,
   type VerifyContext,
@@ -45,14 +46,14 @@ export async function websocketRuntimeKey(
             name: "public",
             config: {
               ...context.model,
-              agent: { system: "Reply with OK." },
+              agent: OK_AGENT,
               publicAccess: true,
             },
           },
           {
             kind: "agent",
             name: "private",
-            config: { ...context.model, agent: { system: "Reply with OK." } },
+            config: { ...context.model, agent: OK_AGENT },
           },
         ],
       },
