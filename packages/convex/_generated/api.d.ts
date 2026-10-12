@@ -1913,6 +1913,12 @@ export declare const internal: {
           month: string;
           plan: "free" | "pro";
           runsPerMinute: number;
+          shares: {
+            egressGb: number;
+            hostedMcpHours: number;
+            sandboxHours: number;
+            storageGb: number;
+          };
           usedPercent: number;
           warned: boolean;
         } | null

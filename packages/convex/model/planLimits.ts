@@ -52,6 +52,23 @@ export interface ResourceCaps {
   egressGb: number;
 }
 
+/**
+ * Which kinds of cap `shares` (percent of each cap) have reached `percent`:
+ * storage, a size a new month does not free, and the monthly ones.
+ */
+export function capsReached(
+  shares: ResourceCaps,
+  percent = 100,
+): { storage: boolean; monthly: boolean } {
+  return {
+    storage: shares.storageGb >= percent,
+    monthly:
+      shares.sandboxHours >= percent ||
+      shares.hostedMcpHours >= percent ||
+      shares.egressGb >= percent,
+  };
+}
+
 export interface PlanLimits {
   caps: ResourceCaps;
   /** Burst protection: runs admitted per account per minute. */
