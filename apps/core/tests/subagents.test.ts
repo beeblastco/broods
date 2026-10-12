@@ -927,11 +927,14 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("resumes the parent with a result the pass's last write did not save, and closes its question", async () => {
+  it("resumes the parent with each result the pass's last write did not save, and detaches the children still working", async () => {
     const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const resumeParent = mock(
-      async (): Promise<SubagentResumeOutcome> => "queued",
+      async (
+        _parent: unknown,
+        _taskId: string,
+      ): Promise<SubagentResumeOutcome> => "queued",
     );
     const coordinator = new SubagentCoordinator(
       parentSession({
@@ -951,13 +954,16 @@ describe("SubagentCoordinator", () => {
       status: "completed",
       response: "idle report",
     });
-    coordinator["pendingMetadata"].set("subagent_2", {
+    // A child that asked a question and is still working.
+    const asking = {
       taskId: "subagent_2",
       eventId: "event_subagent_2",
       agentId: "agent_research",
       conversationKey: "subagent-subagent_2",
-    });
-    const question = coordinator.askParent("subagent_2", "Which?");
+    };
+    coordinator["pending"].set(asking.taskId, new Promise((): void => {}));
+    coordinator["pendingMetadata"].set(asking.taskId, asking);
+    const question = coordinator.askParent(asking.taskId, "Which?");
 
     try {
       expect(
@@ -965,13 +971,24 @@ describe("SubagentCoordinator", () => {
           .drainCompletionsToParent()
           .catch((error: unknown): string => String(error)),
       ).toBe("Error: convex down");
-      expect(resumeParent).toHaveBeenCalledTimes(1);
       // No pass follows to answer the question it did not save.
       expect(await question).toBeNull();
-      expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
-        eventId: "event_subagent_1",
-        observed: false,
+      // The working child is detached, so its result resumes the parent too.
+      await coordinator["completeTask"]({
+        ...asking,
+        status: "completed",
+        response: "after the failure",
       });
+      expect(resumeParent.mock.calls.map(([, taskId]) => taskId)).toEqual([
+        "subagent_1",
+        "subagent_2",
+      ]);
+      for (const eventId of ["event_subagent_1", "event_subagent_2"]) {
+        expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
+          eventId: eventId,
+          observed: false,
+        });
+      }
       expect(await coordinator.drainCompletionsToParent()).toBe(0);
     } finally {
       mutate.mockRestore();

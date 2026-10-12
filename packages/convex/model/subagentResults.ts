@@ -5,7 +5,6 @@ import type { Doc } from "../_generated/dataModel";
  * conversation. Core writes it with the result; `runtimeIngress.accept`
  * looks it up, so a late resume never repeats a result the parent has.
  */
-
 export function subagentResultDedupeKey(
   eventId: string,
   status: Doc<"runtimeAsyncAgentResults">["status"] | "running",
