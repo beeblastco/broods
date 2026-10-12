@@ -680,9 +680,12 @@ describe("streamed runs", (): void => {
       });
       fillWorkerQueue();
 
-      await expect(handleChannelRequest(channelMessage(1))).rejects.toThrow(
-        "In-process worker queue is full",
+      const turnedAway = await handleChannelRequest(channelMessage(1)).then(
+        (): string => "admitted",
+        (err: unknown): string => String(err),
       );
+
+      expect(turnedAway).toBe("Error: In-process worker queue is full");
       await drainWorkerQueue();
 
       expect(ingress.acceptIngress).not.toHaveBeenCalled();
