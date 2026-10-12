@@ -317,14 +317,7 @@ function pickNotice(
   const reset = billingReset(budget.month);
   // Storage is a size: a new month does not free it, deleting files does.
   if (budget.level !== "ok" && budget.shares.storageGb === budget.usedPercent) {
-    return {
-      tone: budget.level === "exhausted" ? "destructive" : "warning",
-      text:
-        budget.level === "exhausted"
-          ? `Storage limit reached. Runs are stopped and each channel got a notice. Delete files${canUpgrade ? " or upgrade" : ""} to resume; storage is measured once a day.`
-          : `${formatPercent(budget.usedPercent ?? 0)} of your storage limit used. Runs stop at 100% until you delete files${canUpgrade ? " or upgrade" : ""}.`,
-      ...(canUpgrade ? { action: "upgrade", actionLabel: "Upgrade" } : {}),
-    };
+    return storageNotice(budget, canUpgrade);
   }
   if (budget.level === "exhausted") {
     return {
@@ -352,6 +345,19 @@ function pickNotice(
   }
 
   return null;
+}
+
+function storageNotice(budget: BudgetUsage, canUpgrade: boolean): Notice {
+  const fix = canUpgrade ? "delete files or upgrade" : "delete files";
+
+  return {
+    tone: budget.level === "exhausted" ? "destructive" : "warning",
+    text:
+      budget.level === "exhausted"
+        ? `Storage limit reached. Runs are stopped and each channel got a notice. To resume, ${fix}; storage is measured once a day.`
+        : `${formatPercent(budget.usedPercent ?? 0)} of your storage limit used. Runs stop at 100% until you ${fix}.`,
+    ...(canUpgrade ? { action: "upgrade", actionLabel: "Upgrade" } : {}),
+  };
 }
 
 function planDetail(
