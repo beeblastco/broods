@@ -828,13 +828,21 @@ async function handleHttpRequest(
 
   const auth = await context.authResolver(request.headers);
 
-  // Scope resolution for the realtime observability gateway. The gateway calls
-  // this server-side with the client's credential to learn which NATS subjects
-  // and Loki/Tempo labels it may stream. Scope comes from the credential, never
-  // the client. Only a member's stage ticket qualifies: the embeddable runtime
-  // key sits in frontends, and logs carry every user's chats and tool payloads.
-  if (isObservabilityScopePath(request.path)) {
-    if (auth?.kind !== "deployment" || !auth.stageTicket) {
+  // Scope resolution for the gateway's sockets. The gateway calls this
+  // server-side with the client's credential to learn which account and stage
+  // the socket binds to. Scope comes from the credential, never the client.
+  // The observability socket takes only a member's stage ticket: the
+  // embeddable runtime key sits in frontends, and logs carry every user's
+  // chats and tool payloads. The agent socket takes that key too: the gateway
+  // starts, steers and reads back each run through the run paths here, with
+  // the client's key, so the key reaches what it reaches over HTTP: the public
+  // agents of its own stage.
+  const socketScope = socketScopePath(request.path);
+  if (socketScope) {
+    if (
+      auth?.kind !== "deployment" ||
+      (socketScope === "observability" && !auth.stageTicket)
+    ) {
       return unauthorizedResponse();
     }
 
@@ -843,9 +851,9 @@ async function handleHttpRequest(
       projectSlug: auth.projectSlug,
       stageSlug: auth.stageSlug,
       endpointIds: [auth.endpointId],
-      // The gateway closes the socket at this instant: a ticket is checked
-      // once at the upgrade, so its lifetime must ride along.
-      expiresAt: auth.stageTicket.expiresAt,
+      // The gateway closes an observability socket at this instant: a ticket
+      // is checked once at the upgrade, so its lifetime must ride along.
+      ...(auth.stageTicket ? { expiresAt: auth.stageTicket.expiresAt } : {}),
     });
   }
 
@@ -2771,8 +2779,11 @@ function parseSandboxJobCompletionPayload(
   };
 }
 
-function isObservabilityScopePath(rawPath: string): boolean {
-  return rawPath === "/v1/internal/observability-scope";
+/** The gateway socket a scope lookup is for, or null on any other path. */
+function socketScopePath(rawPath: string): "agent" | "observability" | null {
+  if (rawPath === "/v1/internal/observability-scope") return "observability";
+
+  return rawPath === "/v1/internal/agent-socket-scope" ? "agent" : null;
 }
 
 // A malformed escape makes `decodeURIComponent` throw, which would surface as a

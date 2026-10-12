@@ -11,7 +11,7 @@ import {
   readObservabilityStream,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
-import { resolveSocketScope } from "./upstream.ts";
+import { resolveSocketScope, type CredentialScope } from "./upstream.ts";
 import {
   decoder,
   errorMessage,
@@ -19,14 +19,8 @@ import {
   parseJson,
 } from "./utils.ts";
 
-export type ObservabilityScope = {
-  accountId: string;
-  projectSlug: string;
-  stageSlug: string;
-  endpointIds: string[];
-  /** Unix ms the stage ticket dies at, as core verified it. */
-  expiresAt: number;
-};
+/** Only a stage ticket opens this socket, so its scope always expires. */
+export type ObservabilityScope = CredentialScope & { expiresAt: number };
 
 export type ObservabilityGatewayData = {
   kind: "observability";
@@ -292,7 +286,11 @@ export function watchObservabilityLifetime(
   state.lifetime = setTimeout(
     async (): Promise<void> => {
       if (closeIfExpired(socket)) return;
-      const resolved = await resolveSocketScope(socket.data.token, coreBaseUrl);
+      const resolved = await resolveSocketScope(
+        "observability",
+        socket.data.token,
+        coreBaseUrl,
+      );
       // Closed while core answered: nothing left to close or watch.
       if (!obsState.has(socket) || closeIfExpired(socket)) return;
       if (resolved.kind === "invalid") {
