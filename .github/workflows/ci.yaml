@@ -287,6 +287,9 @@ jobs:
             ~/.broods-local/*/logs/
             ~/.broods-local/*/perf.jsonl
             ~/.broods-local/*/convex-calls.jsonl
+          # The stack's state dir is hidden, and upload-artifact skips
+          # everything under a dot directory unless told otherwise.
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
 
