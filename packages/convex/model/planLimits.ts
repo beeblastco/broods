@@ -60,7 +60,7 @@ export interface PlanLimits {
 
 // Free: about EUR 1.25 of compute and egress each, two or three large
 // projects' worth of building, and a small storage allowance.
-// Pro: about EUR 2.50 of each resource.
+// Pro: about EUR 2.50 of compute and egress each, and 50 GB of storage.
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   free: {
     caps: { sandboxHours: 9, hostedMcpHours: 16, storageGb: 10, egressGb: 15 },
@@ -70,7 +70,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     caps: {
       sandboxHours: 18,
       hostedMcpHours: 32,
-      storageGb: 100,
+      storageGb: 50,
       egressGb: 30,
     },
     runsPerMinute: 5_000,
