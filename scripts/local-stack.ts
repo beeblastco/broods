@@ -777,7 +777,10 @@ function startCore(state: InstanceState): void {
             "--preload",
             join(repoRoot, "scripts", "local-verify", "fake-model.ts"),
           ]
-        : []),
+        : [
+            "--preload",
+            join(repoRoot, "scripts", "local-verify", "usage-log.ts"),
+          ]),
       "--watch",
       "src/server.ts",
     ],

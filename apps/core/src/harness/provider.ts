@@ -363,6 +363,15 @@ export function cacheBreakpointFromProviderOptions(
   agentConfig: AgentConfig,
   providerOptions: AgentModelProviderOptions | undefined,
 ): AgentModelProviderOptions | undefined {
+  // MEASUREMENT ONLY, never merged: an agent whose prompt says marks-off
+  // runs the code from before the OpenAI breakpoints.
+  if (
+    JSON.stringify(agentConfig.agent?.system ?? "").includes(
+      "[measure:marks-off]",
+    )
+  ) {
+    return undefined;
+  }
   if (
     agentConfig.model?.provider === "openai" &&
     providerOptions?.openai?.promptCacheKey !== undefined &&

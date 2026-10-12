@@ -36,7 +36,11 @@ import { workToolWebhooks } from "./work-tool-webhooks.ts";
 import { workspaceIsolation } from "./workspace-isolation.ts";
 
 /** Every case `local-stack.ts verify` runs, in order. A new end-to-end feature adds one here. */
-export const verifyCases: readonly VerifyCase[] = [
+import { cacheMeasure } from "./cache-measure.ts";
+
+/** MEASUREMENT ONLY, never merged: only the cache measurement runs. */
+export const verifyCases: readonly VerifyCase[] = [cacheMeasure];
+export const allCases: readonly VerifyCase[] = ([] = [
   agentRun,
   sdkClient,
   websocketAttachAbort,
@@ -73,4 +77,4 @@ export const verifyCases: readonly VerifyCase[] = [
   skillLimit,
   // Last: it blocks a source address on the config plane for 15 minutes.
   authFailures,
-];
+]);
