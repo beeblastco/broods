@@ -11,6 +11,7 @@ import type { Id } from "../_generated/dataModel";
 import {
   FREE_MONTHLY_BUDGET_EUR,
   PLAN_LIMITS,
+  type Plan,
   PRO_MONTHLY_BUDGET_EUR,
 } from "../model/planLimits";
 import {
@@ -184,7 +185,7 @@ test("an hour of the default MicroVM costs about €0.14", () => {
 });
 
 test("maxing every cap costs no more than the plan's budget", () => {
-  const capsCost = (plan: "free" | "pro"): number => {
+  const capsCost = (plan: Plan): number => {
     const caps = PLAN_LIMITS[plan].caps;
 
     return meterCostEur({
@@ -472,6 +473,26 @@ describe("budget", () => {
     expect(claims).toEqual([true, false]);
   });
 
+  test("stops a free account at 10 GB of workspaces and files, not a Pro one", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const [free, pro] = await Promise.all(
+      (["free", "pro"] as const).map(async (plan) => {
+        const accountId = await seedAccount(t, plan);
+        await t.mutation(internal.account.budget.record, {
+          accountId: accountId,
+          usage: { storageGbMonths: 10 / 30 },
+        });
+
+        return await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+      }),
+    );
+
+    expect(free).toMatchObject({ usedPercent: 100, level: "exhausted" });
+    expect(pro).toMatchObject({ usedPercent: 10, level: "ok" });
+  });
+
   test("reaches the dashboard as amounts and percentages with no euro figures", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
@@ -479,7 +500,7 @@ describe("budget", () => {
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 16.5, storageGbMonths: 0.5, ingressGb: 2 },
+      usage: { egressGb: 16.5, storageGbMonths: 0.1, ingressGb: 2 },
     });
 
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
@@ -487,7 +508,7 @@ describe("budget", () => {
     const amounts = {
       sandboxHours: 0,
       hostedMcpHours: 0,
-      storageGb: 15,
+      storageGb: 3,
       egressGb: 16.5,
       ingressGb: 2,
     };
@@ -597,13 +618,13 @@ describe("budget", () => {
   });
 });
 
-async function seedAccount(t: T): Promise<Id<"accounts">> {
+async function seedAccount(t: T, plan: Plan = "free"): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",
       slug: "beeblast",
       ownerAuthId: "auth_owner",
-      plan: "free" as const,
+      plan: plan,
       createdAt: Date.now(),
     });
 
