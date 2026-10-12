@@ -472,6 +472,29 @@ describe("budget", () => {
     expect(claims).toEqual([true, false]);
   });
 
+  test("stops a free account at 10 GB of workspaces and files, not a Pro one", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { storageGbMonths: 10 / 30 },
+    });
+
+    const free = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+    await t.run(async (ctx) => {
+      const account = await ctx.db.get(accountId);
+      const orgId = account && ctx.db.normalizeId("orgs", account.orgId);
+      if (orgId) await ctx.db.patch(orgId, { plan: "pro" });
+    });
+    const pro = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
+
+    expect(PLAN_LIMITS.free.caps.storageGb).toBe(10);
+    expect(free).toMatchObject({ usedPercent: 100, level: "exhausted" });
+    expect(pro).toMatchObject({ usedPercent: 10, level: "ok" });
+  });
+
   test("reaches the dashboard as amounts and percentages with no euro figures", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.useFakeTimers({ now: NOW });
@@ -479,7 +502,7 @@ describe("budget", () => {
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 16.5, storageGbMonths: 0.5, ingressGb: 2 },
+      usage: { egressGb: 16.5, storageGbMonths: 0.1, ingressGb: 2 },
     });
 
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
@@ -487,7 +510,7 @@ describe("budget", () => {
     const amounts = {
       sandboxHours: 0,
       hostedMcpHours: 0,
-      storageGb: 15,
+      storageGb: 3,
       egressGb: 16.5,
       ingressGb: 2,
     };

@@ -59,11 +59,13 @@ export interface PlanLimits {
 }
 
 // About EUR 1.25 of each resource, a quarter of the free budget: two or three
-// large projects' worth of building. Pro doubles every cap.
+// large projects' worth of building. Storage is the exception: free workspaces
+// and files stop at 10 GB (about EUR 0.21). Pro doubles every other cap and
+// keeps 100 GB of storage.
 const FREE_CAPS: ResourceCaps = {
   sandboxHours: 9,
   hostedMcpHours: 16,
-  storageGb: 50,
+  storageGb: 10,
   egressGb: 15,
 };
 
@@ -73,7 +75,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     caps: {
       sandboxHours: FREE_CAPS.sandboxHours * 2,
       hostedMcpHours: FREE_CAPS.hostedMcpHours * 2,
-      storageGb: FREE_CAPS.storageGb * 2,
+      storageGb: 100,
       egressGb: FREE_CAPS.egressGb * 2,
     },
     runsPerMinute: 5_000,
