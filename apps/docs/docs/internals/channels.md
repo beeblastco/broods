@@ -116,7 +116,7 @@ sequenceDiagram
 
 The 2 s budget starts once every receiver has parsed the delivery, so it covers admission only; scan and parse come on top. It stays under Slack's and Discord's 3 s retry limit when those are quick. A provider that times out first treats the delivery as failed and resends it, the same as after a `503`. Whatever is still admitting when the budget runs out carries on after the ACK.
 
-Like an API run, a message holds one run queue place while it is admitted (`withQueuePlace` in `handleChannelRequest`). A full queue turns it away before the plan counts it or ingress records it, and an account out of budget hears its refusal first. A turn whose parse result sets `redelivers` (the provider or its forwarder resends after a 5xx) rejects, and the webhook answers `503` with `Retry-After`; in a `batch` that answers the whole delivery, and the turns already admitted come back as duplicates. Any other turn, or one turned away after the ACK went, says the agent is busy in the channel and is acked. Slack slash commands and buttons, Discord interactions, GitHub, Pancake, Zalo, Teams, Google Chat and Twilio do not resend, so they get the busy reply.
+Like an API run, a message holds one run queue place while it is admitted (`withQueuePlace` in `handleChannelRequest`). A full queue turns it away before the plan counts it or ingress records it, and an account out of budget hears its refusal first. A turn whose parse result sets `redelivers` (the provider or its forwarder resends after a 5xx) rejects, and the webhook answers `503` with `Retry-After`; in a `batch` that answers the whole delivery, and the turns already admitted come back as duplicates. Any other turn, or one turned away after the ACK went, says the agent is busy in the channel and is acked. Slack slash commands and buttons, Discord interactions, GitHub, Pancake, Zalo, Teams, Google Chat and Twilio do not resend, so they get the busy reply. Discord Gateway messages get it too: the Discord forwarder gives up after 3 tries in about 10 s, too soon to outlast a full queue, and a dropped message would leave the chat with nothing.
 
 A `queued` or `duplicate` outcome starts no worker: the current owner drains the queue on its own worker slot (`runChannelTurns` loops on `takeNext`). Busy-conversation rules are in [queue and steer](queue-and-steer.md). Model work runs on the `MAX_INPROCESS_WORKERS` pool shared with streamed, async and WebSocket runs.
 
@@ -353,6 +353,6 @@ export function createExampleChannel(
 
 - Verify signatures or secrets before parsing user-controlled payloads deeply.
 - Use stable provider ids for `eventId` so redeliveries dedup, and thread or chat ids for `conversationKey` so follow-ups keep context.
-- Set `redelivers: true` on a `message` result only when the provider, or your forwarder, sends the delivery again after a 5xx. A full run queue then answers `503` instead of a busy reply.
+- Set `redelivers: true` on a `message` result only when the provider, or your forwarder, sends the delivery again after a 5xx and keeps trying long enough to outlast a full queue. A full run queue then answers `503` instead of a busy reply.
 - Never download attachments in `parse`.
 - A provider `apiUrl` override must be a public `https` URL, checked when the channel is saved, because core sends the token to it.

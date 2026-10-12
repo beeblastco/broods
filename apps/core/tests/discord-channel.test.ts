@@ -131,6 +131,8 @@ describe("discord channel adapter", () => {
     }
 
     expect(parsed.ack?.statusCode).toBe(200);
+    // The forwarder's few retries cannot outlast a full queue: busy reply, not 503.
+    expect(parsed.redelivers).toBeUndefined();
     expect(parsed.message.eventId).toBe("discord:message-1");
     expect(parsed.message.conversationKey).toBe("discord:guild-1:channel-1");
     expect(parsed.message.content).toEqual([

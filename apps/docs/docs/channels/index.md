@@ -115,11 +115,11 @@ An ordinary message sent while the agent is busy steers the running turn. See [C
 
 When every worker slot is busy and the run queue behind them is full, a new message is turned away before it is counted against the plan or recorded. Where the provider sends a delivery again after a server error, Broods answers `503` with `Retry-After` and the message is admitted when it comes back. Everywhere else the chat is told the agent is busy, so the sender can try again.
 
-| Provider                                                                                                    | A message the full queue turns away                                         |
-| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Telegram, Slack messages, WhatsApp, Messenger, Instagram, Linear                                            | `503`, the provider sends it again                                          |
-| Matrix, Discord messages                                                                                    | `503`, the forwarder sends it again (Discord: 3 tries within a few seconds) |
-| Slack slash commands and buttons, Discord slash commands, GitHub, Pancake, Zalo, Teams, Google Chat, Twilio | acked, and the chat is told the agent is busy                               |
+| Provider                                                                                     | A message the full queue turns away           |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Telegram, Slack messages, WhatsApp, Messenger, Instagram, Linear                             | `503`, the provider sends it again            |
+| Matrix                                                                                       | `503`, the forwarder sends it again           |
+| Discord, Slack slash commands and buttons, GitHub, Pancake, Zalo, Teams, Google Chat, Twilio | acked, and the chat is told the agent is busy |
 
 An account out of budget hears its plan refusal instead, full queue or not.
 
