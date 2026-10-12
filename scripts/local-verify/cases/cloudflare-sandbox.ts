@@ -58,8 +58,10 @@ export async function cloudflareSandbox(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       ...context.model,
-      instructions:
-        "Use the bash tool to run exactly the command the user gives, then reply with exactly its output and nothing else.",
+      agent: {
+        system:
+          "Use the bash tool to run exactly the command the user gives, then reply with exactly its output and nothing else.",
+      },
       sandboxes: [sandbox.sandboxId],
     },
   });

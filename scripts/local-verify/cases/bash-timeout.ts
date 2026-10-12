@@ -27,8 +27,10 @@ export async function bashTimeout(context: VerifyContext): Promise<void> {
       name: name,
       config: {
         ...context.model,
-        instructions:
-          "Call the bash tool exactly once, with the command `sleep 5`. Never call a tool again, whatever it returns. Then reply with exactly the text the tool returned and nothing else.",
+        agent: {
+          system:
+            "Call the bash tool exactly once, with the command `sleep 5`. Never call a tool again, whatever it returns. Then reply with exactly the text the tool returned and nothing else.",
+        },
         sandboxes: [machine.sandboxId],
       },
     });

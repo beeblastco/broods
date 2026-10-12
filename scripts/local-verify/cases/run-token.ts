@@ -1,5 +1,5 @@
 import { sealRunToken } from "../../../apps/core/src/shared/run-token.ts";
-import { assertStep, type VerifyContext } from "../harness.ts";
+import { OK_AGENT, assertStep, type VerifyContext } from "../harness.ts";
 
 interface Answer {
   status: number;
@@ -53,7 +53,7 @@ export async function runToken(context: VerifyContext): Promise<void> {
   const name = `run-token-${context.runId}`;
   const agentConfig = {
     ...context.model,
-    instructions: "Reply with the single word OK.",
+    agent: OK_AGENT,
   };
   const [{ accountId }, own, other] = await Promise.all([
     context.account.getAccount(),

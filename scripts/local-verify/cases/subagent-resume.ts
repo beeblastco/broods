@@ -39,8 +39,10 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       ...context.model,
-      instructions:
-        "You delegate. Call run_subagent exactly once per request, with no agentId, then reply with what the subagent answered.",
+      agent: {
+        system:
+          "You delegate. Call run_subagent exactly once per request, with no agentId, then reply with what the subagent answered.",
+      },
       subagent: { enabled: true },
     },
   });
