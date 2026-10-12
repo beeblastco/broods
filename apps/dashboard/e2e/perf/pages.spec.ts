@@ -25,11 +25,7 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
-import {
-  timeClientNavigation,
-  waitForHydrated,
-  waitForReady,
-} from "../lib/timing";
+import { timeClientNavigation, waitForReady } from "../lib/timing";
 
 interface ProbePage {
   name: string;
@@ -167,12 +163,12 @@ test("every page renders cold within budget, and every sidebar destination by na
   const navPage = await navContext.newPage();
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
   await waitForReady(PROJECT_PAGES[0].ready(navPage));
+  // The canvas and sidebar are server-rendered, so the start page is ready
+  // before its JS has run. On a deployment, a long round trip from the
+  // runner, the first click would beat hydration and load a new document.
+  await waitForReady(navPage.locator('[data-hydrated="true"]'));
   for (const dest of SIDEBAR_NAV) {
     const link = navPage.getByRole("link", { name: dest.label, exact: true });
-    // The canvas and sidebar are server-rendered, so the start page is ready
-    // before its JS has run. On a deployment, a long round trip from the
-    // runner, the first click would beat hydration and load a new document.
-    await waitForHydrated(link);
     const ms = await timeClientNavigation(
       navPage,
       () => link.click(),

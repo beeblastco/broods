@@ -21,6 +21,7 @@ import {
   useShortcutRegistry,
 } from "@/app/components/ShortcutProvider";
 import { Input } from "@/app/components/ui/input";
+import { useHydrated } from "@/app/hooks/useHydrated";
 import {
   actionTier,
   planRunsUnattended,
@@ -28,7 +29,7 @@ import {
 } from "@/app/lib/copilotActions";
 import { itemAction, planFromQuery } from "@/app/lib/copilotIntent";
 import type { SearchItem } from "@/app/lib/paletteSearch";
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
 
 const ITEMS: readonly SearchItem[] = [
   {
@@ -103,11 +104,7 @@ function describe(action: CopilotAction): string {
 }
 
 export function ShortcutsStandIn(): React.JSX.Element {
-  const hydrated = useSyncExternalStore(
-    () => () => {},
-    () => true,
-    () => false,
-  );
+  const hydrated = useHydrated();
 
   return (
     <main

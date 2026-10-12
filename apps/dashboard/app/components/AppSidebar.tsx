@@ -21,6 +21,7 @@ import {
   useSidebar,
 } from "@/app/components/ui/sidebar";
 import { UserMenu } from "@/app/components/UserMenu";
+import { useHydrated } from "@/app/hooks/useHydrated";
 import {
   ACCOUNT_NAV_ITEMS,
   activeNavItem,
@@ -48,6 +49,7 @@ export function AppSidebar(): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setOpenMobile, toggleSidebar } = useSidebar();
+  const hydrated = useHydrated();
   const projectId = params.projectId;
   const items = projectId ? NAV_ITEMS : ACCOUNT_NAV_ITEMS;
   const base = projectId ? `/${projectId}` : "";
@@ -78,7 +80,11 @@ export function AppSidebar(): React.JSX.Element {
   }, [pathname, searchParams, setOpenMobile]);
 
   return (
-    <Sidebar collapsible="icon" className="top-(--header-height) h-auto">
+    <Sidebar
+      collapsible="icon"
+      className="top-(--header-height) h-auto"
+      data-hydrated={hydrated ? "true" : undefined}
+    >
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>

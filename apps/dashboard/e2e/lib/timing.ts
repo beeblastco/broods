@@ -1,7 +1,7 @@
 /**
  * Clock helpers for the render-budget probe (`e2e/perf`): wait for a page's
- * ready marker without rounding the timing up, wait for a link to be
- * hydrated, and time a client-side navigation on the document's own clock.
+ * ready marker without rounding the timing up, and time a client-side
+ * navigation on the document's own clock.
  */
 import { expect, type Locator, type Page } from "@playwright/test";
 
@@ -14,27 +14,6 @@ export async function waitForReady(marker: Locator): Promise<void> {
       intervals: [16],
       timeout: READY_TIMEOUT_MS,
     })
-    .toBe(true);
-}
-
-/**
- * Waits until React has hydrated `element`, so a click on it reaches the app.
- * A server-rendered page paints its links before its JS has run, and until
- * then a link is a plain `<a>`: a click loads a new document, the browser's
- * fallback, not the client navigation the app does once hydrated. React keeps
- * a hydrated node's props on it under `__reactProps$<id>`.
- */
-export async function waitForHydrated(element: Locator): Promise<void> {
-  await expect
-    .poll(
-      () =>
-        element
-          .first()
-          .evaluate((node) =>
-            Object.keys(node).some((key) => key.startsWith("__reactProps$")),
-          ),
-      { intervals: [16], timeout: READY_TIMEOUT_MS },
-    )
     .toBe(true);
 }
 
