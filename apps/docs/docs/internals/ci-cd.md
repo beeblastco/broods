@@ -102,7 +102,7 @@ sequenceDiagram
 | matrix-forwarder  | `deploy-matrix-forwarder.yaml`, `main` or ticked only  | nothing                             |
 
 - A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
-- The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (a scope with no ticket expiry is a 502). A gateway that rolled first would refuse every such socket until core caught up.
+- The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (an observability scope with no ticket expiry is a 502). The agent socket asks `/v1/internal/agent-socket-scope`, which an older core does not serve. A gateway that rolled first would refuse every such socket until core caught up.
 - Images are `ghcr.io/beeblastco/broods-*`, tagged with the commit sha plus a floating `dev` or `main` tag.
 - The rollout job has a 40 minute budget: 20 for prerequisites, 20 for the roll. It needs `INFRA_DISPATCH_TOKEN`.
 

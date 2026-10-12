@@ -78,7 +78,7 @@ sequenceDiagram
   participant H as core
   participant N as NATS WS_RESPONSES
   C->>G: open /v1/agents/:endpointId/ws
-  G->>H: /v1/internal/observability-scope
+  G->>H: /v1/internal/agent-socket-scope
   H-->>G: token scope
   C->>G: execute frame
   G-->>C: meta
@@ -100,7 +100,7 @@ sequenceDiagram
   G-->>C: done or error
 ```
 
-- The credential rides `Sec-WebSocket-Protocol`. The scope lookup is the door check; attach never reaches the core run path.
+- The credential rides `Sec-WebSocket-Protocol`: the stage's runtime key or a member's stage ticket. The scope lookup is the door check: it binds the socket to the credential's account and stage endpoint. Every frame after it reaches core with that same credential, so `execute` and `control` pass the run checks and `attach` the status read, exactly as over HTTP: a runtime key reaches only the public agents of its stage. The gateway reads NATS only for a run core admitted, and an attach replays only the run its `runId` names.
 - Needs `ENABLE_WEBSOCKET=true` and `NATS_URL`. Attach, replay and control frames: [queue and steer](queue-and-steer.md).
 
 ### Channel webhook
@@ -242,18 +242,18 @@ stateDiagram-v2
 
 ## Credentials
 
-| Credential           | Prefix  | Checked by                                                      |
-| -------------------- | ------- | --------------------------------------------------------------- |
-| Runtime key          | `bsk_`  | core (`src/shared/auth.ts`); the gateway checks WebSocket scope |
-| Stage session ticket | `bdts_` | core, `STAGE_TICKET_SECRET`; Convex signs it, 15 minutes        |
-| Account key          | `bask_` | core and the config plane                                       |
-| Role session         | `bsts_` | core and the config plane, then the role's policy, up to 12 h   |
-| CLI login            | `bcli_` | Convex `cli/http.ts`                                            |
-| Project key          | `bpdk_` | Convex `cli/http.ts`                                            |
-| Admin secret         | none    | core, `ADMIN_ACCOUNT_SECRET`, self-hosted account creation      |
-| Service token        | none    | core, only with `X-Account-Id` and no `x-broods-via-gateway`    |
-| Terminal ticket      | sealed  | gateway, `TERMINAL_TICKET_SECRET`; core seals it                |
-| Per-job token        | none    | core, against the `runtimeAsyncToolResults` row                 |
+| Credential           | Prefix  | Checked by                                                         |
+| -------------------- | ------- | ------------------------------------------------------------------ |
+| Runtime key          | `bsk_`  | core (`src/shared/auth.ts`); the gateway checks agent socket scope |
+| Stage session ticket | `bdts_` | core, `STAGE_TICKET_SECRET`; Convex signs it, 15 minutes           |
+| Account key          | `bask_` | core and the config plane                                          |
+| Role session         | `bsts_` | core and the config plane, then the role's policy, up to 12 h      |
+| CLI login            | `bcli_` | Convex `cli/http.ts`                                               |
+| Project key          | `bpdk_` | Convex `cli/http.ts`                                               |
+| Admin secret         | none    | core, `ADMIN_ACCOUNT_SECRET`, self-hosted account creation         |
+| Service token        | none    | core, only with `X-Account-Id` and no `x-broods-via-gateway`       |
+| Terminal ticket      | sealed  | gateway, `TERMINAL_TICKET_SECRET`; core seals it                   |
+| Per-job token        | none    | core, against the `runtimeAsyncToolResults` row                    |
 
 Channel webhooks use each provider's own signature, checked by the adapter. The gateway holds only `TERMINAL_TICKET_SECRET`, never the service token. Scopes, resolution order and rotation: [security](security.md) and [operations](operations.md).
 

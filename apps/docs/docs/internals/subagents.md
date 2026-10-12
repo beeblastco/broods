@@ -217,7 +217,7 @@ flowchart TD
   PDep -->|"yes"| PRow{"parent ingress row exists,<br/>publicDeploymentIngress matches?"}
   PRow -->|"no"| Deny
   PRow -->|"yes"| Ok["status returned"]
-  Ok --> GW{"gateway: agentId and<br/>conversationKey match request?"}
+  Ok --> GW{"gateway: agentId, conversationKey<br/>and eventId match request?"}
   GW -->|"no"| Unav["replay_unavailable"]
   GW -->|"yes"| Open["open NATS consumer"]
 ```

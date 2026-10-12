@@ -16,9 +16,10 @@ const NO_NATS = "Gateway requires NATS_URL";
 /**
  * BroodsWebSocketClient.attach through the gateway: a plain attach replays a
  * finished run, while an attach aborted on its first frame, or before it
- * opens, delivers nothing more and reports one abort. The gateway takes a
- * member's stage ticket on agent sockets, not the runtime key, so the case
- * seals one with this stack's secret, as the dashboard's test chat holds.
+ * opens, delivers nothing more and reports one abort. The agent is private,
+ * which the runtime key cannot reach, so the case seals a member's stage
+ * ticket with this stack's secret, as the dashboard's test chat holds. The
+ * runtime key's own socket checks are in websocket-runtime-key.ts.
  * Runs without a model key: a run that fails at the provider still replays.
  * Without NATS the gateway cannot replay, so only the replay check skips.
  */

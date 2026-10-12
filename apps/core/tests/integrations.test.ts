@@ -92,14 +92,17 @@ afterEach(() => {
 });
 
 describe("direct API ingress", () => {
-  it("gives observability scope to a stage ticket, never the embeddable key", async () => {
-    const scopeFor = async (stageTicket: boolean): Promise<ResponseShape> =>
+  it("gives observability scope to a stage ticket, agent socket scope to the embeddable key too", async () => {
+    const scopeFor = async (
+      stageTicket: boolean,
+      socket: "agent-socket" | "observability" = "observability",
+    ): Promise<ResponseShape> =>
       await routeIncomingEvent(
         createEvent(
           {},
           { authorization: "Bearer token" },
           {
-            rawPath: "/v1/internal/observability-scope",
+            rawPath: `/v1/internal/${socket}-scope`,
             addDefaultAgentId: false,
           },
         ),
@@ -125,6 +128,19 @@ describe("direct API ingress", () => {
       endpointIds: ["env-endpoint"],
       expiresAt: STAGE_TICKET.expiresAt,
     });
+    // The agent socket runs every turn through the run paths, which hold the
+    // key to public agents of its stage, so the key gets its stage's scope.
+    const key = await scopeFor(false, "agent-socket");
+    expect(key.statusCode).toBe(200);
+    expect(JSON.parse(key.body ?? "{}")).toEqual({
+      accountId: TEST_ACCOUNT.accountId,
+      projectSlug: "demo",
+      stageSlug: "development",
+      endpointIds: ["env-endpoint"],
+    });
+    expect(
+      JSON.parse((await scopeFor(true, "agent-socket")).body ?? "{}"),
+    ).toMatchObject({ expiresAt: STAGE_TICKET.expiresAt });
   });
 
   it("returns 401 when the account bearer token is missing", async () => {
