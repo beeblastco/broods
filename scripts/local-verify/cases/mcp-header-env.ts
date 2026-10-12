@@ -2,6 +2,7 @@ import type { CliManifest } from "../../../packages/broods/src/contracts.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import {
+  OK_AGENT,
   MODEL_KEY_HINT,
   assertStep,
   runToTerminal,
@@ -41,7 +42,7 @@ export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
         name: "reader",
         config: {
           ...context.model,
-          agent: { system: "Reply with the single word OK." },
+          agent: OK_AGENT,
           // The CLI copies the server's headers here; core reads them from the agent.
           mcp: {
             search: {

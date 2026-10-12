@@ -29,8 +29,10 @@ export async function steerAtBoundary(context: VerifyContext): Promise<void> {
       name: key,
       config: {
         ...context.model,
-        instructions:
-          "First use the bash tool to run `sleep 5`. Then reply with exactly the last word of the latest user message and nothing else.",
+        agent: {
+          system:
+            "First use the bash tool to run `sleep 5`. Then reply with exactly the last word of the latest user message and nothing else.",
+        },
         sandboxes: [machine.sandboxId],
       },
     });
