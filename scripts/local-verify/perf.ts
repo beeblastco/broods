@@ -44,13 +44,13 @@ export async function runPerf(
   try {
     const textAgent = await context.account.createAgent({
       name: `perf-text-${context.runId}`,
-      config: { ...context.model, instructions: "Reply OK." },
+      config: { ...context.model, agent: { system: "Reply OK." } },
     });
     const bashAgent = await context.account.createAgent({
       name: `perf-bash-${context.runId}`,
       config: {
         ...context.model,
-        instructions: "Use bash.",
+        agent: { system: "Use bash." },
         sandboxes: [machine.sandboxId],
       },
     });

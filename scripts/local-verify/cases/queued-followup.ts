@@ -1,7 +1,12 @@
 import type { CreateAgentResult } from "../../../packages/broods/src/account.ts";
 import type { AsyncAgentRun } from "../../../packages/broods/src/client.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
-import { MODEL_KEY_HINT, assertStep, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  MODEL_KEY_HINT,
+  assertStep,
+  type VerifyContext,
+} from "../harness.ts";
 
 const FOLLOWUP_TIMEOUT_MS = 120_000;
 
@@ -19,7 +24,7 @@ export async function queuedFollowup(context: VerifyContext): Promise<void> {
         name: key,
         config: {
           ...context.model,
-          instructions: "Reply with the single word OK.",
+          agent: OK_AGENT,
         },
       }),
   );
