@@ -17,6 +17,12 @@ import {
 test.skip(!hasProbe(), MISSING_PROBE);
 const RAIL_WIDTH = 48;
 const SIDEBAR_WIDTH = 256;
+// The sidebar React owns. The server's copy streams in as a hidden segment,
+// and when a session update reaches the shell before that segment is shown,
+// React renders the shell anew: for a moment both copies are in the DOM.
+// Only React's carries data-hydrated.
+const SIDEBAR_CONTAINER =
+  '[data-slot="sidebar-container"][data-hydrated="true"]';
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
@@ -35,6 +41,7 @@ test("every project page fits 1280 wide, sidebar pinned and collapsed", async ({
     expect(await horizontalOverflow(page), item.label).toBe(0);
   }
 
+  await page.locator(SIDEBAR_CONTAINER).waitFor();
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
   expect(await horizontalOverflow(page), "collapsed").toBe(0);
@@ -74,7 +81,7 @@ test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and
   page,
 }) => {
   await page.goto(`/${readProjectId()}/dashboard?tab=tracing`);
-  const container = page.locator('[data-slot="sidebar-container"]');
+  const container = page.locator(SIDEBAR_CONTAINER);
   await expect(container).toBeInViewport();
 
   await page.mouse.move(800, 400);
@@ -121,8 +128,8 @@ test("on a phone the sidebar sheet closes once a link moves the page", async ({
 // sidebar is the topmost element, as "x,y". The `next dev` badge in the
 // corner does not count: builds do not render it.
 async function pointsCoveringSidebar(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const container = document.querySelector('[data-slot="sidebar-container"]');
+  return page.evaluate((selector) => {
+    const container = document.querySelector(selector);
     if (!container) throw new Error("no sidebar container");
     const rect = container.getBoundingClientRect();
     const covered: string[] = [];
@@ -137,9 +144,11 @@ async function pointsCoveringSidebar(page: Page): Promise<string[]> {
     }
 
     return covered;
-  });
+  }, SIDEBAR_CONTAINER);
 }
 
 function sidebarState(page: Page): Locator {
-  return page.locator('[data-slot="sidebar"]');
+  return page.locator('[data-slot="sidebar"]', {
+    has: page.locator(SIDEBAR_CONTAINER),
+  });
 }
