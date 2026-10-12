@@ -1,6 +1,11 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import type { ConnectionStartResult } from "../../../packages/convex/model/connections.ts";
-import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  assertStep,
+  runToTerminal,
+  type VerifyContext,
+} from "../harness.ts";
 
 /**
  * Connections end to end, short of the providers: a `chatgpt` run with no
@@ -15,7 +20,7 @@ export async function connections(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       model: { provider: "chatgpt", modelId: "gpt-5.5" },
-      instructions: "Reply with the single word OK.",
+      agent: OK_AGENT,
     },
   });
   const unsigned = await context.measure(

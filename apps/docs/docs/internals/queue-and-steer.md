@@ -233,8 +233,8 @@ sequenceDiagram
 
   Cl->>G: attach, eventId, runId, afterCursor
   G->>Core: GET /v1/runs/:runId
-  Core-->>G: status, agentId, conversationKey
-  alt not found, other agent or conversation
+  Core-->>G: status, agentId, conversationKey, eventId
+  alt not found, refused, other agent, conversation or event
     G-->>Cl: replay_unavailable, statusUrl
   else cursor stale, other event, past the end, or expired
     G-->>Cl: replay_unavailable, statusUrl

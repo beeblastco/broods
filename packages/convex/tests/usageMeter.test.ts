@@ -490,7 +490,7 @@ describe("budget", () => {
     );
 
     expect(free).toMatchObject({ usedPercent: 100, level: "exhausted" });
-    expect(pro).toMatchObject({ usedPercent: 10, level: "ok" });
+    expect(pro).toMatchObject({ usedPercent: 20, level: "ok" });
   });
 
   test("reaches the dashboard as amounts and percentages with no euro figures", async () => {

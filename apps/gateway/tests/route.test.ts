@@ -20,13 +20,14 @@ import { RateLimiter } from "../src/rate-limiter.ts";
 import type { SpentTickets } from "../src/terminal.ts";
 import type { GatewayLimits } from "../src/utils.ts";
 
-const SCOPE = {
+// A runtime key's scope names no expiry; a stage ticket's does.
+const RUNTIME_KEY_SCOPE = {
   accountId: "account-1",
   projectSlug: "project",
   stageSlug: "production",
   endpointIds: ["endpoint-1"],
-  expiresAt: Number.MAX_SAFE_INTEGER,
 };
+const SCOPE = { ...RUNTIME_KEY_SCOPE, expiresAt: Number.MAX_SAFE_INTEGER };
 
 const realFetch = globalThis.fetch;
 
@@ -214,6 +215,93 @@ test("an observability socket bound to another project is refused", async () => 
   );
 
   expect(response!.status).toBe(403);
+});
+
+test("a runtime key opens an agent socket of its own stage", async (): Promise<void> => {
+  globalThis.fetch = coreScopes();
+  const gateway = createGateway(gatewayConfig());
+  const { server, upgrades } = fakeServer();
+
+  const response = await gateway.fetch(
+    upgradeRequest(
+      "/v1/projects/project/stages/production/agents/endpoint-1/ws",
+      {
+        token: "bsk_runtime",
+      },
+    ),
+    server,
+  );
+
+  expect(response).toBeUndefined();
+  // Each run on it goes to core with this key, so core's run checks hold.
+  expect(upgrades).toEqual([
+    {
+      kind: "agent-test",
+      corePath: "/v1/projects/project/stages/production/agents/endpoint-1",
+      token: "bsk_runtime",
+      coreBaseUrl: "https://core.example",
+      accountId: "account-1",
+    },
+  ]);
+});
+
+test("a runtime key cannot open another stage's agent socket", async (): Promise<void> => {
+  globalThis.fetch = coreScopes();
+  const gateway = createGateway(gatewayConfig());
+  const { server, upgrades } = fakeServer();
+
+  const response = await gateway.fetch(
+    upgradeRequest("/v1/projects/project/stages/staging/agents/endpoint-1/ws", {
+      token: "bsk_runtime",
+    }),
+    server,
+  );
+
+  expect(response!.status).toBe(403);
+  expect(upgrades).toEqual([]);
+});
+
+test("a runtime key never opens the logs socket, and spends auth-failure budget", async (): Promise<void> => {
+  globalThis.fetch = coreScopes();
+  const authFailureLimiter = new RateLimiter(1, 60_000);
+  const gateway = createGateway(
+    gatewayConfig({ authFailureLimiter: authFailureLimiter }),
+  );
+  const { server, upgrades } = fakeServer();
+  const logs = (token: string): Request =>
+    upgradeRequest("/v1/projects/project/stages/production/observability/ws", {
+      token: token,
+    });
+
+  const refused = await gateway.fetch(logs("bsk_runtime"), server);
+
+  expect(refused!.status).toBe(401);
+  expect(authFailureLimiter.blocked("10.0.0.1")).toBe(true);
+  expect(upgrades).toEqual([]);
+  // A member's ticket for the same stage opens it.
+  const opened = await createGateway(gatewayConfig()).fetch(
+    logs("bdts_ticket"),
+    server,
+  );
+  expect(opened).toBeUndefined();
+  expect(upgrades).toMatchObject([{ kind: "observability" }]);
+});
+
+test("an observability scope with no expiry is an outage, not an open-ended socket", async (): Promise<void> => {
+  globalThis.fetch = Object.assign(
+    async (): Promise<Response> => Response.json(RUNTIME_KEY_SCOPE),
+    { preconnect: realFetch.preconnect },
+  );
+  const gateway = createGateway(gatewayConfig());
+
+  const response = await gateway.fetch(
+    upgradeRequest("/v1/projects/project/stages/production/observability/ws", {
+      token: "bdts_ticket",
+    }),
+    fakeServer().server,
+  );
+
+  expect(response!.status).toBe(502);
 });
 
 test("anything but a health check or a socket upgrade is a 404", async (): Promise<void> => {
@@ -464,6 +552,30 @@ function memorySpentTickets(): SpentTickets {
 /** Core answering the scope lookup with a key bound to SCOPE. */
 function scopeFetch(): typeof fetch {
   return (async () => Response.json(SCOPE)) as unknown as typeof fetch;
+}
+
+/**
+ * Core's two scope lookups as they treat SCOPE's stage credentials: the ticket
+ * `bdts_ticket` gets either, the runtime key `bsk_runtime` only the agent
+ * socket's, which names no expiry.
+ */
+function coreScopes(): typeof fetch {
+  return Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const credential = new Headers(init?.headers).get("authorization");
+      const path = new URL(new Request(input).url).pathname;
+      if (credential === "Bearer bdts_ticket") return Response.json(SCOPE);
+      if (
+        credential === "Bearer bsk_runtime" &&
+        path === "/v1/internal/agent-socket-scope"
+      ) {
+        return Response.json(RUNTIME_KEY_SCOPE);
+      }
+
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    },
+    { preconnect: realFetch.preconnect },
+  );
 }
 
 function terminalTicket(): TerminalTicket {

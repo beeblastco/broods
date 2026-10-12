@@ -184,7 +184,13 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
 
-          const resolved = await resolveSocketScope(token, config.coreBaseUrl);
+          // Each socket asks core for its own scope: a runtime key opens the
+          // agent socket, never the observability one.
+          const resolved = await resolveSocketScope(
+            observabilityPath ? "observability" : "agent",
+            token,
+            config.coreBaseUrl,
+          );
           if (resolved.kind === "unavailable")
             return jsonError(502, "Could not verify the WebSocket token");
           if (resolved.kind === "invalid") {
@@ -194,6 +200,11 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           }
           const { scope } = resolved;
           if (observabilityPath) {
+            // The socket closes at this instant; a core that names none is
+            // not trusted with an open-ended one.
+            const { expiresAt } = scope;
+            if (expiresAt === undefined || !Number.isFinite(expiresAt))
+              return jsonError(502, "Could not verify the WebSocket token");
             if (
               scope.projectSlug !== decodeURIComponent(observabilityPath[1]) ||
               scope.stageSlug !== decodeURIComponent(observabilityPath[2])
@@ -204,7 +215,11 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
                 { code: "scope_mismatch" },
               );
             }
-            data = { kind: "observability", scope: scope, token: token };
+            data = {
+              kind: "observability",
+              scope: { ...scope, expiresAt: expiresAt },
+              token: token,
+            };
           } else if (agentWebSocketPath) {
             // Bind the socket to the key's own endpoint scope: attach never posts
             // through the core run path, so the door check must happen here.

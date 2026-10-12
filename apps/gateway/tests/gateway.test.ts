@@ -185,9 +185,10 @@ test("attaches virtual and private child streams through durable parent deployme
     const socket = gatewaySocket(sent);
     const connection = replayThenLiveConnection(fixture);
     // Core authorizes the child status read (covered by core's status-access
-    // tests); the gateway only proceeds when the returned agentId and
-    // conversationKey match.
-    globalThis.fetch = (async (input, init) => {
+    // tests); the gateway only proceeds when the returned agentId,
+    // conversationKey and eventId match. A child's public event id is its
+    // task id.
+    globalThis.fetch = (async (_input, init) => {
       if (
         new Headers(init?.headers).get("authorization") !== "Bearer runtime-key"
       ) {
@@ -195,13 +196,10 @@ test("attaches virtual and private child streams through durable parent deployme
           status: 401,
         });
       }
-      const taskId = decodeURIComponent(
-        new URL(requestUrl(input)).pathname.slice("/v1/runs/".length),
-      );
 
       return new Response(
         JSON.stringify({
-          eventId: taskId,
+          eventId: fixture.taskId,
           agentId: fixture.childAgentId,
           conversationKey: fixture.publicConversationKey,
           status: "processing",
@@ -1332,6 +1330,129 @@ test("a started turn streams from its own start and polls core in-cluster", asyn
   }
 });
 
+test("a runtime key runs a public agent of its stage on the agent socket", async (): Promise<void> => {
+  const { frames, consumers, credentials } =
+    await runtimeKeyExecute("agent_public");
+
+  expect(frames).toEqual([
+    { type: "meta", sessionId: "chat-1", taskId: "event-1" },
+    {
+      type: "ack",
+      requestId: "event-1",
+      eventId: "event-1",
+      status: "completed",
+    },
+    { type: "done" },
+  ]);
+  // The gateway runs it with the client's own key, so core's run checks apply.
+  expect(credentials).toEqual(["Bearer bsk_runtime"]);
+  expect(consumers).toBe(0);
+});
+
+test("a runtime key is refused a private agent, and nothing of it is read", async (): Promise<void> => {
+  const { frames, consumers } = await runtimeKeyExecute("agent_private");
+
+  expect(frames.at(-1)).toEqual({
+    type: "error",
+    status: 403,
+    error: "Agent agent_private is not publicly accessible.",
+  });
+  expect(consumers).toBe(0);
+});
+
+test("a runtime key is refused another stage's agent, and nothing of it is read", async (): Promise<void> => {
+  const { frames, consumers } = await runtimeKeyExecute("agent_staging");
+
+  expect(frames.at(-1)).toEqual({
+    type: "error",
+    status: 404,
+    error: "Agent not found",
+  });
+  expect(consumers).toBe(0);
+});
+
+test("a runtime key cannot attach to a private agent's run", async (): Promise<void> => {
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  socket.data.token = "bsk_runtime";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = runtimeKeyCore([]);
+  let natsRequested = false;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-private",
+        agentId: "agent_private",
+        conversationKey: "chat-1",
+        eventId: "event-1",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => {
+        natsRequested = true;
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "replay_unavailable",
+    );
+    expect(natsRequested).toBe(false);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an attach naming another event of the run's conversation replays nothing", async (): Promise<void> => {
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async (): Promise<Response> =>
+      Response.json({
+        eventId: "event-1",
+        agentId: "agent_public",
+        conversationKey: "chat-1",
+        status: "processing",
+      }),
+    { preconnect: originalFetch.preconnect },
+  );
+  let natsRequested = false;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-sibling",
+        agentId: "agent_public",
+        conversationKey: "chat-1",
+        eventId: "event-2",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => {
+        natsRequested = true;
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "replay_unavailable",
+    );
+    expect(natsRequested).toBe(false);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("uses conservative gateway limit defaults", () => {
   expect(gatewayLimitsFromEnv({})).toEqual({
     maxConnections: 10_000,
@@ -1399,30 +1520,45 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
   ).toBeNull();
 });
 
-test("resolves the scope a runtime key grants from core", async (): Promise<void> => {
+test("each socket asks core for its own scope", async (): Promise<void> => {
   const calls: string[] = [];
-  const resolved = await resolveSocketScope(
-    "runtime-key",
-    "https://core.example",
-    async (input): Promise<Response> => {
-      calls.push(requestUrl(input));
+  const answer = async (input: RequestInfo | URL): Promise<Response> => {
+    calls.push(requestUrl(input));
 
-      return Response.json({
-        accountId: "account-1",
-        projectSlug: "project",
-        stageSlug: "production",
-        endpointIds: ["endpoint-1"],
-        expiresAt: 1_900_000_000_000,
-      });
-    },
+    return Response.json({
+      accountId: "account-1",
+      projectSlug: "project",
+      stageSlug: "production",
+      endpointIds: ["endpoint-1"],
+    });
+  };
+
+  const agent = await resolveSocketScope(
+    "agent",
+    "bsk_runtime",
+    "https://core.example",
+    answer,
+  );
+  await resolveSocketScope(
+    "observability",
+    "bdts_ticket",
+    "https://core.example",
+    answer,
   );
 
   expect(calls).toEqual([
+    "https://core.example/v1/internal/agent-socket-scope",
     "https://core.example/v1/internal/observability-scope",
   ]);
-  expect(resolved).toMatchObject({
+  // A runtime key's scope names no expiry; the agent socket needs none.
+  expect(agent).toEqual({
     kind: "resolved",
-    scope: { stageSlug: "production" },
+    scope: {
+      accountId: "account-1",
+      projectSlug: "project",
+      stageSlug: "production",
+      endpointIds: ["endpoint-1"],
+    },
   });
 });
 
@@ -1430,7 +1566,7 @@ test("a core that cannot answer is an outage, not a bad token", async (): Promis
   const resolve = (
     answer: () => Promise<Response>,
   ): ReturnType<typeof resolveSocketScope> =>
-    resolveSocketScope("runtime-key", "https://core.example", answer);
+    resolveSocketScope("agent", "runtime-key", "https://core.example", answer);
 
   expect(
     await resolve(
@@ -1451,17 +1587,6 @@ test("a core that cannot answer is an outage, not a bad token", async (): Promis
     await resolve(async (): Promise<Response> => {
       throw new Error("timed out");
     }),
-  ).toEqual({ kind: "unavailable" });
-  // A scope with no expiry would let the socket outlive its ticket.
-  expect(
-    await resolve(async (): Promise<Response> =>
-      Response.json({
-        accountId: "account-1",
-        projectSlug: "project",
-        stageSlug: "production",
-        endpointIds: ["endpoint-1"],
-      }),
-    ),
   ).toEqual({ kind: "unavailable" });
 });
 
@@ -3093,6 +3218,95 @@ function gatewaySocket(
   } as unknown as Bun.ServerWebSocket<
     import("../src/agent.ts").AgentTestGatewayData
   >;
+}
+
+/**
+ * Core's run paths as they answer a runtime key of stage development: its
+ * public agent runs, a private agent is refused (`admitStageCredential`,
+ * `statusAccessDenial`), and another stage's agent is unknown. Records the
+ * credential each call carried.
+ */
+function runtimeKeyCore(credentials: string[]): typeof fetch {
+  const refusal = (agentId: string): Response =>
+    agentId === "agent_private"
+      ? Response.json(
+          {
+            error: {
+              message: `Agent ${agentId} is not publicly accessible.`,
+              code: "public_access_disabled",
+            },
+          },
+          { status: 403 },
+        )
+      : Response.json(
+          { error: { message: "Agent not found" } },
+          { status: 404 },
+        );
+
+  return Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      credentials.push(new Headers(init?.headers).get("authorization") ?? "");
+      // A status read names no agent; the fixture's run is the private one's.
+      if (init?.method !== "POST") return refusal("agent_private");
+      const body = (await new Request(input, init).json()) as {
+        agentId: string;
+      };
+      if (body.agentId !== "agent_public") return refusal(body.agentId);
+
+      return Response.json(
+        { eventId: "event-1", status: "completed" },
+        { status: 202 },
+      );
+    },
+    { preconnect: (): void => {} },
+  );
+}
+
+/** One execute on a socket upgraded with a runtime key, against `runtimeKeyCore`. */
+async function runtimeKeyExecute(agentId: string): Promise<{
+  consumers: number;
+  credentials: string[];
+  frames: Array<Record<string, unknown>>;
+}> {
+  const frames: Array<Record<string, unknown>> = [];
+  const credentials: string[] = [];
+  const socket = gatewaySocket(frames);
+  socket.data.token = "bsk_runtime";
+  let consumers = 0;
+  const connection = zeroBufferConnection(
+    async () => ({
+      [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+      close: async (): Promise<void> => {},
+    }),
+    (): void => {
+      consumers += 1;
+    },
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = runtimeKeyCore(credentials);
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: agentId,
+        sessionId: "chat-1",
+        eventId: "event-1",
+        input: "hi",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => connection as never,
+    );
+    await waitForGatewayMessage(
+      frames,
+      (message): boolean => message.type === "done" || message.type === "error",
+    );
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+
+  return { consumers: consumers, credentials: credentials, frames: frames };
 }
 
 /** `count` search hits, oldest first as Tempo may list them: t0 is the oldest, t(count-1) the newest. */
