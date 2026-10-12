@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import schema from "../schema";
+import { subagentResultDedupeKey } from "../model/subagentResults";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -1324,6 +1325,65 @@ describe("runtime ingress", () => {
         eventId: "resumed-first",
       }),
     ).toMatchObject({ observed: true });
+  });
+
+  test("admits no late resume of a result its parent's conversation already stores", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const eventId of ["stored", "unsaved"]) {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: eventId,
+        conversationKey: `acct:${accountId}:agent:child:api:subagent-${eventId}`,
+      });
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: eventId,
+        status: "completed",
+        response: "answer",
+      });
+    }
+    // The parent's write stored one result, then lost its reply, so core
+    // marked it unseen for the recovery sweep.
+    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      eventId: "stored",
+      observed: false,
+    });
+    await t.mutation(internal.runtime.appendConversationEvent, {
+      conversationKey: conversationKey,
+      events: [
+        {
+          cursor: "001",
+          dedupeKey: subagentResultDedupeKey("stored", "completed"),
+          event: { role: "user", content: "subagent result" },
+        },
+      ],
+    });
+    const resume = async (
+      eventId: string,
+      resultEventId: string,
+    ): Promise<{ outcome: string }> =>
+      await t.mutation(internal.runtimeIngress.accept, {
+        ...admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: eventId,
+          mode: "followup",
+        }),
+        resultEventId: resultEventId,
+      });
+
+    expect(await resume("resume-stored", "stored")).toMatchObject({
+      outcome: "duplicate",
+    });
+    // Seen now, so the recovery sweep stops retrying it.
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: "stored",
+      }),
+    ).toMatchObject({ observed: true });
+    expect(await resume("resume-unsaved", "unsaved")).toMatchObject({
+      outcome: "owner",
+    });
   });
 
   test("leaves another account's late result row alone", async (): Promise<void> => {
