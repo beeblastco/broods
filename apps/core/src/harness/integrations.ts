@@ -134,6 +134,7 @@ import {
 import {
   getIngressStatus,
   getIngressStatusByEventId,
+  INGRESS_RETRY_HEADERS,
   type AppliedIngress,
   type ChannelTargetRefs,
   type IngressConfigRef,
@@ -148,6 +149,7 @@ import {
 } from "./sandbox/s3-mount.ts";
 import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
+import { WORKER_QUEUE_FULL } from "./worker-queue.ts";
 
 // How long a channel webhook waits for admission before it acks anyway. Under
 // Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
@@ -393,6 +395,7 @@ interface IntegrationHandlers {
   handleSandboxJobCompletionRequest?(
     event: SandboxJobCompletionInboundEvent,
   ): Promise<Response>;
+  /** Rejects with WORKER_QUEUE_FULL when a full run queue turned it away. */
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
   handleChannelContext?(event: ChannelContextEvent): Promise<void>;
 }
@@ -1396,6 +1399,9 @@ async function handleChannelWebhook(
   const admissions: Promise<void>[] = [];
   let ack: ChannelResponse | undefined;
   let ignored: ChannelResponse | undefined;
+  // Set when the ack budget runs out, so a turn a full queue turns away after
+  // that says so in the channel instead of asking for a 503 nobody receives.
+  let acked = false;
   try {
     for (const receiver of receivers) {
       const receipt = await receiveChannelWebhook(
@@ -1404,6 +1410,7 @@ async function handleChannelWebhook(
         handlers,
         account,
         context,
+        (): boolean => acked,
       );
       if (receipt.kind === "response") {
         return toResponse(receipt.response);
@@ -1427,14 +1434,21 @@ async function handleChannelWebhook(
       await Promise.race([
         admitted,
         new Promise<void>((resolve): void => {
-          ackTimer = setTimeout(resolve, CHANNEL_ACK_BUDGET_MS);
+          ackTimer = setTimeout((): void => {
+            acked = true;
+            resolve();
+          }, CHANNEL_ACK_BUDGET_MS);
         }),
-      ]);
-      clearTimeout(ackTimer);
+      ]).finally((): void => clearTimeout(ackTimer));
     }
 
     return toResponse(ack ?? ignored ?? { statusCode: 200 });
   } catch (err) {
+    // Nothing was counted or recorded for it, so the provider's redelivery
+    // after Retry-After is admitted like a new message.
+    if (err instanceof Error && err.message === WORKER_QUEUE_FULL) {
+      return errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS);
+    }
     logError("Failed to process webhook request", {
       channel: receivers[0]?.adapter.name,
       error: err instanceof Error ? err.message : String(err),
@@ -1448,6 +1462,7 @@ async function handleChannelWebhook(
  * Parse a delivery with one receiver's adapter, under that agent's deployment
  * scope, and start admitting the turns it keeps. The credential scan already
  * authenticated the request with this same adapter.
+ * @param acked true once the provider has its ack
  */
 async function receiveChannelWebhook(
   receiver: ChannelReceiver,
@@ -1455,6 +1470,7 @@ async function receiveChannelWebhook(
   handlers: IntegrationHandlers,
   account: AccountRecord,
   context: HttpRoutingContext,
+  acked: () => boolean,
 ): Promise<ChannelReceipt> {
   const { adapter, agent } = receiver;
   const deployment = await context.deploymentLoader(
@@ -1556,7 +1572,8 @@ async function receiveChannelWebhook(
     }
 
     // A batch admits its turns in order, each on its own; one that fails is
-    // logged and the rest still run.
+    // logged and the rest still run. A full queue stops the batch and answers
+    // the whole delivery; turns already admitted redeliver as duplicates.
     const admitted =
       parsed.kind === "batch"
         ? runWithObservabilityScope(async (): Promise<void> => {
@@ -1571,8 +1588,11 @@ async function receiveChannelWebhook(
                   deployment,
                   context,
                 );
-                await admit?.();
+                await admit?.(acked);
               } catch (err) {
+                if (err instanceof Error && err.message === WORKER_QUEUE_FULL) {
+                  throw err;
+                }
                 logError("Channel batch turn not admitted", {
                   channel: adapter.name,
                   accountId: account.accountId,
@@ -1592,7 +1612,7 @@ async function receiveChannelWebhook(
               deployment,
               context,
             )
-          )?.();
+          )?.(acked);
 
     return {
       kind: "accepted",
@@ -1609,7 +1629,7 @@ async function receiveChannelWebhook(
 // Resolve one parsed turn's record and target and apply its policy. A context
 // turn is stored in the background and a refused one answered here; both give
 // back nothing. A turn to run gives back its admission, which the caller starts
-// and races against the ack budget.
+// and races against the ack budget, telling it whether the ack already went.
 async function acceptChannelTurn(
   adapter: ChannelAdapter,
   result: ParsedChannelMessage | ParsedChannelContext,
@@ -1618,7 +1638,7 @@ async function acceptChannelTurn(
   agent: AgentRecord,
   deployment: AgentDeploymentScope | null,
   context: HttpRoutingContext,
-): Promise<(() => Promise<void>) | undefined> {
+): Promise<((acked: () => boolean) => Promise<void>) | undefined> {
   if (result.kind === "context") {
     const { message, ack } = result;
     const response = ack ?? { statusCode: 200 };
@@ -1782,7 +1802,7 @@ async function acceptChannelTurn(
   // Admission runs before the ack, so a delivery the provider saw acked is
   // durably queued; the agent run goes to the worker pool. Its own scope,
   // because it can outlive this request, whose finally restores the context.
-  return (): Promise<void> =>
+  return (acked): Promise<void> =>
     runWithObservabilityScope(
       (): Promise<void> =>
         processChannelMessage(
@@ -1831,6 +1851,7 @@ async function acceptChannelTurn(
               : {}),
           },
           handlers,
+          (): boolean => result.redelivers === true && !acked(),
         ),
       getObservabilityContext(),
     );
@@ -1926,12 +1947,14 @@ export function attachMetadataToLatestUserIngress(
 
 /**
  * Run the inbound hook and acknowledgements, then admit the message. Resolves
- * after admission, with the agent run already on a worker slot. Never
- * rejects: a failure is answered in the channel.
+ * after admission, with the agent run already on a worker slot. A failure is
+ * answered in the channel; it rejects only for a full run queue when
+ * `redeliver` says the provider will send the message again after a 503.
  */
 async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
+  redeliver: () => boolean,
 ): Promise<void> {
   const previousObservabilityContext = getObservabilityContext();
   const hasDeploymentScope = Boolean(
@@ -2031,6 +2054,7 @@ async function processChannelMessage(
     });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    if (error === WORKER_QUEUE_FULL && redeliver()) throw err;
     logError("Failed to process channel message", {
       channel: event.channelName,
       eventId: event.eventId,

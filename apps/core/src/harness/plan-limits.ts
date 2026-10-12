@@ -65,10 +65,12 @@ const budgets = new Map<string, CachedBudget>();
 /**
  * Admit one run for the account and count it.
  * @param options.claimWarning claim the 80% notice for this run (channel intake)
+ * @param options.count false reads the refusal only: nothing is counted and no
+ *   notice claimed, for a request the full run queue turns away
  */
 export async function admitRun(
   accountId: string,
-  options: { claimWarning?: boolean } = {},
+  options: { claimWarning?: boolean; count?: boolean } = {},
 ): Promise<Admission> {
   const status = await budgetFor(accountId);
   if (!status?.enforced) return { refusal: null, warning: null };
@@ -76,7 +78,7 @@ export async function admitRun(
     return { refusal: budgetRefusal(status), warning: null };
   }
   const now = Date.now();
-  const window = currentWindow(accountId, now);
+  const window = currentWindow(accountId, now, options.count !== false);
   if (window.runs >= status.runsPerMinute) {
     return {
       refusal: {
@@ -90,6 +92,7 @@ export async function admitRun(
       warning: null,
     };
   }
+  if (options.count === false) return { refusal: null, warning: null };
   window.runs += 1;
 
   return {
@@ -137,6 +140,13 @@ export function planRefusalResponse(refusal: PlanRefusal): Response {
     { code: PLAN_LIMIT_EXCEEDED },
     rateLimitHeaders(refusal.limit ?? 0, refusal.retryAfterSeconds ?? 1),
   );
+}
+
+/** The refusal as a channel says it, with the wait a rate refusal has. */
+export function planRefusalText(refusal: PlanRefusal): string {
+  return refusal.retryAfterSeconds === undefined
+    ? refusal.message
+    : `${refusal.message} Try again in ${refusal.retryAfterSeconds} seconds.`;
 }
 
 /**
@@ -209,11 +219,16 @@ async function claimWarning(
   return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }
 
-function currentWindow(accountId: string, now: number): AccountWindow {
+/** @param open start the fresh window when there is none; a read never does */
+function currentWindow(
+  accountId: string,
+  now: number,
+  open: boolean,
+): AccountWindow {
   const existing = windows.get(accountId);
   if (existing && now - existing.startedAt < WINDOW_MS) return existing;
   const fresh: AccountWindow = { startedAt: now, runs: 0 };
-  windows.set(accountId, fresh);
+  if (open) windows.set(accountId, fresh);
 
   return fresh;
 }

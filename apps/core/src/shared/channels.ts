@@ -30,7 +30,7 @@ const ERROR_HINTS: [RegExp, string | null][] = [
     "Add credits or upgrade the plan with the model provider.",
   ],
   [
-    /rate.?limit|\b429\b|too many requests|overloaded/i,
+    /rate.?limit|\b429\b|too many requests|overloaded|queue is full/i,
     "Try again in a moment.",
   ],
   [/\btimed? ?out\b|\betimedout\b|\beconnreset\b/i, "Try again."],
@@ -196,6 +196,13 @@ export interface ParsedChannelMessage {
   kind: "message";
   message: InboundMessage;
   ack?: ChannelResponse;
+  /**
+   * Set when the provider, or the forwarder in front of it, sends this
+   * delivery again after a 5xx. A full run queue then answers 503 with
+   * Retry-After so the message comes back; unset, the channel is told the
+   * agent is busy and the delivery is acked, since a 5xx would lose it.
+   */
+  redelivers?: true;
 }
 
 export interface ParsedChannelContext {

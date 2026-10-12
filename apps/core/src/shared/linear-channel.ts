@@ -154,6 +154,7 @@ export function createLinearChannel(
 
       return {
         kind: "message",
+        redelivers: true,
         ack: { statusCode: 200 },
         message: {
           eventId: `${LINEAR_INTEGRATION_PREFIX}${comment.id}`,

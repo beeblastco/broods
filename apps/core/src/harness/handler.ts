@@ -111,6 +111,7 @@ import {
   acceptIngress,
   getConversationDispatchTarget,
   getIngressStatusByEventId,
+  INGRESS_RETRY_HEADERS,
   loadAppliedIngressConfig,
   loadChannelSessionConfig,
   outcomeSettlement,
@@ -144,6 +145,7 @@ import {
   admitRun,
   refundRun,
   planRefusalResponse,
+  planRefusalText,
   type PlanRefusal,
 } from "./plan-limits.ts";
 import {
@@ -171,7 +173,6 @@ import {
   directStatusUrl,
   emptySseResponse,
   errorSseResponse,
-  INGRESS_RETRY_HEADERS,
   natsStartResponse,
   pipeAgentStream,
   type ContinuationOutcome,
@@ -382,12 +383,16 @@ async function handleRequest(
       // Only a new streamed run answers in SSE.
       handleDirectRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleDirectRequest(event))) ??
-        (event.connectionId || event.answers?.length || event.continuation
-          ? errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS)
-          : errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS)),
+        queueFullResponse(event.accountId, (): Response =>
+          event.connectionId || event.answers?.length || event.continuation
+            ? errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS)
+            : errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS),
+        ),
       handleAsyncRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleAsyncRequest(event))) ??
-        errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS),
+        queueFullResponse(event.accountId, (): Response =>
+          errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS),
+        ),
       handleStatusRequest: handleStatusRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
       handleChannelRequest: handleChannelRequest,
@@ -401,6 +406,20 @@ async function handleRequest(
         : {}),
     },
   );
+}
+
+/**
+ * The answer to a run request the full queue turned away. The plan's budget
+ * comes first, read without counting, so an account out of budget gets its
+ * 402 or 429 rather than a 503 it would only retry into; else `full`.
+ */
+async function queueFullResponse(
+  accountId: string,
+  full: () => Response,
+): Promise<Response> {
+  const { refusal } = await admitRun(accountId, { count: false });
+
+  return refusal ? planRefusalResponse(refusal) : full();
 }
 
 async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
@@ -1537,10 +1556,37 @@ async function handleNatsWorkerRequest(
  * the message is durably admitted (or answered as a command, an answer, or a
  * refusal), so the webhook can ack after it; the agent run itself happens on a
  * worker slot and replies through the channel's ChannelActions.
+ *
+ * Like an API run, the message holds a run queue place while it is admitted.
+ * A full queue turns it away before the plan counts it or ingress records it:
+ * an account out of budget hears its refusal, read without counting; any
+ * other rejects with WORKER_QUEUE_FULL, which the webhook answers. A command
+ * answered at once (`/stop`, `/new`, `/help`) starts no run and takes no
+ * place, so `/stop` still reaches a run while the queue is full.
  */
 export async function handleChannelRequest(
   event: ChannelInboundEvent,
 ): Promise<void> {
+  if (resolveChannelCommand(event).kind === "reply") {
+    return admitChannelMessage(event);
+  }
+  if (
+    await withQueuePlace(async (): Promise<true> => {
+      await admitChannelMessage(event);
+
+      return true;
+    })
+  ) {
+    return;
+  }
+  const { refusal } = event.accountId
+    ? await admitRun(event.accountId, { count: false })
+    : { refusal: null };
+  if (!refusal) throw new Error(WORKER_QUEUE_FULL);
+  await event.channel.sendText(planRefusalText(refusal));
+}
+
+async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
   const outcome = resolveChannelCommand(event);
   if (outcome.kind === "reply") {
     // A forwarder retry redelivers the same event, and a second `/clear` would
@@ -1613,11 +1659,7 @@ export async function handleChannelRequest(
   // make it redeliver. The refusal and the 80% notice are said in the channel.
   const plan = await admitRun(event.accountId, { claimWarning: true });
   if (plan.refusal) {
-    await event.channel.sendText(
-      plan.refusal.retryAfterSeconds === undefined
-        ? plan.refusal.message
-        : `${plan.refusal.message} Try again in ${plan.refusal.retryAfterSeconds} seconds.`,
-    );
+    await event.channel.sendText(planRefusalText(plan.refusal));
 
     return;
   }

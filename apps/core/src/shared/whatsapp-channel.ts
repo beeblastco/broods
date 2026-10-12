@@ -357,6 +357,7 @@ function parseInbound(
 
   return {
     kind: "message",
+    redelivers: true,
     message: toInboundMessage(message, parsed, text),
   };
 }

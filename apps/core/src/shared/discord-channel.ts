@@ -886,6 +886,8 @@ function parseForwardedGatewayEvent(
   };
 
   return {
+    // No `redelivers`: the forwarder gives up after a few tries in about 10 s,
+    // so a full run queue answers with the busy reply the chat can see.
     kind: runAgent ? "message" : "context",
     ack: gatewayAck().response,
     message: {

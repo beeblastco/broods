@@ -10,13 +10,15 @@ import {
 } from "bun:test";
 import * as harness from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
+import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
 import { resetPlanLimitsForTests } from "../src/harness/plan-limits.ts";
 import { Session } from "../src/harness/session.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import { getStorage, resetStorageForTests } from "../src/shared/storage.ts";
 import { coreRequest } from "./helpers/http.ts";
 
-const { handler } = await import("../src/harness/handler.ts");
+const { handleChannelRequest, handler } =
+  await import("../src/harness/handler.ts");
 const { dispatchInProcessWorker, drainInProcessWorkers, workerQueueFull } =
   await import("../src/harness/worker-queue.ts");
 const QUEUED_LEASE_RENEW_INTERVAL_MS = 5 * 60 * 1000;
@@ -586,5 +588,149 @@ describe("streamed runs", (): void => {
     } finally {
       delete process.env.PUBLIC_BASE_URL;
     }
+  });
+
+  it("answers an account out of budget with 402, not 503, while the queue is full", async (): Promise<void> => {
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 100,
+      runsPerMinute: 60,
+      warned: false,
+    });
+    fillWorkerQueue();
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(402);
+    expect(await response.json()).toMatchObject({
+      error: { code: "budget_exhausted" },
+    });
+    expect(ingress.acceptIngress).not.toHaveBeenCalled();
+  });
+
+  it("answers an account past its runs per minute with 429, not 503, while the queue is full", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    spyOn(runtime, "mutate").mockResolvedValue(true);
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      runsPerMinute: 1,
+      warned: false,
+    });
+    try {
+      expect((await streamedRun(1, true)).status).toBe(202);
+      // That run waits in the queue, in its last place.
+      fillWorkerQueue(1);
+
+      const response = await streamedRun(2, true);
+
+      expect(response.status).toBe(429);
+      expect(await response.json()).toMatchObject({
+        error: { code: "plan_limit_exceeded" },
+      });
+      expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  describe("channel messages", (): void => {
+    let sent: string[];
+
+    beforeEach((): void => {
+      sent = [];
+      // No open ask_questions prompt, so the message is a turn.
+      spyOn(runtime, "query").mockResolvedValue([]);
+    });
+
+    function channelMessage(index: number): ChannelInboundEvent {
+      return {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        eventId: `channel-event-${index}`,
+        conversationKey: `acct:acct_1:agent:agent_1:tg:${index}`,
+        content: "hi",
+        events: [{ role: "user", content: "hi" }],
+        channelName: "telegram",
+        source: { chatId: index },
+        channel: {
+          sendText: async (text): Promise<void> => {
+            sent.push(text);
+          },
+          sendTyping: async (): Promise<void> => {},
+          reactToMessage: async (): Promise<void> => {},
+        },
+      };
+    }
+
+    it("turns a message away on a full queue before the plan counts it or ingress records it", async (): Promise<void> => {
+      // One run a minute: a turned-away message that kept its count would
+      // refuse the redelivery.
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 0,
+        runsPerMinute: 1,
+        warned: false,
+      });
+      fillWorkerQueue();
+
+      const turnedAway = await handleChannelRequest(channelMessage(1)).then(
+        (): string => "admitted",
+        (err: unknown): string => String(err),
+      );
+
+      expect(turnedAway).toBe("Error: In-process worker queue is full");
+      await drainWorkerQueue();
+
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+      expect(settles()).toEqual([]);
+      expect(sent).toEqual([]);
+
+      await handleChannelRequest(channelMessage(1));
+      await drainInProcessWorkers();
+
+      expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
+      expect(sent).not.toContainEqual(
+        expect.stringContaining("Rate limit reached"),
+      );
+    });
+
+    it("still runs a command that starts no run, such as /stop, while the queue is full", async (): Promise<void> => {
+      spyOn(runtime, "mutate").mockResolvedValue(true);
+      fillWorkerQueue();
+
+      await handleChannelRequest({
+        ...channelMessage(1),
+        content: "/help",
+        events: [{ role: "user", content: "/help" }],
+        commandToken: "/help",
+      });
+
+      expect(sent).toEqual([expect.stringContaining("/stop")]);
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+    });
+
+    it("tells an account out of budget its refusal, not the full queue", async (): Promise<void> => {
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 100,
+        runsPerMinute: 60,
+        warned: false,
+      });
+      fillWorkerQueue();
+
+      await handleChannelRequest(channelMessage(1));
+
+      expect(sent).toEqual([expect.stringContaining("monthly resource caps")]);
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+    });
   });
 });

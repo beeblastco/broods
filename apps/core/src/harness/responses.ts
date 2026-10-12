@@ -10,7 +10,7 @@ import { errorResponse, jsonResponse } from "../shared/http.ts";
 import { publicEventIdForScope } from "../shared/runtime-keys.ts";
 import type { AsyncToolResultRecord } from "./async-tool-result.ts";
 import { readAgentFullStream, type AgentLoopStream } from "./harness.ts";
-import type { IngressAdmission } from "./ingress.ts";
+import { INGRESS_RETRY_HEADERS, type IngressAdmission } from "./ingress.ts";
 import type {
   AsyncDirectInboundEvent,
   DirectInboundEvent,
@@ -18,8 +18,6 @@ import type {
 
 const textEncoder = new TextEncoder();
 
-// A queue at capacity drains on the order of seconds, not minutes.
-export const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
 export const CONVERSATION_BUSY =
   "Conversation is already processing another turn. Try again when the current turn finishes.";
 

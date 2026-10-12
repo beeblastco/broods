@@ -678,6 +678,7 @@ async function parseEventCallback(
 
   return {
     kind: runAgent ? "message" : "context",
+    redelivers: true,
     ack: { statusCode: 200 },
     message: {
       // Use team:channel:ts as the eventId so that duplicate Slack deliveries

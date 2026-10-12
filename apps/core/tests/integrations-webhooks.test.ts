@@ -14,6 +14,7 @@ import {
   getObservabilityContext,
   setObservabilityContext,
 } from "../src/shared/otel.ts";
+import { WORKER_QUEUE_FULL } from "../src/harness/worker-queue.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const TELEGRAM_BOT_TOKEN = crypto.randomUUID();
@@ -1132,6 +1133,119 @@ describe("account webhook ingress", () => {
       if (originalBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
       else process.env.PUBLIC_BASE_URL = originalBaseUrl;
     }
+  });
+
+  describe("a full run queue", () => {
+    // What the adapters sent the provider, by URL and body.
+    let sent: string[];
+
+    beforeEach(() => {
+      sent = [];
+      globalThis.fetch = Object.assign(
+        async (
+          input: string | URL | Request,
+          init?: RequestInit,
+        ): Promise<Response> => {
+          sent.push(
+            `${input instanceof Request ? input.url : String(input)} ${typeof init?.body === "string" ? init.body : ""}`,
+          );
+
+          return Response.json({ ok: true });
+        },
+        { preconnect: ORIGINAL_FETCH.preconnect },
+      );
+    });
+
+    const queueFull = async (): Promise<void> => {
+      throw new Error(WORKER_QUEUE_FULL);
+    };
+    const busyText = /queue is full\. Try again in a moment/;
+
+    it("answers 503 with Retry-After where the provider redelivers, saying nothing in the chat", async () => {
+      const routeIncomingEvent = createIncomingEventRouter({
+        accountLoader: async () => TEST_ACCOUNT,
+        agentLoader: async () => TEST_AGENT,
+        agentLister: async () => [TEST_AGENT],
+      });
+
+      const response = await routeIncomingEvent(
+        createTelegramEvent(),
+        createHandlers({ handleChannelRequest: queueFull }),
+      );
+      await response.afterResponse?.catch(() => {});
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers?.["retry-after"]).toBe("5");
+      expect(sent.filter((call) => busyText.test(call))).toEqual([]);
+    });
+
+    it("answers a whole batch 503 at the turn the queue turned away", async () => {
+      const handled: string[] = [];
+      const routeIncomingEvent = createIncomingEventRouter({
+        accountLoader: async () => TEST_ACCOUNT,
+        agentLoader: async () => WHATSAPP_AGENT,
+        agentLister: async () => [WHATSAPP_AGENT],
+      });
+
+      const response = await routeIncomingEvent(
+        createWhatsAppBatchEvent(),
+        createHandlers({
+          handleChannelRequest: async (event) => {
+            if (handled.length > 0) await queueFull();
+            handled.push(event.eventId);
+          },
+        }),
+      );
+      await response.afterResponse?.catch(() => {});
+
+      // Meta sends the delivery again; the first message comes back a
+      // duplicate and the second is admitted then.
+      expect(response.statusCode).toBe(503);
+      expect(handled).toEqual([
+        "acct:acct_test:agent:agent_test:whatsapp:wamid.1",
+      ]);
+      expect(sent.filter((call) => busyText.test(call))).toEqual([]);
+    });
+
+    it("acks and says the agent is busy where the provider does not redeliver", async () => {
+      const routeIncomingEvent = createIncomingEventRouter({
+        accountLoader: async () => TEST_ACCOUNT,
+        agentLoader: async () => PANCAKE_AGENT,
+        agentLister: async () => [PANCAKE_AGENT],
+      });
+
+      const response = await routeIncomingEvent(
+        createPancakeEvent(),
+        createHandlers({ handleChannelRequest: queueFull }),
+      );
+      await response.afterResponse;
+
+      expect(response.statusCode).toBe(200);
+      expect(sent.filter((call) => busyText.test(call))).toHaveLength(1);
+    });
+
+    it("says the agent is busy once the ack went, since a 503 can no longer reach the provider", async () => {
+      const routeIncomingEvent = createIncomingEventRouter({
+        accountLoader: async () => TEST_ACCOUNT,
+        agentLoader: async () => TEST_AGENT,
+        agentLister: async () => [TEST_AGENT],
+      });
+
+      const response = await routeIncomingEvent(
+        createTelegramEvent(),
+        createHandlers({
+          handleChannelRequest: async (): Promise<void> => {
+            // Past the 2 s ack budget, as behind a slow hook.
+            await Bun.sleep(2_100);
+            await queueFull();
+          },
+        }),
+      );
+      await response.afterResponse;
+
+      expect(response.statusCode).toBe(200);
+      expect(sent.filter((call) => busyText.test(call))).toHaveLength(1);
+    });
   });
 });
 

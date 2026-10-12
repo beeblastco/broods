@@ -620,6 +620,7 @@ function parseRoomMessage(
 
   return {
     kind: runAgent ? "message" : "context",
+    redelivers: true,
     ack: { statusCode: 200, body: "ok" },
     message: {
       eventId: `${MATRIX_INTEGRATION_PREFIX}${event.event_id}`,
