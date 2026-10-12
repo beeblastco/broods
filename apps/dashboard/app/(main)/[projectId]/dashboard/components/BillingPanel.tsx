@@ -19,6 +19,7 @@ import {
   isMaxPlan,
   PLAN_CONFIGS,
   SEAT_PRICE_EUR,
+  seatCount,
   seatsAndPrice,
 } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
@@ -198,8 +199,8 @@ function PlanActions({
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {owner && billing && isPaid(billing.status) && (
-        <AddSeatButton org={seats.org} />
+      {owner && billing && isPaid(billing.status) && seats.seatsToAdd > 0 && (
+        <AddSeatButton seats={seats} />
       )}
       {owner && billing && (
         <Button
@@ -229,10 +230,12 @@ function PlanActions({
 }
 
 /**
- * The owner's Add seat, behind one confirm: Stripe charges the prorated seat
- * at once, and adds it only when that payment goes through.
+ * The owner's Add seat, behind one confirm: Stripe charges the prorated seats
+ * at once, and adds them only when that payment goes through. Shown only with
+ * every seat taken: a free seat already takes the next member.
  */
-function AddSeatButton({ org }: { org: OrgSeats["org"] }): React.JSX.Element {
+function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
+  const { org, seatsToAdd } = seats;
   const [confirming, setConfirming] = useState(false);
   const { pending, error, run } = useSubmit();
   const addSeat = useAction(api.stripe.addSeat);
@@ -255,7 +258,7 @@ function AddSeatButton({ org }: { org: OrgSeats["org"] }): React.JSX.Element {
       {confirming && (
         <ConfirmDialog
           title={`Add a seat to ${org.name}`}
-          description={`Add 1 seat for €${SEAT_PRICE_EUR}/month. You are charged now for the rest of this period.`}
+          description={`Add ${seatCount(seatsToAdd)} for €${seatsToAdd * SEAT_PRICE_EUR}/month. You are charged now for the rest of this period.`}
           verb="Add seat"
           variant="default"
           pending={pending}
@@ -271,7 +274,7 @@ function AddSeatButton({ org }: { org: OrgSeats["org"] }): React.JSX.Element {
 /** Upgrade with what it pays for: one seat per member. A member only reads it. */
 function upgradeLabel(seats: OrgSeats | undefined): string {
   return seats?.isOwner
-    ? `Upgrade to Pro · ${seatsAndPrice(Math.max(1, seats.members))}`
+    ? `Upgrade to Pro · ${seatsAndPrice(seats.members)}`
     : "Upgrade to Pro";
 }
 
@@ -536,7 +539,7 @@ function planDetail(
     const day = formatDay(billing.currentPeriodEnd * 1000);
     const paidBy = seats.isOwner
       ? seatsAndPrice(seats.seats)
-      : `${seats.seats} ${seats.seats === 1 ? "seat" : "seats"} · paid by ${seats.ownerName} (owner)`;
+      : `${seatCount(seats.seats)} · paid by ${seats.ownerName} (owner)`;
     if (billing.status === "trialing") return `${paidBy} · Trial ends ${day}`;
 
     return `${paidBy} · ${billing.cancelAtPeriodEnd ? "Cancels on" : "Renews on"} ${day}`;

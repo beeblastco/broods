@@ -13,7 +13,7 @@ import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
 import { useOpenBilling } from "@/app/hooks/useOrgSeats";
 import { toErrorMessage } from "@/app/lib/errors";
-import { SEAT_PRICE_EUR } from "@/app/lib/pricing";
+import { SEAT_PRICE_EUR, seatCount } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
@@ -328,7 +328,7 @@ function OwnedOrgsBilling(): React.JSX.Element | null {
               </span>
               {org.plan === "pro" ? (
                 <Badge variant="success" className="justify-self-start">
-                  Pro · {org.seats} {org.seats === 1 ? "seat" : "seats"}
+                  Pro · {seatCount(org.seats)}
                 </Badge>
               ) : (
                 <Badge variant="secondary" className="justify-self-start">

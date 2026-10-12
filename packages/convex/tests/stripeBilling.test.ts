@@ -689,6 +689,50 @@ describe("seats", () => {
     expect(seats).toBe(4);
   });
 
+  test("Add seat with a seat already free charges nothing, so a second tab or a retry never pays twice", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    stripeCalls.subscriptions.mockImplementation(updateLive);
+
+    const first = await t.action(api.stripe.addSeat, { orgId: payerOrgId });
+    const second = await t.action(api.stripe.addSeat, { orgId: payerOrgId });
+
+    expect([first.seats, second.seats]).toEqual([2, 2]);
+    expect(stripeCalls.subscriptions).toHaveBeenCalledTimes(1);
+  });
+
+  test("a webhook read that started before Add seat cannot land over the new seat", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedPayer(t);
+    await seedUser(t, "auth_new", "new@example.com");
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    // A webhook reads the one seat Stripe still holds, after Add seat read it.
+    stripeCalls.subscriptions.mockImplementation(
+      async (id: string, params: Stripe.SubscriptionUpdateParams) => {
+        await sendEvent(
+          t,
+          "customer.subscription.updated",
+          subscription("active"),
+          "evt_mid_seat",
+        );
+
+        return await updateLive(id, params);
+      },
+    );
+
+    await t.action(api.stripe.addSeat, { orgId: payerOrgId });
+    await t.mutation(api.org.members.add, {
+      orgId: payerOrgId,
+      email: "new@example.com",
+    });
+
+    expect(await memberCount(t)).toBe(2);
+  });
+
   test("a declined card adds no seat and the invite stays refused", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
@@ -732,6 +776,7 @@ describe("seats", () => {
   });
 
   test("removing a member gives their seat back with a proration credit", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
@@ -760,6 +805,33 @@ describe("seats", () => {
       stripeSubscriptionId: SUBSCRIPTION_ID,
     });
     expect(sub?.quantity).toBe(1);
+  });
+
+  test("a member whose account is deleted gives their seat back, even while payment is due", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedPayer(t);
+    await addMember(t, "auth_member", "member@example.com");
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("past_due", SUBSCRIPTION_ID, 2),
+    );
+    stripeCalls.subscriptions.mockImplementation(updateLive);
+
+    vi.useFakeTimers();
+    await t.mutation(internal.org.workosUserDeletion.finalize, {
+      authId: "auth_member",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(stripeCalls.subscriptions).toHaveBeenCalledWith(
+      SUBSCRIPTION_ID,
+      expect.objectContaining({
+        items: [{ id: ITEM_ID, price: "price_seat", quantity: 1 }],
+      }),
+    );
   });
 });
 

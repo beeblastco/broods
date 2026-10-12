@@ -37,6 +37,9 @@ let adminOrg: OrgRow;
 let owner: StackUser;
 let acmeId: string;
 let acmeProjectId: string;
+// BROODS_MANAGED_SERVICE before the spec set it: null when unset,
+// undefined while the spec has not touched it.
+let managedBefore: string | null | undefined;
 
 test.beforeAll(async () => {
   test.setTimeout(180_000);
@@ -63,16 +66,52 @@ test.beforeAll(async () => {
   run(STACK_ADMIN, "org/orgs:setActive", { orgId: acmeId });
   acmeProjectId = idOf(run(STACK_ADMIN, "project:create", { name: "robots" }));
   run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id });
+  managedBefore =
+    convex(["env", "list"]).match(/^BROODS_MANAGED_SERVICE=(.*)$/m)?.[1] ??
+    null;
   convex(["env", "set", "BROODS_MANAGED_SERVICE", "true"]);
 });
 
 test.afterAll(async () => {
   test.setTimeout(120_000);
-  convex(["env", "remove", "BROODS_MANAGED_SERVICE"]);
-  fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "canceled");
-  run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id });
-  // Self-hosted again, so removing the org cancels nothing in Stripe.
-  if (acmeId) run(owner, "org/orgs:remove", { orgId: acmeId });
+  // Every step runs even when one before it failed, so a broken run never
+  // leaves the stack managed for the specs after it. Subscriptions end first,
+  // and the org goes once the stack is as it was, so its removal calls no Stripe.
+  // Steps for state beforeAll never reached are skipped.
+  const steps: Array<() => unknown> = [
+    () =>
+      adminOrg &&
+      fileSubscription(
+        adminOrg._id,
+        STACK_ADMIN,
+        subId("admin"),
+        1,
+        "canceled",
+      ),
+    () =>
+      acmeId && fileSubscription(acmeId, owner, subId("acme"), 3, "canceled"),
+    () =>
+      managedBefore !== undefined &&
+      convex(
+        managedBefore === null
+          ? ["env", "remove", "BROODS_MANAGED_SERVICE"]
+          : ["env", "set", "BROODS_MANAGED_SERVICE", managedBefore],
+      ),
+    () =>
+      adminOrg &&
+      run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id }),
+    () => acmeId && run(owner, "org/orgs:remove", { orgId: acmeId }),
+  ];
+  const failures = steps.flatMap((step) => {
+    try {
+      step();
+
+      return [];
+    } catch (error) {
+      return [error];
+    }
+  });
+  if (failures.length > 0) throw failures[0];
 });
 
 test("an owner on the free plan sees their one seat and what Upgrade costs", async ({
@@ -166,6 +205,27 @@ test("a Pro owner adds a seat behind a confirm, and a full invite pays for one f
   await expect(dialog.getByText(/No user with that email/)).toBeVisible();
 });
 
+test("an owner whose payment failed is sent to Manage billing, not to Upgrade", async ({
+  page,
+}) => {
+  fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "past_due");
+  try {
+    await openMembers(page);
+    const dialog = await openInvite(page);
+    await expect(
+      dialog.getByText(`${adminOrg.name}'s last payment did not go through.`),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Manage billing", exact: true }),
+    ).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: /^Upgrade/ })).toHaveCount(
+      0,
+    );
+  } finally {
+    fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "active");
+  }
+});
+
 test("Account settings lists each org you own with its plan", async ({
   page,
 }) => {
@@ -192,6 +252,8 @@ test("an admin of someone else's org sees its plan and seats, never a pay button
     await expect(
       page.getByText(new RegExp(`· owner ${OWNER.name}$`)),
     ).toBeVisible();
+    // The sidebar names the active org's plan, not the admin's own Pro org's.
+    await expect(page.getByText("Hobby plan", { exact: true })).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Upgrade to Pro", exact: true }),
     ).toBeDisabled();

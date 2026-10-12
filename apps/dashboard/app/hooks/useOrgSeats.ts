@@ -23,6 +23,8 @@ export interface OrgSeats {
   members: number;
   /** Seats the org has: the paid quantity, else the owner's one. */
   seats: number;
+  /** Seats Add seat buys: enough for every member plus one more (`stripe.addSeat`). */
+  seatsToAdd: number;
   /** The org's subscription that has not ended, or null when it has none. */
   billing: BillingInfo;
 }
@@ -40,6 +42,7 @@ export function useOrgSeats(): OrgSeats | undefined {
   if (!org || !user || !members || billing === undefined) return undefined;
   if (budget === undefined) return undefined;
   const owner = members.find((member) => member.isOwner);
+  const seats = billing?.seats ?? FREE_ORG_SEATS;
 
   return {
     org: org,
@@ -47,7 +50,8 @@ export function useOrgSeats(): OrgSeats | undefined {
     isOwner: owner?.userId === user._id,
     ownerName: owner?.name ?? "the owner",
     members: members.length,
-    seats: billing?.seats ?? FREE_ORG_SEATS,
+    seats: seats,
+    seatsToAdd: Math.max(seats, members.length + 1) - seats,
     billing: billing,
   };
 }

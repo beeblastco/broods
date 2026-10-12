@@ -91,9 +91,10 @@ type Field = (typeof QUERY_FIELDS)[number];
 /**
  * What the invite dialog asks for: the invite itself, or with every seat
  * taken, the owner's payment for one more seat (`seat`), the owner's upgrade
- * of a free org (`upgrade`), or anyone else's word to the owner (`ask`).
+ * of a free org (`upgrade`), the owner's fix of a failed payment in the
+ * portal (`billing`), or anyone else's word to the owner (`ask`).
  */
-type InviteStep = "invite" | "seat" | "upgrade" | "ask";
+type InviteStep = "invite" | "seat" | "upgrade" | "billing" | "ask";
 
 /** What picking a role sets: a tier, or a custom role on the member tier. */
 type RolePick =
@@ -493,12 +494,13 @@ function InviteDialog({
   const add = useMutation(api.org.members.add);
   const addSeat = useAction(api.stripe.addSeat);
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
+  const createPortalSession = useAction(api.stripe.createPortalSession);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [refused, setRefused] = useState(false);
   const { pending, error, run } = useSubmit();
   const step = inviteStep(seats, refused);
-  const upgradeSeats = Math.max(1, seats?.members ?? 1);
+  const upgradeSeats = seats?.members ?? 1;
 
   async function submit(): Promise<void> {
     const pick = options.find((option) => option.value === role)?.pick;
@@ -531,13 +533,14 @@ function InviteDialog({
     else if (done) onClose();
   }
 
-  async function upgrade(): Promise<void> {
+  // Checkout for a free org, the portal for a failed payment; both come back here.
+  async function openStripe(): Promise<void> {
     await run(async () => {
       const back = window.location.href;
-      const { url } = await createCheckoutSession({
-        successUrl: back,
-        cancelUrl: back,
-      });
+      const { url } =
+        step === "billing"
+          ? await createPortalSession({ returnUrl: back })
+          : await createCheckoutSession({ successUrl: back, cancelUrl: back });
       window.location.href = url;
     });
   }
@@ -609,17 +612,19 @@ function InviteDialog({
           >
             Cancel
           </Button>
-          {step === "upgrade" ? (
+          {step === "upgrade" || step === "billing" ? (
             <Button
               size="sm"
               className="cursor-pointer"
-              onClick={upgrade}
+              onClick={openStripe}
               disabled={pending}
             >
               <ArrowUpRight />
               {pending
                 ? "Loading…"
-                : `Upgrade · €${upgradeSeats * SEAT_PRICE_EUR}/month`}
+                : step === "billing"
+                  ? "Manage billing"
+                  : `Upgrade · €${upgradeSeats * SEAT_PRICE_EUR}/month`}
             </Button>
           ) : (
             <Button
@@ -653,7 +658,7 @@ function SeatNotice({
   seats: OrgSeats;
   step: Exclude<InviteStep, "invite">;
 }): React.JSX.Element {
-  const upgradeSeats = Math.max(1, seats.members);
+  const upgradeSeats = seats.members;
 
   return (
     <div
@@ -663,13 +668,19 @@ function SeatNotice({
       <p className="font-medium text-foreground">
         {step === "upgrade"
           ? `${org.name} is on the free plan, which has one seat: yours.`
-          : `Every seat in ${org.name} is taken.`}
+          : step === "billing"
+            ? `${org.name}'s last payment did not go through.`
+            : `Every seat in ${org.name} is taken.`}
       </p>
       {step === "seat" && seats.billing && (
         <>
           <p className="flex justify-between gap-4 text-foreground">
-            <span>1 more seat</span>
-            <span>€{SEAT_PRICE_EUR} / month</span>
+            <span>
+              {seats.seatsToAdd === 1
+                ? "1 more seat"
+                : `${seats.seatsToAdd} more seats`}
+            </span>
+            <span>€{seats.seatsToAdd * SEAT_PRICE_EUR} / month</span>
           </p>
           <p className="text-muted-foreground">
             Charged now to the card on file, prorated to{" "}
@@ -682,8 +693,14 @@ function SeatNotice({
         <p className="text-muted-foreground">
           Pro is €{SEAT_PRICE_EUR} per member per month. Upgrade opens Stripe
           Checkout for{" "}
-          {upgradeSeats === 1 ? "your seat" : `all ${upgradeSeats} members`};
-          back here, the invite asks you to pay for 1 more seat.
+          {upgradeSeats === 1 ? "your seat" : `all ${upgradeSeats} members`}.
+          Back here, invite them again to pay for 1 more seat.
+        </p>
+      )}
+      {step === "billing" && (
+        <p className="text-muted-foreground">
+          Its seats come back once Stripe has the payment. Update the card in
+          Manage billing, then invite them again.
         </p>
       )}
       {step === "ask" && (
@@ -702,8 +719,9 @@ function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
   const full = refused || (seats.enforced && seats.members >= seats.seats);
   if (!full) return "invite";
   if (!seats.isOwner) return "ask";
+  if (!seats.billing) return "upgrade";
 
-  return seats.billing && isPaid(seats.billing.status) ? "seat" : "upgrade";
+  return isPaid(seats.billing.status) ? "seat" : "billing";
 }
 
 function matchesField(member: Member, _field: Field, value: string): boolean {

@@ -45,6 +45,10 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
     ),
   );
 
+  const managedBefore = must(
+    context.convex(["env", "list"]),
+    "read the stack's env",
+  ).match(/^BROODS_MANAGED_SERVICE=(.*)$/m)?.[1];
   must(
     context.convex(["env", "set", "BROODS_MANAGED_SERVICE", "true"]),
     "turn the managed service on",
@@ -72,7 +76,10 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         free.output.slice(-300),
       );
 
-      fileSubscription(context, orgId, 2);
+      must(
+        fileSubscription(context, orgId, "active"),
+        "file the paid subscription",
+      );
       const org = must(asAdmin("org/orgs:getActive", {}), "read the org");
       assertStep(
         "a paid subscription makes the org Pro",
@@ -84,20 +91,39 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         asAdmin("stripe:getBillingInfo", {}),
         "read the org's billing",
       );
+      const info = result(billing);
       assertStep(
         "billing shows every member the paid seats, and no Stripe ids",
-        billing.includes('"seats": 2') && !billing.includes("cus_"),
+        typeof info === "object" &&
+          info !== null &&
+          Object.keys(info).sort().join() ===
+            "cancelAtPeriodEnd,currentPeriodEnd,seats,status" &&
+          "seats" in info &&
+          info.seats === 2,
         billing,
       );
       const owned = must(
         asAdmin("stripe:listOwnedOrgs", {}),
         "list the owner's orgs",
       );
+      const rows = result(owned);
+      const row: unknown = Array.isArray(rows)
+        ? rows.find(
+            (org: unknown) =>
+              typeof org === "object" &&
+              org !== null &&
+              "orgId" in org &&
+              org.orgId === orgId,
+          )
+        : undefined;
       assertStep(
         "Account settings lists the org as Pro with its seats",
-        new RegExp(`"orgId": "${orgId}",\\s+"plan": "pro",\\s+"seats": 2`).test(
-          owned,
-        ),
+        typeof row === "object" &&
+          row !== null &&
+          "plan" in row &&
+          row.plan === "pro" &&
+          "seats" in row &&
+          row.seats === 2,
         owned,
       );
       must(
@@ -115,18 +141,40 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
       );
     });
   } finally {
-    context.convex(["env", "remove", "BROODS_MANAGED_SERVICE"]);
-    // Self-hosted again, so removing the org cancels nothing in Stripe.
-    asAdmin("org/orgs:remove", { orgId: orgId });
+    // Every step runs even when one before it failed. The subscription ends
+    // first, so the admin is no longer billed as Pro, and the org goes once
+    // the stack is self-hosted again, so its removal calls no Stripe.
+    const cleanup: Array<[string, () => CliResult]> = [
+      [
+        "cancel the subscription",
+        () => fileSubscription(context, orgId, "canceled"),
+      ],
+      [
+        "restore BROODS_MANAGED_SERVICE",
+        () =>
+          context.convex(
+            managedBefore === undefined
+              ? ["env", "remove", "BROODS_MANAGED_SERVICE"]
+              : ["env", "set", "BROODS_MANAGED_SERVICE", managedBefore],
+          ),
+      ],
+      ["remove the org", () => asAdmin("org/orgs:remove", { orgId: orgId })],
+    ];
+    const failed = cleanup.flatMap(([step, cli]) => {
+      const done = cli();
+
+      return done.ok ? [] : [`${step}: ${done.output.slice(-300)}`];
+    });
+    assertStep("clean up", failed.length === 0, failed.join("\n"));
   }
 }
 
-/** File a paid subscription for the org, as the webhook does after reading it from Stripe. */
+/** File the org's two-seat subscription, as the webhook does after reading it from Stripe. */
 function fileSubscription(
   context: VerifyContext,
   orgId: string,
-  seats: number,
-): void {
+  status: "active" | "canceled",
+): CliResult {
   const stripeSubscriptionId = `sub_local_${context.runId}`;
   const ticket = Number(
     result(
@@ -140,26 +188,23 @@ function fileSubscription(
       ),
     ),
   );
-  must(
-    context.convex([
-      "run",
-      "stripe:applySubscriptionInternal",
-      JSON.stringify({
-        ticket: ticket,
-        subscription: {
-          stripeSubscriptionId: stripeSubscriptionId,
-          stripeCustomerId: `cus_local_${context.runId}`,
-          status: "active",
-          currentPeriodEnd: Math.floor(Date.now() / 1000) + 30 * 86_400,
-          cancelAtPeriodEnd: false,
-          quantity: seats,
-          priceId: "price_local_seat",
-          metadata: { userId: SELF_HOST_ADMIN.subject, orgId: orgId },
-        },
-      }),
-    ]),
-    "file the paid subscription",
-  );
+  return context.convex([
+    "run",
+    "stripe:applySubscriptionInternal",
+    JSON.stringify({
+      ticket: ticket,
+      subscription: {
+        stripeSubscriptionId: stripeSubscriptionId,
+        stripeCustomerId: `cus_local_${context.runId}`,
+        status: status,
+        currentPeriodEnd: Math.floor(Date.now() / 1000) + 30 * 86_400,
+        cancelAtPeriodEnd: false,
+        quantity: 2,
+        priceId: "price_local_seat",
+        metadata: { userId: SELF_HOST_ADMIN.subject, orgId: orgId },
+      },
+    }),
+  ]);
 }
 
 /** Users who signed in once, so an org can invite them by email. */

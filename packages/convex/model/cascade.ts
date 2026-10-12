@@ -10,6 +10,7 @@ import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
 import { unregisterSchedule } from "./cronSchedules";
+import { releaseSeat } from "./orgBilling";
 import { isManagedService } from "./planLimits";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
@@ -403,8 +404,9 @@ export async function purgeUser(
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
     .collect();
   for (const membership of memberships) {
-    if (!purgedOrgIds.has(membership.orgId))
-      await ctx.db.delete(membership._id);
+    if (purgedOrgIds.has(membership.orgId)) continue;
+    await ctx.db.delete(membership._id);
+    await releaseSeat(ctx, membership.orgId);
   }
 
   // Personal CLI credentials must be revoked even when their org survives

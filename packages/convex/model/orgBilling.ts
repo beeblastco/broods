@@ -9,11 +9,11 @@
  */
 
 import type Stripe from "stripe";
-import { components } from "../_generated/api";
+import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
-import { isManagedService } from "./planLimits";
+import { isManagedService, type Plan } from "./planLimits";
 
 /** Free orgs one owner may hold. Paid orgs do not count. */
 export const FREE_ORGS_PER_OWNER = 1;
@@ -53,6 +53,11 @@ export function seatsOf(
   return paid ? (paid.quantity ?? FREE_ORG_SEATS) : FREE_ORG_SEATS;
 }
 
+/** The plan a payer's or an org's subscriptions grant: pro while one is paid. */
+export function planOf(subs: ReadonlyArray<{ status: string }>): Plan {
+  return subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
+}
+
 /** How many members an org has, owner included. */
 export async function orgMemberCount(
   ctx: QueryCtx,
@@ -82,11 +87,22 @@ export async function assertFreeSeat(
   if ((await orgMemberCount(ctx, org._id)) < seatsOf(subs)) return;
 
   throw new ClientError(
-    subs.some((sub) => isPaid(sub.status))
+    planOf(subs) === "pro"
       ? `Every seat in ${org.name} is taken. The owner adds a seat in Billing first.`
       : `${org.name} is on the free plan, which has one seat. The owner upgrades it to invite members.`,
     "payment_required",
   );
+}
+
+/** Give back the paid seat of a member who just left an org (`stripe:syncSeatsInternal`). */
+export async function releaseSeat(
+  ctx: MutationCtx,
+  orgId: Id<"orgs">,
+): Promise<void> {
+  if (!isManagedService()) return;
+  await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
+    orgId: orgId,
+  });
 }
 
 /** Refuse a new org when the owner already holds their free ones. */
@@ -122,7 +138,7 @@ export async function syncUserPlan(
     components.stripe.public.listSubscriptionsByUserId,
     { userId: authId },
   );
-  const plan = subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
+  const plan = planOf(subs);
   if (user.plan !== plan) await ctx.db.patch(user._id, { plan: plan });
 }
 
@@ -138,6 +154,6 @@ export async function syncOrgPlan(
     components.stripe.public.listSubscriptionsByOrgId,
     { orgId: org._id },
   );
-  const plan = subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
+  const plan = planOf(subs);
   if (org.plan !== plan) await ctx.db.patch(org._id, { plan: plan });
 }

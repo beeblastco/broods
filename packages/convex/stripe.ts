@@ -62,8 +62,9 @@ export const createCheckoutSession = action({
       activeOf: authUser.id,
     });
     // Stops a second click or tab. It reads webhook-synced rows, so a checkout
-    // paid seconds ago can still slip through; Stripe's "limit customers to
-    // one subscription" Checkout setting closes that window.
+    // paid seconds ago can still slip through. Stripe's "limit customers to one
+    // subscription" setting must stay off: every org an owner pays for is one
+    // more subscription on the same customer.
     if (billing.subscription) {
       throw new ClientError(
         "Already subscribed; use Manage Billing to change plan",
@@ -94,9 +95,11 @@ export const createCheckoutSession = action({
 });
 
 /**
- * Add one seat to a paid org so one more member fits. Stripe invoices the
- * prorated seat at once and refuses the change if that payment fails, so the
- * invite that follows only lands on a paid seat. Owner only.
+ * Make room for one more member in a paid org: seats for every member plus
+ * one. Stripe invoices the prorated seats at once and refuses the change if
+ * that payment fails, so the invite that follows only lands on a paid seat.
+ * A seat already free charges nothing, so a second tab or a retried invite
+ * never pays twice. Owner only.
  */
 export const addSeat = action({
   args: { orgId: v.id("orgs") },
@@ -117,7 +120,7 @@ export const addSeat = action({
       const seats = await changeSeats(
         ctx,
         billing.subscription.stripeSubscriptionId,
-        (paid) => Math.max(paid, billing.members) + 1,
+        (paid) => Math.max(paid, billing.members + 1),
         "always_invoice",
       );
 
@@ -267,9 +270,9 @@ export const orgBillingInternal = internalQuery({
 });
 
 /**
- * Lower a paid org's seats to its member count after someone left. Stripe
- * credits the unused time on the next invoice. Seats only go up on the
- * owner's click (`addSeat`).
+ * Lower an org's seats to its member count after someone left, whether or not
+ * its last payment went through. Stripe credits the unused time on the next
+ * invoice. Seats only go up on the owner's click (`addSeat`).
  */
 export const syncSeatsInternal = internalAction({
   args: { orgId: v.id("orgs") },
@@ -278,9 +281,7 @@ export const syncSeatsInternal = internalAction({
     const billing = await ctx.runQuery(internal.stripe.orgBillingInternal, {
       orgId: args.orgId,
     });
-    if (!billing?.subscription || !isPaid(billing.subscription.status)) {
-      return null;
-    }
+    if (!billing?.subscription) return null;
     await changeSeats(
       ctx,
       billing.subscription.stripeSubscriptionId,
@@ -434,7 +435,7 @@ export function stripeApi(): Stripe {
 }
 
 /** The id of an expandable Stripe field, whether or not it was expanded. */
-export function stripeId(field: string | { id: string } | null): string | null {
+function stripeId(field: string | { id: string } | null): string | null {
   return typeof field === "string" ? field : (field?.id ?? null);
 }
 
@@ -463,7 +464,10 @@ async function applyLive(
 
 /**
  * Set a subscription's seats from what Stripe holds now, on the seat price
- * (which also moves a migrated flat Pro item onto it), and store the result.
+ * (which also moves a migrated flat Pro item onto it), and store the result:
+ * the read when nothing changes, else the update under a ticket claimed once
+ * Stripe answered it, so a webhook read that started before cannot land over
+ * the new seats.
  * @returns the seats the org now pays for
  */
 async function changeSeats(
@@ -482,7 +486,11 @@ async function changeSeats(
   if (!item) throw new Error(`Subscription ${subscriptionId} has no items`);
   const paid = item.quantity ?? 1;
   const quantity = seats(paid);
-  if (quantity === paid) return paid;
+  if (quantity === paid) {
+    await applyLive(ctx, ticket, live);
+
+    return paid;
+  }
 
   const updated = await stripe.subscriptions.update(subscriptionId, {
     items: [{ id: item.id, price: seatPriceId(), quantity: quantity }],
@@ -490,7 +498,11 @@ async function changeSeats(
     // A seat that needs a payment is added only once that payment succeeds.
     payment_behavior: "error_if_incomplete",
   });
-  await applyLive(ctx, ticket, updated);
+  const updateTicket = await ctx.runMutation(
+    internal.stripe.claimSubscriptionSyncInternal,
+    { stripeSubscriptionId: subscriptionId },
+  );
+  await applyLive(ctx, updateTicket, updated);
 
   return quantity;
 }

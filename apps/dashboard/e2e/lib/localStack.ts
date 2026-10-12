@@ -111,7 +111,7 @@ export function fileSubscription(
   payer: StackUser,
   subscriptionId: string,
   seats: number,
-  status: "active" | "canceled",
+  status: "active" | "past_due" | "canceled",
 ): void {
   const ticket = run(null, "stripe:claimSubscriptionSyncInternal", {
     stripeSubscriptionId: subscriptionId,

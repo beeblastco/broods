@@ -6,7 +6,6 @@
  */
 
 import { v } from "convex/values";
-import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
@@ -18,7 +17,7 @@ import {
 } from "../model/access";
 import { actorsOf, actorValidator } from "../model/actor";
 import { ClientError } from "../model/clientError";
-import { assertFreeSeat } from "../model/orgBilling";
+import { assertFreeSeat, releaseSeat } from "../model/orgBilling";
 import {
   getOrgMembership,
   orgRoleMeets,
@@ -305,11 +304,7 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(membershipId);
-    if (org?.plan === "pro") {
-      await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
-        orgId: org._id,
-      });
-    }
+    await releaseSeat(ctx, membership.orgId);
 
     return null;
   },
