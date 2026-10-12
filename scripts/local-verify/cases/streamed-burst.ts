@@ -23,7 +23,7 @@ export async function streamedBurst(context: VerifyContext): Promise<void> {
         name: key,
         config: {
           ...context.model,
-          instructions: "Reply with the single word OK.",
+          agent: { system: "Reply with the single word OK." },
         },
       }),
   );
