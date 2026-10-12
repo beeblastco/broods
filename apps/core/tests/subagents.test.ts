@@ -833,45 +833,105 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("keeps a finished result and the running notice when the detach write fails", async () => {
+  it("resumes the parent once with each finished result a failed expiry write did not save", async () => {
+    const mutate = spyOn(runtime, "mutate").mockResolvedValue(true);
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
-      async (_messages: UserModelMessage[]): Promise<never[]> => [],
+      async (
+        _messages: UserModelMessage[],
+        _onSaved?: (saved: number) => void,
+      ): Promise<never[]> => [],
     );
-    persistModelMessages.mockRejectedValueOnce(new Error("convex down"));
-    const coordinator = new SubagentCoordinator(
-      {
-        accountId: "account_1",
-        agentId: "agent_parent",
-        eventId: "event_parent",
-        persistModelMessages: persistModelMessages,
-        renewConversationLease: async (): Promise<string> => "renewed",
-      } as never,
-      {},
-      Date.now() + 10,
+    // The expiry write saves its first append, then fails.
+    persistModelMessages.mockImplementationOnce(
+      async (_messages, onSaved): Promise<never[]> => {
+        onSaved?.(1);
+        throw new Error("convex down");
+      },
     );
-    const internals = coordinator as unknown as CoordinatorInternals;
-    internals.completions.push(completion("subagent_1", "finished report"));
-    internals.pending.set("subagent_2", new Promise(() => {}));
-    internals.pendingMetadata.set("subagent_2", {
-      taskId: "subagent_2",
-      eventId: "event_subagent_2",
-      agentId: "agent_research",
-      conversationKey: "subagent-subagent_2",
+    const resumeParent = mock(
+      async (
+        _parent: unknown,
+        _taskId: string,
+        _message: UserModelMessage,
+        _resultEventId: string,
+      ): Promise<SubagentResumeOutcome> => "queued",
+    );
+    const session = parentSession({
+      persistModelMessages: persistModelMessages,
     });
-
-    expect(await coordinator.waitForIdle()).toBe("timeout");
-    expect(coordinator.drainCompletionsAndDetachToParent()).rejects.toThrow(
-      "convex down",
+    const coordinator = new SubagentCoordinator(session, {}, Date.now() + 10, {
+      lifecycle: { emit: async (): Promise<void> => {} },
+      resumeParent: resumeParent,
+    });
+    const finished = (taskId: string) => ({
+      taskId: taskId,
+      eventId: `event_${taskId}`,
+      agentId: "agent_research",
+      conversationKey: `subagent-${taskId}`,
+    });
+    coordinator["completions"].push(
+      { ...finished("subagent_1"), status: "completed", response: "saved" },
+      { ...finished("subagent_2"), status: "completed", response: "unsaved" },
+      { ...finished("subagent_3"), status: "failed", error: "unsaved failure" },
     );
-    // The retry writes both, once, in order; nothing is left to write again.
-    expect(await coordinator.drainCompletionsToParent()).toBe(2);
-    expect(await coordinator.drainCompletionsToParent()).toBe(0);
-    expect(persistModelMessages).toHaveBeenCalledTimes(2);
-    const retried = persistModelMessages.mock.calls[1]?.[0] ?? [];
-    expect(retried).toHaveLength(2);
-    expect(messageText(retried[0])).toContain("finished report");
-    expect(messageText(retried[1])).toContain("status: running");
+    const running = {
+      taskId: "subagent_4",
+      eventId: "event_subagent_4",
+      agentId: "agent_research",
+      conversationKey: "subagent-subagent_4",
+    };
+    coordinator["pending"].set(running.taskId, new Promise((): void => {}));
+    coordinator["pendingMetadata"].set(running.taskId, running);
+
+    try {
+      expect(await coordinator.waitForIdle()).toBe("timeout");
+      // Awaited, so the resumes the failure starts land before the checks.
+      expect(
+        await coordinator
+          .drainCompletionsAndDetachToParent()
+          .catch((error: unknown): string => String(error)),
+      ).toBe("Error: convex down");
+      // The still-running child reports back on its own when it finishes.
+      await coordinator["completeTask"]({
+        ...running,
+        status: "completed",
+        response: "late report",
+      });
+
+      // No pass drains after the expiry write: every result not saved reaches
+      // the parent as its own turn, once, fenced by its own result row.
+      expect(
+        resumeParent.mock.calls.map(
+          ([parent, taskId, message, resultEventId]) => [
+            parent === session,
+            taskId,
+            resultEventId,
+            messageText(message).split("Result:\n")[1],
+          ],
+        ),
+      ).toEqual([
+        [true, "subagent_2", "event_subagent_2", "unsaved"],
+        [true, "subagent_3", "event_subagent_3", "unsaved failure"],
+        [true, "subagent_4", "event_subagent_4", "late report"],
+      ]);
+      // Each unsaved result is left for the recovery sweep should its resume fail.
+      for (const eventId of ["event_subagent_2", "event_subagent_3"]) {
+        expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
+          eventId: eventId,
+          observed: false,
+        });
+      }
+      expect(mutate).not.toHaveBeenCalledWith("observeAsyncAgentResult", {
+        eventId: "event_subagent_1",
+        observed: false,
+      });
+      // Nothing is left queued to be written or resumed again.
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+      expect(persistModelMessages).toHaveBeenCalledTimes(1);
+    } finally {
+      mutate.mockRestore();
+    }
   });
 
   it("sends no running notice for a child whose result the model already read", async () => {
@@ -908,7 +968,7 @@ describe("SubagentCoordinator", () => {
     expect(coordinator.runningCount).toBe(1);
   });
 
-  it("drops a put-back running notice once its child has finished", async () => {
+  it("drops the running notice a failed expiry write did not save", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
       async (_messages: UserModelMessage[]): Promise<never[]> => [],
