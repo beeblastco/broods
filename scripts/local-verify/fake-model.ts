@@ -95,6 +95,7 @@ function fakeModel(request: ResponsesRequest): Response {
       event("response.output_text.delta", {
         item_id: item.id,
         output_index: 0,
+        content_index: 0,
         delta: "OK",
       }),
     );
