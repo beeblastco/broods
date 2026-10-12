@@ -243,8 +243,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -268,6 +266,10 @@ jobs:
         run: git diff --exit-code -- packages/convex/_generated
 
       - name: Verify through the edge
+        # Only this step reads the key: the harness puts it in each test
+        # agent's config, so core and the rest of the job never see it.
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: bun run local:verify
 
       - name: Perf report

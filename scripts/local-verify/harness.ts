@@ -11,7 +11,7 @@ const RUN_POLL_INTERVAL_MS = 200;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 
 /** The prompt for a case that only needs the run to answer. */
-export const OK_AGENT = { system: "Reply with the single word OK." };
+export const OK_AGENT = { system: "Reply with the single word OK." } as const;
 
 export const MODEL_KEY_HINT = "set OPENAI_API_KEY for the full run";
 

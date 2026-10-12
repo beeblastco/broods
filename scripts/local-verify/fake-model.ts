@@ -29,7 +29,7 @@ globalThis.fetch = Object.assign(
     const url = input instanceof Request ? input.url : input.toString();
     const body = typeof init?.body === "string" ? init.body : "";
     if (new URL(url).hostname === "api.openai.com") {
-      return fakeModel(JSON.parse(body) as ResponsesRequest);
+      return fakeModel(JSON.parse(body));
     }
     if (TRACE_PATH && CONVEX_URL && url.startsWith(CONVEX_URL)) {
       appendFileSync(
