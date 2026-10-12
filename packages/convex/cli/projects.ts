@@ -161,6 +161,8 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
 
     return methodNotAllowed(["GET", "POST"]);
   } catch (error) {
+    const clientError = clientErrorResponse(error);
+    if (clientError) return clientError;
     console.error("CLI onboarding request failed", error);
     if (error instanceof SyntaxError) {
       return jsonError(400, "Request body must be valid JSON");

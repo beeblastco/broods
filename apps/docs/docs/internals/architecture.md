@@ -316,6 +316,8 @@ Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/s
 
 An org is the billing and login unit; its account is the tenant every runtime row keys on. Projects and stages scope config, keys and deployments.
 
+On the managed service each org has its own Stripe subscription, one seat per member, billed to the org owner (`packages/convex/model/orgBilling.ts`). `orgs.plan` follows that subscription and is the plan core enforces for the org's account. An invite needs a free seat, so the owner adds one first: Stripe charges the prorated seat at once and refuses the change if the payment fails. Removing a member gives a seat back, and deleting the org cancels its subscription. An owner holds at most one free org, so new orgs never bring new free allowances.
+
 ```mermaid
 classDiagram
   direction LR

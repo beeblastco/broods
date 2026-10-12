@@ -27,6 +27,7 @@ import {
   userByAuthId,
 } from "../model/ownership/org";
 import { ClientError } from "../model/clientError";
+import { assertFreeOrgSlot } from "../model/orgBilling";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { planValidator } from "../schema";
 
@@ -175,13 +176,14 @@ export const createOnboardingOrg = internalMutation({
     const name = args.name.trim();
     if (!name) throw new Error("Organization name is required");
 
+    await assertFreeOrgSlot(ctx, token.authId);
     const now = Date.now();
     const slug = await uniqueOrgSlug(ctx, name);
     const orgId = await ctx.db.insert("orgs", {
       name: name,
       slug: slug,
       ownerAuthId: token.authId,
-      plan: user.plan,
+      plan: "free",
       createdAt: now,
     });
     await ctx.db.insert("orgMembers", {

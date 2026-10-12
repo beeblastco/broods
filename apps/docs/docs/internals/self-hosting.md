@@ -141,26 +141,26 @@ Fixed names, not outputs: `SANDBOX_MOUNT_ROLE_ARN` is the role `<stage>-<project
 
 From `packages/convex`, set each with `bunx convex env set NAME value`:
 
-| Variable                                                                   | Required  | Notes                                                                                        |
-| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                         | yes       | Same as core. Comma-separated list                                                           |
-| `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same as core                                                                                 |
-| `SERVICE_AUTH_SECRET`                                                      | yes       | Same as core                                                                                 |
-| `STAGE_TICKET_SECRET`                                                      | yes       | Same as core                                                                                 |
-| `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host   |
-| `AWS_REGION`                                                               | yes       | The data plane region                                                                        |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                                 |
-| `CONVEX_AWS_ROLE_ARN`                                                      | yes       | `convexAwsRoleArn` output                                                                    |
-| `CONVEX_AWS_EXTERNAL_ID`                                                   | no        | Default `broods-convex`                                                                      |
-| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                                |
-| `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                  | no        | Refused as a workspace's own bucket or role                                                  |
-| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core   |
-| `BROODS_AUTH_PROVIDER`                                                     | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login                |
-| `BROODS_SESSION_JWKS`                                                      | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                     |
-| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | no        | The managed service's login. Leave unset                                                     |
-| `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs                                                        |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`        | no        | Billing                                                                                      |
-| `STRIPE_PRO_PAYMENT_LINK`                                                  | no        | Payment Link Upgrade opens. Unset falls back to a Checkout Session for `STRIPE_PRO_PRICE_ID` |
+| Variable                                                                   | Required  | Notes                                                                                      |
+| -------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------ |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                         | yes       | Same as core. Comma-separated list                                                         |
+| `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same as core                                                                               |
+| `SERVICE_AUTH_SECRET`                                                      | yes       | Same as core                                                                               |
+| `STAGE_TICKET_SECRET`                                                      | yes       | Same as core                                                                               |
+| `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host |
+| `AWS_REGION`                                                               | yes       | The data plane region                                                                      |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                               |
+| `CONVEX_AWS_ROLE_ARN`                                                      | yes       | `convexAwsRoleArn` output                                                                  |
+| `CONVEX_AWS_EXTERNAL_ID`                                                   | no        | Default `broods-convex`                                                                    |
+| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                              |
+| `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                  | no        | Refused as a workspace's own bucket or role                                                |
+| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core |
+| `BROODS_AUTH_PROVIDER`                                                     | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login              |
+| `BROODS_SESSION_JWKS`                                                      | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                   |
+| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | no        | The managed service's login. Leave unset                                                   |
+| `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs                                                      |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                               | no        | Billing                                                                                    |
+| `STRIPE_SEAT_PRICE_ID`                                                     | no        | Per-unit monthly price of one org seat; Upgrade and Add seat bill it                       |
 
 Then deploy the functions, before core:
 

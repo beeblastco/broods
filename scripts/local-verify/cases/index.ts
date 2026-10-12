@@ -15,6 +15,7 @@ import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { lambdaSnapshot } from "./lambda-snapshot.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
+import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { providerSnapshot } from "./provider-snapshot.ts";
 import { queuedCompact } from "./queued-compact.ts";
@@ -71,6 +72,7 @@ export const verifyCases: readonly VerifyCase[] = [
   runToken,
   workspaceIsolation,
   skillLimit,
+  orgSeatBilling,
   // Last: it blocks a source address on the config plane for 15 minutes.
   authFailures,
 ];

@@ -1,10 +1,12 @@
 /**
  * Org membership management: list members, add by email, change role, remove.
  * Reads gated on caller being a member; writes on `members:write`, which
- * owners and admins hold by tier and a custom role may grant.
+ * owners and admins hold by tier and a custom role may grant. Each member
+ * takes a seat the org owner pays for (model/orgBilling.ts).
  */
 
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
@@ -16,6 +18,7 @@ import {
 } from "../model/access";
 import { actorsOf, actorValidator } from "../model/actor";
 import { ClientError } from "../model/clientError";
+import { assertFreeSeat } from "../model/orgBilling";
 import {
   getOrgMembership,
   orgRoleMeets,
@@ -114,8 +117,8 @@ export const list = query({
 
 /**
  * Adds an existing user to the org by email, on a tier or with a custom
- * role. Errors if the email does not match a synced user row or the user is
- * already a member.
+ * role. Errors if the email does not match a synced user row, the user is
+ * already a member, or the org has no free seat (`payment_required`).
  */
 export const add = mutation({
   args: {
@@ -165,6 +168,11 @@ export const add = mutation({
     if (existing) {
       throw new Error("User is already a member of this org");
     }
+    const org = await ctx.db.get(orgId);
+    if (!org) {
+      throw new ClientError("Org not found", "not_found");
+    }
+    await assertFreeSeat(ctx, org);
 
     const membershipId = await ctx.db.insert("orgMembers", {
       orgId: orgId,
@@ -247,7 +255,7 @@ export const updateRole = mutation({
   },
 });
 
-/** Removes a member from the org. Cannot remove the org owner. */
+/** Removes a member from the org and gives up their paid seat. Cannot remove the org owner. */
 export const remove = mutation({
   args: { membershipId: v.id("orgMembers") },
   returns: v.null(),
@@ -297,6 +305,11 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(membershipId);
+    if (org?.plan === "pro") {
+      await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
+        orgId: org._id,
+      });
+    }
 
     return null;
   },

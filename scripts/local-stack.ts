@@ -21,7 +21,7 @@
  * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--key|--record]
  */
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -701,16 +701,34 @@ function runConvexCli(
     cwd: join(repoRoot, "packages", "convex"),
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
-    env: {
-      ...process.env,
-      CONVEX_DEPLOY_KEY: undefined,
-      CONVEX_DEPLOYMENT: "",
-      CONVEX_SELF_HOSTED_ADMIN_KEY: state.adminKey,
-      CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${ports(state).convexApi}`,
-    },
+    env: convexCliEnv(state),
   });
 
   return output ?? "";
+}
+
+/** Runs the Convex CLI and hands back its outcome, so a case can expect a refusal. */
+function tryConvexCli(
+  state: InstanceState,
+  args: readonly string[],
+): { ok: boolean; output: string } {
+  const result = spawnSync("bunx", ["convex", ...args], {
+    cwd: join(repoRoot, "packages", "convex"),
+    encoding: "utf8",
+    env: convexCliEnv(state),
+  });
+
+  return { ok: result.status === 0, output: result.stdout + result.stderr };
+}
+
+function convexCliEnv(state: InstanceState): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    CONVEX_DEPLOY_KEY: undefined,
+    CONVEX_DEPLOYMENT: "",
+    CONVEX_SELF_HOSTED_ADMIN_KEY: state.adminKey,
+    CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${ports(state).convexApi}`,
+  };
 }
 
 // --- host processes -----------------------------------------------------
@@ -1013,6 +1031,7 @@ function verifyContext(
     accountSecret: accountSecret,
     client: new BroodsClient({ apiKey: accountSecret, baseUrl: edgeUrl }),
     configPlaneUrl: `http://127.0.0.1:${ports(state).convexSite}`,
+    convex: (args) => tryConvexCli(state, args),
     coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
     edgeUrl: edgeUrl,
     measure: measure,
