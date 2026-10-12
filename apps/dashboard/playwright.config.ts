@@ -45,6 +45,9 @@ export default defineConfig({
       name: "app",
       testMatch: /app\/.*\.spec\.ts/,
       dependencies: ["setup"],
+      // One spec at a time: the seat billing spec switches the signed-in
+      // user's active org and the managed-service flag, which the others read.
+      workers: 1,
       use: { baseURL: BASE_URL, storageState: STORAGE_STATE },
     },
     {

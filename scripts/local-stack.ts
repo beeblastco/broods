@@ -16,9 +16,11 @@
  * `verify` drives the cases in scripts/local-verify/cases through the edge.
  * `up --perf` answers the model in process and traces core's Convex calls, and
  * `perf` then grades scripts/local-verify/perf.ts against its baseline.
+ * `convex <args>` runs the Convex CLI against the stack as its admin, for a
+ * dashboard e2e spec that sets up state no dashboard user can.
  * Under GitHub Actions each command also writes its timings to the job summary.
  *
- * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--key|--record]
+ * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf|convex> [--fresh|--purge|--perf|--dashboard|--key|--record]
  */
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -145,9 +147,12 @@ switch (command) {
   case "perf":
     await perf(flags.has("--record"));
     break;
+  case "convex":
+    convex(process.argv.slice(3));
+    break;
   default:
     console.error(
-      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf> [--fresh|--purge|--perf|--dashboard|--key|--record]",
+      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf|convex> [--fresh|--purge|--perf|--dashboard|--key|--record]",
     );
     process.exit(2);
 }
@@ -188,6 +193,18 @@ async function down(purge: boolean): Promise<void> {
     allowFailure: true,
   });
   console.log(`stopped ${instanceId} (state kept for fast restart)`);
+}
+
+// The Convex CLI's output and exit status, never the admin key it runs with.
+function convex(args: readonly string[]): void {
+  const state = loadState(currentInstanceId());
+  if (!state) {
+    console.error(`no local stack for this worktree (${currentInstanceId()})`);
+    process.exit(1);
+  }
+  const result = tryConvexCli(state, args);
+  process.stdout.write(result.output);
+  process.exit(result.ok ? 0 : 1);
 }
 
 // `--key` prints only the admin secret, the dashboard's sign-in key, for a

@@ -31,6 +31,7 @@ import { SearchInput } from "@/app/components/SearchInput";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { StatusWord } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
+import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -60,16 +61,21 @@ import {
 } from "@/app/components/ui/select";
 import { actorName, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
+import { type OrgSeats, useOrgSeats } from "@/app/hooks/useOrgSeats";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
+import { formatDay } from "@/app/lib/allowance";
 import { formatDate } from "@/app/lib/formatTime";
 import { tabHref } from "@/app/lib/navigation";
+import { SEAT_PRICE_EUR } from "@/app/lib/pricing";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { clientErrorData } from "@broods/convex/model/clientError";
+import { isPaid } from "@broods/convex/model/orgBilling";
 import type { FunctionReturnType } from "convex/server";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -81,6 +87,13 @@ type Role = FunctionReturnType<typeof api.access.listRoles>[number];
 type Tier = Member["role"];
 type Column = "name" | "email" | "role" | "joined" | "invitedBy";
 type Field = (typeof QUERY_FIELDS)[number];
+
+/**
+ * What the invite dialog asks for: the invite itself, or with every seat
+ * taken, the owner's payment for one more seat (`seat`), the owner's upgrade
+ * of a free org (`upgrade`), or anyone else's word to the owner (`ask`).
+ */
+type InviteStep = "invite" | "seat" | "upgrade" | "ask";
 
 /** What picking a role sets: a tier, or a custom role on the member tier. */
 type RolePick =
@@ -132,6 +145,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   const roles = useQuery(api.access.listRoles, {});
   const [selectedId, setSelectedId] = useQueryState("sel", MEMBER_ID);
   const [inviting, setInviting] = useState(false);
+  const seats = useOrgSeats();
   const list = useListState({
     rows: members ?? NO_ROWS,
     fields: QUERY_FIELDS,
@@ -167,6 +181,11 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
           fields={QUERY_FIELDS}
           placeholder="Search members · role:"
         />
+        {seats?.enforced && (
+          <Badge variant="outline">
+            {seats.members} of {seats.seats} seats used
+          </Badge>
+        )}
         <FilterButton columns={[{ label: "Role", filter: filters.role }]} />
         {canChange && (
           <Button
@@ -250,7 +269,8 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
       </DetailSplit>
       {inviting && (
         <InviteDialog
-          orgId={org._id}
+          org={org}
+          seats={seats}
           options={options}
           onClose={() => setInviting(false)}
         />
@@ -452,33 +472,74 @@ function RoleItem({
   );
 }
 
-/** Adds an existing user by email with a role. */
+/**
+ * Adds an existing user by email with a role. On the managed service an
+ * invite needs a free seat: with none, the owner pays for one more seat and
+ * the invite follows, or upgrades a free org first; anyone else asks the
+ * owner. The seat count picks the step up front, and the invite's 402 picks
+ * it when the count was stale. Nobody but the owner is ever charged.
+ */
 function InviteDialog({
-  orgId,
+  org,
+  seats,
   options,
   onClose,
 }: {
-  orgId: Id<"orgs">;
+  org: Doc<"orgs">;
+  seats: OrgSeats | undefined;
   options: RoleOption[];
   onClose: () => void;
 }): React.JSX.Element {
   const add = useMutation(api.org.members.add);
+  const addSeat = useAction(api.stripe.addSeat);
+  const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
+  const [refused, setRefused] = useState(false);
   const { pending, error, run } = useSubmit();
+  const step = inviteStep(seats, refused);
+  const upgradeSeats = Math.max(1, seats?.members ?? 1);
 
   async function submit(): Promise<void> {
     const pick = options.find((option) => option.value === role)?.pick;
     if (!email.trim() || !pick) return;
-    const done = await run(() =>
+    const invite = (): Promise<Id<"orgMembers">> =>
       add({
-        orgId: orgId,
+        orgId: org._id,
         email: email.trim(),
         role: pick.tier,
         roleId: pick.roleId,
-      }),
-    );
-    if (done) onClose();
+      });
+    let seatTaken = false;
+    // The invite goes first, so a wrong email or a seat freed meanwhile
+    // costs nothing; only its 402 leads to the payment.
+    const done = await run(async () => {
+      try {
+        await invite();
+      } catch (err) {
+        if (clientErrorData(err)?.code !== "payment_required") throw err;
+        if (step !== "seat") {
+          seatTaken = true;
+
+          return;
+        }
+        await addSeat({ orgId: org._id });
+        await invite();
+      }
+    });
+    if (seatTaken) setRefused(true);
+    else if (done) onClose();
+  }
+
+  async function upgrade(): Promise<void> {
+    await run(async () => {
+      const back = window.location.href;
+      const { url } = await createCheckoutSession({
+        successUrl: back,
+        cancelUrl: back,
+      });
+      window.location.href = url;
+    });
   }
 
   return (
@@ -503,31 +564,39 @@ function InviteDialog({
               placeholder="ada@example.com"
             />
           </div>
-          <div className="grid gap-1">
-            <Label htmlFor="invite-role" variant="muted" className="text-xs">
-              Role
-            </Label>
-            <Select
-              items={options}
-              value={role}
-              onValueChange={(value) => value !== null && setRole(value)}
-            >
-              <SelectTrigger id="invite-role" className="w-full cursor-pointer">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {options.map((option) => (
-                  <SelectItem
-                    key={option.value}
-                    value={option.value}
-                    className="cursor-pointer"
-                  >
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {(step === "invite" || step === "seat") && (
+            <div className="grid gap-1">
+              <Label htmlFor="invite-role" variant="muted" className="text-xs">
+                Role
+              </Label>
+              <Select
+                items={options}
+                value={role}
+                onValueChange={(value) => value !== null && setRole(value)}
+              >
+                <SelectTrigger
+                  id="invite-role"
+                  className="w-full cursor-pointer"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {options.map((option) => (
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      className="cursor-pointer"
+                    >
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {seats && step !== "invite" && (
+            <SeatNotice org={org} seats={seats} step={step} />
+          )}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
         <DialogFooter>
@@ -540,18 +609,101 @@ function InviteDialog({
           >
             Cancel
           </Button>
-          <Button
-            size="sm"
-            className="cursor-pointer"
-            onClick={submit}
-            disabled={pending || !email.trim()}
-          >
-            {pending ? "Adding…" : "Add"}
-          </Button>
+          {step === "upgrade" ? (
+            <Button
+              size="sm"
+              className="cursor-pointer"
+              onClick={upgrade}
+              disabled={pending}
+            >
+              <ArrowUpRight />
+              {pending
+                ? "Loading…"
+                : `Upgrade · €${upgradeSeats * SEAT_PRICE_EUR}/month`}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              className="cursor-pointer"
+              onClick={submit}
+              disabled={pending || !email.trim() || step === "ask"}
+            >
+              {step === "seat"
+                ? pending
+                  ? "Paying…"
+                  : "Pay for seat and invite"
+                : pending
+                  ? "Adding…"
+                  : "Add"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Why the invite needs more than an email, in the words of its step. */
+function SeatNotice({
+  org,
+  seats,
+  step,
+}: {
+  org: Doc<"orgs">;
+  seats: OrgSeats;
+  step: Exclude<InviteStep, "invite">;
+}): React.JSX.Element {
+  const upgradeSeats = Math.max(1, seats.members);
+
+  return (
+    <div
+      className="grid gap-1 rounded-md bg-muted px-3 py-2.5 text-xs"
+      data-testid="invite-seat-notice"
+    >
+      <p className="font-medium text-foreground">
+        {step === "upgrade"
+          ? `${org.name} is on the free plan, which has one seat: yours.`
+          : `Every seat in ${org.name} is taken.`}
+      </p>
+      {step === "seat" && seats.billing && (
+        <>
+          <p className="flex justify-between gap-4 text-foreground">
+            <span>1 more seat</span>
+            <span>€{SEAT_PRICE_EUR} / month</span>
+          </p>
+          <p className="text-muted-foreground">
+            Charged now to the card on file, prorated to{" "}
+            {formatDay(seats.billing.currentPeriodEnd * 1000)}. If the payment
+            fails, nobody is invited.
+          </p>
+        </>
+      )}
+      {step === "upgrade" && (
+        <p className="text-muted-foreground">
+          Pro is €{SEAT_PRICE_EUR} per member per month. Upgrade opens Stripe
+          Checkout for{" "}
+          {upgradeSeats === 1 ? "your seat" : `all ${upgradeSeats} members`};
+          back here, the invite asks you to pay for 1 more seat.
+        </p>
+      )}
+      {step === "ask" && (
+        <p className="text-muted-foreground">
+          Ask {seats.ownerName}, the owner, to add a seat in Billing. You are
+          never charged.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The invite dialog's step: the seat count, or a 402 the invite got, says whether a seat is free. */
+function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
+  if (!seats) return "invite";
+  const full = refused || (seats.enforced && seats.members >= seats.seats);
+  if (!full) return "invite";
+  if (!seats.isOwner) return "ask";
+
+  return seats.billing && isPaid(seats.billing.status) ? "seat" : "upgrade";
 }
 
 function matchesField(member: Member, _field: Field, value: string): boolean {

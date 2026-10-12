@@ -1,5 +1,6 @@
 "use client";
 
+import { useOpenBilling } from "@/app/hooks/useOrgSeats";
 import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -24,6 +25,7 @@ import { Label } from "@/app/components/ui/label";
 import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { clientErrorData } from "@broods/convex/model/clientError";
 import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -37,6 +39,7 @@ export function OrgSwitcher(): React.JSX.Element {
   const orgQueryArgs = useSignedIn() ? {} : "skip";
   const orgs = useQuery(api.org.orgs.list, orgQueryArgs);
   const active = useQuery(api.org.orgs.getActive, orgQueryArgs);
+  const currentUser = useQuery(api.user.getCurrent, orgQueryArgs);
   const setActive = useMutation(api.org.orgs.setActive);
   const createOrg = useMutation(api.org.orgs.create);
   const provision = useAction(api.org.lifecycle.provision);
@@ -45,6 +48,12 @@ export function OrgSwitcher(): React.JSX.Element {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // The server refused a new org: the owner already holds their free one.
+  const [freeOrgTaken, setFreeOrgTaken] = useState(false);
+  const openBilling = useOpenBilling();
+  const freeOrg = orgs?.find(
+    (org) => org.plan === "free" && org.ownerAuthId === currentUser?.authId,
+  );
 
   // Switching org invalidates whatever project the URL points at: send the user
   // to the gallery when the new org has none, so they can create their first.
@@ -91,10 +100,20 @@ export function OrgSwitcher(): React.JSX.Element {
       router.replace("/projects");
       router.refresh();
     } catch (err) {
-      setCreateError(toErrorMessage(err));
+      if (clientErrorData(err)?.code === "payment_required" && freeOrg) {
+        setFreeOrgTaken(true);
+      } else {
+        setCreateError(toErrorMessage(err));
+      }
     } finally {
       setCreating(false);
     }
+  }
+
+  function closeCreate(): void {
+    setCreateOpen(false);
+    setCreateError(null);
+    setFreeOrgTaken(false);
   }
 
   const label =
@@ -161,12 +180,15 @@ export function OrgSwitcher(): React.JSX.Element {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => (open ? setCreateOpen(true) : closeCreate())}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Create organization</DialogTitle>
+            <DialogTitle>New organization</DialogTitle>
             <DialogDescription>
-              New orgs start on the free plan. You can rename or upgrade later.
+              An organization has its own projects, members and plan.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-2">
@@ -180,22 +202,48 @@ export function OrgSwitcher(): React.JSX.Element {
               placeholder="Acme Inc."
               autoComplete="off"
             />
+            {freeOrgTaken && freeOrg && (
+              <div
+                className="mt-1 grid gap-1 rounded-md bg-muted px-3 py-2.5 text-xs"
+                data-testid="free-org-taken"
+              >
+                <p className="font-medium text-foreground">
+                  You already own a free organization ({freeOrg.name}).
+                </p>
+                <p className="text-muted-foreground">
+                  Each owner gets one free organization. Upgrade it or delete it
+                  to create another.
+                </p>
+              </div>
+            )}
             {createError && (
               <p className="text-xs text-destructive">{createError}</p>
             )}
           </div>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="cursor-pointer"
-              onClick={() => setCreateOpen(false)}
+              onClick={closeCreate}
               disabled={creating}
             >
               Cancel
             </Button>
+            {freeOrgTaken && freeOrg && (
+              <Button
+                variant="outline"
+                className="cursor-pointer"
+                onClick={() => {
+                  closeCreate();
+                  void openBilling(freeOrg._id);
+                }}
+              >
+                Upgrade {freeOrg.name}
+              </Button>
+            )}
             <Button
               className="cursor-pointer"
-              disabled={creating || !newName.trim()}
+              disabled={creating || !newName.trim() || freeOrgTaken}
               onClick={handleCreate}
             >
               {creating ? "Creating..." : "Create"}

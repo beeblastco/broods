@@ -11,14 +11,14 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
+import { useOpenBilling } from "@/app/hooks/useOrgSeats";
 import { toErrorMessage } from "@/app/lib/errors";
-import type { PlanTier } from "@/app/lib/pricing";
-import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
+import { SEAT_PRICE_EUR } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
-import { useAction, useMutation, useQuery } from "convex/react";
-import { ArrowUpRight, Moon, Sun } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { ArrowRight, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 
@@ -29,8 +29,6 @@ export function AccountPanel(): React.JSX.Element {
   const { user: authUser } = useSession();
 
   const currentUser = useQuery(api.user.getCurrent);
-  const billingInfo = useQuery(api.stripe.getBillingInfo);
-  const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const updateProfile = useMutation(
     api.user.updateProfile,
   ).withOptimisticUpdate((localStore, args) => {
@@ -74,8 +72,6 @@ export function AccountPanel(): React.JSX.Element {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
-  const [upgradeLoading, setUpgradeLoading] = useState(false);
-  const [upgradeError, setUpgradeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentUser === undefined || isDirty) return;
@@ -99,11 +95,6 @@ export function AccountPanel(): React.JSX.Element {
   const avatarUrl = currentUser?.avatarUrl ?? claimAvatar;
   const accountId = currentUser?._id ?? authUser?.id ?? "";
   const email = currentUser?.email ?? claimEmail;
-  const userPlan: PlanTier = currentUser?.plan ?? DEFAULT_PLAN;
-  const planConfig = PLAN_CONFIGS[userPlan];
-  // Same rule as BillingPanel: any subscription that has not ended goes
-  // through the portal, and `undefined` is still loading.
-  const showUpgrade = billingInfo === null && !isMaxPlan(userPlan);
 
   async function handleSaveProfile(): Promise<void> {
     const trimmedName = name.trim();
@@ -136,22 +127,6 @@ export function AccountPanel(): React.JSX.Element {
       setSaveError(toErrorMessage(error));
     } finally {
       setIsSavingProfile(false);
-    }
-  }
-
-  async function handleUpgrade(): Promise<void> {
-    setUpgradeLoading(true);
-    setUpgradeError(null);
-    try {
-      const returnUrl = window.location.href;
-      const { url } = await createCheckoutSession({
-        successUrl: returnUrl,
-        cancelUrl: returnUrl,
-      });
-      window.location.href = url;
-    } catch (err) {
-      setUpgradeError(toErrorMessage(err));
-      setUpgradeLoading(false);
     }
   }
 
@@ -276,35 +251,14 @@ export function AccountPanel(): React.JSX.Element {
               {accountId}
             </span>
           </div>
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex items-center justify-between px-4 py-3">
             <span className="text-xs text-muted-foreground">Auth provider</span>
             <span className="text-sm text-foreground">Google</span>
           </div>
-          <div className="flex items-center justify-between px-4 py-3">
-            <span className="text-xs text-muted-foreground">Plan</span>
-            <div className="flex items-center gap-2">
-              <Badge variant={planConfig.badgeVariant}>
-                {planConfig.label}
-              </Badge>
-              {showUpgrade && (
-                <Button
-                  size="xs"
-                  className="cursor-pointer"
-                  aria-label="Upgrade plan"
-                  onClick={handleUpgrade}
-                  disabled={upgradeLoading}
-                >
-                  Upgrade
-                  <ArrowUpRight className="size-3" />
-                </Button>
-              )}
-            </div>
-          </div>
         </div>
-        {upgradeError && (
-          <p className="text-sm text-destructive">{upgradeError}</p>
-        )}
       </Section>
+
+      <OwnedOrgsBilling />
 
       <Separator />
 
@@ -337,5 +291,63 @@ export function AccountPanel(): React.JSX.Element {
         </div>
       </Section>
     </div>
+  );
+}
+
+/**
+ * Billing is per organization: each org you own with its plan, and a way to
+ * its Billing tab, where its owner upgrades or adds seats. Nothing on a
+ * self-hosted install, which has no plans.
+ */
+function OwnedOrgsBilling(): React.JSX.Element | null {
+  const owned = useQuery(api.stripe.listOwnedOrgs, {});
+  const budget = useQuery(api.account.budget.getForActiveOrg, {});
+  const openBilling = useOpenBilling();
+  if (!owned || budget?.enforced !== true) return null;
+
+  return (
+    <>
+      <Separator />
+      <Section
+        title="Billing"
+        description={`Each organization has its own plan, paid by its owner at €${SEAT_PRICE_EUR} per member per month. You own:`}
+      >
+        <div className="rounded-lg border border-border bg-card">
+          {owned.length === 0 && (
+            <p className="px-4 py-3 text-xs text-muted-foreground">
+              No organization yet.
+            </p>
+          )}
+          {owned.map((org) => (
+            <div
+              key={org.orgId}
+              className="grid grid-cols-3 items-center gap-4 border-b border-border px-4 py-3 last:border-b-0"
+            >
+              <span className="truncate text-sm text-foreground">
+                {org.name}
+              </span>
+              {org.plan === "pro" ? (
+                <Badge variant="success" className="justify-self-start">
+                  Pro · {org.seats} {org.seats === 1 ? "seat" : "seats"}
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="justify-self-start">
+                  Free
+                </Badge>
+              )}
+              <Button
+                size="xs"
+                variant="ghost"
+                className="cursor-pointer justify-self-end"
+                onClick={() => void openBilling(org.orgId)}
+              >
+                Billing
+                <ArrowRight data-icon="inline-end" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </Section>
+    </>
   );
 }

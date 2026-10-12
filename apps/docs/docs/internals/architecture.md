@@ -318,6 +318,8 @@ An org is the billing and login unit; its account is the tenant every runtime ro
 
 On the managed service each org has its own Stripe subscription, one seat per member, billed to the org owner (`packages/convex/model/orgBilling.ts`). `orgs.plan` follows that subscription and is the plan core enforces for the org's account. An invite needs a free seat, so the owner adds one first: Stripe charges the prorated seat at once and refuses the change if the payment fails. Removing a member gives a seat back, and deleting the org cancels its subscription. An owner holds at most one free org, so new orgs never bring new free allowances.
 
+In the dashboard every member sees the org's plan and seats on its Billing tab, and only the owner gets Upgrade, Add seat and Manage subscription. When every seat is taken, the invite dialog asks the owner to pay for one more seat, or to upgrade a free org, before the invite goes out; anyone else is told to ask the owner. Account settings lists the orgs you own, each with its plan.
+
 ```mermaid
 classDiagram
   direction LR
