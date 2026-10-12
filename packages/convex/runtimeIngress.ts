@@ -29,6 +29,7 @@ import {
   runtimeHarnessSessionsFields,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
+import { subagentResultDedupeKey } from "./model/subagentResults";
 
 const CLEAR_BATCH_SIZE = 100;
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
@@ -1078,12 +1079,14 @@ async function canonicalIdentity(options: {
  * admission (or conflicts on a different payload digest), and an eventId
  * reused under a different identity is always a conflict. Null means the
  * candidate is new. Rejected busy candidates create neither an envelope nor
- * an identity tombstone, so this is read-only.
+ * an identity tombstone. Its one write marks a late subagent result seen when
+ * the parent's conversation already stores it.
  */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,
   args: {
     accountId: Id<"accounts">;
+    conversationKey: string;
     eventId: string;
     payloadDigest: string;
     resultEventId?: string;
@@ -1121,7 +1124,29 @@ async function checkDuplicateAdmission(
   // whichever marks it seen first wins, so the parent is told it once. Only
   // the caller's own account's row counts.
   const result = await asyncAgentResultRow(ctx, args.resultEventId);
-  if (result?.observed === true && result.accountId === args.accountId) {
+  if (result?.accountId !== args.accountId) {
+    return null;
+  }
+  if (result.observed === true) {
+    return { outcome: "duplicate" as const, eventId: args.eventId };
+  }
+  // A write that stored the result but lost its reply has it in the
+  // conversation already, under the key core wrote it with. The parent has
+  // it, so it is marked seen and the recovery sweep stops retrying it.
+  const stored = await ctx.db
+    .query("runtimeConversationEvents")
+    .withIndex("by_conversationKey_and_dedupeKey", (q) =>
+      q
+        .eq("conversationKey", args.conversationKey)
+        .eq(
+          "dedupeKey",
+          subagentResultDedupeKey(result.eventId, result.status),
+        ),
+    )
+    .first();
+  if (stored) {
+    await ctx.db.patch(result._id, { observed: true });
+
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
 
