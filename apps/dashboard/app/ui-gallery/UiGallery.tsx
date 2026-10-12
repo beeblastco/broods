@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
+import { useHydrated } from "@/app/hooks/useHydrated";
 import {
   applyCanvasDrop,
   canvasDropTarget,
@@ -92,13 +93,7 @@ import {
 } from "@xyflow/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ObservabilityToolbar,
   type VolumePoint,
@@ -306,8 +301,6 @@ const CONVEX_SERVER_ERROR = new Error(
   "[CONVEX A(org/lifecycle:provision)] [Request ID: 4f1c9a2e7b3d0a51] Server Error\n  Called by client",
 );
 
-const subscribeNever = (): (() => void) => () => {};
-
 /**
  * Size cells: fully reported, reported without a disk, a row written before
  * sizes were verified (its specs are only the config's guess), and a computer
@@ -355,13 +348,7 @@ export function UiGallery(): React.JSX.Element {
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  // False in the server HTML, true once React owns the page: a spec waits on
-  // it so its first interaction lands on a listener, not on static markup.
-  const hydrated = useSyncExternalStore(
-    subscribeNever,
-    () => true,
-    () => false,
-  );
+  const hydrated = useHydrated();
   const dashboardTab = useSearchParams().get("tab");
 
   if (dashboardTab === "connections") {
