@@ -54,7 +54,7 @@ describe("user tokens", () => {
   test("refuses to seal past the longest lifetime", async () => {
     await expect(
       sealUserToken(
-        { userId: "alice", expiresAt: NOW + USER_TOKEN_MAX_TTL_MS * 2 },
+        { userId: "alice", expiresAt: NOW + USER_TOKEN_MAX_TTL_MS + 30_000 },
         SECRET,
         NOW,
       ),

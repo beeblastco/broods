@@ -101,24 +101,22 @@ async function publicAgentDenial(
       message: `Agent ${request.agentId} is not publicly accessible.`,
     };
   }
-  const userDenial = embeddableUserDenial(
-    auth,
-    agent,
-    request.ingress.conversationKey,
-  );
-  if (userDenial) return userDenial;
   const deployment = await context.deploymentLoader(
     request.accountId,
     request.agentId,
   );
-
-  return deploymentScopeMatches(auth, deployment) &&
-    deploymentScopeMatches(
+  // Scope first, so a key from another stage learns nothing of the agent.
+  if (
+    !deploymentScopeMatches(auth, deployment) ||
+    !deploymentScopeMatches(
       auth,
       request.ingress.publicDeploymentIngress ?? null,
     )
-    ? null
-    : accessDenied();
+  ) {
+    return accessDenied();
+  }
+
+  return embeddableUserDenial(auth, agent, request.ingress.conversationKey);
 }
 
 async function subagentDenial(

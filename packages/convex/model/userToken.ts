@@ -65,7 +65,8 @@ export async function sealUserToken(
     );
   }
   const checked = parseUserToken(token, now);
-  if (!checked) {
+  // The skew allowance is for verifying, never for minting.
+  if (!checked || token.expiresAt > now + USER_TOKEN_MAX_TTL_MS) {
     throw new Error(
       `Invalid user token: userId must match ${USER_ID_PATTERN.source}, conversations must be at most ${MAX_CONVERSATIONS} non-empty keys, and expiresAt must be in the next ${USER_TOKEN_MAX_TTL_MS / 60_000} minutes.`,
     );
