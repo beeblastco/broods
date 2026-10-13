@@ -9,8 +9,8 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-// A second model the stack's OpenAI key serves, unlike the parent's.
-const SUBAGENT_MODEL_ID = "gpt-6-sol";
+// A second model the stack's Anthropic key serves, unlike the parent's.
+const SUBAGENT_MODEL_ID = "claude-sonnet-5-5";
 
 interface SubagentStartedLog {
   agentId: string;

@@ -1,5 +1,5 @@
 /**
- * Core preload for `local-stack up --perf`. Answers api.openai.com in
+ * Core preload for `local-stack up --perf`. Answers api.anthropic.com in
  * process, so a perf run times Broods and not the model, and appends every
  * core call to the local Convex backend to BROODS_LOCAL_CONVEX_TRACE so
  * `local-stack perf` can count round trips per turn. Never loaded outside the
@@ -10,10 +10,10 @@ import { appendFileSync } from "node:fs";
 
 const CONVEX_URL = process.env.CONVEX_URL ?? "";
 const TRACE_PATH = process.env.BROODS_LOCAL_CONVEX_TRACE ?? "";
-const USAGE = { input_tokens: 100, output_tokens: 10, total_tokens: 110 };
+const USAGE = { input_tokens: 100, output_tokens: 10 };
 
-interface ResponsesRequest {
-  input: { content?: unknown; role?: string }[];
+interface MessagesRequest {
+  messages: { content: unknown; role: string }[];
   model: string;
   stream?: boolean;
   tools?: { name?: string }[];
@@ -28,7 +28,7 @@ globalThis.fetch = Object.assign(
   ): Promise<Response> => {
     const url = input instanceof Request ? input.url : input.toString();
     const body = typeof init?.body === "string" ? init.body : "";
-    if (new URL(url).hostname === "api.openai.com") {
+    if (new URL(url).hostname === "api.anthropic.com") {
       return fakeModel(JSON.parse(body));
     }
     if (TRACE_PATH && CONVEX_URL && url.startsWith(CONVEX_URL)) {
@@ -47,63 +47,53 @@ function event(type: string, fields: Record<string, unknown>): string {
   return `event: ${type}\ndata: ${JSON.stringify({ type: type, ...fields })}\n\n`;
 }
 
-/** A Responses API answer: text, or one `bash` call when the user asks with RUN_BASH. */
-function fakeModel(request: ResponsesRequest): Response {
-  const last = request.input.at(-1);
+/** A Messages API answer: text, or one `bash` call when the user asks with RUN_BASH. */
+function fakeModel(request: MessagesRequest): Response {
+  const last = JSON.stringify(request.messages.at(-1)?.content);
   const wantsBash =
-    last?.role === "user" &&
-    JSON.stringify(last.content).includes("RUN_BASH") &&
+    last.includes("RUN_BASH") &&
+    !last.includes('"tool_result"') &&
     request.tools?.some((tool) => tool.name === "bash") === true;
-  const response = {
-    id: `resp_${Date.now()}`,
-    created_at: 0,
+  const message = {
+    id: `msg_${Date.now()}`,
+    type: "message",
+    role: "assistant",
     model: request.model,
+    stop_sequence: null,
   };
   if (!request.stream) {
     return Response.json({
-      ...response,
-      object: "response",
-      status: "completed",
-      output: [
-        {
-          type: "message",
-          id: "msg_local",
-          role: "assistant",
-          status: "completed",
-          content: [{ type: "output_text", text: "Summary.", annotations: [] }],
-        },
-      ],
+      ...message,
+      content: [{ type: "text", text: "Summary." }],
+      stop_reason: "end_turn",
       usage: USAGE,
     });
   }
-  const item = wantsBash
+  const block = wantsBash
+    ? { type: "tool_use", id: `toolu_${Date.now()}`, name: "bash", input: {} }
+    : { type: "text", text: "" };
+  const delta = wantsBash
     ? {
-        type: "function_call",
-        id: "fc_local",
-        call_id: `call_${Date.now()}`,
-        name: "bash",
-        arguments: JSON.stringify({ command: "hostname" }),
-        status: "completed",
+        type: "input_json_delta",
+        partial_json: JSON.stringify({ command: "hostname" }),
       }
-    : { type: "message", id: "msg_local", role: "assistant" };
+    : { type: "text_delta", text: "OK" };
   const frames = [
-    event("response.created", { response: response }),
-    event("response.output_item.added", { output_index: 0, item: item }),
+    event("message_start", {
+      message: { ...message, content: [], stop_reason: null, usage: USAGE },
+    }),
+    event("content_block_start", { index: 0, content_block: block }),
+    event("content_block_delta", { index: 0, delta: delta }),
+    event("content_block_stop", { index: 0 }),
+    event("message_delta", {
+      delta: {
+        stop_reason: wantsBash ? "tool_use" : "end_turn",
+        stop_sequence: null,
+      },
+      usage: { output_tokens: USAGE.output_tokens },
+    }),
+    event("message_stop", {}),
   ];
-  if (!wantsBash) {
-    frames.push(
-      event("response.output_text.delta", {
-        item_id: item.id,
-        output_index: 0,
-        content_index: 0,
-        delta: "OK",
-      }),
-    );
-  }
-  frames.push(
-    event("response.output_item.done", { output_index: 0, item: item }),
-    event("response.completed", { response: { ...response, usage: USAGE } }),
-  );
 
   return new Response(frames.join(""), {
     status: 200,

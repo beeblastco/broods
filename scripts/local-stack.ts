@@ -410,7 +410,7 @@ async function perf(record: boolean): Promise<void> {
 /**
  * End-to-end check: verify admin account creation, then run every case
  * through the gateway using an org-backed local fixture. Without
- * OPENAI_API_KEY runs fail at the provider call; reaching that failure still
+ * ANTHROPIC_API_KEY runs fail at the provider call; reaching that failure still
  * proves routing, auth, config encrypt/decrypt, and Convex round-trips.
  */
 async function verify(): Promise<void> {

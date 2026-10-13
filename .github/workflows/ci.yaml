@@ -269,7 +269,7 @@ jobs:
         # Only this step reads the key: the harness puts it in each test
         # agent's config, so core and the rest of the job never see it.
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: bun run local:verify
 
       - name: Perf report

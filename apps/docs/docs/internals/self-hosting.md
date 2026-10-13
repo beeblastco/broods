@@ -395,7 +395,7 @@ bun run local:down      # --purge deletes the instance state
 ```
 
 - State, ports and logs live under `~/.broods-local/<instance>/`, one stack per worktree.
-- `verify` passes without a model key: the run fails at the provider call, which still proves routing, auth, config encryption and the Convex round trips. Set `OPENAI_API_KEY` for a full run (GPT-6 Luna at high reasoning).
+- `verify` passes without a model key: the run fails at the provider call, which still proves routing, auth, config encryption and the Convex round trips. Set `ANTHROPIC_API_KEY` for a full run (Claude Haiku 5.5 at medium effort).
 - No AWS data plane or NATS, so no sandboxes or WebSocket runs.
 
 The signed-in dashboard suites run against it with no account to set up:
