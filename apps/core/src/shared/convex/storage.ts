@@ -436,9 +436,12 @@ function workspaceConfigFromConvex(
     workspaceId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
-    // An R2 mount mints its credentials per workspace, so it carries the row's identity.
+    // A bucket of the workspace's own is reached per account (an assumeRole
+    // mount sends the account's external id) or per workspace (R2 mints its
+    // credentials), so it carries the row's identity.
     config:
-      config.storage?.auth?.type === "r2"
+      config.storage?.auth?.type === "r2" ||
+      config.storage?.auth?.type === "assumeRole"
         ? {
             ...config,
             storage: {
@@ -576,6 +579,11 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
     });
 
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
+  },
+  storageExternalId: async function (accountId) {
+    return await adminMutation(internal.account.storageTrust.externalId, {
+      accountId: accountId,
+    });
   },
   mintR2Credentials: async function (accountId, workspaceId, prefix) {
     return await adminMutation(internal.workspace.configs.r2Credentials, {

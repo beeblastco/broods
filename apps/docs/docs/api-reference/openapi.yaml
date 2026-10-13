@@ -1046,6 +1046,50 @@ paths:
                       updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: bask_new...
 
+  /v1/account/storage-trust:
+    get:
+      tags:
+        - Accounts
+      summary: Read storage trust
+      description: >-
+        What an `assumeRole` workspace's IAM role must trust. Broods assigns
+        `externalId` to the account (minted on the first read or mount, then
+        fixed) and sends it as `sts:ExternalId` every time it assumes one of
+        the account's roles; a workspace config cannot set it.
+        `principalArn` and `trustPolicy` are omitted on a deployment with no
+        AWS account. Role sessions need read access to the account.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The account's storage trust
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [storageTrust]
+                properties:
+                  storageTrust:
+                    type: object
+                    required: [externalId]
+                    properties:
+                      externalId:
+                        type: string
+                        description: The `sts:ExternalId` your role's trust policy must require.
+                      principalArn:
+                        type: string
+                        description: The Broods AWS principal your role must trust.
+                      trustPolicy:
+                        type: string
+                        description: A ready-to-paste role trust policy (JSON) naming both.
+              examples:
+                trust:
+                  value:
+                    storageTrust:
+                      externalId: broods-3q2b1Zk9vT0sWmXyLp8eA4cRuHnD6fGj
+                      principalArn: arn:aws:iam::999988887777:root
+                      trustPolicy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::999988887777:root"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"sts:ExternalId":"broods-3q2b1Zk9vT0sWmXyLp8eA4cRuHnD6fGj"}}}]}'
+
   /v1/account/connections:
     get:
       tags:
@@ -2182,11 +2226,10 @@ paths:
                                 type: { type: string, enum: [managed] }
                             - type: object
                               required: [type, roleArn]
-                              description: An IAM role outside the platform AWS account, assumed per run with a session scoped to `bucket/prefix`.
+                              description: "An IAM role outside the platform AWS account, assumed per run with a session scoped to `bucket/prefix`. Broods sends the account's own external id (`GET /v1/account/storage-trust`) on every assume, so the role's trust policy must require it. `externalId` is not accepted here: a body that sets it is a 400."
                               properties:
                                 type: { type: string, enum: [assumeRole] }
                                 roleArn: { type: string }
-                                externalId: { type: string }
                             - type: object
                               required: [type, accessKeyId, secretAccessKey]
                               description: "A Cloudflare R2 API token's S3 keys, each one `${NAME}` env reference, never a value. Requires `bucket`, `prefix` and `endpoint` set to `https://<account id>.r2.cloudflarestorage.com`; `region` must be omitted or `auto`. Each run gets one-hour R2 temporary credentials scoped to `bucket/prefix`."
@@ -2237,7 +2280,6 @@ paths:
                       auth:
                         type: assumeRole
                         roleArn: arn:aws:iam::111122223333:role/broods-mount
-                        externalId: shared-secret
               r2Bucket:
                 value:
                   name: r2-files

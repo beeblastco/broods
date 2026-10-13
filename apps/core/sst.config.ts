@@ -138,20 +138,47 @@ function ecrRepositoryExists(name: string, region: string): boolean {
   }
 }
 
+interface PermissionStatement {
+  effect?: "Allow" | "Deny";
+  actions: string[];
+  resources: $util.Input<string>[];
+  conditions?: Record<string, Record<string, string>>;
+}
+
 // SST's `permissions` shorthand -> a raw IAM policy doc, for the container
 // runtime user and the Convex config-plane role. $jsonStringify resolves Outputs.
-function permissionsPolicy(
-  perms: { actions: string[]; resources: $util.Input<string>[] }[],
-): $util.Output<string> {
+function permissionsPolicy(perms: PermissionStatement[]): $util.Output<string> {
   return $jsonStringify({
     Version: "2012-10-17",
     Statement: perms.map((p) => ({
-      Effect: "Allow",
+      Effect: p.effect ?? "Allow",
       Action: p.actions,
       Resource: p.resources,
+      ...(p.conditions ? { Condition: p.conditions } : {}),
     })),
   });
 }
+
+// Bring-your-own buckets: a workspace names a role in the customer's own AWS
+// account, which core (mounts, harness reads) and the Convex config plane
+// (dashboard file browser) assume with a session scoped to bucket/prefix. The
+// grant is any role, but only with an sts:ExternalId, which Broods assigns per
+// account (packages/convex/model/storageTrust.ts) and the customer's trust
+// policy requires; never a role in the platform's own account, which
+// workspace validation refuses too (workspaceStorageOwnAuth).
+const CUSTOMER_STORAGE_ROLE_PERMISSIONS: PermissionStatement[] = [
+  {
+    actions: ["sts:AssumeRole"],
+    resources: ["arn:aws:iam::*:role/*"],
+    conditions: { Null: { "sts:ExternalId": "false" } },
+  },
+  {
+    effect: "Deny",
+    actions: ["sts:AssumeRole"],
+    resources: [`arn:aws:iam::${AWS_ACCOUNT_ID}:role/*`],
+    conditions: { Null: { "sts:ExternalId": "false" } },
+  },
+];
 
 function denyUnlessProjectPrincipal(
   stage: string,
@@ -869,6 +896,7 @@ export default $config({
         actions: ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"],
         resources: [sandboxS3MountRole.arn],
       },
+      ...CUSTOMER_STORAGE_ROLE_PERMISSIONS,
       {
         actions: ["kms:Decrypt"],
         resources: ["*"],
@@ -1064,6 +1092,7 @@ export default $config({
         actions: ["s3:ListBucket"],
         resources: [skillsBucketArn, toolBundlesBucketArn, filesystemBucketArn],
       },
+      ...CUSTOMER_STORAGE_ROLE_PERMISSIONS,
     ];
     const convexAwsRole = new aws.iam.Role("ConvexAwsRole", {
       name: resourceName("convex-aws", stage, region),

@@ -148,7 +148,6 @@ export const notes = defineWorkspace({
     auth: {
       type: "assumeRole",
       roleArn: "arn:aws:iam::111122223333:role/broods-mount",
-      externalId: "<shared secret>",
     },
   },
 });
@@ -166,7 +165,49 @@ A workspace with `bucket` is rejected unless:
 - `bucket` is not one of the platform's own buckets.
 - `endpoint`, if set, is a public `https` URL. Other S3-compatible stores keep `provider: "s3"` and change `endpoint`.
 
-With `assumeRole`, the platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. Set `externalId` when the role trusts Broods across accounts. No access keys are stored. Static access keys for MinIO and other stores are not supported. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
+With `assumeRole`, the platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. No access keys are stored. Static access keys for MinIO and other stores are not supported. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
+
+### Trusting Broods
+
+Broods reaches every customer's role as the same AWS principal, so your role's trust policy must also require an external id that only your account's calls carry. Broods assigns that id to your account and sends it every time it assumes your role. You cannot set it yourself: a workspace whose `auth` sets `externalId` is rejected with a 400. Without this, another Broods account that learned your role ARN could mount your bucket (the [confused deputy problem](https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html)).
+
+Read the id, the principal to trust and a ready-to-paste trust policy from the workspace's storage settings in the dashboard, `GET /v1/account/storage-trust`, or the SDK:
+
+```ts
+const { externalId, principalArn, trustPolicy } =
+  await account.getStorageTrust();
+```
+
+Set the role's trust policy to it:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<Broods account id>:root" },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": { "sts:ExternalId": "<your external id>" }
+      }
+    }
+  ]
+}
+```
+
+The id is the same for every workspace of the account and does not change.
+
+:::warning Migrating an existing `assumeRole` workspace
+
+Workspaces created before Broods assigned the id used the `externalId` you chose, or none. Do this once per account:
+
+1. Read your id as above and put it in each role's trust policy, replacing any `sts:ExternalId` you set yourself.
+2. Drop `externalId` from each workspace's `auth`: remove it from your `defineWorkspace` and deploy, send `"externalId": null` in a `PATCH /v1/workspaces/{workspaceId}`, or press **Remove** in the dashboard.
+
+Until the trust policy names the new id, mounts and file reads of that workspace fail. A workspace still storing `externalId` is rejected on its next save and its files cannot be browsed from the dashboard. R2 workspaces and the managed bucket are not affected.
+
+:::
 
 ### Cloudflare R2
 

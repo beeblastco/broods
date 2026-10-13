@@ -240,7 +240,7 @@ The entry point has no dependencies and uses plain `fetch`, so it runs in Convex
 
 | Resource   | Methods                                                                                                                                                                           |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Account    | `getAccount`, `updateAccount`, `rotateSecret`, `deleteAccount`, `assumeRole`, `webhookUrl`                                                                                        |
+| Account    | `getAccount`, `updateAccount`, `rotateSecret`, `deleteAccount`, `assumeRole`, `getStorageTrust`, `webhookUrl`                                                                     |
 | Agents     | `listAgents`, `createAgent`, `getAgent`, `updateAgent`, `deleteAgent`                                                                                                             |
 | Env        | `listEnvVars`, `setEnvVar`, `deleteEnvVar`                                                                                                                                        |
 | Crons      | `listCrons`, `createCron`, `getCron`, `updateCron`, `deleteCron`, `listCronRuns`                                                                                                  |

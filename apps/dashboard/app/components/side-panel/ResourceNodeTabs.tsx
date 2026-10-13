@@ -40,8 +40,12 @@ import {
 import { snapshotImage, snapshotOptions } from "@/app/lib/sandboxSnapshots";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
-import { useQuery } from "convex/react";
-import { useState } from "react";
+import type { StorageTrust } from "@broods/convex/model/storageTrust";
+import { CopyRow } from "@/app/components/CopyButton";
+import { CopyTextarea } from "@/app/components/CopyTextarea";
+import { Button } from "@/app/components/ui/button";
+import { useMutation, useQuery } from "convex/react";
+import { useEffect, useState } from "react";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
 
@@ -461,9 +465,11 @@ export function WorkspaceResourceDetailsTab({
                     auth:
                       type === "assumeRole"
                         ? {
-                            ...auth,
                             type: "assumeRole",
-                            roleArn: auth.roleArn ?? "",
+                            roleArn:
+                              typeof auth.roleArn === "string"
+                                ? auth.roleArn
+                                : "",
                           }
                         : { type: "managed" },
                   })
@@ -480,24 +486,22 @@ export function WorkspaceResourceDetailsTab({
                   label="Role ARN"
                   value={typeof auth.roleArn === "string" ? auth.roleArn : ""}
                   placeholder="arn:aws:iam::123456789012:role/BroodsWorkspace"
+                  // Rebuilt, not spread: a stored customer externalId is now
+                  // refused, so editing the role drops it.
                   onCommit={(roleArn) =>
                     setStorage({
-                      auth: { ...auth, type: "assumeRole", roleArn: roleArn },
+                      auth: { type: "assumeRole", roleArn: roleArn },
                     })
                   }
                 />
-                <TextField
-                  label="External id"
-                  value={
-                    typeof auth.externalId === "string" ? auth.externalId : ""
-                  }
-                  placeholder="optional, pair with your role's trust policy"
-                  onCommit={(externalId) =>
+                <StorageTrustFields
+                  staleExternalId={auth.externalId !== undefined}
+                  onDropExternalId={() =>
                     setStorage({
                       auth: {
-                        ...auth,
                         type: "assumeRole",
-                        externalId: externalId || undefined,
+                        roleArn:
+                          typeof auth.roleArn === "string" ? auth.roleArn : "",
                       },
                     })
                   }
@@ -533,6 +537,110 @@ export function WorkspaceResourceDetailsTab({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The account's Broods-assigned external id and the principal its role must
+ * trust, read-only, with the trust policy to paste. Read through a mutation
+ * because the id is minted the first time anyone needs it.
+ */
+function StorageTrustFields({
+  staleExternalId,
+  onDropExternalId,
+}: {
+  /** The config still carries a customer-chosen externalId, now refused. */
+  staleExternalId: boolean;
+  onDropExternalId: () => void;
+}): React.JSX.Element {
+  const loadTrust = useMutation(api.account.storageTrust.getForActiveOrg);
+  const [trust, setTrust] = useState<StorageTrust | null | undefined>();
+  useEffect(() => {
+    let live = true;
+    loadTrust({}).then(
+      (value) => {
+        if (live) setTrust(value);
+      },
+      () => {
+        if (live) setTrust(null);
+      },
+    );
+
+    return () => {
+      live = false;
+    };
+  }, [loadTrust]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {staleExternalId && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-2xs text-warning">
+            This workspace sets its own external id, which is no longer
+            accepted. Remove it and trust the id below instead.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={onDropExternalId}
+          >
+            Remove
+          </Button>
+        </div>
+      )}
+      {trust === undefined && (
+        <p className="text-2xs text-muted-foreground">Loading external id…</p>
+      )}
+      {trust === null && (
+        <p className="text-2xs text-muted-foreground">
+          The external id could not be loaded.
+        </p>
+      )}
+      {trust && (
+        <>
+          <TrustValue label="External id" value={trust.externalId} />
+          {trust.principalArn && (
+            <TrustValue label="Broods principal" value={trust.principalArn} />
+          )}
+          {trust.trustPolicy && (
+            <div className="flex flex-col gap-1">
+              <span className="text-2xs text-muted-foreground">
+                Role trust policy
+              </span>
+              <CopyTextarea
+                value={trust.trustPolicy}
+                label="trust policy"
+                code
+              />
+            </div>
+          )}
+          <p className="text-2xs text-muted-foreground">
+            Broods sends this id every time it assumes your role and assigns it
+            per account, so no other Broods account can use the role.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TrustValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-2xs text-muted-foreground">{label}</span>
+      <CopyRow value={value} className="flex px-2 py-1">
+        <code className="truncate font-mono text-xs text-foreground">
+          {value}
+        </code>
+      </CopyRow>
     </div>
   );
 }

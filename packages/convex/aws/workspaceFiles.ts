@@ -15,7 +15,7 @@ import {
   purgeWorkspaceFilesystem,
   renameWorkspacePath,
   uploadWorkspaceFile,
-  withR2Credentials,
+  withStorageAccess,
   workspaceFileDownloadUrl,
   type WorkspaceFileEntry,
 } from "../model/workspaceFs";
@@ -45,7 +45,7 @@ export const list = internalAction({
   args: workspaceRef,
   returns: v.array(fileEntry),
   handler: async (ctx, args): Promise<WorkspaceFileEntry[]> => {
-    return await listWorkspaceFiles(await withR2Credentials(ctx, args));
+    return await listWorkspaceFiles(await withStorageAccess(ctx, args));
   },
 });
 
@@ -65,7 +65,7 @@ export const upload = internalAction({
   },
   returns: fileEntry,
   handler: async (ctx, args): Promise<WorkspaceFileEntry> => {
-    return await uploadWorkspaceFile(await withR2Credentials(ctx, args), {
+    return await uploadWorkspaceFile(await withStorageAccess(ctx, args), {
       path: args.path,
       contentBase64: args.contentBase64,
       contentType: args.contentType,
@@ -84,7 +84,7 @@ export const downloadUrl = internalAction({
   returns: v.string(),
   handler: async (ctx, args): Promise<string> => {
     return await workspaceFileDownloadUrl(
-      await withR2Credentials(ctx, args),
+      await withStorageAccess(ctx, args),
       args.path,
     );
   },
@@ -102,7 +102,7 @@ export const removePath = internalAction({
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     return await deleteWorkspacePath(
-      await withR2Credentials(ctx, args),
+      await withStorageAccess(ctx, args),
       args.path,
     );
   },
@@ -118,7 +118,7 @@ export const purge = internalAction({
   args: workspaceRef,
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    return await purgeWorkspaceFilesystem(await withR2Credentials(ctx, args));
+    return await purgeWorkspaceFilesystem(await withStorageAccess(ctx, args));
   },
 });
 
@@ -134,7 +134,7 @@ export const renamePath = internalAction({
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     return await renameWorkspacePath(
-      await withR2Credentials(ctx, args),
+      await withStorageAccess(ctx, args),
       args.path,
       args.newPath,
     );

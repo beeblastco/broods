@@ -52,7 +52,11 @@ export type WorkspaceStorageProvider =
 
 export type WorkspaceStorageAuth =
   | { type: "managed" }
-  | { type: "assumeRole"; roleArn: string; externalId?: string }
+  /**
+   * The role's trust policy requires the account's Broods-assigned
+   * sts:ExternalId (`storageTrust.ts`); a customer never sets one here.
+   */
+  | { type: "assumeRole"; roleArn: string }
   | {
       type: "r2";
       /** `${NAME}` ref to the parent R2 token's access key id. */
@@ -85,6 +89,20 @@ export interface WorkspaceConfig {
     workspace?: { enabled?: boolean };
     memory?: { enabled?: boolean };
   };
+}
+
+/**
+ * The platform's own AWS account id: AWS_ACCOUNT_ID, else the account inside
+ * any platform role ARN this deployment knows. Undefined on a stack with no AWS.
+ */
+export function platformAwsAccountId(): string | undefined {
+  if (process.env.AWS_ACCOUNT_ID) return process.env.AWS_ACCOUNT_ID;
+  for (const name of PLATFORM_ROLE_ARN_ENV_NAMES) {
+    const accountId = ROLE_ARN_PATTERN.exec(process.env[name] ?? "")?.[1];
+    if (accountId) return accountId;
+  }
+
+  return undefined;
 }
 
 /**
@@ -481,10 +499,7 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
     "config.storage.endpoint": endpoint,
     "config.storage.prefix": prefix,
     ...(auth?.type === "assumeRole"
-      ? {
-          "config.storage.auth.roleArn": auth.roleArn,
-          "config.storage.auth.externalId": auth.externalId,
-        }
+      ? { "config.storage.auth.roleArn": auth.roleArn }
       : {}),
   };
   for (const [name, literal] of Object.entries(literals)) {
@@ -544,16 +559,17 @@ function normalizeWorkspaceStorageAuth(
     };
   }
   if (value.type === "assumeRole") {
-    const roleArn = requireString(value.roleArn, "config.storage.auth.roleArn");
-    const externalId = optionalString(
-      value.externalId,
-      "config.storage.auth.externalId",
-    );
+    // Broods assigns the external id per account. One a customer picked could
+    // be learned and replayed by another account naming the same role.
+    if (value.externalId !== undefined) {
+      throw new ClientError(
+        "config.storage.auth.externalId is no longer accepted: Broods assigns the external id for your account. Remove it from the config (send null in a PATCH) and require the id from GET /v1/account/storage-trust in your role's trust policy",
+      );
+    }
 
     return {
       type: "assumeRole",
-      roleArn: roleArn,
-      ...(externalId ? { externalId: externalId } : {}),
+      roleArn: requireString(value.roleArn, "config.storage.auth.roleArn"),
     };
   }
   throw new ClientError(

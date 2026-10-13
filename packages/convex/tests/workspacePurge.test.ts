@@ -83,6 +83,7 @@ test("purge refuses a bring-your-own bucket with no prefix", async () => {
           roleArn: "arn:aws:iam::123456789012:role/broods-workspace",
         },
       },
+      externalId: "broods-account-a",
     }),
   ).rejects.toThrow(
     "Refusing to purge a workspace bucket without a key prefix",

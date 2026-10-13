@@ -21,15 +21,16 @@ export type {
 } from "@broods/convex/model/workspaceRules";
 
 /**
- * Workspace storage as core carries it. An R2 bucket also carries its row's
- * identity, which a mount sends to Convex to mint scoped credentials; it is
- * stamped on load (shared/convex/storage.ts), never stored or accepted.
+ * Workspace storage as core carries it. An R2 or assumeRole bucket also
+ * carries its row's identity, which a mount sends to Convex to mint scoped R2
+ * credentials or fetch the account's external id; it is stamped on load
+ * (shared/convex/storage.ts), never stored or accepted.
  */
 export type WorkspaceStorageConfig = StoredWorkspaceStorageConfig & {
   owner?: { accountId: string; workspaceId: string };
 };
 
-/** A loaded workspace config, whose storage may carry the R2 owner. */
+/** A loaded workspace config, whose storage may carry its owner. */
 export type WorkspaceRuntimeConfig = Omit<WorkspaceConfig, "storage"> & {
   storage: WorkspaceStorageConfig;
 };

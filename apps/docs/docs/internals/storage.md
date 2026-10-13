@@ -68,13 +68,13 @@ The agent always reads through the mount, so it sees its own writes at once. Har
 
 ## Bring-your-own bucket
 
-A workspace can set `storage.bucket`, `region`, `prefix`, optional `endpoint`, and `auth` of `{ type: "assumeRole", roleArn, externalId }` or `{ type: "r2", accessKeyId, secretAccessKey }`.
+A workspace can set `storage.bucket`, `region`, `prefix`, optional `endpoint`, and `auth` of `{ type: "assumeRole", roleArn }` or `{ type: "r2", accessKeyId, secretAccessKey }`.
 
 ```mermaid
 flowchart TD
   Storage["workspace.storage"] --> Resolve["resolveS3Mount()"]
   Resolve -->|"managed"| Managed["FILESYSTEM_BUCKET_NAME<br/>assume sandbox-s3mount role"]
-  Resolve -->|"assumeRole"| STS["STS AssumeRole roleArn<br/>session policy: bucket/prefix*"]
+  Resolve -->|"assumeRole"| STS["STS AssumeRole roleArn<br/>ExternalId: account's storageExternalId<br/>session policy: bucket/prefix*"]
   Resolve -->|"r2"| Mint["Convex workspace.configs.r2Credentials<br/>temporary credentials JWT"]
   Resolve -->|"no mount role"| Prov["provider's own credentials"]
   Managed --> Use["sandbox mount + harness reads"]
@@ -88,13 +88,16 @@ Validation refuses a BYO bucket unless:
 - `auth.type` is `assumeRole` or `r2`. `managed` or no auth is valid only without `bucket`.
 - `r2` keys are each a single `${NAME}` env ref and `endpoint` is the account's `https://<account id>.r2.cloudflarestorage.com`.
 - `bucket` is not a platform bucket, and `roleArn` is outside the platform AWS account.
+- `auth.externalId` is absent. Broods assigns it instead (below).
 - `prefix` is set. Credentials are scoped to `bucket/prefix*`, and the prefix must end in `/`.
 - `endpoint` is public `https`. `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on core and Convex allows private hosts such as MinIO on a self-hosted cluster.
 
 The config API, `broods deploy` and the canvas check on save; core and the config plane check again every time storage resolves, so an old row fails instead of falling back to platform credentials.
 
+- Every AssumeRole of an `assumeRole` role sends `ExternalId` = the account's `accounts.storageExternalId`: `broods-` plus 24 random bytes, minted on first need by `ensureStorageExternalId` (`model/storageTrust.ts`) and never accepted from a customer. Core asks for it per mount (`workspaceConfigs.storageExternalId`, through `storage.owner`); the config plane's file actions attach it in `withStorageAccess`. One AWS principal assumes every customer's role, so this id is what keeps one account from mounting another's role (confused deputy). `GET /v1/account/storage-trust` and the dashboard show it with the principal (`arn:aws:iam::<platform account>:root`, from `AWS_ACCOUNT_ID` or a platform role ARN) and a trust policy.
+- IAM side (`apps/core/sst.config.ts`, `CUSTOMER_STORAGE_ROLE_PERMISSIONS`): the core runtime user and `ConvexAwsRole` may `sts:AssumeRole` any role only when the call carries an `sts:ExternalId`, and are denied that for roles in the platform account. The platform mount role keeps its own grant, with no external id.
 - Every assumed session lasts one hour and allows object reads and writes on `bucket/prefix*` and `ListBucket` under that prefix only. Naming and session tags: see [sandboxes](sandboxes.md#isolation-levels).
-- R2: Convex decrypts the two env values and signs Cloudflare's temporary-credential JWT (`model/r2Credentials.ts`, HS256, `object-read-write`, one prefix, one hour). The parent secret never leaves Convex. Core finds the row through `storage.owner`, which only core stamps on its in-memory copy.
+- R2: Convex decrypts the two env values and signs Cloudflare's temporary-credential JWT (`model/r2Credentials.ts`, HS256, `object-read-write`, one prefix, one hour). The parent secret never leaves Convex. Core finds the row through `storage.owner`, which only core stamps on its in-memory copy (for `r2` and `assumeRole` storage).
 - BYO read targets are cached until 10 minutes before expiry, R2 ones for at most a minute.
 - Static access keys for other stores are not supported, since they would hand the parent key to the sandbox.
 - Under `deny-all` or `restricted` networking a MicroVM reaches S3 only through the gateway endpoint for the managed bucket, so BYO workspaces on `lambda` need `allow-all`.

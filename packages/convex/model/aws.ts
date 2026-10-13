@@ -48,7 +48,8 @@ let cached: { credentials: AssumedCredentials; expiresAt: number } | null =
  * Assume a workspace's own storage role with a session policy narrowed to
  * `bucket/prefix*`. A faithful port of core's `assumeScopedMountCredentials`, so
  * the config plane never holds broader access to a tenant bucket than the mount.
- * @param params role to assume, the bucket/prefix to scope to, optional external id
+ * @param params role to assume, the bucket/prefix to scope to, and the
+ * account's Broods-assigned external id (`storageTrust.ts`)
  * @returns short-lived credentials for that bucket prefix
  * @throws when STS returns no credentials
  */
@@ -56,7 +57,7 @@ export async function assumeScopedS3Credentials(params: {
   roleArn: string;
   bucket: string;
   prefix: string;
-  externalId?: string;
+  externalId: string;
 }): Promise<S3Access["credentials"]> {
   const access = awsAccess();
   const objectResource = `arn:aws:s3:::${params.bucket}/${params.prefix}*`;
@@ -91,7 +92,7 @@ export async function assumeScopedS3Credentials(params: {
       RoleSessionName: "broods-convex-workspace",
       DurationSeconds: 3600,
       Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }),
-      ...(params.externalId ? { ExternalId: params.externalId } : {}),
+      ExternalId: params.externalId,
     }),
   );
   const credentials = result.Credentials;
