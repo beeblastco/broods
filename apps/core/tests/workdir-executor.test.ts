@@ -6,7 +6,15 @@
  * no real workdir host. A separate *.integration.test.ts hits a live server.
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import { requestBodyText } from "./helpers/http.ts";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import type { WorkdirSandboxExecutor as WorkdirExecutor } from "../src/harness/sandbox/workdir-executor.ts";
@@ -880,6 +888,11 @@ describe("WorkdirSandboxExecutor.run", () => {
   });
 
   it("mounts a bring-your-own bucket via exec using the workspace storage assume-role", async () => {
+    const { getStorage } = await import("../src/shared/storage.ts");
+    const externalId = spyOn(
+      getStorage().workspaceConfigs,
+      "storageExternalId",
+    ).mockImplementation(async (accountId) => `broods-ext-${accountId}`);
     const executor = await newExecutor({
       provider: "sandbox",
       options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
@@ -892,8 +905,8 @@ describe("WorkdirSandboxExecutor.run", () => {
         auth: {
           type: "assumeRole",
           roleArn: "arn:aws:iam::222222222222:role/byo",
-          externalId: "ext-7",
         },
+        owner: { accountId: "acct_byo", workspaceId: "ws_byo" },
       },
     });
 
@@ -919,11 +932,12 @@ describe("WorkdirSandboxExecutor.run", () => {
       AWS_ACCESS_KEY_ID: "ASIA_TEMP",
       AWS_SESSION_TOKEN: "temp-token",
     });
-    // The developer's role is assumed with their ExternalId.
+    // The developer's role is assumed with the account's Broods-assigned ExternalId.
     expect(lastAssumeRoleInput?.RoleArn).toBe(
       "arn:aws:iam::222222222222:role/byo",
     );
-    expect(lastAssumeRoleInput?.ExternalId).toBe("ext-7");
+    expect(lastAssumeRoleInput?.ExternalId).toBe("broods-ext-acct_byo");
+    externalId.mockRestore();
   });
 
   it("still deletes an ephemeral sandbox when minting its mount credentials fails", async (): Promise<void> => {

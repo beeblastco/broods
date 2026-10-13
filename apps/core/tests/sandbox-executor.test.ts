@@ -2876,6 +2876,11 @@ describe("createSandboxExecutor", () => {
   });
 
   it("mounts a Daytona bring-your-own bucket via the workspace storage assume-role", async () => {
+    const { getStorage } = await import("../src/shared/storage.ts");
+    const externalId = spyOn(
+      getStorage().workspaceConfigs,
+      "storageExternalId",
+    ).mockImplementation(async (accountId) => `broods-ext-${accountId}`);
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
@@ -2890,8 +2895,8 @@ describe("createSandboxExecutor", () => {
         auth: {
           type: "assumeRole",
           roleArn: "arn:aws:iam::222:role/byo",
-          externalId: "ext-7",
         },
+        owner: { accountId: "acct_byo", workspaceId: "ws_byo" },
       },
       options: {
         organizationId: "org-id",
@@ -2924,7 +2929,8 @@ describe("createSandboxExecutor", () => {
       }
     ).input;
     expect(assumeRoleInput.RoleArn).toBe("arn:aws:iam::222:role/byo");
-    expect(assumeRoleInput.ExternalId).toBe("ext-7");
+    expect(assumeRoleInput.ExternalId).toBe("broods-ext-acct_byo");
+    externalId.mockRestore();
     expect(assumeRoleInput.Policy).toContain("acme/agents/");
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' 'agents/' '--region' 'us-west-2' '--endpoint-url' 'https://r2.example.com' 'acme' '/mnt/workspaces/${NS}'`,

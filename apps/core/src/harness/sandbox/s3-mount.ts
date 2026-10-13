@@ -5,7 +5,8 @@
  * target with credentials. Platform credentials only ever reach the managed
  * bucket (`workspaceStorageOwnAuth`). Four credential sources, in precedence:
  *   - `assumeRole` (bring-your-own bucket): assume the developer's cross-account
- *     role, scoped to their bucket/prefix. Keyless; pair with an ExternalId.
+ *     role, scoped to their bucket/prefix. Keyless; always sends the account's
+ *     Broods-assigned ExternalId, so no other account can reach that role.
  *   - `r2` (bring-your-own R2 bucket): the config plane signs R2 temporary
  *     credentials scoped to bucket/prefix. The parent keys never leave Convex.
  *   - managed + platform role (SANDBOX_MOUNT_ROLE_ARN): assume the broods role,
@@ -251,7 +252,7 @@ export async function resolveS3Mount(
         roleArn: roleArn,
         bucket: identity.bucket,
         prefix: identity.prefix,
-        externalId: mountExternalId(ctx.storage),
+        externalId: await mountExternalId(ctx.storage),
         attribution: ctx.attribution,
       })
     : undefined;
@@ -363,12 +364,18 @@ function joinPrefix(
   return joined ? `${joined}/` : "";
 }
 
-function mountExternalId(
+// A customer role is always assumed with its account's external id, which
+// Broods assigns, so another account naming the same role is refused by its
+// trust policy. The platform role (managed bucket) takes none.
+async function mountExternalId(
   storage: WorkspaceStorageConfig | undefined,
-): string | undefined {
-  const auth = storage && workspaceStorageOwnAuth(storage);
+): Promise<string | undefined> {
+  if (!storage || workspaceStorageOwnAuth(storage)?.type !== "assumeRole")
+    return undefined;
+  const owner = storage.owner;
+  if (!owner) throw new Error("assumeRole workspace storage has no owner");
 
-  return auth?.type === "assumeRole" ? auth.externalId : undefined;
+  return await getStorage().workspaceConfigs.storageExternalId(owner.accountId);
 }
 
 function namespaceIsolationSuffix(namespace: string): string | undefined {

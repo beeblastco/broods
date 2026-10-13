@@ -254,6 +254,18 @@ export declare const api: {
         }>
       >;
     };
+    storageTrust: {
+      getForActiveOrg: FunctionReference<
+        "mutation",
+        "public",
+        {},
+        {
+          externalId: string;
+          principalArn?: string;
+          trustPolicy?: string;
+        } | null
+      >;
+    };
   };
   agent: {
     agents: {
@@ -1798,6 +1810,7 @@ export declare const internal: {
           secretRotatedAt?: number;
           secretRotatedBy?: Id<"users">;
           status: "active" | "disabled";
+          storageExternalId?: string;
           updatedAt: number;
           username: string;
         }
@@ -1818,6 +1831,7 @@ export declare const internal: {
           secretRotatedAt?: number;
           secretRotatedBy?: Id<"users">;
           status: "active" | "disabled";
+          storageExternalId?: string;
           updatedAt: number;
           username: string;
         } | null
@@ -1838,6 +1852,7 @@ export declare const internal: {
           secretRotatedAt?: number;
           secretRotatedBy?: Id<"users">;
           status: "active" | "disabled";
+          storageExternalId?: string;
           updatedAt: number;
           username: string;
         } | null
@@ -1858,6 +1873,7 @@ export declare const internal: {
           secretRotatedAt?: number;
           secretRotatedBy?: Id<"users">;
           status: "active" | "disabled";
+          storageExternalId?: string;
           updatedAt: number;
           username: string;
         } | null
@@ -1878,6 +1894,7 @@ export declare const internal: {
           secretRotatedAt?: number;
           secretRotatedBy?: Id<"users">;
           status: "active" | "disabled";
+          storageExternalId?: string;
           updatedAt: number;
           username: string;
         }>
@@ -1919,6 +1936,7 @@ export declare const internal: {
           secretRotatedAt?: number;
           secretRotatedBy?: Id<"users">;
           status: "active" | "disabled";
+          storageExternalId?: string;
           updatedAt: number;
           username: string;
         } | null
@@ -3081,6 +3099,20 @@ export declare const internal: {
         } | null
       >;
     };
+    storageTrust: {
+      externalId: FunctionReference<
+        "mutation",
+        "internal",
+        { accountId: string },
+        string
+      >;
+      get: FunctionReference<
+        "mutation",
+        "internal",
+        { accountId: Id<"accounts"> },
+        { externalId: string; principalArn?: string; trustPolicy?: string }
+      >;
+    };
     uploads: {
       grant: FunctionReference<
         "mutation",
@@ -3600,6 +3632,7 @@ export declare const internal: {
             secretRotatedAt?: number;
             secretRotatedBy?: Id<"users">;
             status: "active" | "disabled";
+            storageExternalId?: string;
             updatedAt: number;
             username: string;
           };
@@ -4172,7 +4205,7 @@ export declare const internal: {
             auth?:
               | { type: "managed" }
               | { accessKeyId: string; secretAccessKey: string; type: "r2" }
-              | { externalId?: string; roleArn: string; type: "assumeRole" };
+              | { roleArn: string; type: "assumeRole" };
             bucket?: string;
             endpoint?: string;
             prefix?: string;
@@ -4192,7 +4225,7 @@ export declare const internal: {
             auth?:
               | { type: "managed" }
               | { accessKeyId: string; secretAccessKey: string; type: "r2" }
-              | { externalId?: string; roleArn: string; type: "assumeRole" };
+              | { roleArn: string; type: "assumeRole" };
             bucket?: string;
             endpoint?: string;
             prefix?: string;
@@ -4218,7 +4251,7 @@ export declare const internal: {
             auth?:
               | { type: "managed" }
               | { accessKeyId: string; secretAccessKey: string; type: "r2" }
-              | { externalId?: string; roleArn: string; type: "assumeRole" };
+              | { roleArn: string; type: "assumeRole" };
             bucket?: string;
             endpoint?: string;
             prefix?: string;
@@ -4239,7 +4272,7 @@ export declare const internal: {
             auth?:
               | { type: "managed" }
               | { accessKeyId: string; secretAccessKey: string; type: "r2" }
-              | { externalId?: string; roleArn: string; type: "assumeRole" };
+              | { roleArn: string; type: "assumeRole" };
             bucket?: string;
             endpoint?: string;
             prefix?: string;
@@ -4261,7 +4294,7 @@ export declare const internal: {
             auth?:
               | { type: "managed" }
               | { accessKeyId: string; secretAccessKey: string; type: "r2" }
-              | { externalId?: string; roleArn: string; type: "assumeRole" };
+              | { roleArn: string; type: "assumeRole" };
             bucket?: string;
             endpoint?: string;
             prefix?: string;
@@ -4284,7 +4317,7 @@ export declare const internal: {
             auth?:
               | { type: "managed" }
               | { accessKeyId: string; secretAccessKey: string; type: "r2" }
-              | { externalId?: string; roleArn: string; type: "assumeRole" };
+              | { roleArn: string; type: "assumeRole" };
             bucket?: string;
             endpoint?: string;
             prefix?: string;
@@ -6935,7 +6968,7 @@ export declare const internal: {
             auth?:
               | { type: "managed" }
               | { accessKeyId: string; secretAccessKey: string; type: "r2" }
-              | { externalId?: string; roleArn: string; type: "assumeRole" };
+              | { roleArn: string; type: "assumeRole" };
             bucket?: string;
             endpoint?: string;
             prefix?: string;

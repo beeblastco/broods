@@ -154,7 +154,6 @@ describe("workspace config", () => {
           auth: {
             type: "assumeRole",
             roleArn: "arn:aws:iam::111122223333:role/broods-mount",
-            externalId: "ext-1",
           },
         },
       }),
@@ -168,13 +167,59 @@ describe("workspace config", () => {
         auth: {
           type: "assumeRole",
           roleArn: "arn:aws:iam::111122223333:role/broods-mount",
-          externalId: "ext-1",
         },
       },
     });
   });
 
-  it("accepts managed auth and an assume-role without externalId", () => {
+  it("refuses a customer-chosen externalId: Broods assigns it per account", () => {
+    for (const externalId of ["ext-1", "", null]) {
+      expect(() =>
+        normalizeWorkspaceConfig({
+          storage: {
+            provider: "s3",
+            bucket: "acme-workspaces",
+            prefix: "agents/",
+            auth: {
+              type: "assumeRole",
+              roleArn: "arn:aws:iam::111122223333:role/broods-mount",
+              externalId: externalId,
+            },
+          },
+        }),
+      ).toThrow(
+        /config\.storage\.auth\.externalId is no longer accepted: Broods assigns the external id.*GET \/v1\/account\/storage-trust/,
+      );
+    }
+  });
+
+  it("drops a stored externalId on a PATCH that sends it as null", () => {
+    const existing = {
+      storage: {
+        provider: "s3",
+        bucket: "acme-workspaces",
+        prefix: "agents/",
+        auth: {
+          type: "assumeRole",
+          roleArn: "arn:aws:iam::111122223333:role/broods-mount",
+          externalId: "old",
+        },
+      },
+    } as unknown as WorkspaceConfig;
+    expect(
+      normalizeUpdateWorkspaceConfigInput(existing, {
+        config: { storage: { auth: { externalId: null } } },
+      }).config.storage.auth,
+    ).toEqual({
+      type: "assumeRole",
+      roleArn: "arn:aws:iam::111122223333:role/broods-mount",
+    });
+    expect(() =>
+      normalizeUpdateWorkspaceConfigInput(existing, { name: "renamed" }),
+    ).not.toThrow();
+  });
+
+  it("accepts managed auth and an assume-role", () => {
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3", auth: { type: "managed" } },

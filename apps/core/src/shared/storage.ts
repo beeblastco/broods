@@ -245,6 +245,11 @@ interface WorkspaceConfigStore {
     workspaceId: string,
   ): Promise<WorkspaceConfigRecord | null>;
   list(accountId: string): Promise<WorkspaceConfigRecord[]>;
+  /**
+   * The sts:ExternalId every AssumeRole of the account's own storage role
+   * sends; the config plane mints it on first need.
+   */
+  storageExternalId(accountId: string): Promise<string>;
   /** One-hour R2 credentials scoped to `prefix`, minted by the config plane. */
   mintR2Credentials(
     accountId: string,

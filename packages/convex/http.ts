@@ -145,6 +145,11 @@ http.route({
   handler: configHttp,
 });
 http.route({
+  path: "/v1/account/storage-trust",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
   path: "/v1/account/assume-role",
   method: "POST",
   handler: configHttp,

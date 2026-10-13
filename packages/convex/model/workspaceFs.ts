@@ -49,8 +49,10 @@ export interface WorkspaceFsRef {
   accountId: string;
   workspaceId: string;
   storage?: WorkspaceStorageConfig;
-  /** An R2 workspace's minted credentials; see {@link withR2Credentials}. */
+  /** An R2 workspace's minted credentials; see {@link withStorageAccess}. */
   r2Credentials?: S3Access["credentials"];
+  /** The account's sts:ExternalId for an assumeRole workspace; same source. */
+  externalId?: string;
 }
 
 /**
@@ -272,13 +274,24 @@ export async function uploadWorkspaceFile(
 }
 
 /**
- * Attach an R2 workspace's scoped credentials; any other ref passes through.
- * Every action calls it before an op, since only a ctx can mint them.
+ * Attach what reaching a workspace's own bucket needs: an R2 workspace's scoped
+ * credentials, or the account's external id for an assumeRole one. Any other
+ * ref passes through. Every action calls it before an op, since only a ctx can
+ * mint them.
  */
-export async function withR2Credentials<Ref extends WorkspaceFsRef>(
+export async function withStorageAccess<Ref extends WorkspaceFsRef>(
   ctx: ActionCtx,
   ref: Ref,
 ): Promise<Ref> {
+  if (ref.storage?.auth?.type === "assumeRole") {
+    return {
+      ...ref,
+      externalId: await ctx.runMutation(
+        internal.account.storageTrust.externalId,
+        { accountId: ref.accountId },
+      ),
+    };
+  }
   if (ref.storage?.auth?.type !== "r2") return ref;
   const credentials = await ctx.runMutation(
     internal.workspace.configs.r2Credentials,
@@ -339,16 +352,19 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   const auth = workspaceStorageOwnAuth(storage);
   if (!auth) throw new Error("Workspace storage has no credentials of its own");
   const prefix = normalizeWorkspacePrefix(storage.prefix);
-  const credentials =
-    auth.type === "r2"
-      ? ref.r2Credentials
-      : await assumeScopedS3Credentials({
-          roleArn: auth.roleArn,
-          bucket: storage.bucket,
-          prefix: prefix,
-          ...(auth.externalId ? { externalId: auth.externalId } : {}),
-        });
-  if (!credentials) throw new Error("R2 workspace credentials were not minted");
+  let credentials = ref.r2Credentials;
+  if (auth.type === "assumeRole") {
+    if (!ref.externalId)
+      throw new Error("Workspace storage external id was not attached");
+    credentials = await assumeScopedS3Credentials({
+      roleArn: auth.roleArn,
+      bucket: storage.bucket,
+      prefix: prefix,
+      externalId: ref.externalId,
+    });
+  }
+  if (!credentials)
+    throw new Error("Workspace storage credentials were not minted");
   const region = auth.type === "r2" ? "auto" : storage.region;
 
   return {

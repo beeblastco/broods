@@ -417,6 +417,19 @@ export interface RotateSecretResult {
   secret: string;
 }
 
+/**
+ * Result of `GET /v1/account/storage-trust`: what a workspace's own AWS role
+ * must trust. Broods assigns `externalId` per account and sends it on every
+ * AssumeRole of an `assumeRole` workspace's role; it is never set in config.
+ */
+export interface StorageTrust {
+  externalId: string;
+  /** The Broods AWS principal to trust; absent on a deployment with no AWS. */
+  principalArn?: string;
+  /** A ready-to-paste trust policy JSON; absent on a deployment with no AWS. */
+  trustPolicy?: string;
+}
+
 /** Result of `DELETE /v1/account`: the account and all account-scoped data are removed; `cleanup` reports per-resource deletion counts. */
 export interface DeleteAccountResult {
   deleted: boolean;
@@ -521,6 +534,23 @@ export class BroodsAccountClient {
       );
 
     return result.account;
+  }
+
+  /** The external id and Broods principal this account's own storage roles must trust. */
+  async getStorageTrust(): Promise<StorageTrust> {
+    const result = await this.request<{ storageTrust: StorageTrust }>(
+      "GET",
+      "/v1/account/storage-trust",
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "GET",
+        "/v1/account/storage-trust",
+        404,
+        "Account not found",
+      );
+
+    return result.storageTrust;
   }
 
   /** Update account metadata (username/description). Returns null when the account is gone. Runtime config is managed through the agent endpoints. */

@@ -28,10 +28,12 @@ import {
   type ConfigAuth,
 } from "./shared";
 import { ClientError } from "../../model/clientError";
+import type { StorageTrust } from "../../model/storageTrust";
 
 type AccountHttpRoute =
   | { kind: "self" }
   | { kind: "selfRotate" }
+  | { kind: "selfStorageTrust" }
   | { kind: "adminList" }
   | { kind: "adminRecord"; accountId: string }
   | { kind: "adminRotate"; accountId: string }
@@ -56,39 +58,12 @@ export async function handleAccountRoute(
   req: Request,
   route: AccountHttpRoute,
 ): Promise<Response> {
-  if (route.kind === "self" || route.kind === "selfRotate") {
-    const accountAuth = await requireSelfAccount(ctx, req);
-    if (accountAuth instanceof Response) return accountAuth;
-    const account = accountAuth.account;
-    const actor = auditActorForAuth(accountAuth);
-
-    if (accountAuth.kind === "role") {
-      // Rotating the master secret from a session would be privilege
-      // escalation, so no role policy can grant it.
-      if (route.kind === "selfRotate") {
-        return jsonError(403, "Role sessions may not rotate the account key");
-      }
-      const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
-        type: "account",
-        id: account._id,
-      });
-      if (denial) return jsonError(403, denial);
-    }
-
-    if (route.kind === "self") {
-      if (req.method === "GET")
-        return json({ account: toPublicAccount(account) });
-      if (req.method === "PATCH")
-        return await patchSelfResponse(ctx, req, accountAuth, actor);
-
-      return methodNotAllowed(["GET", "PATCH"]);
-    }
-
-    if (req.method === "POST")
-      return await rotateAccountSecretResponse(ctx, account._id, actor);
-
-    return methodNotAllowed(["POST"]);
-  }
+  if (
+    route.kind === "self" ||
+    route.kind === "selfRotate" ||
+    route.kind === "selfStorageTrust"
+  )
+    return await handleSelfAccountRoute(ctx, req, route);
 
   const admin = await requireAdminAuth(ctx, req);
   if (admin instanceof Response) return admin;
@@ -137,6 +112,58 @@ export async function handleAccountRoute(
   return methodNotAllowed(["POST"]);
 }
 
+/** `/v1/account*`: the caller's own account, by its key or a role session. */
+async function handleSelfAccountRoute(
+  ctx: ActionCtx,
+  req: Request,
+  route: Extract<
+    AccountHttpRoute,
+    { kind: "self" | "selfRotate" | "selfStorageTrust" }
+  >,
+): Promise<Response> {
+  const accountAuth = await requireSelfAccount(ctx, req);
+  if (accountAuth instanceof Response) return accountAuth;
+  const account = accountAuth.account;
+  const actor = auditActorForAuth(accountAuth);
+
+  if (accountAuth.kind === "role") {
+    // Rotating the master secret from a session would be privilege
+    // escalation, so no role policy can grant it.
+    if (route.kind === "selfRotate") {
+      return jsonError(403, "Role sessions may not rotate the account key");
+    }
+    const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
+      type: "account",
+      id: account._id,
+    });
+    if (denial) return jsonError(403, denial);
+  }
+
+  if (route.kind === "self") {
+    if (req.method === "GET")
+      return json({ account: toPublicAccount(account) });
+    if (req.method === "PATCH")
+      return await patchSelfResponse(ctx, req, accountAuth, actor);
+
+    return methodNotAllowed(["GET", "PATCH"]);
+  }
+
+  if (route.kind === "selfStorageTrust") {
+    if (req.method !== "GET") return methodNotAllowed(["GET"]);
+    const trust: StorageTrust = await ctx.runMutation(
+      internal.account.storageTrust.get,
+      { accountId: account._id },
+    );
+
+    return json({ storageTrust: trust });
+  }
+
+  if (req.method === "POST")
+    return await rotateAccountSecretResponse(ctx, account._id, actor);
+
+  return methodNotAllowed(["POST"]);
+}
+
 /**
  * Parse account config-plane pathnames, including unknown admin subpaths.
  * @param pathname request pathname
@@ -145,6 +172,8 @@ export async function handleAccountRoute(
 export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
   if (pathname === "/v1/account") return { kind: "self" };
   if (pathname === "/v1/account/rotate-secret") return { kind: "selfRotate" };
+  if (pathname === "/v1/account/storage-trust")
+    return { kind: "selfStorageTrust" };
   if (pathname === "/v1/accounts") return { kind: "adminList" };
   if (!pathname.startsWith("/v1/accounts/")) return null;
 

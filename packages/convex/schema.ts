@@ -494,6 +494,12 @@ export const accountsFields = {
   status: v.union(v.literal("active"), v.literal("disabled")),
   /** Days an audit ledger row is kept before pruning; 90 when unset. */
   auditRetentionDays: v.optional(v.number()),
+  /**
+   * The sts:ExternalId Broods sends whenever it assumes this account's own
+   * storage role (`model/storageTrust.ts`). Random, minted on first need,
+   * never set by the customer, so no other account can name it.
+   */
+  storageExternalId: v.optional(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
 };

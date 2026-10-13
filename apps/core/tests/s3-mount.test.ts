@@ -43,6 +43,7 @@ const BYO_STORAGE = {
   bucket: "acme-cached",
   prefix: "agents/",
   auth: { type: "assumeRole" as const, roleArn: "arn:aws:iam::3:role/byo" },
+  owner: { accountId: "acct_1", workspaceId: "ws_1" },
 };
 
 const RULE_ENV_NAMES = [
@@ -51,14 +52,28 @@ const RULE_ENV_NAMES = [
   "ALLOW_PRIVATE_STORAGE_ENDPOINTS",
 ];
 
+// Each account's Broods-assigned external id, as the config plane hands it out.
+const externalIdLookups: string[] = [];
+let externalIdSpy: { mockRestore(): void } | undefined;
+
 beforeEach(() => {
   lastAssumeRoleInput = undefined;
   assumeRoleSendMock.mockClear();
   for (const name of RULE_ENV_NAMES) delete process.env[name];
+  externalIdLookups.length = 0;
+  externalIdSpy = spyOn(
+    getStorage().workspaceConfigs,
+    "storageExternalId",
+  ).mockImplementation(async (accountId) => {
+    externalIdLookups.push(accountId);
+
+    return `broods-ext-${accountId}`;
+  });
 });
 
 afterEach(() => {
   for (const name of RULE_ENV_NAMES) delete process.env[name];
+  externalIdSpy?.mockRestore();
 });
 
 describe("resolveS3MountIdentity", () => {
@@ -335,17 +350,14 @@ describe("resolveS3Mount", () => {
     expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
   });
 
-  it("assumes the developer's role with the ExternalId, scoped to their bucket/prefix", async () => {
+  it("assumes the developer's role with the account's ExternalId, scoped to their bucket/prefix", async () => {
     const mount = await resolveS3Mount({
       storage: {
         provider: "s3",
         bucket: "acme",
         prefix: "agents/",
-        auth: {
-          type: "assumeRole",
-          roleArn: "arn:aws:iam::2:role/byo",
-          externalId: "ext-9",
-        },
+        auth: { type: "assumeRole", roleArn: "arn:aws:iam::2:role/byo" },
+        owner: { accountId: "acct_7", workspaceId: "ws_7" },
       },
       namespace: NS,
     });
@@ -353,7 +365,8 @@ describe("resolveS3Mount", () => {
     expect(mount.prefix).toBe("agents/");
     expect(mount.credentials?.AWS_SESSION_TOKEN).toBe("temp-token");
     expect(lastAssumeRoleInput?.RoleArn).toBe("arn:aws:iam::2:role/byo");
-    expect(lastAssumeRoleInput?.ExternalId).toBe("ext-9");
+    expect(lastAssumeRoleInput?.ExternalId).toBe("broods-ext-acct_7");
+    expect(externalIdLookups).toEqual(["acct_7"]);
     const policy = JSON.parse(String(lastAssumeRoleInput?.Policy)) as {
       Statement: Array<Record<string, unknown>>;
     };
@@ -363,6 +376,39 @@ describe("resolveS3Mount", () => {
     expect(policy.Statement[1]?.Condition).toEqual({
       StringLike: { "s3:prefix": ["agents/*"] },
     });
+  });
+
+  it("sends each account its own ExternalId for the same role, never one from config", async () => {
+    const role = "arn:aws:iam::2:role/shared";
+    const storage = (accountId: string) => ({
+      provider: "s3" as const,
+      bucket: "acme",
+      prefix: "agents/",
+      // A row stored before the id was Broods-assigned may still carry one.
+      auth: {
+        type: "assumeRole" as const,
+        roleArn: role,
+        externalId: "customer-picked",
+      } as { type: "assumeRole"; roleArn: string },
+      owner: { accountId: accountId, workspaceId: `ws_${accountId}` },
+    });
+
+    await resolveS3Mount({ storage: storage("acct_a"), namespace: NS });
+    expect(lastAssumeRoleInput?.ExternalId).toBe("broods-ext-acct_a");
+    await resolveS3Mount({ storage: storage("acct_b"), namespace: NS });
+    expect(lastAssumeRoleInput?.ExternalId).toBe("broods-ext-acct_b");
+  });
+
+  it("refuses an assumeRole mount whose account is unknown", async () => {
+    const { owner: _owner, ...unowned } = BYO_STORAGE;
+    const refused = await resolveS3Mount({
+      storage: unowned,
+      namespace: NS,
+    }).catch((error: unknown) => error);
+    expect(String(refused)).toContain(
+      "assumeRole workspace storage has no owner",
+    );
+    expect(assumeRoleSendMock).not.toHaveBeenCalled();
   });
 
   it("never mints credentials for a prefix that is not a directory", async () => {
@@ -400,11 +446,8 @@ describe("resolveS3ReadTarget", () => {
         prefix: "agents/",
         region: "eu-west-1",
         endpoint: "https://r2.example.com",
-        auth: {
-          type: "assumeRole",
-          roleArn: "arn:aws:iam::2:role/byo",
-          externalId: "ext-9",
-        },
+        auth: { type: "assumeRole", roleArn: "arn:aws:iam::2:role/byo" },
+        owner: { accountId: "acct_9", workspaceId: "ws_9" },
       },
       namespace: NS,
     });
@@ -418,7 +461,7 @@ describe("resolveS3ReadTarget", () => {
     expect(target.access?.region).toBe("eu-west-1");
     expect(target.access?.endpoint).toBe("https://r2.example.com");
     expect(lastAssumeRoleInput?.RoleArn).toBe("arn:aws:iam::2:role/byo");
-    expect(lastAssumeRoleInput?.ExternalId).toBe("ext-9");
+    expect(lastAssumeRoleInput?.ExternalId).toBe("broods-ext-acct_9");
   });
 
   it("reuses an assumed session across reads until it nears expiry", async () => {

@@ -228,6 +228,13 @@ describe("ingestInboundAttachments", () => {
   });
 
   it("writes a bring-your-own workspace copy on the assumed role, the store copy on core's", async () => {
+    setStorageForTests({
+      budgets: { record: async (): Promise<void> => undefined },
+      workspaceConfigs: {
+        storageExternalId: async (accountId: string): Promise<string> =>
+          `broods-ext-${accountId}`,
+      },
+    } as never);
     await ingestInboundAttachments([imageAttachment()], {
       accountId: ACCOUNT,
       channelName: "telegram",
@@ -241,6 +248,7 @@ describe("ingestInboundAttachments", () => {
             prefix: "agents/",
             region: "eu-west-1",
             auth: { type: "assumeRole", roleArn: "arn:aws:iam::2:role/byo" },
+            owner: { accountId: ACCOUNT, workspaceId: "ws_byo" },
           },
         },
       },

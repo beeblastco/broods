@@ -87,7 +87,6 @@ export const workspaceStorageValidator = v.object({
       v.object({
         type: v.literal("assumeRole"),
         roleArn: v.string(),
-        externalId: v.optional(v.string()),
       }),
     ),
   ),

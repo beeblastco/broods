@@ -151,6 +151,23 @@ test("getAccount unwraps the account envelope", async () => {
   expect(account.accountId).toBe("acc_1");
 });
 
+test("getStorageTrust reads the account's external id and principal", async () => {
+  const trust = {
+    externalId: "broods-abc",
+    principalArn: "arn:aws:iam::999988887777:root",
+    trustPolicy: "{}",
+  };
+  const { client, calls } = mockClient([
+    { status: 200, body: { storageTrust: trust } },
+  ]);
+
+  expect(await client.getStorageTrust()).toEqual(trust);
+  expect(calls[0]?.method).toBe("GET");
+  expect(calls[0]?.url).toBe(
+    "https://gateway.example.com/v1/account/storage-trust",
+  );
+});
+
 test("webhookUrl builds the per-account channel path", () => {
   const { client } = mockClient([]);
 
