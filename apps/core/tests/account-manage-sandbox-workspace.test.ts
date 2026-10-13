@@ -23,6 +23,7 @@ import {
   openTerminalTicket,
   TERMINAL_WEBSOCKET_PATH,
 } from "../src/shared/terminal-ticket.ts";
+import { verifyTerminalToken } from "../../cloudflare-sandbox/src/terminal-token.ts";
 
 const ACCOUNT_ID = "acct_test";
 const AUTH = { authorization: "Bearer bask_test" };
@@ -157,6 +158,9 @@ await mock.module("@aws-sdk/client-lambda-microvms", () => ({
   },
   RunMicrovmCommand: microvmCommand("RunMicrovm"),
   CreateMicrovmAuthTokenCommand: microvmCommand("CreateMicrovmAuthToken"),
+  CreateMicrovmImageCommand: microvmCommand("CreateMicrovmImage"),
+  GetMicrovmImageCommand: microvmCommand("GetMicrovmImage"),
+  GetMicrovmImageVersionCommand: microvmCommand("GetMicrovmImageVersion"),
   CreateMicrovmShellAuthTokenCommand: microvmCommand(
     "CreateMicrovmShellAuthToken",
   ),
@@ -613,13 +617,53 @@ describe("account-manage sandbox endpoints", () => {
     try {
       const response = await terminal();
       expect(response.status).toBe(200);
-      const body = (await responseJson(response)) as { token: string };
+      const body = (await responseJson(response)) as {
+        token: string;
+        expiresAt: number;
+      };
       expect(body.token).not.toContain("bridge-key");
-      expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
+      const ticket = openTerminalTicket(body.token, "terminal-secret");
+      // The bearer and the ticket expire together.
+      expect(ticket!.expiresAt).toBe(body.expiresAt);
+      expect(
+        await verifyTerminalToken(
+          "bridge-key",
+          ticket!.authorization.replace(/^Bearer /, ""),
+          "sbx_handler",
+          ticket!.expiresAt - 1,
+        ),
+      ).toBe(true);
+      expect(ticket).toMatchObject({
         url: "wss://bridge.example.com/v1/sandboxes/sbx_handler/terminal",
-        authorization: "Bearer bridge-key",
         accountId: ACCOUNT_ID,
       });
+      // The gateway gets a token for this one terminal, never the bridge key.
+      const bearer = ticket!.authorization.replace(/^Bearer /, "");
+      expect(bearer).not.toContain("bridge-key");
+      expect(
+        await verifyTerminalToken(
+          "bridge-key",
+          bearer,
+          "sbx_handler",
+          Date.now(),
+        ),
+      ).toBe(true);
+      expect(
+        await verifyTerminalToken(
+          "bridge-key",
+          bearer,
+          "sbx_other",
+          Date.now(),
+        ),
+      ).toBe(false);
+      expect(
+        await verifyTerminalToken(
+          "bridge-key",
+          bearer,
+          "sbx_handler",
+          ticket!.expiresAt,
+        ),
+      ).toBe(false);
 
       running = false;
       const stopped = await terminal();

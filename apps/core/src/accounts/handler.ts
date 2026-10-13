@@ -15,6 +15,7 @@ import {
   planRefusalResponse,
 } from "../harness/plan-limits.ts";
 import { cloudflareConnection } from "../harness/sandbox/cloudflare-executor.ts";
+import { signTerminalToken } from "../../../cloudflare-sandbox/src/terminal-token.ts";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import type { SandboxExecutor } from "../harness/sandbox/types.ts";
 import {
@@ -553,6 +554,8 @@ async function openSandboxTerminal(
     authorization: string;
     authorizationHeader?: string;
   };
+  // Set when the bearer itself expires, so the ticket expires with it.
+  let bearerExpiresAt: number | undefined;
   if (context.provider === "lambda") {
     try {
       const shell = await microvmShellConnection(externalId);
@@ -584,9 +587,16 @@ async function openSandboxTerminal(
       );
     }
     const { baseURL, apiKey } = cloudflareConnection();
+    bearerExpiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
+    // A token for this one terminal, so the gateway never holds the bridge
+    // key that reaches every sandbox.
     target = {
       url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal`,
-      authorization: `Bearer ${apiKey}`,
+      authorization: `Bearer ${await signTerminalToken(
+        apiKey,
+        externalId,
+        bearerExpiresAt,
+      )}`,
     };
   } else {
     const { baseUrl, apiKey } = workdirConnection(context.config);
@@ -595,7 +605,7 @@ async function openSandboxTerminal(
       authorization: `Bearer ${apiKey}`,
     };
   }
-  const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
+  const expiresAt = bearerExpiresAt ?? Date.now() + TERMINAL_TICKET_TTL_MS;
   const token = sealTerminalTicket(
     { ...target, accountId: context.accountId, expiresAt: expiresAt },
     requireSecretsEnv("TERMINAL_TICKET_SECRET")[0],

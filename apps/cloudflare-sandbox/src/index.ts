@@ -14,6 +14,7 @@ import {
   MAX_OUTPUT_BYTES,
   MAX_TIMEOUT_MS,
 } from "./limits.ts";
+import { verifyTerminalToken } from "./terminal-token.ts";
 
 const SANDBOX_PATH =
   /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec|\/terminal)?$/;
@@ -252,14 +253,20 @@ export class Sandbox extends DurableObject<Env> {
 }
 
 const handler: ExportedHandler<Env> = {
-  /** Authenticates core's bearer token, then routes to the sandbox it names. */
+  /**
+   * Authenticates core's bearer token, then routes to the sandbox it names. A
+   * terminal token from a ticket opens only its own sandbox's terminal.
+   */
   fetch: async function (request: Request, env: Env): Promise<Response> {
-    if (!(await authorized(request, env.SANDBOX_API_KEY)))
-      return new Response("Unauthorized", { status: 401 });
     const match = SANDBOX_PATH.exec(new URL(request.url).pathname);
+    const action = match?.[2];
+    const allowed =
+      (await authorized(request, env.SANDBOX_API_KEY)) ||
+      (action === "/terminal" &&
+        (await terminalAuthorized(request, env.SANDBOX_API_KEY, match![1]!)));
+    if (!allowed) return new Response("Unauthorized", { status: 401 });
     if (!match?.[1]) return new Response("Not found", { status: 404 });
     const sandbox = env.SANDBOX.getByName(match[1]);
-    const action = match[2];
     if (action === "/terminal") return sandbox.fetch(request);
     if (action === "/exec" && request.method === "POST") {
       const body = execRequest.safeParse(
@@ -295,6 +302,22 @@ async function authorized(request: Request, apiKey: string): Promise<boolean> {
   ]);
 
   return crypto.subtle.timingSafeEqual(given, expected);
+}
+
+async function terminalAuthorized(
+  request: Request,
+  apiKey: string,
+  sandboxId: string,
+): Promise<boolean> {
+  const header = request.headers.get("Authorization") ?? "";
+  if (!apiKey || !header.startsWith("Bearer ")) return false;
+
+  return await verifyTerminalToken(
+    apiKey,
+    header.slice("Bearer ".length),
+    sandboxId,
+    Date.now(),
+  );
 }
 
 // Keeps the first `limit` bytes and drains the rest, so a chatty command can

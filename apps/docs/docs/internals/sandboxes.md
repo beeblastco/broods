@@ -254,10 +254,11 @@ sequenceDiagram
 | ------------ | --------------------------------------- | ------------------------------------------------------------- |
 | `sandbox`    | workdir PTY WebSocket                   | workdir API key as bearer                                     |
 | `lambda`     | MicroVM native shell (`SHELL_INGRESS`)  | `CreateMicrovmShellAuthToken` JWE, 30 min, `X-aws-proxy-auth` |
-| `cloudflare` | bridge `GET /v1/sandboxes/:id/terminal` | bridge API key as bearer                                      |
+| `cloudflare` | bridge `GET /v1/sandboxes/:id/terminal` | terminal token for that sandbox as bearer, ticket TTL         |
 
 - The ticket is AES-256-GCM sealed (`src/shared/terminal-ticket.ts`), so the browser holds only an opaque token. If NATS is down the upgrade answers 502 rather than skip the spend check.
 - A Cloudflare Container that is not running answers 409; a command has to start it first.
+- The Cloudflare terminal token (`apps/cloudflare-sandbox/src/terminal-token.ts`) is an HMAC of the sandbox id and expiry, signed with the bridge API key. The bridge accepts it only on `/terminal` for that sandbox id and until it expires, so the gateway never holds the key that reaches every sandbox.
 
 ## Background jobs
 
