@@ -275,6 +275,9 @@ function fakeStorage(): Storage {
       mintR2Credentials: async () => {
         throw new Error("the bench has no R2 workspace");
       },
+      storageExternalId: async () => {
+        throw new Error("the bench has no assumeRole workspace");
+      },
       removeAllForAccount: zero,
     },
     accountHooks: { getById: none, removeAllForAccount: zero },
