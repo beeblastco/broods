@@ -119,7 +119,7 @@ flowchart TD
   S -->|yes| S1["sst deploy without sandbox,<br/>crane copy latest-arm64"]
   S1 --> D
   S -->|no| D["sst deploy, 3 tries, 15 s apart"]
-  D --> W{"production, or no<br/>Cloudflare credentials?"}
+  D --> W{"no Cloudflare<br/>credentials?"}
   W -->|yes| Done[Next target]
   W -->|no| M["wrangler deploy cloudflare-mcp<br/>named cloudflareMcpWorkerName"]
   M --> Done
@@ -134,7 +134,7 @@ flowchart TD
 
 - Production stages deploy only from `main`. `production_targets()` in `deploy.yaml` lists `eu-west-1` alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM pieces in `ap-southeast-1`.
 - The deploy job shares the `sst-<stage>` concurrency group with drift cleanup, so the two never touch a stage at once.
-- The [Cloudflare MCP runtime](../guides/tools.md#where-a-hosted-server-runs) step creates the `broods-mcp-bundles` R2 bucket if missing, sets its 30-day expiry and sets `BUNDLE_ORIGIN` to the stage's tool-bundles bucket. It ships code only; the infra repo writes the shared key to the Worker's `MCP_API_KEY` and core's `CLOUDFLARE_MCP_API_KEY`. A failure only warns.
+- The [Cloudflare MCP runtime](../guides/tools.md#where-a-hosted-server-runs) step creates the `broods-mcp-bundles` R2 bucket if missing, sets its 30-day expiry and sets `BUNDLE_ORIGIN` to the stage's tool-bundles bucket. It ships code only; the infra repo writes the shared key to the Worker's `MCP_API_KEY` and core's `CLOUDFLARE_MCP_API_KEY`. It runs for production stages too. A failure only warns and leaves the last deployed Worker serving, so infra sets a stage's `CLOUDFLARE_MCP_URL` only after its first Worker deploy succeeded.
 
 ## Secrets and variables
 

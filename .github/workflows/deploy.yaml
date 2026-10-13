@@ -282,12 +282,13 @@ jobs:
           # R2 bucket (wrangler.jsonc) only caches S3 bundles, so each deploy
           # sets its 30-day expiry (r2-lifecycle.json) and every copy is
           # refetched from S3 after that.
-          # Production stays on Lambda until infra routes production core to it.
+          # Production gets it too: core sends a Workers-safe bundle there once
+          # infra sets CLOUDFLARE_MCP_URL and the key, and Lambda until then.
           # A failure only warns, so it never stops the remaining SST targets.
           deploy_mcp_worker() {
             local target_stage="$1"
             local target_region="$2"
-            if [[ "$target_stage" == production* || -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
               echo "Cloudflare MCP runtime not deployed for $target_stage; skipping."
               return 0
             fi
