@@ -18,7 +18,7 @@ jobs:
     # On the job, not the workflow: any other label starts a run whose job is
     # skipped, and a workflow-level group would cancel a billed run for it.
     concurrency:
-      group: real-model-${{ github.ref }}
+      group: real-model-${{ github.head_ref || github.ref_name }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -42,9 +42,13 @@ jobs:
       - name: Verify through the edge
         # Only this step reads the key: the harness puts it in each test
         # agent's config, so core and the rest of the job never see it.
+        # Without the key the model cases skip or stop at the provider call and
+        # the run reads green while proving nothing, so a missing key fails.
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: bun run local:verify
+        run: |
+          test -n "$ANTHROPIC_API_KEY" || { echo "ANTHROPIC_API_KEY secret is not set" >&2; exit 1; }
+          bun run local:verify
 
       - name: Upload stack logs
         if: failure()
@@ -54,3 +58,4 @@ jobs:
           path: ~/.broods-local/*/logs/
           include-hidden-files: true
           if-no-files-found: ignore
+          retention-days: 14

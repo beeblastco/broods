@@ -823,6 +823,9 @@ function startCore(state: InstanceState): void {
         : {}),
       ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
       ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
+      // Pinned over a shell's own: the perf fake answers only this host, and
+      // a gateway here would take the verify key and bill perf runs.
+      ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
       CONVEX_DEPLOY_KEY: state.adminKey ?? "",
       CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
       MEDIA_TICKET_SECRET: state.secrets.mediaTicket,
