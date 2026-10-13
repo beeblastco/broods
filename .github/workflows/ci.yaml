@@ -266,10 +266,8 @@ jobs:
         run: git diff --exit-code -- packages/convex/_generated
 
       - name: Verify through the edge
-        # Only this step reads the key: the harness puts it in each test
-        # agent's config, so core and the rest of the job never see it.
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        # No model key: every push would bill the model, so model cases stop
+        # at the provider call here. real-model.yaml runs them on request.
         run: bun run local:verify
 
       - name: Perf report
