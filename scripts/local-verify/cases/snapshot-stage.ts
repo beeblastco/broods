@@ -169,6 +169,9 @@ function convexResult(
   const cli = context.convex(["run", fn, JSON.stringify(args)]);
   assertStep(step, cli.ok, cli.output.slice(-300));
 
-  // `convex run` prints the result as JSON after any log lines.
-  return JSON.parse(cli.output.slice(cli.output.search(/^[[{"\dn]/m)));
+  // `convex run` prints the result as JSON after any log lines, and nothing
+  // for a function that returns null.
+  const start = cli.output.search(/^[[{"\dn]/m);
+
+  return start < 0 ? null : JSON.parse(cli.output.slice(start));
 }

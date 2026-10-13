@@ -471,14 +471,14 @@ async function materializeSandboxNode(
     const codeManaged =
       existing.managedBy === "cli" || existing.managedBy === "api";
     if (!codeManaged && changed) {
-      if (sandboxConfig.snapshot !== asRecord(previousData.config).snapshot) {
-        await assertSnapshotInScope(
-          ctx,
-          account._id,
-          { projectId: projectId, stageId: stageId },
-          sandboxConfig.snapshot,
-        );
-      }
+      // Every save, not only a changed snapshot: the canvas copy can be older
+      // than the row, so "unchanged" could restore an out-of-scope snapshot.
+      await assertSnapshotInScope(
+        ctx,
+        account._id,
+        { projectId: projectId, stageId: stageId },
+        sandboxConfig.snapshot,
+      );
       await ctx.db.patch(existing._id, {
         projectId: projectId,
         stageId: stageId,

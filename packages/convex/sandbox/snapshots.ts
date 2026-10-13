@@ -53,14 +53,19 @@ export const listForActiveOrg = query({
       .query("sandboxSnapshots")
       .withIndex("by_accountId_and_name", (q) => q.eq("accountId", account._id))
       .collect();
-    const stageNames = new Map<Id<"stages">, string | undefined>();
-    for (const row of rows) {
-      if (typeof row.scope !== "object" || stageNames.has(row.scope.stageId)) {
-        continue;
-      }
-      const stage = await ctx.db.get(row.scope.stageId);
-      stageNames.set(row.scope.stageId, stage?.name);
-    }
+    const stageIds = new Set(
+      rows.flatMap((row) =>
+        typeof row.scope === "object" ? [row.scope.stageId] : [],
+      ),
+    );
+    const stageNames = new Map(
+      await Promise.all(
+        [...stageIds].map(
+          async (stageId) =>
+            [stageId, (await ctx.db.get(stageId))?.name] as const,
+        ),
+      ),
+    );
 
     return rows.map((row) => {
       const stageName =
@@ -279,13 +284,22 @@ async function snapshotByImage(
   accountId: Id<"accounts"> | undefined,
   externalImageId: string,
 ): Promise<SnapshotImage | null> {
-  const rows = await ctx.db
-    .query("sandboxSnapshots")
-    .withIndex("by_externalImageId", (q) =>
-      q.eq("externalImageId", externalImageId),
-    )
-    .take(10);
-  const row = rows.find((row) => row.accountId === accountId) ?? rows[0];
+  const own = accountId
+    ? await ctx.db
+        .query("sandboxSnapshots")
+        .withIndex("by_externalImageId_and_accountId", (q) =>
+          q.eq("externalImageId", externalImageId).eq("accountId", accountId),
+        )
+        .first()
+    : null;
+  const row =
+    own ??
+    (await ctx.db
+      .query("sandboxSnapshots")
+      .withIndex("by_externalImageId_and_accountId", (q) =>
+        q.eq("externalImageId", externalImageId),
+      )
+      .first());
   if (row) return row;
   const lock = await ctx.db
     .query("sandboxSnapshotImages")

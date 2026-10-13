@@ -1718,7 +1718,7 @@ export default defineSchema({
     .index("by_sandboxConfigId", ["sandboxConfigId"]),
   sandboxSnapshots: defineTable(sandboxSnapshotsFields)
     .index("by_accountId_and_name", ["accountId", "name"])
-    .index("by_externalImageId", ["externalImageId"])
+    .index("by_externalImageId_and_accountId", ["externalImageId", "accountId"])
     .index("by_status", ["status"]),
   sandboxSnapshotImages: defineTable(sandboxSnapshotImagesFields).index(
     "by_externalImageId",
