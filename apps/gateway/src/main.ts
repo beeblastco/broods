@@ -14,7 +14,8 @@ import {
 } from "../../core/src/shared/terminal-ticket.ts";
 import {
   handleAgentMessage,
-  stopActiveRun,
+  cleanupAgentSocket,
+  watchUserTokenLifetime,
   type AgentTestGatewayData,
 } from "./agent.ts";
 import {
@@ -53,6 +54,7 @@ import {
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
+  websocketUserToken,
   withRequestId,
   type GatewayLimits,
 } from "./utils.ts";
@@ -183,6 +185,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         } else if (observabilityPath || agentWebSocketPath) {
           const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
+          // Only the agent socket runs as an end user; logs are the stage's.
+          const userToken = agentWebSocketPath
+            ? websocketUserToken(request)
+            : undefined;
 
           // Each socket asks core for its own scope: a runtime key opens the
           // agent socket, never the observability one.
@@ -190,6 +196,8 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
             observabilityPath ? "observability" : "agent",
             token,
             config.coreBaseUrl,
+            fetch,
+            userToken,
           );
           if (resolved.kind === "unavailable")
             return jsonError(502, "Could not verify the WebSocket token");
@@ -242,6 +250,13 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               token: token,
               coreBaseUrl: config.coreBaseUrl,
               accountId: scope.accountId,
+              ...(userToken ? { userToken: userToken } : {}),
+              ...(scope.userTokenExpiresAt !== undefined
+                ? { userTokenExpiresAt: scope.userTokenExpiresAt }
+                : {}),
+              ...(scope.conversationPrefix
+                ? { conversationPrefix: scope.conversationPrefix }
+                : {}),
             };
           }
         }
@@ -315,6 +330,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       }
       if (socket.data.kind === "terminal" || socket.data.kind === "machine")
         openTerminalUpstream(socket as Bun.ServerWebSocket<RelayGatewayData>);
+      if (socket.data.kind === "agent-test")
+        watchUserTokenLifetime(
+          socket as Bun.ServerWebSocket<AgentTestGatewayData>,
+        );
     },
     message: async function (socket, rawMessage): Promise<void> {
       if (
@@ -366,7 +385,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         return;
       }
 
-      stopActiveRun(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
+      cleanupAgentSocket(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
     },
   };
 

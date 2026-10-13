@@ -5,7 +5,8 @@
  * to the same stage, without the limits it puts on the embeddable key (run
  * overrides, continuing a channel session). Signed with an HMAC derived
  * from the service secret both sides already hold, on WebCrypto so the same
- * code runs in Convex and in core.
+ * code runs in Convex and in core. The signed-ticket format itself is shared:
+ * `userToken.ts` seals end-user tokens with it under its own key context.
  */
 
 const ENCODER = new TextEncoder();
@@ -41,27 +42,14 @@ export async function openStageSessionTicket(
   secret: string,
   now = Date.now(),
 ): Promise<StageSessionTicket | null> {
-  if (!token.startsWith(STAGE_SESSION_TICKET_PREFIX)) return null;
-  const [payload, signature, ...rest] = token
-    .slice(STAGE_SESSION_TICKET_PREFIX.length)
-    .split(".");
-  if (!payload || !signature || rest.length > 0) return null;
-
-  const key = await ticketKey(secret);
-  let verified = false;
-  try {
-    verified = await crypto.subtle.verify(
-      HMAC_ALGORITHM,
-      key,
-      base64UrlToBytes(signature),
-      ENCODER.encode(payload),
-    );
-  } catch {
-    return null;
-  }
-  if (!verified) return null;
-
-  const ticket = parseTicket(payload);
+  const ticket = parseTicket(
+    await openSignedTicket(
+      STAGE_SESSION_TICKET_PREFIX,
+      KEY_CONTEXT,
+      token,
+      secret,
+    ),
+  );
   if (!ticket || ticket.expiresAt <= now) return null;
 
   return ticket;
@@ -71,14 +59,63 @@ export async function sealStageSessionTicket(
   ticket: StageSessionTicket,
   secret: string,
 ): Promise<string> {
-  const payload = bytesToBase64Url(ENCODER.encode(JSON.stringify(ticket)));
+  return await sealSignedTicket(
+    STAGE_SESSION_TICKET_PREFIX,
+    KEY_CONTEXT,
+    ticket,
+    secret,
+  );
+}
+
+/**
+ * The signed-ticket format every Broods ticket shares:
+ * `<prefix><base64url JSON>.<base64url HMAC-SHA256>`, keyed by a hash of
+ * `keyContext` and the secret, so one secret never signs two kinds of ticket.
+ */
+export async function sealSignedTicket(
+  prefix: string,
+  keyContext: string,
+  value: object,
+  secret: string,
+): Promise<string> {
+  const payload = bytesToBase64Url(ENCODER.encode(JSON.stringify(value)));
   const signature = await crypto.subtle.sign(
     HMAC_ALGORITHM,
-    await ticketKey(secret),
+    await ticketKey(keyContext, secret),
     ENCODER.encode(payload),
   );
 
-  return `${STAGE_SESSION_TICKET_PREFIX}${payload}.${bytesToBase64Url(new Uint8Array(signature))}`;
+  return `${prefix}${payload}.${bytesToBase64Url(new Uint8Array(signature))}`;
+}
+
+/**
+ * The decoded JSON of a ticket `sealSignedTicket` sealed under the same
+ * prefix, context and secret; null for anything else. The caller checks its
+ * shape and expiry. WebCrypto's verify compares the MAC in constant time.
+ */
+export async function openSignedTicket(
+  prefix: string,
+  keyContext: string,
+  token: string,
+  secret: string,
+): Promise<unknown> {
+  if (!token.startsWith(prefix)) return null;
+  const [payload, signature, ...rest] = token.slice(prefix.length).split(".");
+  if (!payload || !signature || rest.length > 0) return null;
+
+  try {
+    const verified = await crypto.subtle.verify(
+      HMAC_ALGORITHM,
+      await ticketKey(keyContext, secret),
+      base64UrlToBytes(signature),
+      ENCODER.encode(payload),
+    );
+    if (!verified) return null;
+
+    return JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
+  } catch {
+    return null;
+  }
 }
 
 function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
@@ -103,13 +140,7 @@ export function bytesToBase64Url(bytes: Uint8Array): string {
     .replace(/=+$/, "");
 }
 
-function parseTicket(payload: string): StageSessionTicket | null {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
-  } catch {
-    return null;
-  }
+function parseTicket(decoded: unknown): StageSessionTicket | null {
   if (!decoded || typeof decoded !== "object") return null;
   const record = decoded as Record<string, unknown>;
   const {
@@ -147,12 +178,15 @@ function parseTicket(payload: string): StageSessionTicket | null {
   };
 }
 
-// The key is derived, not the raw service secret, so a ticket can never stand
-// in for service-to-service auth even if the derivation context leaked.
-async function ticketKey(secret: string): Promise<CryptoKey> {
+// The key is derived, not the raw secret, so a ticket can never stand in for
+// the secret's own use, and the context keeps each ticket kind's key apart.
+async function ticketKey(
+  keyContext: string,
+  secret: string,
+): Promise<CryptoKey> {
   const material = await crypto.subtle.digest(
     "SHA-256",
-    ENCODER.encode(`${KEY_CONTEXT}${secret}`),
+    ENCODER.encode(`${keyContext}${secret}`),
   );
 
   return crypto.subtle.importKey("raw", material, HMAC_ALGORITHM, false, [

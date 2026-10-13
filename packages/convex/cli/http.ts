@@ -24,6 +24,7 @@ import {
   handleMcpBundleUploadRoute,
   handleResourceDeleteRoute,
   handleRuntimeKeyRoute,
+  handleUserTokenSecretRoute,
   type CliAuth,
   type RouteParts,
 } from "./httpRoutes";
@@ -55,6 +56,8 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
         return handleLogsRoute(req);
       case "runtimeKey":
         return await handleRuntimeKeyRoute(ctx, req, route, authResult);
+      case "userTokenSecret":
+        return await handleUserTokenSecretRoute(ctx, req, route, authResult);
       case "envList":
         return await handleEnvListRoute(ctx, req, route, authResult);
       case "env":
@@ -107,6 +110,9 @@ function parseRoute(pathname: string): RouteParts | null {
   }
   if (rest.length === 1 && rest[0] === "runtime-key") {
     return { kind: "runtimeKey", project: project, stage: stage };
+  }
+  if (rest.length === 1 && rest[0] === "user-token-secret") {
+    return { kind: "userTokenSecret", project: project, stage: stage };
   }
   if (rest.length === 1 && rest[0] === "env") {
     return { kind: "envList", project: project, stage: stage };

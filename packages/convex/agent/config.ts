@@ -570,6 +570,90 @@ export const updateSubagentRefs = mutation({
   },
 });
 
+/**
+ * Whether a runtime-key request to this agent needs a signed user token. Null
+ * while the config has no live `agents` row yet.
+ */
+export const userTokenRequirement = query({
+  args: { configId: v.id("agentConfigs") },
+  returns: v.union(v.boolean(), v.null()),
+  handler: async (ctx, { configId }): Promise<boolean | null> => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const config = await ctx.db.get(configId);
+    if (!config || !(await canAccessAgentConfig(ctx, user.id, config))) {
+      return null;
+    }
+    const agent = await linkedAgentRow(ctx, config);
+
+    return agent ? agent.requireUserToken === true : null;
+  },
+});
+
+/**
+ * Turn the user-token requirement on or off for one agent. Admin only, and
+ * allowed on code-managed agents too: it is a security switch on the agent
+ * row, not part of the config a sync owns.
+ */
+export const setRequireUserToken = mutation({
+  args: { configId: v.id("agentConfigs"), required: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { configId, required }): Promise<null> => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const config = await ctx.db.get(configId);
+    if (!config || !(await canAccessAgentConfig(ctx, user.id, config))) {
+      throw new Error("Agent config not found.");
+    }
+    await assertAgentConfigAdmin(ctx, user.id, config);
+    const agent = await linkedAgentRow(ctx, config);
+    if (!agent) throw new Error("Deploy the agent first.");
+    if (agent.requireUserToken === required) return null;
+
+    await ctx.db.patch(agent._id, {
+      requireUserToken: required,
+      updatedAt: Date.now(),
+    });
+    await recordAgentConfigAudit(ctx, dashboardAuditActor(user), {
+      projectId: config.projectId,
+      stageId: config.stageId,
+      action: required ? "user-token-required" : "user-token-optional",
+      agentId: agent._id,
+      configId: configId,
+      name: config.name,
+      summary: required
+        ? "Runtime key requests now need a signed user token"
+        : "Runtime key requests no longer need a signed user token",
+    });
+
+    return null;
+  },
+});
+
+/** The config's `agents` row, when it lives under the project's own account. */
+async function linkedAgentRow(
+  ctx: Parameters<typeof getProjectForRole>[0],
+  config: Doc<"agentConfigs">,
+): Promise<Doc<"agents"> | null> {
+  const agentId = config.agentId
+    ? ctx.db.normalizeId("agents", config.agentId)
+    : null;
+  const agent = agentId ? await ctx.db.get(agentId) : null;
+  if (!agent) return null;
+
+  return agent.accountId === (await accountIdForProject(ctx, config.projectId))
+    ? agent
+    : null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

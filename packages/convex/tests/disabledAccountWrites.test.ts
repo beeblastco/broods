@@ -306,6 +306,12 @@ test("a disabled account cannot change or remove project config, and can still r
     () => caller.mutation(api.agent.deployments.ensureForStage, scope),
     () => caller.mutation(api.agent.deployments.rotate, scope),
     () => caller.mutation(api.agent.deployments.mintStageSession, scope),
+    () => caller.mutation(api.agent.deployments.rotateUserTokenSecret, scope),
+    () =>
+      caller.mutation(api.agent.config.setRequireUserToken, {
+        ...config,
+        required: false,
+      }),
     () =>
       caller.mutation(api.agent.policies.create, {
         ...scope,

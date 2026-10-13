@@ -23,6 +23,7 @@ import {
   errorText,
   type GatewayLimits,
   parseJson,
+  USER_TOKEN_HEADER,
 } from "./utils.ts";
 import type { ApiError } from "../../../packages/convex/model/apiError.ts";
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
@@ -33,6 +34,15 @@ export type AgentTestGatewayData = {
   token: string;
   coreBaseUrl: string;
   accountId: string;
+  /** The signed user token the upgrade carried; rides every core call. */
+  userToken?: string;
+  /**
+   * The namespace core keys that user's conversations and event ids under,
+   * as core answered it at the upgrade. The socket subscribes there.
+   */
+  conversationPrefix?: string;
+  /** Unix ms the user token dies at; the socket closes then. */
+  userTokenExpiresAt?: number;
 };
 
 type ExecuteMessage = WebSocketClientExecuteMessage;
@@ -223,6 +233,44 @@ export function parseGatewayMessage(
   return isExecuteMessage(parsed) ? parsed : null;
 }
 
+const tokenLifetimes = new WeakMap<
+  Bun.ServerWebSocket<AgentTestGatewayData>,
+  ReturnType<typeof setTimeout>
+>();
+export const USER_TOKEN_EXPIRED_CLOSE = {
+  code: 4419,
+  reason: "User token expired",
+};
+
+/**
+ * Closes a socket opened with a user token when that token dies: core checks
+ * it only at the upgrade, and every later core call would answer 401.
+ */
+export function watchUserTokenLifetime(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): void {
+  const { userTokenExpiresAt } = socket.data;
+  if (userTokenExpiresAt === undefined) return;
+  tokenLifetimes.set(
+    socket,
+    setTimeout(
+      (): void =>
+        socket.close(
+          USER_TOKEN_EXPIRED_CLOSE.code,
+          USER_TOKEN_EXPIRED_CLOSE.reason,
+        ),
+      Math.max(userTokenExpiresAt - Date.now(), 0),
+    ),
+  );
+}
+
+export function cleanupAgentSocket(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): void {
+  clearTimeout(tokenLifetimes.get(socket));
+  stopActiveRun(socket);
+}
+
 /**
  * Stops the socket's active run. With `run`, only while that run is still the
  * active one: a run's own cleanup must never abort a newer run on the socket.
@@ -261,8 +309,8 @@ async function runCoreStream(
       abort.abort();
     }, limits.runStartTimeoutMs),
     agentId: String(body.agentId),
-    publicConversationKey: String(body.conversationKey),
-    publicEventId: String(body.eventId),
+    publicConversationKey: userScoped(socket, String(body.conversationKey)),
+    publicEventId: userScoped(socket, String(body.eventId)),
     controls: 0,
   };
   activeRuns.set(socket, active);
@@ -643,8 +691,8 @@ async function attachCoreStream(
     abort: abort,
     startTimeout: startTimeout,
     agentId: message.agentId,
-    publicConversationKey: message.conversationKey,
-    publicEventId: message.eventId,
+    publicConversationKey: userScoped(socket, message.conversationKey),
+    publicEventId: userScoped(socket, message.eventId),
     controls: 0,
   };
   activeRuns.set(socket, active);
@@ -667,8 +715,8 @@ async function attachCoreStream(
     // credential read. A core that omits them fails closed.
     if (
       status.agentId !== message.agentId ||
-      status.conversationKey !== message.conversationKey ||
-      status.eventId !== message.eventId
+      status.conversationKey !== active.publicConversationKey ||
+      status.eventId !== active.publicEventId
     ) {
       sendAgentTest(socket, {
         type: "replay_unavailable",
@@ -684,7 +732,7 @@ async function attachCoreStream(
     const scope = {
       accountId: socket.data.accountId,
       agentId: message.agentId,
-      conversationKey: message.conversationKey,
+      conversationKey: active.publicConversationKey,
     };
     const snapshot = await conversationReplaySnapshot({
       connection: connection,
@@ -693,7 +741,7 @@ async function attachCoreStream(
     const cursor = message.afterCursor
       ? parseCursor(message.afterCursor)
       : null;
-    const eventKey = cursorEventKey(message.eventId);
+    const eventKey = cursorEventKey(active.publicEventId);
     const unavailable = () =>
       sendAgentTest(socket, {
         type: "replay_unavailable",
@@ -821,9 +869,9 @@ async function followAttachedExecution(
     scope: {
       accountId: socket.data.accountId,
       agentId: message.agentId,
-      conversationKey: message.conversationKey,
+      conversationKey: active.publicConversationKey,
     },
-    eventId: message.eventId,
+    eventId: active.publicEventId,
     eventKey: eventKey,
     snapshot: snapshot,
     startSequence: startSequence,
@@ -916,7 +964,24 @@ function coreHeaders(
     Authorization: `Bearer ${socket.data.token}`,
     "Content-Type": "application/json",
     [VIA_GATEWAY_HEADER]: "1",
+    ...(socket.data.userToken
+      ? { [USER_TOKEN_HEADER]: socket.data.userToken }
+      : {}),
   };
+}
+
+/**
+ * A conversation key or event id as core keys it for this socket's user:
+ * under the user's namespace, whether the client named it bare or already
+ * namespaced. Core applies the same rule, so both name one NATS subject.
+ */
+function userScoped(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  value: string,
+): string {
+  const prefix = socket.data.conversationPrefix;
+
+  return prefix && !value.startsWith(prefix) ? `${prefix}${value}` : value;
 }
 
 /** Core's error envelope reduced to its message, or the raw body if it is not one. */

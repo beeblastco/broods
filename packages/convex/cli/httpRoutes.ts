@@ -57,6 +57,7 @@ export type RouteParts =
   | { kind: "mcpBundleUpload"; project: string; stage: string }
   | { kind: "logs"; project: string; stage: string }
   | { kind: "runtimeKey"; project: string; stage: string }
+  | { kind: "userTokenSecret"; project: string; stage: string }
   | { kind: "envList"; project: string; stage: string }
   | { kind: "env"; project: string; stage: string; name: string }
   | {
@@ -337,6 +338,44 @@ export async function handleRuntimeKeyRoute(
         stageSlug: deployment.stageSlug,
       })
     : jsonError(404, "Project or stage not found");
+}
+
+/**
+ * POST rotates the stage's user-token signing secret and returns it this
+ * once, so `broods dev` / `deploy` can write it beside the runtime key.
+ * Tokens the previous secret signed stop opening.
+ */
+export async function handleUserTokenSecretRoute(
+  ctx: ActionCtx,
+  req: Request,
+  route: Extract<RouteParts, { kind: "userTokenSecret" }>,
+  auth: CliAuth,
+): Promise<Response> {
+  if (req.method !== "POST") return methodNotAllowed(["POST"]);
+  const rotated = await ctx.runMutation(
+    internal.cli.sync.rotateUserTokenSecretBySecretHash,
+    {
+      secretHash: auth.secretHash,
+      project: route.project,
+      stage: route.stage,
+      cliAuthId: "cliAuthId" in auth ? auth.cliAuthId : undefined,
+      actorKind:
+        "deployKeyId" in auth && auth.deployKeyId ? "deployKey" : "cli",
+      actorId:
+        "deployKeyId" in auth && auth.deployKeyId
+          ? auth.deployKeyId
+          : "cliTokenId" in auth
+            ? auth.cliTokenId
+            : auth.accountId,
+    },
+  );
+
+  return rotated
+    ? json(rotated)
+    : jsonError(
+        404,
+        "Project or stage not found, or it has no runtime key yet",
+      );
 }
 
 /**

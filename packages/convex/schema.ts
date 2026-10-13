@@ -188,6 +188,17 @@ export const agentDeploymentsFields = {
   createdByUserId: v.optional(v.id("users")),
   /** Last runtime request the key authenticated, written by core at most every few minutes. */
   lastUsedAt: v.optional(v.number()),
+  /**
+   * The stage's user-token signing secret (`bsig_…`), sealed under the
+   * account's key like the runtime key, because core needs the plaintext to
+   * check an HMAC. Never revealed again after the mint that showed it.
+   * Absent until an owner generates one.
+   */
+  userTokenSecretCiphertext: v.optional(v.string()),
+  userTokenSecretIv: v.optional(v.string()),
+  userTokenSecretTag: v.optional(v.string()),
+  userTokenSecretHint: v.optional(v.string()),
+  userTokenSecretCreatedAt: v.optional(v.number()),
   updatedAt: v.number(),
 };
 
@@ -537,6 +548,13 @@ export const agentsFields = {
   encryptedSourceConfig: v.optional(v.string()),
   sourceEncryptionIv: v.optional(v.string()),
   sourceEncryptionTag: v.optional(v.string()),
+  /**
+   * Whether a runtime-key (`bsk_`) request must carry a signed user token.
+   * Every agent created from now on gets `true`; an older row has none and
+   * keeps answering without one until its owner turns it on. Not part of the
+   * config, so a CLI or API config sync never flips it.
+   */
+  requireUserToken: v.optional(v.boolean()),
   createdAt: v.number(),
   updatedAt: v.number(),
 };

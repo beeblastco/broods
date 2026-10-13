@@ -33,6 +33,7 @@ import { subagentModel } from "./subagent-model.ts";
 import { subagentResume } from "./subagent-resume.ts";
 import { subagentStop } from "./subagent-stop.ts";
 import { trailingSlash } from "./trailing-slash.ts";
+import { userToken } from "./user-token.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { websocketAttachAbort } from "./websocket-attach-abort.ts";
 import { websocketRuntimeKey } from "./websocket-runtime-key.ts";
@@ -45,6 +46,7 @@ export const verifyCases: readonly VerifyCase[] = [
   sdkClient,
   websocketAttachAbort,
   websocketRuntimeKey,
+  userToken,
   queuedFollowup,
   queuedCompact,
   steerAtBoundary,

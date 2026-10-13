@@ -45,7 +45,7 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
@@ -584,6 +584,9 @@ export function DetailsTab({
             onCheckedChange={(next) => void onUpdatePublicAccess(next)}
           />
         )}
+        {publicAccess && agentConfig && (
+          <UserTokenToggle configId={agentConfig._id} canWrite={canWrite} />
+        )}
         <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
           <p className="text-2xs text-muted-foreground">
             {publicAccess
@@ -934,4 +937,38 @@ function readCustomBaseUrl(
     typeof custom.base_url === "string" ? custom.base_url : custom.baseURL;
 
   return typeof value === "string" ? value : "";
+}
+
+function UserTokenToggle({
+  configId,
+  canWrite,
+}: {
+  configId: Id<"agentConfigs">;
+  canWrite: boolean;
+}): React.JSX.Element | null {
+  const required = useQuery(api.agent.config.userTokenRequirement, {
+    configId: configId,
+  });
+  const setRequired = useMutation(api.agent.config.setRequireUserToken);
+  const [error, setError] = useState<string | null>(null);
+  if (required === undefined || required === null) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <ToggleRow
+        label="Require user token"
+        description="Runtime-key callers must send a signed user token"
+        checked={required}
+        disabled={!canWrite}
+        onCheckedChange={(next) => {
+          setError(null);
+          setRequired({ configId: configId, required: next }).catch(
+            (err: unknown) => {
+              setError(toErrorMessage(err));
+            },
+          );
+        }}
+      />
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
 }

@@ -8,6 +8,16 @@ import {
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
+import {
+  AccountCipher,
+  createWrappedAccountKey,
+  type EncryptedBlob,
+} from "@broods/convex/model/envelope";
+import {
+  sealUserToken,
+  USER_TOKEN_HEADER,
+} from "@broods/convex/model/userToken";
+import { resetAccountKeysForTests } from "../src/shared/convex/account-keys.ts";
 import { sealRunToken } from "../src/shared/run-token.ts";
 import {
   getStorage,
@@ -54,6 +64,7 @@ let accountsBySecretHash: Record<string, AccountRecord>;
 let runtimeKeyHashes: Set<string>;
 let agentsById: Record<string, AgentRecord>;
 let roleSessionsByTokenHash: Record<string, RolePrincipal>;
+let userTokenSecret: EncryptedBlob | undefined;
 
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
@@ -66,6 +77,7 @@ beforeEach(() => {
   roleSessionsByTokenHash = {
     [sha256Hex(ROLE_SESSION_TOKEN)]: ROLE_PRINCIPAL,
   };
+  userTokenSecret = undefined;
   setStorageForTests({
     accounts: {
       getById: async (accountId: string) => accountsById[accountId] ?? null,
@@ -85,6 +97,7 @@ beforeEach(() => {
               projectSlug: "demo",
               stageSlug: "development",
               account: ACCOUNT,
+              ...(userTokenSecret ? { userTokenSecret: userTokenSecret } : {}),
             }
           : null,
       touchLastUsed: async () => {},
@@ -402,6 +415,83 @@ describe("resolveBearerAuth with a run token", () => {
     accountsById[ACCOUNT.accountId] = { ...ACCOUNT, status: "disabled" };
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${token}` }),
+    ).toBeNull();
+  });
+});
+
+describe("runtime key with a user token", () => {
+  const KEK = "core-test-kek";
+  const SIGNING_SECRET = "bsig_stage-signing-secret";
+  const runtimeKey = `Bearer ${DEPLOYMENT_API_KEY}`;
+
+  beforeEach(async () => {
+    process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = KEK;
+    const keys = [await createWrappedAccountKey(ACCOUNT.accountId, [KEK])];
+    resetAccountKeysForTests(async () => keys);
+    userTokenSecret = await new AccountCipher(
+      ACCOUNT.accountId,
+      [KEK],
+      keys,
+    ).encrypt("agentDeployments:userTokenSecretCiphertext", {
+      value: SIGNING_SECRET,
+    });
+  });
+
+  afterEach(() => {
+    resetAccountKeysForTests();
+  });
+
+  it("puts the token's user on the deployment auth", async () => {
+    const token = await sealUserToken(
+      { userId: "alice", expiresAt: Date.now() + 60_000 },
+      SIGNING_SECRET,
+    );
+
+    expect(
+      await resolveBearerAuth({
+        authorization: runtimeKey,
+        [USER_TOKEN_HEADER]: token,
+      }),
+    ).toMatchObject({ kind: "deployment", user: { userId: "alice" } });
+    expect(
+      await resolveBearerAuth({ authorization: runtimeKey }),
+    ).not.toHaveProperty("user");
+  });
+
+  it("refuses the whole key with a forged, expired or garbage token", async () => {
+    const forged = await sealUserToken(
+      { userId: "alice", expiresAt: Date.now() + 60_000 },
+      "bsig_someone-else",
+    );
+    const expired = await sealUserToken(
+      { userId: "alice", expiresAt: Date.now() - 500 },
+      SIGNING_SECRET,
+      Date.now() - 1_000,
+    );
+
+    for (const token of [forged, expired, "buat_garbage", ""]) {
+      expect(
+        await resolveBearerAuth({
+          authorization: runtimeKey,
+          [USER_TOKEN_HEADER]: token,
+        }),
+        token.slice(0, 12),
+      ).toBeNull();
+    }
+  });
+
+  it("refuses any token while the stage has no signing secret", async () => {
+    userTokenSecret = undefined;
+    const token = await sealUserToken(
+      { userId: "alice", expiresAt: Date.now() + 60_000 },
+      SIGNING_SECRET,
+    );
+
+    expect(
+      await resolveBearerAuth({
+        authorization: runtimeKey,
+        [USER_TOKEN_HEADER]: token,
+      }),
     ).toBeNull();
   });
 });

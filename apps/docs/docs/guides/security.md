@@ -15,6 +15,8 @@ A custom role, made under Organization settings, Roles, sits on the member tier 
 | Create or edit agents, the canvas, workspace files, MCP servers              | no     | yes          |
 | Reveal, set or delete an environment variable                                | no     | yes          |
 | Reveal or rotate the runtime key                                             | no     | yes          |
+| Generate or rotate the user token signing secret                             | no     | yes          |
+| Turn an agent's user token requirement on or off                             | no     | yes          |
 | Create, clone or promote a stage. Create or delete a project.                | no     | yes          |
 | Manage agent webhooks and scheduled jobs                                     | no     | yes          |
 | Exec, open a terminal, snapshot, suspend or terminate a sandbox              | no     | yes          |
@@ -26,22 +28,24 @@ The CLI only works for owners and admins.
 
 Three keys are yours to hold. Use the narrowest one that works.
 
-| Key         | Prefix  | Scope                 | What it can do                                                           | Never                                       |
-| ----------- | ------- | --------------------- | ------------------------------------------------------------------------ | ------------------------------------------- |
-| Account key | `bask_` | The whole account     | Everything: create and change agents, crons, files and roles, run agents | Put it in a frontend or hand it to an agent |
-| Project key | `bpdk_` | One project and stage | Deploy, and set and list environment variables                           | Expect it to read a variable's value        |
-| Runtime key | `bsk_`  | One project and stage | Run agents with `publicAccess: true`                                     | Expect it to read logs or change config     |
+| Key            | Prefix  | Scope                 | What it can do                                                           | Never                                       |
+| -------------- | ------- | --------------------- | ------------------------------------------------------------------------ | ------------------------------------------- |
+| Account key    | `bask_` | The whole account     | Everything: create and change agents, crons, files and roles, run agents | Put it in a frontend or hand it to an agent |
+| Project key    | `bpdk_` | One project and stage | Deploy, set and list environment variables, rotate the signing secret    | Expect it to read a variable's value        |
+| Runtime key    | `bsk_`  | One project and stage | Run agents with `publicAccess: true`                                     | Expect it to read logs or change config     |
+| Signing secret | `bsig_` | One project and stage | Sign user tokens on your server                                          | Put it in a frontend                        |
 
-`BROODS_ACCOUNT_SECRET` holds the account key, `BROODS_TOKEN` a project key, and `BROODS_API_KEY` the runtime key.
+`BROODS_ACCOUNT_SECRET` holds the account key, `BROODS_TOKEN` a project key, `BROODS_API_KEY` the runtime key, and `BROODS_USER_TOKEN_SECRET` the signing secret.
 
 The rest are issued for you and expire or follow your membership:
 
-| Credential           | Prefix  | Use it for                                        | Never                                          |
-| -------------------- | ------- | ------------------------------------------------- | ---------------------------------------------- |
-| CLI login            | `bcli_` | Your own machine                                  | Share it                                       |
-| Role session         | `bsts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours                  |
-| Stage session ticket | `bdts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes.                 |
-| Run token            | `brt_`  | Sandbox code reading its agent's runs             | Start a run with it, or expect it past the run |
+| Credential           | Prefix  | Use it for                                        | Never                                              |
+| -------------------- | ------- | ------------------------------------------------- | -------------------------------------------------- |
+| CLI login            | `bcli_` | Your own machine                                  | Share it                                           |
+| Role session         | `bsts_` | Handing a tool or agent narrow API access         | Expect it to outlive 12 hours                      |
+| Stage session ticket | `bdts_` | Minted for you by the dashboard and `broods logs` | Store it. It lasts 15 minutes.                     |
+| Run token            | `brt_`  | Sandbox code reading its agent's runs             | Start a run with it, or expect it past the run     |
+| User token           | `buat_` | Telling a run which of your users is calling      | Mint it in a browser. It lasts 60 minutes at most. |
 
 Every Broods credential starts with `b`, so you and a secret scanner can tell it from another vendor's key.
 
@@ -51,6 +55,56 @@ The runtime key is the one key meant to sit in a frontend, so it is limited:
 - It cannot send `system` messages or `model` overrides unless the agent sets `allowRunOverrides: true`.
 - `continue` with it only reopens conversations the direct API started, never a channel conversation.
 - It cannot open logs, traces or the machine socket.
+- An agent that requires a user token refuses it without one. See below.
+
+## Users behind the runtime key
+
+:::warning Conversation keys are readable by anyone with the runtime key
+
+The runtime key sits in your website's code, so every visitor has it. Without a user token, a request names its conversation with `conversationKey` and Broods takes it as given. A visitor who guesses another user's key (a user id, an email, `ticket-42`) can read that conversation's runs, steer it, answer its approvals and continue it. Send a user token on every runtime-key request, and turn the requirement on for every agent your frontend reaches.
+
+:::
+
+Your backend knows who is signed in, so it vouches for them. It signs a short-lived user token with the stage's signing secret, and your frontend sends that token beside the runtime key.
+
+```ts
+// On your server, after your own sign-in check.
+import { signUserToken } from "broods";
+
+const userToken = await signUserToken({
+  userId: session.user.id,
+  ttlMs: 10 * 60 * 1000, // 10 minutes is the default, 60 the most
+}); // reads BROODS_USER_TOKEN_SECRET
+```
+
+```ts
+// In the browser.
+import { BroodsClient } from "broods";
+
+const client = new BroodsClient({
+  apiKey: "bsk_...",
+  userToken: () => fetch("/api/broods-token").then((r) => r.text()),
+});
+await client.run(api.agents.support, {
+  conversationKey: "ticket-42",
+  input: "Where is my order?",
+});
+```
+
+With a valid token, every conversation key and event id of that request lives under that user. `ticket-42` becomes `bsu:<userId>:ticket-42`, and responses name it that way. Another user's token, or no token, cannot reach it, for new runs, steering, approvals, `continue` or reading a run.
+
+| Token field     | What it does                                                                                 |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `userId`        | Your id for the user. Letters, digits and `._@+=-`, at most 128 characters                   |
+| `conversations` | Optional. The only conversation keys this user may use. Omit to allow any key under the user |
+| `ttlMs`         | Lifetime. Default 10 minutes, at most 60                                                     |
+
+- `broods dev` and `broods deploy` write the signing secret to `.env.local` when the stage has none yet. They never rotate a secret the stage already has; they warn when your checkout does not hold it. You can also generate or rotate it on the dashboard's Runtime key tab. It is shown once. Rotating it voids every token it signed at once.
+- Every agent created from now on requires a user token with the runtime key. An agent made before keeps working without one until you turn the requirement on in its Details tab. Plan to turn it on for every existing agent your frontend reaches within 30 days; a token is honored even while the requirement is off, so send tokens first, then flip the switch.
+- A forged or expired token fails the whole request with `401`. A missing one on an agent that requires it is `403 user_token_required`. A conversation the token does not list is `403 user_token_conversation`.
+- On the WebSocket, `BroodsWebSocketClient` takes `userToken` too. It rides the upgrade as a `broods.user.<token>` subprotocol entry. The gateway closes the socket with `4419` when the token expires; open a new one with a fresh token.
+- The account key and the dashboard's stage session ticket speak for the whole stage and take no user token.
+- Keys starting with `bsu:` are reserved for user namespaces.
 
 The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access; that takes `keys:write` for the organization, which admins hold and a role can be granted. The account key is the whole account API, so give organization-wide `keys:write` as you would admin. Rotation breaks everything holding the old one.
 

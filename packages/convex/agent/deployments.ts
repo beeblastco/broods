@@ -39,6 +39,7 @@ import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { userByAuthId } from "../model/ownership/org";
 import { getOwnedStage, getStageForWrite } from "../model/ownership/stage";
 import { getProjectForWrite } from "../model/ownership/project";
+import { USER_TOKEN_SECRET_PREFIX } from "../model/userToken";
 import {
   sealStageSessionTicket,
   STAGE_SESSION_TICKET_TTL_MS,
@@ -104,6 +105,8 @@ type EnsureResult = {
   keyHint: string;
   /** Plaintext key: freshly minted, or recovered from the stored blob. */
   rawApiKey: string;
+  /** The stage's user-token signing secret hint, when it has one. */
+  userTokenSecretHint?: string;
 };
 
 /** Returns the stage's recoverable runtime key, creating one on first call. */
@@ -178,9 +181,17 @@ export const getByAgentId = internalQuery({
 /** Resolve a runtime key hash to the account and scope it invokes. */
 export const getByApiKeyHash = internalQuery({
   args: { apiKeyHash: v.string() },
-  // The account rides along so core authenticates a runtime key in one call.
+  // The account rides along so core authenticates a runtime key in one call,
+  // and the signing secret too, still sealed: core opens it only when a
+  // request carries a user token.
   returns: v.union(
-    v.object({ ...agentDeploymentScopeValidator.fields, account: accountDoc }),
+    v.object({
+      ...agentDeploymentScopeValidator.fields,
+      account: accountDoc,
+      userTokenSecret: v.optional(
+        v.object({ ciphertext: v.string(), iv: v.string(), tag: v.string() }),
+      ),
+    }),
     v.null(),
   ),
   handler: async (ctx, { apiKeyHash }) => {
@@ -201,6 +212,17 @@ export const getByApiKeyHash = internalQuery({
       projectSlug: deployment.projectSlug,
       stageSlug: deployment.stageSlug,
       account: account,
+      ...(deployment.userTokenSecretCiphertext &&
+      deployment.userTokenSecretIv &&
+      deployment.userTokenSecretTag
+        ? {
+            userTokenSecret: {
+              ciphertext: deployment.userTokenSecretCiphertext,
+              iv: deployment.userTokenSecretIv,
+              tag: deployment.userTokenSecretTag,
+            },
+          }
+        : {}),
     };
   },
 });
@@ -218,15 +240,7 @@ export const getForStage = query({
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
 
-    const deployment = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_projectId_and_stageId_and_status", (q) =>
-        q
-          .eq("projectId", projectId)
-          .eq("stageId", stageId)
-          .eq("status", "active"),
-      )
-      .first();
+    const deployment = await activeDeployment(ctx, projectId, stageId);
     if (!deployment) return null;
 
     return {
@@ -283,15 +297,7 @@ export async function mintStageSessionTicket(
   stageId: Id<"stages">,
   sandboxWrite = false,
 ): Promise<StageSession | null> {
-  const deployment = await ctx.db
-    .query("agentDeployments")
-    .withIndex("by_projectId_and_stageId_and_status", (q) =>
-      q
-        .eq("projectId", projectId)
-        .eq("stageId", stageId)
-        .eq("status", "active"),
-    )
-    .first();
+  const deployment = await activeDeployment(ctx, projectId, stageId);
   if (!deployment) return null;
 
   const expiresAt = Date.now() + STAGE_SESSION_TICKET_TTL_MS;
@@ -334,15 +340,7 @@ export const revealKeyForStage = query({
     const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) return null;
 
-    const deployment = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_projectId_and_stageId_and_status", (q) =>
-        q
-          .eq("projectId", projectId)
-          .eq("stageId", stageId)
-          .eq("status", "active"),
-      )
-      .first();
+    const deployment = await activeDeployment(ctx, projectId, stageId);
     if (!deployment) return null;
 
     return {
@@ -420,6 +418,118 @@ export const rotate = mutation({
   },
 });
 
+/** The stage's user-token signing secret as the dashboard may show it: never the secret. */
+const userTokenSecretView = v.object({
+  hint: v.string(),
+  createdAt: v.optional(v.number()),
+});
+
+/** A freshly minted signing secret, returned this once, and its masked hint. */
+export const userTokenSecretReturn = v.object({
+  secret: v.string(),
+  hint: v.string(),
+});
+
+/** Whether the stage has a user-token signing secret, and its masked hint. */
+export const userTokenSecretForStage = query({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
+  returns: v.union(userTokenSecretView, v.null()),
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<Infer<typeof userTokenSecretView> | null> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
+    const deployment = await activeDeployment(ctx, projectId, stageId);
+    if (!deployment?.userTokenSecretHint) return null;
+
+    return {
+      hint: deployment.userTokenSecretHint,
+      createdAt: deployment.userTokenSecretCreatedAt,
+    };
+  },
+});
+
+/**
+ * Mint the stage's user-token signing secret, replacing any earlier one, and
+ * return it this once. Tokens the old secret signed stop opening at once, so
+ * a leaked secret is out the moment it is rotated.
+ */
+export const rotateUserTokenSecret = mutation({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
+  returns: userTokenSecretReturn,
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<Infer<typeof userTokenSecretReturn>> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const project = await getProjectForWrite(ctx, authUser.id, projectId);
+    if (!project) throw new Error("Project not found.");
+    const member = await userByAuthId(ctx, authUser.id);
+    if (!member) throw new Error("User row not found");
+    await requireDashboardPermission(ctx, project.orgId, member, "keys:write", {
+      projectId: projectId,
+      stageId: stageId,
+    });
+    const rotated = await rotateStageUserTokenSecret(
+      ctx,
+      projectId,
+      stageId,
+      dashboardAuditActor(authUser),
+    );
+    if (!rotated) throw new Error("Generate the stage's runtime key first.");
+
+    return rotated;
+  },
+});
+
+/**
+ * Seal a fresh signing secret on the stage's active deployment and audit it,
+ * for the dashboard and the CLI route alike. The caller has already checked
+ * `keys:write`. Null when the stage has no deployment yet.
+ */
+export async function rotateStageUserTokenSecret(
+  ctx: MutationCtx,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+  actor: AuditActor,
+): Promise<Infer<typeof userTokenSecretReturn> | null> {
+  const deployment = await activeDeployment(ctx, projectId, stageId);
+  if (!deployment) return null;
+
+  const secret = randomToken(USER_TOKEN_SECRET_PREFIX);
+  const cipher = await accountCipherForWrite(ctx, deployment.accountId);
+  const blob = await cipher.encrypt(
+    "agentDeployments:userTokenSecretCiphertext",
+    { value: secret },
+  );
+  const hint = keyHint(USER_TOKEN_SECRET_PREFIX, secret);
+  const now = Date.now();
+  await ctx.db.patch(deployment._id, {
+    userTokenSecretCiphertext: blob.ciphertext,
+    userTokenSecretIv: blob.iv,
+    userTokenSecretTag: blob.tag,
+    userTokenSecretHint: hint,
+    userTokenSecretCreatedAt: now,
+    updatedAt: now,
+  });
+  await recordDeploymentAudit(ctx, actor, {
+    accountId: deployment.accountId,
+    projectId: projectId,
+    stageId: stageId,
+    action: "user-token-secret-rotated",
+    endpointId: deployment.endpointId,
+    summary: "User token signing secret rotated",
+  });
+
+  return { secret: secret, hint: hint };
+}
+
 /**
  * Mints a stage's runtime key and audits it, so Monitoring and Tracing stream
  * from the first visit. Project and stage creation call it right after the
@@ -478,15 +588,7 @@ export async function ensureStageDeployment(
   },
 ): Promise<EnsureResult> {
   const endpointId = endpointIdForStage(args.stageId);
-  const existing = await ctx.db
-    .query("agentDeployments")
-    .withIndex("by_projectId_and_stageId_and_status", (q) =>
-      q
-        .eq("projectId", args.projectId)
-        .eq("stageId", args.stageId)
-        .eq("status", "active"),
-    )
-    .first();
+  const existing = await activeDeployment(ctx, args.projectId, args.stageId);
 
   if (existing && args.rotate !== true) {
     // Keep slugs fresh (project/stage can be renamed) but reuse the key,
@@ -509,6 +611,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       keyHint: existing.keyHint,
       rawApiKey: await decryptApiKey(ctx, existing),
+      userTokenSecretHint: existing.userTokenSecretHint,
     };
   }
 
@@ -537,6 +640,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       keyHint: keyHint,
       rawApiKey: rawApiKey,
+      userTokenSecretHint: existing.userTokenSecretHint,
     };
   }
 
@@ -617,6 +721,23 @@ async function runtimeKeyFields(
     apiKeyIv: blob.iv,
     apiKeyTag: blob.tag,
   };
+}
+
+/** The stage's active deployment row, if it has one. */
+async function activeDeployment(
+  ctx: QueryCtx,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+): Promise<Doc<"agentDeployments"> | null> {
+  return await ctx.db
+    .query("agentDeployments")
+    .withIndex("by_projectId_and_stageId_and_status", (q) =>
+      q
+        .eq("projectId", projectId)
+        .eq("stageId", stageId)
+        .eq("status", "active"),
+    )
+    .first();
 }
 
 /** Stable opaque endpoint handle for a stage's runtime API. */

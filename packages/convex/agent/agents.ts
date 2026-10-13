@@ -88,6 +88,8 @@ export const create = internalMutation({
       encryptedSourceConfig: args.encryptedSourceConfig,
       sourceEncryptionIv: args.sourceEncryptionIv,
       sourceEncryptionTag: args.sourceEncryptionTag,
+      // New agents take a runtime key only with a signed user token.
+      requireUserToken: true,
       createdAt: now,
       updatedAt: now,
     });

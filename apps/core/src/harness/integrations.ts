@@ -4,6 +4,11 @@
  */
 
 import type { ApiErrorInit } from "@broods/convex/model/apiError";
+import {
+  userConversationKey,
+  userConversationPrefix,
+  type UserToken,
+} from "@broods/convex/model/userToken";
 import { context as otelContextApi } from "@opentelemetry/api";
 import type {
   JSONValue,
@@ -126,7 +131,11 @@ import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
 } from "./hook-dispatcher.ts";
-import { deploymentScopeMatches, statusAccessDenial } from "./status-access.ts";
+import {
+  deploymentScopeMatches,
+  embeddableKeyReaches,
+  statusAccessDenial,
+} from "./status-access.ts";
 import {
   getAsyncAgentResult,
   type AsyncAgentResultRecord,
@@ -854,6 +863,15 @@ async function handleHttpRequest(
       // The gateway closes an observability socket at this instant: a ticket
       // is checked once at the upgrade, so its lifetime must ride along.
       ...(auth.stageTicket ? { expiresAt: auth.stageTicket.expiresAt } : {}),
+      // A socket opened with a user token streams that user's conversations,
+      // which core keys under this namespace; the gateway subscribes to it.
+      // The gateway closes the agent socket when the user token dies.
+      ...(auth.user
+        ? {
+            conversationPrefix: userConversationPrefix(auth.user.userId),
+            userTokenExpiresAt: auth.user.expiresAt,
+          }
+        : {}),
     });
   }
 
@@ -2414,14 +2432,24 @@ async function parseDirectPayload(
     throw new DirectNotFoundError("Agent not found");
   }
   const embeddableKey = admitStageCredential(deploymentAuth, agent, deployment);
+  // Only the embeddable key carries a user: a ticket or an account key
+  // already speaks for the whole stage.
+  const user = embeddableKey ? deploymentAuth?.user : undefined;
+  if (embeddableKey && !user && agent.requireUserToken === true) {
+    throw new DirectForbiddenError(userTokenRequiredMessage(agent.agentId), {
+      code: "user_token_required",
+    });
+  }
 
-  const rawEventId = assertValidPublicEventId(record.eventId as string);
+  const rawEventId = user
+    ? userScopedEventId(user, record.eventId as string)
+    : assertValidPublicEventId(record.eventId as string);
   const conversation = directConversationKeys(
     record.conversationKey,
     continuation,
     account.accountId,
     agent.agentId,
-    embeddableKey,
+    embeddableKey ? { user: user } : null,
   );
 
   const events = parseDirectIngressEvents(record);
@@ -2495,37 +2523,65 @@ function directConversationKeys(
   continuation: boolean,
   accountId: string,
   agentId: string,
-  apiConversationsOnly: boolean,
+  embeddable: { user?: UserToken } | null,
 ): Pick<DirectInboundEvent, "conversationKey" | "publicConversationKey"> {
   if (continuation && requested.startsWith(ACCOUNT_NAMESPACE_PREFIX)) {
     const scope = parseAccountAgentScopedKey(requested);
+    const publicKey = publicConversationKeyFromScoped(
+      requested,
+      accountId,
+      agentId,
+    );
     // A channel session belongs to its channel: the embeddable key continues
-    // only conversations the direct API opened.
+    // only conversations the direct API opened, and only its own user's.
     if (
       !scope ||
       scope.accountId !== accountId ||
       scope.agentId !== agentId ||
-      (apiConversationsOnly &&
-        !scope.key.startsWith(DIRECT_API_CONVERSATION_PREFIX))
+      (embeddable &&
+        (!scope.key.startsWith(DIRECT_API_CONVERSATION_PREFIX) ||
+          !embeddableKeyReaches(embeddable.user, publicKey)))
     ) {
       throw new DirectNotFoundError("Conversation not found");
     }
 
-    return {
-      conversationKey: requested,
-      publicConversationKey: publicConversationKeyFromScoped(
-        requested,
-        accountId,
-        agentId,
-      ),
-    };
+    return { conversationKey: requested, publicConversationKey: publicKey };
   }
-  const raw = assertValidPublicConversationKey(requested);
+  const user = embeddable?.user;
+  const requestedKey = normalizeDirectIdentifier("conversationKey", requested);
+  const publicKey = user
+    ? userConversationKey(user, requestedKey)
+    : requestedKey;
+  if (publicKey === null) {
+    throw new DirectForbiddenError(
+      "The user token does not list this conversationKey.",
+      { code: "user_token_conversation", param: "conversationKey" },
+    );
+  }
+  // The part after a user's namespace is held to the rules of a bare key.
+  const bare = user
+    ? publicKey.slice(userConversationPrefix(user.userId).length)
+    : publicKey;
+  if (assertValidPublicConversationKey(bare) !== bare) {
+    throw new Error("conversationKey must not start or end with whitespace");
+  }
 
   return {
-    conversationKey: scopedDirectConversationKey(accountId, agentId, raw),
-    publicConversationKey: raw,
+    conversationKey: scopedDirectConversationKey(accountId, agentId, publicKey),
+    publicConversationKey: publicKey,
   };
+}
+
+/** A caller event id under the token's user, accepting one already namespaced. */
+function userScopedEventId(user: UserToken, requested: string): string {
+  const prefix = userConversationPrefix(user.userId);
+  const bare = normalizeDirectIdentifier("eventId", requested);
+
+  return `${prefix}${assertValidPublicEventId(bare.startsWith(prefix) ? bare.slice(prefix.length) : bare)}`;
+}
+
+function userTokenRequiredMessage(agentId: string): string {
+  return `Agent ${agentId} requires a signed user token with the runtime key. Send it in the X-Broods-User-Token header (signUserToken in the broods SDK), or turn the requirement off for this agent.`;
 }
 
 /** A body is exactly one of: events, answers, or a bare continue. */

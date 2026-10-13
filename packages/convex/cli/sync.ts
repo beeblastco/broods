@@ -7,7 +7,7 @@
  * helpers live in `model/cliSync*.ts`.
  */
 
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 import type { GeneratedIds } from "./types";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -15,7 +15,13 @@ import {
   internalQuery,
   type MutationCtx,
 } from "../_generated/server";
-import { ensureStageDeployment } from "../agent/deployments";
+import {
+  ensureStageDeployment,
+  rotateStageUserTokenSecret,
+  userTokenSecretReturn,
+} from "../agent/deployments";
+import { hasDashboardPermission } from "../model/access";
+import { userByAuthId } from "../model/ownership/org";
 import { accountCipher } from "../model/accountKeys";
 import { sha256Hex } from "../model/accountSecrets";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
@@ -297,6 +303,8 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       ),
       keyHint: v.string(),
       apiKey: v.string(),
+      /** Set once the stage has a user-token signing secret. */
+      userTokenSecretHint: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -358,7 +366,71 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       stageKind: stageDoc.kind,
       keyHint: result.keyHint,
       apiKey: result.rawApiKey,
+      ...(result.userTokenSecretHint
+        ? { userTokenSecretHint: result.userTokenSecretHint }
+        : {}),
     };
+  },
+});
+
+/**
+ * Rotates the stage's user-token signing secret (`bsig_…`) for the CLI and
+ * returns it this once, through the dashboard's own rotation. An account or
+ * project key holds `keys:write` on its stage by issue; a `broods login`
+ * token answers for its member, who must hold it now. Null when the project,
+ * stage or its deployment is unknown.
+ */
+export const rotateUserTokenSecretBySecretHash = internalMutation({
+  args: {
+    secretHash: v.string(),
+    project: v.string(),
+    stage: v.string(),
+    /** WorkOS id of the CLI-login user, whose `keys:write` is checked. */
+    cliAuthId: v.optional(v.string()),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.optional(v.string()),
+  },
+  returns: v.union(v.null(), userTokenSecretReturn),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof userTokenSecretReturn> | null> => {
+    const account = await accountFromSecretHash(ctx, args.secretHash);
+    if (!account) return null;
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      args.project,
+      args.stage,
+    );
+    if (!resolved) return null;
+    const { projectDoc, stageDoc } = resolved;
+    const member = args.cliAuthId
+      ? await userByAuthId(ctx, args.cliAuthId)
+      : null;
+    if (
+      args.cliAuthId &&
+      !(
+        member &&
+        (await hasDashboardPermission(
+          ctx,
+          projectDoc.orgId,
+          member,
+          "keys:write",
+          { projectId: projectDoc._id, stageId: stageDoc._id },
+        ))
+      )
+    ) {
+      throw new ClientError(
+        "Rotating the user token signing secret needs keys:write on this stage",
+        "forbidden",
+      );
+    }
+
+    return await rotateStageUserTokenSecret(ctx, projectDoc._id, stageDoc._id, {
+      kind: args.actorKind,
+      id: args.actorId,
+    });
   },
 });
 

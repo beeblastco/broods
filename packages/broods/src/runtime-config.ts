@@ -144,8 +144,8 @@ function loadEnvFiles(cwd: string): void {
   }
 }
 
-/** Parses dotenv-style `KEY=value` lines, tolerating `export `, comments, and blanks. */
-function parseEnv(source: string): Record<string, string> {
+/** Parses dotenv-style `KEY=value` lines, tolerating `export `, comments, quotes and blanks. */
+export function parseEnv(source: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const rawLine of source.split(/\r?\n/)) {
     const line = rawLine.trim();

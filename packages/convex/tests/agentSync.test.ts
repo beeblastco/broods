@@ -677,6 +677,8 @@ describe("ensureAgentsRowForConfig", () => {
     await tt.run(async (ctx) => {
       const agent = await ctx.db.get(agentId!);
       expect(agent?.accountId).toBe(personal.accountId);
+      // A new agent asks runtime-key callers for a signed user token.
+      expect(agent?.requireUserToken).toBe(true);
     });
   });
 

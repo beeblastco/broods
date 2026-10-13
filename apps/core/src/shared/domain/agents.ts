@@ -11,6 +11,12 @@ export interface AgentRecord {
   name: string;
   description?: string;
   config: AgentConfig;
+  /**
+   * A runtime-key request must carry a signed user token. Set on every agent
+   * created since the token shipped; unset on an older one until its owner
+   * turns it on.
+   */
+  requireUserToken?: boolean;
   createdAt: string;
   updatedAt: string;
 }

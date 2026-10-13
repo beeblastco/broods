@@ -23,6 +23,14 @@ writes for the selected stage.
 WebSocket demos use the same `BROODS_BASE_URL` or `BROODS_HOST` override as
 HTTP clients. The hosted SDK default is `gateway.broods.app`.
 
+A new agent refuses the runtime key without a signed user token, so the demos
+sign one for a single `demo-user` with `signUserToken`. It reads the stage's
+signing secret from `BROODS_USER_TOKEN_SECRET`, which `bun run dev`/`bun run
+deploy` write to the demo's `.env.local` with the runtime key (the dashboard's
+Runtime key tab can rotate it too; it is shown once). A
+real app signs a token per signed-in user on its server, never in a browser.
+See `apps/docs/docs/guides/security.md`, "Users behind the runtime key".
+
 ## Run against a local core
 
 The core now runs as a single container (`apps/core`, off Lambda). You can run

@@ -21,7 +21,13 @@ import {
   openStageSessionTicket,
   STAGE_SESSION_TICKET_PREFIX,
 } from "@broods/convex/model/stageSessionTicket";
+import {
+  openUserToken,
+  USER_TOKEN_HEADER,
+  type UserToken,
+} from "@broods/convex/model/userToken";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { decryptAccountBlob } from "./convex/account-keys.ts";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
 import { waitUntil } from "./in-flight.ts";
@@ -48,6 +54,9 @@ export type AuthContext =
       stageSlug: string;
       // Set for a member-minted bdts_ ticket, unset for the embeddable key.
       stageTicket?: StageTicketScope;
+      // The end user a runtime key's request carries a valid signed token
+      // for. Every conversation it touches lives under that user's namespace.
+      user?: UserToken;
     }
   | {
       // Short-lived assume-role session minted by the config plane. What it
@@ -168,7 +177,7 @@ export async function resolveBearerAuth(
     return await resolveAccountSecretAuth(token, options);
   }
   if (token.startsWith(RUNTIME_KEY_PREFIX)) {
-    return await resolveRuntimeKeyAuth(token);
+    return await resolveRuntimeKeyAuth(token, headers[USER_TOKEN_HEADER]);
   }
 
   return null;
@@ -226,14 +235,37 @@ async function resolveRoleSessionAuth(
   return { kind: "role", account: account, role: principal };
 }
 
-/** Resolve a runtime key in one lookup, stamping its lastUsedAt (throttled). */
+/**
+ * Resolve a runtime key in one lookup, stamping its lastUsedAt (throttled).
+ * A user token beside it must open under the stage's signing secret, or the
+ * whole credential is refused: a forged or expired token is a bad login.
+ */
 async function resolveRuntimeKeyAuth(
   token: string,
+  userTokenHeader: string | undefined,
 ): Promise<AuthContext | null> {
   const apiKeyHash = sha256Hex(token);
   const deployment =
     await getStorage().agentDeployments.getByApiKeyHash(apiKeyHash);
   if (!deployment || deployment.account.status !== "active") return null;
+  let user: UserToken | undefined;
+  if (userTokenHeader !== undefined) {
+    const secret = deployment.userTokenSecret
+      ? (
+          await decryptAccountBlob(
+            deployment.accountId,
+            "agentDeployments:userTokenSecretCiphertext",
+            deployment.userTokenSecret,
+          )
+        ).value
+      : undefined;
+    const opened =
+      typeof secret === "string"
+        ? await openUserToken(userTokenHeader.trim(), secret)
+        : null;
+    if (!opened) return null;
+    user = opened;
+  }
   const now = Date.now();
   if (claimLastUsedWrite(keyLastUsedWrites, apiKeyHash, now)) {
     waitUntil(getStorage().agentDeployments.touchLastUsed(apiKeyHash, now));
@@ -245,6 +277,7 @@ async function resolveRuntimeKeyAuth(
     endpointId: deployment.endpointId,
     projectSlug: deployment.projectSlug,
     stageSlug: deployment.stageSlug,
+    ...(user ? { user: user } : {}),
   };
 }
 
