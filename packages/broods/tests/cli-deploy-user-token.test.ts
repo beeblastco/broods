@@ -104,6 +104,7 @@ export const support = defineAgent({
 async function runDeploy(
   cwd: string,
   baseUrl: string,
+  shell: Record<string, string> = {},
 ): Promise<{ exitCode: number; output: string; envLocal: string }> {
   const proc = Bun.spawn({
     cmd: [process.execPath, CLI, "deploy"],
@@ -116,6 +117,7 @@ async function runDeploy(
       HOME: process.env.HOME ?? "",
       BROODS_TOKEN: "tok",
       BROODS_BASE_URL: baseUrl,
+      ...shell,
     },
   });
   const [exitCode, stdout, stderr] = await Promise.all([
@@ -189,6 +191,25 @@ test("deploy leaves a secret that matches the stage alone", async () => {
   expect(result.exitCode).toBe(0);
   expect(backend.rotations).toEqual([]);
   expect(result.output).not.toContain("user token signing secret");
+});
+
+test("deploy warns when a stale shell export shadows the current secret", async () => {
+  const cwd = await projectDir([`BROODS_USER_TOKEN_SECRET="${SECRET}"`]);
+  const backend = serveBackend({
+    stageKind: "development",
+    userTokenSecretHint: "bsig_…wxyz",
+  });
+
+  const result = await runDeploy(cwd, backend.baseUrl, {
+    BROODS_USER_TOKEN_SECRET: "bsig_stale-shell-1234",
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.output).toContain(
+    "BROODS_USER_TOKEN_SECRET is exported in your shell",
+  );
+  expect(result.output).not.toContain("stale-shell");
 });
 
 test("deploy still succeeds when the rotation is refused", async () => {

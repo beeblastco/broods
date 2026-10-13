@@ -55,7 +55,11 @@ import {
   DEFAULT_CORE_BASE_URL,
   type AgentReference,
 } from "../client.ts";
-import { isShellOwnedEnv, loadBroodsRuntimeConfig } from "../runtime-config.ts";
+import {
+  isShellOwnedEnv,
+  loadBroodsRuntimeConfig,
+  parseEnv as parseDotenv,
+} from "../runtime-config.ts";
 import {
   subscribeObservabilityLogs,
   type ObservabilityClientOptions,
@@ -1220,21 +1224,24 @@ async function applyDeploymentKey(
     printSuccess(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
   }
 
-  // `.env.local` counts on its own too: a stale shell export would otherwise
-  // rotate the secret on every `dev` sync, voiding each one just written.
   const remoteHint = deployment.userTokenSecretHint;
-  const fileSecret = parseEnv(
+  const matches = (secret: string | undefined): boolean =>
+    secret !== undefined &&
+    keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint;
+  const fileSecret = parseDotenv(
     await readTextIfExists(resolve(process.cwd(), ".env.local")),
   )[USER_TOKEN_SECRET_ENV];
-  const local = [process.env[USER_TOKEN_SECRET_ENV], fileSecret].filter(
-    (secret): secret is string => secret !== undefined,
-  );
   if (
     remoteHint &&
-    local.some(
-      (secret) => keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint,
-    )
+    (matches(process.env[USER_TOKEN_SECRET_ENV]) || matches(fileSecret))
   ) {
+    // `.env.local` is current, but a stale shell export still wins over it.
+    warnShellShadowedEnv(
+      USER_TOKEN_SECRET_ENV,
+      !matches(process.env[USER_TOKEN_SECRET_ENV]) &&
+        isShellOwnedEnv(USER_TOKEN_SECRET_ENV),
+    );
+
     return;
   }
   // Only a stage with no secret gets one minted: rotating here would void the
