@@ -35,6 +35,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  assertSnapshotBootable,
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
@@ -189,6 +190,11 @@ export class E2BSandboxExecutor implements SandboxExecutor {
   async #acquire(request: SandboxRunRequest): Promise<Sandbox> {
     const Sandbox = await e2bSandboxApi();
     if (!this.#persistent(request)) {
+      await assertSnapshotBootable(
+        this.#config.controlPlane,
+        this.#config.snapshot,
+      );
+
       return Sandbox.create(e2bCreateOptions(this.#config, false));
     }
     const ns = sandboxReservationKey(request)!;
@@ -228,6 +234,10 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         ).catch(() => {});
       }
     }
+    await assertSnapshotBootable(
+      this.#config.controlPlane,
+      this.#config.snapshot,
+    );
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));
     try {
       if (

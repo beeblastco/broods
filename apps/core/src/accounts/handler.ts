@@ -75,7 +75,11 @@ import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";
 import { runsOnOwnCredentials } from "../shared/workspaces.ts";
-import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
+import {
+  assertNoRetiredImageOptions,
+  sandboxScope,
+  type SandboxScope,
+} from "@broods/convex/model/sandboxRules";
 import {
   CLIENT_ERROR_STATUS,
   clientErrorData,
@@ -131,6 +135,8 @@ interface SandboxLifecycleContext {
   provider: SandboxProvider;
   ref: { reservationKey: string };
   reservationKey: string;
+  /** The sandbox config's stage, or the account; a snapshot is locked to it. */
+  scope: SandboxScope;
 }
 
 /** Thrown by requireAccountAuth for a principal that gets a 401. */
@@ -409,6 +415,7 @@ async function handleSandboxLifecycle(
     provider: record.config.provider,
     ref: { reservationKey: reservationKey },
     reservationKey: reservationKey,
+    scope: sandboxScope(record),
   };
   if (action === "exec") return execSandbox(context);
   if (action === "refresh") return refreshSandboxStatus(context);
@@ -696,6 +703,7 @@ async function snapshotSandbox(
   try {
     await upsertSandboxSnapshot({
       accountId: context.accountId,
+      scope: context.scope,
       name: name,
       provider: context.provider,
       baseImage: baseImage,
@@ -925,7 +933,7 @@ async function lambdaBaseImage(
     ? await findSandboxSnapshot(context.accountId, context.config.snapshot)
     : null;
 
-  return pinned?.baseImage ?? "default";
+  return pinned?.accountId === context.accountId ? pinned.baseImage : "default";
 }
 
 /**

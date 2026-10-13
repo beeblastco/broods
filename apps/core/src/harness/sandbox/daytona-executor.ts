@@ -57,6 +57,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  assertSnapshotBootable,
   configString,
   isNoRunnersError,
   isSandboxGoneError,
@@ -496,6 +497,7 @@ async function daytonaCreateOptions(
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
+  await assertSnapshotBootable(config.controlPlane, config.snapshot);
   // No run identity here: a sandbox outlives the run that created it, and
   // every exec lays its own over this env.
   const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);

@@ -1083,7 +1083,7 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Snapshot a persistent sandbox reservation into an image any sandbox of that provider can pin with `snapshot` (`sandbox`, `daytona`, `e2b`, `vercel`, or `lambda`, which answers `building` until its image build lands). Throws on 404/403/409. */
+  /** Snapshot a persistent sandbox reservation into an image any sandbox of that provider on the same stage can pin with `snapshot` (`sandbox`, `daytona`, `e2b`, `vercel`, or `lambda`, which answers `building` until its image build lands). The snapshot is locked to the stage of the sandbox it was taken from: pinning it on another stage throws a 400. Throws on 404/403/409. */
   async snapshotSandbox(
     sandboxId: string,
     reservationKey: string,

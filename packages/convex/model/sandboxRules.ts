@@ -111,7 +111,8 @@ export interface SandboxConfig {
   // "obscura" has the Obscura headless browser. With `snapshot`, the variant it was built from.
   image?: SandboxImage;
   // What the sandbox boots from, in its provider's own format. See
-  // SNAPSHOT_SANDBOX_PROVIDERS.
+  // SNAPSHOT_SANDBOX_PROVIDERS. A Broods snapshot boots only on the stage it
+  // was taken on (snapshotBootRefusal).
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -296,6 +297,51 @@ export function assertNoRetiredImageOptions(
       );
     }
   }
+}
+
+/**
+ * Where a sandbox runs or a snapshot was taken: one project stage, or the
+ * account for a sandbox config with no stage. Mirrors `sandboxSnapshotScopeValidator`.
+ */
+export type SandboxScope = "account" | { projectId: string; stageId: string };
+
+/** A sandbox config row's scope: its stage, or the account when it has none. */
+export function sandboxScope<P extends string, S extends string>(row: {
+  projectId?: P;
+  stageId?: S;
+}): "account" | { projectId: P; stageId: S } {
+  return row.projectId && row.stageId
+    ? { projectId: row.projectId, stageId: row.stageId }
+    : "account";
+}
+
+/**
+ * Why a sandbox may not boot a registered snapshot, or null when it may. A
+ * snapshot is a copy of another sandbox's disk, so it boots only in the
+ * account and stage it was taken from, whoever asks. One taken before
+ * snapshots recorded their stage has no scope and boots nowhere.
+ * @param snapshot the snapshot row's owner and scope
+ * @param sandbox the booting sandbox's owner and scope
+ */
+export function snapshotBootRefusal(
+  snapshot: { accountId: string; scope?: SandboxScope },
+  sandbox: { accountId: string; scope: SandboxScope },
+): string | null {
+  if (snapshot.accountId !== sandbox.accountId) {
+    return "config.snapshot names a snapshot of another account";
+  }
+  if (snapshot.scope === undefined) {
+    return "config.snapshot names a snapshot taken before snapshots were locked to a stage; take it again from a sandbox on this stage";
+  }
+  const same =
+    snapshot.scope === "account" || sandbox.scope === "account"
+      ? snapshot.scope === sandbox.scope
+      : snapshot.scope.projectId === sandbox.scope.projectId &&
+        snapshot.scope.stageId === sandbox.scope.stageId;
+
+  return same
+    ? null
+    : "config.snapshot names a snapshot taken on another stage; a sandbox boots only snapshots taken on its own stage";
 }
 
 /**

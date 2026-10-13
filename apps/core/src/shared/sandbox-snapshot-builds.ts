@@ -63,6 +63,7 @@ export async function refreshBuildingSnapshots(): Promise<number> {
     if (state === "building") continue;
     await upsertSandboxSnapshot({
       accountId: snapshot.accountId,
+      scope: snapshot.scope,
       name: snapshot.name,
       provider: snapshot.provider,
       baseImage: snapshot.baseImage,

@@ -31,6 +31,7 @@ import {
 import { Separator } from "@/app/components/ui/separator";
 import { useMachineConnection } from "@/app/hooks/useMachineConnection";
 import { useNow } from "@/app/hooks/useNow";
+import { useStage } from "@/app/hooks/useStage";
 import {
   MACHINE_STATE_LABEL,
   MACHINE_TONE,
@@ -145,7 +146,13 @@ export function SandboxResourceDetailsTab({
     api.sandbox.snapshots.listForActiveOrg,
     hasSnapshots ? {} : "skip",
   );
-  const snapshotChoices = snapshotOptions(snapshots ?? [], provider, snapshot);
+  const { stageId } = useStage();
+  const snapshotChoices = snapshotOptions(
+    snapshots ?? [],
+    provider,
+    snapshot,
+    stageId,
+  );
 
   function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: { ...config, ...patch } });

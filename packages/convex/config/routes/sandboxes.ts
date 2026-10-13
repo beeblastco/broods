@@ -13,6 +13,7 @@ import {
   DEFAULT_SANDBOX_PROVIDER,
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
+  sandboxScope,
   type SandboxConfig,
 } from "../../model/sandboxRules";
 import {
@@ -55,6 +56,13 @@ export async function handleSandboxConfigRoute(
     }
     if (req.method === "POST") {
       const input = normalizeCreateSandboxConfigInput(await req.json());
+      // The API creates account-scoped sandboxes, which boot only snapshots
+      // taken on an account-scoped sandbox.
+      await ctx.runQuery(internal.sandbox.snapshots.assertInScope, {
+        accountId: accountId,
+        scope: "account",
+        snapshot: input.config.snapshot,
+      });
       const cipher = await accountCipherForAction(ctx, accountId, "write");
       const encrypted = await encryptSandboxConfig(cipher, input.config);
       const createdId: Id<"sandboxConfigs"> = await ctx.runMutation(
@@ -135,6 +143,16 @@ export async function handleSandboxConfigRoute(
       existingConfig,
       await req.json(),
     );
+    // A snapshot is a copy of another sandbox's disk: pointing this one at a
+    // snapshot of another stage is refused for every caller, a stage-pinned
+    // role session included.
+    if (patch.config.snapshot !== existingConfig.snapshot) {
+      await ctx.runQuery(internal.sandbox.snapshots.assertInScope, {
+        accountId: accountId,
+        scope: sandboxScope(existing),
+        snapshot: patch.config.snapshot,
+      });
+    }
     const encrypted = await encryptSandboxConfig(cipher, patch.config);
     await ctx.runMutation(internal.sandbox.configs.update, {
       accountId: accountId,

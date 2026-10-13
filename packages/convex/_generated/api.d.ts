@@ -1449,6 +1449,10 @@ export declare const api: {
             | "machine"
             | "custom";
           pulledCount: number;
+          scope?:
+            | "account"
+            | { projectId: Id<"projects">; stageId: Id<"stages"> };
+          stageName?: string;
           status:
             | "pending"
             | "building"
@@ -5590,6 +5594,9 @@ export declare const internal: {
           | "cloudflare"
           | "machine"
           | "custom";
+        scope:
+          | "account"
+          | { projectId: Id<"projects">; stageId: Id<"stages"> };
       }>
     >;
     listConversationEvents: FunctionReference<
@@ -6638,12 +6645,28 @@ export declare const internal: {
       >;
     };
     snapshots: {
+      assertInScope: FunctionReference<
+        "query",
+        "internal",
+        {
+          accountId: Id<"accounts">;
+          scope:
+            | "account"
+            | { projectId: Id<"projects">; stageId: Id<"stages"> };
+          snapshot?: string;
+        },
+        null
+      >;
       findByImage: FunctionReference<
         "query",
         "internal",
-        { accountId: Id<"accounts">; externalImageId: string },
+        { accountId?: Id<"accounts">; externalImageId: string },
         null | {
+          accountId: Id<"accounts">;
           baseImage: string;
+          scope?:
+            | "account"
+            | { projectId: Id<"projects">; stageId: Id<"stages"> };
           status:
             | "pending"
             | "building"
@@ -6671,6 +6694,9 @@ export declare const internal: {
             | "cloudflare"
             | "machine"
             | "custom";
+          scope:
+            | "account"
+            | { projectId: Id<"projects">; stageId: Id<"stages"> };
           status?:
             | "pending"
             | "building"

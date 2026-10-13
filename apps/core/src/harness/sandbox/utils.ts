@@ -10,6 +10,10 @@ import {
   setSandboxInstanceSpecs,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
+import {
+  findSandboxSnapshot,
+  type SandboxSnapshotRecord,
+} from "../../shared/convex/sandbox-snapshots.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { isPlainObject } from "../../shared/object.ts";
@@ -19,6 +23,10 @@ import {
   type SandboxRunMetadata,
   type SandboxSpecs,
 } from "../../shared/sandbox-sizes.ts";
+import {
+  sandboxScope,
+  snapshotBootRefusal,
+} from "@broods/convex/model/sandboxRules";
 import type {
   SandboxExecutorConfig,
   SandboxProvider,
@@ -411,6 +419,35 @@ function isExecResponse(value: object): value is SandboxExecResponse {
       typeof record[field] === type ||
       (!required && (record[field] === undefined || record[field] === null)),
   );
+}
+
+/**
+ * Refuses to boot a Broods snapshot outside the account and stage it was taken
+ * in. Every executor that creates a machine from `config.snapshot` calls it
+ * first, whoever the caller is: a snapshot is a copy of another sandbox's disk.
+ * A config with no control plane (no known account or stage) boots no
+ * registered snapshot at all.
+ * @param controlPlane the booting sandbox's account and stage
+ * @param snapshot the provider image the machine boots from, when it names one
+ * @returns the snapshot's row, or null when no account registered the image
+ * (a provider image or template, not a Broods snapshot)
+ */
+export async function assertSnapshotBootable(
+  controlPlane: SandboxControlPlane | undefined,
+  snapshot: string | undefined,
+): Promise<SandboxSnapshotRecord | null> {
+  if (!snapshot) return null;
+  const row = await findSandboxSnapshot(controlPlane?.accountId, snapshot);
+  if (!row) return null;
+  const refusal = controlPlane
+    ? snapshotBootRefusal(row, {
+        accountId: controlPlane.accountId,
+        scope: sandboxScope(controlPlane),
+      })
+    : "config.snapshot names a snapshot, which boots only from a sandbox config of its own account and stage";
+  if (refusal) throw new Error(refusal);
+
+  return row;
 }
 
 /** The BROODS_* variables sandbox code reads to act as its run. */

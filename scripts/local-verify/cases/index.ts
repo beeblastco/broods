@@ -25,6 +25,7 @@ import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { skillLimit } from "./skill-limit.ts";
+import { snapshotStage } from "./snapshot-stage.ts";
 import { storageTrust } from "./storage-trust.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
@@ -59,6 +60,7 @@ export const verifyCases: readonly VerifyCase[] = [
   sandboxImage,
   lambdaSnapshot,
   providerSnapshot,
+  snapshotStage,
   browserSandbox,
   mcpCommand,
   customSandbox,

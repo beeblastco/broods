@@ -49,6 +49,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  assertSnapshotBootable,
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
@@ -311,6 +312,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async #acquireSandbox(request: SandboxRunRequest): Promise<VercelSandbox> {
     const Sandbox = await this.#Sandbox();
     if (!this.#persistent(request)) {
+      await assertSnapshotBootable(
+        this.#config.controlPlane,
+        this.#config.snapshot,
+      );
+
       return Sandbox.create(vercelCreateOptions(this.#config, request, false));
     }
 
@@ -356,6 +362,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     // derived from the key would hand back whatever machine already answers to
     // it, including one a sweeper has taken the row for and is about to delete.
     const name = vercelSandboxName(key);
+    await assertSnapshotBootable(
+      this.#config.controlPlane,
+      this.#config.snapshot,
+    );
     const sandbox = await Sandbox.create({
       ...vercelCreateOptions(this.#config, request, true),
       name: name,

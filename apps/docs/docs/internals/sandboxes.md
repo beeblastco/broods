@@ -392,7 +392,7 @@ The harness's own credentials never enter the VM. Stateless runs skip the mount 
 
 ### Image, snapshots and network
 
-- The image is built by AWS from an S3 zip of a Dockerfile (`create-microvm-image`), a versioned Firecracker snapshot of memory and disk. Core selects it with `MICROVM_IMAGE_IDENTIFIER`, optionally pinned by `MICROVM_IMAGE_VERSION`. `image: "obscura"` boots the `-obscura` variant next to the default. A `snapshot` ARN must be in the same account and region, and a `broods-snapshot-*` one boots only for the account with a `sandboxSnapshots` row for it.
+- The image is built by AWS from an S3 zip of a Dockerfile (`create-microvm-image`), a versioned Firecracker snapshot of memory and disk. Core selects it with `MICROVM_IMAGE_IDENTIFIER`, optionally pinned by `MICROVM_IMAGE_VERSION`. `image: "obscura"` boots the `-obscura` variant next to the default. A `snapshot` ARN must be in the same account and region, and a `broods-snapshot-*` one boots only for a sandbox in the account and stage of its `sandboxSnapshots` row (see [Snapshot stage lock](#snapshot-stage-lock)).
 - `apps/core/sst.config.ts` provisions the `MicrovmArtifacts` bucket, the `microvm-build` and `microvm-execution` roles, the `/broods/:stage/microvms` log group with its forwarder subscription, and the NAT-less `SandboxNetwork` VPC with the `microvm-egress` connector. Not in `ap-southeast-1` (`microvmPrereqsEnabled()`).
 - Network: `allow-all` uses default internet egress. `deny-all` and `restricted` attach the shared egress connector, which has no NAT; its S3 gateway endpoint reaches only the managed workspace bucket. Per-account allowlists cannot apply, so `allowDomains` and `allowCidrs` are rejected. Without `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`, `deny-all` fails to launch.
 
@@ -447,7 +447,7 @@ A workspace's `isolation` picks the namespace a run mounts (`isolatedWorkspaceNa
 
 ## Workdir (`sandbox` provider)
 
-- Core reaches the workdir control plane at `WORKDIR_URL` with `WORKDIR_API_KEY`, unless `options.workdirUrl` and `options.apiKey` override them. Images are referenced by name in `config.snapshot`.
+- Core reaches the workdir control plane at `WORKDIR_URL` with `WORKDIR_API_KEY`, unless `options.workdirUrl` and `options.apiKey` override them. Images are referenced by name in `config.snapshot`. One node serves every account, so an image id another account or stage registered is refused before the create (see [Snapshot stage lock](#snapshot-stage-lock)).
 - Sizes are create-time resources with vCPU clamped to 0.5, 1, 2 or 4; explicit `options.cpu`, `memoryMb` and `diskGb` win. `options.docker: true` enables docker-in-sandbox, on this provider only.
 - Every command runs as `timeout -k 5 :seconds bash -c ...`, since the workdir API has no exec timeout.
 - A self-hosted node needs the `mountpoint-s3` binary in the rootfs, a guest kernel with `CONFIG_FUSE_FS=y` (the prebuilt Firecracker CI kernels up to v1.13 ship without it), and `bash` plus GNU `timeout`. Without them every file tool fails with `mount-s3: not found`.
@@ -466,6 +466,15 @@ Credentials fall back to deployment env: `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATIO
 
 - Daytona needs a snapshot with `mount-s3`, built by `bun run daytona:s3-snapshot` (`apps/core/scripts/daytona-s3-snapshot.ts`). It assumes the `sandbox-s3mount` role (`SANDBOX_MOUNT_ROLE_ARN`) for prefix-scoped credentials.
 - Each snapshot verb finishes before it answers, so the row is `active` at once.
+
+## Snapshot stage lock
+
+A snapshot is a copy of one sandbox's disk, so it boots only where it was taken.
+
+- The snapshot verb writes the `sandboxSnapshots` row with `scope`: the `{projectId, stageId}` of the sandbox config it ran on, or `"account"` for a config with no stage. Names are unique per account and scope. The row is the lock, so a capture whose row write fails answers an error rather than an unregistered image.
+- `snapshotBootRefusal` (`packages/convex/model/sandboxRules.ts`) is the one rule: the row's account and scope must equal the booting sandbox's. A row with no `scope` (taken before the lock) is refused everywhere. No caller is exempt; an account key and a stage-pinned role session get the same answer.
+- Writes: the config API (`POST` and `PATCH /v1/sandboxes`), a dashboard canvas save, a CLI sync and an env var refresh that changes `snapshot` all run `assertSnapshotInScope` and answer `400` with the refusal. An image id no account registered is a provider image or template and passes.
+- Boots: every executor that creates a machine from `config.snapshot` calls `assertSnapshotBootable` first (`harness/sandbox/utils.ts`): lambda in `#runInput`, workdir in `#create`, Daytona in `daytonaCreateOptions`, E2B and Vercel before `Sandbox.create`. `findByImage` looks the image up across accounts (`by_externalImageId`), so another account's image is refused rather than booted as a provider image. A config with no control plane (no known account or stage) boots no registered snapshot. Cloudflare, machine and custom reject `snapshot` at validation.
 - Vercel names a persistent sandbox with a prefix from the reservation key plus a random generation, stored as `externalId`, so a sweeper deleting an old machine never hits a new one under the same key. `onCreate` and `onResume` run as one script guarded by `.fp-lifecycle-created`.
 
 ## Cloudflare

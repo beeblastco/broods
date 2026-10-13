@@ -7,6 +7,7 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { assertSnapshotInScope } from "../sandbox/snapshots";
 import { accountCipherForWrite } from "./accountKeys";
 import { normalizePolicyDocument } from "./policyRules";
 import {
@@ -664,6 +665,19 @@ export async function syncSandboxResources(
       claimed.add(target._id);
       ids[name] = target._id;
       continue;
+    }
+    // A deploy key pins this sync to one stage; no caller may point the
+    // stage's sandbox at another stage's snapshot.
+    if (
+      !target ||
+      existingConfigs.get(target._id)?.snapshot !== resolvedConfig.snapshot
+    ) {
+      await assertSnapshotInScope(
+        ctx,
+        accountId,
+        { projectId: projectId, stageId: stageId },
+        resolvedConfig.snapshot,
+      );
     }
     const encrypted = await cipher.encrypt(
       "sandboxConfigs:encryptedConfig",

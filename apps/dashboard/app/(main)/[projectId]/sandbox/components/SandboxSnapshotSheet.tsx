@@ -13,6 +13,7 @@ import {
   SheetTitle,
 } from "@/app/components/ui/sheet";
 import type { Doc } from "@broods/convex/_generated/dataModel";
+import { snapshotStage } from "@/app/lib/sandboxSnapshots";
 import {
   formatProvider,
   relativeTime,
@@ -20,7 +21,7 @@ import {
 } from "./sandboxFormat";
 
 interface Props {
-  snapshot: Doc<"sandboxSnapshots">;
+  snapshot: Doc<"sandboxSnapshots"> & { stageName?: string };
   /** The parent table's clock, so both tick together off one timer. */
   now: number;
   onClose: () => void;
@@ -63,6 +64,7 @@ export function SandboxSnapshotSheet({
           <div className="rounded-lg border border-border bg-card px-4">
             <Field label="Provider" value={formatProvider(snapshot.provider)} />
             <Field label="Status" value={snapshot.status} />
+            <Field label="Stage" value={snapshotStage(snapshot)} />
             <Field label="Base image" value={snapshot.baseImage} />
             <Field
               label="Image ID"
@@ -84,9 +86,10 @@ export function SandboxSnapshotSheet({
           </div>
 
           <p className="mt-4 text-xs text-muted-foreground">
-            Launch a sandbox from this image with the Snapshot select on its
-            sandbox node, or set <code className="font-mono">snapshot</code> to
-            the image id in code.
+            Launch a sandbox on the stage it was taken on from this image with
+            the Snapshot select on its sandbox node, or set{" "}
+            <code className="font-mono">snapshot</code> to the image id in code.
+            A sandbox on another stage cannot boot it.
           </p>
         </div>
       </SheetContent>
