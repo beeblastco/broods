@@ -71,13 +71,13 @@ flowchart TB
   Core -->|Matrix sends| MFwd
 ```
 
-| Piece          | Replicas                 | Why                                                                                  |
-| -------------- | ------------------------ | ------------------------------------------------------------------------------------ |
-| core           | 1                        | The machine sandbox registry and the in-process worker queue live in memory          |
-| gateway        | any                      | Stateless. On `SIGTERM` it closes sockets with `1012` so clients reconnect elsewhere |
-| forwarders     | 1, `strategy: Recreate`  | A second pod means a second socket per token and every message answered twice        |
-| Traefik        | 1                        | Rate-limit buckets count in memory per pod                                           |
-| cloudflare-mcp | one Worker per dev stage | `deploy.yaml` skips production, so production hosted MCP stays on Lambda             |
+| Piece          | Replicas                | Why                                                                                   |
+| -------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| core           | 1                       | The machine sandbox registry and the in-process worker queue live in memory           |
+| gateway        | any                     | Stateless. On `SIGTERM` it closes sockets with `1012` so clients reconnect elsewhere  |
+| forwarders     | 1, `strategy: Recreate` | A second pod means a second socket per token and every message answered twice         |
+| Traefik        | 1                       | Rate-limit buckets count in memory per pod                                            |
+| cloudflare-mcp | one Worker per stage    | Core uses it only once infra sets `CLOUDFLARE_MCP_URL` and its key; until then Lambda |
 
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user. Convex uses the `convex-bootstrap` user, which can only assume `ConvexAwsRole`.
 - Core schedules nothing. The Convex crons component owns every schedule and POSTs each firing to core's `/v1/cron-runs` in-cluster.

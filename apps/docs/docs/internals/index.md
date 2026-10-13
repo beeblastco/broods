@@ -114,12 +114,12 @@ flowchart LR
 | Hetzner k3s        | Traefik, core, gateway, dashboard, forwarders, OPA, Convex, NATS, observability | Image build, then `rollout.yaml` into `../infra` Helm  |
 | Convex backends    | Schema and functions, prod and dev                                              | `deploy-convex.yaml` on push to `main` or `dev`        |
 | AWS, per SST stage | Buckets, mcp-runner, MicroVM roles and log forwarder, sandbox VPC, IAM          | `deploy.yaml`, `sst deploy`                            |
-| Cloudflare         | Hosted MCP Worker per non-production stage                                      | `deploy.yaml`, `wrangler deploy`                       |
+| Cloudflare         | Hosted MCP Worker per stage, production included                                | `deploy.yaml`, `wrangler deploy`                       |
 | Cloudflare         | Sandbox bridge Worker                                                           | No workflow; `wrangler` from `apps/cloudflare-sandbox` |
 | S3 + CloudFront    | This docs site                                                                  | `deploy-docs.yaml`                                     |
 
 - Dev and production share the cluster as separate releases (`core-dev` next to `core`). The forwarders are one release each for both planes, because one bot token holds one socket.
-- Production hosted MCP stays on Lambda; only non-production stages get the Workers runtime.
+- Every stage, production included, gets the hosted MCP Workers runtime. Core sends a Workers-safe bundle there once infra sets that stage's `CLOUDFLARE_MCP_URL` and `CLOUDFLARE_MCP_API_KEY`; other bundles stay on Lambda.
 - MicroVM images are built by `../lambda-sanbdox` CI, not SST.
 
 Pods, namespaces and replicas: [Operations](operations.md#runtime-topology). How a commit reaches each box: [CI/CD](ci-cd.md). Running the same shape yourself: [self-hosting](self-hosting.md).
