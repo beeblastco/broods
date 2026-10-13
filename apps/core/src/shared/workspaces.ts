@@ -512,7 +512,7 @@ function reservedAgentSandbox(
  * mirror itself into the Convex `sandboxInstances` registry (account, config row,
  * display name, size specs, and the idle timeout the meter bills it up to).
  */
-function sandboxControlPlane(
+export function sandboxControlPlane(
   accountId: string,
   record: SandboxConfigRecord,
 ): SandboxControlPlane {

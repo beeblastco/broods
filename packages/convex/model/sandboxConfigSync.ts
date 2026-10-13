@@ -12,6 +12,7 @@ import type { MutationCtx } from "../_generated/server";
 import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
 import { substituteEnvPlaceholders } from "./agentConfigCodec";
 import { loadEnvironmentVariableValues } from "./environmentValues";
+import { assertSnapshotInScope } from "../sandbox/snapshots";
 
 /**
  * No-ops on rows without a stored source (legacy rows synced before
@@ -61,6 +62,15 @@ export async function refreshSandboxConfigsForEnvironmentVariable(
     if (!source) continue;
 
     const resolved = substituteEnvPlaceholders(source, values);
+    // A snapshot named through an env var must stay on this stage too.
+    if (resolved.snapshot !== source.snapshot) {
+      await assertSnapshotInScope(
+        ctx,
+        config.accountId,
+        { projectId: projectId, stageId: stageId },
+        resolved.snapshot,
+      );
+    }
     const encrypted = await cipher.encrypt(
       "sandboxConfigs:encryptedConfig",
       resolved,

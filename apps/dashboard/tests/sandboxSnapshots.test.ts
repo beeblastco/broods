@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { snapshotImage, snapshotOptions } from "../app/lib/sandboxSnapshots";
+import type { Id } from "@broods/convex/_generated/dataModel";
+import {
+  snapshotImage,
+  snapshotOptions,
+  snapshotStage,
+} from "../app/lib/sandboxSnapshots";
+
+const DEV = "stage_dev" as Id<"stages">;
+const PROD = "stage_prod" as Id<"stages">;
+const PROJECT = "project_1" as Id<"projects">;
 
 const ROWS = [
   {
@@ -7,52 +16,93 @@ const ROWS = [
     provider: "sandbox" as const,
     status: "active" as const,
     externalImageId: "img-crawler",
+    scope: { projectId: PROJECT, stageId: DEV },
+    stageName: "development",
   },
   {
     name: "scraper",
     provider: "lambda" as const,
     status: "active" as const,
     externalImageId: "arn:aws:lambda:us-east-1:1:microvm-image:scraper",
+    scope: { projectId: PROJECT, stageId: DEV },
+    stageName: "development",
   },
   {
     name: "half-built",
     provider: "lambda" as const,
     status: "building" as const,
     externalImageId: "arn:aws:lambda:us-east-1:1:microvm-image:half",
+    scope: { projectId: PROJECT, stageId: DEV },
+    stageName: "development",
+  },
+  {
+    name: "prod-disk",
+    provider: "sandbox" as const,
+    status: "active" as const,
+    externalImageId: "img-prod",
+    scope: { projectId: PROJECT, stageId: PROD },
+    stageName: "production",
+  },
+  {
+    name: "old-disk",
+    provider: "sandbox" as const,
+    status: "active" as const,
+    externalImageId: "img-old",
   },
 ];
 
 describe("snapshotOptions", () => {
-  test("lists only the provider's active snapshots, pinned by image id", () => {
-    expect(snapshotOptions(ROWS, "lambda", undefined)).toEqual([
+  test("lists only the provider's active snapshots of this stage, with the stage", () => {
+    expect(snapshotOptions(ROWS, "lambda", undefined, DEV)).toEqual([
       { value: "none", label: "None" },
       {
         value: "arn:aws:lambda:us-east-1:1:microvm-image:scraper",
-        label: "scraper",
+        label: "scraper · development",
       },
     ]);
-    expect(snapshotOptions(ROWS, "sandbox", undefined)).toEqual([
+    expect(snapshotOptions(ROWS, "sandbox", undefined, DEV)).toEqual([
       { value: "none", label: "None" },
-      { value: "img-crawler", label: "crawler" },
+      { value: "img-crawler", label: "crawler · development" },
+    ]);
+    expect(snapshotOptions(ROWS, "sandbox", undefined, PROD)).toEqual([
+      { value: "none", label: "None" },
+      { value: "img-prod", label: "prod-disk · production" },
     ]);
   });
 
   test("keeps a pin from code that the list does not have", () => {
-    expect(snapshotOptions(ROWS, "sandbox", "img-from-code")).toEqual([
+    expect(snapshotOptions(ROWS, "sandbox", "img-from-code", DEV)).toEqual([
       { value: "none", label: "None" },
-      { value: "img-crawler", label: "crawler" },
+      { value: "img-crawler", label: "crawler · development" },
       { value: "img-from-code", label: "img-from-code" },
     ]);
   });
 
+  test("says a pinned snapshot of another stage cannot boot here", () => {
+    expect(snapshotOptions(ROWS, "sandbox", "img-prod", DEV).at(-1)).toEqual({
+      value: "img-prod",
+      label: "prod-disk · production, cannot boot here",
+    });
+  });
+
   test("shows a listed pin once", () => {
-    expect(snapshotOptions(ROWS, "sandbox", "img-crawler")).toHaveLength(2);
+    expect(snapshotOptions(ROWS, "sandbox", "img-crawler", DEV)).toHaveLength(
+      2,
+    );
   });
 
   test("offers only None when the account has no snapshots", () => {
-    expect(snapshotOptions([], "lambda", undefined)).toEqual([
+    expect(snapshotOptions([], "lambda", undefined, DEV)).toEqual([
       { value: "none", label: "None" },
     ]);
+  });
+});
+
+describe("snapshotStage", () => {
+  test("names the stage, the account, or a snapshot to take again", () => {
+    expect(snapshotStage(ROWS[0]!)).toBe("development");
+    expect(snapshotStage({ scope: "account" })).toBe("account");
+    expect(snapshotStage({})).toBe("no stage, take again");
   });
 });
 

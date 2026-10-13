@@ -72,6 +72,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  assertSnapshotBootable,
   configuredSandboxSpecs,
   configString,
   isSandboxGoneError,
@@ -651,6 +652,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // Only the create is read that way: a later exec failing with the same status
   // means the command may have run, which must never be retried elsewhere.
   async #create(options: CreateOptions): Promise<Sandbox> {
+    // One workdir host serves every account, so an image id alone would boot
+    // any account's snapshot on any stage.
+    await assertSnapshotBootable(this.#config.controlPlane, options.image);
     try {
       return await this.#client.sandboxes.create(options);
     } catch (error) {

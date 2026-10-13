@@ -371,11 +371,13 @@ describe("account-manage sandbox endpoints", () => {
         (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_handler",
       ),
     ).toBe(true);
-    // The executor's own delete has no account and is a no-op; the route's carries
-    // it, so the next run creates a fresh sandbox instead of reconnecting here.
-    expect(
-      deleteSandboxInstanceMock.mock.calls.filter((c) => c[2] !== undefined),
-    ).toEqual([["sandbox", reservationKey, ACCOUNT_ID]]);
+    // The route drops the reservation row itself, so the next run creates a
+    // fresh sandbox instead of reconnecting here.
+    expect(deleteSandboxInstanceMock.mock.calls).toContainEqual([
+      "sandbox",
+      reservationKey,
+      ACCOUNT_ID,
+    ]);
   });
 
   it("runs bounded lifecycle exec commands without marking non-zero exits as sandbox errors", async () => {

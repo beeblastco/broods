@@ -510,6 +510,84 @@ describe("account management HTTP handler", () => {
     }
   });
 
+  it("records the stage of the sandbox a snapshot was taken from", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(
+      createFakeStorage({
+        sandboxConfigs: {
+          getById: async function () {
+            return {
+              accountId: "acct_test",
+              sandboxId: "sbx_1",
+              projectId: "proj_1",
+              stageId: "stage_dev",
+              config: { provider: "daytona" },
+            };
+          },
+        },
+      }),
+    );
+    const upsert = spyOn(
+      sandboxSnapshots,
+      "upsertSandboxSnapshot",
+    ).mockResolvedValue(undefined);
+    const createExecutor = spyOn(
+      sandboxIndex,
+      "createSandboxExecutor",
+    ).mockReturnValue({
+      run: async () => {
+        throw new Error("not called");
+      },
+      snapshot: async () => ({ snapshotId: "broods-daytona-1" }),
+    });
+    const spies = [
+      upsert,
+      spyOn(
+        sandboxInstances,
+        "sandboxInstanceIsControllable",
+      ).mockResolvedValue(true),
+      spyOn(sandboxAudit, "recordSandboxAuditEvent").mockResolvedValue(
+        undefined,
+      ),
+      createExecutor,
+    ];
+
+    try {
+      const response = await handler(
+        createEvent(
+          "POST",
+          "/v1/sandboxes/sbx_1/snapshot",
+          {
+            authorization: "Bearer service-secret",
+            "x-account-id": "acct_test",
+          },
+          { reservationKey: "res_1", name: "base" },
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountId: "acct_test",
+          scope: { projectId: "proj_1", stageId: "stage_dev" },
+          externalImageId: "broods-daytona-1",
+        }),
+      );
+      // A machine the action creates may boot only its own stage's snapshot.
+      expect(createExecutor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          controlPlane: expect.objectContaining({
+            accountId: "acct_test",
+            projectId: "proj_1",
+            stageId: "stage_dev",
+          }),
+        }),
+      );
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
   it("holds a stage-pinned role session to its own stage's sandboxes", async () => {
     setStorageForTests(
       createFakeStorage({

@@ -422,7 +422,17 @@ await mock.module("@aws-sdk/client-sts", () => ({
   },
 }));
 
+// The boot check's registry read. Null by default: a provider image no account
+// registered, which every provider boots.
+let findSnapshotSpy: ReturnType<
+  typeof spyOn<typeof sandboxSnapshots, "findSandboxSnapshot">
+>;
+
 beforeEach(() => {
+  findSnapshotSpy = spyOn(
+    sandboxSnapshots,
+    "findSandboxSnapshot",
+  ).mockResolvedValue(null);
   setSandboxInstanceSpecsMock.mockClear();
   process.env.AWS_ACCESS_KEY_ID = "test-access-key";
   process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
@@ -491,6 +501,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  findSnapshotSpy.mockRestore();
 });
 
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
@@ -1499,10 +1510,9 @@ describe("createSandboxExecutor", () => {
     it("boots a pinned snapshot even when image names the variant it came from", async () => {
       const snapshot =
         "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-x";
-      const owned = spyOn(
-        sandboxSnapshots,
-        "findSandboxSnapshot",
-      ).mockImplementation(async () => ({
+      findSnapshotSpy.mockImplementation(async () => ({
+        accountId: "account-owner",
+        scope: "account",
         baseImage: "obscura",
         status: "active",
       }));
@@ -1510,48 +1520,108 @@ describe("createSandboxExecutor", () => {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
 
-      try {
-        await createSandboxExecutor({
-          provider: "lambda",
-          image: "obscura",
-          snapshot: snapshot,
-          controlPlane: {
-            accountId: "account-owner",
-            name: "owner",
-            specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-          },
-        }).run({
-          code: "echo ok",
-          timeoutSeconds: 30,
-          outputLimitBytes: 4096,
-        });
+      await createSandboxExecutor({
+        provider: "lambda",
+        image: "obscura",
+        snapshot: snapshot,
+        controlPlane: {
+          accountId: "account-owner",
+          name: "owner",
+          specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        },
+      }).run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
 
-        expect(microvmRunInput().imageIdentifier).toBe(snapshot);
-        expect(owned).toHaveBeenCalledWith("account-owner", snapshot);
-      } finally {
-        owned.mockRestore();
-      }
+      expect(microvmRunInput().imageIdentifier).toBe(snapshot);
+      expect(findSnapshotSpy).toHaveBeenCalledWith("account-owner", snapshot);
     });
 
-    it("refuses to boot a snapshot another account built", async () => {
-      const owned = spyOn(
-        sandboxSnapshots,
-        "findSandboxSnapshot",
-      ).mockImplementation(async () => null);
+    it("refuses to boot a snapshot image no account registered", async () => {
       const {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
 
-      try {
+      const outcome = await createSandboxExecutor({
+        provider: "lambda",
+        snapshot:
+          "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-y",
+        controlPlane: {
+          accountId: "account-other",
+          name: "other",
+          specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        },
+      })
+        .run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 })
+        .then(
+          (result: unknown): string => JSON.stringify(result),
+          (error: unknown): string => String(error),
+        );
+
+      expect(outcome).toContain("snapshot of another account");
+      const types = microvmSendMock.mock.calls.map((c) => c[0]?._type);
+      expect(types).not.toContain("RunMicrovm");
+    });
+  });
+
+  describe("snapshot stage lock", () => {
+    const devPlane = {
+      accountId: "account-owner",
+      projectId: "project-1",
+      stageId: "stage-dev",
+      name: "dev-box",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    };
+    const prodSnapshot = {
+      accountId: "account-owner",
+      scope: { projectId: "project-1", stageId: "stage-prod" },
+      baseImage: "default",
+      status: "active" as const,
+    };
+    const lambdaSnapshot =
+      "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-prod";
+    const cases: Array<[string, SandboxExecutorConfig, () => number]> = [
+      [
+        "lambda",
+        { provider: "lambda", snapshot: lambdaSnapshot },
+        (): number =>
+          microvmSendMock.mock.calls.filter((c) => c[0]?._type === "RunMicrovm")
+            .length,
+      ],
+      [
+        "e2b",
+        { provider: "e2b", snapshot: "snap-prod" },
+        (): number => e2bCreateMock.mock.calls.length,
+      ],
+      [
+        "daytona",
+        { provider: "daytona", snapshot: "broods-prod" },
+        (): number => daytonaCreateMock.mock.calls.length,
+      ],
+      [
+        "vercel",
+        {
+          provider: "vercel",
+          snapshot: "snap_prod",
+          options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+        },
+        (): number => vercelCreateMock.mock.calls.length,
+      ],
+    ];
+
+    it.each(cases)(
+      "%s refuses to boot another stage's snapshot, whoever asks",
+      async (_provider, config, creates) => {
+        findSnapshotSpy.mockImplementation(async () => prodSnapshot);
+        const {
+          createSandboxExecutor,
+        } = require("../src/harness/sandbox/index.ts");
+
         const outcome = await createSandboxExecutor({
-          provider: "lambda",
-          snapshot:
-            "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snapshot-y",
-          controlPlane: {
-            accountId: "account-other",
-            name: "other",
-            specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-          },
+          ...config,
+          controlPlane: devPlane,
         })
           .run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 })
           .then(
@@ -1559,13 +1629,58 @@ describe("createSandboxExecutor", () => {
             (error: unknown): string => String(error),
           );
 
-        expect(outcome).toContain("snapshot of another account");
-        const types = microvmSendMock.mock.calls.map((c) => c[0]?._type);
-        expect(types).not.toContain("RunMicrovm");
-      } finally {
-        owned.mockRestore();
-      }
-    });
+        expect(outcome).toContain("snapshot taken on another stage");
+        expect(creates()).toBe(0);
+      },
+    );
+
+    it.each(cases)(
+      "%s refuses a snapshot taken before snapshots had a stage",
+      async (_provider, config, creates) => {
+        findSnapshotSpy.mockImplementation(async () => ({
+          accountId: "account-owner",
+          baseImage: "default",
+          status: "active",
+        }));
+        const {
+          createSandboxExecutor,
+        } = require("../src/harness/sandbox/index.ts");
+
+        const outcome = await createSandboxExecutor({
+          ...config,
+          controlPlane: devPlane,
+        })
+          .run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 })
+          .then(
+            (result: unknown): string => JSON.stringify(result),
+            (error: unknown): string => String(error),
+          );
+
+        expect(outcome).toContain("take it again");
+        expect(creates()).toBe(0);
+      },
+    );
+
+    it.each(cases)(
+      "%s boots its own stage's snapshot",
+      async (_provider, config, creates) => {
+        findSnapshotSpy.mockImplementation(async () => ({
+          ...prodSnapshot,
+          scope: { projectId: "project-1", stageId: "stage-dev" },
+        }));
+        const {
+          createSandboxExecutor,
+        } = require("../src/harness/sandbox/index.ts");
+
+        await createSandboxExecutor({ ...config, controlPlane: devPlane }).run({
+          code: "echo ok",
+          timeoutSeconds: 30,
+          outputLimitBytes: 4096,
+        });
+
+        expect(creates()).toBe(1);
+      },
+    );
   });
 
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {

@@ -721,13 +721,31 @@ export const machineConnectionsFields = {
 };
 
 /**
- * Sandbox snapshot/image registry, mirrored from broods. Account-scoped because
- * a built image is reusable across stages. `status` follows the unified
- * (Daytona-aligned) build model mapped from AWS MicroVM image versions and
- * workdir images; broods owns the build pipeline and dual-writes status here.
+ * Where a snapshot was taken: the project and stage of the sandbox it came
+ * from, or `"account"` for an account-scoped sandbox (no stage). A snapshot
+ * holds a copy of that sandbox's disk, so only a sandbox of the same scope
+ * boots it (`snapshotBootRefusal` in model/sandboxRules.ts).
+ */
+export const sandboxSnapshotScopeValidator = v.union(
+  v.literal("account"),
+  v.object({ projectId: v.id("projects"), stageId: v.id("stages") }),
+);
+
+/**
+ * Sandbox snapshot/image registry, mirrored from broods. One row per captured
+ * image, locked to the scope of the sandbox it was taken from, so a dev
+ * sandbox never boots a copy of a production disk. Names are unique per
+ * (account, scope). `status` follows the unified (Daytona-aligned) build model
+ * mapped from AWS MicroVM image versions and workdir images; broods owns the
+ * build pipeline and dual-writes status here.
  */
 export const sandboxSnapshotsFields = {
   accountId: v.id("accounts"),
+  /**
+   * Absent only on snapshots taken before snapshots were locked to a stage.
+   * No sandbox boots those; they must be taken again.
+   */
+  scope: v.optional(sandboxSnapshotScopeValidator),
   name: v.string(),
   provider: sandboxProviderValidator,
   baseImage: v.string(),
@@ -745,6 +763,19 @@ export const sandboxSnapshotsFields = {
   pulledCount: v.number(),
   createdAt: v.number(),
   lastUsedAt: v.number(),
+};
+
+/**
+ * Which account and stage took each provider image. Kept when the snapshot row
+ * moves on to a newer capture and when the account is deleted: an image no row
+ * names would otherwise boot anywhere as a plain provider image.
+ */
+export const sandboxSnapshotImagesFields = {
+  externalImageId: v.string(),
+  accountId: v.id("accounts"),
+  /** Absent for an image taken before snapshots were locked; it boots nowhere. */
+  scope: v.optional(sandboxSnapshotScopeValidator),
+  baseImage: v.string(),
 };
 
 /** Sandbox lifecycle action names recorded in the operator audit trail. */
@@ -1688,8 +1719,12 @@ export default defineSchema({
     .index("by_sandboxConfigId", ["sandboxConfigId"]),
   sandboxSnapshots: defineTable(sandboxSnapshotsFields)
     .index("by_accountId_and_name", ["accountId", "name"])
-    .index("by_accountId_and_externalImageId", ["accountId", "externalImageId"])
+    .index("by_externalImageId_and_accountId", ["externalImageId", "accountId"])
     .index("by_status", ["status"]),
+  sandboxSnapshotImages: defineTable(sandboxSnapshotImagesFields).index(
+    "by_externalImageId",
+    ["externalImageId"],
+  ),
   sandboxAuditEvents: defineTable(sandboxAuditEventsFields).index(
     "by_accountId_and_reservationKey_and_createdAt",
     ["accountId", "reservationKey", "createdAt"],

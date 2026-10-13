@@ -18,6 +18,7 @@ import {
 import { requestBodyText } from "./helpers/http.ts";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import type { WorkdirSandboxExecutor as WorkdirExecutor } from "../src/harness/sandbox/workdir-executor.ts";
+import type { SandboxSnapshotRecord } from "../src/shared/convex/sandbox-snapshots.ts";
 
 // Captured before any test mutates it, so we can restore the native fetch and
 // not leak the mock into other test files (e.g. the live integration test).
@@ -204,6 +205,20 @@ await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
   recordSandboxBurst: mock(async (): Promise<boolean> => true),
   removeSandboxInstance: removeSandboxInstanceMock,
+}));
+
+// The snapshot registry row the boot check reads for an image; null is a
+// provider image no account registered.
+let snapshotRow: SandboxSnapshotRecord | null = null;
+const findSandboxSnapshotMock = mock(
+  async (
+    _accountId: string | undefined,
+    _image: string,
+  ): Promise<SandboxSnapshotRecord | null> => snapshotRow,
+);
+await mock.module("../src/shared/convex/sandbox-snapshots.ts", () => ({
+  findSandboxSnapshot: findSandboxSnapshotMock,
+  upsertSandboxSnapshot: mock(async (): Promise<void> => {}),
 }));
 
 // Assume-role S3 mount path: stub STS so it returns fixed temporary credentials
@@ -633,6 +648,93 @@ describe("WorkdirSandboxExecutor.run", () => {
       outputLimitBytes: 4096,
     });
     expect(createBody().image).toBe("img_curated");
+  });
+
+  describe("snapshot ownership", () => {
+    const devPlane = {
+      accountId: "acct_owner",
+      projectId: "proj_1",
+      stageId: "stage_dev",
+      name: "dev-box",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    };
+    const run = async (
+      config: Record<string, unknown>,
+    ): Promise<string | undefined> => {
+      const executor = await newExecutor({
+        provider: "sandbox",
+        snapshot: "img_registered",
+        options: { workdirUrl: BASE },
+        ...config,
+      });
+
+      return await executor
+        .run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 })
+        .then(
+          (): undefined => undefined,
+          (error: unknown): string => String(error),
+        );
+    };
+    afterEach(() => {
+      snapshotRow = null;
+      findSandboxSnapshotMock.mockClear();
+    });
+
+    it("boots its own stage's snapshot", async () => {
+      snapshotRow = {
+        accountId: "acct_owner",
+        scope: { projectId: "proj_1", stageId: "stage_dev" },
+        baseImage: "sandbox",
+        status: "active",
+      };
+
+      expect(await run({ controlPlane: devPlane })).toBeUndefined();
+      expect(findSandboxSnapshotMock).toHaveBeenCalledWith(
+        "acct_owner",
+        "img_registered",
+      );
+      expect(createBody().image).toBe("img_registered");
+    });
+
+    it.each([
+      [
+        "another stage",
+        {
+          accountId: "acct_owner",
+          scope: { projectId: "proj_1", stageId: "stage_prod" },
+        },
+        "snapshot taken on another stage",
+      ],
+      [
+        "another account",
+        { accountId: "acct_other", scope: "account" as const },
+        "snapshot of another account",
+      ],
+      ["no recorded stage", { accountId: "acct_owner" }, "take it again"],
+    ])(
+      "refuses a snapshot of %s before creating anything",
+      async (_label, owner, message) => {
+        snapshotRow = { ...owner, baseImage: "sandbox", status: "active" };
+
+        expect(await run({ controlPlane: devPlane })).toContain(message);
+        expect(
+          fetchCalls.some(
+            (c) => c.method === "POST" && c.path === "/v1/sandboxes",
+          ),
+        ).toBe(false);
+      },
+    );
+
+    it("refuses a registered snapshot when the config names no account", async () => {
+      snapshotRow = {
+        accountId: "acct_owner",
+        scope: "account",
+        baseImage: "sandbox",
+        status: "active",
+      };
+
+      expect(await run({})).toContain("of its own account and stage");
+    });
   });
 
   it("maps network modes onto workdir egress policy", async () => {

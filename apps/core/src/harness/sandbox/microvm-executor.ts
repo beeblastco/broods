@@ -35,7 +35,6 @@ import {
   removeSandboxInstance,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
-import { findSandboxSnapshot } from "../../shared/convex/sandbox-snapshots.ts";
 import type {
   SandboxExecRequest,
   SandboxExecResponse,
@@ -100,6 +99,7 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  assertSnapshotBootable,
   configuredSandboxSpecs,
   configString,
   EXEC_GRACE_MS,
@@ -1195,17 +1195,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): Promise<RunMicrovmRequest> {
     const image = this.#image();
     // Every account's snapshot images live in the platform account, so one boots
-    // only for the account that built it.
+    // only in the account and stage that built it, and a snapshot image no
+    // account registered boots nowhere.
     const imageName = image.imageIdentifier.split(":")[6] ?? "";
     if (imageName.startsWith(SNAPSHOT_IMAGE_PREFIX)) {
-      const accountId = this.#config.controlPlane?.accountId;
-      const owned = accountId
-        ? await findSandboxSnapshot(
-            accountId,
-            microvmImageName(image.imageIdentifier),
-          )
-        : null;
-      if (!owned) {
+      const registered = await assertSnapshotBootable(
+        this.#config.controlPlane,
+        microvmImageName(image.imageIdentifier),
+      );
+      if (!registered) {
         throw new Error("config.snapshot names a snapshot of another account");
       }
     }

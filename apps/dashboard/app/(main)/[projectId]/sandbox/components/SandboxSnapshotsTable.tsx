@@ -21,6 +21,7 @@ import { Toolbar } from "@/app/components/Toolbar";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
 import type { SortKey } from "@/app/lib/tableState";
+import { snapshotStage } from "@/app/lib/sandboxSnapshots";
 import { parseAsId } from "@/app/lib/urlState";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQueryState } from "nuqs";
@@ -28,16 +29,17 @@ import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
 import { formatProvider, relativeTime, SNAPSHOT_TONE } from "./sandboxFormat";
 
 // The `field:value` tokens the search box understands.
-const QUERY_FIELDS = ["provider", "status"] as const;
+const QUERY_FIELDS = ["provider", "status", "stage"] as const;
 
 // The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const SNAPSHOT_ID = parseAsId<"sandboxSnapshots">();
 
-type Snapshot = Doc<"sandboxSnapshots">;
+type Snapshot = Doc<"sandboxSnapshots"> & { stageName?: string };
 type Field = (typeof QUERY_FIELDS)[number];
 type Column =
   | "name"
   | "status"
+  | "stage"
   | "provider"
   | "baseImage"
   | "pulled"
@@ -48,6 +50,7 @@ type Column =
 const SORT_KEY: Record<Column, (snapshot: Snapshot) => SortKey> = {
   name: (snapshot) => snapshot.name,
   status: (snapshot) => snapshot.status,
+  stage: (snapshot) => snapshotStage(snapshot),
   provider: (snapshot) => formatProvider(snapshot.provider),
   baseImage: (snapshot) => snapshot.baseImage,
   pulled: (snapshot) => snapshot.pulledCount,
@@ -105,6 +108,7 @@ export function SandboxSnapshotsTable({
               <DataTableHead sort={list.sortFor("status")}>
                 Status
               </DataTableHead>
+              <DataTableHead sort={list.sortFor("stage")}>Stage</DataTableHead>
               <DataTableHead sort={list.sortFor("provider")}>
                 Provider
               </DataTableHead>
@@ -137,6 +141,7 @@ export function SandboxSnapshotsTable({
                     {snapshot.status.replace("_", " ")}
                   </StatusWord>
                 </DataTableCell>
+                <DataTableCell muted>{snapshotStage(snapshot)}</DataTableCell>
                 <DataTableCell muted>
                   {formatProvider(snapshot.provider)}
                 </DataTableCell>
@@ -180,8 +185,12 @@ function matchesField(
   field: Field,
   value: string,
 ): boolean {
-  return field === "provider"
-    ? formatProvider(snapshot.provider).toLowerCase().startsWith(value)
+  if (field === "provider") {
+    return formatProvider(snapshot.provider).toLowerCase().startsWith(value);
+  }
+
+  return field === "stage"
+    ? snapshotStage(snapshot).toLowerCase().startsWith(value)
     : snapshot.status.startsWith(value);
 }
 

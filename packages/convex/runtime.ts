@@ -18,6 +18,7 @@ import {
   runtimeAsyncToolResultsFields,
   runtimeConversationEventsFields,
   sandboxProviderValidator,
+  sandboxSnapshotScopeValidator,
   subagentTaskValidator,
 } from "./schema";
 import {
@@ -962,6 +963,8 @@ export const listExpiredSandboxReservations = internalQuery({
  * Every snapshot image still building, for core's build watcher to finish once
  * the provider reports the build done. Builds last minutes, so the set stays small,
  * and a capped page would let builds stuck on failing checks starve the rest.
+ * A build from before snapshots recorded their stage is left alone: nothing
+ * boots it, so it must be taken again.
  * @returns the building snapshots
  */
 export const listBuildingSandboxSnapshots = internalQuery({
@@ -969,6 +972,7 @@ export const listBuildingSandboxSnapshots = internalQuery({
   returns: v.array(
     v.object({
       accountId: v.id("accounts"),
+      scope: sandboxSnapshotScopeValidator,
       name: v.string(),
       provider: sandboxProviderValidator,
       baseImage: v.string(),
@@ -979,9 +983,16 @@ export const listBuildingSandboxSnapshots = internalQuery({
     ctx,
   ): Promise<
     Array<
-      Pick<
-        Doc<"sandboxSnapshots">,
-        "accountId" | "name" | "provider" | "baseImage" | "externalImageId"
+      Required<
+        Pick<
+          Doc<"sandboxSnapshots">,
+          | "accountId"
+          | "scope"
+          | "name"
+          | "provider"
+          | "baseImage"
+          | "externalImageId"
+        >
       >
     >
   > => {
@@ -990,13 +1001,20 @@ export const listBuildingSandboxSnapshots = internalQuery({
       .withIndex("by_status", (q) => q.eq("status", "building"))
       .collect();
 
-    return rows.map((row) => ({
-      accountId: row.accountId,
-      name: row.name,
-      provider: row.provider,
-      baseImage: row.baseImage,
-      externalImageId: row.externalImageId,
-    }));
+    return rows.flatMap((row) =>
+      row.scope
+        ? [
+            {
+              accountId: row.accountId,
+              scope: row.scope,
+              name: row.name,
+              provider: row.provider,
+              baseImage: row.baseImage,
+              externalImageId: row.externalImageId,
+            },
+          ]
+        : [],
+    );
   },
 });
 

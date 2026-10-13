@@ -6,6 +6,7 @@ import * as snapshots from "../src/shared/convex/sandbox-snapshots.ts";
 const BUILDING = [
   {
     accountId: "acct_1",
+    scope: { projectId: "proj_1", stageId: "stage_dev" },
     name: "scraper",
     provider: "lambda" as const,
     baseImage: "obscura",
@@ -13,6 +14,7 @@ const BUILDING = [
   },
   {
     accountId: "acct_1",
+    scope: { projectId: "proj_1", stageId: "stage_dev" },
     name: "half",
     provider: "lambda" as const,
     baseImage: "default",
@@ -20,6 +22,7 @@ const BUILDING = [
   },
   {
     accountId: "acct_2",
+    scope: "account" as const,
     name: "broken",
     provider: "lambda" as const,
     baseImage: "default",
@@ -69,10 +72,14 @@ it("marks each landed build active or failed and leaves the rest building", asyn
         ? "build_failed"
         : "building",
   );
-  const written: Array<{ name: string; status?: string }> = [];
+  const written: Array<{ name: string; scope: unknown; status?: string }> = [];
   const upsert = spyOn(snapshots, "upsertSandboxSnapshot").mockImplementation(
     async (input): Promise<void> => {
-      written.push({ name: input.name, status: input.status });
+      written.push({
+        name: input.name,
+        scope: input.scope,
+        status: input.status,
+      });
     },
   );
   restores.push(
@@ -84,9 +91,14 @@ it("marks each landed build active or failed and leaves the rest building", asyn
 
   expect(await refreshBuildingSnapshots()).toBe(2);
   expect(queries).toEqual([["listBuildingSandboxSnapshots", {}]]);
+  // The stage rides along, so a finished build stays locked to it.
   expect(written).toEqual([
-    { name: "scraper", status: "active" },
-    { name: "broken", status: "build_failed" },
+    {
+      name: "scraper",
+      scope: { projectId: "proj_1", stageId: "stage_dev" },
+      status: "active",
+    },
+    { name: "broken", scope: "account", status: "build_failed" },
   ]);
 });
 
@@ -110,4 +122,28 @@ it("keeps a snapshot building when its provider cannot be asked", async () => {
 
   expect(await refreshBuildingSnapshots()).toBe(0);
   expect(upsert).not.toHaveBeenCalled();
+});
+
+it("records the rest of the pass when one status write fails", async () => {
+  building = BUILDING;
+  const status = spyOn(
+    MicrovmSandboxExecutor.prototype,
+    "snapshotStatus",
+  ).mockImplementation(async (image: string) =>
+    image.endsWith("snap-wip") ? "building" : "active",
+  );
+  const upsert = spyOn(snapshots, "upsertSandboxSnapshot").mockImplementation(
+    async (input): Promise<void> => {
+      if (input.name === "scraper") throw new Error("convex unavailable");
+    },
+  );
+  restores.push(
+    (): void => status.mockRestore(),
+    (): void => upsert.mockRestore(),
+  );
+  const { refreshBuildingSnapshots } =
+    await import("../src/shared/sandbox-snapshot-builds.ts");
+
+  expect(await refreshBuildingSnapshots()).toBe(1);
+  expect(upsert).toHaveBeenCalledTimes(2);
 });

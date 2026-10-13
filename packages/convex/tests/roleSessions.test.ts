@@ -709,6 +709,95 @@ describe("stage-pinned role sessions", () => {
     });
     expect(create.status).toBe(403);
   });
+
+  test("a dev-pinned role cannot point its sandbox at another stage's snapshot", async () => {
+    const t = roleTest();
+    const seeded = await seed(t);
+    const devSandbox = await t.run(async (ctx) => {
+      const now = Date.now();
+      const snapshot = {
+        accountId: seeded.accountId,
+        provider: "sandbox" as const,
+        baseImage: "sandbox",
+        status: "active" as const,
+        pulledCount: 0,
+        createdAt: now,
+        lastUsedAt: now,
+      };
+      await ctx.db.insert("sandboxSnapshots", {
+        ...snapshot,
+        scope: { projectId: seeded.projectId, stageId: seeded.otherStageId },
+        name: "prod-disk",
+        externalImageId: "img_prod",
+      });
+      await ctx.db.insert("sandboxSnapshots", {
+        ...snapshot,
+        scope: { projectId: seeded.projectId, stageId: seeded.stageId },
+        name: "dev-disk",
+        externalImageId: "img_dev",
+      });
+      // Taken before snapshots recorded their stage.
+      await ctx.db.insert("sandboxSnapshots", {
+        ...snapshot,
+        name: "old-disk",
+        externalImageId: "img_legacy",
+      });
+
+      return await ctx.db.insert("sandboxConfigs", {
+        accountId: seeded.accountId,
+        projectId: seeded.projectId,
+        stageId: seeded.stageId,
+        name: "dev-box",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const roleId = await createRole(t, seeded, {
+      scoped: true,
+      policy: {
+        version: 1,
+        rules: [
+          {
+            id: "sandboxes",
+            effect: "allow",
+            actions: ["sandboxes:read", "sandboxes:write"],
+          },
+        ],
+      },
+    });
+    const minted = await assumeRole(t, ACCOUNT_SECRET, { roleId: roleId });
+    const { token } = (await minted.json()) as { token: string };
+    const pin = (bearer: string, snapshot: string): Promise<Response> =>
+      t.fetch(`/v1/sandboxes/${devSandbox}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          config: { provider: "sandbox", snapshot: snapshot },
+        }),
+      });
+
+    const prod = await pin(token, "img_prod");
+    expect(prod.status).toBe(400);
+    expect(((await prod.json()) as ApiErrorBody).error.message).toContain(
+      "snapshot taken on another stage",
+    );
+    const legacy = await pin(token, "img_legacy");
+    expect(legacy.status).toBe(400);
+    expect(((await legacy.json()) as ApiErrorBody).error.message).toContain(
+      "take it again",
+    );
+    // The account key keeps working, but cannot cross stages either.
+    expect((await pin(ACCOUNT_SECRET, "img_prod")).status).toBe(400);
+    const unchanged = await t.run(async (ctx) => await ctx.db.get(devSandbox));
+    expect(unchanged?.encryptedConfig).toBeUndefined();
+
+    expect((await pin(token, "img_dev")).status).toBe(200);
+    // A name no account registered is a provider image.
+    expect((await pin(token, "ubuntu-24.04")).status).toBe(200);
+  });
 });
 
 describe("POST /v1/roles", () => {

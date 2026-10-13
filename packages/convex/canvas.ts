@@ -14,6 +14,7 @@ import {
 import { stableJson } from "./model/objects";
 import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
 import { hasReservation } from "./model/cliSyncResources";
+import { assertSnapshotInScope } from "./sandbox/snapshots";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage, getProjectStage } from "./model/ownership/stage";
 import {
@@ -470,6 +471,14 @@ async function materializeSandboxNode(
     const codeManaged =
       existing.managedBy === "cli" || existing.managedBy === "api";
     if (!codeManaged && changed) {
+      // Every save, not only a changed snapshot: the canvas copy can be older
+      // than the row, so "unchanged" could restore an out-of-scope snapshot.
+      await assertSnapshotInScope(
+        ctx,
+        account._id,
+        { projectId: projectId, stageId: stageId },
+        sandboxConfig.snapshot,
+      );
       await ctx.db.patch(existing._id, {
         projectId: projectId,
         stageId: stageId,
@@ -494,6 +503,12 @@ async function materializeSandboxNode(
     accountId: account._id,
     name: name,
   });
+  await assertSnapshotInScope(
+    ctx,
+    account._id,
+    { projectId: projectId, stageId: stageId },
+    sandboxConfig.snapshot,
+  );
   const createdId = await ctx.db.insert("sandboxConfigs", {
     accountId: account._id,
     projectId: projectId,
