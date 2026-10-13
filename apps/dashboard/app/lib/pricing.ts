@@ -42,3 +42,16 @@ export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
 export function isMaxPlan(plan: PlanTier): boolean {
   return plan === "pro";
 }
+
+/** One org seat a month, in euros: the price behind `STRIPE_SEAT_PRICE_ID`. */
+export const SEAT_PRICE_EUR = 20;
+
+/** `count` seats, like "1 seat" or "3 seats". */
+export function seatCount(count: number): string {
+  return `${count} ${count === 1 ? "seat" : "seats"}`;
+}
+
+/** `count` seats and their monthly price, like "3 seats · €60/month". */
+export function seatsAndPrice(count: number): string {
+  return `${seatCount(count)} · €${count * SEAT_PRICE_EUR}/month`;
+}

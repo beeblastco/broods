@@ -16,6 +16,7 @@ import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
 import { ClientError } from "../model/clientError";
 import { hasDashboardPermission } from "../model/access";
+import { assertFreeOrgSlot } from "../model/orgBilling";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -131,7 +132,7 @@ export const adoptExternalAccount = internalMutation({
       name: args.orgName,
       slug: slug,
       ownerAuthId: owner.authId,
-      plan: owner.plan,
+      plan: "free",
       createdAt: now,
       // An adopted org is not a first-time signup: without this,
       // project.openHome treats the owner's first dashboard
@@ -529,18 +530,22 @@ export async function resolveActiveAccount(
   return { account: account, role: role, user: user };
 }
 
-/** Inserts an org the user owns, with an owner membership, and makes it their active org. */
+/**
+ * Inserts a free org the user owns, with an owner membership, and makes it
+ * their active org. Refused once they hold their free orgs (model/orgBilling.ts).
+ */
 async function insertOwnedOrg(
   ctx: MutationCtx,
   user: Doc<"users">,
   name: string,
 ): Promise<Id<"orgs">> {
+  await assertFreeOrgSlot(ctx, user.authId);
   const now = Date.now();
   const orgId = await ctx.db.insert("orgs", {
     name: name,
     slug: await uniqueOrgSlug(ctx, name),
     ownerAuthId: user.authId,
-    plan: user.plan,
+    plan: "free",
     createdAt: now,
   });
   await ctx.db.insert("orgMembers", {

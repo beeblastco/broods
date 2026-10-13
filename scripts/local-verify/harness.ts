@@ -34,6 +34,8 @@ export interface VerifyContext {
   client: BroodsClient;
   /** The Convex site directly, as an in-cluster caller reaches it. */
   configPlaneUrl: string;
+  /** Runs the Convex CLI against the stack's backend with its admin key; never throws. */
+  convex: (args: readonly string[]) => { ok: boolean; output: string };
   coreLogPath: string;
   /** The public URL: Traefik, in front of core, the config plane and the gateway. */
   edgeUrl: string;

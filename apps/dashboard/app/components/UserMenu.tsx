@@ -49,8 +49,9 @@ export function UserMenu(): React.JSX.Element | null {
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
-  const currentUser = useQuery(
-    api.user.getCurrent,
+  // The plan is the active org's: each org pays for its own.
+  const activeOrg = useQuery(
+    api.org.orgs.getActive,
     useSignedIn() ? {} : "skip",
   );
   // Warm the account/org routes the moment the menu opens so the first click
@@ -81,7 +82,7 @@ export function UserMenu(): React.JSX.Element | null {
     .slice(0, 2)
     .join("")
     .toUpperCase();
-  const plan = currentUser?.plan ?? DEFAULT_PLAN;
+  const plan = activeOrg?.plan ?? DEFAULT_PLAN;
   const isDark = theme === "dark";
   // Billing lives on a project's dashboard, so the upgrade needs one open.
   const upgradeHref =

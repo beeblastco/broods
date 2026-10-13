@@ -10,6 +10,8 @@ import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
 import { unregisterSchedule } from "./cronSchedules";
+import { releaseSeat } from "./orgBilling";
+import { isManagedService } from "./planLimits";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 // One bounded read per account-scoped table. Each names the index whose
@@ -324,8 +326,9 @@ export async function purgeProject(
 
 /**
  * Delete an org and everything beneath it: its projects, its account, and its
- * memberships. Account contents can exceed one transaction, so each account is
- * drained in bounded batches by `accounts.remove` after this commits.
+ * memberships, and cancel its subscription. Account contents can exceed one
+ * transaction, so each account is drained in bounded batches by
+ * `accounts.remove` after this commits.
  * @param orgId the org to purge
  */
 export async function purgeOrg(
@@ -354,6 +357,14 @@ export async function purgeOrg(
     .collect();
   for (const member of members) await ctx.db.delete(member._id);
 
+  // Only the managed service bills orgs (model/orgBilling.ts).
+  if (isManagedService()) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.stripe.cancelOrgSubscriptionsInternal,
+      { orgId: orgId },
+    );
+  }
   await ctx.db.delete(orgId);
 }
 
@@ -393,8 +404,9 @@ export async function purgeUser(
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
     .collect();
   for (const membership of memberships) {
-    if (!purgedOrgIds.has(membership.orgId))
-      await ctx.db.delete(membership._id);
+    if (purgedOrgIds.has(membership.orgId)) continue;
+    await ctx.db.delete(membership._id);
+    await releaseSeat(ctx, membership.orgId);
   }
 
   // Personal CLI credentials must be revoked even when their org survives

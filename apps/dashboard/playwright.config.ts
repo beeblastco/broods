@@ -17,11 +17,21 @@
  * runs the standalone build). They skip without the account.
  */
 import { defineConfig, devices } from "@playwright/test";
-import { BASE_URL, DEV_URL, STORAGE_STATE } from "./e2e/lib/session";
+import {
+  BASE_URL,
+  DEV_URL,
+  probeAccount,
+  STORAGE_STATE,
+} from "./e2e/lib/session";
 
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: false,
+  // On a self-hosted stack (the admin key) the seat billing spec runs, and it
+  // flips the deployment's managed-service flag and the admin's active org,
+  // which every other app and perf spec reads: one spec at a time there.
+  // Against WorkOS that spec skips, so the suites keep their workers.
+  workers: probeAccount.adminKey ? 1 : undefined,
   retries: 0,
   reporter: process.env.CI ? [["list"], ["github"]] : "list",
   use: {

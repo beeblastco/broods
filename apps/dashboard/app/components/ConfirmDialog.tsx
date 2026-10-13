@@ -12,13 +12,15 @@ import {
 
 /**
  * One question before an action that cannot be taken back without a cost:
- * rotate a key, suspend a sandbox. The verb is the button; a typed phrase is
+ * rotate a key, suspend a sandbox, pay for a seat. The verb is the button,
+ * destructive unless the action only costs money; a typed phrase is
  * `DeleteConfirmDialog`'s job.
  */
 export function ConfirmDialog({
   title,
   description,
   verb,
+  variant = "destructive",
   pending,
   error,
   onConfirm,
@@ -28,6 +30,7 @@ export function ConfirmDialog({
   description: string;
   /** The button's word, and with "…" the word while it runs. */
   verb: string;
+  variant?: "default" | "destructive";
   pending: boolean;
   error: string | null;
   onConfirm: () => void;
@@ -52,7 +55,7 @@ export function ConfirmDialog({
             Cancel
           </Button>
           <Button
-            variant="destructive"
+            variant={variant}
             size="sm"
             className="cursor-pointer"
             disabled={pending}

@@ -6,7 +6,7 @@
 import { processEvent } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
 import Stripe from "stripe";
-import { components, internal } from "./_generated/api";
+import { components } from "./_generated/api";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cli/auth";
@@ -21,6 +21,7 @@ import {
 } from "./cli/stages";
 import { handle as configHttp } from "./config/http";
 import { authProvider } from "./model/selfHostAuth";
+import { reconcileSubscription } from "./stripe";
 
 const http = httpRouter();
 
@@ -355,10 +356,6 @@ async function handleStripeWebhook(
     } else {
       await processEvent(ctx, components.stripe, event, stripe);
     }
-
-    if (event.type === "checkout.session.completed") {
-      await linkCheckoutToUser(ctx, stripe, event.data.object);
-    }
   } catch (error) {
     console.error("Stripe webhook processing failed", error);
 
@@ -366,89 +363,4 @@ async function handleStripeWebhook(
   }
 
   return Response.json({ received: true });
-}
-
-/**
- * Read a subscription from Stripe and store that, never the event's snapshot:
- * a late or repeated event carries an old state. The ticket claimed before the
- * read keeps an older read from landing over a newer one.
- */
-async function reconcileSubscription(
-  ctx: ActionCtx,
-  stripe: Stripe,
-  subscriptionId: string,
-): Promise<void> {
-  const ticket = await ctx.runMutation(
-    internal.stripe.claimSubscriptionSyncInternal,
-    { stripeSubscriptionId: subscriptionId },
-  );
-  const live = await stripe.subscriptions.retrieve(subscriptionId);
-  const item = live.items.data[0];
-  await ctx.runMutation(internal.stripe.applySubscriptionInternal, {
-    ticket: ticket,
-    subscription: {
-      stripeSubscriptionId: live.id,
-      stripeCustomerId: stripeId(live.customer) ?? "",
-      status: live.status,
-      currentPeriodEnd: item?.current_period_end ?? 0,
-      cancelAtPeriodEnd: live.cancel_at_period_end,
-      cancelAt: live.cancel_at ?? undefined,
-      quantity: item?.quantity ?? 1,
-      priceId: item?.price.id ?? "",
-      metadata: live.metadata,
-    },
-  });
-}
-
-/**
- * Link a Payment Link checkout to the Broods user in `client_reference_id` by
- * stamping `metadata.userId` on its subscription and customer. The
- * customer.subscription.updated that follows files the subscription under the
- * user and syncs the plan. API checkouts set the metadata up front and carry
- * no `client_reference_id`, so they skip this.
- */
-async function linkCheckoutToUser(
-  ctx: ActionCtx,
-  stripe: Stripe,
-  session: Stripe.Checkout.Session,
-): Promise<void> {
-  const authId = session.client_reference_id;
-  const subscriptionId = stripeId(session.subscription);
-  const customerId = stripeId(session.customer);
-  if (session.mode !== "subscription" || !authId) return;
-  if (!subscriptionId || !customerId) return;
-
-  const liveIds = await ctx.runQuery(
-    internal.stripe.getLiveSubscriptionIdsInternal,
-    { authId: authId },
-  );
-  if (liveIds === null) {
-    console.warn(`Checkout ${session.id} names unknown user ${authId}`);
-
-    return;
-  }
-  const otherIds = liveIds.filter((id) => id !== subscriptionId);
-  if (otherIds.length > 0) {
-    console.warn(
-      `User ${authId} paid ${subscriptionId} while ${otherIds.join(", ")} is still live`,
-    );
-  }
-
-  await stripe.subscriptions.update(subscriptionId, {
-    metadata: { userId: authId },
-  });
-  await stripe.customers.update(customerId, { metadata: { userId: authId } });
-  // customer.updated does not copy `metadata.userId` onto the component's
-  // customer row (only customer.created does), so file it here. The portal
-  // finds the customer by that key.
-  await ctx.runMutation(components.stripe.public.createOrUpdateCustomer, {
-    stripeCustomerId: customerId,
-    email: session.customer_details?.email ?? undefined,
-    metadata: { userId: authId },
-  });
-}
-
-/** The id of an expandable Stripe field, whether or not it was expanded. */
-function stripeId(field: string | { id: string } | null): string | null {
-  return typeof field === "string" ? field : (field?.id ?? null);
 }

@@ -13,11 +13,15 @@ import { jsonError } from "./httpJson";
 
 /**
  * HTTP status for each code. Codes match `model/apiError` for that status, but
- * for `manifest_conflict`, which the CLI branches on to re-read and retry.
+ * for `manifest_conflict`, which the CLI branches on to re-read and retry, and
+ * `payment_required`, which the dashboard branches on to offer an upgrade or a
+ * seat (model/orgBilling.ts).
  */
 export const CLIENT_ERROR_STATUS = {
   invalid_request: 400,
   unauthorized: 401,
+  payment_required: 402,
+  forbidden: 403,
   not_found: 404,
   conflict: 409,
   manifest_conflict: 409,
