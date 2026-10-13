@@ -1237,11 +1237,9 @@ async function applyDeploymentKey(
   ) {
     return;
   }
-  if (
-    remoteHint &&
-    (deployment.stageKind === undefined ||
-      deployment.stageKind === "production")
-  ) {
+  // Only a stage with no secret gets one minted: rotating here would void the
+  // secret a running backend, CI or a teammate already signs with.
+  if (remoteHint) {
     printWarning(
       `${manifest.project}/${manifest.stage} already has a user token signing secret (${remoteHint}), ` +
         `and ${USER_TOKEN_SECRET_ENV} here is unset or another one. Use the secret your backend ` +

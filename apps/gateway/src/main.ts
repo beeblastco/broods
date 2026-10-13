@@ -14,7 +14,8 @@ import {
 } from "../../core/src/shared/terminal-ticket.ts";
 import {
   handleAgentMessage,
-  stopActiveRun,
+  cleanupAgentSocket,
+  watchUserTokenLifetime,
   type AgentTestGatewayData,
 } from "./agent.ts";
 import {
@@ -250,6 +251,9 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               coreBaseUrl: config.coreBaseUrl,
               accountId: scope.accountId,
               ...(userToken ? { userToken: userToken } : {}),
+              ...(scope.userTokenExpiresAt !== undefined
+                ? { userTokenExpiresAt: scope.userTokenExpiresAt }
+                : {}),
               ...(scope.conversationPrefix
                 ? { conversationPrefix: scope.conversationPrefix }
                 : {}),
@@ -326,6 +330,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       }
       if (socket.data.kind === "terminal" || socket.data.kind === "machine")
         openTerminalUpstream(socket as Bun.ServerWebSocket<RelayGatewayData>);
+      if (socket.data.kind === "agent-test")
+        watchUserTokenLifetime(
+          socket as Bun.ServerWebSocket<AgentTestGatewayData>,
+        );
     },
     message: async function (socket, rawMessage): Promise<void> {
       if (
@@ -377,7 +385,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         return;
       }
 
-      stopActiveRun(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
+      cleanupAgentSocket(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
     },
   };
 

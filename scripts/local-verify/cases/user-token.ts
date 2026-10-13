@@ -192,4 +192,38 @@ export async function userToken(context: VerifyContext): Promise<void> {
       signed.conversationKey === `bsu:alice:${turn.conversationKey}`,
     JSON.stringify(signed),
   );
+
+  // The gateway checks the token only at the upgrade, so it closes the socket
+  // when the token dies instead of letting every later core call answer 401.
+  const shortLived = await sealUserToken(
+    { userId: "alice", expiresAt: Date.now() + 1_500 },
+    rotated.secret,
+  );
+  const closed = await context.measure(
+    "socket outlives its token",
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const socket = new WebSocket(
+          `${context.edgeUrl.replace(/^http/, "ws")}${agentPath}/ws`,
+          [
+            "broods.v1",
+            `broods.token.${runtimeKey}`,
+            `broods.user.${shortLived}`,
+          ],
+        );
+        const timeout = setTimeout(() => {
+          socket.close();
+          reject(new Error("the socket stayed open past its user token"));
+        }, 10_000);
+        socket.onclose = (event): void => {
+          clearTimeout(timeout);
+          resolve(event.code);
+        };
+      }),
+  );
+  assertStep(
+    "the gateway closes an agent socket when its user token expires",
+    closed === 4419,
+    `close code ${closed}`,
+  );
 }

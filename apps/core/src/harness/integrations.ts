@@ -865,8 +865,12 @@ async function handleHttpRequest(
       ...(auth.stageTicket ? { expiresAt: auth.stageTicket.expiresAt } : {}),
       // A socket opened with a user token streams that user's conversations,
       // which core keys under this namespace; the gateway subscribes to it.
+      // The gateway closes the agent socket when the user token dies.
       ...(auth.user
-        ? { conversationPrefix: userConversationPrefix(auth.user.userId) }
+        ? {
+            conversationPrefix: userConversationPrefix(auth.user.userId),
+            userTokenExpiresAt: auth.user.expiresAt,
+          }
         : {}),
     });
   }

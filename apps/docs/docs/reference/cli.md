@@ -176,7 +176,7 @@ On every sync `dev`:
 - asks before deleting remote resources you removed from code
 - sends the stage revision it read, so a sync from another session in between refuses the write instead of overwriting it; `dev` then reads the stage again, reprints the diff and tries again, three attempts in all, and asks again before any delete
 - regenerates `broods/_generated/`
-- writes the stage's user token signing secret to `.env.local` as `BROODS_USER_TOKEN_SECRET` when this checkout does not hold it, by rotating it (see [Signing secret](#signing-secret))
+- writes a new user token signing secret to `.env.local` as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and warns when the stage has one this checkout does not hold (see [Signing secret](#signing-secret))
 - prints each channel's webhook URL
 
 A sync that references an `env("NAME")` with no stored value fails before anything is written and names the missing variables. `dev` checks npm for a newer CLI at most once a day and prints a one-line notice.
@@ -210,7 +210,7 @@ broods deploy [--prune] [--rotate-key] [--stage <name>]
 | `--prune`      | Delete remote resources the project no longer declares                           |
 | `--rotate-key` | Mint a fresh runtime key and write it to `.env.local`. The old key stops working |
 
-Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, but it never rotates a production stage's existing one. See [Signing secret](#signing-secret).
+Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret).
 
 `deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
 
@@ -218,12 +218,13 @@ Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKE
 
 A new agent refuses the runtime key without a signed user token, and `signUserToken` signs one with the stage's `bsig_` signing secret from `BROODS_USER_TOKEN_SECRET`. The stage shows the secret only once, so after each sync `dev` and `deploy` compare the stage's hint with the secret in `.env.local` (or your shell) and act:
 
-| Stage                            | Local secret           | What the CLI does                                                                         |
-| -------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
-| Has none                         | any                    | Mints one and writes it to `.env.local`                                                   |
-| Has one                          | matches                | Nothing                                                                                   |
-| Has one, `development` or custom | missing or another one | Rotates it and writes the new one. Tokens the old one signed stop working                 |
-| Has one, `production`            | missing or another one | Warns and keeps it. Copy it from where your backend has it, or rotate it on the dashboard |
+| Stage    | Local secret           | What the CLI does                                                                         |
+| -------- | ---------------------- | ----------------------------------------------------------------------------------------- |
+| Has none | any                    | Mints one and writes it to `.env.local`                                                   |
+| Has one  | matches                | Nothing                                                                                   |
+| Has one  | missing or another one | Warns and keeps it. Copy it from where your backend has it, or rotate it on the dashboard |
+
+The CLI never rotates a secret the stage already has, so a CI deploy or a teammate's `dev` on a fresh checkout cannot void the secret a running backend signs with.
 
 The CLI prints only that it wrote the secret, never the secret. Rotating takes `keys:write` on the stage: the account key and a project key hold it, a `broods login` token holds it while you do. The route is `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret`.
 

@@ -41,6 +41,8 @@ export type AgentTestGatewayData = {
    * as core answered it at the upgrade. The socket subscribes there.
    */
   conversationPrefix?: string;
+  /** Unix ms the user token dies at; the socket closes then. */
+  userTokenExpiresAt?: number;
 };
 
 type ExecuteMessage = WebSocketClientExecuteMessage;
@@ -229,6 +231,44 @@ export function parseGatewayMessage(
   if (type === "attach") return isAttachMessage(parsed) ? parsed : null;
 
   return isExecuteMessage(parsed) ? parsed : null;
+}
+
+const tokenLifetimes = new WeakMap<
+  Bun.ServerWebSocket<AgentTestGatewayData>,
+  ReturnType<typeof setTimeout>
+>();
+export const USER_TOKEN_EXPIRED_CLOSE = {
+  code: 4419,
+  reason: "User token expired",
+};
+
+/**
+ * Closes a socket opened with a user token when that token dies: core checks
+ * it only at the upgrade, and every later core call would answer 401.
+ */
+export function watchUserTokenLifetime(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): void {
+  const { userTokenExpiresAt } = socket.data;
+  if (userTokenExpiresAt === undefined) return;
+  tokenLifetimes.set(
+    socket,
+    setTimeout(
+      (): void =>
+        socket.close(
+          USER_TOKEN_EXPIRED_CLOSE.code,
+          USER_TOKEN_EXPIRED_CLOSE.reason,
+        ),
+      Math.max(userTokenExpiresAt - Date.now(), 0),
+    ),
+  );
+}
+
+export function cleanupAgentSocket(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): void {
+  clearTimeout(tokenLifetimes.get(socket));
+  stopActiveRun(socket);
 }
 
 /**

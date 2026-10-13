@@ -159,7 +159,7 @@ test("deploy keeps a production stage's existing secret when this checkout lacks
   expect(result.output).toContain("already has a user token signing secret");
 });
 
-test("deploy rotates a development stage's secret this checkout does not hold", async () => {
+test("deploy keeps a development stage's secret this checkout does not hold", async () => {
   const cwd = await projectDir([
     'BROODS_STAGE="development"',
     'BROODS_USER_TOKEN_SECRET="bsig_someone-elses-1234"',
@@ -172,9 +172,9 @@ test("deploy rotates a development stage's secret this checkout does not hold", 
   const result = await runDeploy(cwd, backend.baseUrl);
 
   expect(result.exitCode).toBe(0);
-  expect(backend.rotations).toEqual(["POST"]);
-  expect(result.envLocal).toContain(`BROODS_USER_TOKEN_SECRET="${SECRET}"`);
-  expect(result.envLocal).not.toContain("someone-elses");
+  expect(backend.rotations).toEqual([]);
+  expect(result.envLocal).toContain("someone-elses");
+  expect(result.output).toContain("already has a user token signing secret");
 });
 
 test("deploy leaves a secret that matches the stage alone", async () => {

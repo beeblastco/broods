@@ -7,9 +7,11 @@ import type {
 } from "../../../packages/broods/src/websocket-contracts.ts";
 import {
   buildCoreRunBody,
+  cleanupAgentSocket,
   handleAgentMessage,
   parseGatewayMessage,
   stopActiveRun,
+  watchUserTokenLifetime,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
 import { matchAgentWebSocketPath } from "../src/routes.ts";
@@ -3786,6 +3788,29 @@ test("the socket scope lookup carries the user token, and its namespace comes ba
     kind: "resolved",
     scope: { conversationPrefix: "bsu:alice:" },
   });
+});
+
+test("an agent socket closes when its user token dies, unless it closed first", async (): Promise<void> => {
+  const closes: Array<[number | undefined, string | undefined]> = [];
+  const socket = gatewaySocket([]);
+  const close = (code?: number, reason?: string): void => {
+    closes.push([code, reason]);
+  };
+  socket.close = close;
+  socket.data.userTokenExpiresAt = Date.now() + 20;
+  const closedFirst = gatewaySocket([]);
+  closedFirst.close = close;
+  closedFirst.data.userTokenExpiresAt = Date.now() + 20;
+  const withoutToken = gatewaySocket([]);
+  withoutToken.close = close;
+
+  watchUserTokenLifetime(socket);
+  watchUserTokenLifetime(closedFirst);
+  watchUserTokenLifetime(withoutToken);
+  cleanupAgentSocket(closedFirst);
+  await Bun.sleep(60);
+
+  expect(closes).toEqual([[4419, "User token expired"]]);
 });
 
 test("a user's run sends the token to core and streams from the user's namespace", async (): Promise<void> => {

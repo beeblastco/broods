@@ -3024,7 +3024,7 @@ describe("runtime key with a user token", () => {
     expect(scoped[0]?.publicConversationKey).toBe("bsu:alice:chat_1");
   });
 
-  it("hands the agent socket its user's namespace", async () => {
+  it("hands the agent socket its user's namespace and token expiry", async () => {
     const response = await routeIncomingEvent(
       createEvent(
         {},
@@ -3050,6 +3050,7 @@ describe("runtime key with a user token", () => {
     expect(response.statusCode).toBe(200);
     expect(responseJson(response)).toMatchObject({
       conversationPrefix: "bsu:alice:",
+      userTokenExpiresAt: ALICE.expiresAt,
     });
   });
 

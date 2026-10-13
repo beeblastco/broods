@@ -11,6 +11,8 @@ export type CredentialScope = {
   expiresAt?: number;
   /** Where core keys the signed user's conversations, when a user token rode along. */
   conversationPrefix?: string;
+  /** Unix ms that user token dies at, as core verified it. */
+  userTokenExpiresAt?: number;
 };
 
 /**

@@ -99,10 +99,10 @@ With a valid token, every conversation key and event id of that request lives un
 | `conversations` | Optional. The only conversation keys this user may use. Omit to allow any key under the user |
 | `ttlMs`         | Lifetime. Default 10 minutes, at most 60                                                     |
 
-- `broods dev` and `broods deploy` write the signing secret to `.env.local` when the stage has none yet, and rotate a development or custom stage's when your checkout does not hold it. They never rotate a production stage's existing secret. You can also generate or rotate it on the dashboard's Runtime key tab. It is shown once. Rotating it voids every token it signed at once.
+- `broods dev` and `broods deploy` write the signing secret to `.env.local` when the stage has none yet. They never rotate a secret the stage already has; they warn when your checkout does not hold it. You can also generate or rotate it on the dashboard's Runtime key tab. It is shown once. Rotating it voids every token it signed at once.
 - Every agent created from now on requires a user token with the runtime key. An agent made before keeps working without one until you turn the requirement on in its Details tab. Plan to turn it on for every existing agent your frontend reaches within 30 days; a token is honored even while the requirement is off, so send tokens first, then flip the switch.
 - A forged or expired token fails the whole request with `401`. A missing one on an agent that requires it is `403 user_token_required`. A conversation the token does not list is `403 user_token_conversation`.
-- On the WebSocket, `BroodsWebSocketClient` takes `userToken` too. It rides the upgrade as a `broods.user.<token>` subprotocol entry.
+- On the WebSocket, `BroodsWebSocketClient` takes `userToken` too. It rides the upgrade as a `broods.user.<token>` subprotocol entry. The gateway closes the socket with `4419` when the token expires; open a new one with a fresh token.
 - The account key and the dashboard's stage session ticket speak for the whole stage and take no user token.
 - Keys starting with `bsu:` are reserved for user namespaces.
 

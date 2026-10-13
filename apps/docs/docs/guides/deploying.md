@@ -10,7 +10,7 @@ How code in `broods/` reaches a stage, how secrets get there, and how to run it 
 | `broods dev --once` | same                                  | yes                        | no                  |
 | `broods deploy`     | `production`, or `stages.deploy`      | no                         | no                  |
 
-Both commands compile `broods/`, validate it, sync it, regenerate `broods/_generated/`, and write the runtime key to `.env.local` as `BROODS_API_KEY`. When the checkout lacks the stage's user token signing secret they also write it as `BROODS_USER_TOKEN_SECRET`, rotating it on a development or custom stage; a production stage that already has one keeps it ([details](../reference/cli.md#signing-secret)). A broken config fails before anything is written.
+Both commands compile `broods/`, validate it, sync it, regenerate `broods/_generated/`, and write the runtime key to `.env.local` as `BROODS_API_KEY`. When the stage has no user token signing secret yet they also mint one and write it as `BROODS_USER_TOKEN_SECRET`; a stage that already has one keeps it, and the CLI warns when this checkout does not hold it ([details](../reference/cli.md#signing-secret)). A broken config fails before anything is written.
 
 `deploy` ignores `BROODS_STAGE`. After `broods stage use staging`, `broods deploy` still writes to production, or to the stage `defineBroods({ stages: { deploy } })` names. Pass `--stage staging` to deploy elsewhere.
 
