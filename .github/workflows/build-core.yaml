@@ -8,6 +8,8 @@ on:
     paths:
       - "apps/core/**"
       - "apps/cloudflare-sandbox/src/limits.ts"
+      - "apps/cloudflare-sandbox/src/terminal-token.ts"
+      - "packages/ai-sdk-sandbox/**"
       - "packages/convex/**"
       - "package.json"
       - "bun.lock"
