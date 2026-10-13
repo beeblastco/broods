@@ -51,6 +51,8 @@ const LEGACY_REDIRECTS: { from: string; to: string }[] = [
   { from: "/guides/cloudflare-mcp", to: "/guides/tools" },
   { from: "/guides/cloudflare-browser", to: "/guides/sandboxes/browsing" },
   { from: "/guides/sandboxes/cloudflare", to: "/guides/sandboxes/providers" },
+  // Removed in #1066; its URL params now sit in each guide.
+  { from: "/guides/dashboard-links", to: "/guides/observability" },
 ];
 
 const config: Config = {
