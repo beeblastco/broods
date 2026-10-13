@@ -564,6 +564,10 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
   },
 };
 
+// An account's storage external id never changes once minted, so a
+// bring-your-own-bucket mount asks Convex for it once per process.
+const storageExternalIds = new Map<string, string>();
+
 const workspaceConfigs: Storage["workspaceConfigs"] = {
   getById: async function (accountId, workspaceId) {
     const doc = await adminQuery(internal.workspace.configs.getById, {
@@ -581,9 +585,15 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
   },
   storageExternalId: async function (accountId) {
-    return await adminMutation(internal.account.storageTrust.externalId, {
-      accountId: accountId,
-    });
+    const known = storageExternalIds.get(accountId);
+    if (known) return known;
+    const externalId = await adminMutation(
+      internal.account.storageTrust.externalId,
+      { accountId: accountId },
+    );
+    storageExternalIds.set(accountId, externalId);
+
+    return externalId;
   },
   mintR2Credentials: async function (accountId, workspaceId, prefix) {
     return await adminMutation(internal.workspace.configs.r2Credentials, {

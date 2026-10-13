@@ -352,19 +352,17 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   const auth = workspaceStorageOwnAuth(storage);
   if (!auth) throw new Error("Workspace storage has no credentials of its own");
   const prefix = normalizeWorkspacePrefix(storage.prefix);
-  const externalId = ref.externalId;
-  if (auth.type === "assumeRole" && !externalId)
-    throw new Error("Workspace storage external id was not attached");
-  const credentials =
-    auth.type === "r2"
-      ? ref.r2Credentials
-      : externalId &&
-        (await assumeScopedS3Credentials({
-          roleArn: auth.roleArn,
-          bucket: storage.bucket,
-          prefix: prefix,
-          externalId: externalId,
-        }));
+  let credentials = ref.r2Credentials;
+  if (auth.type === "assumeRole") {
+    if (!ref.externalId)
+      throw new Error("Workspace storage external id was not attached");
+    credentials = await assumeScopedS3Credentials({
+      roleArn: auth.roleArn,
+      bucket: storage.bucket,
+      prefix: prefix,
+      externalId: ref.externalId,
+    });
+  }
   if (!credentials)
     throw new Error("Workspace storage credentials were not minted");
   const region = auth.type === "r2" ? "auto" : storage.region;
