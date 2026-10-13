@@ -6,6 +6,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, components, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { deleteAccountContentsBatch } from "../model/cascade";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -445,4 +446,34 @@ test("a versioned MicroVM image ARN is checked by its image name", async () => {
       snapshot: `${image}:3`,
     }),
   ).rejects.toThrow("another stage");
+});
+
+test("deleting an account keeps its pre-lock snapshot images locked", async () => {
+  const t = convexTest(schema, modules);
+  const { accountId, otherAccountId } = await seed(t);
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("sandboxSnapshots", {
+      accountId: otherAccountId,
+      name: "legacy",
+      provider: "sandbox",
+      baseImage: "sandbox",
+      status: "active",
+      externalImageId: "img_legacy",
+      pulledCount: 0,
+      createdAt: now,
+      lastUsedAt: now,
+    });
+    while (!(await deleteAccountContentsBatch(ctx, otherAccountId))) {
+      // drain
+    }
+  });
+
+  await expect(
+    t.query(internal.sandbox.snapshots.assertInScope, {
+      accountId: accountId,
+      scope: "account",
+      snapshot: "img_legacy",
+    }),
+  ).rejects.toThrow("another account");
 });

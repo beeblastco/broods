@@ -61,7 +61,8 @@ export async function refreshBuildingSnapshots(): Promise<number> {
         return "building" as const;
       });
     if (state === "building") continue;
-    await upsertSandboxSnapshot({
+    // One failed write must not stall every snapshot after it.
+    const recorded = await upsertSandboxSnapshot({
       accountId: snapshot.accountId,
       scope: snapshot.scope,
       name: snapshot.name,
@@ -69,8 +70,19 @@ export async function refreshBuildingSnapshots(): Promise<number> {
       baseImage: snapshot.baseImage,
       externalImageId: snapshot.externalImageId,
       status: state,
-    });
-    finished += 1;
+    }).then(
+      () => true,
+      (error: unknown) => {
+        logWarn("Snapshot build status write failed", {
+          accountId: snapshot.accountId,
+          snapshot: snapshot.name,
+          error: toErrorMessage(error),
+        });
+
+        return false;
+      },
+    );
+    if (recorded) finished += 1;
   }
 
   return finished;

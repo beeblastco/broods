@@ -773,7 +773,8 @@ export const sandboxSnapshotsFields = {
 export const sandboxSnapshotImagesFields = {
   externalImageId: v.string(),
   accountId: v.id("accounts"),
-  scope: sandboxSnapshotScopeValidator,
+  /** Absent for an image taken before snapshots were locked; it boots nowhere. */
+  scope: v.optional(sandboxSnapshotScopeValidator),
   baseImage: v.string(),
 };
 

@@ -12,6 +12,7 @@ import { deleteStageContents } from "../stage";
 import { unregisterSchedule } from "./cronSchedules";
 import { releaseSeat } from "./orgBilling";
 import { isManagedService } from "./planLimits";
+import { lockImage } from "./snapshotLocks";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 // One bounded read per account-scoped table. Each names the index whose
@@ -106,11 +107,17 @@ const accountScopedReads: ReadonlyArray<
         q.eq("accountId", accountId),
       )
       .take(ACCOUNT_DELETE_BATCH_SIZE),
-  (ctx, accountId) =>
-    ctx.db
+  // Each image keeps its lock after its row goes, so it never boots for
+  // another account as a plain provider image.
+  async (ctx, accountId) => {
+    const rows = await ctx.db
       .query("sandboxSnapshots")
       .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
-      .take(ACCOUNT_DELETE_BATCH_SIZE),
+      .take(ACCOUNT_DELETE_BATCH_SIZE);
+    for (const row of rows) await lockImage(ctx, row);
+
+    return rows;
+  },
   (ctx, accountId) =>
     ctx.db
       .query("sandboxAuditEvents")

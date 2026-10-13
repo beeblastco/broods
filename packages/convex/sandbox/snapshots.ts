@@ -20,6 +20,7 @@ import {
 import type { Doc, Id } from "../_generated/dataModel";
 import { getActiveAccountForUser } from "../org/orgs";
 import { ClientError } from "../model/clientError";
+import { lockImage } from "../model/snapshotLocks";
 import { snapshotBootRefusal, type SandboxScope } from "../model/sandboxRules";
 import {
   sandboxSnapshotScopeValidator,
@@ -250,26 +251,6 @@ export const upsert = internalMutation({
     return null;
   },
 });
-
-// Records which account and stage took an image, once: the first capture owns it.
-async function lockImage(
-  ctx: MutationCtx,
-  image: Omit<Doc<"sandboxSnapshotImages">, "_id" | "_creationTime">,
-): Promise<void> {
-  const locked = await ctx.db
-    .query("sandboxSnapshotImages")
-    .withIndex("by_externalImageId", (q) =>
-      q.eq("externalImageId", image.externalImageId),
-    )
-    .first();
-  if (locked) return;
-  await ctx.db.insert("sandboxSnapshotImages", {
-    externalImageId: image.externalImageId,
-    accountId: image.accountId,
-    scope: image.scope,
-    baseImage: image.baseImage,
-  });
-}
 
 type SnapshotImage = Pick<
   Doc<"sandboxSnapshots">,

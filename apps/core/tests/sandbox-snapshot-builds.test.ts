@@ -123,3 +123,27 @@ it("keeps a snapshot building when its provider cannot be asked", async () => {
   expect(await refreshBuildingSnapshots()).toBe(0);
   expect(upsert).not.toHaveBeenCalled();
 });
+
+it("records the rest of the pass when one status write fails", async () => {
+  building = BUILDING;
+  const status = spyOn(
+    MicrovmSandboxExecutor.prototype,
+    "snapshotStatus",
+  ).mockImplementation(async (image: string) =>
+    image.endsWith("snap-wip") ? "building" : "active",
+  );
+  const upsert = spyOn(snapshots, "upsertSandboxSnapshot").mockImplementation(
+    async (input): Promise<void> => {
+      if (input.name === "scraper") throw new Error("convex unavailable");
+    },
+  );
+  restores.push(
+    (): void => status.mockRestore(),
+    (): void => upsert.mockRestore(),
+  );
+  const { refreshBuildingSnapshots } =
+    await import("../src/shared/sandbox-snapshot-builds.ts");
+
+  expect(await refreshBuildingSnapshots()).toBe(1);
+  expect(upsert).toHaveBeenCalledTimes(2);
+});
