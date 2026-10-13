@@ -7,7 +7,6 @@ import type { WebSocketServerMessage } from "../../../packages/broods/src/websoc
 import { BroodsWebSocketClient } from "../../../packages/broods/src/websocket.ts";
 import { sealStageSessionTicket } from "../../../packages/convex/model/stageSessionTicket.ts";
 import {
-  MODEL_KEY_HINT,
   OK_AGENT,
   assertStep,
   pollUntil,
@@ -21,11 +20,13 @@ const NO_NATS = "Gateway requires NATS_URL";
 
 /**
  * The stage's runtime key, as `broods dev` writes it to BROODS_API_KEY, on the
- * gateway's sockets: it opens its stage's agent socket and runs a turn of a
- * `publicAccess` agent, is refused a private agent's turn and run, and never
- * opens the logs socket. The upgrade and attach checks need neither a model
- * key nor NATS. Without NATS the turns skip, and without a model key the
- * public turn only has to end.
+ * gateway's sockets: it opens its stage's agent socket, is refused a private
+ * agent's turn and run, and never opens the logs socket. A new agent requires
+ * a signed user token, which this stack cannot sign (the signing secret is
+ * minted from a dashboard session), so the public agent's turn and run are
+ * refused too, for that reason and no other; `user-token.ts` covers the
+ * token itself. The upgrade and attach checks need neither a model key nor
+ * NATS. Without NATS the turns skip.
  */
 export async function websocketRuntimeKey(
   context: VerifyContext,
@@ -234,11 +235,15 @@ export async function websocketRuntimeKey(
       !privateAttach.frames.some((frame): boolean => frame.type === "attached"),
     JSON.stringify(privateAttach),
   );
-  const publicAttach = await attach(publicAgent, runtimeKey);
+  // Started with the ticket, which speaks for the stage and needs no user
+  // token; read back over the socket with the bare runtime key.
+  const publicAttach = await attach(publicAgent, ticket);
   assertStep(
-    "the runtime key attaches to its public agent's run",
-    publicAttach.error === NO_NATS ||
-      publicAttach.frames.some((frame): boolean => frame.type === "attached"),
+    "the runtime key without a user token cannot attach to a new agent's run",
+    publicAttach.frames.some(
+      (frame): boolean => frame.type === "replay_unavailable",
+    ) &&
+      !publicAttach.frames.some((frame): boolean => frame.type === "attached"),
     JSON.stringify(publicAttach),
   );
 
@@ -255,18 +260,8 @@ export async function websocketRuntimeKey(
   );
   const publicTurn = await turn(publicAgent);
   assertStep(
-    "the runtime key ran a public agent's turn on the socket",
-    publicTurn.frames.some((frame): boolean => frame.type === "meta") &&
-      (context.hasModelKey
-        ? publicTurn.error === undefined &&
-          publicTurn.frames.some(
-            (frame): boolean => frame.type === "text-delta",
-          )
-        : publicTurn.error !== undefined &&
-          !publicTurn.error.includes("is not publicly accessible")),
+    "the runtime key without a user token is refused a new public agent's turn",
+    publicTurn.error?.includes("requires a signed user token") === true,
     JSON.stringify(publicTurn),
   );
-  if (!context.hasModelKey) {
-    console.log(`  the public turn ended at the provider (${MODEL_KEY_HINT})`);
-  }
 }

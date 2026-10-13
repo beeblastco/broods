@@ -17,6 +17,8 @@ info:
 
     WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The agent sockets take the stage's runtime key or a stage session ticket for their own stage, and check every frame like the matching HTTP call, so a runtime key reaches only agents with `publicAccess: true` there. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket. A socket opened with a stage session ticket closes when the ticket expires, with close code `4419` (`Stage session expired` on the observability socket, `Credential expired` on the machine socket); reconnect with a fresh ticket. The machine socket can instead be kept open: its `ready` frame carries `expiresInMs`, and a daemon that sends `{ "type": "credential", "token": "bdts_..." }` with a fresh ticket for the same account and stage before then moves the deadline (core answers with another `ready`); a ticket for anything else closes it with `4401`. A credential that stops resolving while the socket is open (account suspended, key rotated, role session ended) closes it with `4401` within a minute.
 
+    **End-user tokens.** The runtime key (`bsk_...`) is embeddable, so on its own it cannot say which of your users is calling, and any visitor who guesses another user's `conversationKey` could read and steer that conversation. Your backend signs a short-lived user token (`buat_...`) with the stage's signing secret (`bsig_...`, generated and rotated on the dashboard's Runtime key tab, shown once) and your frontend sends it beside the runtime key in the `X-Broods-User-Token` header, or as a `broods.user.<token>` subprotocol entry on an agent socket. The SDK's `signUserToken` signs one. A request with a valid token runs every conversation key and event id it names under that user's namespace (`bsu:<userId>:<key>`, answered back in `conversationKey` and `eventId`), so one user can never name another's conversation; runs, steering, approvals, `continue` and run reads all go through the same check. A forged or expired token is a 401 like a bad key. An agent with the user-token requirement on (every agent created since this shipped; an existing agent once its owner turns it on) refuses the runtime key without a token with 403 `user_token_required`. Account keys and stage session tickets are not affected.
+
     The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
 
@@ -244,12 +246,25 @@ paths:
                       type: invalid_request_error
                       code: budget_exhausted
         "403":
-          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, or the credential is a run token, which does not start runs yet
+          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, the agent requires a user token and the runtime key came without one (`user_token_required`), the user token does not list the conversation (`user_token_conversation`), or the credential is a run token, which does not start runs yet
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                userTokenRequired:
+                  value:
+                    error:
+                      message: "Agent agent_... requires a signed user token with the runtime key. Send it in the X-Broods-User-Token header (signUserToken in the broods SDK), or turn the requirement off for this agent."
+                      type: permission_error
+                      code: user_token_required
+                userTokenConversation:
+                  value:
+                    error:
+                      message: The user token does not list this conversationKey.
+                      type: permission_error
+                      code: user_token_conversation
+                      param: conversationKey
                 runTokenScope:
                   value:
                     error:
@@ -301,7 +316,9 @@ paths:
         has to be named here. Every accepted request reaches completed, failed,
         or expired. The embeddable runtime key reads runs of public agents only;
         a member's stage ticket also reads runs of its stage's private agents,
-        as it may start them.
+        as it may start them. With a user token the runtime key reads only runs
+        of that user's own conversations; without one it reads no run of any
+        user's conversation.
       parameters:
         - name: runId
           in: path
@@ -363,7 +380,7 @@ paths:
                     status: failed
                     error: Model provider returned 503
         "403":
-          description: Deployment-key caller polling an agent that has not opted into public access, or a run token reading a run of another agent
+          description: Deployment-key caller polling an agent that has not opted into public access, polling an agent that requires a user token without one (`user_token_required`), polling a run of another user's conversation (`status_access_denied`), or a run token reading a run of another agent
           content:
             application/json:
               schema:
@@ -1616,7 +1633,7 @@ paths:
       description: |
         The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the runtime key rather than an account key. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`bdts_...`) from a member of the stage's project may run any agent of the stage.
 
-        A runtime key is safe to embed, so it carries three limits an account key does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
+        A runtime key is safe to embed, so it carries three limits an account key does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session. With a user token (`X-Broods-User-Token`) every conversation and event id lands under that user, and an agent that requires one refuses the key without it (`403 user_token_required`).
 
         The path segment is the stage's deployment endpoint id, not an agent id, although this path item names it `{agentId}` because it shares the URL with `GET`, `PATCH` and `DELETE /v1/agents/{agentId}`. Prefer `/v1/runs` unless the caller only holds a runtime key.
       security:
@@ -3677,6 +3694,9 @@ components:
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
         config-plane route answers it with 401.
+        Beside a runtime key, `X-Broods-User-Token` may carry a signed user
+        token (`buat_...`, see `UserToken`); an invalid or expired one makes
+        the whole request a 401.
         A stage session ticket (`bdts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
@@ -3685,6 +3705,18 @@ components:
         a run with it is not enabled yet: `POST /v1/runs` and every other run
         route answer 403 `run_token_scope`, and every config-plane route
         answers 401. It expires shortly after the run's time budget.
+    UserToken:
+      type: apiKey
+      in: header
+      name: X-Broods-User-Token
+      description: >-
+        A short-lived end-user token (`buat_...`) your backend signs with the
+        stage's signing secret (`bsig_...`, `signUserToken` in the SDK),
+        naming the user, optionally the conversation keys they may use, and an
+        expiry at most 60 minutes out. Sent only beside the runtime key. Keep
+        the signing secret on your server: whoever holds it can speak as any
+        user of the stage. Rotating it on the dashboard voids every token it
+        signed.
     AdminAuth:
       type: http
       scheme: bearer
@@ -3776,7 +3808,13 @@ components:
           description: Used for account-scoped deduplication
         conversationKey:
           type: string
-          description: Selects the account-scoped persisted direct conversation
+          description: >-
+            Selects the account-scoped persisted direct conversation. With the
+            runtime key it is a key any of your users could guess (a user id,
+            an email, `ticket-42`), so send a user token: the key then lives
+            under that user (`bsu:<userId>:<key>`, and the response names it
+            so), and another user's token or no token cannot reach it. Keys
+            starting with `bsu:` are reserved for that namespace.
         background:
           type: boolean
           default: false
@@ -4419,6 +4457,8 @@ components:
                 | `unsupported_channel_type` | 400 | The channel type does not support this operation. |
                 | `unsupported_media_type` | 415 | Default for a 415: the `Content-Type` is not accepted. |
                 | `upload_quota_exceeded` | 429 | The hourly upload grant budget is spent. Retry after `Retry-After`. |
+                | `user_token_conversation` | 403 | The user token lists its conversations and this `conversationKey` is not one of them. |
+                | `user_token_required` | 403 | The agent requires a signed user token (`X-Broods-User-Token`) with the runtime key and the request had none. |
               example: not_found
             param:
               type: string

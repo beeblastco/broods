@@ -45,10 +45,16 @@ import {
   json,
   mapWithConcurrency,
   resolveRequestId,
+  USER_TOKEN_HEADER,
   websocketToken,
   websocketUpgradeHeaders,
+  websocketUserToken,
   withRequestId,
 } from "../src/utils.ts";
+import {
+  USER_TOKEN_HEADER as CORE_USER_TOKEN_HEADER,
+  USER_TOKEN_SUBPROTOCOL_PREFIX,
+} from "../../../packages/convex/model/userToken.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
   createSubagentTaskId,
@@ -3721,4 +3727,136 @@ test("retryAfterSeconds returns zero once the window has elapsed", () => {
   Bun.sleepSync(5);
 
   expect(limiter.retryAfterSeconds("k")).toBe(0);
+});
+test("the gateway spells the user token header and subprotocol as core does", () => {
+  expect(USER_TOKEN_HEADER).toBe(CORE_USER_TOKEN_HEADER);
+  const request = new Request("https://gateway.example.com/ws", {
+    headers: {
+      "sec-websocket-protocol": `broods.v1, broods.token.bsk_key, ${USER_TOKEN_SUBPROTOCOL_PREFIX}buat_from-proto`,
+    },
+  });
+  expect(websocketUserToken(request)).toBe("buat_from-proto");
+  // The credential is still the token entry, never the user's.
+  expect(websocketToken(request)).toBe("bsk_key");
+  expect(
+    websocketUserToken(
+      new Request("https://gateway.example.com/ws", {
+        headers: { [USER_TOKEN_HEADER]: " buat_from-header " },
+      }),
+    ),
+  ).toBe("buat_from-header");
+  expect(
+    websocketUserToken(new Request("https://gateway.example.com/ws")),
+  ).toBeUndefined();
+});
+
+test("the socket scope lookup carries the user token, and its namespace comes back", async (): Promise<void> => {
+  const sent: Array<string | null> = [];
+  const answer = async (
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    sent.push(new Headers(init?.headers).get(USER_TOKEN_HEADER));
+
+    return Response.json({
+      accountId: "account-1",
+      projectSlug: "project",
+      stageSlug: "production",
+      endpointIds: ["endpoint-1"],
+      conversationPrefix: "bsu:alice:",
+    });
+  };
+
+  const scope = await resolveSocketScope(
+    "agent",
+    "bsk_runtime",
+    "https://core.example",
+    answer,
+    "buat_alice",
+  );
+  await resolveSocketScope(
+    "agent",
+    "bsk_runtime",
+    "https://core.example",
+    answer,
+  );
+
+  expect(sent).toEqual(["buat_alice", null]);
+  expect(scope).toMatchObject({
+    kind: "resolved",
+    scope: { conversationPrefix: "bsu:alice:" },
+  });
+});
+
+test("a user's run sends the token to core and streams from the user's namespace", async (): Promise<void> => {
+  const frames: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(frames);
+  socket.data.token = "bsk_runtime";
+  socket.data.userToken = "buat_alice";
+  socket.data.conversationPrefix = "bsu:alice:";
+  const userTokens: Array<string | null> = [];
+  const subjects: string[] = [];
+  const base = zeroBufferConnection(async () => ({
+    [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+    close: async (): Promise<void> => {},
+  }));
+  const connection = {
+    ...base,
+    jetstreamManager: async () => {
+      const manager = await base.jetstreamManager();
+
+      return {
+        streams: {
+          ...manager.streams,
+          info: async (
+            name: string,
+            options?: { subjects_filter?: string },
+          ) => {
+            if (options?.subjects_filter)
+              subjects.push(options.subjects_filter);
+
+            return manager.streams.info(name, options);
+          },
+        },
+      };
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      userTokens.push(new Headers(init?.headers).get(USER_TOKEN_HEADER));
+
+      return Response.json(
+        { eventId: "bsu:alice:event-1", status: "completed" },
+        { status: 202 },
+      );
+    },
+    { preconnect: (): void => {} },
+  );
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_public",
+        sessionId: "chat-1",
+        eventId: "event-1",
+        input: "hi",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => connection as never,
+    );
+    await waitForCondition((): boolean => subjects.length > 0);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+
+  expect(userTokens[0]).toBe("buat_alice");
+  expect(subjects).toContain(
+    streamResponseSubject("acct_test", "agent_public", "bsu:alice:chat-1"),
+  );
+  expect(subjects).not.toContain(
+    streamResponseSubject("acct_test", "agent_public", "chat-1"),
+  );
 });

@@ -3,6 +3,7 @@
  * account scoping, public direct API validation, leases, filesystem namespaces.
  */
 
+import { USER_CONVERSATION_PREFIX } from "@broods/convex/model/userToken";
 import { createHash } from "node:crypto";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
@@ -46,6 +47,7 @@ export const MESSENGER_INTEGRATION_PREFIX = "messenger:";
 export const WHATSAPP_INTEGRATION_PREFIX = "whatsapp:";
 
 const RESERVED_EVENT_ID_PREFIXES = [
+  USER_CONVERSATION_PREFIX,
   INTERNAL_EVENT_ID_PREFIX,
   ACCOUNT_NAMESPACE_PREFIX,
   DIRECT_API_EVENT_ID_PREFIX,
@@ -68,6 +70,8 @@ const RESERVED_EVENT_ID_PREFIXES = [
 ] as const;
 
 const RESERVED_CONVERSATION_PREFIXES = [
+  // A signed user's namespace: only a request carrying their token reaches it.
+  USER_CONVERSATION_PREFIX,
   INTERNAL_EVENT_ID_PREFIX,
   ACCOUNT_NAMESPACE_PREFIX,
   DIRECT_API_CONVERSATION_PREFIX,

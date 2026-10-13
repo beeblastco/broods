@@ -53,6 +53,7 @@ import {
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
+  websocketUserToken,
   withRequestId,
   type GatewayLimits,
 } from "./utils.ts";
@@ -183,6 +184,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         } else if (observabilityPath || agentWebSocketPath) {
           const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
+          // Only the agent socket runs as an end user; logs are the stage's.
+          const userToken = agentWebSocketPath
+            ? websocketUserToken(request)
+            : undefined;
 
           // Each socket asks core for its own scope: a runtime key opens the
           // agent socket, never the observability one.
@@ -190,6 +195,8 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
             observabilityPath ? "observability" : "agent",
             token,
             config.coreBaseUrl,
+            fetch,
+            userToken,
           );
           if (resolved.kind === "unavailable")
             return jsonError(502, "Could not verify the WebSocket token");
@@ -242,6 +249,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               token: token,
               coreBaseUrl: config.coreBaseUrl,
               accountId: scope.accountId,
+              ...(userToken ? { userToken: userToken } : {}),
+              ...(scope.conversationPrefix
+                ? { conversationPrefix: scope.conversationPrefix }
+                : {}),
             };
           }
         }

@@ -219,6 +219,8 @@ export async function ensureAgentsRowForConfig(
     accountId: account._id,
     name: config.name,
     description: config.description,
+    // New agents take a runtime key only with a signed user token.
+    requireUserToken: true,
     createdAt: now,
     updatedAt: now,
   });

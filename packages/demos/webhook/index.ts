@@ -6,10 +6,14 @@
  * `X-Webhook-Signature`. Point WEBHOOK_URL at any HTTPS endpoint you can read.
  */
 
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// The demo's agents require a signed user token beside the runtime key.
+// Your backend signs one per signed-in user; here one demo user stands in.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 for await (const chunk of client.stream(api.agents.webhookAgent, {
   input: "What is the newest model release from OpenAI",

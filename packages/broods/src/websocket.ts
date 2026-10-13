@@ -6,6 +6,7 @@
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import type { AgentReference } from "./client.ts";
 import { stripTrailingSlash } from "./config.ts";
+import { USER_TOKEN_SUBPROTOCOL_PREFIX } from "../../convex/model/userToken.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
   resolveRunEvents,
@@ -40,6 +41,8 @@ export type WebSocketRunInput = {
   /** Defaults to "steer": join the live run at its next step boundary. */
   mode?: "reject" | "followup" | "collect" | "steer";
   idempotencyKey?: string;
+  /** This socket's user token, over the client's `userToken`. */
+  userToken?: string;
 } & (AgentRunEventInput | AgentRunAnswerInput) &
   AgentRunOverrides;
 
@@ -52,6 +55,8 @@ export type WebSocketAttachInput = Omit<
   projectSlug?: string;
   stageSlug?: string;
   signal?: AbortSignal;
+  /** This socket's user token, over the client's `userToken`. */
+  userToken?: string;
 };
 
 export interface WebSocketHandlers {
@@ -81,6 +86,13 @@ export interface BroodsWebSocketClientOptions {
   host?: string;
   /** Runtime key used as the WebSocket token. Defaults to BROODS_API_KEY from the environment or local .env files. */
   apiKey?: string;
+  /**
+   * The signed-in user's token (from `signUserToken` on your backend). Each
+   * socket carries it from its upgrade on; an agent that requires one refuses
+   * the runtime key without it. Tokens are short-lived, so a long-lived client
+   * passes a fresh one per run as `userToken` on the input instead.
+   */
+  userToken?: string;
   WebSocket?: WebSocketConstructorLike;
   connectTimeoutMs?: number;
 }
@@ -102,6 +114,7 @@ export interface WebSocketLike {
 export class BroodsWebSocketClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly userToken?: string;
   private readonly WebSocketImpl?: WebSocketConstructorLike;
   private readonly connectTimeoutMs: number;
 
@@ -119,6 +132,7 @@ export class BroodsWebSocketClient {
       throw new Error(
         "BroodsWebSocketClient requires apiKey or BROODS_API_KEY.",
       );
+    this.userToken = options.userToken;
     this.WebSocketImpl = options.WebSocket;
     this.connectTimeoutMs =
       options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
@@ -132,7 +146,10 @@ export class BroodsWebSocketClient {
     const url = this.buildUrl(input);
     const agentId = resolveAgentId(input);
     const accessError = webSocketAccessError(this.baseUrl);
-    const socket = new WebSocketImpl(url, webSocketSubprotocols(this.apiKey));
+    const socket = new WebSocketImpl(
+      url,
+      webSocketSubprotocols(this.apiKey, input.userToken ?? this.userToken),
+    );
     let opened = false;
     let closed = false;
     const timeout = setTimeout(() => {
@@ -251,7 +268,10 @@ export class BroodsWebSocketClient {
   ): WebSocketSubscription {
     const WebSocketImpl = this.resolveWebSocket();
     const url = this.buildUrl(input);
-    const socket = new WebSocketImpl(url, webSocketSubprotocols(this.apiKey));
+    const socket = new WebSocketImpl(
+      url,
+      webSocketSubprotocols(this.apiKey, input.userToken ?? this.userToken),
+    );
     let closed = false;
     const close = (code = 1000, reason = "client closed") => {
       if (closed) return;
@@ -275,6 +295,7 @@ export class BroodsWebSocketClient {
           ...input,
           signal: undefined,
           agent: undefined,
+          userToken: undefined,
         }),
       );
     };
@@ -404,12 +425,19 @@ export function toWebSocketBaseUrl(url: string): string {
 
 /**
  * The credential travels as a `Sec-WebSocket-Protocol` entry rather than in
- * the URL, so it never lands in proxy or access logs. The gateway answers
- * with `broods.v1`, which is what completes a handshake that offered
- * subprotocols.
+ * the URL, so it never lands in proxy or access logs, and so does the user
+ * token. The gateway answers with `broods.v1`, which is what completes a
+ * handshake that offered subprotocols.
  */
-export function webSocketSubprotocols(apiKey: string): string[] {
-  return ["broods.v1", `broods.token.${apiKey}`];
+export function webSocketSubprotocols(
+  apiKey: string,
+  userToken?: string,
+): string[] {
+  return [
+    "broods.v1",
+    `broods.token.${apiKey}`,
+    ...(userToken ? [`${USER_TOKEN_SUBPROTOCOL_PREFIX}${userToken}`] : []),
+  ];
 }
 
 export { BroodsWebSocketClient as WebSocketClient };

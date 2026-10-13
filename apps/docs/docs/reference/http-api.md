@@ -22,6 +22,14 @@ Every request sends `Authorization: Bearer <credential>`.
 
 The runtime key only reaches agents with `publicAccess: true` in its own stage, over HTTP and on the agent WebSocket alike. A run token (`brt_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md). Every credential starts with `b` (`bsk_`, `bask_`, ...).
 
+With the runtime key, also send the signed-in user's token, which your server signs with the stage's signing secret:
+
+```text
+X-Broods-User-Token: buat_...
+```
+
+Every `conversationKey` and `eventId` of that request then lives under that user, and the response names them as `bsu:<userId>:<key>`. Send either form back. An agent that requires a user token, which every new agent does, answers the runtime key without one with `403 user_token_required`. A forged or expired token is a `401`. See [Users behind the runtime key](../guides/security.md#users-behind-the-runtime-key).
+
 ### Calling the API from a sandbox
 
 Every `bash` command that blocks runs with the identity of the run that issued it. A background job outlives the run and its token, so it gets none:
@@ -163,18 +171,20 @@ A queued request answers `202` with a `statusUrl` instead of a second SSE stream
 
 Branch on `code`, never on `message`. Each response also carries an `X-Request-Id` header. Quote it when reporting a problem.
 
-| Status | `code`                   | Cause                                                                                                                                   |
-| ------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope                                                                                 |
-| 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                                                                                             |
-| 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true`                                                                              |
-| 403    | `run_token_scope`        | A run token did anything but read its own agent's runs                                                                                  |
-| 403    | `status_access_denied`   | The run's status is not readable from this deployment, such as a subagent run started under another deployment                          |
-| 404    | `run_not_found`          | Unknown run id                                                                                                                          |
-| 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                                                      |
-| 409    | `idempotency_conflict`   | Same idempotency key, different payload                                                                                                 |
-| 429    | `ingress_capacity`       | Conversation queue is full                                                                                                              |
-| 503    | `service_unavailable`    | `POST /v1/runs` when the deployment's run queue is full. Nothing is recorded or counted; retry after `Retry-After`. A plan refusal wins |
+| Status | `code`                    | Cause                                                                                                                                   |
+| ------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 401    | `unauthorized`            | Missing or wrong credential, or a key for another scope                                                                                 |
+| 403    | `public_access_disabled`  | The agent does not set `publicAccess: true`                                                                                             |
+| 403    | `run_overrides_disabled`  | `system` or `model` sent without `allowRunOverrides: true`                                                                              |
+| 403    | `run_token_scope`         | A run token did anything but read its own agent's runs                                                                                  |
+| 403    | `status_access_denied`    | The run's status is not readable from this deployment, such as a subagent run started under another deployment, or another user's run   |
+| 403    | `user_token_required`     | The agent requires a user token with the runtime key and none was sent                                                                  |
+| 403    | `user_token_conversation` | The user token lists its conversations and this `conversationKey` is not one                                                            |
+| 404    | `run_not_found`           | Unknown run id                                                                                                                          |
+| 409    | `conversation_busy`       | Busy conversation in `reject` mode                                                                                                      |
+| 409    | `idempotency_conflict`    | Same idempotency key, different payload                                                                                                 |
+| 429    | `ingress_capacity`        | Conversation queue is full                                                                                                              |
+| 503    | `service_unavailable`     | `POST /v1/runs` when the deployment's run queue is full. Nothing is recorded or counted; retry after `Retry-After`. A plan refusal wins |
 
 On a streamed run, these arrive as the first SSE `error` frame instead of a JSON body.
 
@@ -211,7 +221,7 @@ Connect to `wss://gateway.broods.app/v1/agents/{endpointId}/ws`, or the scoped f
 Sec-WebSocket-Protocol: broods.v1, broods.token.<runtime key>
 ```
 
-The server answers `broods.v1`. A proxy in front of the gateway must not log request headers. A `?token=` query parameter is ignored.
+The server answers `broods.v1`. A proxy in front of the gateway must not log request headers. A `?token=` query parameter is ignored. A user token rides as one more entry, `broods.user.<token>`, and holds for every frame on the socket: `meta` then names the conversation as `bsu:<userId>:<key>`.
 
 The key opens a socket for its own stage only; another stage's path answers `403` before the upgrade. Each frame on the socket is checked like the matching HTTP call: an `execute` on an agent without `publicAccess: true` gets an `error` frame with `status: 403`, and an `attach` to its run gets `replay_unavailable`.
 

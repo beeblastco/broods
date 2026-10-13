@@ -211,6 +211,7 @@ export default function DashboardPage(): React.JSX.Element {
             revealed={revealedKey}
             onRotate={rotateViewingKey}
             projectId={projectId}
+            stageId={activeStageId ?? undefined}
             projectSlug={projectSlug}
             stageSlug={stageSlug}
           />

@@ -15,8 +15,9 @@ import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
 import { navHref } from "@/app/lib/navigation";
-import type { api } from "@broods/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
@@ -67,6 +68,8 @@ interface ViewProps {
   onRotate?: () => Promise<void>;
   /** The project and stage the key belongs to, for the Deployment section. */
   projectId?: Id<"projects">;
+  /** The stage whose user-token signing secret the tab manages. */
+  stageId?: Id<"stages">;
   projectSlug?: string;
   stageSlug?: string;
 }
@@ -104,6 +107,7 @@ export function RuntimeKeyView({
   revealed,
   onRotate,
   projectId,
+  stageId,
   projectSlug,
   stageSlug,
 }: ViewProps): React.JSX.Element {
@@ -160,6 +164,15 @@ export function RuntimeKeyView({
           )}
         </p>
       </SettingsRow>
+
+      {projectId && stageId && (
+        <SettingsRow
+          title="User token signing secret"
+          description="Your server signs each user's token with it. Shown once."
+        >
+          <SigningSecretRow projectId={projectId} stageId={stageId} />
+        </SettingsRow>
+      )}
 
       <SettingsRow title="Connect" description="Three lines to a first run.">
         <ConnectSnippet key={apiKey} apiKey={apiKey} gatewayUrl={gatewayUrl} />
@@ -449,5 +462,77 @@ function RotateButton({
       </Button>
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </span>
+  );
+}
+
+/**
+ * The stage's user-token signing secret: its hint, and generate or rotate,
+ * which shows the new secret this once.
+ */
+function SigningSecretRow({
+  projectId,
+  stageId,
+}: {
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}): React.JSX.Element {
+  const current = useQuery(api.agent.deployments.userTokenSecretForStage, {
+    projectId: projectId,
+    stageId: stageId,
+  });
+  const rotate = useMutation(api.agent.deployments.rotateUserTokenSecret);
+  const [minted, setMinted] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function mint(): Promise<void> {
+    const result = await rotate({ projectId: projectId, stageId: stageId });
+    setMinted(result.secret);
+  }
+
+  return (
+    <>
+      {minted ? (
+        <ValueRow label="Copy it now. It is not shown again.">
+          <Input readOnly value={minted} className="font-mono text-xs" />
+          <CopyButton value={minted} label="signing secret" />
+        </ValueRow>
+      ) : (
+        <ValueRow label="BROODS_USER_TOKEN_SECRET">
+          <Input
+            readOnly
+            value={current ? current.hint : "Not generated"}
+            className="font-mono text-xs"
+          />
+          {current ? (
+            <RotateButton onRotate={mint} />
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              tone="muted"
+              className="cursor-pointer"
+              onClick={() => {
+                setError(null);
+                mint().catch((e: unknown) => setError(toErrorMessage(e)));
+              }}
+            >
+              Generate
+            </Button>
+          )}
+        </ValueRow>
+      )}
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <p className="text-2xs text-muted-foreground">
+        Keep it on your server. Rotating it voids every token it signed.{" "}
+        <a
+          href={`${DOCS_URL}#user-tokens`}
+          target="_blank"
+          rel="noreferrer"
+          className="cursor-pointer text-foreground underline-offset-3 hover:underline"
+        >
+          User tokens
+        </a>
+      </p>
+    </>
   );
 }

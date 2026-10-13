@@ -80,6 +80,7 @@ interface ConvexAgentDoc {
   encryptedConfig?: string;
   encryptionIv?: string;
   encryptionTag?: string;
+  requireUserToken?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -103,6 +104,7 @@ async function agentFromConvex(
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     config: config,
+    ...(doc.requireUserToken === true ? { requireUserToken: true } : {}),
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };

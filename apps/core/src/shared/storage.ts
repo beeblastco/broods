@@ -8,6 +8,7 @@ import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { McpRecord } from "./domain/mcp.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { ConnectionType } from "@broods/convex/model/connections";
+import type { EncryptedBlob } from "@broods/convex/model/envelope";
 import type { UsageQuantities } from "@broods/convex/model/pricing";
 import type { R2Credentials } from "@broods/convex/model/r2Credentials";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
@@ -166,9 +167,14 @@ interface ChannelRecordStore {
  */
 interface AgentDeploymentStore {
   /** The key's scope with its account, null when either is inactive. */
-  getByApiKeyHash(
-    apiKeyHash: string,
-  ): Promise<(AgentDeploymentScope & { account: AccountRecord }) | null>;
+  getByApiKeyHash(apiKeyHash: string): Promise<
+    | (AgentDeploymentScope & {
+        account: AccountRecord;
+        /** The stage's user-token signing secret, still sealed; absent until one is minted. */
+        userTokenSecret?: EncryptedBlob;
+      })
+    | null
+  >;
   /** Stamp the key's lastUsedAt for the dashboard. Callers throttle it. */
   touchLastUsed(apiKeyHash: string, usedAt: number): Promise<void>;
   /** Resolve the stage deployment containing one linked runtime agent. */

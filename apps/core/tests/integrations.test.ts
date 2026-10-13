@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { UserToken } from "@broods/convex/model/userToken";
 import {
   createIncomingEventRouter,
   type AsyncDirectInboundEvent,
@@ -2828,5 +2829,265 @@ describe("run token (auth kind agent)", () => {
     expect(responseJson(endpoint)).toMatchObject({
       error: { code: "run_token_scope" },
     });
+  });
+});
+describe("runtime key with a user token", () => {
+  const REQUIRING_AGENT = { ...TEST_AGENT, requireUserToken: true };
+  const ALICE: UserToken = { userId: "alice", expiresAt: 1_900_000_000_000 };
+  const BOB: UserToken = { userId: "bob", expiresAt: 1_900_000_000_000 };
+
+  async function userTurn(
+    body: Record<string, unknown>,
+    user: UserToken | undefined,
+    agent: typeof TEST_AGENT = REQUIRING_AGENT,
+    handled: DirectInboundEvent[] = [],
+  ): Promise<ResponseShape> {
+    return routeIncomingEvent(
+      createEvent(
+        { agentId: agent.agentId, ...body },
+        { authorization: "Bearer bsk_example" },
+        {
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handled.push(event);
+
+          return { statusCode: 200, body: "ok" };
+        },
+      }),
+      {
+        agentLoader: async () => agent,
+        authResolver: async () => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          ...(user ? { user: user } : {}),
+        }),
+      },
+    );
+  }
+
+  async function userStatusRead(
+    conversationKey: string,
+    user: UserToken | undefined,
+    agent: typeof TEST_AGENT = REQUIRING_AGENT,
+  ): Promise<ResponseShape> {
+    return routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer bsk_example" },
+        { method: "GET", rawPath: `/v1/runs/${TEST_RUN_ID}` },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({ statusCode: 200, body: "{}" }),
+      }),
+      {
+        agentLoader: async () => agent,
+        authResolver: async () => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          ...(user ? { user: user } : {}),
+        }),
+        ingressStatusLoader: async ({ runId }) =>
+          ingressStatus(
+            scopedDirectEventId(TEST_ACCOUNT.accountId, agent.agentId, "one"),
+            conversationKey,
+            agent.agentId,
+            runId,
+          ),
+      },
+    );
+  }
+
+  it("refuses a runtime key without a token when the agent requires one", async () => {
+    const response = await userTurn(USER_TURN, undefined);
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      error: { code: "user_token_required" },
+    });
+  });
+
+  it("puts the conversation and event id under the token's user", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const response = await userTurn(USER_TURN, ALICE, REQUIRING_AGENT, handled);
+
+    expect(response.statusCode).toBe(200);
+    expect(handled[0]?.publicConversationKey).toBe("bsu:alice:chat_1");
+    expect(handled[0]?.conversationKey).toBe(
+      scopedDirectConversationKey(
+        TEST_ACCOUNT.accountId,
+        TEST_AGENT.agentId,
+        "bsu:alice:chat_1",
+      ),
+    );
+    expect(handled[0]?.publicEventId).toBe("bsu:alice:one");
+
+    // The namespaced form core answered with names the same conversation.
+    const again: DirectInboundEvent[] = [];
+    await userTurn(
+      { ...USER_TURN, conversationKey: "bsu:alice:chat_1" },
+      ALICE,
+      REQUIRING_AGENT,
+      again,
+    );
+    expect(again[0]?.conversationKey).toBe(handled[0]?.conversationKey);
+  });
+
+  it("keeps user A's token out of user B's conversation", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const named = await userTurn(
+      { ...USER_TURN, conversationKey: "bsu:bob:chat_1" },
+      ALICE,
+      REQUIRING_AGENT,
+      handled,
+    );
+    // Bob's namespaced key is just a key under Alice's namespace, and a
+    // reserved one at that, so it never lands in Bob's conversation.
+    expect(named.statusCode).toBe(400);
+    expect(handled).toHaveLength(0);
+
+    const bobScoped = scopedDirectConversationKey(
+      TEST_ACCOUNT.accountId,
+      TEST_AGENT.agentId,
+      "bsu:bob:chat_1",
+    );
+    const continued = await userTurn(
+      { eventId: "c-1", conversationKey: bobScoped, continue: true },
+      ALICE,
+    );
+    expect(continued.statusCode).toBe(404);
+
+    const answered = await userTurn(
+      { eventId: "c-2", conversationKey: bobScoped, continue: true },
+      BOB,
+      REQUIRING_AGENT,
+      handled,
+    );
+    expect(answered.statusCode).toBe(200);
+    expect(handled[0]?.publicConversationKey).toBe("bsu:bob:chat_1");
+  });
+
+  it("holds a token that lists its conversations to those", async () => {
+    const listed = { ...ALICE, conversations: ["chat_1"] };
+
+    expect((await userTurn(USER_TURN, listed)).statusCode).toBe(200);
+    const other = await userTurn(
+      { ...USER_TURN, conversationKey: "chat_2" },
+      listed,
+    );
+    expect(other.statusCode).toBe(403);
+    expect(responseJson(other)).toMatchObject({
+      error: { code: "user_token_conversation", param: "conversationKey" },
+    });
+  });
+
+  it("keeps a legacy agent answering without a token, outside every user's namespace", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const legacy = await userTurn(USER_TURN, undefined, TEST_AGENT, handled);
+    expect(legacy.statusCode).toBe(200);
+    expect(handled[0]?.publicConversationKey).toBe("chat_1");
+
+    // No token cannot name a user's namespace, new or continued.
+    const named = await userTurn(
+      { ...USER_TURN, conversationKey: "bsu:alice:chat_1" },
+      undefined,
+      TEST_AGENT,
+    );
+    expect(named.statusCode).toBe(400);
+    const continued = await userTurn(
+      {
+        eventId: "c-1",
+        conversationKey: scopedDirectConversationKey(
+          TEST_ACCOUNT.accountId,
+          TEST_AGENT.agentId,
+          "bsu:alice:chat_1",
+        ),
+        continue: true,
+      },
+      undefined,
+      TEST_AGENT,
+    );
+    expect(continued.statusCode).toBe(404);
+
+    // A token is honored even while the requirement is off.
+    const scoped: DirectInboundEvent[] = [];
+    await userTurn(USER_TURN, ALICE, TEST_AGENT, scoped);
+    expect(scoped[0]?.publicConversationKey).toBe("bsu:alice:chat_1");
+  });
+
+  it("hands the agent socket its user's namespace", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        {},
+        { authorization: "Bearer bsk_example" },
+        {
+          rawPath: "/v1/internal/agent-socket-scope",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers(),
+      {
+        authResolver: async () => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          user: ALICE,
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(responseJson(response)).toMatchObject({
+      conversationPrefix: "bsu:alice:",
+    });
+  });
+
+  it("lets a member's stage ticket past the requirement", async () => {
+    const response = await runtimeKeyRequest(
+      USER_TURN,
+      { agentLoader: async () => REQUIRING_AGENT },
+      true,
+    );
+
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("reads a run only for its own user", async () => {
+    expect((await userStatusRead("bsu:alice:chat_1", ALICE)).statusCode).toBe(
+      200,
+    );
+
+    const other = await userStatusRead("bsu:alice:chat_1", BOB);
+    expect(other.statusCode).toBe(403);
+    expect(responseJson(other)).toMatchObject({
+      error: { code: "status_access_denied" },
+    });
+
+    const missing = await userStatusRead("bsu:alice:chat_1", undefined);
+    expect(missing.statusCode).toBe(403);
+    expect(responseJson(missing)).toMatchObject({
+      error: { code: "user_token_required" },
+    });
+
+    // A legacy agent without a token still reads its un-namespaced runs,
+    // never a user's.
+    expect(
+      (await userStatusRead("chat_1", undefined, TEST_AGENT)).statusCode,
+    ).toBe(200);
+    expect(
+      (await userStatusRead("bsu:alice:chat_1", undefined, TEST_AGENT))
+        .statusCode,
+    ).toBe(403);
   });
 });

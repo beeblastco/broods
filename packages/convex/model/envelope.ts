@@ -92,6 +92,13 @@ export const ENVELOPE_COLUMNS = [
     tag: "apiKeyTag",
   },
   {
+    table: "agentDeployments",
+    scope: "agentDeployments:userTokenSecretCiphertext",
+    ciphertext: "userTokenSecretCiphertext",
+    iv: "userTokenSecretIv",
+    tag: "userTokenSecretTag",
+  },
+  {
     table: "channelEndpoints",
     scope: "channelEndpoints:tokenCiphertext",
     ciphertext: "tokenCiphertext",

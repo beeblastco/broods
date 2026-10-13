@@ -23,6 +23,13 @@ export const decoder = new TextDecoder();
 const WEBSOCKET_SUBPROTOCOL = "broods.v1";
 /** `Sec-WebSocket-Protocol` entry prefix that carries the credential. */
 const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
+/**
+ * The end-user token's header and subprotocol prefix, the values core's
+ * `@broods/convex/model/userToken` names (a test holds them equal). Spelled
+ * here so the gateway image needs no file from another workspace.
+ */
+export const USER_TOKEN_HEADER = "x-broods-user-token";
+const USER_TOKEN_SUBPROTOCOL_PREFIX = "broods.user.";
 const maxBunIdleTimeoutSeconds = 255;
 
 /** The message from either shape core puts in `error`: envelope or plain text. */
@@ -85,6 +92,21 @@ export function websocketToken(request: Request): string {
   }
 
   return token;
+}
+
+/**
+ * The signed end-user token beside the credential: the `X-Broods-User-Token`
+ * header, else a `broods.user.<token>` subprotocol entry (browsers again).
+ * Undefined when the upgrade carries none; core checks it.
+ */
+export function websocketUserToken(request: Request): string | undefined {
+  const token = (
+    request.headers.get(USER_TOKEN_HEADER) ??
+    subprotocolToken(request, USER_TOKEN_SUBPROTOCOL_PREFIX) ??
+    ""
+  ).trim();
+
+  return token || undefined;
 }
 
 /**
@@ -228,10 +250,13 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function subprotocolToken(request: Request): string | null {
+function subprotocolToken(
+  request: Request,
+  prefix: string = WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX,
+): string | null {
   const entry = offeredSubprotocols(request).find((candidate) =>
-    candidate.startsWith(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX),
+    candidate.startsWith(prefix),
   );
 
-  return entry ? entry.slice(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX.length) : null;
+  return entry ? entry.slice(prefix.length) : null;
 }

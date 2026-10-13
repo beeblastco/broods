@@ -206,6 +206,8 @@ function headersMiddleware(origins: readonly string[]): {
         "authorization",
         "content-type",
         "x-request-id",
+        // The signed end-user token a browser sends beside the runtime key.
+        "x-broods-user-token",
       ],
       accessControlAllowOriginListRegex: origins.map(originRegex),
       accessControlMaxAge: 600,

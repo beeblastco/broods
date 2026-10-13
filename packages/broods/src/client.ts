@@ -13,6 +13,7 @@ import {
 } from "./run-input.ts";
 import { readSseStream } from "./stream.ts";
 import type { AsyncRequestAccepted, AsyncStatus } from "./types.ts";
+import { USER_TOKEN_HEADER } from "./user-token.ts";
 
 export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
@@ -127,6 +128,13 @@ export interface BroodsClientOptions {
   host?: string;
   /** Runtime key used as the Bearer token for direct runtime calls. */
   apiKey?: string;
+  /**
+   * The signed-in user's token, sent beside the runtime key on every call.
+   * Pass a function to get a fresh one per call (a browser fetches it from
+   * your backend, which signs it with `signUserToken`). An agent that
+   * requires one refuses the runtime key without it.
+   */
+  userToken?: string | (() => string | Promise<string>);
   fetch?: typeof fetch;
 }
 
@@ -141,6 +149,7 @@ export type AgentHandle = {
 export class BroodsClient {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
+  private readonly userToken?: BroodsClientOptions["userToken"];
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: BroodsClientOptions = {}) {
@@ -155,6 +164,7 @@ export class BroodsClient {
         DEFAULT_CORE_BASE_URL,
     );
     this.apiKey = options.apiKey || process.env.BROODS_API_KEY || undefined;
+    this.userToken = options.userToken;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
@@ -380,7 +390,7 @@ export class BroodsClient {
     const statusUrl = this.resolveStatusUrl(status);
     const response = await this.fetchJson(statusUrl, {
       method: "GET",
-      headers: this.apiKeyHeaders(),
+      headers: await this.apiKeyHeaders(),
     });
 
     if (response.status === 404) return { status: "not_found" };
@@ -460,7 +470,7 @@ export class BroodsClient {
   ): Promise<AsyncAgentRun> {
     const response = await this.fetchJson(targetUrl, {
       method: "POST",
-      headers: this.apiKeyHeaders(),
+      headers: await this.apiKeyHeaders(),
       body: JSON.stringify(body),
     });
     if (response.status !== 202) {
@@ -482,6 +492,7 @@ export class BroodsClient {
     if (this.apiKey) {
       return await this.fetchCore(body, targetUrl, {
         Authorization: `Bearer ${this.apiKey}`,
+        ...(await this.userTokenHeaders()),
       });
     }
 
@@ -517,7 +528,7 @@ export class BroodsClient {
     }
   }
 
-  private apiKeyHeaders(): Record<string, string> {
+  private async apiKeyHeaders(): Promise<Record<string, string>> {
     if (!this.apiKey) {
       throw new Error("BroodsClient requires apiKey or BROODS_API_KEY.");
     }
@@ -525,7 +536,17 @@ export class BroodsClient {
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
+      ...(await this.userTokenHeaders()),
     };
+  }
+
+  private async userTokenHeaders(): Promise<Record<string, string>> {
+    const token =
+      typeof this.userToken === "function"
+        ? await this.userToken()
+        : this.userToken;
+
+    return token ? { [USER_TOKEN_HEADER]: token } : {};
   }
 
   private async fetchJson(

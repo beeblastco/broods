@@ -45,14 +45,34 @@ import { BroodsClient } from "broods";
 const client = new BroodsClient();
 ```
 
-| Option    | Default                                                                               |
-| --------- | ------------------------------------------------------------------------------------- |
-| `apiKey`  | The runtime key. `BROODS_API_KEY`, loaded from `.env` and `.env.local`                |
-| `baseUrl` | `BROODS_BASE_URL`, then `BROODS_HOST`, then `https://gateway.broods.app`              |
-| `host`    | Hostname form of `baseUrl`. `gateway.broods.app` becomes `https://gateway.broods.app` |
-| `fetch`   | Global `fetch`                                                                        |
+| Option      | Default                                                                               |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `apiKey`    | The runtime key. `BROODS_API_KEY`, loaded from `.env` and `.env.local`                |
+| `baseUrl`   | `BROODS_BASE_URL`, then `BROODS_HOST`, then `https://gateway.broods.app`              |
+| `host`      | Hostname form of `baseUrl`. `gateway.broods.app` becomes `https://gateway.broods.app` |
+| `userToken` | None. The signed-in user's token, or a function that returns a fresh one per call     |
+| `fetch`     | Global `fetch`                                                                        |
 
 The runtime key, `bsk_...`, is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
+
+### User tokens
+
+An agent created now requires a user token beside the runtime key, so a visitor cannot read or steer another user's conversation by guessing its key. Sign one on your server with the stage's signing secret, and hand it to the client.
+
+```ts
+import { signUserToken } from "broods";
+
+const token = await signUserToken({ userId: "user_123" });
+```
+
+| Field           | Default                                                                   |
+| --------------- | ------------------------------------------------------------------------- |
+| `userId`        | Required. Your id for the user. Letters, digits and `._@+=-`, 128 at most |
+| `conversations` | Any key. Or the only conversation keys this user may use                  |
+| `ttlMs`         | 10 minutes. 60 at most                                                    |
+| `secret`        | `BROODS_USER_TOKEN_SECRET`, the `bsig_` secret from the Runtime key tab   |
+
+Never call `signUserToken` in a browser: the signing secret speaks for every user of the stage. Conversation keys and event ids come back under the user, as `bsu:<userId>:<key>`; pass either form back. See [Users behind the runtime key](../guides/security.md#users-behind-the-runtime-key).
 
 ### Methods
 
@@ -169,11 +189,12 @@ const ws = new WebSocketClient();
 | Option             | Default                                            |
 | ------------------ | -------------------------------------------------- |
 | `apiKey`           | The runtime key. `BROODS_API_KEY`. Required        |
+| `userToken`        | None. A user token every socket opens with         |
 | `baseUrl`, `host`  | As for `BroodsClient`. `https` becomes `wss`       |
 | `WebSocket`        | `globalThis.WebSocket`. Pass one on older runtimes |
 | `connectTimeoutMs` | 2000                                               |
 
-The key travels as the `Sec-WebSocket-Protocol` entries `broods.v1` and `broods.token.<key>`, never in the URL.
+The key travels as the `Sec-WebSocket-Protocol` entries `broods.v1` and `broods.token.<key>`, never in the URL, and a user token as `broods.user.<token>`. `subscribe` and `attach` also take `userToken`, over the client's, since a token outlives no more than an hour.
 
 | Method                        | What it does                                            |
 | ----------------------------- | ------------------------------------------------------- |

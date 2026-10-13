@@ -3,10 +3,16 @@
  * is allowed only through its already-authorized, active, public parent.
  */
 
+import {
+  USER_CONVERSATION_PREFIX,
+  userOwnsConversation,
+  type UserToken,
+} from "@broods/convex/model/userToken";
 import type { StageTicketScope } from "../shared/auth.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
   parseAccountAgentScopedKey,
+  publicConversationKeyFromScoped,
   subagentParentEventId,
 } from "../shared/runtime-keys.ts";
 import type { AgentDeploymentScope } from "../shared/storage.ts";
@@ -20,6 +26,8 @@ export interface StatusAccessAuth {
   projectSlug: string;
   /** A member's ticket, which runs the stage's private agents too. */
   stageTicket?: StageTicketScope;
+  /** The signed end user a runtime key's request speaks for. */
+  user?: UserToken;
 }
 
 export interface StatusAccessContext {
@@ -39,7 +47,10 @@ export interface StatusAccessContext {
 }
 
 export interface StatusAccessDenial {
-  code: "public_access_disabled" | "status_access_denied";
+  code:
+    | "public_access_disabled"
+    | "status_access_denied"
+    | "user_token_required";
   message: string;
 }
 
@@ -90,6 +101,12 @@ async function publicAgentDenial(
       message: `Agent ${request.agentId} is not publicly accessible.`,
     };
   }
+  const userDenial = embeddableUserDenial(
+    auth,
+    agent,
+    request.ingress.conversationKey,
+  );
+  if (userDenial) return userDenial;
   const deployment = await context.deploymentLoader(
     request.accountId,
     request.agentId,
@@ -153,7 +170,51 @@ async function subagentDenial(
     return accessDenied();
   }
 
-  return null;
+  // The child is read through its parent, so the parent's conversation must
+  // be one this caller's user may read.
+  return embeddableUserDenial(auth, parentAgent, parentStatus.conversationKey);
+}
+
+/**
+ * Whether the embeddable key may touch a direct conversation by its public
+ * key: with a user token only that user's own, without one none that lives in
+ * any user's namespace. Runs, approvals, steering and reads all go through it.
+ */
+export function embeddableKeyReaches(
+  user: UserToken | undefined,
+  publicConversationKey: string,
+): boolean {
+  return user
+    ? userOwnsConversation(user, publicConversationKey)
+    : !publicConversationKey.startsWith(USER_CONVERSATION_PREFIX);
+}
+
+/**
+ * The runtime key's user rule for reading one run: an agent that requires a
+ * user token answers only with one, and the run's conversation must be one
+ * `embeddableKeyReaches` allows. A member's ticket reads the whole stage.
+ */
+function embeddableUserDenial(
+  auth: StatusAccessAuth,
+  agent: AgentRecord,
+  scopedConversationKey: string,
+): StatusAccessDenial | null {
+  if (auth.stageTicket) return null;
+  if (agent.requireUserToken === true && !auth.user) {
+    return {
+      code: "user_token_required",
+      message: `Agent ${agent.agentId} requires a signed user token with the runtime key.`,
+    };
+  }
+  // A key scoped to another account or agent keeps its prefix here, so it
+  // never reads as a user's namespace.
+  const publicKey = publicConversationKeyFromScoped(
+    scopedConversationKey,
+    auth.account.accountId,
+    agent.agentId,
+  );
+
+  return embeddableKeyReaches(auth.user, publicKey) ? null : accessDenied();
 }
 
 function accessDenied(): StatusAccessDenial {

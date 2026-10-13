@@ -139,12 +139,15 @@ Details are in [Memory and sessions](memory-and-sessions.md).
 
 ## Who can call the agent
 
-| Setting                   | Default | Effect                                                                                                                        |
-| ------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `publicAccess: true`      | off     | The runtime key may run this agent. Without it, runtime-key requests get `403 public_access_disabled`.                        |
-| `allowRunOverrides: true` | off     | A runtime-key caller may send `system` messages and `model` overrides. Without it, the run gets `403 run_overrides_disabled`. |
+| Setting                   | Default           | Effect                                                                                                                                                |
+| ------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `publicAccess: true`      | off               | The runtime key may run this agent. Without it, runtime-key requests get `403 public_access_disabled`.                                                |
+| `allowRunOverrides: true` | off               | A runtime-key caller may send `system` messages and `model` overrides. Without it, the run gets `403 run_overrides_disabled`.                         |
+| Require user token        | on for new agents | A runtime-key caller must send a signed user token. Without it, the run gets `403 user_token_required`. Turn it on or off in the agent's Details tab. |
 
 Channels, cron jobs and callers with the account key are never gated by these flags. A private agent is still reachable from Slack.
+
+The user token requirement is not part of the agent config, so `broods deploy` never changes it. An agent created before it shipped has it off; turn it on once your frontend sends tokens. See [Users behind the runtime key](security.md#users-behind-the-runtime-key).
 
 ## Harness adapters
 

@@ -361,6 +361,12 @@ export declare const api: {
         { configId: Id<"agentConfigs"> },
         Id<"agentConfigs">
       >;
+      setRequireUserToken: FunctionReference<
+        "mutation",
+        "public",
+        { configId: Id<"agentConfigs">; required: boolean },
+        null
+      >;
       update: FunctionReference<
         "mutation",
         "public",
@@ -438,6 +444,12 @@ export declare const api: {
           configId: Id<"agentConfigs">;
         },
         Id<"agentConfigs">
+      >;
+      userTokenRequirement: FunctionReference<
+        "query",
+        "public",
+        { configId: Id<"agentConfigs"> },
+        boolean | null
       >;
     };
     crons: {
@@ -575,6 +587,18 @@ export declare const api: {
           rawApiKey: string;
           stageSlug: string;
         }
+      >;
+      rotateUserTokenSecret: FunctionReference<
+        "mutation",
+        "public",
+        { projectId: Id<"projects">; stageId: Id<"stages"> },
+        { hint: string; secret: string }
+      >;
+      userTokenSecretForStage: FunctionReference<
+        "query",
+        "public",
+        { projectId: Id<"projects">; stageId: Id<"stages"> },
+        { createdAt?: number; hint: string } | null
       >;
     };
     policies: {
@@ -3164,6 +3188,7 @@ export declare const internal: {
           encryptionIv?: string;
           encryptionTag?: string;
           name: string;
+          requireUserToken?: boolean;
           sourceEncryptionIv?: string;
           sourceEncryptionTag?: string;
           updatedAt: number;
@@ -3184,6 +3209,7 @@ export declare const internal: {
           encryptionIv?: string;
           encryptionTag?: string;
           name: string;
+          requireUserToken?: boolean;
           sourceEncryptionIv?: string;
           sourceEncryptionTag?: string;
           updatedAt: number;
@@ -3204,6 +3230,7 @@ export declare const internal: {
           encryptionIv?: string;
           encryptionTag?: string;
           name: string;
+          requireUserToken?: boolean;
           sourceEncryptionIv?: string;
           sourceEncryptionTag?: string;
           updatedAt: number;
@@ -3253,6 +3280,7 @@ export declare const internal: {
           encryptionIv?: string;
           encryptionTag?: string;
           name: string;
+          requireUserToken?: boolean;
           sourceEncryptionIv?: string;
           sourceEncryptionTag?: string;
           updatedAt: number;
@@ -3273,6 +3301,7 @@ export declare const internal: {
           encryptionIv?: string;
           encryptionTag?: string;
           name: string;
+          requireUserToken?: boolean;
           sourceEncryptionIv?: string;
           sourceEncryptionTag?: string;
           updatedAt: number;
@@ -3297,6 +3326,7 @@ export declare const internal: {
           encryptionIv?: string;
           encryptionTag?: string;
           name: string;
+          requireUserToken?: boolean;
           sourceEncryptionIv?: string;
           sourceEncryptionTag?: string;
           updatedAt: number;
@@ -3330,6 +3360,7 @@ export declare const internal: {
             encryptionIv?: string;
             encryptionTag?: string;
             name: string;
+            requireUserToken?: boolean;
             sourceEncryptionIv?: string;
             sourceEncryptionTag?: string;
             updatedAt: number;
@@ -3645,6 +3676,7 @@ export declare const internal: {
           projectSlug: string;
           stageId: Id<"stages">;
           stageSlug: string;
+          userTokenSecret?: { ciphertext: string; iv: string; tag: string };
         } | null
       >;
       touchLastUsed: FunctionReference<
