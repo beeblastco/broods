@@ -765,6 +765,18 @@ export const sandboxSnapshotsFields = {
   lastUsedAt: v.number(),
 };
 
+/**
+ * Which account and stage took each provider image. Kept when the snapshot row
+ * moves on to a newer capture and when the account is deleted: an image no row
+ * names would otherwise boot anywhere as a plain provider image.
+ */
+export const sandboxSnapshotImagesFields = {
+  externalImageId: v.string(),
+  accountId: v.id("accounts"),
+  scope: sandboxSnapshotScopeValidator,
+  baseImage: v.string(),
+};
+
 /** Sandbox lifecycle action names recorded in the operator audit trail. */
 export const sandboxAuditActionValidator = v.union(
   v.literal("reserve"),
@@ -1708,6 +1720,10 @@ export default defineSchema({
     .index("by_accountId_and_name", ["accountId", "name"])
     .index("by_externalImageId", ["externalImageId"])
     .index("by_status", ["status"]),
+  sandboxSnapshotImages: defineTable(sandboxSnapshotImagesFields).index(
+    "by_externalImageId",
+    ["externalImageId"],
+  ),
   sandboxAuditEvents: defineTable(sandboxAuditEventsFields).index(
     "by_accountId_and_reservationKey_and_createdAt",
     ["accountId", "reservationKey", "createdAt"],

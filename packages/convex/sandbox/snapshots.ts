@@ -95,13 +95,7 @@ export const findByImage = internalQuery({
       status: sandboxSnapshotsFields.status,
     }),
   ),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<Pick<
-    Doc<"sandboxSnapshots">,
-    "accountId" | "scope" | "baseImage" | "status"
-  > | null> => {
+  handler: async (ctx, args): Promise<SnapshotImage | null> => {
     const row = await snapshotByImage(
       ctx,
       args.accountId,
@@ -154,7 +148,11 @@ export async function assertSnapshotInScope(
   snapshot: unknown,
 ): Promise<void> {
   if (typeof snapshot !== "string" || !snapshot) return;
-  const row = await snapshotByImage(ctx, accountId, snapshot);
+  // A MicroVM image is registered by name, whatever version its ARN pins.
+  const image = snapshot.includes(":microvm-image:")
+    ? snapshot.split(":").slice(0, 7).join(":")
+    : snapshot;
+  const row = await snapshotByImage(ctx, accountId, image);
   const refusal = row
     ? snapshotBootRefusal(row, { accountId: accountId, scope: scope })
     : null;
@@ -211,6 +209,14 @@ export const upsert = internalMutation({
     }
     const now = Date.now();
     const status = args.status ?? "active";
+    // A re-capture moves the row to the new image; the old one keeps its lock.
+    if (existing && existing.externalImageId !== args.externalImageId) {
+      await lockImage(ctx, {
+        ...existing,
+        scope: args.scope,
+      });
+    }
+    await lockImage(ctx, args);
     if (existing) {
       await ctx.db.patch(existing._id, {
         provider: args.provider,
@@ -240,19 +246,53 @@ export const upsert = internalMutation({
   },
 });
 
+// Records which account and stage took an image, once: the first capture owns it.
+async function lockImage(
+  ctx: MutationCtx,
+  image: Omit<Doc<"sandboxSnapshotImages">, "_id" | "_creationTime">,
+): Promise<void> {
+  const locked = await ctx.db
+    .query("sandboxSnapshotImages")
+    .withIndex("by_externalImageId", (q) =>
+      q.eq("externalImageId", image.externalImageId),
+    )
+    .first();
+  if (locked) return;
+  await ctx.db.insert("sandboxSnapshotImages", {
+    externalImageId: image.externalImageId,
+    accountId: image.accountId,
+    scope: image.scope,
+    baseImage: image.baseImage,
+  });
+}
+
+type SnapshotImage = Pick<
+  Doc<"sandboxSnapshots">,
+  "accountId" | "scope" | "baseImage" | "status"
+>;
+
 // The row registering one provider image, the caller's own first should two
-// accounts ever hold the same id.
+// accounts ever hold the same id. An image whose row moved on to a newer
+// capture, or whose account is gone, still answers from its lock, as inactive.
 async function snapshotByImage(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts"> | undefined,
   externalImageId: string,
-): Promise<Doc<"sandboxSnapshots"> | null> {
+): Promise<SnapshotImage | null> {
   const rows = await ctx.db
     .query("sandboxSnapshots")
     .withIndex("by_externalImageId", (q) =>
       q.eq("externalImageId", externalImageId),
     )
     .take(10);
+  const row = rows.find((row) => row.accountId === accountId) ?? rows[0];
+  if (row) return row;
+  const lock = await ctx.db
+    .query("sandboxSnapshotImages")
+    .withIndex("by_externalImageId", (q) =>
+      q.eq("externalImageId", externalImageId),
+    )
+    .first();
 
-  return rows.find((row) => row.accountId === accountId) ?? rows[0] ?? null;
+  return lock ? { ...lock, status: "inactive" } : null;
 }

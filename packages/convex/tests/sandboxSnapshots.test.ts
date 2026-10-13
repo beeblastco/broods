@@ -369,3 +369,80 @@ test("a dashboard canvas save cannot point a stage's sandbox at another stage's 
   );
   expect(rows.map((row) => row.stageId)).toEqual([prod]);
 });
+
+test("re-capturing a snapshot keeps the image it replaced locked to its stage", async () => {
+  const t = convexTest(schema, modules);
+  const { accountId, dev, prod } = await seed(t);
+  for (const image of ["img_prod_1", "img_prod_2"]) {
+    await t.mutation(internal.sandbox.snapshots.upsert, {
+      accountId: accountId,
+      scope: prod,
+      name: "disk",
+      provider: "sandbox",
+      baseImage: "sandbox",
+      externalImageId: image,
+    });
+  }
+
+  const old = await t.query(internal.sandbox.snapshots.findByImage, {
+    accountId: accountId,
+    externalImageId: "img_prod_1",
+  });
+  expect(old).toMatchObject({ scope: prod, status: "inactive" });
+  await expect(
+    t.query(internal.sandbox.snapshots.assertInScope, {
+      accountId: accountId,
+      scope: dev,
+      snapshot: "img_prod_1",
+    }),
+  ).rejects.toThrow("another stage");
+});
+
+test("a snapshot image stays locked after its account's rows are gone", async () => {
+  const t = convexTest(schema, modules);
+  const { accountId, otherAccountId } = await seed(t);
+  await t.mutation(internal.sandbox.snapshots.upsert, {
+    accountId: otherAccountId,
+    scope: "account",
+    name: "theirs",
+    provider: "sandbox",
+    baseImage: "sandbox",
+    externalImageId: "img_gone",
+  });
+  await t.run(async (ctx) => {
+    for (const row of await ctx.db.query("sandboxSnapshots").collect()) {
+      await ctx.db.delete(row._id);
+    }
+  });
+
+  await expect(
+    t.query(internal.sandbox.snapshots.assertInScope, {
+      accountId: accountId,
+      scope: "account",
+      snapshot: "img_gone",
+    }),
+  ).rejects.toThrow("another account");
+});
+
+test("a versioned MicroVM image ARN is checked by its image name", async () => {
+  const t = convexTest(schema, modules);
+  const { accountId, dev, prod } = await seed(t);
+  const image =
+    "arn:aws:lambda:us-east-1:123456789012:microvm-image:broods-snap-disk";
+  await t.mutation(internal.sandbox.snapshots.upsert, {
+    accountId: accountId,
+    scope: prod,
+    name: "disk",
+    provider: "lambda",
+    baseImage: "default",
+    externalImageId: image,
+  });
+
+  await expect(
+    t.query(internal.sandbox.snapshots.assertInScope, {
+      accountId: accountId,
+      scope: dev,
+      snapshot: `${image}:3`,
+    }),
+  ).rejects.toThrow("another stage");
+});

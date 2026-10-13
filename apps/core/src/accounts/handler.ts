@@ -74,7 +74,10 @@ import { isPlainObject } from "../shared/object.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";
-import { runsOnOwnCredentials } from "../shared/workspaces.ts";
+import {
+  runsOnOwnCredentials,
+  sandboxControlPlane,
+} from "../shared/workspaces.ts";
 import {
   assertNoRetiredImageOptions,
   sandboxScope,
@@ -411,7 +414,12 @@ async function handleSandboxLifecycle(
     },
     body: body,
     config: record.config,
-    executor: createSandboxExecutor(record.config),
+    // The control plane names the record's stage, so a machine this action
+    // creates may boot the record's own snapshot.
+    executor: createSandboxExecutor({
+      ...record.config,
+      controlPlane: sandboxControlPlane(accountId, record),
+    }),
     provider: record.config.provider,
     ref: { reservationKey: reservationKey },
     reservationKey: reservationKey,

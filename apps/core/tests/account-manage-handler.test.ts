@@ -531,6 +531,15 @@ describe("account management HTTP handler", () => {
       sandboxSnapshots,
       "upsertSandboxSnapshot",
     ).mockResolvedValue(undefined);
+    const createExecutor = spyOn(
+      sandboxIndex,
+      "createSandboxExecutor",
+    ).mockReturnValue({
+      run: async () => {
+        throw new Error("not called");
+      },
+      snapshot: async () => ({ snapshotId: "broods-daytona-1" }),
+    });
     const spies = [
       upsert,
       spyOn(
@@ -540,12 +549,7 @@ describe("account management HTTP handler", () => {
       spyOn(sandboxAudit, "recordSandboxAuditEvent").mockResolvedValue(
         undefined,
       ),
-      spyOn(sandboxIndex, "createSandboxExecutor").mockReturnValue({
-        run: async () => {
-          throw new Error("not called");
-        },
-        snapshot: async () => ({ snapshotId: "broods-daytona-1" }),
-      }),
+      createExecutor,
     ];
 
     try {
@@ -567,6 +571,16 @@ describe("account management HTTP handler", () => {
           accountId: "acct_test",
           scope: { projectId: "proj_1", stageId: "stage_dev" },
           externalImageId: "broods-daytona-1",
+        }),
+      );
+      // A machine the action creates may boot only its own stage's snapshot.
+      expect(createExecutor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          controlPlane: expect.objectContaining({
+            accountId: "acct_test",
+            projectId: "proj_1",
+            stageId: "stage_dev",
+          }),
         }),
       );
     } finally {
