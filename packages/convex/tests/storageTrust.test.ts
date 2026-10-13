@@ -155,6 +155,12 @@ describe("storage trust", () => {
 
   it("falls back to a platform role ARN's account", () => {
     vi.stubEnv("AWS_ACCOUNT_ID", "");
+    for (const name of [
+      "CONVEX_AWS_ROLE_ARN",
+      "MICROVM_EXECUTION_ROLE_ARN",
+      "MICROVM_BUILD_ROLE_ARN",
+    ])
+      vi.stubEnv(name, "");
     vi.stubEnv(
       "SANDBOX_MOUNT_ROLE_ARN",
       "arn:aws:iam::444455556666:role/sandbox-s3mount",
