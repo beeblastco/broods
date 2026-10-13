@@ -4,6 +4,7 @@ name: Real model
 # so ci.yaml's local-stack job runs keyless (model cases stop at the provider
 # call) and this runs only when someone asks: the real-model label on a pull
 # request (remove and add it again to re-run), or a manual run on a branch.
+# Same steps as ci.yaml's local-stack job up to the verify: change both.
 on:
   pull_request:
     types: [labeled]
@@ -11,13 +12,14 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: real-model-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   verify:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'real-model'
+    # On the job, not the workflow: any other label starts a run whose job is
+    # skipped, and a workflow-level group would cancel a billed run for it.
+    concurrency:
+      group: real-model-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

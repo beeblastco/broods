@@ -266,8 +266,8 @@ jobs:
         run: git diff --exit-code -- packages/convex/_generated
 
       - name: Verify through the edge
-        # No model key: every push would bill the model, so model cases stop
-        # at the provider call here. real-model.yaml runs them on request.
+        # Keyless, so model cases stop at the provider call; real-model.yaml
+        # runs them with the key (same setup steps: change both).
         run: bun run local:verify
 
       - name: Perf report

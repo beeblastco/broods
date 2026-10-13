@@ -13,7 +13,7 @@ const TRACE_PATH = process.env.BROODS_LOCAL_CONVEX_TRACE ?? "";
 const USAGE = { input_tokens: 100, output_tokens: 10 };
 
 interface MessagesRequest {
-  messages: { content: unknown; role: string }[];
+  messages: { content: unknown }[];
   model: string;
   stream?: boolean;
   tools?: { name?: string }[];
@@ -49,11 +49,6 @@ function event(type: string, fields: Record<string, unknown>): string {
 
 /** A Messages API answer: text, or one `bash` call when the user asks with RUN_BASH. */
 function fakeModel(request: MessagesRequest): Response {
-  const last = JSON.stringify(request.messages.at(-1)?.content);
-  const wantsBash =
-    last.includes("RUN_BASH") &&
-    !last.includes('"tool_result"') &&
-    request.tools?.some((tool) => tool.name === "bash") === true;
   const message = {
     id: `msg_${Date.now()}`,
     type: "message",
@@ -69,15 +64,29 @@ function fakeModel(request: MessagesRequest): Response {
       usage: USAGE,
     });
   }
-  const block = wantsBash
-    ? { type: "tool_use", id: `toolu_${Date.now()}`, name: "bash", input: {} }
-    : { type: "text", text: "" };
-  const delta = wantsBash
-    ? {
-        type: "input_json_delta",
-        partial_json: JSON.stringify({ command: "hostname" }),
-      }
-    : { type: "text_delta", text: "OK" };
+  const last = request.tools?.some((tool) => tool.name === "bash")
+    ? JSON.stringify(request.messages.at(-1)?.content)
+    : "";
+  const { block, delta, stopReason } =
+    last.includes("RUN_BASH") && !last.includes('"tool_result"')
+      ? {
+          block: {
+            type: "tool_use",
+            id: `toolu_${Date.now()}`,
+            name: "bash",
+            input: {},
+          },
+          delta: {
+            type: "input_json_delta",
+            partial_json: JSON.stringify({ command: "hostname" }),
+          },
+          stopReason: "tool_use",
+        }
+      : {
+          block: { type: "text", text: "" },
+          delta: { type: "text_delta", text: "OK" },
+          stopReason: "end_turn",
+        };
   const frames = [
     event("message_start", {
       message: { ...message, content: [], stop_reason: null, usage: USAGE },
@@ -87,7 +96,7 @@ function fakeModel(request: MessagesRequest): Response {
     event("content_block_stop", { index: 0 }),
     event("message_delta", {
       delta: {
-        stop_reason: wantsBash ? "tool_use" : "end_turn",
+        stop_reason: stopReason,
         stop_sequence: null,
       },
       usage: { output_tokens: USAGE.output_tokens },
