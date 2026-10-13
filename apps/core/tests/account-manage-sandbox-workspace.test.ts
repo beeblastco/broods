@@ -617,9 +617,22 @@ describe("account-manage sandbox endpoints", () => {
     try {
       const response = await terminal();
       expect(response.status).toBe(200);
-      const body = (await responseJson(response)) as { token: string };
+      const body = (await responseJson(response)) as {
+        token: string;
+        expiresAt: number;
+      };
       expect(body.token).not.toContain("bridge-key");
       const ticket = openTerminalTicket(body.token, "terminal-secret");
+      // The bearer and the ticket expire together.
+      expect(ticket!.expiresAt).toBe(body.expiresAt);
+      expect(
+        await verifyTerminalToken(
+          "bridge-key",
+          ticket!.authorization.replace(/^Bearer /, ""),
+          "sbx_handler",
+          ticket!.expiresAt - 1,
+        ),
+      ).toBe(true);
       expect(ticket).toMatchObject({
         url: "wss://bridge.example.com/v1/sandboxes/sbx_handler/terminal",
         accountId: ACCOUNT_ID,
