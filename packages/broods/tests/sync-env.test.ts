@@ -162,3 +162,27 @@ test("putManifest PUTs to the stage manifest route and sends manifest.stage", as
   );
   expect(JSON.parse(sent?.body ?? "{}").manifest).toEqual(manifest);
 });
+
+test("rotateUserTokenSecret POSTs to the stage and returns the secret once", async () => {
+  const { client, calls } = clientWith(() =>
+    Response.json({ secret: "bsig_fresh", hint: "bsig_…resh" }),
+  );
+
+  const rotated = await client.rotateUserTokenSecret("demo-app", "development");
+
+  expect(rotated).toEqual({ secret: "bsig_fresh", hint: "bsig_…resh" });
+  expect(calls[0]).toEqual({
+    url: "https://convex.example.com/v1/account/projects/demo-app/stages/development/user-token-secret",
+    method: "POST",
+  });
+});
+
+test("rotateUserTokenSecret returns null when the stage has no deployment", async () => {
+  const { client } = clientWith(
+    () => new Response("not found", { status: 404 }),
+  );
+
+  expect(
+    await client.rotateUserTokenSecret("missing", "development"),
+  ).toBeNull();
+});

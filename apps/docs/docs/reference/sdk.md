@@ -70,7 +70,7 @@ const token = await signUserToken({ userId: "user_123" });
 | `userId`        | Required. Your id for the user. Letters, digits and `._@+=-`, 128 at most |
 | `conversations` | Any key. Or the only conversation keys this user may use                  |
 | `ttlMs`         | 10 minutes. 60 at most                                                    |
-| `secret`        | `BROODS_USER_TOKEN_SECRET`, the `bsig_` secret from the Runtime key tab   |
+| `secret`        | `BROODS_USER_TOKEN_SECRET`, which `broods dev` and `deploy` write         |
 
 Never call `signUserToken` in a browser: the signing secret speaks for every user of the stage. Conversation keys and event ids come back under the user, as `bsu:<userId>:<key>`; pass either form back. See [Users behind the runtime key](../guides/security.md#users-behind-the-runtime-key).
 

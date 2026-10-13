@@ -4860,6 +4860,7 @@ export declare const internal: {
           projectSlug: string;
           stageKind: "development" | "production" | "custom";
           stageSlug: string;
+          userTokenSecretHint?: string;
         }
       >;
       ensureScopeBySecretHash: FunctionReference<
@@ -5028,6 +5029,19 @@ export declare const internal: {
           scoped: boolean;
           secretHash: string;
         }
+      >;
+      rotateUserTokenSecretBySecretHash: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          actorId?: string;
+          actorKind: "cli" | "deployKey";
+          cliAuthId?: string;
+          project: string;
+          secretHash: string;
+          stage: string;
+        },
+        null | { hint: string; secret: string }
       >;
       setEnvBySecretHash: FunctionReference<
         "mutation",

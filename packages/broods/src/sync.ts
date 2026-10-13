@@ -59,6 +59,11 @@ export interface RemoteManifestResponse {
     stageKind?: "development" | "production" | "custom";
     keyHint: string;
     apiKey: string;
+    /**
+     * The masked hint (`bsig_…abcd`) of the stage's user-token signing
+     * secret; absent while the stage has none.
+     */
+    userTokenSecretHint?: string;
   } | null;
 }
 
@@ -329,6 +334,34 @@ export class BroodsSyncClient {
       ...(payload.projectSlug ? { projectSlug: payload.projectSlug } : {}),
       ...(payload.stageSlug ? { stageSlug: payload.stageSlug } : {}),
     };
+  }
+
+  /**
+   * Rotates the stage's user-token signing secret (`bsig_…`) and returns it
+   * this once; tokens the previous secret signed stop opening. Needs
+   * `keys:write` on the stage. Returns null when the project or stage is
+   * unknown or has no runtime key yet.
+   */
+  async rotateUserTokenSecret(
+    project: string,
+    stage: string,
+  ): Promise<{ secret: string; hint: string } | null> {
+    const response = await this.request(project, stage, "/user-token-secret", {
+      method: "POST",
+    });
+    if (response.status === 404) return null;
+    await assertOk(response, "Rotate user token signing secret failed");
+    const payload = (await response.json()) as {
+      secret?: string;
+      hint?: string;
+    };
+    if (!payload.secret || !payload.hint) {
+      throw new Error(
+        "Rotate user token signing secret failed: response omitted the secret",
+      );
+    }
+
+    return { secret: payload.secret, hint: payload.hint };
   }
 
   async setEnv(

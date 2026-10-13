@@ -17,6 +17,12 @@ import {
 
 export { USER_TOKEN_HEADER, USER_TOKEN_MAX_TTL_MS };
 
+/**
+ * The env var `signUserToken` reads the signing secret from, and the one
+ * `broods dev` / `broods deploy` write it to in `.env.local`.
+ */
+export const USER_TOKEN_SECRET_ENV = "BROODS_USER_TOKEN_SECRET";
+
 export interface SignUserTokenInput {
   /** Your own id for the signed-in user. Letters, digits and `._@+=-`, at most 128. */
   userId: string;
@@ -39,10 +45,10 @@ export interface SignUserTokenInput {
 export async function signUserToken(
   input: SignUserTokenInput,
 ): Promise<string> {
-  const secret = input.secret ?? process.env.BROODS_USER_TOKEN_SECRET;
+  const secret = input.secret ?? process.env[USER_TOKEN_SECRET_ENV];
   if (!secret) {
     throw new Error(
-      "signUserToken needs the stage's signing secret: pass secret or set BROODS_USER_TOKEN_SECRET. Generate it on the dashboard's Runtime key tab.",
+      `signUserToken needs the stage's signing secret: pass secret or set ${USER_TOKEN_SECRET_ENV}. \`broods dev\` and \`broods deploy\` write it to .env.local; the dashboard's Runtime key tab rotates it.`,
     );
   }
 

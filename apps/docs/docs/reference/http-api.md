@@ -30,6 +30,8 @@ X-Broods-User-Token: buat_...
 
 Every `conversationKey` and `eventId` of that request then lives under that user, and the response names them as `bsu:<userId>:<key>`. Send either form back. An agent that requires a user token, which every new agent does, answers the runtime key without one with `403 user_token_required`. A forged or expired token is a `401`. See [Users behind the runtime key](../guides/security.md#users-behind-the-runtime-key).
 
+The signing secret comes from `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret`, authenticated with the account key, a project key or a `broods login` token holding `keys:write` on the stage. It rotates the secret and returns it once as `{ "secret": "bsig_...", "hint": "bsig_…abcd" }`; tokens the previous secret signed stop working. `broods dev` and `broods deploy` call it for you.
+
 ### Calling the API from a sandbox
 
 Every `bash` command that blocks runs with the identity of the run that issued it. A background job outlives the run and its token, so it gets none:

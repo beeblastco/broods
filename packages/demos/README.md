@@ -25,8 +25,9 @@ HTTP clients. The hosted SDK default is `gateway.broods.app`.
 
 A new agent refuses the runtime key without a signed user token, so the demos
 sign one for a single `demo-user` with `signUserToken`. It reads the stage's
-signing secret from `BROODS_USER_TOKEN_SECRET`: generate it on the dashboard's
-Runtime key tab (it is shown once) and put it in the demo's `.env.local`. A
+signing secret from `BROODS_USER_TOKEN_SECRET`, which `bun run dev`/`bun run
+deploy` write to the demo's `.env.local` with the runtime key (the dashboard's
+Runtime key tab can rotate it too; it is shown once). A
 real app signs a token per signed-in user on its server, never in a browser.
 See `apps/docs/docs/guides/security.md`, "Users behind the runtime key".
 

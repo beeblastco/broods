@@ -34,6 +34,9 @@ import {
   type StoredAuthConfig,
 } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
+import { USER_TOKEN_SECRET_ENV } from "../user-token.ts";
+import { keyHint } from "../../../convex/model/accountSecrets.ts";
+import { USER_TOKEN_SECRET_PREFIX } from "../../../convex/model/userToken.ts";
 import {
   type CliOnboardingContext,
   type CliOnboardingOrg,
@@ -179,7 +182,8 @@ ${CONNECTION_TYPE_NAMES.map((type) => `  ${type.padEnd(11)} ${CONNECTION_TYPES[t
 ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
 
-Syncs Production once and writes BROODS_API_KEY to .env.local. Ignores
+Syncs Production once and writes BROODS_API_KEY to .env.local, plus
+BROODS_USER_TOKEN_SECRET when the stage has no signing secret yet. Ignores
 BROODS_STAGE by design. Pass --stage to deploy anywhere else.
 
 Options:
@@ -1192,24 +1196,79 @@ async function deploy(args: string[]): Promise<void> {
   printSuccess(
     `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.stage}`,
   );
-  await applyDeploymentKey(result.deployment);
+  await applyDeploymentKey(client, manifest, result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
 }
 
 /**
- * Persist the stage's recoverable runtime key after a deploy.
+ * Persist the stage's recoverable runtime key after a deploy, and its
+ * user-token signing secret when this checkout lacks it: a new agent refuses
+ * the bare runtime key, so `signUserToken` needs the secret from the first
+ * sync. The secret is shown once, so having none locally means rotating it.
+ * A production stage that already has one keeps it: some backend may sign
+ * with it, and rotating would void every token it hands out.
  */
 async function applyDeploymentKey(
+  client: BroodsSyncClient,
+  manifest: CliManifest,
   deployment: RemoteManifestResponse["deployment"],
 ): Promise<void> {
   if (!deployment) return;
   if (deployment.apiKey) {
     await writeEnvValue("BROODS_API_KEY", deployment.apiKey);
     printSuccess(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
+  }
+
+  // `.env.local` counts on its own too: a stale shell export would otherwise
+  // rotate the secret on every `dev` sync, voiding each one just written.
+  const remoteHint = deployment.userTokenSecretHint;
+  const fileSecret = parseEnv(
+    await readTextIfExists(resolve(process.cwd(), ".env.local")),
+  )[USER_TOKEN_SECRET_ENV];
+  const local = [process.env[USER_TOKEN_SECRET_ENV], fileSecret].filter(
+    (secret): secret is string => secret !== undefined,
+  );
+  if (
+    remoteHint &&
+    local.some(
+      (secret) => keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint,
+    )
+  ) {
+    return;
+  }
+  if (
+    remoteHint &&
+    (deployment.stageKind === undefined ||
+      deployment.stageKind === "production")
+  ) {
+    printWarning(
+      `${manifest.project}/${manifest.stage} already has a user token signing secret (${remoteHint}), ` +
+        `and ${USER_TOKEN_SECRET_ENV} here is unset or another one. Use the secret your backend ` +
+        "signs with, or rotate it on the dashboard's Runtime key tab.",
+    );
 
     return;
   }
+
+  // The sync already landed, so a refused rotation (no keys:write) only warns.
+  const rotated = await client
+    .rotateUserTokenSecret(manifest.project, manifest.stage)
+    .catch((error: unknown) => {
+      printWarning(
+        `${error instanceof Error ? error.message : String(error)}. ` +
+          `Set ${USER_TOKEN_SECRET_ENV} from the dashboard's Runtime key tab to sign user tokens.`,
+      );
+
+      return null;
+    });
+  if (!rotated) return;
+  const shadowed = isShellOwnedEnv(USER_TOKEN_SECRET_ENV);
+  await writeEnvValue(USER_TOKEN_SECRET_ENV, rotated.secret);
+  printSuccess(
+    `Wrote a new user token signing secret to ${USER_TOKEN_SECRET_ENV} in .env.local`,
+  );
+  warnShellShadowedEnv(USER_TOKEN_SECRET_ENV, shadowed);
 }
 
 /** Surface non-fatal deploy advisories (unresolved policy refs, resources a prune kept). */
@@ -2024,7 +2083,7 @@ async function syncDevOnce(
     );
   }
 
-  await applyDeploymentKey(result.deployment);
+  await applyDeploymentKey(client, manifest, result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
 

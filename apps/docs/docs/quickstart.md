@@ -32,13 +32,14 @@ The first run:
 2. Asks for an organization, a project name, a stage and a service region. Press Enter to keep each default.
 3. Creates `broods/index.ts` with a starter agent.
 4. Pushes `OPENAI_API_KEY` from `.env.local` to your `development` stage.
-5. Syncs your resources and writes the runtime key to `.env.local` as `BROODS_API_KEY`.
+5. Syncs your resources and writes the runtime key to `.env.local` as `BROODS_API_KEY`, and the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET`.
 6. Watches `broods/` and live-tails warnings and errors.
 
 ```text
 ✔ Created starter broods/
 ✔ Synced 2 resources to my-agents/development
 ✔ Wrote BROODS_API_KEY (bsk_…vK8s) to .env.local
+✔ Wrote a new user token signing secret to BROODS_USER_TOKEN_SECRET in .env.local
 ```
 
 The starter agent:

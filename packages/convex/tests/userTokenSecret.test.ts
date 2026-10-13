@@ -21,6 +21,7 @@ import {
 import schema from "../schema";
 
 const AUTH_ID = "user_token_secret_owner";
+const ACCOUNT_KEY = "bask_token_fixture_key";
 const modules = import.meta.glob("../**/*.ts");
 
 type T = TestConvex<typeof schema>;
@@ -89,6 +90,60 @@ test("an admin mints the signing secret once and core opens tokens with it", asy
   ).toEqual(token);
 });
 
+test("the CLI route rotates the secret the dashboard does, behind keys:write", async (): Promise<void> => {
+  const { t, caller, projectId, stageId } = await setup();
+  const scope = { projectId: projectId, stageId: stageId };
+  const route =
+    "/v1/account/projects/fixture/stages/development/user-token-secret";
+  const post = async (token: string): Promise<Response> =>
+    await t.fetch(route, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+  expect((await post(ACCOUNT_KEY)).status).toBe(404);
+  await caller.mutation(api.agent.deployments.ensureForStage, scope);
+  expect((await post("bask_not_this_account")).status).toBe(401);
+
+  const response = await post(ACCOUNT_KEY);
+  expect(response.status).toBe(200);
+  const rotated = (await response.json()) as { secret: string; hint: string };
+  expect(rotated.secret.startsWith(USER_TOKEN_SECRET_PREFIX)).toBe(true);
+  expect(
+    await caller.query(api.agent.deployments.userTokenSecretForStage, scope),
+  ).toMatchObject({ hint: rotated.hint });
+
+  // The manifest sync reports the hint, so the CLI can tell a stale local copy.
+  const deployment = await t.mutation(
+    internal.cli.sync.ensureRuntimeKeyBySecretHash,
+    {
+      secretHash: await sha256Hex(ACCOUNT_KEY),
+      project: "fixture",
+      stage: "development",
+    },
+  );
+  expect(deployment?.userTokenSecretHint).toBe(rotated.hint);
+
+  // A `broods login` token answers for its member, who must hold keys:write.
+  const cliArgs = {
+    secretHash: await sha256Hex(ACCOUNT_KEY),
+    project: "fixture",
+    stage: "development",
+    actorKind: "cli" as const,
+  };
+  await expect(
+    t.mutation(internal.cli.sync.rotateUserTokenSecretBySecretHash, {
+      ...cliArgs,
+      cliAuthId: "user_not_a_member",
+    }),
+  ).rejects.toThrow("needs keys:write");
+  const owned = await t.mutation(
+    internal.cli.sync.rotateUserTokenSecretBySecretHash,
+    { ...cliArgs, cliAuthId: AUTH_ID },
+  );
+  expect(owned?.secret).not.toBe(rotated.secret);
+});
+
 test("an admin turns an agent's user-token requirement on and off", async (): Promise<void> => {
   const { t, caller, accountId, projectId, stageId } = await setup();
   const { configId, agentId } = await t.run(async (ctx) => {
@@ -152,7 +207,7 @@ async function setup(): Promise<{
   const account = await t.mutation(internal.account.accounts.create, {
     orgId: orgId,
     username: "token-fixture",
-    secretHash: await sha256Hex("bask_token_fixture_key"),
+    secretHash: await sha256Hex(ACCOUNT_KEY),
   });
   const { projectId, stageId } = await t.run(async (ctx) => {
     const now = Date.now();

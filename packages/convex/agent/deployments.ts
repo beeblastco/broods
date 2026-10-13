@@ -105,6 +105,8 @@ type EnsureResult = {
   keyHint: string;
   /** Plaintext key: freshly minted, or recovered from the stored blob. */
   rawApiKey: string;
+  /** The stage's user-token signing secret hint, when it has one. */
+  userTokenSecretHint?: string;
 };
 
 /** Returns the stage's recoverable runtime key, creating one on first call. */
@@ -422,6 +424,12 @@ const userTokenSecretView = v.object({
   createdAt: v.optional(v.number()),
 });
 
+/** A freshly minted signing secret, returned this once, and its masked hint. */
+export const userTokenSecretReturn = v.object({
+  secret: v.string(),
+  hint: v.string(),
+});
+
 /** Whether the stage has a user-token signing secret, and its masked hint. */
 export const userTokenSecretForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
@@ -452,11 +460,11 @@ export const userTokenSecretForStage = query({
  */
 export const rotateUserTokenSecret = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
-  returns: v.object({ secret: v.string(), hint: v.string() }),
+  returns: userTokenSecretReturn,
   handler: async (
     ctx,
     { projectId, stageId },
-  ): Promise<{ secret: string; hint: string }> => {
+  ): Promise<Infer<typeof userTokenSecretReturn>> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -468,39 +476,59 @@ export const rotateUserTokenSecret = mutation({
       projectId: projectId,
       stageId: stageId,
     });
-    const deployment = await activeDeployment(ctx, projectId, stageId);
-    if (!deployment) {
-      throw new Error("Generate the stage's runtime key first.");
-    }
-
-    const secret = randomToken(USER_TOKEN_SECRET_PREFIX);
-    const cipher = await accountCipherForWrite(ctx, deployment.accountId);
-    const blob = await cipher.encrypt(
-      "agentDeployments:userTokenSecretCiphertext",
-      { value: secret },
+    const rotated = await rotateStageUserTokenSecret(
+      ctx,
+      projectId,
+      stageId,
+      dashboardAuditActor(authUser),
     );
-    const hint = keyHint(USER_TOKEN_SECRET_PREFIX, secret);
-    const now = Date.now();
-    await ctx.db.patch(deployment._id, {
-      userTokenSecretCiphertext: blob.ciphertext,
-      userTokenSecretIv: blob.iv,
-      userTokenSecretTag: blob.tag,
-      userTokenSecretHint: hint,
-      userTokenSecretCreatedAt: now,
-      updatedAt: now,
-    });
-    await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
-      accountId: deployment.accountId,
-      projectId: projectId,
-      stageId: stageId,
-      action: "user-token-secret-rotated",
-      endpointId: deployment.endpointId,
-      summary: "User token signing secret rotated",
-    });
+    if (!rotated) throw new Error("Generate the stage's runtime key first.");
 
-    return { secret: secret, hint: hint };
+    return rotated;
   },
 });
+
+/**
+ * Seal a fresh signing secret on the stage's active deployment and audit it,
+ * for the dashboard and the CLI route alike. The caller has already checked
+ * `keys:write`. Null when the stage has no deployment yet.
+ */
+export async function rotateStageUserTokenSecret(
+  ctx: MutationCtx,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+  actor: AuditActor,
+): Promise<Infer<typeof userTokenSecretReturn> | null> {
+  const deployment = await activeDeployment(ctx, projectId, stageId);
+  if (!deployment) return null;
+
+  const secret = randomToken(USER_TOKEN_SECRET_PREFIX);
+  const cipher = await accountCipherForWrite(ctx, deployment.accountId);
+  const blob = await cipher.encrypt(
+    "agentDeployments:userTokenSecretCiphertext",
+    { value: secret },
+  );
+  const hint = keyHint(USER_TOKEN_SECRET_PREFIX, secret);
+  const now = Date.now();
+  await ctx.db.patch(deployment._id, {
+    userTokenSecretCiphertext: blob.ciphertext,
+    userTokenSecretIv: blob.iv,
+    userTokenSecretTag: blob.tag,
+    userTokenSecretHint: hint,
+    userTokenSecretCreatedAt: now,
+    updatedAt: now,
+  });
+  await recordDeploymentAudit(ctx, actor, {
+    accountId: deployment.accountId,
+    projectId: projectId,
+    stageId: stageId,
+    action: "user-token-secret-rotated",
+    endpointId: deployment.endpointId,
+    summary: "User token signing secret rotated",
+  });
+
+  return { secret: secret, hint: hint };
+}
 
 /**
  * Mints a stage's runtime key and audits it, so Monitoring and Tracing stream
@@ -583,6 +611,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       keyHint: existing.keyHint,
       rawApiKey: await decryptApiKey(ctx, existing),
+      userTokenSecretHint: existing.userTokenSecretHint,
     };
   }
 
@@ -611,6 +640,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       keyHint: keyHint,
       rawApiKey: rawApiKey,
+      userTokenSecretHint: existing.userTokenSecretHint,
     };
   }
 

@@ -3,6 +3,7 @@ import {
   type AgentReference,
 } from "../../../packages/broods/src/client.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
+import { signUserToken } from "../../../packages/broods/src/user-token.ts";
 import { sealStageSessionTicket } from "../../../packages/convex/model/stageSessionTicket.ts";
 import {
   sealUserToken,
@@ -15,17 +16,19 @@ import { OK_AGENT, assertStep, type VerifyContext } from "../harness.ts";
  * gateway: a new agent refuses the bare runtime key with
  * `user_token_required`, a token the stage did not sign fails the whole
  * credential with 401 on HTTP and on the agent socket's upgrade, and a
- * member's stage ticket still runs the agent without one. A valid token needs
- * the stage's signing secret, which only a dashboard session mints, so the
- * namespacing it brings is covered by the core and Convex tests instead.
+ * member's stage ticket still runs the agent without one. The account key
+ * then rotates the stage's signing secret through the CLI route `broods dev`
+ * and `broods deploy` call, and a token signed with it runs the agent under
+ * that user's namespace.
  */
 export async function userToken(context: VerifyContext): Promise<void> {
   const project = `user-token-${context.runId}`;
+  const sync = new BroodsSyncClient({
+    baseUrl: context.edgeUrl,
+    token: context.accountSecret,
+  });
   const deployed = await context.measure("deploy stage", () =>
-    new BroodsSyncClient({
-      baseUrl: context.edgeUrl,
-      token: context.accountSecret,
-    }).putManifest(
+    sync.putManifest(
       {
         version: 1,
         project: project,
@@ -48,6 +51,11 @@ export async function userToken(context: VerifyContext): Promise<void> {
     deployment?.apiKey.startsWith("bsk_") === true && agentId !== undefined,
     JSON.stringify(deployed.ids),
   );
+  assertStep(
+    "a fresh stage reports no user token signing secret",
+    deployment.userTokenSecretHint === undefined,
+    JSON.stringify(deployment.userTokenSecretHint),
+  );
   const runtimeKey = deployment.apiKey;
   const agent: AgentReference = {
     kind: "agent",
@@ -66,10 +74,10 @@ export async function userToken(context: VerifyContext): Promise<void> {
     `bsig_not-this-stage-${context.runId}`,
   );
 
-  /** The status and error code core answers one runtime-key run with. */
+  /** The status, error code and conversation key core answers one runtime-key run with. */
   const run = async (
     headers: Record<string, string>,
-  ): Promise<{ status: number; code?: string }> =>
+  ): Promise<{ status: number; code?: string; conversationKey?: string }> =>
     await context.measure("runtime key run", async () => {
       const response = await fetch(`${context.edgeUrl}${agentPath}`, {
         method: "POST",
@@ -91,11 +99,15 @@ export async function userToken(context: VerifyContext): Promise<void> {
       });
       const body = (await response.json().catch(() => ({}))) as {
         error?: { code?: string };
+        conversationKey?: string;
       };
 
       return {
         status: response.status,
         ...(body.error?.code ? { code: body.error.code } : {}),
+        ...(body.conversationKey
+          ? { conversationKey: body.conversationKey }
+          : {}),
       };
     });
 
@@ -157,5 +169,27 @@ export async function userToken(context: VerifyContext): Promise<void> {
     "a member's stage ticket runs the agent without a user token",
     accepted.runId.startsWith("run_"),
     JSON.stringify(accepted),
+  );
+
+  const rotated = await context.measure("rotate signing secret", () =>
+    sync.rotateUserTokenSecret(project, "development"),
+  );
+  assertStep(
+    "the account key rotates the stage's signing secret and gets it once",
+    rotated?.secret.startsWith("bsig_") === true &&
+      rotated.hint.startsWith("bsig_"),
+    JSON.stringify(rotated?.hint),
+  );
+  const signed = await run({
+    [USER_TOKEN_HEADER]: await signUserToken({
+      userId: "alice",
+      secret: rotated.secret,
+    }),
+  });
+  assertStep(
+    "a user token signed with the rotated secret runs the agent under its user",
+    signed.status === 202 &&
+      signed.conversationKey === `bsu:alice:${turn.conversationKey}`,
+    JSON.stringify(signed),
   );
 }

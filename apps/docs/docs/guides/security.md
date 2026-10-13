@@ -31,7 +31,7 @@ Three keys are yours to hold. Use the narrowest one that works.
 | Key            | Prefix  | Scope                 | What it can do                                                           | Never                                       |
 | -------------- | ------- | --------------------- | ------------------------------------------------------------------------ | ------------------------------------------- |
 | Account key    | `bask_` | The whole account     | Everything: create and change agents, crons, files and roles, run agents | Put it in a frontend or hand it to an agent |
-| Project key    | `bpdk_` | One project and stage | Deploy, and set and list environment variables                           | Expect it to read a variable's value        |
+| Project key    | `bpdk_` | One project and stage | Deploy, set and list environment variables, rotate the signing secret    | Expect it to read a variable's value        |
 | Runtime key    | `bsk_`  | One project and stage | Run agents with `publicAccess: true`                                     | Expect it to read logs or change config     |
 | Signing secret | `bsig_` | One project and stage | Sign user tokens on your server                                          | Put it in a frontend                        |
 
@@ -99,7 +99,7 @@ With a valid token, every conversation key and event id of that request lives un
 | `conversations` | Optional. The only conversation keys this user may use. Omit to allow any key under the user |
 | `ttlMs`         | Lifetime. Default 10 minutes, at most 60                                                     |
 
-- Generate the signing secret on the dashboard's Runtime key tab. It is shown once. Rotating it voids every token it signed at once.
+- `broods dev` and `broods deploy` write the signing secret to `.env.local` when the stage has none yet, and rotate a development or custom stage's when your checkout does not hold it. They never rotate a production stage's existing secret. You can also generate or rotate it on the dashboard's Runtime key tab. It is shown once. Rotating it voids every token it signed at once.
 - Every agent created from now on requires a user token with the runtime key. An agent made before keeps working without one until you turn the requirement on in its Details tab. Plan to turn it on for every existing agent your frontend reaches within 30 days; a token is honored even while the requirement is off, so send tokens first, then flip the switch.
 - A forged or expired token fails the whole request with `401`. A missing one on an agent that requires it is `403 user_token_required`. A conversation the token does not list is `403 user_token_conversation`.
 - On the WebSocket, `BroodsWebSocketClient` takes `userToken` too. It rides the upgrade as a `broods.user.<token>` subprotocol entry.

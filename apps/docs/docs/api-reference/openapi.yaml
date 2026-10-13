@@ -17,7 +17,7 @@ info:
 
     WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The agent sockets take the stage's runtime key or a stage session ticket for their own stage, and check every frame like the matching HTTP call, so a runtime key reaches only agents with `publicAccess: true` there. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket. A socket opened with a stage session ticket closes when the ticket expires, with close code `4419` (`Stage session expired` on the observability socket, `Credential expired` on the machine socket); reconnect with a fresh ticket. The machine socket can instead be kept open: its `ready` frame carries `expiresInMs`, and a daemon that sends `{ "type": "credential", "token": "bdts_..." }` with a fresh ticket for the same account and stage before then moves the deadline (core answers with another `ready`); a ticket for anything else closes it with `4401`. A credential that stops resolving while the socket is open (account suspended, key rotated, role session ended) closes it with `4401` within a minute.
 
-    **End-user tokens.** The runtime key (`bsk_...`) is embeddable, so on its own it cannot say which of your users is calling, and any visitor who guesses another user's `conversationKey` could read and steer that conversation. Your backend signs a short-lived user token (`buat_...`) with the stage's signing secret (`bsig_...`, generated and rotated on the dashboard's Runtime key tab, shown once) and your frontend sends it beside the runtime key in the `X-Broods-User-Token` header, or as a `broods.user.<token>` subprotocol entry on an agent socket. The SDK's `signUserToken` signs one. A request with a valid token runs every conversation key and event id it names under that user's namespace (`bsu:<userId>:<key>`, answered back in `conversationKey` and `eventId`), so one user can never name another's conversation; runs, steering, approvals, `continue` and run reads all go through the same check. A forged or expired token is a 401 like a bad key. An agent with the user-token requirement on (every agent created since this shipped; an existing agent once its owner turns it on) refuses the runtime key without a token with 403 `user_token_required`. Account keys and stage session tickets are not affected.
+    **End-user tokens.** The runtime key (`bsk_...`) is embeddable, so on its own it cannot say which of your users is calling, and any visitor who guesses another user's `conversationKey` could read and steer that conversation. Your backend signs a short-lived user token (`buat_...`) with the stage's signing secret (`bsig_...`, shown once: `broods dev` and `broods deploy` write it through `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret`, and the dashboard's Runtime key tab rotates it too) and your frontend sends it beside the runtime key in the `X-Broods-User-Token` header, or as a `broods.user.<token>` subprotocol entry on an agent socket. The SDK's `signUserToken` signs one. A request with a valid token runs every conversation key and event id it names under that user's namespace (`bsu:<userId>:<key>`, answered back in `conversationKey` and `eventId`), so one user can never name another's conversation; runs, steering, approvals, `continue` and run reads all go through the same check. A forged or expired token is a 401 like a bad key. An agent with the user-token requirement on (every agent created since this shipped; an existing agent once its owner turns it on) refuses the runtime key without a token with 403 `user_token_required`. Account keys and stage session tickets are not affected.
 
     The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
   version: 0.1.0
@@ -1338,6 +1338,66 @@ paths:
           description: Missing token, or the token is not a `broods login` token
         "404":
           description: The project or stage does not exist, or has no deployment yet
+
+  /v1/account/projects/{project}/stages/{stage}/user-token-secret:
+    post:
+      tags:
+        - Accounts
+      summary: Rotate the stage's user token signing secret
+      description: >-
+        Mint a new user token signing secret (`bsig_...`) for one deployed
+        project stage, replacing any earlier one, and return it this once.
+        Tokens the previous secret signed stop opening at once. Your server
+        signs user tokens with it (`signUserToken` in the SDK reads
+        `BROODS_USER_TOKEN_SECRET`); `broods dev` and `broods deploy` call this
+        route and write the secret to `.env.local` when the checkout lacks it.
+        Authenticate with the account key, a project key (`bpdk_...`) for this
+        stage, or a `broods login` token (`bcli_...`) whose member holds
+        `keys:write` on the stage. The rotation is recorded in the audit ledger
+        as `user-token-secret-rotated`; the secret never is.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: project
+          in: path
+          required: true
+          description: Project name or slug
+          schema:
+            type: string
+        - name: stage
+          in: path
+          required: true
+          description: Stage name, e.g. `development`
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Secret rotated. Shown only in this response
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, hint]
+                properties:
+                  secret:
+                    type: string
+                    description: The new `bsig_...` signing secret. Keep it on your server
+                  hint:
+                    type: string
+                    description: Masked form the dashboard and later syncs show
+              examples:
+                rotated:
+                  value:
+                    secret: bsig_abc...
+                    hint: bsig_…wxyz
+        "401":
+          description: Missing token, an unknown key, or a project key for another project or stage
+        "403":
+          description: The `broods login` token's member lacks `keys:write` on the stage
+        "404":
+          description: The project or stage does not exist, or has no runtime key yet
+        "405":
+          description: Any method but `POST`
 
   /v1/env:
     get:
@@ -3715,8 +3775,7 @@ components:
         naming the user, optionally the conversation keys they may use, and an
         expiry at most 60 minutes out. Sent only beside the runtime key. Keep
         the signing secret on your server: whoever holds it can speak as any
-        user of the stage. Rotating it on the dashboard voids every token it
-        signed.
+        user of the stage. Rotating it voids every token it signed.
     AdminAuth:
       type: http
       scheme: bearer
