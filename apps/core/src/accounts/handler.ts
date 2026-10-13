@@ -549,7 +549,6 @@ async function openSandboxTerminal(
       );
     }
   }
-  const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
   let target: {
     url: string;
     authorization: string;
@@ -593,7 +592,7 @@ async function openSandboxTerminal(
       authorization: `Bearer ${await signTerminalToken(
         apiKey,
         externalId,
-        expiresAt,
+        Date.now() + TERMINAL_TICKET_TTL_MS,
       )}`,
     };
   } else {
@@ -603,6 +602,7 @@ async function openSandboxTerminal(
       authorization: `Bearer ${apiKey}`,
     };
   }
+  const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
   const token = sealTerminalTicket(
     { ...target, accountId: context.accountId, expiresAt: expiresAt },
     requireSecretsEnv("TERMINAL_TICKET_SECRET")[0],
