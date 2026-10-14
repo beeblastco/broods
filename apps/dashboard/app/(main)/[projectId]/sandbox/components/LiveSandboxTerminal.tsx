@@ -168,7 +168,7 @@ export function LiveSandboxTerminal({
   }
 
   const blocked = disabled || !term || status === "connecting";
-  const connect = canWrite && (
+  const connect = canWrite ? (
     <Button
       type="button"
       variant="outline"
@@ -180,6 +180,10 @@ export function LiveSandboxTerminal({
       <Plug />
       {status === "connecting" ? "Connecting" : "Connect"}
     </Button>
+  ) : (
+    <p className="text-xs text-terminal-muted">
+      Your role cannot open a shell.
+    </p>
   );
 
   return (

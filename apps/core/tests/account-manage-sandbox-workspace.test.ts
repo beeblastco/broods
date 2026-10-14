@@ -636,7 +636,8 @@ describe("account-manage sandbox endpoints", () => {
         ),
       ).toBe(true);
       expect(ticket).toMatchObject({
-        url: "wss://bridge.example.com/v1/sandboxes/sbx_handler/terminal",
+        // The sandbox's name rides along for the shell prompt.
+        url: "wss://bridge.example.com/v1/sandboxes/sbx_handler/terminal?name=persistent",
         accountId: ACCOUNT_ID,
       });
       // The gateway gets a token for this one terminal, never the bridge key.

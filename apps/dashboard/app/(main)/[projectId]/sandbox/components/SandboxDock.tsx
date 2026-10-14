@@ -149,17 +149,23 @@ export function SandboxDock({
                 : "hidden"
             }
           >
-            {session.kind === "logs" && logId ? (
+            {session.kind === "logs" ? (
               <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-card p-3">
-                <SandboxLogTail
-                  logSandboxId={logId}
-                  scope={observability}
-                  monitoringHref={dashboardHref(
-                    projectId,
-                    searchParams.get("stage"),
-                    { tab: "monitoring" },
-                  )}
-                />
+                {logId ? (
+                  <SandboxLogTail
+                    logSandboxId={logId}
+                    scope={observability}
+                    monitoringHref={dashboardHref(
+                      projectId,
+                      searchParams.get("stage"),
+                      { tab: "monitoring" },
+                    )}
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    This sandbox has no log stream.
+                  </p>
+                )}
               </div>
             ) : !controllable(instance) ? (
               <p className="bg-card p-3 text-xs text-muted-foreground">
