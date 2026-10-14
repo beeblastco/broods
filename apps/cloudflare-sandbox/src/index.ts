@@ -19,8 +19,8 @@ import { verifyTerminalToken } from "./terminal-token.ts";
 const SANDBOX_PATH =
   /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec|\/terminal)?$/;
 const TERMINAL_SIZE = { cols: 120, rows: 32 };
-// A sandbox name core passes for the terminal prompt; anything else is dropped.
-const PROMPT_NAME = /^[A-Za-z0-9_.-]{1,63}$/;
+// Characters a sandbox name keeps in the terminal prompt; the rest become "-".
+const PROMPT_UNSAFE = /[^A-Za-z0-9_.-]+/g;
 // Seconds `timeout` waits after its TERM before it sends KILL.
 const KILL_GRACE_SECONDS = 5;
 // The abort fires only past the KILL, for an exec that never settles.
@@ -176,14 +176,16 @@ export class Sandbox extends DurableObject<Env> {
     if (!container.running)
       return new Response("Sandbox is not running", { status: 409 });
     const abort = new AbortController();
-    const name = new URL(request.url).searchParams.get("name") ?? "";
+    const name = (new URL(request.url).searchParams.get("name") ?? "")
+      .replace(PROMPT_UNSAFE, "-")
+      .slice(0, 63);
     // The image's WORKDIR, where agent commands run; exec alone starts in /.
     const shell = await container.exec(["bash", "-l"], {
       cwd: "/workspace",
       pty: TERMINAL_SIZE,
       env: {
         TERM: "xterm-256color",
-        ...(PROMPT_NAME.test(name) ? { BROODS_SANDBOX_NAME: name } : {}),
+        ...(name ? { BROODS_SANDBOX_NAME: name } : {}),
       },
       signal: abort.signal,
       stdin: "pipe",

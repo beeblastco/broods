@@ -43,6 +43,9 @@ export function LiveSandboxTerminal({
   const socketRef = useRef<WebSocket | null>(null);
   const [term, setTerm] = useState<Terminal | null>(null);
   const [status, setStatus] = useState<TerminalStatus>("idle");
+  // Whether a session has opened yet: until then Connect stands over the
+  // empty shell, afterwards under its output.
+  const [started, setStarted] = useState(false);
 
   // The disposed flag stops a handleConnect still awaiting its ticket from
   // opening a live PTY socket (which resumes a suspended instance) that
@@ -134,6 +137,7 @@ export function LiveSandboxTerminal({
       socket.onopen = () => {
         if (socketRef.current !== socket) return;
         setStatus("live");
+        setStarted(true);
         term.focus();
       };
       socket.onmessage = (event) => {
@@ -186,18 +190,23 @@ export function LiveSandboxTerminal({
     </p>
   );
 
+  // A failed first connect drops the overlay so its note in the shell shows.
+  const overlay = !started && status !== "error";
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-terminal-background">
       <div className="flex min-h-0 flex-1 py-2 pl-3">
         <div ref={containerRef} className="h-full min-h-40 w-full font-mono" />
       </div>
-      {status === "idle" && (
+      {overlay && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-terminal-background">
           {connect}
-          <p className="text-2xs text-terminal-muted">{label}</p>
+          <p className="text-2xs text-terminal-muted">
+            {disabled ? `${label} · waiting for the sandbox` : label}
+          </p>
         </div>
       )}
-      {(status === "ended" || status === "error") && (
+      {!overlay && status !== "live" && (
         <div className="px-3 pb-3">{connect}</div>
       )}
     </div>

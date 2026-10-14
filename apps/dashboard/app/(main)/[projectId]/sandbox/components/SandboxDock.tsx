@@ -82,44 +82,45 @@ export function SandboxDock({
   return (
     <div className="flex h-full min-h-0 flex-col bg-terminal-background">
       <div className="flex h-8 shrink-0 items-stretch border-b border-border bg-card">
-        {groups.map(({ instance, sessions }) => (
-          <div
-            key={instance._id}
-            data-active={instance._id === activeInstance || undefined}
-            className="group flex items-center gap-0.5 border-t-2 border-r border-t-transparent border-r-border pr-1 pl-2.5 data-active:border-t-foreground data-active:bg-terminal-background"
-          >
-            <span className="mr-1 text-xs text-muted-foreground group-data-active:font-medium group-data-active:text-foreground">
-              {instance.name}
-            </span>
-            {sessions.map((session) => (
-              <Button
-                key={session.key}
-                variant="nav"
-                size="xs"
-                data-active={session.key === state.active}
-                className="cursor-pointer tabular-nums"
-                onClick={() => onActivate(session.key)}
-              >
-                {session.kind === "logs" ? "Logs" : session.shell}
-              </Button>
-            ))}
-            {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
-              controllable(instance) && (
+        <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
+          {groups.map(({ instance, sessions }) => (
+            <div
+              key={instance._id}
+              data-active={instance._id === activeInstance || undefined}
+              className="group flex shrink-0 items-center gap-0.5 border-t-2 border-r border-t-transparent border-r-border pr-1 pl-2.5 data-active:border-t-foreground data-active:bg-terminal-background"
+            >
+              <span className="mr-1 max-w-40 truncate text-xs text-muted-foreground group-data-active:font-medium group-data-active:text-foreground">
+                {instance.name}
+              </span>
+              {sessions.map((session) => (
                 <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  tone="muted"
-                  aria-label={`New shell on ${instance.name}`}
-                  className="cursor-pointer"
-                  onClick={() => onNewShell(instance._id)}
+                  key={session.key}
+                  variant="nav"
+                  size="xs"
+                  data-active={session.key === state.active}
+                  className="cursor-pointer tabular-nums"
+                  onClick={() => onActivate(session.key)}
                 >
-                  <Plus />
+                  {session.kind === "logs" ? "Logs" : session.shell}
                 </Button>
-              )}
-          </div>
-        ))}
-        <span className="flex-1" />
-        <div className="flex items-center gap-1 pr-2">
+              ))}
+              {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
+                controllable(instance) && (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    tone="muted"
+                    aria-label={`New shell on ${instance.name}`}
+                    className="cursor-pointer"
+                    onClick={() => onNewShell(instance._id)}
+                  >
+                    <Plus />
+                  </Button>
+                )}
+            </div>
+          ))}
+        </div>
+        <div className="flex shrink-0 items-center gap-1 pr-2">
           <ShortcutKeys id="sandbox.terminal" bordered />
           <Button
             variant="ghost"

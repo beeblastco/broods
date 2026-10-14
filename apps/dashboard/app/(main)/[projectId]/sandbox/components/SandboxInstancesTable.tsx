@@ -172,6 +172,8 @@ export function SandboxInstancesTable({
   // stale copy once a refresh or suspend moves its status.
   const [selectedId, setSelectedId] = useQueryState("sel", ROW_ID);
   const [rawDock, setDock] = useState<DockState | null>(null);
+  // Hidden, not closed: the backtick keeps every shell connected.
+  const [dockHidden, setDockHidden] = useState(false);
   // A click on the open row closes its panel.
   const select = (id: TableRow["id"]): void => {
     void setSelectedId(selectedId === id ? null : id);
@@ -266,16 +268,21 @@ export function SandboxInstancesTable({
     ]),
   };
 
+  const showDock = (next: DockState): void => {
+    setDock(next);
+    setDockHidden(false);
+  };
+
   // The backtick toggles the dock, like an editor's terminal: it opens a
-  // shell on the selected instance, and with the dock open it closes it.
+  // shell on the selected instance, and with the dock open it hides it.
   useShortcut("sandbox.terminal", () => {
     if (dock) {
-      setDock(null);
+      setDockHidden((hidden) => !hidden);
     } else if (
       selected?.kind === "instance" &&
       controllable(selected.instance)
     ) {
-      setDock(openDockSession(null, selected.id, "shell"));
+      showDock(openDockSession(null, selected.id, "shell"));
     }
   });
 
@@ -367,7 +374,7 @@ export function SandboxInstancesTable({
                   snapshots={snapshots}
                   projectId={projectId}
                   onOpenDock={(kind) =>
-                    setDock(openDockSession(dock, selected.id, kind))
+                    showDock(openDockSession(dock, selected.id, kind))
                   }
                   onClose={() => setSelectedId(null)}
                 />
@@ -460,11 +467,13 @@ export function SandboxInstancesTable({
         </ResizablePanel>
         {dock && (
           <>
-            <ResizableHandle className="cursor-row-resize" />
+            <ResizableHandle
+              className={dockHidden ? "hidden" : "cursor-row-resize"}
+            />
             <ResizablePanel
               defaultSize={DOCK_DEFAULT_HEIGHT}
               minSize={DOCK_MIN_HEIGHT}
-              className="flex min-h-0 flex-col"
+              className={dockHidden ? "hidden" : "flex min-h-0 flex-col"}
             >
               <SandboxDock
                 state={dock}
@@ -601,6 +610,7 @@ function InstanceRow({
       </DataTableCell>
       <DataTableCell
         align="right"
+        className={suspendable ? undefined : "cursor-help"}
         title={
           suspendable
             ? undefined
