@@ -16,7 +16,7 @@ import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
 import { ClientError } from "../model/clientError";
 import { hasDashboardPermission } from "../model/access";
-import { assertFreeOrgSlot } from "../model/orgBilling";
+import { assertCanCreateOrg } from "../model/orgBilling";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -532,14 +532,15 @@ export async function resolveActiveAccount(
 
 /**
  * Inserts a free org the user owns, with an owner membership, and makes it
- * their active org. Refused once they hold their free orgs (model/orgBilling.ts).
+ * their active org. Past their first, refused unless they are on Pro
+ * (model/orgBilling.ts).
  */
 async function insertOwnedOrg(
   ctx: MutationCtx,
   user: Doc<"users">,
   name: string,
 ): Promise<Id<"orgs">> {
-  await assertFreeOrgSlot(ctx, user.authId);
+  await assertCanCreateOrg(ctx, user.authId);
   const now = Date.now();
   const orgId = await ctx.db.insert("orgs", {
     name: name,

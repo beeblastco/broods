@@ -9,6 +9,7 @@ import type { Id } from "../_generated/dataModel";
 // build straight from disk to register it.
 import stripeSchema from "../node_modules/@convex-dev/stripe/dist/component/schema.js";
 import schema from "../schema";
+import { proQuantity } from "../model/orgBilling";
 import { stripeClient } from "../stripe";
 
 const AUTH_ID = "auth_payer";
@@ -422,7 +423,20 @@ describe("per-org billing", () => {
     expect(await plans(t)).toEqual({ user: "pro", org: "free" });
   });
 
-  test("checkout bills the owner for one seat per member of the active org", async () => {
+  test.each([
+    [1, 1],
+    [2, 1],
+    [3, 1],
+    [4, 2],
+    [5, 3],
+  ])(
+    "Pro for %i members, owner included, is %i units: the owner and 2 developers, then one per extra seat",
+    (members, units) => {
+      expect(proQuantity(members)).toBe(units);
+    },
+  );
+
+  test("checkout bills the owner one Pro unit while the included seats cover every member", async () => {
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
@@ -448,11 +462,37 @@ describe("per-org billing", () => {
       priceId: "price_seat",
       customerId: CUSTOMER_ID,
       mode: "subscription",
-      quantity: 2,
+      quantity: 1,
       successUrl: "http://localhost:3000/ok",
       cancelUrl: "http://localhost:3000/cancel",
       subscriptionMetadata: { userId: AUTH_ID, orgId: payerOrgId },
     });
+  });
+
+  test("upgrading a free org that kept 5 members bills Pro plus 2 extra seats", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedPayer(t);
+    for (const name of ["a", "b", "c", "d"]) {
+      await addMember(t, `auth_kept_${name}`, `${name}@example.com`);
+    }
+    vi.spyOn(stripeClient, "getOrCreateCustomer").mockResolvedValue({
+      customerId: CUSTOMER_ID,
+      isNew: false,
+    });
+    const checkoutSession = vi
+      .spyOn(stripeClient, "createCheckoutSession")
+      .mockResolvedValue({ sessionId: "cs_org", url: "https://checkout.test" });
+
+    await t.action(api.stripe.createCheckoutSession, {
+      successUrl: "http://localhost:3000/ok",
+      cancelUrl: "http://localhost:3000/cancel",
+    });
+
+    expect(checkoutSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ quantity: 3 }),
+    );
   });
 
   test("a member who clicks Upgrade in someone else's org is refused and not charged", async () => {
@@ -572,9 +612,10 @@ describe("per-org billing", () => {
   });
 });
 
-// The owner pays for a seat before the member it is for can join.
+// Pro seats the owner and 2 developers; the owner pays for each seat past
+// those before the member it is for can join.
 describe("seats", () => {
-  test("a free org has the owner's seat only", async () => {
+  test("a Hobby org has the owner's seat only, so its invite is refused", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     const t = billingTest();
     await seedPayer(t);
@@ -585,32 +626,43 @@ describe("seats", () => {
         orgId: payerOrgId,
         email: "new@example.com",
       }),
-    ).rejects.toThrow("free plan, which has one seat");
+    ).rejects.toThrow("Payer Org is on Hobby, which has one seat");
+    expect(await memberCount(t)).toBe(1);
   });
 
-  test("a paid org takes as many members as it has seats", async () => {
+  test("Pro invites 2 developers, then the next one needs a seat", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
-    await seedUser(t, "auth_second", "second@example.com");
-    await seedUser(t, "auth_third", "third@example.com");
-    await sendEvent(
-      t,
-      "customer.subscription.created",
-      subscription("active", SUBSCRIPTION_ID, 2),
-    );
+    for (const name of ["second", "third", "fourth"]) {
+      await seedUser(t, `auth_${name}`, `${name}@example.com`);
+    }
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
 
-    await t.mutation(api.org.members.add, {
-      orgId: payerOrgId,
-      email: "second@example.com",
-    });
-
+    for (const name of ["second", "third"]) {
+      await t.mutation(api.org.members.add, {
+        orgId: payerOrgId,
+        email: `${name}@example.com`,
+      });
+    }
     await expect(
       t.mutation(api.org.members.add, {
         orgId: payerOrgId,
-        email: "third@example.com",
+        email: "fourth@example.com",
       }),
     ).rejects.toThrow("Every seat");
+    stripeCalls.subscriptions.mockImplementation(updateLive);
+    const { seats } = await t.action(api.stripe.addSeat, {
+      orgId: payerOrgId,
+    });
+    await t.mutation(api.org.members.add, {
+      orgId: payerOrgId,
+      email: "fourth@example.com",
+    });
+
+    expect(seats).toBe(4);
+    expect(await memberCount(t)).toBe(4);
   });
 
   test("billing shows every member the paid seats, and the owner each org they own", async () => {
@@ -625,12 +677,13 @@ describe("seats", () => {
     const second = await t.mutation(api.org.orgs.create, { name: "Second" });
     await addMember(t, "auth_member", "member@example.com");
 
+    // 3 units: Pro with its 2 included seats, and 2 extra seats.
     expect(await t.query(api.stripe.listOwnedOrgs, {})).toEqual([
-      { orgId: payerOrgId, name: "Payer Org", plan: "pro", seats: 3 },
+      { orgId: payerOrgId, name: "Payer Org", plan: "pro", seats: 5 },
       { orgId: second, name: "Second", plan: "free", seats: 1 },
     ]);
     caller.authId = "auth_member";
-    expect((await t.query(api.stripe.getBillingInfo, {}))?.seats).toBe(3);
+    expect((await t.query(api.stripe.getBillingInfo, {}))?.seats).toBe(5);
     expect(await t.query(api.stripe.listOwnedOrgs, {})).toEqual([]);
   });
 
@@ -651,9 +704,8 @@ describe("seats", () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
-    await seedPayer(t);
+    await seedIncludedSeatsTaken(t);
     await seedUser(t, "auth_new", "new@example.com");
-    await sendEvent(t, "customer.subscription.created", subscription("active"));
     stripeCalls.subscriptions.mockImplementation(updateLive);
 
     const { seats } = await t.action(api.stripe.addSeat, {
@@ -664,21 +716,22 @@ describe("seats", () => {
       email: "new@example.com",
     });
 
-    expect(seats).toBe(2);
+    expect(seats).toBe(4);
     expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
       items: [{ id: ITEM_ID, price: "price_seat", quantity: 2 }],
       proration_behavior: "always_invoice",
       payment_behavior: "error_if_incomplete",
     });
-    expect(await memberCount(t)).toBe(2);
+    expect(await memberCount(t)).toBe(4);
   });
 
   test("Add seat pays for members kept from the free plan too", async () => {
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
-    await addMember(t, "auth_kept", "kept@example.com");
-    await addMember(t, "auth_also", "also@example.com");
+    for (const name of ["a", "b", "c", "d"]) {
+      await addMember(t, `auth_kept_${name}`, `${name}@example.com`);
+    }
     await sendEvent(t, "customer.subscription.created", subscription("active"));
     stripeCalls.subscriptions.mockImplementation(updateLive);
 
@@ -686,20 +739,20 @@ describe("seats", () => {
       orgId: payerOrgId,
     });
 
-    expect(seats).toBe(4);
+    // 5 members and the one to come: Pro with its 2 included seats, 3 extra.
+    expect(seats).toBe(6);
   });
 
   test("Add seat with a seat already free charges nothing, so a second tab or a retry never pays twice", async () => {
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
-    await seedPayer(t);
-    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    await seedIncludedSeatsTaken(t);
     stripeCalls.subscriptions.mockImplementation(updateLive);
 
     const first = await t.action(api.stripe.addSeat, { orgId: payerOrgId });
     const second = await t.action(api.stripe.addSeat, { orgId: payerOrgId });
 
-    expect([first.seats, second.seats]).toEqual([2, 2]);
+    expect([first.seats, second.seats]).toEqual([4, 4]);
     expect(stripeCalls.subscriptions).toHaveBeenCalledTimes(1);
   });
 
@@ -707,9 +760,8 @@ describe("seats", () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
-    await seedPayer(t);
+    await seedIncludedSeatsTaken(t);
     await seedUser(t, "auth_new", "new@example.com");
-    await sendEvent(t, "customer.subscription.created", subscription("active"));
     // A webhook reads the one seat Stripe still holds, after Add seat read it.
     stripeCalls.subscriptions.mockImplementation(
       async (id: string, params: Stripe.SubscriptionUpdateParams) => {
@@ -730,16 +782,15 @@ describe("seats", () => {
       email: "new@example.com",
     });
 
-    expect(await memberCount(t)).toBe(2);
+    expect(await memberCount(t)).toBe(4);
   });
 
   test("a declined card adds no seat and the invite stays refused", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
-    await seedPayer(t);
+    await seedIncludedSeatsTaken(t);
     await seedUser(t, "auth_new", "new@example.com");
-    await sendEvent(t, "customer.subscription.created", subscription("active"));
     stripeCalls.subscriptions.mockRejectedValue(
       new Stripe.errors.StripeCardError({
         message: "Your card was declined.",
@@ -775,20 +826,15 @@ describe("seats", () => {
     expect(stripeCalls.subscriptions).not.toHaveBeenCalled();
   });
 
-  test("removing a member gives their seat back with a proration credit", async () => {
+  test("removing a member past the included seats gives their extra seat back with a proration credit", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
-    await seedPayer(t);
+    await seedIncludedSeatsTaken(t, 2);
     const membershipId = await addMember(
       t,
       "auth_member",
       "member@example.com",
-    );
-    await sendEvent(
-      t,
-      "customer.subscription.created",
-      subscription("active", SUBSCRIPTION_ID, 2),
     );
     stripeCalls.subscriptions.mockImplementation(updateLive);
 
@@ -807,17 +853,42 @@ describe("seats", () => {
     expect(sub?.quantity).toBe(1);
   });
 
-  test("a member whose account is deleted gives their seat back, even while payment is due", async () => {
+  test("a subscription bought at one seat per member drops to the new count on its next sync", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
-    await addMember(t, "auth_member", "member@example.com");
+    await addMember(t, "auth_kept", "kept@example.com");
+    const membershipId = await addMember(
+      t,
+      "auth_member",
+      "member@example.com",
+    );
+    // Three members at the old one unit each.
     await sendEvent(
       t,
       "customer.subscription.created",
-      subscription("past_due", SUBSCRIPTION_ID, 2),
+      subscription("active", SUBSCRIPTION_ID, 3),
     );
+    stripeCalls.subscriptions.mockImplementation(updateLive);
+
+    vi.useFakeTimers();
+    await t.mutation(api.org.members.remove, { membershipId: membershipId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
+      items: [{ id: ITEM_ID, price: "price_seat", quantity: 1 }],
+      proration_behavior: "create_prorations",
+      payment_behavior: "error_if_incomplete",
+    });
+  });
+
+  test("a member whose account is deleted gives their seat back, even while payment is due", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedIncludedSeatsTaken(t, 2, "past_due");
+    await addMember(t, "auth_member", "member@example.com");
     stripeCalls.subscriptions.mockImplementation(updateLive);
 
     vi.useFakeTimers();
@@ -835,20 +906,23 @@ describe("seats", () => {
   });
 });
 
-// One free org per owner, so a new org never brings a new free allowance.
-describe("free-org cap", () => {
-  test("a free owner cannot create a second free org", async () => {
+// Creating an org needs Pro, so a new org never brings a new free allowance.
+// Everyone still gets their own Hobby workspace.
+describe("creating an org", () => {
+  test("a Hobby user cannot create a second org", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     const t = billingTest();
     await seedPayer(t);
 
     await expect(
       t.mutation(api.org.orgs.create, { name: "Second" }),
-    ).rejects.toThrow("You already own a free organization (Payer Org)");
+    ).rejects.toThrow(
+      "Creating an organization needs Pro. Upgrade Payer Org to Pro first",
+    );
     expect(await ownedOrgCount(t)).toBe(1);
   });
 
-  test("an owner whose org pays can create one more free org", async () => {
+  test("a Pro owner creates an org, which is upgraded before the next one", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     const t = billingTest();
     await seedPayer(t);
@@ -859,7 +933,21 @@ describe("free-org cap", () => {
     expect(await orgPlan(t, second)).toBe("free");
     await expect(
       t.mutation(api.org.orgs.create, { name: "Third" }),
-    ).rejects.toThrow("You already own a free organization (Second)");
+    ).rejects.toThrow("Second is still on Hobby");
+  });
+
+  test("a Hobby user who joined someone else's org still gets their own workspace, and only that", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const t = billingTest();
+    await seedPayer(t);
+    await addMember(t, "auth_member", "member@example.com");
+    caller.authId = "auth_member";
+
+    await t.mutation(api.org.orgs.create, { name: "Member Workspace" });
+
+    await expect(
+      t.mutation(api.org.orgs.create, { name: "Member Second" }),
+    ).rejects.toThrow("Creating an organization needs Pro");
   });
 
   test("broods login answers the cap as 402 payment_required", async () => {
@@ -900,7 +988,7 @@ describe("free-org cap", () => {
     expect(await ownedOrgCount(t)).toBe(1);
   });
 
-  test("a self-hosted install has no cap", async () => {
+  test("a self-hosted install creates orgs without Pro", async () => {
     const t = billingTest();
     await seedPayer(t);
 
@@ -1096,6 +1184,22 @@ async function addMember(
       createdAt: Date.now(),
     });
   });
+}
+
+/** The payer's org on Pro at `quantity` units, its 2 included developer seats taken. */
+async function seedIncludedSeatsTaken(
+  t: T,
+  quantity = 1,
+  status: Stripe.Subscription.Status = "active",
+): Promise<void> {
+  await seedPayer(t);
+  await addMember(t, "auth_dev_one", "dev-one@example.com");
+  await addMember(t, "auth_dev_two", "dev-two@example.com");
+  await sendEvent(
+    t,
+    "customer.subscription.created",
+    subscription(status, SUBSCRIPTION_ID, quantity),
+  );
 }
 
 async function memberCount(t: T): Promise<number> {

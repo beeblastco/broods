@@ -4,7 +4,11 @@ import { ConfirmDialog } from "@/app/components/ConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
-import { type OrgSeats, useOrgSeats } from "@/app/hooks/useOrgSeats";
+import {
+  type OrgSeats,
+  type SeatKind,
+  useOrgSeats,
+} from "@/app/hooks/useOrgSeats";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import {
   billingReset,
@@ -17,15 +21,19 @@ import type { PlanTier } from "@/app/lib/pricing";
 import {
   DEFAULT_PLAN,
   isMaxPlan,
+  perMonth,
   PLAN_CONFIGS,
-  SEAT_PRICE_EUR,
   seatCount,
-  seatsAndPrice,
+  UNIT_PRICE_EUR,
 } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { clientErrorData } from "@broods/convex/model/clientError";
-import { isPaid } from "@broods/convex/model/orgBilling";
+import {
+  isPaid,
+  PRO_INCLUDED_DEVELOPER_SEATS,
+  proQuantity,
+} from "@broods/convex/model/orgBilling";
 import {
   BUDGET_WARNING_RATIO,
   capsReached,
@@ -40,8 +48,12 @@ import { useState } from "react";
 // Stripe states where a payment is owed and the portal can fix it.
 const PAYMENT_DUE_STATUSES = new Set(["past_due", "unpaid", "incomplete"]);
 
-// Past this many seats the row of marks stops growing; the words carry the count.
-const MAX_SEAT_MARKS = 20;
+// What pays for a seat, as its row in the owner's seat list says it.
+const SEAT_LABELS: Record<SeatKind, string> = {
+  owner: "Owner",
+  included: "Included with Pro",
+  extra: `Extra seat · ${perMonth(1)}`,
+};
 
 interface Notice {
   tone: "warning" | "destructive" | "info";
@@ -61,11 +73,12 @@ const ACTIVATING_NOTICE: Notice = {
 };
 
 /**
- * Billing tab, for the active org: the plan with its seats and the owner's
- * actions, one bar for the closest cap, then a single notice when something
- * needs attention. Every member sees the plan; only the owner pays, so only
- * the owner gets Upgrade, Add seat and the portal. The per-resource allowance
- * lives on the Usage tab, which the bar links to.
+ * Billing tab, for the active org, in separate parts: the plan with its
+ * price and one bar for the closest cap, then a single notice when something
+ * needs attention, then the org's seats, then what the owner pays each month.
+ * Every member sees the plan and their own seat; only the owner pays, so only
+ * the owner gets Upgrade, Add seat, the portal and the bill. The
+ * per-resource allowance lives on the Usage tab, which the bar links to.
  */
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -140,9 +153,14 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
   return (
     <div className="grid gap-8">
-      <Section title={seats ? `Plan · ${seats.org.name}` : "Plan"}>
+      <Section
+        // Someone else's org names the org: its plan is the owner's.
+        title={
+          seats?.isOwner === false ? `Plan · ${seats.org.name}` : "Your plan"
+        }
+      >
         <div className="grid gap-4 rounded-lg border border-border bg-card px-4 py-3">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <PlanSummary budget={budget} plan={plan} seats={seats} />
             <PlanActions
               seats={seats}
@@ -154,7 +172,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
             />
           </div>
           <AllowanceBar budget={budget} projectId={projectId} />
-          <SeatsRow seats={seats} />
         </div>
         {actionError && (
           <p className="text-sm text-destructive">{actionError}</p>
@@ -170,12 +187,14 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
           onAction={notice.action === "upgrade" ? handleUpgrade : handlePortal}
         />
       )}
+
+      <SeatsSection seats={seats} />
     </div>
   );
 }
 
 /**
- * The owner's actions on the plan: Add seat and the portal once the org has a
+ * The owner's actions on the plan: the portal once the org has a
  * subscription, Upgrade before. A member sees Upgrade greyed out, since only
  * the owner pays.
  */
@@ -195,14 +214,10 @@ function PlanActions({
   onPortal: () => Promise<void>;
 }): React.JSX.Element {
   const owner = seats?.isOwner === true;
-  const billing = seats?.billing;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {owner && billing && isPaid(billing.status) && seats.seatsToAdd > 0 && (
-        <AddSeatButton seats={seats} />
-      )}
-      {owner && billing && (
+      {owner && seats?.billing && (
         <Button
           size="sm"
           variant="outline"
@@ -222,7 +237,11 @@ function PlanActions({
           disabled={checkoutLoading || !owner}
         >
           <ArrowUpRight className="size-3.5" />
-          {checkoutLoading ? "Loading…" : upgradeLabel(seats)}
+          {checkoutLoading
+            ? "Loading…"
+            : owner
+              ? `Upgrade to Pro · ${perMonth(proQuantity(seats.members))}`
+              : "Upgrade to Pro"}
         </Button>
       )}
     </div>
@@ -248,17 +267,16 @@ function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
     <>
       <Button
         size="sm"
-        variant="outline"
         className="cursor-pointer"
         onClick={() => setConfirming(true)}
       >
         <Plus className="size-3.5" />
-        Add seat
+        Add seat · {perMonth(1)}
       </Button>
       {confirming && (
         <ConfirmDialog
           title={`Add a seat to ${org.name}`}
-          description={`Add ${seatCount(seatsToAdd)} for €${seatsToAdd * SEAT_PRICE_EUR}/month. You are charged now for the rest of this period.`}
+          description={`Add ${seatCount(seatsToAdd)} for ${perMonth(seatsToAdd)}. You are charged now for the rest of this period.`}
           verb="Add seat"
           variant="default"
           pending={pending}
@@ -271,47 +289,142 @@ function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
   );
 }
 
-/** Upgrade with what it pays for: one seat per member. A member only reads it. */
-function upgradeLabel(seats: OrgSeats | undefined): string {
-  return seats?.isOwner
-    ? `Upgrade to Pro · ${seatsAndPrice(seats.members)}`
-    : "Upgrade to Pro";
-}
-
 /**
- * The owner's seats: one mark per seat or member, filled where a member sits.
- * A free org whose members were kept from before seats counted says what
- * Upgrade pays for. Nothing for a member, or on an install without seats.
+ * The org's seats. For the owner: how many are used, what pays for each, and
+ * Add seat once every one is taken, then on Pro what they pay each month. On
+ * Hobby there is only the owner's, and a free org whose members were kept
+ * from before seats counted says what Upgrade pays for them. Anyone else
+ * sees only their own seat. Nothing on an install without seats.
  */
-function SeatsRow({
+function SeatsSection({
   seats,
 }: {
   seats: OrgSeats | undefined;
 }): React.JSX.Element | null {
-  if (!seats?.enforced || !seats.isOwner) return null;
-  const marks = Math.min(Math.max(seats.members, seats.seats), MAX_SEAT_MARKS);
+  if (!seats?.enforced) return null;
+  if (!seats.isOwner) return <YourSeat seats={seats} />;
+  const { billing, members, extraSeats } = seats;
+  const paid = billing !== null && isPaid(billing.status);
 
   return (
-    <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
-      <p className="text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">Seats</span>
-        {" · "}
-        {seats.billing === null && seats.members > seats.seats
-          ? `${seats.members} members on the free plan's ${seats.seats} seat. Upgrading pays for all ${seats.members}; no new invites until then.`
-          : `${seats.members} of ${seats.seats} used`}
-      </p>
-      <div className="flex shrink-0 gap-1" aria-hidden>
-        {Array.from({ length: marks }, (_, index) => (
-          <span
-            key={index}
-            className={cn(
-              "size-2.5 rounded-xs",
-              index < seats.members ? "bg-foreground" : "bg-muted",
-            )}
-          />
-        ))}
+    <>
+      <Section title={`Seats · ${seats.org.name}`}>
+        <div className="grid gap-3 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="grid gap-0.5">
+              <span className="text-sm font-semibold text-foreground">
+                {paid
+                  ? `${members} of ${seatCount(seats.seats)} used`
+                  : billing
+                    ? "Seats on hold"
+                    : "No developer seats on Hobby"}
+              </span>
+              <p className="text-xs text-muted-foreground">
+                {paid
+                  ? `You, plus ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats included with Pro${extraSeats > 0 ? ` and ${extraSeats} extra` : ""}`
+                  : billing
+                    ? "The seats come back once Stripe has the payment. Update the card in Manage subscription."
+                    : `Pro lets you create an org and includes ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats. Extra seats are ${perMonth(1)} each.`}
+              </p>
+              {!billing && members > 1 && (
+                <p className="text-xs text-muted-foreground">
+                  {`${members} members kept from before seats counted. Upgrading charges ${perMonth(proQuantity(members))} for all of them; no new invites until then.`}
+                </p>
+              )}
+            </div>
+            {paid && seats.seatsToAdd > 0 && <AddSeatButton seats={seats} />}
+          </div>
+          {(billing || members > 1) && (
+            <ul className="grid border-t border-border">
+              {seats.holders.map((holder) => (
+                <li
+                  key={holder.userId}
+                  className="flex items-center justify-between gap-4 border-b border-border py-2 text-xs last:border-b-0"
+                >
+                  <span className="truncate text-foreground">
+                    {holder.seat === "owner"
+                      ? `${holder.name} (you)`
+                      : holder.name}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {paid || holder.seat === "owner"
+                      ? SEAT_LABELS[holder.seat]
+                      : "Kept from before seats counted"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Section>
+      {paid && <MonthlyBill extraSeats={extraSeats} />}
+    </>
+  );
+}
+
+/** A member's own seat in someone else's org: who pays for it, and that they never do. */
+function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
+  const paid = seats.billing !== null && isPaid(seats.billing.status);
+  const own =
+    seats.userPlan === "free"
+      ? "Your own Hobby plan stays free and separate."
+      : "Your own Pro plan is billed separately.";
+  const paidBy =
+    paid && seats.yours === "included"
+      ? `One of the ${PRO_INCLUDED_DEVELOPER_SEATS} seats included with ${seats.ownerName}'s Pro plan.`
+      : paid
+        ? `An extra seat paid by ${seats.ownerName}.`
+        : `A seat in ${seats.ownerName}'s org. You are not charged.`;
+
+  return (
+    <Section title="Your seat">
+      <div className="grid gap-0.5 rounded-lg border border-border bg-card px-4 py-3">
+        <span className="text-sm font-semibold text-foreground">
+          Developer seat in {seats.org.name}
+        </span>
+        <p className="text-xs text-muted-foreground">
+          {paidBy} {own}
+        </p>
       </div>
-    </div>
+    </Section>
+  );
+}
+
+/** The owner's monthly bill for this org: Pro, its extra seats, and the total. */
+function MonthlyBill({
+  extraSeats,
+}: {
+  extraSeats: number;
+}): React.JSX.Element {
+  const rows: Array<[string, string]> = [
+    [
+      `Pro plan (includes ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats)`,
+      `€${UNIT_PRICE_EUR}`,
+    ],
+    [
+      `Extra seats · ${extraSeats} × €${UNIT_PRICE_EUR}`,
+      `€${extraSeats * UNIT_PRICE_EUR}`,
+    ],
+  ];
+
+  return (
+    <Section title="What you pay each month">
+      <div className="grid rounded-lg border border-border bg-card px-4 py-1">
+        {rows.map(([label, amount]) => (
+          <div
+            key={label}
+            className="flex justify-between gap-4 border-b border-border py-2 text-xs text-muted-foreground"
+          >
+            <span>{label}</span>
+            <span className="tabular-nums">{amount}</span>
+          </div>
+        ))}
+        <div className="flex justify-between gap-4 py-2 text-xs font-semibold text-foreground">
+          <span>Total</span>
+          <span className="tabular-nums">{perMonth(1 + extraSeats)}</span>
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -397,13 +510,20 @@ function NoticeBar({
 function PlanBadge({
   selfHosted,
   status,
+  paidBy,
 }: {
   selfHosted: boolean;
   status: string | undefined;
+  /** Who pays, for a member: shown in place of Active. */
+  paidBy: string | null;
 }): React.JSX.Element {
   if (selfHosted) return <Badge variant="secondary">Unlimited</Badge>;
   if (status === "trialing") return <Badge variant="info">Trial</Badge>;
-  if (status === "active") return <Badge variant="success">Active</Badge>;
+  if (status === "active") {
+    return (
+      <Badge variant="success">{paidBy ? `Paid by ${paidBy}` : "Active"}</Badge>
+    );
+  }
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return <Badge variant="destructive">Payment due</Badge>;
   }
@@ -411,7 +531,7 @@ function PlanBadge({
   return <Badge variant="secondary">Free</Badge>;
 }
 
-// Plan name, status badge, its seats, and when it renews or resets.
+// Plan name, status badge, and what it costs and when it renews or resets.
 function PlanSummary({
   budget,
   plan,
@@ -422,7 +542,7 @@ function PlanSummary({
   seats: OrgSeats | undefined;
 }): React.JSX.Element {
   const selfHosted = budget?.enforced === false;
-  const detail = planDetail(budget, selfHosted, seats);
+  const detail = planDetail(budget, selfHosted, plan, seats);
 
   return (
     <div className="grid gap-0.5">
@@ -430,7 +550,11 @@ function PlanSummary({
         <span className="text-sm font-semibold text-foreground">
           {selfHosted ? "Self-hosted" : PLAN_CONFIGS[plan].label}
         </span>
-        <PlanBadge selfHosted={selfHosted} status={seats?.billing?.status} />
+        <PlanBadge
+          selfHosted={selfHosted}
+          status={seats?.billing?.status}
+          paidBy={seats && !seats.isOwner ? seats.ownerName : null}
+        />
       </div>
       {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
     </div>
@@ -526,31 +650,36 @@ function storageNotice(
   };
 }
 
-// When it renews or resets, after its seats: what they cost for the owner,
-// who pays for them for everyone else.
+// The plan's price and when it renews, or when a free one resets, for the
+// owner; for anyone else, whose plan it is and that they are not charged.
 function planDetail(
   budget: BudgetUsage | null | undefined,
   selfHosted: boolean,
+  plan: PlanTier,
   seats: OrgSeats | undefined,
 ): string | null {
   if (selfHosted) return "Your own install. Every feature, no limits.";
+  if (seats && !seats.isOwner) {
+    return `This org runs on ${seats.ownerName}'s ${PLAN_CONFIGS[plan].label} plan. You are not charged.`;
+  }
   const billing = seats?.billing;
-  if (seats && billing) {
+  if (billing) {
     const day = formatDay(billing.currentPeriodEnd * 1000);
-    const paidBy = seats.isOwner
-      ? seatsAndPrice(seats.seats)
-      : `${seatCount(seats.seats)} · paid by ${seats.ownerName} (owner)`;
-    if (billing.status === "trialing") return `${paidBy} · Trial ends ${day}`;
+    const when =
+      billing.status === "trialing"
+        ? "trial ends"
+        : billing.cancelAtPeriodEnd
+          ? "cancels"
+          : "renews";
 
-    return `${paidBy} · ${billing.cancelAtPeriodEnd ? "Cancels on" : "Renews on"} ${day}`;
+    return `${perMonth(1)} · ${when} ${day}`;
   }
   if (!budget) return null;
   const reset = `Resets ${billingReset(budget.month)}`;
   if (!seats) return reset;
+  const who = seats.members === 1 ? "just you" : `${seats.members} members`;
 
-  return seats.isOwner
-    ? `${reset} · 1 seat (yours)`
-    : `${reset} · owner ${seats.ownerName}`;
+  return `${reset} · ${who} · you can join other people's orgs`;
 }
 
 // The Usage tab, keeping the other params (the stage) the page carries.

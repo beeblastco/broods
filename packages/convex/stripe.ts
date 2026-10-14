@@ -1,7 +1,8 @@
 /**
  * Stripe billing per org: checkout, seats and the portal for the org owner,
  * and storing what Stripe returns. Each org has its own subscription to
- * `STRIPE_SEAT_PRICE_ID`, one seat per member (model/orgBilling.ts). The
+ * `STRIPE_SEAT_PRICE_ID`: one unit for Pro with its included seats, one more
+ * per extra member (model/orgBilling.ts). The
  * webhook (http.ts) and the seat actions store a subscription only as read
  * back from Stripe, then recompute the plan of the org it pays for and of the
  * owner who pays.
@@ -25,6 +26,8 @@ import {
   isEnded,
   isPaid,
   orgMemberCount,
+  PRO_INCLUDED_DEVELOPER_SEATS,
+  proQuantity,
   seatsOf,
   syncOrgPlan,
   syncUserPlan,
@@ -50,7 +53,11 @@ const orgBillingValidator = v.object({
 
 type OrgBilling = Infer<typeof orgBillingValidator>;
 
-/** Start the checkout that puts the caller's active org on Pro, one seat per member. Owner only. */
+/**
+ * Start the checkout that puts the caller's active org on Pro: one unit, plus
+ * one for each member past the included seats, kept from before seats
+ * counted. Owner only.
+ */
 export const createCheckoutSession = action({
   args: { successUrl: v.string(), cancelUrl: v.string() },
   returns: v.object({ url: v.string() }),
@@ -80,7 +87,7 @@ export const createCheckoutSession = action({
       priceId: seatPriceId(),
       customerId: customerId,
       mode: "subscription",
-      quantity: Math.max(1, billing.members),
+      quantity: proQuantity(billing.members),
       successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
       cancelUrl: safeDashboardUrl(args.cancelUrl, "cancelUrl"),
       // The component files a subscription under `metadata.userId` (who pays)
@@ -95,11 +102,12 @@ export const createCheckoutSession = action({
 });
 
 /**
- * Make room for one more member in a paid org: seats for every member plus
- * one. Stripe invoices the prorated seats at once and refuses the change if
- * that payment fails, so the invite that follows only lands on a paid seat.
- * A seat already free charges nothing, so a second tab or a retried invite
- * never pays twice. Owner only.
+ * Make room for one more member in a paid org: the units for every member
+ * plus one (`proQuantity`). Stripe invoices the prorated seat at once and
+ * refuses the change if that payment fails, so the invite that follows only
+ * lands on a paid seat. A seat already free charges nothing, so a second tab
+ * or a retried invite never pays twice. Owner only.
+ * @returns the seats the org now holds, included ones too
  */
 export const addSeat = action({
   args: { orgId: v.id("orgs") },
@@ -117,14 +125,14 @@ export const addSeat = action({
     }
     try {
       // Members kept from before the org paid get their seat too.
-      const seats = await changeSeats(
+      const quantity = await changeSeats(
         ctx,
         billing.subscription.stripeSubscriptionId,
-        (paid) => Math.max(paid, billing.members + 1),
+        (paid) => Math.max(paid, proQuantity(billing.members + 1)),
         "always_invoice",
       );
 
-      return { seats: seats };
+      return { seats: quantity + PRO_INCLUDED_DEVELOPER_SEATS };
     } catch (error) {
       if (!(error instanceof Stripe.errors.StripeCardError)) throw error;
       throw new ClientError(
@@ -270,9 +278,11 @@ export const orgBillingInternal = internalQuery({
 });
 
 /**
- * Lower an org's seats to its member count after someone left, whether or not
- * its last payment went through. Stripe credits the unused time on the next
- * invoice. Seats only go up on the owner's click (`addSeat`).
+ * Lower an org's units to what its members need (`proQuantity`) after someone
+ * left, whether or not its last payment went through. Stripe credits the
+ * unused time on the next invoice. Units only go up on the owner's click
+ * (`addSeat`). A subscription bought at one unit per member, before Pro
+ * included seats, drops to the same count here on its next run.
  */
 export const syncSeatsInternal = internalAction({
   args: { orgId: v.id("orgs") },
@@ -285,7 +295,7 @@ export const syncSeatsInternal = internalAction({
     await changeSeats(
       ctx,
       billing.subscription.stripeSubscriptionId,
-      (paid) => Math.min(paid, Math.max(1, billing.members)),
+      (paid) => Math.min(paid, proQuantity(billing.members)),
       "create_prorations",
     );
 
@@ -463,17 +473,17 @@ async function applyLive(
 }
 
 /**
- * Set a subscription's seats from what Stripe holds now, on the seat price
+ * Set a subscription's quantity from what Stripe holds now, on the seat price
  * (which also moves a migrated flat Pro item onto it), and store the result:
  * the read when nothing changes, else the update under a ticket claimed once
  * Stripe answered it, so a webhook read that started before cannot land over
- * the new seats.
- * @returns the seats the org now pays for
+ * the new quantity.
+ * @returns the quantity the org now pays for
  */
 async function changeSeats(
   ctx: ActionCtx,
   subscriptionId: string,
-  seats: (paid: number) => number,
+  quantityFor: (paid: number) => number,
   proration: "always_invoice" | "create_prorations",
 ): Promise<number> {
   const stripe = stripeApi();
@@ -485,7 +495,7 @@ async function changeSeats(
   const item = live.items.data[0];
   if (!item) throw new Error(`Subscription ${subscriptionId} has no items`);
   const paid = item.quantity ?? 1;
-  const quantity = seats(paid);
+  const quantity = quantityFor(paid);
   if (quantity === paid) {
     await applyLive(ctx, ticket, live);
 

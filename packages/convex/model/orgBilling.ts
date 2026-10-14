@@ -1,11 +1,14 @@
 /**
  * Who pays for an org and how many people it may hold. Each org has its own
- * Stripe subscription, one seat per member (owner included), billed to the
- * org owner; a free org has the owner's seat only. An owner keeps at most
- * `FREE_ORGS_PER_OWNER` free orgs, so new orgs never multiply the free
- * allowance. Both rules hold only on the managed service (`isManagedService`).
- * `orgs.plan` follows the org's own subscription and is what core enforces;
- * `users.plan` only says whether the user pays for any org.
+ * Stripe subscription to one €20 unit price, billed to the org owner. Pro is
+ * one unit and seats the owner plus `PRO_INCLUDED_DEVELOPER_SEATS`
+ * developers; each member past those is one more unit (`proQuantity`). A
+ * Hobby (free) org seats its owner only, and creating an org needs Pro
+ * (`assertCanCreateOrg`), so new orgs never multiply the free allowance. A
+ * Hobby user still joins any org that invites them, on that org's seat. The
+ * rules hold only on the managed service (`isManagedService`). `orgs.plan`
+ * follows the org's own subscription and is what core enforces; `users.plan`
+ * only says whether the user pays for any org.
  */
 
 import type Stripe from "stripe";
@@ -15,8 +18,8 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
 import { isManagedService, type Plan } from "./planLimits";
 
-/** Free orgs one owner may hold. Paid orgs do not count. */
-export const FREE_ORGS_PER_OWNER = 1;
+/** Developer seats Pro includes on top of the owner's, for its one unit. */
+export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
 
 /** Seats a free org has: the owner's. */
 export const FREE_ORG_SEATS = 1;
@@ -44,13 +47,23 @@ export function isPaid(status: string): boolean {
   return PAID_STATUSES.some((paid) => paid === status);
 }
 
-/** The seats an org's subscriptions give it: the paid quantity, else the owner's seat. */
+/**
+ * The Stripe quantity a Pro org of `members` people (owner included) pays
+ * for: Pro itself, plus one unit per member past the included seats.
+ */
+export function proQuantity(members: number): number {
+  return Math.max(1, members - PRO_INCLUDED_DEVELOPER_SEATS);
+}
+
+/** The seats an org's subscriptions give it: the paid units plus the included seats, else the owner's seat. */
 export function seatsOf(
   subs: ReadonlyArray<{ status: string; quantity?: number }>,
 ): number {
   const paid = subs.find((sub) => isPaid(sub.status));
 
-  return paid ? (paid.quantity ?? FREE_ORG_SEATS) : FREE_ORG_SEATS;
+  return paid
+    ? (paid.quantity ?? 1) + PRO_INCLUDED_DEVELOPER_SEATS
+    : FREE_ORG_SEATS;
 }
 
 /** The plan a payer's or an org's subscriptions grant: pro while one is paid. */
@@ -89,7 +102,7 @@ export async function assertFreeSeat(
   throw new ClientError(
     planOf(subs) === "pro"
       ? `Every seat in ${org.name} is taken. The owner adds a seat in Billing first.`
-      : `${org.name} is on the free plan, which has one seat. The owner upgrades it to invite members.`,
+      : `${org.name} is on Hobby, which has one seat: the owner's. The owner upgrades it to Pro to invite developers.`,
     "payment_required",
   );
 }
@@ -105,8 +118,13 @@ export async function releaseSeat(
   });
 }
 
-/** Refuse a new org when the owner already holds their free ones. */
-export async function assertFreeOrgSlot(
+/**
+ * Refuse a new org unless its owner is on Pro. Everyone gets one Hobby org:
+ * the workspace made for them when they own none. Past it, a new org needs
+ * every org they own on Pro; it starts on Hobby, so it is upgraded before
+ * the next one.
+ */
+export async function assertCanCreateOrg(
   ctx: QueryCtx,
   ownerAuthId: string,
 ): Promise<void> {
@@ -115,11 +133,13 @@ export async function assertFreeOrgSlot(
     .query("orgs")
     .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", ownerAuthId))
     .collect();
-  const free = owned.filter((org) => org.plan === "free");
-  if (free.length < FREE_ORGS_PER_OWNER) return;
+  const hobby = owned.find((org) => org.plan === "free");
+  if (!hobby) return;
 
   throw new ClientError(
-    `You already own a free organization (${free[0].name}). Upgrade it or delete it to create another.`,
+    owned.some((org) => org.plan === "pro")
+      ? `${hobby.name} is still on Hobby. Upgrade it to Pro before you create another organization.`
+      : `Creating an organization needs Pro. Upgrade ${hobby.name} to Pro first; you can still join an org when its owner invites you.`,
     "payment_required",
   );
 }

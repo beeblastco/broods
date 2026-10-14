@@ -67,13 +67,17 @@ import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDay } from "@/app/lib/allowance";
 import { formatDate } from "@/app/lib/formatTime";
 import { tabHref } from "@/app/lib/navigation";
-import { SEAT_PRICE_EUR } from "@/app/lib/pricing";
+import { perMonth } from "@/app/lib/pricing";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { clientErrorData } from "@broods/convex/model/clientError";
-import { isPaid } from "@broods/convex/model/orgBilling";
+import {
+  isPaid,
+  PRO_INCLUDED_DEVELOPER_SEATS,
+  proQuantity,
+} from "@broods/convex/model/orgBilling";
 import type { FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
@@ -500,7 +504,6 @@ function InviteDialog({
   const [refused, setRefused] = useState(false);
   const { pending, error, run } = useSubmit();
   const step = inviteStep(seats, refused);
-  const upgradeSeats = seats?.members ?? 1;
 
   async function submit(): Promise<void> {
     const pick = options.find((option) => option.value === role)?.pick;
@@ -624,7 +627,7 @@ function InviteDialog({
                 ? "Loading…"
                 : step === "billing"
                   ? "Manage billing"
-                  : `Upgrade · €${upgradeSeats * SEAT_PRICE_EUR}/month`}
+                  : `Upgrade · ${perMonth(proQuantity(seats?.members ?? 1))}`}
             </Button>
           ) : (
             <Button
@@ -658,8 +661,6 @@ function SeatNotice({
   seats: OrgSeats;
   step: Exclude<InviteStep, "invite">;
 }): React.JSX.Element {
-  const upgradeSeats = seats.members;
-
   return (
     <div
       className="grid gap-1 rounded-md bg-muted px-3 py-2.5 text-xs"
@@ -667,7 +668,7 @@ function SeatNotice({
     >
       <p className="font-medium text-foreground">
         {step === "upgrade"
-          ? `${org.name} is on the free plan, which has one seat: yours.`
+          ? `${org.name} is on Hobby, which has one seat: yours.`
           : step === "billing"
             ? `${org.name}'s last payment did not go through.`
             : `Every seat in ${org.name} is taken.`}
@@ -680,7 +681,7 @@ function SeatNotice({
                 ? "1 more seat"
                 : `${seats.seatsToAdd} more seats`}
             </span>
-            <span>€{seats.seatsToAdd * SEAT_PRICE_EUR} / month</span>
+            <span>{perMonth(seats.seatsToAdd)}</span>
           </p>
           <p className="text-muted-foreground">
             Charged now to the card on file, prorated to{" "}
@@ -691,10 +692,13 @@ function SeatNotice({
       )}
       {step === "upgrade" && (
         <p className="text-muted-foreground">
-          Pro is €{SEAT_PRICE_EUR} per member per month. Upgrade opens Stripe
-          Checkout for{" "}
-          {upgradeSeats === 1 ? "your seat" : `all ${upgradeSeats} members`}.
-          Back here, invite them again to pay for 1 more seat.
+          Pro is {perMonth(1)} and includes {PRO_INCLUDED_DEVELOPER_SEATS}{" "}
+          developer seats; each seat past those is {perMonth(1)}. Upgrade opens
+          Stripe Checkout
+          {seats.members > 1
+            ? ` for all ${seats.members} members: ${perMonth(proQuantity(seats.members))}`
+            : ""}
+          . Back here, invite them again.
         </p>
       )}
       {step === "billing" && (

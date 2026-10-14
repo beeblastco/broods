@@ -326,7 +326,7 @@ broods org use beeblast      # slug, name or id
 broods org create "New Org"
 ```
 
-On the managed service you own at most one free organization: `create` is refused with `payment_required` until your free one is upgraded or deleted. Only organizations where you are owner or admin, with a provisioned API account, can be selected. `use` and `create` store the choice and rewrite `BROODS_API_KEY` for the current project and stage in the new organization. If the project does not exist there yet, the CLI warns and keeps the old key. Run `broods dev` to create the project and mint a key.
+On the managed service creating an organization needs Pro: past your own Hobby workspace, `create` is refused with `payment_required` while any organization you own is still on Hobby. Upgrade it in the dashboard's Billing tab first. Only organizations where you are owner or admin, with a provisioned API account, can be selected. `use` and `create` store the choice and rewrite `BROODS_API_KEY` for the current project and stage in the new organization. If the project does not exist there yet, the CLI warns and keeps the old key. Run `broods dev` to create the project and mint a key.
 
 ## project
 

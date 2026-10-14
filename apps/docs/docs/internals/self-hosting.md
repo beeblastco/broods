@@ -160,7 +160,7 @@ From `packages/convex`, set each with `bunx convex env set NAME value`:
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | no        | The managed service's login. Leave unset                                                   |
 | `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs                                                      |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                               | no        | Billing                                                                                    |
-| `STRIPE_SEAT_PRICE_ID`                                                     | no        | Per-unit monthly price of one org seat; Upgrade and Add seat bill it                       |
+| `STRIPE_SEAT_PRICE_ID`                                                     | no        | Monthly unit price: Pro, or one seat past its 2; Upgrade and Add seat bill it              |
 
 Then deploy the functions, before core:
 

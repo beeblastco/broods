@@ -14,8 +14,9 @@ interface CliResult {
 }
 
 /**
- * Per-org seat billing on the managed service: an owner holds one free org,
- * and an invite needs a seat the owner paid for. The case turns
+ * Per-org seat billing on the managed service: a Hobby owner holds one org
+ * and cannot create another, Pro seats the owner and 2 developers, and an
+ * invite past those needs a seat the owner paid for. The case turns
  * BROODS_MANAGED_SERVICE on for its own steps only and acts as the stack's
  * admin through the Convex CLI. The stack has no Stripe, so it files a paid
  * subscription the way the webhook does once it has read one back
@@ -34,8 +35,8 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
     `seat-${name}-${context.runId}@broods.local`;
 
   must(asAdmin("user:ensureSynced", {}), "the admin's user is synced");
-  importUsers(context, [invitee("first"), invitee("second")]);
-  // Made before the cap is on, so an org left by an earlier run cannot stop it.
+  importUsers(context, [invitee("first"), invitee("second"), invitee("third")]);
+  // Made before the rule is on, so an org left by an earlier run cannot stop it.
   const orgId = String(
     result(
       must(
@@ -54,13 +55,14 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
     "turn the managed service on",
   );
   try {
-    await context.measure("free-org cap", async () => {
+    await context.measure("creating an org needs Pro", async () => {
       const second = asAdmin("org/orgs:create", {
         name: `seats-${context.runId}-second`,
       });
       assertStep(
-        "a second free org is refused",
-        !second.ok && second.output.includes("You already own a free"),
+        "a Hobby owner cannot create another org",
+        !second.ok &&
+          second.output.includes("Creating an organization needs Pro"),
         second.output.slice(-300),
       );
     });
@@ -71,7 +73,7 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         email: invitee("first"),
       });
       assertStep(
-        "a free org has no seat to invite into",
+        "a Hobby org has no seat to invite into",
         !free.ok && free.output.includes("which has one seat"),
         free.output.slice(-300),
       );
@@ -93,13 +95,13 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
       );
       const info = result(billing);
       assertStep(
-        "billing shows every member the paid seats, and no Stripe ids",
+        "billing shows every member Pro's 3 seats, and no Stripe ids",
         typeof info === "object" &&
           info !== null &&
           Object.keys(info).sort().join() ===
             "cancelAtPeriodEnd,currentPeriodEnd,seats,status" &&
           "seats" in info &&
-          info.seats === 2,
+          info.seats === 3,
         billing,
       );
       const owned = must(
@@ -123,19 +125,21 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
           "plan" in row &&
           row.plan === "pro" &&
           "seats" in row &&
-          row.seats === 2,
+          row.seats === 3,
         owned,
       );
-      must(
-        asAdmin("org/members:add", { orgId: orgId, email: invitee("first") }),
-        "the invite lands on the paid seat",
-      );
+      for (const name of ["first", "second"]) {
+        must(
+          asAdmin("org/members:add", { orgId: orgId, email: invitee(name) }),
+          `the ${name} invite lands on a seat included with Pro`,
+        );
+      }
       const full = asAdmin("org/members:add", {
         orgId: orgId,
-        email: invitee("second"),
+        email: invitee("third"),
       });
       assertStep(
-        "an invite past the paid seats is refused",
+        "an invite past the included seats is refused",
         !full.ok && full.output.includes("Every seat"),
         full.output.slice(-300),
       );
@@ -169,7 +173,7 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
   }
 }
 
-/** File the org's two-seat subscription, as the webhook does after reading it from Stripe. */
+/** File the org's one-unit Pro subscription, as the webhook does after reading it from Stripe. */
 function fileSubscription(
   context: VerifyContext,
   orgId: string,
@@ -199,7 +203,7 @@ function fileSubscription(
         status: status,
         currentPeriodEnd: Math.floor(Date.now() / 1000) + 30 * 86_400,
         cancelAtPeriodEnd: false,
-        quantity: 2,
+        quantity: 1,
         priceId: "price_local_seat",
         metadata: { userId: SELF_HOST_ADMIN.subject, orgId: orgId },
       },

@@ -13,7 +13,8 @@ import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
 import { useOpenBilling } from "@/app/hooks/useOrgSeats";
 import { toErrorMessage } from "@/app/lib/errors";
-import { SEAT_PRICE_EUR, seatCount } from "@/app/lib/pricing";
+import { perMonth, seatCount } from "@/app/lib/pricing";
+import { PRO_INCLUDED_DEVELOPER_SEATS } from "@broods/convex/model/orgBilling";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
@@ -310,7 +311,7 @@ function OwnedOrgsBilling(): React.JSX.Element | null {
       <Separator />
       <Section
         title="Billing"
-        description={`Each organization has its own plan, paid by its owner at €${SEAT_PRICE_EUR} per member per month. You own:`}
+        description={`Each organization has its own plan, paid by its owner: Pro is ${perMonth(1)} with ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats included, and each extra seat is ${perMonth(1)}. You own:`}
       >
         <div className="rounded-lg border border-border bg-card">
           {owned.length === 0 && (
