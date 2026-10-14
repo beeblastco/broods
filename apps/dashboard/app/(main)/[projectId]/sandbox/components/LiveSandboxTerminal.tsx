@@ -1,53 +1,41 @@
 "use client";
 
 /**
- * Mints a sealed terminal ticket through Convex, then bridges xterm.js to the
- * gateway's terminal WebSocket. Raw bytes both ways, no resize protocol. The
- * shell fills the dock edge to edge and outlives reconnects; its state and
- * Reconnect sit in the dock's header, through `controls`.
+ * One shell in the sandbox dock: mints a sealed terminal ticket through Convex,
+ * then bridges xterm.js to the gateway's terminal WebSocket. Raw bytes both
+ * ways, no resize protocol. The shell is drawn when it mounts and keeps its
+ * scrollback across reconnects; it connects only on the Connect button, which
+ * stands over the empty shell and under the output once a session ends.
  */
 
-import { CONNECTION_TONE, StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useAction } from "convex/react";
-import { Plug, RefreshCw } from "lucide-react";
+import { Plug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { toErrorMessage } from "@/app/lib/errors";
 
-type TerminalStatus = keyof typeof CONNECTION_TONE;
-
-// Before the first connect the header shows only the Connect button.
-const STATUS_LABEL: Record<Exclude<TerminalStatus, "idle">, string> = {
-  connecting: "Connecting",
-  live: "Connected",
-  ended: "Session ended",
-  error: "Disconnected",
-};
-
-// Dim, then reset: notes the dashboard writes between shell output.
-const note = (text: string): string => `\r\n\x1b[2m${text}\x1b[0m\r\n`;
+type TerminalStatus = "idle" | "connecting" | "live" | "ended" | "error";
 
 interface Props {
   sandboxId: Id<"sandboxConfigs">;
   reservationKey: string;
   /** Blocks connecting, e.g. while the instance is terminating. */
   disabled: boolean;
-  /** The dock header slot the connection state and Reconnect render into. */
-  controls: HTMLElement | null;
+  /** Names the shell under its first Connect button, e.g. "cfbox · Shell 2". */
+  label: string;
 }
 
 export function LiveSandboxTerminal({
   sandboxId,
   reservationKey,
   disabled,
-  controls,
+  label,
 }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const openTerminal = useAction(api.sandbox.public.openTerminal);
@@ -55,11 +43,10 @@ export function LiveSandboxTerminal({
   const socketRef = useRef<WebSocket | null>(null);
   const [term, setTerm] = useState<Terminal | null>(null);
   const [status, setStatus] = useState<TerminalStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
 
-  // The shell is drawn as soon as the dock opens. The disposed flag stops a
-  // handleConnect still awaiting its ticket from opening a live PTY socket
-  // (which resumes a suspended instance) that nothing would close.
+  // The disposed flag stops a handleConnect still awaiting its ticket from
+  // opening a live PTY socket (which resumes a suspended instance) that
+  // nothing would close.
   const disposedRef = useRef(false);
   useEffect(() => {
     disposedRef.current = false;
@@ -124,7 +111,6 @@ export function LiveSandboxTerminal({
   async function handleConnect(): Promise<void> {
     if (!term || disabled) return;
     setStatus("connecting");
-    setError(null);
     socketRef.current?.close(1000, "reconnect");
     socketRef.current = null;
     try {
@@ -162,72 +148,60 @@ export function LiveSandboxTerminal({
         if (socketRef.current !== socket) return;
         socketRef.current = null;
         setStatus(event.code === 1000 ? "ended" : "error");
-        if (event.code !== 1000)
-          setError(event.reason || `Connection closed (${event.code}).`);
-        term.write(note("[terminal session ended]"));
+        term.write(
+          note(
+            event.code === 1000
+              ? "[session ended]"
+              : `[disconnected: ${event.reason || `code ${event.code}`}]`,
+          ),
+        );
       };
       socket.onerror = () => {
         if (socketRef.current !== socket) return;
         setStatus("error");
-        setError("WebSocket transport error.");
       };
     } catch (err) {
       if (disposedRef.current) return;
       setStatus("error");
-      setError(toErrorMessage(err));
       term.write(note(`[could not connect: ${toErrorMessage(err)}]`));
     }
   }
 
-  // Opening the terminal is the ask to connect, once the shell is drawn and
-  // the sandbox can take it. Reconnect is for after.
-  const autoConnectedRef = useRef(false);
-  useEffect(() => {
-    if (autoConnectedRef.current || !term || !canWrite || disabled) return;
-    autoConnectedRef.current = true;
-    void handleConnect();
-  });
+  const blocked = disabled || !term || status === "connecting";
+  const connect = canWrite && (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={blocked}
+      onClick={handleConnect}
+      className={blocked ? "cursor-not-allowed" : "cursor-pointer"}
+    >
+      <Plug />
+      {status === "connecting" ? "Connecting" : "Connect"}
+    </Button>
+  );
 
   return (
-    <>
-      {controls &&
-        createPortal(
-          <>
-            {(disabled || status !== "idle") && (
-              <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <StatusDot tone={CONNECTION_TONE[status]} label={status} />
-                <span className="shrink-0">
-                  {disabled || status === "idle"
-                    ? "Waiting for the sandbox"
-                    : STATUS_LABEL[status]}
-                </span>
-                {error && (
-                  <span className="truncate text-destructive" title={error}>
-                    {error}
-                  </span>
-                )}
-              </span>
-            )}
-            {canWrite && status !== "connecting" && (
-              <Button
-                type="button"
-                variant={status === "idle" ? "default" : "ghost"}
-                size="xs"
-                tone={status === "idle" ? "default" : "muted"}
-                disabled={disabled || !term}
-                onClick={handleConnect}
-                className="cursor-pointer"
-              >
-                {status === "idle" ? <Plug /> : <RefreshCw />}
-                {status === "idle" ? "Connect" : "Reconnect"}
-              </Button>
-            )}
-          </>,
-          controls,
-        )}
-      <div className="flex min-h-0 flex-1 bg-terminal-background py-2 pl-3">
+    <div className="relative flex min-h-0 flex-1 flex-col bg-terminal-background">
+      <div className="flex min-h-0 flex-1 py-2 pl-3">
         <div ref={containerRef} className="h-full min-h-40 w-full font-mono" />
       </div>
-    </>
+      {status === "idle" ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-terminal-background">
+          {connect}
+          <p className="text-2xs text-terminal-muted">{label}</p>
+        </div>
+      ) : (
+        (status === "ended" || status === "error") && (
+          <div className="px-3 pb-3">{connect}</div>
+        )
+      )}
+    </div>
   );
+}
+
+// Dim, then reset: a note the dashboard writes between shell output.
+function note(text: string): string {
+  return `\r\n\x1b[2m${text}\x1b[0m\r\n`;
 }

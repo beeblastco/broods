@@ -135,6 +135,8 @@ interface SandboxLifecycleContext {
   body: Record<string, unknown>;
   config: SandboxConfig;
   executor: SandboxExecutor;
+  /** The sandbox config's name, shown in a Cloudflare terminal's prompt. */
+  name: string;
   provider: SandboxProvider;
   ref: { reservationKey: string };
   reservationKey: string;
@@ -414,6 +416,7 @@ async function handleSandboxLifecycle(
     },
     body: body,
     config: record.config,
+    name: record.name,
     // The control plane names the record's stage, so a machine this action
     // creates may boot the record's own snapshot.
     executor: createSandboxExecutor({
@@ -606,7 +609,7 @@ async function openSandboxTerminal(
     // A token for this one terminal, so the gateway never holds the bridge
     // key that reaches every sandbox.
     target = {
-      url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal`,
+      url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal?name=${encodeURIComponent(context.name)}`,
       authorization: `Bearer ${await signTerminalToken(
         apiKey,
         externalId,

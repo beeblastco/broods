@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * The panel docked under the sandbox list, like an editor's terminal: one
- * tab for the shell and one for the guest log tail, both for the instance
- * the panel was opened from, so the detail column stays a list of facts.
+ * The panel docked under the sandbox list, like an editor's terminal. It holds
+ * any number of sessions, grouped by sandbox: numbered shells and, for a
+ * MicroVM, its guest log tail. Every session stays mounted while another one
+ * is shown, so switching tabs keeps a shell connected.
  */
 
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
@@ -15,9 +16,10 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { Play, X } from "lucide-react";
+import { Play, Plus, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import type { DockSession, DockState } from "./dockSessions";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import { controllable, dashboardHref } from "./sandboxFormat";
 import {
@@ -29,8 +31,6 @@ import {
 // Command results kept on screen; older ones drop off the bottom.
 const COMMAND_HISTORY = 20;
 
-export type DockTab = "terminal" | "logs";
-
 type Instance = Doc<"sandboxInstances">;
 type Controllable = Instance & { sandboxConfigId: Id<"sandboxConfigs"> };
 
@@ -41,112 +41,148 @@ interface CommandEntry {
 }
 
 interface Props {
-  instance: Instance;
+  state: DockState;
+  /** The live rows of the sandboxes the sessions belong to. */
+  instances: Instance[];
   projectId: Id<"projects">;
   /** Stage-scoped observability WS inputs for the log tail; null before the stage deploys. */
   observability: SandboxObservabilityScope | null;
-  tab: DockTab;
-  onTab: (tab: DockTab) => void;
-  onClose: () => void;
+  onActivate: (key: string) => void;
+  onNewShell: (instanceId: Id<"sandboxInstances">) => void;
+  onCloseSession: (key: string) => void;
 }
 
 export function SandboxDock({
-  instance,
+  state,
+  instances,
   projectId,
   observability,
-  tab,
-  onTab,
-  onClose,
+  onActivate,
+  onNewShell,
+  onCloseSession,
 }: Props): React.JSX.Element {
   const searchParams = useSearchParams();
-  const logId = sandboxLogId(instance.logStream);
-  // The providers core opens a PTY for: workdir (`sandbox`) over its in-guest
-  // WebSocket, AWS MicroVM (`lambda`) over its shell endpoint, and the
-  // Cloudflare bridge in its Container. The rest keep the bounded runner.
-  const liveShell =
-    instance.provider === "sandbox" ||
-    instance.provider === "lambda" ||
-    instance.provider === "cloudflare";
-  // Nothing runs while the provider is mid-change: a connect would race the
-  // suspend in flight, and a terminating instance is gone.
-  const runnable =
-    instance.status !== "terminating" && instance.status !== "suspending";
-  // The live shell renders its connection state and Reconnect into the header.
-  const [controls, setControls] = useState<HTMLSpanElement | null>(null);
-  const shell = tab === "terminal" && controllable(instance) && liveShell;
+  const byId = new Map(instances.map((instance) => [instance._id, instance]));
+  const activeInstance = state.sessions.find(
+    (session) => session.key === state.active,
+  )?.instanceId;
+  // Sessions are kept grouped by sandbox, so a group is one run of them.
+  const groups = state.sessions.reduce<
+    { instance: Instance; sessions: DockSession[] }[]
+  >((acc, session) => {
+    const instance = byId.get(session.instanceId);
+    if (!instance) return acc;
+    const last = acc.at(-1);
+    if (last?.instance._id === instance._id) last.sessions.push(session);
+    else acc.push({ instance: instance, sessions: [session] });
+
+    return acc;
+  }, []);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-card">
-      <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2">
-        <Button
-          variant="nav"
-          size="xs"
-          data-active={tab === "terminal"}
-          className="cursor-pointer"
-          onClick={() => onTab("terminal")}
-        >
-          Terminal
-        </Button>
-        {logId && (
-          <Button
-            variant="nav"
-            size="xs"
-            data-active={tab === "logs"}
-            className="cursor-pointer"
-            onClick={() => onTab("logs")}
+    <div className="flex h-full min-h-0 flex-col bg-terminal-background">
+      <div className="flex h-8 shrink-0 items-stretch border-b border-border bg-card">
+        {groups.map(({ instance, sessions }) => (
+          <div
+            key={instance._id}
+            data-active={instance._id === activeInstance || undefined}
+            className="flex items-center gap-0.5 border-t-2 border-r border-t-transparent border-r-border pr-1 pl-2.5 data-active:border-t-foreground data-active:bg-terminal-background"
           >
-            Logs
-          </Button>
-        )}
-        <span className="ml-2 truncate text-xs text-muted-foreground">
-          {instance.name}
-        </span>
-        <span className="flex-1" />
-        <span ref={setControls} className="flex min-w-0 items-center gap-2" />
-        <ShortcutKeys id="sandbox.terminal" bordered />
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          tone="muted"
-          aria-label="Close the dock"
-          className="cursor-pointer"
-          onClick={onClose}
-        >
-          <X />
-        </Button>
-      </div>
-      <div
-        className={
-          shell
-            ? "flex min-h-0 flex-1 flex-col"
-            : "flex min-h-0 flex-1 flex-col overflow-auto p-3"
-        }
-      >
-        {tab === "logs" && logId ? (
-          <SandboxLogTail
-            logSandboxId={logId}
-            scope={observability}
-            monitoringHref={dashboardHref(
-              projectId,
-              searchParams.get("stage"),
-              { tab: "monitoring" },
+            <span
+              data-active={instance._id === activeInstance || undefined}
+              className="mr-1 text-xs text-muted-foreground data-active:font-medium data-active:text-foreground"
+            >
+              {instance.name}
+            </span>
+            {sessions.map((session) => (
+              <Button
+                key={session.key}
+                variant="nav"
+                size="xs"
+                data-active={session.key === state.active}
+                className="cursor-pointer tabular-nums"
+                onClick={() => onActivate(session.key)}
+              >
+                {session.kind === "logs" ? "Logs" : session.shell}
+              </Button>
+            ))}
+            {hasLiveShell(instance) && controllable(instance) && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                tone="muted"
+                aria-label={`New shell on ${instance.name}`}
+                className="cursor-pointer"
+                onClick={() => onNewShell(instance._id)}
+              >
+                <Plus />
+              </Button>
             )}
-          />
-        ) : !controllable(instance) ? (
-          <p className="text-xs text-muted-foreground">
-            This instance cannot run commands from the dashboard.
-          </p>
-        ) : liveShell ? (
-          <LiveSandboxTerminal
-            sandboxId={instance.sandboxConfigId}
-            reservationKey={instance.reservationKey}
-            disabled={!runnable}
-            controls={controls}
-          />
-        ) : (
-          <CommandRunner instance={instance} runnable={runnable} />
-        )}
+          </div>
+        ))}
+        <span className="flex-1" />
+        <div className="flex items-center gap-1 pr-2">
+          <ShortcutKeys id="sandbox.terminal" bordered />
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            tone="muted"
+            aria-label="Close this session"
+            className="cursor-pointer"
+            onClick={() => onCloseSession(state.active)}
+          >
+            <X />
+          </Button>
+        </div>
       </div>
+      {state.sessions.map((session) => {
+        const instance = byId.get(session.instanceId);
+        if (!instance) return null;
+        const logId = sandboxLogId(instance.logStream);
+
+        return (
+          <div
+            key={session.key}
+            className={
+              session.key === state.active
+                ? "flex min-h-0 flex-1 flex-col"
+                : "hidden"
+            }
+          >
+            {session.kind === "logs" && logId ? (
+              <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-card p-3">
+                <SandboxLogTail
+                  logSandboxId={logId}
+                  scope={observability}
+                  monitoringHref={dashboardHref(
+                    projectId,
+                    searchParams.get("stage"),
+                    { tab: "monitoring" },
+                  )}
+                />
+              </div>
+            ) : !controllable(instance) ? (
+              <p className="bg-card p-3 text-xs text-muted-foreground">
+                This instance cannot run commands from the dashboard.
+              </p>
+            ) : hasLiveShell(instance) ? (
+              <LiveSandboxTerminal
+                sandboxId={instance.sandboxConfigId}
+                reservationKey={instance.reservationKey}
+                disabled={!isRunnable(instance)}
+                label={`${instance.name} · Shell ${session.shell}`}
+              />
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-card p-3">
+                <CommandRunner
+                  instance={instance}
+                  runnable={isRunnable(instance)}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -263,4 +299,21 @@ function CommandRunner({
       ))}
     </div>
   );
+}
+
+// The providers core opens a PTY for: workdir (`sandbox`) over its in-guest
+// WebSocket, AWS MicroVM (`lambda`) over its shell endpoint, and the
+// Cloudflare bridge in its Container. The rest keep the bounded runner.
+function hasLiveShell(instance: Instance): boolean {
+  return (
+    instance.provider === "sandbox" ||
+    instance.provider === "lambda" ||
+    instance.provider === "cloudflare"
+  );
+}
+
+// Nothing runs while the provider is mid-change: a connect would race the
+// suspend in flight, and a terminating instance is gone.
+function isRunnable(instance: Instance): boolean {
+  return instance.status !== "terminating" && instance.status !== "suspending";
 }

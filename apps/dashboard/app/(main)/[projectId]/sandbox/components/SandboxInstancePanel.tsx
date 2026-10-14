@@ -25,7 +25,7 @@ import { Camera, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import type { DockTab } from "./SandboxDock";
+import type { DockSessionKind } from "./dockSessions";
 import { controllable, dashboardHref, TraceLink } from "./sandboxFormat";
 import { sandboxLogId } from "./SandboxLogTail";
 
@@ -50,7 +50,7 @@ interface Props {
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
   /** Opens the dock under the table on the given tab. */
-  onOpenDock: (tab: DockTab) => void;
+  onOpenDock: (kind: DockSessionKind) => void;
   onClose: () => void;
 }
 
@@ -156,7 +156,7 @@ export function SandboxInstancePanel({
               size="sm"
               tone="muted"
               className="cursor-pointer"
-              onClick={() => onOpenDock("terminal")}
+              onClick={() => onOpenDock("shell")}
             >
               Terminal
             </Button>
@@ -386,5 +386,12 @@ function auditDetail(event: SandboxAuditEvent): string {
     return `exit ${event.exitCode} · ${actor}`;
   }
 
-  return event.status ? `${event.status} · ${actor}` : actor;
+  // A refresh that finds the instance gone records "terminating"; to a reader
+  // it simply stopped, most often after its idle window.
+  const status =
+    event.action === "refresh" && event.status === "terminating"
+      ? "stopped"
+      : event.status;
+
+  return status ? `${status} · ${actor}` : actor;
 }

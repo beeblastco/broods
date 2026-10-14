@@ -43,7 +43,13 @@ import { useQueryState } from "nuqs";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MachinePanel } from "./MachinePanel";
-import { type DockTab, SandboxDock } from "./SandboxDock";
+import {
+  closeDockSession,
+  type DockState,
+  openDockSession,
+  pruneDock,
+} from "./dockSessions";
+import { SandboxDock } from "./SandboxDock";
 import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   controllable,
@@ -107,12 +113,6 @@ type TableRow =
       agent: Agent | null;
     };
 
-/** The dock under the table: which instance it shows and on which tab. */
-interface Dock {
-  id: Id<"sandboxInstances">;
-  tab: DockTab;
-}
-
 const SORT_KEY: Record<Column, (row: TableRow) => SortKey> = {
   name: (row) =>
     row.kind === "machine" ? row.machine.name : row.instance.name,
@@ -149,7 +149,7 @@ interface Props {
  * The stage's sandboxes and computers as one list, laid out like Monitoring:
  * a search box, a flush table whose headers sort on click, a running switch,
  * a detail panel for the selected row, and a dock under it all for the
- * selected instance's shell and logs. The visible instances refresh from the
+ * shells and logs opened from the rows. The visible instances refresh from the
  * provider on their own as they scroll in.
  */
 export function SandboxInstancesTable({
@@ -169,7 +169,7 @@ export function SandboxInstancesTable({
   // Only the id is held, so the open panel follows the live row instead of a
   // stale copy once a refresh or suspend moves its status.
   const [selectedId, setSelectedId] = useQueryState("sel", ROW_ID);
-  const [dock, setDock] = useState<Dock | null>(null);
+  const [dockState, setDock] = useState<DockState | null>(null);
   // A click on the open row closes its panel.
   const select = (id: TableRow["id"]): void => {
     void setSelectedId(selectedId === id ? null : id);
@@ -222,11 +222,16 @@ export function SandboxInstancesTable({
   });
   const visible = list.shown.slice(0, visibleCount);
   const selected = rows.find((row) => row.id === selectedId) ?? null;
-  // The dock follows the live instance too, and is closed once the row is gone.
-  const docked = dock
-    ? instances.find((instance) => instance._id === dock.id)
-    : undefined;
-  const dockOpen = docked !== undefined;
+  // The dock follows the live rows too: a session leaves once its row is gone.
+  const dock = pruneDock(dockState, instances);
+  const shellCounts = new Map<string, number>();
+  for (const session of dock?.sessions ?? []) {
+    if (session.kind === "shell")
+      shellCounts.set(
+        session.instanceId,
+        (shellCounts.get(session.instanceId) ?? 0) + 1,
+      );
+  }
   const visibleInstances = useMemo(
     () =>
       visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
@@ -263,16 +268,16 @@ export function SandboxInstancesTable({
     ]),
   };
 
-  // The backtick toggles the dock for the selected instance, like an
-  // editor's terminal; with the dock open it closes it whatever is selected.
+  // The backtick toggles the dock, like an editor's terminal: it opens a
+  // shell on the selected instance, and with the dock open it closes it.
   useShortcut("sandbox.terminal", () => {
-    if (dockOpen) {
+    if (dock) {
       setDock(null);
     } else if (
       selected?.kind === "instance" &&
       controllable(selected.instance)
     ) {
-      setDock({ id: selected.id, tab: "terminal" });
+      setDock(openDockSession(null, selected.id, "shell"));
     }
   });
 
@@ -363,7 +368,9 @@ export function SandboxInstancesTable({
                   instance={selected.instance}
                   snapshots={snapshots}
                   projectId={projectId}
-                  onOpenDock={(tab) => setDock({ id: selected.id, tab: tab })}
+                  onOpenDock={(kind) =>
+                    setDock(openDockSession(dock, selected.id, kind))
+                  }
                   onClose={() => setSelectedId(null)}
                 />
               ) : (
@@ -402,6 +409,7 @@ export function SandboxInstancesTable({
                   <DataTableHead sort={list.sortFor("created")}>
                     Created
                   </DataTableHead>
+                  <DataTableHead align="right">Terminals</DataTableHead>
                   <DataTableHead align="right" sort={list.sortFor("running")}>
                     Running
                   </DataTableHead>
@@ -424,6 +432,7 @@ export function SandboxInstancesTable({
                       projectId={projectId}
                       now={now}
                       selected={selectedId === row.id}
+                      shells={shellCounts.get(row.id) ?? 0}
                       canToggle={canWrite && pendingId !== row.id}
                       onSelect={() => select(row.id)}
                       onToggle={(next) =>
@@ -451,7 +460,7 @@ export function SandboxInstancesTable({
             )}
           </DetailSplit>
         </ResizablePanel>
-        {dock && dockOpen && (
+        {dock && (
           <>
             <ResizableHandle className="cursor-row-resize" />
             <ResizablePanel
@@ -460,13 +469,15 @@ export function SandboxInstancesTable({
               className="flex min-h-0 flex-col"
             >
               <SandboxDock
-                key={docked._id}
-                instance={docked}
+                state={dock}
+                instances={instances}
                 projectId={projectId}
                 observability={observability}
-                tab={dock.tab}
-                onTab={(tab) => setDock({ id: dock.id, tab: tab })}
-                onClose={() => setDock(null)}
+                onActivate={(key) => setDock({ ...dock, active: key })}
+                onNewShell={(instanceId) =>
+                  setDock(openDockSession(dock, instanceId, "shell", true))
+                }
+                onCloseSession={(key) => setDock(closeDockSession(dock, key))}
               />
             </ResizablePanel>
           </>
@@ -492,12 +503,13 @@ export function SandboxInstancesTable({
   );
 }
 
-/** A cloud instance: its facts, a trace link on hover, and the running switch. */
+/** A cloud instance: its facts, a trace link on hover, its open shells, and the running switch. */
 function InstanceRow({
   row,
   projectId,
   now,
   selected,
+  shells,
   canToggle,
   onSelect,
   onToggle,
@@ -506,6 +518,8 @@ function InstanceRow({
   projectId: Id<"projects">;
   now: number;
   selected: boolean;
+  /** Shells open on this instance in the dock. */
+  shells: number;
   canToggle: boolean;
   onSelect: () => void;
   onToggle: (next: boolean) => void;
@@ -582,6 +596,9 @@ function InstanceRow({
       <DataTableCell muted className="tabular-nums">
         {relativeTime(instance.createdAt, now)}
       </DataTableCell>
+      <DataTableCell align="right" muted className="tabular-nums">
+        {shells > 0 ? shells : "—"}
+      </DataTableCell>
       <DataTableCell align="right" onClick={(event) => event.stopPropagation()}>
         <Switch
           checked={running}
@@ -627,6 +644,9 @@ function MachineRow({
       </DataTableCell>
       <DataTableCell muted className="tabular-nums">
         {relativeTime(machine.connectedAt, now)}
+      </DataTableCell>
+      <DataTableCell align="right" muted>
+        —
       </DataTableCell>
       <DataTableCell align="right" muted>
         —

@@ -5,7 +5,8 @@ FROM node:24-trixie-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git python3 ripgrep \
   && rm -rf /var/lib/apt/lists/* \
-  && mkdir -p /workspace
+  && mkdir -p /workspace \
+  && printf '%s\n' '[ -n "$BROODS_SANDBOX_NAME" ] && PS1="\\u@$BROODS_SANDBOX_NAME:\\w\\\$ "' >> /root/.bashrc
 
 WORKDIR /workspace
 CMD ["sleep", "infinity"]
