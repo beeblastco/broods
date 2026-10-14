@@ -176,14 +176,14 @@ export const createOnboardingOrg = internalMutation({
     const name = args.name.trim();
     if (!name) throw new Error("Organization name is required");
 
-    await assertCanCreateOrg(ctx, token.authId);
+    const plan = await assertCanCreateOrg(ctx, token.authId);
     const now = Date.now();
     const slug = await uniqueOrgSlug(ctx, name);
     const orgId = await ctx.db.insert("orgs", {
       name: name,
       slug: slug,
       ownerAuthId: token.authId,
-      plan: "free",
+      plan: plan,
       createdAt: now,
     });
     await ctx.db.insert("orgMembers", {

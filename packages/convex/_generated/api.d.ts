@@ -1564,12 +1564,7 @@ export declare const api: {
     >;
   };
   stripe: {
-    addSeat: FunctionReference<
-      "action",
-      "public",
-      { orgId: Id<"orgs"> },
-      { seats: number }
-    >;
+    addSeat: FunctionReference<"action", "public", {}, { seats: number }>;
     createCheckoutSession: FunctionReference<
       "action",
       "public",
@@ -1587,22 +1582,26 @@ export declare const api: {
       "public",
       {},
       null | {
-        cancelAtPeriodEnd: boolean;
-        currentPeriodEnd: number;
+        developers: number;
         seats: number;
-        status: string;
+        subscription: null | {
+          cancelAtPeriodEnd: boolean;
+          currentPeriodEnd: number;
+          status: string;
+        };
       }
     >;
     listOwnedOrgs: FunctionReference<
       "query",
       "public",
       {},
-      Array<{
-        name: string;
-        orgId: Id<"orgs">;
-        plan: "free" | "pro";
-        seats: number;
-      }>
+      Array<{ name: string; orgId: Id<"orgs">; plan: "free" | "pro" }>
+    >;
+    listSeatHolders: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{ name: string; orgs: Array<string>; userId: Id<"users"> }>
     >;
   };
   user: {
@@ -4371,42 +4370,6 @@ export declare const internal: {
       >;
     };
   };
-  billingMigration: {
-    applyPageInternal: FunctionReference<
-      "mutation",
-      "internal",
-      {
-        authIds: Array<string>;
-        moves: Array<{
-          authId: string;
-          orgId: Id<"orgs">;
-          stripeSubscriptionId: string;
-        }>;
-      },
-      null
-    >;
-    movePageInternal: FunctionReference<
-      "query",
-      "internal",
-      { cursor: string | null },
-      {
-        authIds: Array<string>;
-        continueCursor: string;
-        isDone: boolean;
-        moves: Array<{
-          authId: string;
-          orgId: Id<"orgs">;
-          stripeSubscriptionId: string;
-        }>;
-      }
-    >;
-    moveUserSubscriptionsToOrgs: FunctionReference<
-      "action",
-      "internal",
-      { dryRun: boolean },
-      Array<{ authId: string; orgId: Id<"orgs">; stripeSubscriptionId: string }>
-    >;
-  };
   channel: {
     connections: {
       listConnections: FunctionReference<
@@ -6757,11 +6720,13 @@ export declare const internal: {
       { dryRun: boolean },
       {
         done: Array<{
+          authId: string;
           newQuantity: number;
           oldQuantity: number;
-          orgId: Id<"orgs">;
+          stripeSubscriptionId: string;
         }>;
-        failed: Array<{ error: string; orgId: Id<"orgs"> }>;
+        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
+        failed: Array<{ authId: string; error: string }>;
       }
     >;
     resyncPageInternal: FunctionReference<
@@ -6770,13 +6735,21 @@ export declare const internal: {
       { cursor: string | null },
       {
         continueCursor: string;
+        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
         isDone: boolean;
         resyncs: Array<{
+          authId: string;
           newQuantity: number;
           oldQuantity: number;
-          orgId: Id<"orgs">;
+          stripeSubscriptionId: string;
         }>;
       }
+    >;
+    syncPlanInternal: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string },
+      null
     >;
   };
   stripe: {
@@ -6799,10 +6772,10 @@ export declare const internal: {
       },
       null
     >;
-    cancelOrgSubscriptionsInternal: FunctionReference<
+    cancelUserSubscriptionsInternal: FunctionReference<
       "action",
       "internal",
-      { orgId: string },
+      { authId: string },
       null
     >;
     claimSubscriptionSyncInternal: FunctionReference<
@@ -6811,21 +6784,19 @@ export declare const internal: {
       { stripeSubscriptionId: string },
       number
     >;
-    orgBillingInternal: FunctionReference<
+    ownerBillingInternal: FunctionReference<
       "query",
       "internal",
-      { activeOf?: string; orgId?: Id<"orgs"> },
-      null | {
-        members: number;
-        orgId: Id<"orgs">;
-        ownerAuthId: string;
+      { authId: string },
+      {
+        developers: number;
         subscription: null | { status: string; stripeSubscriptionId: string };
       }
     >;
     syncSeatsInternal: FunctionReference<
       "action",
       "internal",
-      { orgId: Id<"orgs"> },
+      { authId: string },
       null
     >;
   };

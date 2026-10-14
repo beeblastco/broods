@@ -184,7 +184,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         />
         {seats?.enforced && (
           <Badge variant="outline">
-            {seats.members} of {seats.seats} seats used
+            {seats.developers} of {seats.seats} developer seats used
           </Badge>
         )}
         <FilterButton columns={[{ label: "Role", filter: filters.role }]} />
@@ -475,10 +475,12 @@ function RoleItem({
 
 /**
  * Adds an existing user by email with a role. On the managed service an
- * invite needs a free seat: with none, the owner pays for one more seat and
- * the invite follows, or upgrades a free org first; anyone else asks the
- * owner. The seat count picks the step up front, and the invite's 402 picks
- * it when the count was stale. Nobody but the owner is ever charged.
+ * invite needs a developer seat from the owner's pool, shared by every org
+ * they own: someone already seated in another of them joins free. With none
+ * free, the owner pays for one more seat and the invite follows, or upgrades
+ * to Pro first; anyone else asks the owner. The seat count picks the step up
+ * front, and the invite's 402 picks it when the count was stale or the
+ * person was already seated. Nobody but the owner is ever charged.
  */
 function InviteDialog({
   org,
@@ -524,7 +526,7 @@ function InviteDialog({
 
           return;
         }
-        await addSeat({ orgId: org._id });
+        await addSeat({});
         await invite();
       }
     });
@@ -566,7 +568,7 @@ function InviteDialog({
               placeholder="ada@example.com"
             />
           </div>
-          {(step === "invite" || step === "seat") && (
+          {step !== "upgrade" && step !== "billing" && (
             <div className="grid gap-1">
               <Label htmlFor="invite-role" variant="muted" className="text-xs">
                 Role
@@ -597,7 +599,7 @@ function InviteDialog({
             </div>
           )}
           {seats && step !== "invite" && (
-            <SeatNotice org={org} seats={seats} step={step} />
+            <SeatNotice seats={seats} step={step} />
           )}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
@@ -623,14 +625,14 @@ function InviteDialog({
                 ? "Loading…"
                 : step === "billing"
                   ? "Manage billing"
-                  : `Upgrade · ${perMonth(proQuantity(seats?.members ?? 1))}`}
+                  : `Upgrade · ${perMonth(proQuantity(seats?.developers ?? 0))}`}
             </Button>
           ) : (
             <Button
               size="sm"
               className="cursor-pointer"
               onClick={submit}
-              disabled={pending || !email.trim() || step === "ask"}
+              disabled={pending || !email.trim()}
             >
               {step === "seat"
                 ? pending
@@ -649,11 +651,9 @@ function InviteDialog({
 
 /** Why the invite needs more than an email, in the words of its step. */
 function SeatNotice({
-  org,
   seats,
   step,
 }: {
-  org: Doc<"orgs">;
   seats: OrgSeats;
   step: Exclude<InviteStep, "invite">;
 }): React.JSX.Element {
@@ -664,10 +664,10 @@ function SeatNotice({
     >
       <p className="font-medium text-foreground">
         {step === "upgrade"
-          ? `${org.name} is on Hobby, which has one seat: yours.`
+          ? "You are on Hobby, which has no developer seats."
           : step === "billing"
-            ? `${org.name}'s last payment did not go through.`
-            : `Every seat in ${org.name} is taken.`}
+            ? "Your last payment did not go through."
+            : "Every developer seat is taken."}
       </p>
       {step === "seat" && seats.billing && (
         <>
@@ -681,30 +681,32 @@ function SeatNotice({
           </p>
           <p className="text-muted-foreground">
             Charged now to the card on file, prorated to{" "}
-            {formatDay(seats.billing.currentPeriodEnd * 1000)}. If the payment
-            fails, nobody is invited.
+            {formatDay(seats.billing.currentPeriodEnd * 1000)}, and usable in
+            any of your orgs. If the payment fails, nobody is invited. A
+            developer already in another of your orgs joins free.
           </p>
         </>
       )}
       {step === "upgrade" && (
         <p className="text-muted-foreground">
           {PRO_OFFER} Upgrade opens Stripe Checkout
-          {seats.members > 1
-            ? ` for all ${seats.members} members: ${perMonth(proQuantity(seats.members))}`
+          {seats.developers > 0
+            ? ` for all ${seats.developers} developers: ${perMonth(proQuantity(seats.developers))}`
             : ""}
           . Back here, invite them again.
         </p>
       )}
       {step === "billing" && (
         <p className="text-muted-foreground">
-          Its seats come back once Stripe has the payment. Update the card in
+          Your seats come back once Stripe has the payment. Update the card in
           Manage billing, then invite them again.
         </p>
       )}
       {step === "ask" && (
         <p className="text-muted-foreground">
-          Ask {seats.ownerName}, the owner, to add a seat in Billing. You are
-          never charged.
+          Ask {seats.ownerName}, the owner, to add a developer seat in Billing.
+          Someone already on one of their seats joins free. You are never
+          charged.
         </p>
       )}
     </div>
@@ -714,7 +716,7 @@ function SeatNotice({
 /** The invite dialog's step: the seat count, or a 402 the invite got, says whether a seat is free. */
 function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
   if (!seats) return "invite";
-  const full = refused || (seats.enforced && seats.members >= seats.seats);
+  const full = refused || (seats.enforced && seats.developers >= seats.seats);
   if (!full) return "invite";
   if (!seats.isOwner) return "ask";
   if (!seats.billing) return "upgrade";

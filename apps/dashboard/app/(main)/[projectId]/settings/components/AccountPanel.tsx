@@ -13,7 +13,7 @@ import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
 import { useOpenBilling } from "@/app/hooks/useOrgSeats";
 import { toErrorMessage } from "@/app/lib/errors";
-import { PRO_OFFER, seatCount } from "@/app/lib/pricing";
+import { PRO_OFFER } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
@@ -295,8 +295,8 @@ export function AccountPanel(): React.JSX.Element {
 }
 
 /**
- * Billing is per organization: each org you own with its plan, and a way to
- * its Billing tab, where its owner upgrades or adds seats. Nothing on a
+ * Your plan covers every org you own: each one with the plan it runs on, and
+ * a way to its Billing tab, where you upgrade or add seats. Nothing on a
  * self-hosted install, which has no plans.
  */
 function OwnedOrgsBilling(): React.JSX.Element | null {
@@ -310,7 +310,7 @@ function OwnedOrgsBilling(): React.JSX.Element | null {
       <Separator />
       <Section
         title="Billing"
-        description={`Each organization has its own plan, paid by its owner. ${PRO_OFFER} You own:`}
+        description={`Your plan covers every organization you own. ${PRO_OFFER} You own:`}
       >
         <div className="rounded-lg border border-border bg-card">
           {owned.length === 0 && (
@@ -328,7 +328,7 @@ function OwnedOrgsBilling(): React.JSX.Element | null {
               </span>
               {org.plan === "pro" ? (
                 <Badge variant="success" className="justify-self-start">
-                  Pro · {seatCount(org.seats)}
+                  Pro
                 </Badge>
               ) : (
                 <Badge variant="secondary" className="justify-self-start">

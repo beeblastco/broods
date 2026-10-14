@@ -128,14 +128,13 @@ export function removeUser(user: StackUser): void {
 }
 
 /**
- * File a subscription for an org as the Stripe webhook does once it has read
- * one back. Nothing here reaches Stripe.
+ * File a user's Pro subscription, which covers every org they own, as the
+ * Stripe webhook does once it has read one back. Nothing here reaches Stripe.
  */
 export function fileSubscription(
-  orgId: string,
   payer: StackUser,
   subscriptionId: string,
-  seats: number,
+  quantity: number,
   status: "active" | "past_due" | "canceled",
 ): void {
   const ticket = run(null, "stripe:claimSubscriptionSyncInternal", {
@@ -149,9 +148,9 @@ export function fileSubscription(
       status: status,
       currentPeriodEnd: Math.floor(Date.now() / 1000) + 30 * 86_400,
       cancelAtPeriodEnd: false,
-      quantity: seats,
+      quantity: quantity,
       priceId: "price_local_seat",
-      metadata: { userId: payer.authId, orgId: orgId },
+      metadata: { userId: payer.authId },
     },
   });
 }

@@ -1,12 +1,14 @@
 /**
- * Per-org billing on the managed service, as the org owner and as an admin of
- * someone else's org: the Billing tab's plan, seats and monthly bill, the
- * invite dialog with every seat taken, New organization needing Pro, and
- * Account settings. Only a self-hosted stack can stage it: the spec turns the
- * managed service on, adds a second user who owns an org the stack's admin
- * is invited into, two developers who join the admin's org once it is on
- * Pro, and files subscriptions the way the Stripe webhook does. The stack has
- * no Stripe, so no button that would reach it is pressed.
+ * Billing on the managed service, as an owner and as an admin of someone
+ * else's org: Pro belongs to the owner and covers every org they own, with
+ * one pool of developer seats across them. The Billing tab's plan, seats and
+ * monthly bill, the invite dialog with every seat taken, New organization
+ * needing Pro, and Account settings. Only a self-hosted stack can stage it:
+ * the spec turns the managed service on, adds a second user who owns an org
+ * the stack's admin is invited into, and two developers who join the admin's
+ * org once they are on Pro, one of them also in a second org the admin
+ * creates, and files subscriptions the way the Stripe webhook does. The
+ * stack has no Stripe, so no button that would reach it is pressed.
  */
 import { expect, test, type Page } from "@playwright/test";
 import {
@@ -29,6 +31,8 @@ test.describe.configure({ mode: "serial" });
 const SIDEBAR_READY = '[data-slot="sidebar-container"][data-hydrated="true"]';
 const RUN_ID = Date.now().toString(36);
 const OWNER = { name: "Ada Lovelace", org: "Acme Robotics" };
+// The second org the admin creates once on Pro.
+const LAB = "Tracy Lab";
 
 interface OrgRow {
   _id: string;
@@ -41,6 +45,7 @@ let owner: StackUser;
 const developers: StackUser[] = [];
 let acmeId: string;
 let acmeProjectId: string;
+let labId: string | undefined;
 // BROODS_MANAGED_SERVICE before the spec set it: null when unset,
 // undefined while the spec has not touched it.
 let managedBefore: string | null | undefined;
@@ -89,17 +94,8 @@ test.afterAll(async () => {
   // and the org goes once the stack is as it was, so its removal calls no Stripe.
   // Steps for state beforeAll never reached are skipped.
   const steps: Array<() => unknown> = [
-    () =>
-      adminOrg &&
-      fileSubscription(
-        adminOrg._id,
-        STACK_ADMIN,
-        subId("admin"),
-        1,
-        "canceled",
-      ),
-    () =>
-      acmeId && fileSubscription(acmeId, owner, subId("acme"), 3, "canceled"),
+    () => fileSubscription(STACK_ADMIN, subId("admin"), 1, "canceled"),
+    () => owner && fileSubscription(owner, subId("acme"), 1, "canceled"),
     () =>
       managedBefore !== undefined &&
       convex(
@@ -111,6 +107,7 @@ test.afterAll(async () => {
       adminOrg &&
       run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id }),
     () => acmeId && run(owner, "org/orgs:remove", { orgId: acmeId }),
+    () => labId && run(STACK_ADMIN, "org/orgs:remove", { orgId: labId }),
     // Self-hosted again, so the seats the users free call no Stripe.
     ...[owner, ...developers].map((user) => () => user && removeUser(user)),
   ];
@@ -139,12 +136,12 @@ test("an owner on Hobby sees their plan, no developer seats, and what Upgrade co
     page.getByRole("button", { name: "Upgrade to Pro · €20/month" }),
   ).toBeEnabled();
   await expect(
-    page.getByRole("heading", { name: `Seats · ${adminOrg.name}` }),
+    page.getByRole("heading", { name: "Developer seats" }),
   ).toBeVisible();
   await expect(page.getByText("No developer seats on Hobby")).toBeVisible();
   await expect(
     page.getByText(
-      "Pro is €20/month: it lets you create an org and includes 2 developer seats. Extra seats are €20/month each.",
+      "Pro is €20/month: it lets you create orgs and gives you 2 developer seats to use across all of them. Extra seats are €20/month each.",
     ),
   ).toBeVisible();
   await expect(
@@ -156,13 +153,11 @@ test("a Hobby owner's invite with no free seat offers the upgrade instead", asyn
   page,
 }) => {
   await openMembers(page);
-  await expect(page.getByText("1 of 1 seats used")).toBeVisible();
+  await expect(page.getByText("0 of 0 developer seats used")).toBeVisible();
 
   const dialog = await openInvite(page);
   await expect(
-    dialog.getByText(
-      `${adminOrg.name} is on Hobby, which has one seat: yours.`,
-    ),
+    dialog.getByText("You are on Hobby, which has no developer seats."),
   ).toBeVisible();
   await expect(dialog.getByLabel("Role")).toHaveCount(0);
   await expect(
@@ -182,7 +177,8 @@ test("creating an org needs Pro, and Upgrade opens the Hobby org's Billing", asy
 
   await expect(
     dialog.getByText(
-      /^Creating an organization needs Pro\. Upgrade .+ to Pro first\.$/,
+      "Creating another organization needs Pro. Upgrade to Pro first.",
+      { exact: true },
     ),
   ).toBeVisible();
   await expect(
@@ -198,10 +194,10 @@ test("creating an org needs Pro, and Upgrade opens the Hobby org's Billing", asy
   run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id });
 });
 
-test("a Pro owner sees the seats Pro includes, what each costs, and adds one once they are taken", async ({
+test("a Pro owner shares 2 developer seats across their orgs, and adds one once they are taken", async ({
   page,
 }) => {
-  fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "active");
+  fileSubscription(STACK_ADMIN, subId("admin"), 1, "active");
   for (const developer of developers) {
     run(STACK_ADMIN, "org/members:add", {
       orgId: adminOrg._id,
@@ -209,42 +205,69 @@ test("a Pro owner sees the seats Pro includes, what each costs, and adds one onc
       role: "member",
     });
   }
+  // Pro creates more orgs; a developer already seated joins one free, and
+  // anyone new finds the pool full.
+  labId = idOf(run(STACK_ADMIN, "org/orgs:create", { name: LAB }));
+  run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id });
+  run(STACK_ADMIN, "org/members:add", {
+    orgId: labId,
+    email: developers[0].email,
+    role: "member",
+  });
+  expect(() =>
+    run(STACK_ADMIN, "org/members:add", {
+      orgId: labId,
+      email: owner.email,
+      role: "member",
+    }),
+  ).toThrow(/Every developer seat is taken/);
+
   await openBilling(page, readProjectId());
   await expect(page.getByText(/^€20\/month · renews /)).toBeVisible();
+  await expect(
+    page.getByText("Covers every organization you own."),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Manage subscription", exact: true }),
   ).toBeVisible();
 
-  await expect(page.getByText("3 of 3 seats used")).toBeVisible();
   await expect(
-    page.getByText("You, plus 2 developer seats included with Pro", {
+    page.getByText("2 of 2 developer seats used across your orgs"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("2 included with Pro", { exact: true }),
+  ).toBeVisible();
+  const seats = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Developer seats" }),
+  });
+  // One row, and one seat, per developer, with every org they are in.
+  await expect(
+    seatRow(page, developers[0].name).getByText(`${adminOrg.name}, ${LAB}`, {
       exact: true,
     }),
   ).toBeVisible();
-  const seats = page.locator("section").filter({
-    has: page.getByRole("heading", { name: `Seats · ${adminOrg.name}` }),
-  });
-  await expect(seats.getByText("Owner", { exact: true })).toBeVisible();
   await expect(
-    seats.getByText("Included with Pro", { exact: true }),
-  ).toHaveCount(2);
+    seatRow(page, developers[1].name).getByText(adminOrg.name, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(seats.getByRole("listitem")).toHaveCount(2);
   await expectBill(page, 0, "€20/month");
 
   await page.getByRole("button", { name: "Add seat · €20/month" }).click();
-  const confirm = page.getByRole("dialog", {
-    name: `Add a seat to ${adminOrg.name}`,
-  });
+  const confirm = page.getByRole("dialog", { name: "Add a developer seat" });
   await expect(
     confirm.getByText(
-      "Add 1 seat for €20/month. You are charged now for the rest of this period.",
+      "Add 1 seat for €20/month, to use in any of your orgs. You are charged now for the rest of this period.",
     ),
   ).toBeVisible();
   await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
 
   await openMembers(page);
+  await expect(page.getByText("2 of 2 developer seats used")).toBeVisible();
   const dialog = await openInvite(page);
   await expect(
-    dialog.getByText(`Every seat in ${adminOrg.name} is taken.`),
+    dialog.getByText("Every developer seat is taken."),
   ).toBeVisible();
   await expect(dialog.getByText("€20/month")).toBeVisible();
   // The invite goes first, so an email nobody signed in with charges nothing.
@@ -256,28 +279,28 @@ test("a Pro owner sees the seats Pro includes, what each costs, and adds one onc
 test("an extra seat shows on the seat count and the monthly bill", async ({
   page,
 }) => {
-  fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 2, "active");
+  fileSubscription(STACK_ADMIN, subId("admin"), 2, "active");
   try {
     await openBilling(page, readProjectId());
-    await expect(page.getByText("3 of 4 seats used")).toBeVisible();
     await expect(
-      page.getByText(
-        "You, plus 2 developer seats included with Pro and 1 extra",
-      ),
+      page.getByText("2 of 3 developer seats used across your orgs"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("2 included with Pro and 1 extra", { exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: /^Add seat/ })).toHaveCount(
       0,
     );
     await expectBill(page, 1, "€40/month");
   } finally {
-    fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "active");
+    fileSubscription(STACK_ADMIN, subId("admin"), 1, "active");
   }
 });
 
 test("an owner whose payment failed sees Pro on hold, and is sent to Manage billing, not to Upgrade", async ({
   page,
 }) => {
-  fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "past_due");
+  fileSubscription(STACK_ADMIN, subId("admin"), 1, "past_due");
   try {
     await openBilling(page, readProjectId());
     const plan = page.locator("section").filter({
@@ -290,11 +313,11 @@ test("an owner whose payment failed sees Pro on hold, and is sent to Manage bill
     ).toBeVisible();
     await expect(plan.getByText("Hobby", { exact: true })).toHaveCount(0);
     const seats = page.locator("section").filter({
-      has: page.getByRole("heading", { name: `Seats · ${adminOrg.name}` }),
+      has: page.getByRole("heading", { name: "Developer seats" }),
     });
     await expect(seats.getByText("Seats on hold")).toBeVisible();
-    await expect(seats.getByText("On hold", { exact: true })).toHaveCount(2);
-    await expect(seats.getByText("Kept from before seats counted")).toHaveCount(
+    await expect(seats.getByRole("listitem")).toHaveCount(2);
+    await expect(seats.getByText(/kept from before seats counted/)).toHaveCount(
       0,
     );
     await expect(
@@ -304,7 +327,7 @@ test("an owner whose payment failed sees Pro on hold, and is sent to Manage bill
     await openMembers(page);
     const dialog = await openInvite(page);
     await expect(
-      dialog.getByText(`${adminOrg.name}'s last payment did not go through.`),
+      dialog.getByText("Your last payment did not go through."),
     ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: "Manage billing", exact: true }),
@@ -313,11 +336,11 @@ test("an owner whose payment failed sees Pro on hold, and is sent to Manage bill
       0,
     );
   } finally {
-    fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "active");
+    fileSubscription(STACK_ADMIN, subId("admin"), 1, "active");
   }
 });
 
-test("Account settings lists each org you own with its plan", async ({
+test("Account settings lists every org you own on your plan", async ({
   page,
 }) => {
   await page.goto("/settings/account");
@@ -326,11 +349,16 @@ test("Account settings lists each org you own with its plan", async ({
   const billing = page.locator("section").filter({
     has: page.getByRole("heading", { name: "Billing", exact: true }),
   });
-  const row = billing.getByText(adminOrg.name, { exact: true }).locator("..");
-  await expect(row.getByText("Pro · 3 seats")).toBeVisible();
   await expect(
-    row.getByRole("button", { name: "Billing", exact: true }),
+    billing.getByText(/^Your plan covers every organization you own\./),
   ).toBeVisible();
+  for (const name of [adminOrg.name, LAB]) {
+    const row = billing.getByText(name, { exact: true }).locator("..");
+    await expect(row.getByText("Pro", { exact: true })).toBeVisible();
+    await expect(
+      row.getByRole("button", { name: "Billing", exact: true }),
+    ).toBeVisible();
+  }
   await expect(billing.getByText(OWNER.org, { exact: true })).toHaveCount(0);
 });
 
@@ -356,13 +384,13 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
     await expect(
       page.getByRole("heading", { name: "Your seat" }),
     ).toBeVisible();
-    await expect(page.getByText(/ of \d+ seats used$/)).toHaveCount(0);
+    await expect(page.getByText(/ of \d+ developer seats used/)).toHaveCount(0);
 
     await openMembers(page);
     const dialog = await openInvite(page);
     await expect(
       dialog.getByText(
-        `Ask ${OWNER.name}, the owner, to add a seat in Billing. You are never charged.`,
+        `Ask ${OWNER.name}, the owner, to add a developer seat in Billing. Someone already on one of their seats joins free. You are never charged.`,
       ),
     ).toBeVisible();
     await expect(
@@ -370,7 +398,7 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
     ).toBeDisabled();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
-    fileSubscription(acmeId, owner, subId("acme"), 1, "active");
+    fileSubscription(owner, subId("acme"), 1, "active");
     await openBilling(page, acmeProjectId);
     await expect(
       page.getByText(
@@ -384,7 +412,7 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
     // The admin pays for their own org, apart from this one.
     await expect(
       page.getByText(
-        `One of the 2 seats included with ${OWNER.name}'s Pro plan. Your own Pro plan is billed separately.`,
+        `A developer seat from ${OWNER.name}'s Pro plan. Your own Pro plan is billed separately.`,
       ),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: /^Add seat/ })).toHaveCount(
@@ -427,6 +455,13 @@ async function expectBill(
   await expect(
     bill.getByText("Total", { exact: true }).locator("..").getByText(total),
   ).toBeVisible();
+}
+
+/** A developer's row in the owner's seat list. */
+function seatRow(page: Page, name: string): ReturnType<Page["locator"]> {
+  return page
+    .getByRole("listitem")
+    .filter({ has: page.getByText(name, { exact: true }) });
 }
 
 async function openMembers(page: Page): Promise<void> {

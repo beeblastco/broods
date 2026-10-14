@@ -2,7 +2,7 @@
  * Org membership management: list members, add by email, change role, remove.
  * Reads gated on caller being a member; writes on `members:write`, which
  * owners and admins hold by tier and a custom role may grant. Each member
- * takes a seat the org owner pays for (model/orgBilling.ts).
+ * takes one of the org owner's developer seats (model/orgBilling.ts).
  */
 
 import { v } from "convex/values";
@@ -171,7 +171,7 @@ export const add = mutation({
     if (!org) {
       throw new ClientError("Org not found", "not_found");
     }
-    await assertFreeSeat(ctx, org);
+    await assertFreeSeat(ctx, org, target._id);
 
     const membershipId = await ctx.db.insert("orgMembers", {
       orgId: orgId,

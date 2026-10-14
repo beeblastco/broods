@@ -531,22 +531,22 @@ export async function resolveActiveAccount(
 }
 
 /**
- * Inserts a free org the user owns, with an owner membership, and makes it
- * their active org. Past their first, refused unless they are on Pro
- * (model/orgBilling.ts).
+ * Inserts an org the user owns, on their plan, with an owner membership, and
+ * makes it their active org. Past their first, refused unless they are on
+ * Pro (model/orgBilling.ts).
  */
 async function insertOwnedOrg(
   ctx: MutationCtx,
   user: Doc<"users">,
   name: string,
 ): Promise<Id<"orgs">> {
-  await assertCanCreateOrg(ctx, user.authId);
+  const plan = await assertCanCreateOrg(ctx, user.authId);
   const now = Date.now();
   const orgId = await ctx.db.insert("orgs", {
     name: name,
     slug: await uniqueOrgSlug(ctx, name),
     ownerAuthId: user.authId,
-    plan: "free",
+    plan: plan,
     createdAt: now,
   });
   await ctx.db.insert("orgMembers", {

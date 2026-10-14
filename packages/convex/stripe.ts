@@ -1,11 +1,11 @@
 /**
- * Stripe billing per org: checkout, seats and the portal for the org owner,
- * and storing what Stripe returns. Each org has its own subscription to
- * `STRIPE_SEAT_PRICE_ID`: one unit for Pro with its included seats, one more
- * per extra member (model/orgBilling.ts). The
- * webhook (http.ts) and the seat actions store a subscription only as read
- * back from Stripe, then recompute the plan of the org it pays for and of the
- * owner who pays.
+ * Stripe billing per owner: checkout, seats and the portal for the user who
+ * pays, and storing what Stripe returns. Each owner has one subscription to
+ * `STRIPE_SEAT_PRICE_ID`, filed under their authId: one unit for Pro with
+ * its included developer seats, one more per extra seat, shared by every org
+ * they own (model/orgBilling.ts). The webhook (http.ts) and the seat actions
+ * store a subscription only as read back from Stripe, then recompute the
+ * plan of the owner who pays and of every org they own.
  */
 
 import { StripeSubscriptions } from "@convex-dev/stripe";
@@ -23,13 +23,13 @@ import {
 import { authKit } from "./auth";
 import { ClientError } from "./model/clientError";
 import {
+  currentOf,
+  developersOf,
   isEnded,
   isPaid,
-  orgMemberCount,
   proQuantity,
   seatsForQuantity,
   seatsOf,
-  syncOrgPlan,
   syncUserPlan,
 } from "./model/orgBilling";
 import { getActiveOrgForUser, userByAuthId } from "./model/ownership/org";
@@ -37,11 +37,10 @@ import { planValidator } from "./schema";
 
 export const stripeClient = new StripeSubscriptions(components.stripe);
 
-const orgBillingValidator = v.object({
-  orgId: v.id("orgs"),
-  ownerAuthId: v.string(),
-  members: v.number(),
-  /** The org's subscription that has not ended, if any. */
+const ownerBillingValidator = v.object({
+  /** Distinct developers across every org the owner owns. */
+  developers: v.number(),
+  /** The owner's subscription billing acts on (`currentOf`), if any. */
   subscription: v.union(
     v.null(),
     v.object({
@@ -51,12 +50,12 @@ const orgBillingValidator = v.object({
   ),
 });
 
-type OrgBilling = Infer<typeof orgBillingValidator>;
+type OwnerBilling = Infer<typeof ownerBillingValidator>;
 
 /**
- * Start the checkout that puts the caller's active org on Pro: one unit, plus
- * one for each member past the included seats, kept from before seats
- * counted. Owner only.
+ * Start the checkout that puts the caller on Pro, for every org they own:
+ * one unit, plus one for each developer past the included seats, kept from
+ * before seats counted.
  */
 export const createCheckoutSession = action({
   args: { successUrl: v.string(), cancelUrl: v.string() },
@@ -65,13 +64,12 @@ export const createCheckoutSession = action({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("Not authenticated");
 
-    const billing = await ownerBilling(ctx, authUser.id, {
-      activeOf: authUser.id,
+    const billing = await ctx.runQuery(internal.stripe.ownerBillingInternal, {
+      authId: authUser.id,
     });
     // Stops a second click or tab. It reads webhook-synced rows, so a checkout
-    // paid seconds ago can still slip through. Stripe's "limit customers to one
-    // subscription" setting must stay off: every org an owner pays for is one
-    // more subscription on the same customer.
+    // paid seconds ago can still slip through; the seat resync reports such a
+    // duplicate (seatMigration.ts).
     if (billing.subscription) {
       throw new ClientError(
         "Already subscribed; use Manage Billing to change plan",
@@ -87,12 +85,12 @@ export const createCheckoutSession = action({
       priceId: seatPriceId(),
       customerId: customerId,
       mode: "subscription",
-      quantity: proQuantity(billing.members),
+      quantity: proQuantity(billing.developers),
       successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
       cancelUrl: safeDashboardUrl(args.cancelUrl, "cancelUrl"),
-      // The component files a subscription under `metadata.userId` (who pays)
-      // and `metadata.orgId` (what it pays for).
-      subscriptionMetadata: { userId: authUser.id, orgId: billing.orgId },
+      // The component files a subscription under `metadata.userId`: who pays,
+      // and whose orgs it covers.
+      subscriptionMetadata: { userId: authUser.id },
     });
 
     if (!session.url) throw new Error("No checkout URL returned");
@@ -102,33 +100,36 @@ export const createCheckoutSession = action({
 });
 
 /**
- * Make room for one more member in a paid org: the units for every member
- * plus one (`proQuantity`). Stripe invoices the prorated seat at once and
- * refuses the change if that payment fails, so the invite that follows only
- * lands on a paid seat. A seat already free charges nothing, so a second tab
- * or a retried invite never pays twice. Owner only.
- * @returns the seats the org now holds, included ones too
+ * Make room for one more developer in the caller's seat pool: the units for
+ * every developer plus one (`proQuantity`), one more than now when the pool
+ * is full. Stripe invoices the prorated seat at once and refuses the change
+ * if that payment fails, so the invite that follows only lands on a paid
+ * seat. A seat already free charges nothing, so a second tab or a retried
+ * invite never pays twice.
+ * @returns the developer seats the caller now has
  */
 export const addSeat = action({
-  args: { orgId: v.id("orgs") },
+  args: {},
   returns: v.object({ seats: v.number() }),
-  handler: async (ctx, args): Promise<{ seats: number }> => {
+  handler: async (ctx): Promise<{ seats: number }> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("Not authenticated");
 
-    const billing = await ownerBilling(ctx, authUser.id, { orgId: args.orgId });
+    const billing = await ctx.runQuery(internal.stripe.ownerBillingInternal, {
+      authId: authUser.id,
+    });
     if (!billing.subscription || !isPaid(billing.subscription.status)) {
       throw new ClientError(
-        "Upgrade this organization before adding seats",
+        "Upgrade to Pro before adding seats",
         "payment_required",
       );
     }
     try {
-      // Members kept from before the org paid get their seat too.
+      // Developers kept from before the owner paid get their seat too.
       const quantity = await changeSeats(
         ctx,
         billing.subscription.stripeSubscriptionId,
-        (paid) => Math.max(paid, proQuantity(billing.members + 1)),
+        (paid) => Math.max(paid, proQuantity(billing.developers + 1)),
         "always_invoice",
       );
 
@@ -143,13 +144,13 @@ export const addSeat = action({
   },
 });
 
+/** The Stripe portal for the caller's own subscription. */
 export const createPortalSession = action({
   args: { returnUrl: v.string() },
   returns: v.object({ url: v.string() }),
   handler: async (ctx, args) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("Not authenticated");
-    await ownerBilling(ctx, authUser.id, { activeOf: authUser.id });
 
     const { customerId } = await stripeClient.getOrCreateCustomer(ctx, {
       userId: authUser.id,
@@ -164,19 +165,26 @@ export const createPortalSession = action({
 });
 
 /**
- * The caller's active org's subscription that has not ended, for any member:
- * its status, period and the seats invites count against. Who pays and the
- * Stripe ids stay with the owner.
+ * The plan behind the caller's active org, for any member: its owner's
+ * developer seats, how many are taken across the owner's orgs, and the
+ * owner's subscription that has not ended (its status and period). Who pays
+ * and the Stripe ids stay with the owner.
  */
 export const getBillingInfo = query({
   args: {},
   returns: v.union(
     v.null(),
     v.object({
-      status: v.string(),
-      currentPeriodEnd: v.number(),
-      cancelAtPeriodEnd: v.boolean(),
       seats: v.number(),
+      developers: v.number(),
+      subscription: v.union(
+        v.null(),
+        v.object({
+          status: v.string(),
+          currentPeriodEnd: v.number(),
+          cancelAtPeriodEnd: v.boolean(),
+        }),
+      ),
     }),
   ),
   handler: async (ctx) => {
@@ -187,25 +195,57 @@ export const getBillingInfo = query({
     if (!org) return null;
 
     const subs = await ctx.runQuery(
-      components.stripe.public.listSubscriptionsByOrgId,
-      { orgId: org._id },
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: org.ownerAuthId },
     );
     // Any subscription that is not over, including past_due and unpaid ones,
     // so the dashboard offers the portal to fix payment instead of checkout.
-    const live = subs.find((sub) => !isEnded(sub.status));
+    const live = currentOf(subs);
 
-    return live
-      ? {
-          status: live.status,
-          currentPeriodEnd: live.currentPeriodEnd,
-          cancelAtPeriodEnd: live.cancelAtPeriodEnd,
-          seats: seatsOf(subs),
-        }
-      : null;
+    return {
+      seats: seatsOf(subs),
+      developers: (await developersOf(ctx, org.ownerAuthId)).size,
+      subscription: live
+        ? {
+            status: live.status,
+            currentPeriodEnd: live.currentPeriodEnd,
+            cancelAtPeriodEnd: live.cancelAtPeriodEnd,
+          }
+        : null,
+    };
   },
 });
 
-/** The orgs the caller owns, each with its plan and seats, for Account settings. */
+/** The developers on the caller's seats, each with the orgs of theirs they are in, for Billing. */
+export const listSeatHolders = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      userId: v.id("users"),
+      name: v.string(),
+      orgs: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+    const developers = await developersOf(ctx, user.id);
+    const rows = await Promise.all(
+      [...developers].map(async ([userId, orgs]) => ({
+        userId: userId,
+        name: (await ctx.db.get(userId))?.name ?? "(unknown)",
+        orgs: orgs.map((org) => org.name),
+      })),
+    );
+
+    return rows.sort((left, right) => left.name.localeCompare(right.name));
+  },
+});
+
+/** The orgs the caller owns, each with its plan, for Account settings. */
 export const listOwnedOrgs = query({
   args: {},
   returns: v.array(
@@ -213,7 +253,6 @@ export const listOwnedOrgs = query({
       orgId: v.id("orgs"),
       name: v.string(),
       plan: planValidator,
-      seats: v.number(),
     }),
   ),
   handler: async (ctx) => {
@@ -227,46 +266,27 @@ export const listOwnedOrgs = query({
       .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", user.id))
       .collect();
 
-    return await Promise.all(
-      owned.map(async (org) => ({
-        orgId: org._id,
-        name: org.name,
-        plan: org.plan,
-        seats: seatsOf(
-          await ctx.runQuery(
-            components.stripe.public.listSubscriptionsByOrgId,
-            { orgId: org._id },
-          ),
-        ),
-      })),
-    );
+    return owned.map((org) => ({
+      orgId: org._id,
+      name: org.name,
+      plan: org.plan,
+    }));
   },
 });
 
-/** An org's owner, member count and live subscription: the named org, or `activeOf`'s active org. */
-export const orgBillingInternal = internalQuery({
-  args: {
-    orgId: v.optional(v.id("orgs")),
-    activeOf: v.optional(v.string()),
-  },
-  returns: v.union(v.null(), orgBillingValidator),
-  handler: async (ctx, args): Promise<OrgBilling | null> => {
-    const user = args.activeOf ? await userByAuthId(ctx, args.activeOf) : null;
-    const org = args.orgId
-      ? await ctx.db.get(args.orgId)
-      : user && (await getActiveOrgForUser(ctx, user._id));
-    if (!org) return null;
-
+/** An owner's developers across their orgs and the subscription billing acts on. */
+export const ownerBillingInternal = internalQuery({
+  args: { authId: v.string() },
+  returns: ownerBillingValidator,
+  handler: async (ctx, args): Promise<OwnerBilling> => {
     const subs = await ctx.runQuery(
-      components.stripe.public.listSubscriptionsByOrgId,
-      { orgId: org._id },
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: args.authId },
     );
-    const live = subs.find((sub) => !isEnded(sub.status));
+    const live = currentOf(subs);
 
     return {
-      orgId: org._id,
-      ownerAuthId: org.ownerAuthId,
-      members: await orgMemberCount(ctx, org._id),
+      developers: (await developersOf(ctx, args.authId)).size,
       subscription: live
         ? {
             stripeSubscriptionId: live.stripeSubscriptionId,
@@ -278,24 +298,24 @@ export const orgBillingInternal = internalQuery({
 });
 
 /**
- * Lower an org's units to what its members need (`proQuantity`) after someone
- * left, whether or not its last payment went through. Stripe credits the
- * unused time on the next invoice. Units only go up on the owner's click
- * (`addSeat`). A subscription bought at one unit per member, before Pro
- * included seats, drops to the same count here on its next run.
+ * Lower an owner's units to what their developers need (`proQuantity`)
+ * after one left their last org of the owner's, or an org was deleted,
+ * whether or not the last payment went through. Stripe credits the unused
+ * time on the next invoice. Units only go up on the owner's click
+ * (`addSeat`).
  */
 export const syncSeatsInternal = internalAction({
-  args: { orgId: v.id("orgs") },
+  args: { authId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const billing = await ctx.runQuery(internal.stripe.orgBillingInternal, {
-      orgId: args.orgId,
+    const billing = await ctx.runQuery(internal.stripe.ownerBillingInternal, {
+      authId: args.authId,
     });
-    if (!billing?.subscription) return null;
+    if (!billing.subscription) return null;
     await changeSeats(
       ctx,
       billing.subscription.stripeSubscriptionId,
-      (paid) => Math.min(paid, proQuantity(billing.members)),
+      (paid) => Math.min(paid, proQuantity(billing.developers)),
       "create_prorations",
     );
 
@@ -303,14 +323,14 @@ export const syncSeatsInternal = internalAction({
   },
 });
 
-/** Cancel a deleted org's subscriptions now, so its owner stops paying for it. */
-export const cancelOrgSubscriptionsInternal = internalAction({
-  args: { orgId: v.string() },
+/** Cancel a deleted user's subscriptions now, so they stop paying for Pro. */
+export const cancelUserSubscriptionsInternal = internalAction({
+  args: { authId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const subs = await ctx.runQuery(
-      components.stripe.public.listSubscriptionsByOrgId,
-      { orgId: args.orgId },
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: args.authId },
     );
     for (const sub of subs.filter((sub) => !isEnded(sub.status))) {
       await stripeClient.cancelSubscription(ctx, {
@@ -354,7 +374,7 @@ export const claimSubscriptionSyncInternal = internalMutation({
 
 /**
  * Store a subscription as Stripe returned it, then recompute the plan of the
- * org it pays for and of the user who pays. Webhook payloads are only a cue to
+ * user who pays and of every org they own. Webhook payloads are only a cue to
  * read: delivery is unordered and repeats, so the snapshot in an event can be
  * stale. A read is dropped when a read with a later ticket already landed,
  * and a subscription that ended never comes back, since Stripe never reopens
@@ -406,9 +426,6 @@ export const applySubscriptionInternal = internalMutation({
 
     for (const authId of new Set([sub.metadata.userId, stored?.userId])) {
       if (authId) await syncUserPlan(ctx, authId);
-    }
-    for (const orgId of new Set([sub.metadata.orgId, stored?.orgId])) {
-      if (orgId) await syncOrgPlan(ctx, orgId);
     }
 
     return null;
@@ -478,7 +495,7 @@ async function applyLive(
  * the read when nothing changes, else the update under a ticket claimed once
  * Stripe answered it, so a webhook read that started before cannot land over
  * the new quantity.
- * @returns the quantity the org now pays for
+ * @returns the quantity the owner now pays for
  */
 async function changeSeats(
   ctx: ActionCtx,
@@ -515,23 +532,6 @@ async function changeSeats(
   await applyLive(ctx, updateTicket, updated);
 
   return quantity;
-}
-
-/** The org's billing when `authId` owns it; refuses anyone else. */
-async function ownerBilling(
-  ctx: ActionCtx,
-  authId: string,
-  org: { orgId: OrgBilling["orgId"] } | { activeOf: string },
-): Promise<OrgBilling> {
-  const billing = await ctx.runQuery(internal.stripe.orgBillingInternal, org);
-  if (!billing || billing.ownerAuthId !== authId) {
-    throw new ClientError(
-      "Only the organization's owner can change its plan, seats or billing",
-      "forbidden",
-    );
-  }
-
-  return billing;
 }
 
 function seatPriceId(): string {

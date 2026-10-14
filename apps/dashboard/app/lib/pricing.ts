@@ -57,5 +57,5 @@ export function perMonth(units: number): string {
   return `€${units * UNIT_PRICE_EUR}/month`;
 }
 
-/** What Pro offers an org, wherever an upgrade is offered. */
-export const PRO_OFFER = `Pro is ${perMonth(1)}: it lets you create an org and includes ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats. Extra seats are ${perMonth(1)} each.`;
+/** What Pro offers its owner, wherever an upgrade is offered. */
+export const PRO_OFFER = `Pro is ${perMonth(1)}: it lets you create orgs and gives you ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats to use across all of them. Extra seats are ${perMonth(1)} each.`;

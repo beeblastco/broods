@@ -4,11 +4,7 @@ import { ConfirmDialog } from "@/app/components/ConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
-import {
-  type OrgSeats,
-  type SeatKind,
-  useOrgSeats,
-} from "@/app/hooks/useOrgSeats";
+import { type OrgSeats, useOrgSeats } from "@/app/hooks/useOrgSeats";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import {
   billingReset,
@@ -47,15 +43,6 @@ import { useState } from "react";
 // Stripe states where a payment is owed and the portal can fix it.
 const PAYMENT_DUE_STATUSES = new Set(["past_due", "unpaid", "incomplete"]);
 
-// What pays for a seat, as its row in the owner's seat list says it.
-const SEAT_LABELS: Record<SeatKind, string> = {
-  owner: "Owner",
-  included: "Included with Pro",
-  extra: `Extra seat · ${perMonth(1)}`,
-  kept: "Kept from before seats counted",
-  held: "On hold",
-};
-
 interface Notice {
   tone: "warning" | "destructive" | "info";
   text: string;
@@ -74,12 +61,14 @@ const ACTIVATING_NOTICE: Notice = {
 };
 
 /**
- * Billing tab, for the active org, in separate parts: the plan with its
- * price and one bar for the closest cap, then a single notice when something
- * needs attention, then the org's seats, then what the owner pays each month.
- * Every member sees the plan and their own seat; only the owner pays, so only
- * the owner gets Upgrade, Add seat, the portal and the bill. The
- * per-resource allowance lives on the Usage tab, which the bar links to.
+ * Billing tab, in separate parts: the plan with its price and one bar for
+ * the active org's closest cap, then a single notice when something needs
+ * attention, then the owner's developer seats, then what they pay each
+ * month. Pro belongs to the owner and covers every org they own, with one
+ * seat pool across them. Every member sees the plan and their own seat; only
+ * the owner pays, so only the owner gets Upgrade, Add seat, the portal and
+ * the bill. The per-resource allowance lives on the Usage tab, which the bar
+ * links to.
  */
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -240,7 +229,7 @@ function PlanActions({
           {checkoutLoading
             ? "Loading…"
             : owner
-              ? `Upgrade to Pro · ${perMonth(proQuantity(seats.members))}`
+              ? `Upgrade to Pro · ${perMonth(proQuantity(seats.developers))}`
               : "Upgrade to Pro"}
         </Button>
       )}
@@ -251,16 +240,16 @@ function PlanActions({
 /**
  * The owner's Add seat, behind one confirm: Stripe charges the prorated seats
  * at once, and adds them only when that payment goes through. Shown only with
- * every seat taken: a free seat already takes the next member.
+ * every seat taken: a free seat already takes the next developer.
  */
 function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
-  const { org, seatsToAdd } = seats;
+  const { seatsToAdd } = seats;
   const [confirming, setConfirming] = useState(false);
   const { pending, error, run } = useSubmit();
   const addSeat = useAction(api.stripe.addSeat);
 
   async function confirm(): Promise<void> {
-    if (await run(() => addSeat({ orgId: org._id }))) setConfirming(false);
+    if (await run(() => addSeat({}))) setConfirming(false);
   }
 
   return (
@@ -275,8 +264,8 @@ function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
       </Button>
       {confirming && (
         <ConfirmDialog
-          title={`Add a seat to ${org.name}`}
-          description={`Add ${seatCount(seatsToAdd)} for ${perMonth(seatsToAdd)}. You are charged now for the rest of this period.`}
+          title="Add a developer seat"
+          description={`Add ${seatCount(seatsToAdd)} for ${perMonth(seatsToAdd)}, to use in any of your orgs. You are charged now for the rest of this period.`}
           verb="Add seat"
           variant="default"
           pending={pending}
@@ -290,24 +279,27 @@ function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
 }
 
 /**
- * The org's seats. For the owner: how many are used, what pays for each, and
+ * The owner's developer seats, one pool across every org they own. For the
+ * owner: how many are used, each developer with the orgs they are in, and
  * Add seat once every one is taken, then on Pro what they pay each month. On
- * Hobby there is only the owner's, and a free org whose members were kept
- * from before seats counted says what Upgrade pays for them. Anyone else
- * sees only their own seat. Nothing on an install without seats.
+ * Hobby there are none, and developers kept from before seats counted are
+ * listed with what Upgrade pays for them. Anyone else sees only their own
+ * seat. Nothing on an install without seats.
  */
 function SeatsSection({
   seats,
 }: {
   seats: OrgSeats | undefined;
 }): React.JSX.Element | null {
+  const owner = seats?.enforced === true && seats.isOwner;
+  const holders = useQuery(api.stripe.listSeatHolders, owner ? {} : "skip");
   if (!seats?.enforced) return null;
   if (!seats.isOwner) return <YourSeat seats={seats} />;
-  const { billing, members, extraSeats, paid } = seats;
+  const { billing, developers, extraSeats, paid } = seats;
   const [headline, detail] = paid
     ? [
-        `${members} of ${seatCount(seats.seats)} used`,
-        `You, plus ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats included with Pro${extraSeats > 0 ? ` and ${extraSeats} extra` : ""}`,
+        `${developers} of ${seats.seats} developer seats used across your orgs`,
+        `${PRO_INCLUDED_DEVELOPER_SEATS} included with Pro${extraSeats > 0 ? ` and ${extraSeats} extra` : ""}`,
       ]
     : billing
       ? [
@@ -318,7 +310,7 @@ function SeatsSection({
 
   return (
     <>
-      <Section title={`Seats · ${seats.org.name}`}>
+      <Section title="Developer seats">
         <div className="grid gap-3 rounded-lg border border-border bg-card px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="grid gap-0.5">
@@ -326,28 +318,26 @@ function SeatsSection({
                 {headline}
               </span>
               <p className="text-xs text-muted-foreground">{detail}</p>
-              {!billing && members > 1 && (
+              {!billing && developers > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  {`${members} members kept from before seats counted. Upgrading charges ${perMonth(proQuantity(members))} for all of them; no new invites until then.`}
+                  {`${developers} ${developers === 1 ? "developer" : "developers"} kept from before seats counted. Upgrading charges ${perMonth(proQuantity(developers))} for all of them; no new invites until then.`}
                 </p>
               )}
             </div>
             {paid && seats.seatsToAdd > 0 && <AddSeatButton seats={seats} />}
           </div>
-          {(billing || members > 1) && (
+          {holders && holders.length > 0 && (
             <ul className="grid border-t border-border">
-              {seats.holders.map((holder) => (
+              {holders.map((holder) => (
                 <li
                   key={holder.userId}
                   className="flex items-center justify-between gap-4 border-b border-border py-2 text-xs last:border-b-0"
                 >
                   <span className="truncate text-foreground">
-                    {holder.seat === "owner"
-                      ? `${holder.name} (you)`
-                      : holder.name}
+                    {holder.name}
                   </span>
-                  <span className="shrink-0 text-muted-foreground">
-                    {SEAT_LABELS[holder.seat]}
+                  <span className="truncate text-muted-foreground">
+                    {holder.orgs.join(", ")}
                   </span>
                 </li>
               ))}
@@ -366,12 +356,9 @@ function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
     seats.userPlan === "free"
       ? "Your own Hobby plan stays free and separate."
       : "Your own Pro plan is billed separately.";
-  const paidBy =
-    seats.yours === "included"
-      ? `One of the ${PRO_INCLUDED_DEVELOPER_SEATS} seats included with ${seats.ownerName}'s Pro plan.`
-      : seats.yours === "extra"
-        ? `An extra seat paid by ${seats.ownerName}.`
-        : `A seat in ${seats.ownerName}'s org.`;
+  const paidBy = seats.paid
+    ? `A developer seat from ${seats.ownerName}'s Pro plan.`
+    : `A seat in ${seats.ownerName}'s org.`;
 
   return (
     <Section title="Your seat">
@@ -387,7 +374,7 @@ function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
   );
 }
 
-/** The owner's monthly bill for this org: Pro, its extra seats, and the total. */
+/** The owner's monthly bill, for every org they own: Pro, the extra seats, and the total. */
 function MonthlyBill({
   extraSeats,
 }: {
@@ -548,6 +535,11 @@ function PlanSummary({
         />
       </div>
       {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
+      {seats?.isOwner && seats.billing && !selfHosted && (
+        <p className="text-xs text-muted-foreground">
+          Covers every organization you own.
+        </p>
+      )}
     </div>
   );
 }

@@ -1,38 +1,22 @@
 /**
- * The active org's plan and seats as Billing and the invite dialog show them.
- * Each org pays for its own plan, and only its owner pays: Pro seats the
- * owner and `PRO_INCLUDED_DEVELOPER_SEATS` developers, each seat past those
- * is extra, and Hobby seats the owner only
+ * The active org's plan and its owner's developer seats as Billing and the
+ * invite dialog show them. Pro belongs to the owner and covers every org they
+ * own: it includes `PRO_INCLUDED_DEVELOPER_SEATS` developer seats, shared
+ * across those orgs, and each seat past those is extra. Hobby has none
  * (`packages/convex/model/orgBilling.ts`). The server checks every rule
  * again; this only picks what to show.
  */
 
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import {
-  FREE_ORG_SEATS,
-  isPaid,
-  PRO_INCLUDED_DEVELOPER_SEATS,
-  seatsForQuantity,
-} from "@broods/convex/model/orgBilling";
+import { isPaid, seatsForQuantity } from "@broods/convex/model/orgBilling";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useRouter } from "next/navigation";
 
-type BillingInfo = FunctionReturnType<typeof api.stripe.getBillingInfo>;
-
-/**
- * What pays for a member's seat: the owner's own, one Pro includes, an extra
- * one, none since they were kept from before seats counted (or sit past the
- * seats paid for), or one on hold while a payment is due.
- */
-export type SeatKind = "owner" | "included" | "extra" | "kept" | "held";
-
-export interface SeatHolder {
-  userId: Id<"users">;
-  name: string;
-  seat: SeatKind;
-}
+type Subscription = NonNullable<
+  FunctionReturnType<typeof api.stripe.getBillingInfo>
+>["subscription"];
 
 export interface OrgSeats {
   org: Doc<"orgs">;
@@ -42,21 +26,20 @@ export interface OrgSeats {
   ownerName: string;
   /** The viewer's own plan, apart from this org's. */
   userPlan: Doc<"users">["plan"];
+  /** Members of this org, owner included. */
   members: number;
-  /** Every member, owner first, with what pays for their seat. */
-  holders: SeatHolder[];
-  /** The viewer's seat, or undefined while they hold none. */
-  yours: SeatKind | undefined;
-  /** Seats the org has: Pro's included ones plus the extra paid ones, else the owner's one. */
+  /** Developers across every org the owner owns, each once. */
+  developers: number;
+  /** Developer seats the owner has: Pro's included ones plus the extra paid ones, else none. */
   seats: number;
   /** Seats paid past the ones Pro includes. */
   extraSeats: number;
-  /** The org's subscription is paid, so its seats count. */
+  /** The owner's subscription is paid, so their seats count. */
   paid: boolean;
-  /** Seats Add seat buys: enough for every member plus one more (`stripe.addSeat`). */
+  /** Seats Add seat buys: enough for every developer plus one more (`stripe.addSeat`). */
   seatsToAdd: number;
-  /** The org's subscription that has not ended, or null when it has none. */
-  billing: BillingInfo;
+  /** The owner's subscription that has not ended, or null when they have none. */
+  billing: Subscription;
 }
 
 /** @returns undefined while any part loads */
@@ -67,31 +50,14 @@ export function useOrgSeats(): OrgSeats | undefined {
     api.org.members.list,
     org ? { orgId: org._id } : "skip",
   );
-  const billing = useQuery(api.stripe.getBillingInfo);
+  const info = useQuery(api.stripe.getBillingInfo);
   const budget = useQuery(api.account.budget.getForActiveOrg, {});
-  if (!org || !user || !members || billing === undefined) return undefined;
+  if (!org || !user || !members || info === undefined) return undefined;
   if (budget === undefined) return undefined;
   const owner = members.find((member) => member.isOwner);
-  const seats = billing?.seats ?? FREE_ORG_SEATS;
-  const paid = billing !== null && isPaid(billing.status);
-  // The list puts the owner first, then members by when they joined: the
-  // first ones past the owner sit on the seats Pro includes, then on the
-  // extra ones, and anyone past the seats paid for was kept from before.
-  const holders = members.map((member, index): SeatHolder => ({
-    userId: member.userId,
-    name: member.name,
-    seat: member.isOwner
-      ? "owner"
-      : !paid
-        ? billing
-          ? "held"
-          : "kept"
-        : index >= seats
-          ? "kept"
-          : index <= PRO_INCLUDED_DEVELOPER_SEATS
-            ? "included"
-            : "extra",
-  }));
+  const billing = info?.subscription ?? null;
+  const seats = info?.seats ?? 0;
+  const developers = info?.developers ?? 0;
 
   return {
     org: org,
@@ -100,12 +66,11 @@ export function useOrgSeats(): OrgSeats | undefined {
     ownerName: owner?.name ?? "the owner",
     userPlan: user.plan,
     members: members.length,
-    holders: holders,
-    yours: holders.find((holder) => holder.userId === user._id)?.seat,
+    developers: developers,
     seats: seats,
     extraSeats: Math.max(0, seats - seatsForQuantity(1)),
-    paid: paid,
-    seatsToAdd: Math.max(seats, members.length + 1) - seats,
+    paid: billing !== null && isPaid(billing.status),
+    seatsToAdd: Math.max(seats, developers + 1) - seats,
     billing: billing,
   };
 }
