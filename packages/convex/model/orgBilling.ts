@@ -72,15 +72,6 @@ export function seatsOf(
   return paid ? seatsForQuantity(paid.quantity ?? 1) : FREE_ORG_SEATS;
 }
 
-/** The extra seats an org's subscriptions pay for: the paid units past Pro's own. */
-export function extraSeatsOf(
-  subs: ReadonlyArray<{ status: string; quantity?: number }>,
-): number {
-  const paid = subs.find((sub) => isPaid(sub.status));
-
-  return paid ? (paid.quantity ?? 1) - 1 : 0;
-}
-
 /** The plan a payer's or an org's subscriptions grant: pro while one is paid. */
 export function planOf(subs: ReadonlyArray<{ status: string }>): Plan {
   return subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
@@ -134,10 +125,10 @@ export async function releaseSeat(
 }
 
 /**
- * Refuse a new org unless its owner is on Pro. Everyone gets one Hobby org:
- * the workspace made for them when they own none. Past it, a new org needs
- * every org they own on Pro; it starts on Hobby, so it is upgraded before
- * the next one.
+ * Refuse a new org unless every org its owner already owns is on Pro. Owning
+ * none, they get one: the Hobby workspace made for them. A new org starts on
+ * Hobby, so it is upgraded before the next one. An org whose subscription
+ * waits on a payment counts as Hobby until Stripe has it.
  */
 export async function assertCanCreateOrg(
   ctx: QueryCtx,
@@ -150,11 +141,17 @@ export async function assertCanCreateOrg(
     .collect();
   const hobby = owned.find((org) => org.plan === "free");
   if (!hobby) return;
+  const subs = await ctx.runQuery(
+    components.stripe.public.listSubscriptionsByOrgId,
+    { orgId: hobby._id },
+  );
 
   throw new ClientError(
-    owned.some((org) => org.plan === "pro")
-      ? `${hobby.name} is still on Hobby. Upgrade it to Pro before you create another organization.`
-      : `Creating an organization needs Pro. Upgrade ${hobby.name} to Pro first.`,
+    subs.some((sub) => !isEnded(sub.status))
+      ? `Payment for ${hobby.name} is due. Update the card in Billing first.`
+      : owned.some((org) => org.plan === "pro")
+        ? `${hobby.name} is still on Hobby. Upgrade it to Pro before you create another organization.`
+        : `Creating an organization needs Pro. Upgrade ${hobby.name} to Pro first.`,
     "payment_required",
   );
 }

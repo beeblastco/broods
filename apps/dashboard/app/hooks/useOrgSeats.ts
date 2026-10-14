@@ -13,6 +13,7 @@ import {
   FREE_ORG_SEATS,
   isPaid,
   PRO_INCLUDED_DEVELOPER_SEATS,
+  seatsForQuantity,
 } from "@broods/convex/model/orgBilling";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -20,8 +21,12 @@ import { useRouter } from "next/navigation";
 
 type BillingInfo = FunctionReturnType<typeof api.stripe.getBillingInfo>;
 
-/** What pays for a member's seat: the owner's own, one Pro includes, or an extra one. */
-export type SeatKind = "owner" | "included" | "extra";
+/**
+ * What pays for a member's seat: the owner's own, one Pro includes, an extra
+ * one, none since they were kept from before seats counted (or sit past the
+ * seats paid for), or one on hold while a payment is due.
+ */
+export type SeatKind = "owner" | "included" | "extra" | "kept" | "held";
 
 export interface SeatHolder {
   userId: Id<"users">;
@@ -68,16 +73,24 @@ export function useOrgSeats(): OrgSeats | undefined {
   if (budget === undefined) return undefined;
   const owner = members.find((member) => member.isOwner);
   const seats = billing?.seats ?? FREE_ORG_SEATS;
+  const paid = billing !== null && isPaid(billing.status);
   // The list puts the owner first, then members by when they joined: the
-  // first ones past the owner sit on the seats Pro includes.
+  // first ones past the owner sit on the seats Pro includes, then on the
+  // extra ones, and anyone past the seats paid for was kept from before.
   const holders = members.map((member, index): SeatHolder => ({
     userId: member.userId,
     name: member.name,
     seat: member.isOwner
       ? "owner"
-      : index <= PRO_INCLUDED_DEVELOPER_SEATS
-        ? "included"
-        : "extra",
+      : !paid
+        ? billing
+          ? "held"
+          : "kept"
+        : index >= seats
+          ? "kept"
+          : index <= PRO_INCLUDED_DEVELOPER_SEATS
+            ? "included"
+            : "extra",
   }));
 
   return {
@@ -90,8 +103,8 @@ export function useOrgSeats(): OrgSeats | undefined {
     holders: holders,
     yours: holders.find((holder) => holder.userId === user._id)?.seat,
     seats: seats,
-    extraSeats: billing?.extraSeats ?? 0,
-    paid: billing !== null && isPaid(billing.status),
+    extraSeats: Math.max(0, seats - seatsForQuantity(1)),
+    paid: paid,
     seatsToAdd: Math.max(seats, members.length + 1) - seats,
     billing: billing,
   };

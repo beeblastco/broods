@@ -4,7 +4,9 @@
  * `stripe:syncSeatsInternal` only lowers it once a member leaves. This runs
  * that same sync for every org that pays too much, so the units drop now
  * (Stripe credits the difference on the next invoice). It never raises a
- * quantity, and a second run finds nothing to change. Run it once per
+ * quantity, and a second run finds nothing to change. An org Stripe refuses
+ * is reported and the run carries on, so running it again retries only
+ * those. Run it once per
  * deployment after the deploy, dry first:
  * `npx convex run seatMigration:resyncAllSeats '{"dryRun":true}'`.
  * Delete this file once it has run on every deployment.
@@ -29,30 +31,46 @@ const resyncPageValidator = v.object({
   isDone: v.boolean(),
 });
 
+const resyncResultValidator = v.object({
+  done: v.array(resyncValidator),
+  failed: v.array(v.object({ orgId: v.id("orgs"), error: v.string() })),
+});
+
 type Resync = Infer<typeof resyncValidator>;
 type ResyncPage = Infer<typeof resyncPageValidator>;
+type ResyncResult = Infer<typeof resyncResultValidator>;
 
-/** Lower every org's units to what its members need. `dryRun` only lists the changes. */
+/**
+ * Lower every org's units to what its members need, and report the orgs it
+ * changed and the ones Stripe refused. `dryRun` only lists the changes.
+ */
 export const resyncAllSeats = internalAction({
   args: { dryRun: v.boolean() },
-  returns: v.array(resyncValidator),
-  handler: async (ctx, args): Promise<Array<Resync>> => {
-    const resynced: Array<Resync> = [];
+  returns: resyncResultValidator,
+  handler: async (ctx, args): Promise<ResyncResult> => {
+    const result: ResyncResult = { done: [], failed: [] };
     let cursor: string | null = null;
     for (;;) {
       const page: ResyncPage = await ctx.runQuery(
         internal.seatMigration.resyncPageInternal,
         { cursor: cursor },
       );
-      if (!args.dryRun) {
-        for (const resync of page.resyncs) {
-          await ctx.runAction(internal.stripe.syncSeatsInternal, {
+      for (const resync of page.resyncs) {
+        try {
+          if (!args.dryRun) {
+            await ctx.runAction(internal.stripe.syncSeatsInternal, {
+              orgId: resync.orgId,
+            });
+          }
+          result.done.push(resync);
+        } catch (error) {
+          result.failed.push({
             orgId: resync.orgId,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       }
-      resynced.push(...page.resyncs);
-      if (page.isDone) return resynced;
+      if (page.isDone) return result;
       cursor = page.continueCursor;
     }
   },

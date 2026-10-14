@@ -1589,7 +1589,6 @@ export declare const api: {
       null | {
         cancelAtPeriodEnd: boolean;
         currentPeriodEnd: number;
-        extraSeats: number;
         seats: number;
         status: string;
       }
@@ -6756,7 +6755,14 @@ export declare const internal: {
       "action",
       "internal",
       { dryRun: boolean },
-      Array<{ newQuantity: number; oldQuantity: number; orgId: Id<"orgs"> }>
+      {
+        done: Array<{
+          newQuantity: number;
+          oldQuantity: number;
+          orgId: Id<"orgs">;
+        }>;
+        failed: Array<{ error: string; orgId: Id<"orgs"> }>;
+      }
     >;
     resyncPageInternal: FunctionReference<
       "query",

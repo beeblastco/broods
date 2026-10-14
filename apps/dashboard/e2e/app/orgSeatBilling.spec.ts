@@ -274,11 +274,33 @@ test("an extra seat shows on the seat count and the monthly bill", async ({
   }
 });
 
-test("an owner whose payment failed is sent to Manage billing, not to Upgrade", async ({
+test("an owner whose payment failed sees Pro on hold, and is sent to Manage billing, not to Upgrade", async ({
   page,
 }) => {
   fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "past_due");
   try {
+    await openBilling(page, readProjectId());
+    const plan = page.locator("section").filter({
+      has: page.getByRole("heading", { name: "Your plan" }),
+    });
+    await expect(plan.getByText("Pro", { exact: true })).toBeVisible();
+    await expect(plan.getByText("Payment due", { exact: true })).toBeVisible();
+    await expect(
+      plan.getByText("€20/month · on hold until Stripe has the payment"),
+    ).toBeVisible();
+    await expect(plan.getByText("Hobby", { exact: true })).toHaveCount(0);
+    const seats = page.locator("section").filter({
+      has: page.getByRole("heading", { name: `Seats · ${adminOrg.name}` }),
+    });
+    await expect(seats.getByText("Seats on hold")).toBeVisible();
+    await expect(seats.getByText("On hold", { exact: true })).toHaveCount(2);
+    await expect(seats.getByText("Kept from before seats counted")).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByRole("heading", { name: "What you pay each month" }),
+    ).toHaveCount(0);
+
     await openMembers(page);
     const dialog = await openInvite(page);
     await expect(
@@ -399,8 +421,12 @@ async function expectBill(
   await expect(
     bill.getByText("Pro plan (includes 2 developer seats)"),
   ).toBeVisible();
-  await expect(bill.getByText(`Extra seats · ${extra} × €20`)).toBeVisible();
-  await expect(bill.getByText(total, { exact: true })).toBeVisible();
+  await expect(
+    bill.getByText(`Extra seats · ${extra} × €20/month`),
+  ).toBeVisible();
+  await expect(
+    bill.getByText("Total", { exact: true }).locator("..").getByText(total),
+  ).toBeVisible();
 }
 
 async function openMembers(page: Page): Promise<void> {

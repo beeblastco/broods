@@ -52,14 +52,9 @@ export function seatCount(count: number): string {
   return `${count} ${count === 1 ? "seat" : "seats"}`;
 }
 
-/** An amount in euros, like "€20". */
-export function euros(amount: number): string {
-  return `€${amount}`;
-}
-
 /** What `units` cost a month, like "€40/month". */
 export function perMonth(units: number): string {
-  return `${euros(units * UNIT_PRICE_EUR)}/month`;
+  return `€${units * UNIT_PRICE_EUR}/month`;
 }
 
 /** What Pro offers an org, wherever an upgrade is offered. */

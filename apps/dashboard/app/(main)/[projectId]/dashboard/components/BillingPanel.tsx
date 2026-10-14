@@ -21,7 +21,6 @@ import type { PlanTier } from "@/app/lib/pricing";
 import {
   DEFAULT_PLAN,
   isMaxPlan,
-  euros,
   perMonth,
   PLAN_CONFIGS,
   PRO_OFFER,
@@ -33,7 +32,6 @@ import { clientErrorData } from "@broods/convex/model/clientError";
 import {
   PRO_INCLUDED_DEVELOPER_SEATS,
   proQuantity,
-  UNIT_PRICE_EUR,
 } from "@broods/convex/model/orgBilling";
 import {
   BUDGET_WARNING_RATIO,
@@ -54,6 +52,8 @@ const SEAT_LABELS: Record<SeatKind, string> = {
   owner: "Owner",
   included: "Included with Pro",
   extra: `Extra seat · ${perMonth(1)}`,
+  kept: "Kept from before seats counted",
+  held: "On hold",
 };
 
 interface Notice {
@@ -347,9 +347,7 @@ function SeatsSection({
                       : holder.name}
                   </span>
                   <span className="shrink-0 text-muted-foreground">
-                    {paid || holder.seat === "owner"
-                      ? SEAT_LABELS[holder.seat]
-                      : "Kept from before seats counted"}
+                    {SEAT_LABELS[holder.seat]}
                   </span>
                 </li>
               ))}
@@ -369,9 +367,9 @@ function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
       ? "Your own Hobby plan stays free and separate."
       : "Your own Pro plan is billed separately.";
   const paidBy =
-    seats.paid && seats.yours === "included"
+    seats.yours === "included"
       ? `One of the ${PRO_INCLUDED_DEVELOPER_SEATS} seats included with ${seats.ownerName}'s Pro plan.`
-      : seats.paid
+      : seats.yours === "extra"
         ? `An extra seat paid by ${seats.ownerName}.`
         : `A seat in ${seats.ownerName}'s org.`;
 
@@ -402,15 +400,13 @@ function MonthlyBill({
           <span>
             Pro plan (includes {PRO_INCLUDED_DEVELOPER_SEATS} developer seats)
           </span>
-          <span className="tabular-nums">{euros(UNIT_PRICE_EUR)}</span>
+          <span className="tabular-nums">{perMonth(1)}</span>
         </div>
         <div className="flex justify-between gap-4 border-b border-border py-2 text-muted-foreground">
           <span>
-            Extra seats · {extraSeats} × {euros(UNIT_PRICE_EUR)}
+            Extra seats · {extraSeats} × {perMonth(1)}
           </span>
-          <span className="tabular-nums">
-            {euros(extraSeats * UNIT_PRICE_EUR)}
-          </span>
+          <span className="tabular-nums">{perMonth(extraSeats)}</span>
         </div>
         <div className="flex justify-between gap-4 py-2 font-semibold text-foreground">
           <span>Total</span>
@@ -535,13 +531,15 @@ function PlanSummary({
   seats: OrgSeats | undefined;
 }): React.JSX.Element {
   const selfHosted = budget?.enforced === false;
-  const detail = planDetail(budget, selfHosted, plan, seats);
+  // A subscription waiting on a payment is still Pro, held back until paid.
+  const shown: PlanTier = seats?.billing ? "pro" : plan;
+  const detail = planDetail(budget, selfHosted, shown, seats);
 
   return (
     <div className="grid gap-0.5">
       <div className="flex items-center gap-2">
         <span className="text-sm font-semibold text-foreground">
-          {selfHosted ? "Self-hosted" : PLAN_CONFIGS[plan].label}
+          {selfHosted ? "Self-hosted" : PLAN_CONFIGS[shown].label}
         </span>
         <PlanBadge
           selfHosted={selfHosted}
@@ -656,6 +654,9 @@ function planDetail(
   }
   const billing = seats?.billing;
   if (billing) {
+    if (!seats?.paid) {
+      return `${perMonth(1)} · on hold until Stripe has the payment`;
+    }
     const day = formatDay(billing.currentPeriodEnd * 1000);
     const when =
       billing.status === "trialing"

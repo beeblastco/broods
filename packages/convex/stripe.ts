@@ -25,7 +25,6 @@ import { ClientError } from "./model/clientError";
 import {
   isEnded,
   isPaid,
-  extraSeatsOf,
   orgMemberCount,
   proQuantity,
   seatsForQuantity,
@@ -178,8 +177,6 @@ export const getBillingInfo = query({
       currentPeriodEnd: v.number(),
       cancelAtPeriodEnd: v.boolean(),
       seats: v.number(),
-      /** Seats paid past the ones Pro includes. */
-      extraSeats: v.number(),
     }),
   ),
   handler: async (ctx) => {
@@ -203,7 +200,6 @@ export const getBillingInfo = query({
           currentPeriodEnd: live.currentPeriodEnd,
           cancelAtPeriodEnd: live.cancelAtPeriodEnd,
           seats: seatsOf(subs),
-          extraSeats: extraSeatsOf(subs),
         }
       : null;
   },

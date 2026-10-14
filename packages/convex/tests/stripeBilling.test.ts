@@ -576,7 +576,6 @@ describe("per-org billing", () => {
       currentPeriodEnd: expect.any(Number),
       cancelAtPeriodEnd: false,
       seats: 1,
-      extraSeats: 0,
     });
   });
 
@@ -684,10 +683,7 @@ describe("seats", () => {
       { orgId: second, name: "Second", plan: "free", seats: 1 },
     ]);
     caller.authId = "auth_member";
-    expect(await t.query(api.stripe.getBillingInfo, {})).toMatchObject({
-      seats: 5,
-      extraSeats: 2,
-    });
+    expect((await t.query(api.stripe.getBillingInfo, {}))?.seats).toBe(5);
     expect(await t.query(api.stripe.listOwnedOrgs, {})).toEqual([]);
   });
 
@@ -940,6 +936,24 @@ describe("creating an org", () => {
     ).rejects.toThrow("Second is still on Hobby");
   });
 
+  test("an owner whose payment is due is told to fix it, not to upgrade", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("past_due"),
+    );
+
+    await expect(
+      t.mutation(api.org.orgs.create, { name: "Second" }),
+    ).rejects.toThrow(
+      "Payment for Payer Org is due. Update the card in Billing first.",
+    );
+    expect(await ownedOrgCount(t)).toBe(1);
+  });
+
   test("a Hobby user who joined someone else's org still gets their own workspace, and only that", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     const t = billingTest();
@@ -1073,9 +1087,10 @@ describe("seat migration", () => {
       dryRun: true,
     });
 
-    expect(resyncs).toEqual([
-      { orgId: payerOrgId, oldQuantity: 3, newQuantity: 1 },
-    ]);
+    expect(resyncs).toEqual({
+      done: [{ orgId: payerOrgId, oldQuantity: 3, newQuantity: 1 }],
+      failed: [],
+    });
     expect(stripeCalls.subscriptions).not.toHaveBeenCalled();
   });
 
@@ -1100,7 +1115,42 @@ describe("seat migration", () => {
       stripeSubscriptionId: SUBSCRIPTION_ID,
     });
     expect(sub?.quantity).toBe(1);
-    expect(again).toEqual([]);
+    expect(again).toEqual({ done: [], failed: [] });
+  });
+
+  test("an org Stripe refuses is reported, and the run carries on with the rest", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedIncludedSeatsTaken(t, 3);
+    const second = await seedOrg(t, "Second");
+    await addMember(t, "auth_second_one", "second-one@example.com", second);
+    await addMember(t, "auth_second_two", "second-two@example.com", second);
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("active", "sub_second", 3, {
+        userId: AUTH_ID,
+        orgId: second,
+      }),
+    );
+    stripeCalls.subscriptions.mockImplementation(
+      async (id: string, params: Stripe.SubscriptionUpdateParams) => {
+        if (id === "sub_second") throw new Error("Stripe is down");
+
+        return await updateLive(id, params);
+      },
+    );
+
+    const result = await t.action(internal.seatMigration.resyncAllSeats, {
+      dryRun: false,
+    });
+
+    expect(result.done).toEqual([
+      { orgId: payerOrgId, oldQuantity: 3, newQuantity: 1 },
+    ]);
+    expect(result.failed).toEqual([
+      { orgId: second, error: expect.stringContaining("Stripe is down") },
+    ]);
   });
 });
 
