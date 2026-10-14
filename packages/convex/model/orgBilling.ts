@@ -21,6 +21,9 @@ import { isManagedService, type Plan } from "./planLimits";
 /** Developer seats Pro includes on top of the owner's, for its one unit. */
 export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
 
+/** One unit a month in euros: the price behind `STRIPE_SEAT_PRICE_ID`, Pro or one extra seat. */
+export const UNIT_PRICE_EUR = 20;
+
 /** Seats a free org has: the owner's. */
 export const FREE_ORG_SEATS = 1;
 
@@ -55,15 +58,27 @@ export function proQuantity(members: number): number {
   return Math.max(1, members - PRO_INCLUDED_DEVELOPER_SEATS);
 }
 
-/** The seats an org's subscriptions give it: the paid units plus the included seats, else the owner's seat. */
+/** The seats `quantity` paid units give a Pro org: the owner's and the included ones on the first unit, one more per unit after. */
+export function seatsForQuantity(quantity: number): number {
+  return quantity + PRO_INCLUDED_DEVELOPER_SEATS;
+}
+
+/** The seats an org's subscriptions give it: what the paid units buy, else the owner's seat. */
 export function seatsOf(
   subs: ReadonlyArray<{ status: string; quantity?: number }>,
 ): number {
   const paid = subs.find((sub) => isPaid(sub.status));
 
-  return paid
-    ? (paid.quantity ?? 1) + PRO_INCLUDED_DEVELOPER_SEATS
-    : FREE_ORG_SEATS;
+  return paid ? seatsForQuantity(paid.quantity ?? 1) : FREE_ORG_SEATS;
+}
+
+/** The extra seats an org's subscriptions pay for: the paid units past Pro's own. */
+export function extraSeatsOf(
+  subs: ReadonlyArray<{ status: string; quantity?: number }>,
+): number {
+  const paid = subs.find((sub) => isPaid(sub.status));
+
+  return paid ? (paid.quantity ?? 1) - 1 : 0;
 }
 
 /** The plan a payer's or an org's subscriptions grant: pro while one is paid. */
@@ -139,7 +154,7 @@ export async function assertCanCreateOrg(
   throw new ClientError(
     owned.some((org) => org.plan === "pro")
       ? `${hobby.name} is still on Hobby. Upgrade it to Pro before you create another organization.`
-      : `Creating an organization needs Pro. Upgrade ${hobby.name} to Pro first; you can still join an org when its owner invites you.`,
+      : `Creating an organization needs Pro. Upgrade ${hobby.name} to Pro first.`,
     "payment_required",
   );
 }

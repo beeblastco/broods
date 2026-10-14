@@ -99,7 +99,7 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         typeof info === "object" &&
           info !== null &&
           Object.keys(info).sort().join() ===
-            "cancelAtPeriodEnd,currentPeriodEnd,seats,status" &&
+            "cancelAtPeriodEnd,currentPeriodEnd,extraSeats,seats,status" &&
           "seats" in info &&
           info.seats === 3,
         billing,

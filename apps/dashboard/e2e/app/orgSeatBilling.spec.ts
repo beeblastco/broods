@@ -13,6 +13,7 @@ import {
   addUser,
   convex,
   fileSubscription,
+  removeUser,
   run,
   STACK_ADMIN,
   type StackUser,
@@ -36,9 +37,8 @@ interface OrgRow {
 
 let adminOrg: OrgRow;
 let owner: StackUser;
-// The developers on the admin's Pro org, and their memberships.
+// The developers who join the admin's Pro org.
 const developers: StackUser[] = [];
-const developerSeats: string[] = [];
 let acmeId: string;
 let acmeProjectId: string;
 // BROODS_MANAGED_SERVICE before the spec set it: null when unset,
@@ -110,12 +110,9 @@ test.afterAll(async () => {
     () =>
       adminOrg &&
       run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id }),
-    // Self-hosted again, so giving back their seats calls no Stripe.
-    ...developerSeats.map(
-      (membershipId) => () =>
-        run(STACK_ADMIN, "org/members:remove", { membershipId: membershipId }),
-    ),
     () => acmeId && run(owner, "org/orgs:remove", { orgId: acmeId }),
+    // Self-hosted again, so the seats the users free call no Stripe.
+    ...[owner, ...developers].map((user) => () => user && removeUser(user)),
   ];
   const failures = steps.flatMap((step) => {
     try {
@@ -147,7 +144,7 @@ test("an owner on Hobby sees their plan, no developer seats, and what Upgrade co
   await expect(page.getByText("No developer seats on Hobby")).toBeVisible();
   await expect(
     page.getByText(
-      "Pro lets you create an org and includes 2 developer seats. Extra seats are €20/month each.",
+      "Pro is €20/month: it lets you create an org and includes 2 developer seats. Extra seats are €20/month each.",
     ),
   ).toBeVisible();
   await expect(
@@ -180,17 +177,20 @@ test("creating an org needs Pro, and Upgrade opens the Hobby org's Billing", asy
   await page.getByRole("button", { name: adminOrg.name }).click();
   await page.getByRole("menuitem", { name: "Create organization" }).click();
   const dialog = page.getByRole("dialog", { name: "New organization" });
+  await dialog.getByLabel("Name").fill("Side Project");
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
 
   await expect(
-    dialog.getByText("Creating an organization needs Pro"),
+    dialog.getByText(
+      /^Creating an organization needs Pro\. Upgrade .+ to Pro first\.$/,
+    ),
   ).toBeVisible();
   await expect(
     dialog.getByText("You can still join an org when its owner invites you."),
   ).toBeVisible();
-  await expect(dialog.getByLabel("Name")).toHaveCount(0);
   await expect(
     dialog.getByRole("button", { name: "Create", exact: true }),
-  ).toHaveCount(0);
+  ).toBeDisabled();
   await dialog.getByRole("button", { name: "Upgrade to Pro" }).click();
   await page.waitForURL(/\/dashboard\?tab=billing/);
   await expect(page.getByRole("heading", { name: "Your plan" })).toBeVisible();
@@ -203,15 +203,11 @@ test("a Pro owner sees the seats Pro includes, what each costs, and adds one onc
 }) => {
   fileSubscription(adminOrg._id, STACK_ADMIN, subId("admin"), 1, "active");
   for (const developer of developers) {
-    developerSeats.push(
-      idOf(
-        run(STACK_ADMIN, "org/members:add", {
-          orgId: adminOrg._id,
-          email: developer.email,
-          role: "member",
-        }),
-      ),
-    );
+    run(STACK_ADMIN, "org/members:add", {
+      orgId: adminOrg._id,
+      email: developer.email,
+      role: "member",
+    });
   }
   await openBilling(page, readProjectId());
   await expect(page.getByText(/^€20\/month · renews /)).toBeVisible();

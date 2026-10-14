@@ -25,6 +25,7 @@ import { Label } from "@/app/components/ui/label";
 import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { clientErrorData } from "@broods/convex/model/clientError";
 import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -44,26 +45,16 @@ export function OrgSwitcher(): React.JSX.Element {
   const provision = useAction(api.org.lifecycle.provision);
 
   const [createOpen, setCreateOpen] = useState(false);
-  // Whether plans apply (the managed service), read only once New
-  // organization opens, so the header never holds the allowance query.
-  const budget = useQuery(
-    api.account.budget.getForActiveOrg,
-    createOpen ? {} : "skip",
-  );
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // The server's refusal when creating an org needs Pro (model/orgBilling.ts).
+  const [needsPro, setNeedsPro] = useState<string | null>(null);
   const openBilling = useOpenBilling();
-  // Creating an org needs Pro (model/orgBilling.ts): past their own Hobby
-  // org, every org the user owns must be on Pro. The server checks it again.
-  const owned = (orgs ?? []).filter(
-    (org) => org.ownerAuthId === currentUser?.authId,
+  // The Hobby org the user owns, which Upgrade opens.
+  const hobbyOrg = orgs?.find(
+    (org) => org.plan === "free" && org.ownerAuthId === currentUser?.authId,
   );
-  const hobbyOrg =
-    budget?.enforced === true
-      ? owned.find((org) => org.plan === "free")
-      : undefined;
-  const onPro = owned.some((org) => org.plan === "pro");
 
   // Switching org invalidates whatever project the URL points at: send the user
   // to the gallery when the new org has none, so they can create their first.
@@ -110,7 +101,9 @@ export function OrgSwitcher(): React.JSX.Element {
       router.replace("/projects");
       router.refresh();
     } catch (err) {
-      setCreateError(toErrorMessage(err));
+      const refusal = clientErrorData(err);
+      if (refusal?.code === "payment_required") setNeedsPro(refusal.message);
+      else setCreateError(toErrorMessage(err));
     } finally {
       setCreating(false);
     }
@@ -119,6 +112,7 @@ export function OrgSwitcher(): React.JSX.Element {
   function closeCreate(): void {
     setCreateOpen(false);
     setCreateError(null);
+    setNeedsPro(null);
   }
 
   const label =
@@ -197,39 +191,26 @@ export function OrgSwitcher(): React.JSX.Element {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-2">
-            {hobbyOrg ? (
+            <Label htmlFor="new-org-name" variant="muted" className="text-xs">
+              Name
+            </Label>
+            <Input
+              id="new-org-name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Acme Inc."
+              autoComplete="off"
+            />
+            {needsPro && (
               <div
-                className="grid gap-1 rounded-md bg-muted px-3 py-2.5 text-xs"
+                className="mt-1 grid gap-1 rounded-md bg-muted px-3 py-2.5 text-xs"
                 data-testid="create-org-needs-pro"
               >
-                <p className="font-medium text-foreground">
-                  {onPro
-                    ? `${hobbyOrg.name} is still on Hobby`
-                    : "Creating an organization needs Pro"}
-                </p>
+                <p className="font-medium text-foreground">{needsPro}</p>
                 <p className="text-muted-foreground">
-                  {onPro
-                    ? "A new organization starts on Hobby. Upgrade it to Pro before you create the next one."
-                    : "You can still join an org when its owner invites you."}
+                  You can still join an org when its owner invites you.
                 </p>
               </div>
-            ) : (
-              <>
-                <Label
-                  htmlFor="new-org-name"
-                  variant="muted"
-                  className="text-xs"
-                >
-                  Name
-                </Label>
-                <Input
-                  id="new-org-name"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Acme Inc."
-                  autoComplete="off"
-                />
-              </>
             )}
             {createError && (
               <p className="text-xs text-destructive">{createError}</p>
@@ -244,25 +225,25 @@ export function OrgSwitcher(): React.JSX.Element {
             >
               Cancel
             </Button>
-            {hobbyOrg ? (
+            {needsPro && hobbyOrg && (
               <Button
+                variant="outline"
                 className="cursor-pointer"
                 onClick={() => {
                   closeCreate();
                   void openBilling(hobbyOrg._id);
                 }}
               >
-                {onPro ? `Upgrade ${hobbyOrg.name}` : "Upgrade to Pro"}
-              </Button>
-            ) : (
-              <Button
-                className="cursor-pointer"
-                disabled={creating || !newName.trim()}
-                onClick={handleCreate}
-              >
-                {creating ? "Creating..." : "Create"}
+                Upgrade to Pro
               </Button>
             )}
+            <Button
+              className="cursor-pointer"
+              disabled={creating || !newName.trim() || needsPro !== null}
+              onClick={handleCreate}
+            >
+              {creating ? "Creating..." : "Create"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

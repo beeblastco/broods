@@ -103,6 +103,31 @@ export function addUser(
 }
 
 /**
+ * Delete a user `addUser` made, from both stores: ours, with their
+ * memberships and the orgs only they belong to, the way a WorkOS deletion
+ * finishes, then the AuthKit component's, the way its `user.deleted` event
+ * does. Run it with the managed service off, so a seat they free calls no
+ * Stripe.
+ */
+export function removeUser(user: StackUser): void {
+  run(null, "org/workosUserDeletion:finalize", { authId: user.authId });
+  convex([
+    "run",
+    "--component",
+    "workOSAuthKit",
+    "lib:processEvent",
+    JSON.stringify({
+      event: {
+        id: `evt_e2e_delete_${user.authId}`,
+        createdAt: new Date().toISOString(),
+        event: "user.deleted",
+        data: { id: user.authId },
+      },
+    }),
+  ]);
+}
+
+/**
  * File a subscription for an org as the Stripe webhook does once it has read
  * one back. Nothing here reaches Stripe.
  */

@@ -576,6 +576,7 @@ describe("per-org billing", () => {
       currentPeriodEnd: expect.any(Number),
       cancelAtPeriodEnd: false,
       seats: 1,
+      extraSeats: 0,
     });
   });
 
@@ -683,7 +684,10 @@ describe("seats", () => {
       { orgId: second, name: "Second", plan: "free", seats: 1 },
     ]);
     caller.authId = "auth_member";
-    expect((await t.query(api.stripe.getBillingInfo, {}))?.seats).toBe(5);
+    expect(await t.query(api.stripe.getBillingInfo, {})).toMatchObject({
+      seats: 5,
+      extraSeats: 2,
+    });
     expect(await t.query(api.stripe.listOwnedOrgs, {})).toEqual([]);
   });
 
@@ -1054,6 +1058,49 @@ describe("billing migration", () => {
     expect(moves).toEqual([]);
     expect(await orgPlan(t, small)).toBe("free");
     expect(await orgPlan(t, large)).toBe("free");
+  });
+});
+
+// The cutover to Pro's included seats: a subscription bought at one unit per
+// member drops to what its members need now, not when someone leaves.
+describe("seat migration", () => {
+  test("a dry run reports an old-formula 3-member org at 3 to 1 units and changes nothing", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedIncludedSeatsTaken(t, 3);
+
+    const resyncs = await t.action(internal.seatMigration.resyncAllSeats, {
+      dryRun: true,
+    });
+
+    expect(resyncs).toEqual([
+      { orgId: payerOrgId, oldQuantity: 3, newQuantity: 1 },
+    ]);
+    expect(stripeCalls.subscriptions).not.toHaveBeenCalled();
+  });
+
+  test("the real run sets it to 1 unit, and a second run changes nothing", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedIncludedSeatsTaken(t, 3);
+    stripeCalls.subscriptions.mockImplementation(updateLive);
+
+    await t.action(internal.seatMigration.resyncAllSeats, { dryRun: false });
+    const again = await t.action(internal.seatMigration.resyncAllSeats, {
+      dryRun: false,
+    });
+
+    expect(stripeCalls.subscriptions).toHaveBeenCalledTimes(1);
+    expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
+      items: [{ id: ITEM_ID, price: "price_seat", quantity: 1 }],
+      proration_behavior: "create_prorations",
+      payment_behavior: "error_if_incomplete",
+    });
+    const sub = await t.query(components.stripe.public.getSubscription, {
+      stripeSubscriptionId: SUBSCRIPTION_ID,
+    });
+    expect(sub?.quantity).toBe(1);
+    expect(again).toEqual([]);
   });
 });
 

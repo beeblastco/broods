@@ -67,17 +67,13 @@ import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDay } from "@/app/lib/allowance";
 import { formatDate } from "@/app/lib/formatTime";
 import { tabHref } from "@/app/lib/navigation";
-import { perMonth } from "@/app/lib/pricing";
+import { perMonth, PRO_OFFER } from "@/app/lib/pricing";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { clientErrorData } from "@broods/convex/model/clientError";
-import {
-  isPaid,
-  PRO_INCLUDED_DEVELOPER_SEATS,
-  proQuantity,
-} from "@broods/convex/model/orgBilling";
+import { proQuantity } from "@broods/convex/model/orgBilling";
 import type { FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
@@ -692,9 +688,7 @@ function SeatNotice({
       )}
       {step === "upgrade" && (
         <p className="text-muted-foreground">
-          Pro is {perMonth(1)} and includes {PRO_INCLUDED_DEVELOPER_SEATS}{" "}
-          developer seats; each seat past those is {perMonth(1)}. Upgrade opens
-          Stripe Checkout
+          {PRO_OFFER} Upgrade opens Stripe Checkout
           {seats.members > 1
             ? ` for all ${seats.members} members: ${perMonth(proQuantity(seats.members))}`
             : ""}
@@ -725,7 +719,7 @@ function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
   if (!seats.isOwner) return "ask";
   if (!seats.billing) return "upgrade";
 
-  return isPaid(seats.billing.status) ? "seat" : "billing";
+  return seats.paid ? "seat" : "billing";
 }
 
 function matchesField(member: Member, _field: Field, value: string): boolean {

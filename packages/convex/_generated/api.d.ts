@@ -1589,6 +1589,7 @@ export declare const api: {
       null | {
         cancelAtPeriodEnd: boolean;
         currentPeriodEnd: number;
+        extraSeats: number;
         seats: number;
         status: string;
       }
@@ -6749,6 +6750,28 @@ export declare const internal: {
         null
       >;
     };
+  };
+  seatMigration: {
+    resyncAllSeats: FunctionReference<
+      "action",
+      "internal",
+      { dryRun: boolean },
+      Array<{ newQuantity: number; oldQuantity: number; orgId: Id<"orgs"> }>
+    >;
+    resyncPageInternal: FunctionReference<
+      "query",
+      "internal",
+      { cursor: string | null },
+      {
+        continueCursor: string;
+        isDone: boolean;
+        resyncs: Array<{
+          newQuantity: number;
+          oldQuantity: number;
+          orgId: Id<"orgs">;
+        }>;
+      }
+    >;
   };
   stripe: {
     applySubscriptionInternal: FunctionReference<

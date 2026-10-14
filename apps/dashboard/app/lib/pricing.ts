@@ -1,4 +1,8 @@
 import type { Doc } from "@broods/convex/_generated/dataModel";
+import {
+  PRO_INCLUDED_DEVELOPER_SEATS,
+  UNIT_PRICE_EUR,
+} from "@broods/convex/model/orgBilling";
 import type { VariantProps } from "class-variance-authority";
 
 import type { badgeVariants } from "@/app/components/ui/badge";
@@ -43,18 +47,20 @@ export function isMaxPlan(plan: PlanTier): boolean {
   return plan === "pro";
 }
 
-/**
- * One unit of `STRIPE_SEAT_PRICE_ID` a month, in euros: Pro for an org, with
- * its included developer seats, or one extra seat past those.
- */
-export const UNIT_PRICE_EUR = 20;
-
 /** `count` seats, like "1 seat" or "3 seats". */
 export function seatCount(count: number): string {
   return `${count} ${count === 1 ? "seat" : "seats"}`;
 }
 
+/** An amount in euros, like "€20". */
+export function euros(amount: number): string {
+  return `€${amount}`;
+}
+
 /** What `units` cost a month, like "€40/month". */
 export function perMonth(units: number): string {
-  return `€${units * UNIT_PRICE_EUR}/month`;
+  return `${euros(units * UNIT_PRICE_EUR)}/month`;
 }
+
+/** What Pro offers an org, wherever an upgrade is offered. */
+export const PRO_OFFER = `Pro is ${perMonth(1)}: it lets you create an org and includes ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats. Extra seats are ${perMonth(1)} each.`;

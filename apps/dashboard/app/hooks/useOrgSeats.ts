@@ -46,6 +46,8 @@ export interface OrgSeats {
   seats: number;
   /** Seats paid past the ones Pro includes. */
   extraSeats: number;
+  /** The org's subscription is paid, so its seats count. */
+  paid: boolean;
   /** Seats Add seat buys: enough for every member plus one more (`stripe.addSeat`). */
   seatsToAdd: number;
   /** The org's subscription that has not ended, or null when it has none. */
@@ -88,10 +90,8 @@ export function useOrgSeats(): OrgSeats | undefined {
     holders: holders,
     yours: holders.find((holder) => holder.userId === user._id)?.seat,
     seats: seats,
-    extraSeats:
-      billing && isPaid(billing.status)
-        ? Math.max(0, seats - FREE_ORG_SEATS - PRO_INCLUDED_DEVELOPER_SEATS)
-        : 0,
+    extraSeats: billing?.extraSeats ?? 0,
+    paid: billing !== null && isPaid(billing.status),
     seatsToAdd: Math.max(seats, members.length + 1) - seats,
     billing: billing,
   };

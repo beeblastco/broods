@@ -25,9 +25,10 @@ import { ClientError } from "./model/clientError";
 import {
   isEnded,
   isPaid,
+  extraSeatsOf,
   orgMemberCount,
-  PRO_INCLUDED_DEVELOPER_SEATS,
   proQuantity,
+  seatsForQuantity,
   seatsOf,
   syncOrgPlan,
   syncUserPlan,
@@ -132,7 +133,7 @@ export const addSeat = action({
         "always_invoice",
       );
 
-      return { seats: quantity + PRO_INCLUDED_DEVELOPER_SEATS };
+      return { seats: seatsForQuantity(quantity) };
     } catch (error) {
       if (!(error instanceof Stripe.errors.StripeCardError)) throw error;
       throw new ClientError(
@@ -177,6 +178,8 @@ export const getBillingInfo = query({
       currentPeriodEnd: v.number(),
       cancelAtPeriodEnd: v.boolean(),
       seats: v.number(),
+      /** Seats paid past the ones Pro includes. */
+      extraSeats: v.number(),
     }),
   ),
   handler: async (ctx) => {
@@ -200,6 +203,7 @@ export const getBillingInfo = query({
           currentPeriodEnd: live.currentPeriodEnd,
           cancelAtPeriodEnd: live.cancelAtPeriodEnd,
           seats: seatsOf(subs),
+          extraSeats: extraSeatsOf(subs),
         }
       : null;
   },

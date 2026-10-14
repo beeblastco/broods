@@ -21,18 +21,19 @@ import type { PlanTier } from "@/app/lib/pricing";
 import {
   DEFAULT_PLAN,
   isMaxPlan,
+  euros,
   perMonth,
   PLAN_CONFIGS,
+  PRO_OFFER,
   seatCount,
-  UNIT_PRICE_EUR,
 } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { clientErrorData } from "@broods/convex/model/clientError";
 import {
-  isPaid,
   PRO_INCLUDED_DEVELOPER_SEATS,
   proQuantity,
+  UNIT_PRICE_EUR,
 } from "@broods/convex/model/orgBilling";
 import {
   BUDGET_WARNING_RATIO,
@@ -110,8 +111,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
       : null;
   const notice = pickNotice(
     budget,
-    billingInfo?.status,
-    billingInfo?.currentPeriodEnd,
+    billingInfo,
     canUpgrade,
     ownerOnly,
     plan,
@@ -303,8 +303,18 @@ function SeatsSection({
 }): React.JSX.Element | null {
   if (!seats?.enforced) return null;
   if (!seats.isOwner) return <YourSeat seats={seats} />;
-  const { billing, members, extraSeats } = seats;
-  const paid = billing !== null && isPaid(billing.status);
+  const { billing, members, extraSeats, paid } = seats;
+  const [headline, detail] = paid
+    ? [
+        `${members} of ${seatCount(seats.seats)} used`,
+        `You, plus ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats included with Pro${extraSeats > 0 ? ` and ${extraSeats} extra` : ""}`,
+      ]
+    : billing
+      ? [
+          "Seats on hold",
+          "The seats come back once Stripe has the payment. Update the card in Manage subscription.",
+        ]
+      : ["No developer seats on Hobby", PRO_OFFER];
 
   return (
     <>
@@ -313,19 +323,9 @@ function SeatsSection({
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="grid gap-0.5">
               <span className="text-sm font-semibold text-foreground">
-                {paid
-                  ? `${members} of ${seatCount(seats.seats)} used`
-                  : billing
-                    ? "Seats on hold"
-                    : "No developer seats on Hobby"}
+                {headline}
               </span>
-              <p className="text-xs text-muted-foreground">
-                {paid
-                  ? `You, plus ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats included with Pro${extraSeats > 0 ? ` and ${extraSeats} extra` : ""}`
-                  : billing
-                    ? "The seats come back once Stripe has the payment. Update the card in Manage subscription."
-                    : `Pro lets you create an org and includes ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats. Extra seats are ${perMonth(1)} each.`}
-              </p>
+              <p className="text-xs text-muted-foreground">{detail}</p>
               {!billing && members > 1 && (
                 <p className="text-xs text-muted-foreground">
                   {`${members} members kept from before seats counted. Upgrading charges ${perMonth(proQuantity(members))} for all of them; no new invites until then.`}
@@ -362,19 +362,18 @@ function SeatsSection({
   );
 }
 
-/** A member's own seat in someone else's org: who pays for it, and that they never do. */
+/** A member's own seat in someone else's org: who pays for it. The plan already says they never do. */
 function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
-  const paid = seats.billing !== null && isPaid(seats.billing.status);
   const own =
     seats.userPlan === "free"
       ? "Your own Hobby plan stays free and separate."
       : "Your own Pro plan is billed separately.";
   const paidBy =
-    paid && seats.yours === "included"
+    seats.paid && seats.yours === "included"
       ? `One of the ${PRO_INCLUDED_DEVELOPER_SEATS} seats included with ${seats.ownerName}'s Pro plan.`
-      : paid
+      : seats.paid
         ? `An extra seat paid by ${seats.ownerName}.`
-        : `A seat in ${seats.ownerName}'s org. You are not charged.`;
+        : `A seat in ${seats.ownerName}'s org.`;
 
   return (
     <Section title="Your seat">
@@ -396,30 +395,24 @@ function MonthlyBill({
 }: {
   extraSeats: number;
 }): React.JSX.Element {
-  const rows: Array<[string, string]> = [
-    [
-      `Pro plan (includes ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats)`,
-      `€${UNIT_PRICE_EUR}`,
-    ],
-    [
-      `Extra seats · ${extraSeats} × €${UNIT_PRICE_EUR}`,
-      `€${extraSeats * UNIT_PRICE_EUR}`,
-    ],
-  ];
-
   return (
     <Section title="What you pay each month">
-      <div className="grid rounded-lg border border-border bg-card px-4 py-1">
-        {rows.map(([label, amount]) => (
-          <div
-            key={label}
-            className="flex justify-between gap-4 border-b border-border py-2 text-xs text-muted-foreground"
-          >
-            <span>{label}</span>
-            <span className="tabular-nums">{amount}</span>
-          </div>
-        ))}
-        <div className="flex justify-between gap-4 py-2 text-xs font-semibold text-foreground">
+      <div className="grid rounded-lg border border-border bg-card px-4 py-1 text-xs">
+        <div className="flex justify-between gap-4 border-b border-border py-2 text-muted-foreground">
+          <span>
+            Pro plan (includes {PRO_INCLUDED_DEVELOPER_SEATS} developer seats)
+          </span>
+          <span className="tabular-nums">{euros(UNIT_PRICE_EUR)}</span>
+        </div>
+        <div className="flex justify-between gap-4 border-b border-border py-2 text-muted-foreground">
+          <span>
+            Extra seats · {extraSeats} × {euros(UNIT_PRICE_EUR)}
+          </span>
+          <span className="tabular-nums">
+            {euros(extraSeats * UNIT_PRICE_EUR)}
+          </span>
+        </div>
+        <div className="flex justify-between gap-4 py-2 font-semibold text-foreground">
           <span>Total</span>
           <span className="tabular-nums">{perMonth(1 + extraSeats)}</span>
         </div>
@@ -567,14 +560,13 @@ function PlanSummary({
 // `ownerOnly` tells a member of a free org who can upgrade it.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
-  status: string | undefined,
-  periodEnd: number | undefined,
+  billing: OrgSeats["billing"] | undefined,
   canUpgrade: boolean,
   ownerOnly: string | null,
   plan: PlanTier,
   checkoutReturned: boolean,
 ): Notice | null {
-  if (status && PAYMENT_DUE_STATUSES.has(status)) {
+  if (billing && PAYMENT_DUE_STATUSES.has(billing.status)) {
     return {
       tone: "destructive",
       text: "Payment failed. Update your card to keep Pro.",
@@ -614,10 +606,10 @@ function pickNotice(
       ...(canUpgrade ? { action: "upgrade", actionLabel: "Upgrade" } : {}),
     };
   }
-  if (status === "trialing" && periodEnd) {
+  if (billing?.status === "trialing") {
     return {
       tone: "info",
-      text: `Pro trial ends ${formatDay(periodEnd * 1000)}. Keep a card on file to stay on Pro.`,
+      text: `Pro trial ends ${formatDay(billing.currentPeriodEnd * 1000)}. Keep a card on file to stay on Pro.`,
       action: "portal",
       actionLabel: "Add card",
     };
