@@ -129,7 +129,9 @@ export async function signIn(page: Page): Promise<void> {
   });
   await page.getByLabel(/email/i).fill(probeAccount.email!);
   await page.getByRole("button", { name: /continue/i }).click();
-  await page.getByLabel(/password/i).fill(probeAccount.password!);
+  await page
+    .getByRole("textbox", { name: /password/i })
+    .fill(probeAccount.password!);
   await page.getByRole("button", { name: /continue|sign in/i }).click();
   await page.waitForURL((url) => url.origin === origin, {
     timeout: AUTH_TIMEOUT_MS,
