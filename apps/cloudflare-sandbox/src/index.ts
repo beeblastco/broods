@@ -82,8 +82,14 @@ export class Sandbox extends DurableObject<Env> {
     const container = ctx.container;
     const idleMs = ctx.storage.kv.get<number>(IDLE_KEY);
     if (container?.running && idleMs !== undefined) {
+      // A rejection here would reset the Durable Object; the next exec sets
+      // the window again, so a failure is only logged.
       void ctx.blockConcurrencyWhile((): Promise<void> =>
-        container.setInactivityTimeout(idleMs),
+        container
+          .setInactivityTimeout(idleMs)
+          .catch((error: unknown): void =>
+            console.error("restoring the idle window failed", error),
+          ),
       );
     }
   }
