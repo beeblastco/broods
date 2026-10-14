@@ -12,8 +12,9 @@ test("the terminal fills the dock and draws in a real monospace font", async ({
   }).toPass();
   await open.click();
 
-  // The connection state sits in the dock's one header row, not over the shell.
-  await expect(page.getByText("Not connected")).toBeVisible();
+  // Before a connect the header carries no state word (a role that may write
+  // gets the Connect button there), and no explainer sits over the shell.
+  await expect(page.getByText("Not connected")).toHaveCount(0);
   await expect(page.getByText("Interactive shell inside")).toHaveCount(0);
 
   // xterm sizes its cells on a canvas, where var() does not resolve: handed

@@ -16,15 +16,15 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useAction } from "convex/react";
-import { RefreshCw } from "lucide-react";
+import { Plug, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toErrorMessage } from "@/app/lib/errors";
 
 type TerminalStatus = keyof typeof CONNECTION_TONE;
 
-const STATUS_LABEL: Record<TerminalStatus, string> = {
-  idle: "Not connected",
+// Before the first connect the header shows only the Connect button.
+const STATUS_LABEL: Record<Exclude<TerminalStatus, "idle">, string> = {
   connecting: "Connecting",
   live: "Connected",
   ended: "Session ended",
@@ -192,28 +192,32 @@ export function LiveSandboxTerminal({
       {controls &&
         createPortal(
           <>
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <StatusDot tone={CONNECTION_TONE[status]} label={status} />
-              <span className="shrink-0">
-                {disabled ? "Waiting for the sandbox" : STATUS_LABEL[status]}
-              </span>
-              {error && (
-                <span className="truncate text-destructive" title={error}>
-                  {error}
+            {(disabled || status !== "idle") && (
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <StatusDot tone={CONNECTION_TONE[status]} label={status} />
+                <span className="shrink-0">
+                  {disabled || status === "idle"
+                    ? "Waiting for the sandbox"
+                    : STATUS_LABEL[status]}
                 </span>
-              )}
-            </span>
+                {error && (
+                  <span className="truncate text-destructive" title={error}>
+                    {error}
+                  </span>
+                )}
+              </span>
+            )}
             {canWrite && status !== "connecting" && (
               <Button
                 type="button"
-                variant="ghost"
+                variant={status === "idle" ? "default" : "ghost"}
                 size="xs"
-                tone="muted"
+                tone={status === "idle" ? "default" : "muted"}
                 disabled={disabled || !term}
                 onClick={handleConnect}
                 className="cursor-pointer"
               >
-                <RefreshCw />
+                {status === "idle" ? <Plug /> : <RefreshCw />}
                 {status === "idle" ? "Connect" : "Reconnect"}
               </Button>
             )}
