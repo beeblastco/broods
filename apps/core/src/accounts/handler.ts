@@ -4,6 +4,7 @@
  * plane.
  */
 
+import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { isUnreachableError } from "../shared/errors.ts";
 import {
   roleDenial,
@@ -135,6 +136,8 @@ interface SandboxLifecycleContext {
   body: Record<string, unknown>;
   config: SandboxConfig;
   executor: SandboxExecutor;
+  /** The sandbox config's name, shown in a Cloudflare terminal's prompt. */
+  name: string;
   provider: SandboxProvider;
   ref: { reservationKey: string };
   reservationKey: string;
@@ -414,6 +417,7 @@ async function handleSandboxLifecycle(
     },
     body: body,
     config: record.config,
+    name: record.name,
     // The control plane names the record's stage, so a machine this action
     // creates may boot the record's own snapshot.
     executor: createSandboxExecutor({
@@ -528,11 +532,7 @@ async function openSandboxTerminal(
   // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
   // shell endpoint (SHELL_INGRESS); the cloudflare bridge opens a PTY in its
   // Container. Other providers keep the bounded `exec` terminal.
-  if (
-    context.provider !== "sandbox" &&
-    context.provider !== "lambda" &&
-    context.provider !== "cloudflare"
-  ) {
+  if (!LIVE_TERMINAL_SANDBOX_PROVIDERS.has(context.provider)) {
     return unsupportedSandboxAction(context, "a live terminal");
   }
   const externalId = await getSandboxExternalId(
@@ -606,7 +606,7 @@ async function openSandboxTerminal(
     // A token for this one terminal, so the gateway never holds the bridge
     // key that reaches every sandbox.
     target = {
-      url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal`,
+      url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal?name=${encodeURIComponent(context.name)}`,
       authorization: `Bearer ${await signTerminalToken(
         apiKey,
         externalId,
