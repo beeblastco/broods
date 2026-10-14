@@ -68,8 +68,15 @@ const QUERY_FIELDS = ["provider", "status", "agent"] as const;
 // Rows shown before the footer offers more; the live query holds them all.
 const PAGE_SIZE = 50;
 
-// Eight columns of short text; below this the detail panel would wrap them.
-const TABLE_MIN_WIDTH = 760;
+// Nine columns of short text; below this the detail panel would wrap them.
+const TABLE_MIN_WIDTH = 840;
+
+// The providers core can suspend and resume; the others only stop after their
+// idle window or on Terminate, so their running switch is off limits.
+const SUSPENDABLE_PROVIDERS: ReadonlySet<Instance["provider"]> = new Set([
+  "lambda",
+  "sandbox",
+]);
 
 // How often the visible rows re-sync their status from the provider.
 const REFRESH_EVERY_MS = 60_000;
@@ -527,8 +534,10 @@ function InstanceRow({
   const searchParams = useSearchParams();
   const { instance, agent } = row;
   const running = instance.status === "running";
+  const suspendable = SUSPENDABLE_PROVIDERS.has(instance.provider);
   const toggleable =
     canToggle &&
+    suspendable &&
     controllable(instance) &&
     (instance.status === "running" || instance.status === "suspended");
   const traceId = instance.lastUsedTraceId ?? instance.createdByTraceId;
@@ -599,11 +608,19 @@ function InstanceRow({
       <DataTableCell align="right" muted className="tabular-nums">
         {shells > 0 ? shells : "—"}
       </DataTableCell>
-      <DataTableCell align="right" onClick={(event) => event.stopPropagation()}>
+      <DataTableCell
+        align="right"
+        title={
+          suspendable
+            ? undefined
+            : `${formatProvider(instance.provider)} sandboxes can't be suspended. They stop after their idle window; Terminate stops one now.`
+        }
+        onClick={(event) => event.stopPropagation()}
+      >
         <Switch
           checked={running}
           disabled={!toggleable}
-          className="cursor-pointer"
+          className={toggleable ? "cursor-pointer" : "cursor-not-allowed"}
           onCheckedChange={onToggle}
           aria-label={running ? "Suspend" : "Resume"}
         />
