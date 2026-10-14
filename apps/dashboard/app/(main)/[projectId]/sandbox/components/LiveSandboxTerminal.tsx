@@ -191,15 +191,14 @@ export function LiveSandboxTerminal({
       <div className="flex min-h-0 flex-1 py-2 pl-3">
         <div ref={containerRef} className="h-full min-h-40 w-full font-mono" />
       </div>
-      {status === "idle" ? (
+      {status === "idle" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-terminal-background">
           {connect}
           <p className="text-2xs text-terminal-muted">{label}</p>
         </div>
-      ) : (
-        (status === "ended" || status === "error") && (
-          <div className="px-3 pb-3">{connect}</div>
-        )
+      )}
+      {(status === "ended" || status === "error") && (
+        <div className="px-3 pb-3">{connect}</div>
       )}
     </div>
   );

@@ -34,3 +34,14 @@ export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 // Providers whose workspace is a mount-s3 FUSE mount, which has no rename or append.
 export const S3_MOUNT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["daytona", "lambda", "sandbox"]);
+
+// Providers core can suspend and resume: their executors implement `suspend()`
+// and `resume()`. The rest stop after their idle window or on Terminate.
+export const SUSPEND_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
+  new Set<SandboxProvider>(["sandbox", "lambda"]);
+
+// Providers core opens a live PTY for: workdir (`sandbox`) over its in-guest
+// WebSocket, AWS MicroVM (`lambda`) over its shell endpoint, and the
+// Cloudflare bridge in its Container. The rest keep the bounded `exec` runner.
+export const LIVE_TERMINAL_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
+  new Set<SandboxProvider>(["sandbox", "lambda", "cloudflare"]);

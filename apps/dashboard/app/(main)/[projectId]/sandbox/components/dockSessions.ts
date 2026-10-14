@@ -42,45 +42,47 @@ export function closeDockSession(
   return { sessions: sessions, active: active };
 }
 
-/**
- * Shows a sandbox's session of this kind, opening one when it has none. With
- * `fresh` a shell always opens anew, next to that sandbox's other sessions.
- */
+/** Shows a sandbox's session of this kind, opening one when it has none. */
 export function openDockSession(
   state: DockState | null,
   instanceId: Id<"sandboxInstances">,
   kind: DockSessionKind,
-  fresh = false,
 ): DockState {
-  const sessions = state?.sessions ?? [];
-  const own = sessions.filter((session) => session.instanceId === instanceId);
-  const existing = own.find((session) => session.kind === kind);
-  if (existing && !(fresh && kind === "shell")) {
-    return { sessions: sessions, active: existing.key };
-  }
-  const shell =
-    kind === "logs"
-      ? 0
-      : Math.max(0, ...own.map((session) => session.shell)) + 1;
-  const session: DockSession = {
-    key: `${instanceId}:${kind}:${shell}`,
-    instanceId: instanceId,
-    kind: kind,
-    shell: shell,
-  };
-  const after = sessions.findLastIndex(
-    (candidate) => candidate.instanceId === instanceId,
+  const existing = state?.sessions.find(
+    (session) => session.instanceId === instanceId && session.kind === kind,
   );
-  const next =
-    after === -1
-      ? [...sessions, session]
-      : [
-          ...sessions.slice(0, after + 1),
-          session,
-          ...sessions.slice(after + 1),
-        ];
+  if (state && existing)
+    return { sessions: state.sessions, active: existing.key };
 
-  return { sessions: next, active: session.key };
+  return kind === "shell"
+    ? openDockShell(state, instanceId)
+    : insertSession(state, {
+        key: `${instanceId}:logs`,
+        instanceId: instanceId,
+        kind: "logs",
+        shell: 0,
+      });
+}
+
+/** Opens a new shell on a sandbox, numbered after its others. */
+export function openDockShell(
+  state: DockState | null,
+  instanceId: Id<"sandboxInstances">,
+): DockState {
+  const shell =
+    Math.max(
+      0,
+      ...(state?.sessions ?? [])
+        .filter((session) => session.instanceId === instanceId)
+        .map((session) => session.shell),
+    ) + 1;
+
+  return insertSession(state, {
+    key: `${instanceId}:shell:${shell}`,
+    instanceId: instanceId,
+    kind: "shell",
+    shell: shell,
+  });
 }
 
 /**
@@ -102,4 +104,25 @@ export function pruneDock(
     : sessions[0]!.key;
 
   return { sessions: sessions, active: active };
+}
+
+// Adds a session next to its sandbox's others, so groups stay contiguous, and shows it.
+function insertSession(
+  state: DockState | null,
+  session: DockSession,
+): DockState {
+  const sessions = state?.sessions ?? [];
+  const after = sessions.findLastIndex(
+    (candidate) => candidate.instanceId === session.instanceId,
+  );
+  const next =
+    after === -1
+      ? [...sessions, session]
+      : [
+          ...sessions.slice(0, after + 1),
+          session,
+          ...sessions.slice(after + 1),
+        ];
+
+  return { sessions: next, active: session.key };
 }

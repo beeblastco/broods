@@ -3,6 +3,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   closeDockSession,
   openDockSession,
+  openDockShell,
   pruneDock,
 } from "../app/(main)/[projectId]/sandbox/components/dockSessions";
 
@@ -13,7 +14,7 @@ describe("dock sessions", () => {
   test("a fresh shell numbers on and stays next to its sandbox's sessions", () => {
     let state = openDockSession(null, CFBOX, "shell");
     state = openDockSession(state, WEB, "shell");
-    state = openDockSession(state, CFBOX, "shell", true);
+    state = openDockShell(state, CFBOX);
 
     expect(
       state.sessions.map((session) => `${session.instanceId}:${session.shell}`),
@@ -21,25 +22,25 @@ describe("dock sessions", () => {
     expect(state.active).toBe("cfbox:shell:2");
   });
 
-  test("opening without fresh shows the sandbox's existing session", () => {
+  test("opening shows the sandbox's existing session", () => {
     let state = openDockSession(null, CFBOX, "shell");
-    state = openDockSession(state, CFBOX, "shell", true);
+    state = openDockShell(state, CFBOX);
     state = openDockSession(state, CFBOX, "shell");
 
     expect(state.sessions).toHaveLength(2);
     expect(state.active).toBe("cfbox:shell:1");
   });
 
-  test("a sandbox has one log tail, even when asked fresh", () => {
+  test("a sandbox has one log tail", () => {
     let state = openDockSession(null, WEB, "logs");
-    state = openDockSession(state, WEB, "logs", true);
+    state = openDockSession(state, WEB, "logs");
 
     expect(state.sessions).toHaveLength(1);
   });
 
   test("closing the shown session shows its neighbour, and the last one closes the dock", () => {
     let state = openDockSession(null, CFBOX, "shell");
-    state = openDockSession(state, CFBOX, "shell", true);
+    state = openDockShell(state, CFBOX);
     const closed = closeDockSession(state, "cfbox:shell:2");
 
     expect(closed?.active).toBe("cfbox:shell:1");

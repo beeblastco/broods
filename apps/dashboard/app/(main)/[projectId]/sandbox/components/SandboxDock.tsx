@@ -19,6 +19,7 @@ import type { FunctionReturnType } from "convex/server";
 import { Play, Plus, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import type { DockSession, DockState } from "./dockSessions";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import { controllable, dashboardHref } from "./sandboxFormat";
@@ -61,23 +62,22 @@ export function SandboxDock({
   onNewShell,
   onCloseSession,
 }: Props): React.JSX.Element {
-  const searchParams = useSearchParams();
   const byId = new Map(instances.map((instance) => [instance._id, instance]));
   const activeInstance = state.sessions.find(
     (session) => session.key === state.active,
   )?.instanceId;
   // Sessions are kept grouped by sandbox, so a group is one run of them.
-  const groups = state.sessions.reduce<
-    { instance: Instance; sessions: DockSession[] }[]
-  >((acc, session) => {
+  const groups: { instance: Instance; sessions: DockSession[] }[] = [];
+  for (const session of state.sessions) {
     const instance = byId.get(session.instanceId);
-    if (!instance) return acc;
-    const last = acc.at(-1);
-    if (last?.instance._id === instance._id) last.sessions.push(session);
-    else acc.push({ instance: instance, sessions: [session] });
-
-    return acc;
-  }, []);
+    if (!instance) continue;
+    const last = groups.at(-1);
+    if (last?.instance._id === instance._id) {
+      last.sessions.push(session);
+    } else {
+      groups.push({ instance: instance, sessions: [session] });
+    }
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-terminal-background">
@@ -86,12 +86,9 @@ export function SandboxDock({
           <div
             key={instance._id}
             data-active={instance._id === activeInstance || undefined}
-            className="flex items-center gap-0.5 border-t-2 border-r border-t-transparent border-r-border pr-1 pl-2.5 data-active:border-t-foreground data-active:bg-terminal-background"
+            className="group flex items-center gap-0.5 border-t-2 border-r border-t-transparent border-r-border pr-1 pl-2.5 data-active:border-t-foreground data-active:bg-terminal-background"
           >
-            <span
-              data-active={instance._id === activeInstance || undefined}
-              className="mr-1 text-xs text-muted-foreground data-active:font-medium data-active:text-foreground"
-            >
+            <span className="mr-1 text-xs text-muted-foreground group-data-active:font-medium group-data-active:text-foreground">
               {instance.name}
             </span>
             {sessions.map((session) => (
@@ -106,18 +103,19 @@ export function SandboxDock({
                 {session.kind === "logs" ? "Logs" : session.shell}
               </Button>
             ))}
-            {hasLiveShell(instance) && controllable(instance) && (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                tone="muted"
-                aria-label={`New shell on ${instance.name}`}
-                className="cursor-pointer"
-                onClick={() => onNewShell(instance._id)}
-              >
-                <Plus />
-              </Button>
-            )}
+            {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
+              controllable(instance) && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  tone="muted"
+                  aria-label={`New shell on ${instance.name}`}
+                  className="cursor-pointer"
+                  onClick={() => onNewShell(instance._id)}
+                >
+                  <Plus />
+                </Button>
+              )}
           </div>
         ))}
         <span className="flex-1" />
@@ -137,56 +135,25 @@ export function SandboxDock({
       </div>
       {state.sessions.map((session) => {
         const instance = byId.get(session.instanceId);
-        if (!instance) return null;
-        const logId = sandboxLogId(instance.logStream);
 
         return (
-          <div
-            key={session.key}
-            className={
-              session.key === state.active
-                ? "flex min-h-0 flex-1 flex-col"
-                : "hidden"
-            }
-          >
-            {session.kind === "logs" ? (
-              <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-card p-3">
-                {logId ? (
-                  <SandboxLogTail
-                    logSandboxId={logId}
-                    scope={observability}
-                    monitoringHref={dashboardHref(
-                      projectId,
-                      searchParams.get("stage"),
-                      { tab: "monitoring" },
-                    )}
-                  />
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    This sandbox has no log stream.
-                  </p>
-                )}
-              </div>
-            ) : !controllable(instance) ? (
-              <p className="bg-card p-3 text-xs text-muted-foreground">
-                This instance cannot run commands from the dashboard.
-              </p>
-            ) : hasLiveShell(instance) ? (
-              <LiveSandboxTerminal
-                sandboxId={instance.sandboxConfigId}
-                reservationKey={instance.reservationKey}
-                disabled={!isRunnable(instance)}
-                label={`${instance.name} · Shell ${session.shell}`}
+          instance && (
+            <div
+              key={session.key}
+              className={
+                session.key === state.active
+                  ? "flex min-h-0 flex-1 flex-col"
+                  : "hidden"
+              }
+            >
+              <SessionBody
+                session={session}
+                instance={instance}
+                projectId={projectId}
+                observability={observability}
               />
-            ) : (
-              <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-card p-3">
-                <CommandRunner
-                  instance={instance}
-                  runnable={isRunnable(instance)}
-                />
-              </div>
-            )}
-          </div>
+            </div>
+          )
         );
       })}
     </div>
@@ -307,14 +274,61 @@ function CommandRunner({
   );
 }
 
-// The providers core opens a PTY for: workdir (`sandbox`) over its in-guest
-// WebSocket, AWS MicroVM (`lambda`) over its shell endpoint, and the
-// Cloudflare bridge in its Container. The rest keep the bounded runner.
-function hasLiveShell(instance: Instance): boolean {
+/** One session's content: a live shell, or a card holding a log tail, the bounded runner or a note. */
+function SessionBody({
+  session,
+  instance,
+  projectId,
+  observability,
+}: {
+  session: DockSession;
+  instance: Instance;
+  projectId: Id<"projects">;
+  observability: SandboxObservabilityScope | null;
+}): React.JSX.Element {
+  const searchParams = useSearchParams();
+  const logId = sandboxLogId(instance.logStream);
+  const shell =
+    session.kind === "shell" &&
+    controllable(instance) &&
+    LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider);
+  if (shell) {
+    return (
+      <LiveSandboxTerminal
+        sandboxId={instance.sandboxConfigId}
+        reservationKey={instance.reservationKey}
+        disabled={!isRunnable(instance)}
+        label={`${instance.name} · Shell ${session.shell}`}
+      />
+    );
+  }
+
   return (
-    instance.provider === "sandbox" ||
-    instance.provider === "lambda" ||
-    instance.provider === "cloudflare"
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto bg-card p-3">
+      {session.kind === "logs" ? (
+        logId ? (
+          <SandboxLogTail
+            logSandboxId={logId}
+            scope={observability}
+            monitoringHref={dashboardHref(
+              projectId,
+              searchParams.get("stage"),
+              { tab: "monitoring" },
+            )}
+          />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            This sandbox has no log stream.
+          </p>
+        )
+      ) : controllable(instance) ? (
+        <CommandRunner instance={instance} runnable={isRunnable(instance)} />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          This instance cannot run commands from the dashboard.
+        </p>
+      )}
+    </div>
   );
 }
 

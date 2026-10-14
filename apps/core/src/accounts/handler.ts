@@ -4,6 +4,7 @@
  * plane.
  */
 
+import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { isUnreachableError } from "../shared/errors.ts";
 import {
   roleDenial,
@@ -531,11 +532,7 @@ async function openSandboxTerminal(
   // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
   // shell endpoint (SHELL_INGRESS); the cloudflare bridge opens a PTY in its
   // Container. Other providers keep the bounded `exec` terminal.
-  if (
-    context.provider !== "sandbox" &&
-    context.provider !== "lambda" &&
-    context.provider !== "cloudflare"
-  ) {
+  if (!LIVE_TERMINAL_SANDBOX_PROVIDERS.has(context.provider)) {
     return unsupportedSandboxAction(context, "a live terminal");
   }
   const externalId = await getSandboxExternalId(

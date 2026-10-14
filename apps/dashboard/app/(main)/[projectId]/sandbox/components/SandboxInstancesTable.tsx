@@ -22,6 +22,7 @@ import {
   ResizablePanelGroup,
 } from "@/app/components/ui/resizable";
 import { Switch } from "@/app/components/ui/switch";
+import { SUSPEND_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
@@ -47,6 +48,7 @@ import {
   closeDockSession,
   type DockState,
   openDockSession,
+  openDockShell,
   pruneDock,
 } from "./dockSessions";
 import { SandboxDock } from "./SandboxDock";
@@ -70,13 +72,6 @@ const PAGE_SIZE = 50;
 
 // Nine columns of short text; below this the detail panel would wrap them.
 const TABLE_MIN_WIDTH = 840;
-
-// The providers core can suspend and resume; the others only stop after their
-// idle window or on Terminate, so their running switch is off limits.
-const SUSPENDABLE_PROVIDERS: ReadonlySet<Instance["provider"]> = new Set([
-  "lambda",
-  "sandbox",
-]);
 
 // How often the visible rows re-sync their status from the provider.
 const REFRESH_EVERY_MS = 60_000;
@@ -176,7 +171,7 @@ export function SandboxInstancesTable({
   // Only the id is held, so the open panel follows the live row instead of a
   // stale copy once a refresh or suspend moves its status.
   const [selectedId, setSelectedId] = useQueryState("sel", ROW_ID);
-  const [dockState, setDock] = useState<DockState | null>(null);
+  const [rawDock, setDock] = useState<DockState | null>(null);
   // A click on the open row closes its panel.
   const select = (id: TableRow["id"]): void => {
     void setSelectedId(selectedId === id ? null : id);
@@ -230,15 +225,11 @@ export function SandboxInstancesTable({
   const visible = list.shown.slice(0, visibleCount);
   const selected = rows.find((row) => row.id === selectedId) ?? null;
   // The dock follows the live rows too: a session leaves once its row is gone.
-  const dock = pruneDock(dockState, instances);
-  const shellCounts = new Map<string, number>();
-  for (const session of dock?.sessions ?? []) {
-    if (session.kind === "shell")
-      shellCounts.set(
-        session.instanceId,
-        (shellCounts.get(session.instanceId) ?? 0) + 1,
-      );
-  }
+  const dock = pruneDock(rawDock, instances);
+  const shellCount = (id: Id<"sandboxInstances">): number =>
+    dock?.sessions.filter(
+      (session) => session.instanceId === id && session.kind === "shell",
+    ).length ?? 0;
   const visibleInstances = useMemo(
     () =>
       visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
@@ -439,7 +430,7 @@ export function SandboxInstancesTable({
                       projectId={projectId}
                       now={now}
                       selected={selectedId === row.id}
-                      shells={shellCounts.get(row.id) ?? 0}
+                      shells={shellCount(row.id)}
                       canToggle={canWrite && pendingId !== row.id}
                       onSelect={() => select(row.id)}
                       onToggle={(next) =>
@@ -482,7 +473,7 @@ export function SandboxInstancesTable({
                 observability={observability}
                 onActivate={(key) => setDock({ ...dock, active: key })}
                 onNewShell={(instanceId) =>
-                  setDock(openDockSession(dock, instanceId, "shell", true))
+                  setDock(openDockShell(dock, instanceId))
                 }
                 onCloseSession={(key) => setDock(closeDockSession(dock, key))}
               />
@@ -534,7 +525,7 @@ function InstanceRow({
   const searchParams = useSearchParams();
   const { instance, agent } = row;
   const running = instance.status === "running";
-  const suspendable = SUSPENDABLE_PROVIDERS.has(instance.provider);
+  const suspendable = SUSPEND_SANDBOX_PROVIDERS.has(instance.provider);
   const toggleable =
     canToggle &&
     suspendable &&
