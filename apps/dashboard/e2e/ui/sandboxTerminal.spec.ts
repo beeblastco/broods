@@ -12,8 +12,8 @@ test("the terminal fills the dock and draws in a real monospace font", async ({
   }).toPass();
   await open.click();
 
-  // Before a connect the header carries no state word (a role that may write
-  // gets the Connect button there), and no explainer sits over the shell.
+  // Before a connect there is no state word, only a Connect button over the
+  // shell for a role that may write, and no explainer.
   await expect(page.getByText("Not connected")).toHaveCount(0);
   await expect(page.getByText("Interactive shell inside")).toHaveCount(0);
 
