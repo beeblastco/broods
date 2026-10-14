@@ -71,6 +71,9 @@ export function SandboxDock({
   // suspend in flight, and a terminating instance is gone.
   const runnable =
     instance.status !== "terminating" && instance.status !== "suspending";
+  // The live shell renders its connection state and Reconnect into the header.
+  const [controls, setControls] = useState<HTMLSpanElement | null>(null);
+  const shell = tab === "terminal" && controllable(instance) && liveShell;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
@@ -99,6 +102,7 @@ export function SandboxDock({
           {instance.name}
         </span>
         <span className="flex-1" />
+        <span ref={setControls} className="flex min-w-0 items-center gap-2" />
         <ShortcutKeys id="sandbox.terminal" bordered />
         <Button
           variant="ghost"
@@ -111,7 +115,13 @@ export function SandboxDock({
           <X />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
+      <div
+        className={
+          shell
+            ? "flex min-h-0 flex-1 flex-col"
+            : "flex min-h-0 flex-1 flex-col overflow-auto p-3"
+        }
+      >
         {tab === "logs" && logId ? (
           <SandboxLogTail
             logSandboxId={logId}
@@ -131,6 +141,7 @@ export function SandboxDock({
             sandboxId={instance.sandboxConfigId}
             reservationKey={instance.reservationKey}
             disabled={!runnable}
+            controls={controls}
           />
         ) : (
           <CommandRunner instance={instance} runnable={runnable} />
