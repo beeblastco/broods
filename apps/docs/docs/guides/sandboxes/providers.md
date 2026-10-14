@@ -180,7 +180,7 @@ export const box = defineSandbox({
 - Workspaces are not supported. Attaching one fails.
 - `onCreate`, `onResume`, `snapshot` and `lifecycle.maxLifetimeSeconds` are rejected. Background jobs, suspend, resume and the Snapshot action are not available.
 - `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
-- The dashboard runs commands through its bounded runner. The API's `terminal` action opens a PTY only on a running Container, so run a command first to wake it.
+- A `persistent` sandbox gets the live dashboard terminal, a login shell in `/workspace`. It opens only on a running Container, so run a command first to wake one that slept.
 - The provider needs the deployment's Cloudflare bridge. Without it every run fails with an error saying the bridge is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).
 
 ## Environment variables in every provider
