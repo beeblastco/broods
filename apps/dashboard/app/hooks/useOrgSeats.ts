@@ -60,13 +60,14 @@ export function useOrgSeats(): OrgSeats | undefined {
   if (!org || !user || !members || info === undefined) return undefined;
   if (budget === undefined) return undefined;
   const owner = members.find((member) => member.isOwner);
-  const pool = info?.kind === "owner" ? info : null;
+  // Anyone but the owner sees no pool: no seats, developers or period.
+  const pool =
+    info?.kind === "owner"
+      ? info
+      : { seats: 0, developers: 0, subscription: null };
   const status =
-    info?.kind === "member"
-      ? info.status
-      : (pool?.subscription?.status ?? null);
-  const seats = pool?.seats ?? 0;
-  const developers = pool?.developers ?? 0;
+    info?.kind === "member" ? info.status : (pool.subscription?.status ?? null);
+  const { seats, developers } = pool;
 
   return {
     org: org,
@@ -81,7 +82,7 @@ export function useOrgSeats(): OrgSeats | undefined {
     seats: seats,
     extraSeats: Math.max(0, seats - seatsForQuantity(1)),
     seatsToAdd: Math.max(seats, developers + 1) - seats,
-    billing: pool?.subscription ?? null,
+    billing: pool.subscription,
   };
 }
 

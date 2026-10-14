@@ -41,7 +41,11 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 // Stripe states where a payment is owed and the portal can fix it.
-const PAYMENT_DUE_STATUSES = new Set(["past_due", "unpaid", "incomplete"]);
+const PAYMENT_DUE_STATUSES: ReadonlySet<string | null> = new Set([
+  "past_due",
+  "unpaid",
+  "incomplete",
+]);
 
 interface Notice {
   tone: "warning" | "destructive" | "info";
@@ -546,8 +550,8 @@ function PlanSummary({
 // The one notice worth showing, most urgent first. `checkoutReturned` is the
 // success=true Stripe adds to the checkout return URL; a payment due outranks
 // it, since the URL keeps that flag after the subscription later fails.
-// `ownerOnly` tells a member of a free org who can upgrade it. A trial's end
-// is the owner's to see.
+// `ownerOnly` tells a member of a free org who can upgrade it. The status is
+// for every member; `billing`, with a trial's end, is the owner's alone.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
   seats: OrgSeats | undefined,
@@ -556,8 +560,8 @@ function pickNotice(
   plan: PlanTier,
   checkoutReturned: boolean,
 ): Notice | null {
-  const billing = seats?.billing;
-  if (seats?.status && PAYMENT_DUE_STATUSES.has(seats.status)) {
+  const { status, billing } = seats ?? { status: null, billing: null };
+  if (PAYMENT_DUE_STATUSES.has(status)) {
     return {
       tone: "destructive",
       text: "Payment failed. Update your card to keep Pro.",
