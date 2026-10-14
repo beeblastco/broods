@@ -172,6 +172,7 @@ export function LiveSandboxTerminal({
         setError("WebSocket transport error.");
       };
     } catch (err) {
+      if (disposedRef.current) return;
       setStatus("error");
       setError(toErrorMessage(err));
       term.write(note(`[could not connect: ${toErrorMessage(err)}]`));
