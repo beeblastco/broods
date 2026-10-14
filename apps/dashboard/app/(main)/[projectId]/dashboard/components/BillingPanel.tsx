@@ -17,15 +17,18 @@ import type { PlanTier } from "@/app/lib/pricing";
 import {
   DEFAULT_PLAN,
   isMaxPlan,
+  perMonth,
   PLAN_CONFIGS,
-  SEAT_PRICE_EUR,
+  PRO_OFFER,
   seatCount,
-  seatsAndPrice,
 } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { clientErrorData } from "@broods/convex/model/clientError";
-import { isPaid } from "@broods/convex/model/orgBilling";
+import {
+  PRO_INCLUDED_DEVELOPER_SEATS,
+  proQuantity,
+} from "@broods/convex/model/orgBilling";
 import {
   BUDGET_WARNING_RATIO,
   capsReached,
@@ -38,10 +41,11 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 // Stripe states where a payment is owed and the portal can fix it.
-const PAYMENT_DUE_STATUSES = new Set(["past_due", "unpaid", "incomplete"]);
-
-// Past this many seats the row of marks stops growing; the words carry the count.
-const MAX_SEAT_MARKS = 20;
+const PAYMENT_DUE_STATUSES: ReadonlySet<string | null> = new Set([
+  "past_due",
+  "unpaid",
+  "incomplete",
+]);
 
 interface Notice {
   tone: "warning" | "destructive" | "info";
@@ -61,11 +65,14 @@ const ACTIVATING_NOTICE: Notice = {
 };
 
 /**
- * Billing tab, for the active org: the plan with its seats and the owner's
- * actions, one bar for the closest cap, then a single notice when something
- * needs attention. Every member sees the plan; only the owner pays, so only
- * the owner gets Upgrade, Add seat and the portal. The per-resource allowance
- * lives on the Usage tab, which the bar links to.
+ * Billing tab, in separate parts: the plan with its price and one bar for
+ * the active org's closest cap, then a single notice when something needs
+ * attention, then the owner's developer seats, then what they pay each
+ * month. Pro belongs to the owner and covers every org they own, with one
+ * seat pool across them. Every member sees the plan and their own seat; only
+ * the owner pays, so only the owner gets Upgrade, Add seat, the portal and
+ * the bill. The per-resource allowance lives on the Usage tab, which the bar
+ * links to.
  */
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -80,7 +87,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
-  const billingInfo = seats?.billing;
   const plan: PlanTier = budget?.plan ?? DEFAULT_PLAN;
   const isOwner = seats?.isOwner === true;
   // A live subscription in any state (even past_due) goes through the portal;
@@ -88,7 +94,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   // Self-hosted installs have no plans to buy. Every member sees Upgrade on
   // a free org; only the owner can press it.
   const showUpgrade =
-    billingInfo === null && !isMaxPlan(plan) && budget?.enforced === true;
+    seats?.status === null && !isMaxPlan(plan) && budget?.enforced === true;
   const canUpgrade = showUpgrade && isOwner;
   // What a member of a free org hears instead of a checkout.
   const ownerOnly =
@@ -97,8 +103,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
       : null;
   const notice = pickNotice(
     budget,
-    billingInfo?.status,
-    billingInfo?.currentPeriodEnd,
+    seats,
     canUpgrade,
     ownerOnly,
     plan,
@@ -140,9 +145,14 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
   return (
     <div className="grid gap-8">
-      <Section title={seats ? `Plan · ${seats.org.name}` : "Plan"}>
+      <Section
+        // Someone else's org names the org: its plan is the owner's.
+        title={
+          seats?.isOwner === false ? `Plan · ${seats.org.name}` : "Your plan"
+        }
+      >
         <div className="grid gap-4 rounded-lg border border-border bg-card px-4 py-3">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <PlanSummary budget={budget} plan={plan} seats={seats} />
             <PlanActions
               seats={seats}
@@ -154,7 +164,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
             />
           </div>
           <AllowanceBar budget={budget} projectId={projectId} />
-          <SeatsRow seats={seats} />
         </div>
         {actionError && (
           <p className="text-sm text-destructive">{actionError}</p>
@@ -170,12 +179,14 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
           onAction={notice.action === "upgrade" ? handleUpgrade : handlePortal}
         />
       )}
+
+      <SeatsSection seats={seats} />
     </div>
   );
 }
 
 /**
- * The owner's actions on the plan: Add seat and the portal once the org has a
+ * The owner's actions on the plan: the portal once the org has a
  * subscription, Upgrade before. A member sees Upgrade greyed out, since only
  * the owner pays.
  */
@@ -195,14 +206,10 @@ function PlanActions({
   onPortal: () => Promise<void>;
 }): React.JSX.Element {
   const owner = seats?.isOwner === true;
-  const billing = seats?.billing;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {owner && billing && isPaid(billing.status) && seats.seatsToAdd > 0 && (
-        <AddSeatButton seats={seats} />
-      )}
-      {owner && billing && (
+      {owner && seats?.billing && (
         <Button
           size="sm"
           variant="outline"
@@ -222,7 +229,11 @@ function PlanActions({
           disabled={checkoutLoading || !owner}
         >
           <ArrowUpRight className="size-3.5" />
-          {checkoutLoading ? "Loading…" : upgradeLabel(seats)}
+          {checkoutLoading
+            ? "Loading…"
+            : owner
+              ? `Upgrade to Pro · ${perMonth(proQuantity(seats.developers))}`
+              : "Upgrade to Pro"}
         </Button>
       )}
     </div>
@@ -232,33 +243,32 @@ function PlanActions({
 /**
  * The owner's Add seat, behind one confirm: Stripe charges the prorated seats
  * at once, and adds them only when that payment goes through. Shown only with
- * every seat taken: a free seat already takes the next member.
+ * every seat taken: a free seat already takes the next developer.
  */
 function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
-  const { org, seatsToAdd } = seats;
+  const { seatsToAdd } = seats;
   const [confirming, setConfirming] = useState(false);
   const { pending, error, run } = useSubmit();
   const addSeat = useAction(api.stripe.addSeat);
 
   async function confirm(): Promise<void> {
-    if (await run(() => addSeat({ orgId: org._id }))) setConfirming(false);
+    if (await run(() => addSeat({}))) setConfirming(false);
   }
 
   return (
     <>
       <Button
         size="sm"
-        variant="outline"
         className="cursor-pointer"
         onClick={() => setConfirming(true)}
       >
         <Plus className="size-3.5" />
-        Add seat
+        Add seat · {perMonth(1)}
       </Button>
       {confirming && (
         <ConfirmDialog
-          title={`Add a seat to ${org.name}`}
-          description={`Add ${seatCount(seatsToAdd)} for €${seatsToAdd * SEAT_PRICE_EUR}/month. You are charged now for the rest of this period.`}
+          title="Add a developer seat"
+          description={`Add ${seatCount(seatsToAdd)} for ${perMonth(seatsToAdd)}, to use in any of your orgs. You are charged now for the rest of this period.`}
           verb="Add seat"
           variant="default"
           pending={pending}
@@ -271,47 +281,129 @@ function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
   );
 }
 
-/** Upgrade with what it pays for: one seat per member. A member only reads it. */
-function upgradeLabel(seats: OrgSeats | undefined): string {
-  return seats?.isOwner
-    ? `Upgrade to Pro · ${seatsAndPrice(seats.members)}`
-    : "Upgrade to Pro";
-}
-
 /**
- * The owner's seats: one mark per seat or member, filled where a member sits.
- * A free org whose members were kept from before seats counted says what
- * Upgrade pays for. Nothing for a member, or on an install without seats.
+ * The owner's developer seats, one pool across every org they own. For the
+ * owner: how many are used, each developer with the orgs they are in, and
+ * Add seat once every one is taken, then on Pro what they pay each month. On
+ * Hobby there are none, and developers kept from before seats counted are
+ * listed with what Upgrade pays for them. Anyone else sees only their own
+ * seat. Nothing on an install without seats.
  */
-function SeatsRow({
+function SeatsSection({
   seats,
 }: {
   seats: OrgSeats | undefined;
 }): React.JSX.Element | null {
-  if (!seats?.enforced || !seats.isOwner) return null;
-  const marks = Math.min(Math.max(seats.members, seats.seats), MAX_SEAT_MARKS);
+  const owner = seats?.enforced === true && seats.isOwner;
+  const holders = useQuery(api.stripe.listSeatHolders, owner ? {} : "skip");
+  if (!seats?.enforced) return null;
+  if (!seats.isOwner) return <YourSeat seats={seats} />;
+  const { billing, developers, extraSeats, paid } = seats;
+  const [headline, detail] = paid
+    ? [
+        `${developers} of ${seats.seats} developer seats used across your orgs`,
+        `${PRO_INCLUDED_DEVELOPER_SEATS} included with Pro${extraSeats > 0 ? ` and ${extraSeats} extra` : ""}`,
+      ]
+    : billing
+      ? [
+          "Seats on hold",
+          "The seats come back once Stripe has the payment. Update the card in Manage subscription.",
+        ]
+      : ["No developer seats on Hobby", PRO_OFFER];
 
   return (
-    <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
-      <p className="text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">Seats</span>
-        {" · "}
-        {seats.billing === null && seats.members > seats.seats
-          ? `${seats.members} members on the free plan's ${seats.seats} seat. Upgrading pays for all ${seats.members}; no new invites until then.`
-          : `${seats.members} of ${seats.seats} used`}
-      </p>
-      <div className="flex shrink-0 gap-1" aria-hidden>
-        {Array.from({ length: marks }, (_, index) => (
-          <span
-            key={index}
-            className={cn(
-              "size-2.5 rounded-xs",
-              index < seats.members ? "bg-foreground" : "bg-muted",
-            )}
-          />
-        ))}
+    <>
+      <Section title="Developer seats">
+        <div className="grid gap-3 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="grid gap-0.5">
+              <span className="text-sm font-semibold text-foreground">
+                {headline}
+              </span>
+              <p className="text-xs text-muted-foreground">{detail}</p>
+              {!billing && developers > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {`${developers} ${developers === 1 ? "developer" : "developers"} kept from before seats counted. Upgrading charges ${perMonth(proQuantity(developers))} for all of them; no new invites until then.`}
+                </p>
+              )}
+            </div>
+            {paid && seats.seatsToAdd > 0 && <AddSeatButton seats={seats} />}
+          </div>
+          {holders && holders.length > 0 && (
+            <ul className="grid border-t border-border">
+              {holders.map((holder) => (
+                <li
+                  key={holder.userId}
+                  className="flex items-center justify-between gap-4 border-b border-border py-2 text-xs last:border-b-0"
+                >
+                  <span className="truncate text-foreground">
+                    {holder.name}
+                  </span>
+                  <span className="truncate text-muted-foreground">
+                    {holder.orgs.join(", ")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Section>
+      {paid && <MonthlyBill extraSeats={extraSeats} />}
+    </>
+  );
+}
+
+/** A member's own seat in someone else's org: who pays for it. The plan already says they never do. */
+function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
+  const own =
+    seats.userPlan === "free"
+      ? "Your own Hobby plan stays free and separate."
+      : "Your own Pro plan is billed separately.";
+  const paidBy = seats.paid
+    ? `A developer seat from ${seats.ownerName}'s Pro plan.`
+    : `A seat in ${seats.ownerName}'s org.`;
+
+  return (
+    <Section title="Your seat">
+      <div className="grid gap-0.5 rounded-lg border border-border bg-card px-4 py-3">
+        <span className="text-sm font-semibold text-foreground">
+          Developer seat in {seats.org.name}
+        </span>
+        <p className="text-xs text-muted-foreground">
+          {paidBy} {own}
+        </p>
       </div>
-    </div>
+    </Section>
+  );
+}
+
+/** The owner's monthly bill, for every org they own: Pro, the extra seats, and the total. */
+function MonthlyBill({
+  extraSeats,
+}: {
+  extraSeats: number;
+}): React.JSX.Element {
+  return (
+    <Section title="What you pay each month">
+      <div className="grid rounded-lg border border-border bg-card px-4 py-1 text-xs">
+        <div className="flex justify-between gap-4 border-b border-border py-2 text-muted-foreground">
+          <span>
+            Pro plan (includes {PRO_INCLUDED_DEVELOPER_SEATS} developer seats)
+          </span>
+          <span className="tabular-nums">{perMonth(1)}</span>
+        </div>
+        <div className="flex justify-between gap-4 border-b border-border py-2 text-muted-foreground">
+          <span>
+            Extra seats · {extraSeats} × {perMonth(1)}
+          </span>
+          <span className="tabular-nums">{perMonth(extraSeats)}</span>
+        </div>
+        <div className="flex justify-between gap-4 py-2 font-semibold text-foreground">
+          <span>Total</span>
+          <span className="tabular-nums">{perMonth(1 + extraSeats)}</span>
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -397,13 +489,20 @@ function NoticeBar({
 function PlanBadge({
   selfHosted,
   status,
+  paidBy,
 }: {
   selfHosted: boolean;
   status: string | undefined;
+  /** Who pays, for a member: shown in place of Active. */
+  paidBy: string | null;
 }): React.JSX.Element {
   if (selfHosted) return <Badge variant="secondary">Unlimited</Badge>;
   if (status === "trialing") return <Badge variant="info">Trial</Badge>;
-  if (status === "active") return <Badge variant="success">Active</Badge>;
+  if (status === "active") {
+    return (
+      <Badge variant="success">{paidBy ? `Paid by ${paidBy}` : "Active"}</Badge>
+    );
+  }
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return <Badge variant="destructive">Payment due</Badge>;
   }
@@ -411,7 +510,7 @@ function PlanBadge({
   return <Badge variant="secondary">Free</Badge>;
 }
 
-// Plan name, status badge, its seats, and when it renews or resets.
+// Plan name, status badge, and what it costs and when it renews or resets.
 function PlanSummary({
   budget,
   plan,
@@ -422,17 +521,28 @@ function PlanSummary({
   seats: OrgSeats | undefined;
 }): React.JSX.Element {
   const selfHosted = budget?.enforced === false;
-  const detail = planDetail(budget, selfHosted, seats);
+  // A subscription waiting on a payment is still Pro, held back until paid.
+  const shown: PlanTier = seats?.status ? "pro" : plan;
+  const detail = planDetail(budget, selfHosted, shown, seats);
 
   return (
     <div className="grid gap-0.5">
       <div className="flex items-center gap-2">
         <span className="text-sm font-semibold text-foreground">
-          {selfHosted ? "Self-hosted" : PLAN_CONFIGS[plan].label}
+          {selfHosted ? "Self-hosted" : PLAN_CONFIGS[shown].label}
         </span>
-        <PlanBadge selfHosted={selfHosted} status={seats?.billing?.status} />
+        <PlanBadge
+          selfHosted={selfHosted}
+          status={seats?.status ?? undefined}
+          paidBy={seats && !seats.isOwner ? seats.ownerName : null}
+        />
       </div>
       {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
+      {seats?.isOwner && seats.billing && !selfHosted && (
+        <p className="text-xs text-muted-foreground">
+          Covers every organization you own.
+        </p>
+      )}
     </div>
   );
 }
@@ -440,17 +550,18 @@ function PlanSummary({
 // The one notice worth showing, most urgent first. `checkoutReturned` is the
 // success=true Stripe adds to the checkout return URL; a payment due outranks
 // it, since the URL keeps that flag after the subscription later fails.
-// `ownerOnly` tells a member of a free org who can upgrade it.
+// `ownerOnly` tells a member of a free org who can upgrade it. The status is
+// for every member; `billing`, with a trial's end, is the owner's alone.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
-  status: string | undefined,
-  periodEnd: number | undefined,
+  seats: OrgSeats | undefined,
   canUpgrade: boolean,
   ownerOnly: string | null,
   plan: PlanTier,
   checkoutReturned: boolean,
 ): Notice | null {
-  if (status && PAYMENT_DUE_STATUSES.has(status)) {
+  const { status, billing } = seats ?? { status: null, billing: null };
+  if (PAYMENT_DUE_STATUSES.has(status)) {
     return {
       tone: "destructive",
       text: "Payment failed. Update your card to keep Pro.",
@@ -490,10 +601,10 @@ function pickNotice(
       ...(canUpgrade ? { action: "upgrade", actionLabel: "Upgrade" } : {}),
     };
   }
-  if (status === "trialing" && periodEnd) {
+  if (billing?.status === "trialing") {
     return {
       tone: "info",
-      text: `Pro trial ends ${formatDay(periodEnd * 1000)}. Keep a card on file to stay on Pro.`,
+      text: `Pro trial ends ${formatDay(billing.currentPeriodEnd * 1000)}. Keep a card on file to stay on Pro.`,
       action: "portal",
       actionLabel: "Add card",
     };
@@ -526,31 +637,39 @@ function storageNotice(
   };
 }
 
-// When it renews or resets, after its seats: what they cost for the owner,
-// who pays for them for everyone else.
+// The plan's price and when it renews, or when a free one resets, for the
+// owner; for anyone else, whose plan it is and that they are not charged.
 function planDetail(
   budget: BudgetUsage | null | undefined,
   selfHosted: boolean,
+  plan: PlanTier,
   seats: OrgSeats | undefined,
 ): string | null {
   if (selfHosted) return "Your own install. Every feature, no limits.";
+  if (seats && !seats.isOwner) {
+    return `This org runs on ${seats.ownerName}'s ${PLAN_CONFIGS[plan].label} plan. You are not charged.`;
+  }
   const billing = seats?.billing;
-  if (seats && billing) {
+  if (billing) {
+    if (!seats?.paid) {
+      return `${perMonth(1)} · on hold until Stripe has the payment`;
+    }
     const day = formatDay(billing.currentPeriodEnd * 1000);
-    const paidBy = seats.isOwner
-      ? seatsAndPrice(seats.seats)
-      : `${seatCount(seats.seats)} · paid by ${seats.ownerName} (owner)`;
-    if (billing.status === "trialing") return `${paidBy} · Trial ends ${day}`;
+    const when =
+      billing.status === "trialing"
+        ? "trial ends"
+        : billing.cancelAtPeriodEnd
+          ? "cancels"
+          : "renews";
 
-    return `${paidBy} · ${billing.cancelAtPeriodEnd ? "Cancels on" : "Renews on"} ${day}`;
+    return `${perMonth(1)} · ${when} ${day}`;
   }
   if (!budget) return null;
   const reset = `Resets ${billingReset(budget.month)}`;
   if (!seats) return reset;
+  const who = seats.members === 1 ? "just you" : `${seats.members} members`;
 
-  return seats.isOwner
-    ? `${reset} · 1 seat (yours)`
-    : `${reset} · owner ${seats.ownerName}`;
+  return `${reset} · ${who} · you can join other people's orgs`;
 }
 
 // The Usage tab, keeping the other params (the stage) the page carries.

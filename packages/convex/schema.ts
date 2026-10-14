@@ -17,7 +17,7 @@ export const usersFields = {
   accountHandle: v.optional(v.string()),
   /** Set once the user saves a name in Account settings; WorkOS syncs stop changing `name` after that. */
   nameEdited: v.optional(v.boolean()),
-  /** Pro while the user pays for any org's subscription. Display only: limits read `orgs.plan`. */
+  /** Pro while the user pays for Pro, which covers every org they own. Display only: limits read `orgs.plan`. */
   plan: planValidator,
   deletionScheduledFor: v.optional(v.number()),
   /** Set when a WorkOS deletion webhook has queued irreversible teardown. */
@@ -447,7 +447,7 @@ export const orgsFields = {
   name: v.string(),
   slug: v.string(),
   ownerAuthId: v.string(),
-  /** The org's own tier: free at insert, pro while a subscription filed under the org is paid (model/orgBilling.ts). */
+  /** The org's tier: its owner's, pro while the owner's subscription is paid; set at insert and on every change to it (model/orgBilling.ts). */
   plan: planValidator,
   createdAt: v.number(),
   /** Set the first time a project is created in this org; gates the home-page auto-onboarding. */

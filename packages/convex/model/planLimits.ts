@@ -32,10 +32,14 @@ export const FREE_MONTHLY_BUDGET_EUR = 5;
 
 /**
  * Most EUR of real platform cost a Pro account can reach per month. Pro sells at
- * €20 per seat a month (Stripe price `STRIPE_SEAT_PRICE_ID`, not in code), and
- * the caps stay the same however many seats an org pays for. Half of one seat:
- * the rest covers VAT if the price includes it (€20 is €16.53 net at 21%),
- * Stripe's fee (about €0.55), the fixed Hetzner core and gateway, and margin.
+ * €20 a month per owner, one unit of Stripe price `STRIPE_SEAT_PRICE_ID` (not
+ * in code) with two developer seats included, and each extra seat is one more
+ * unit. It covers every org the owner owns, and each of those orgs gets these
+ * caps in full: they are per org, not pooled, however many orgs or seats the
+ * owner pays for. Half of one unit: the rest covers VAT if the price includes
+ * it (€20 is €16.53 net at 21%), Stripe's fee (about €0.55), the fixed Hetzner
+ * core and gateway, and margin. An owner with several busy orgs can cost more
+ * than they pay (internals/architecture.md).
  */
 export const PRO_MONTHLY_BUDGET_EUR = 10;
 
@@ -96,9 +100,9 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
 };
 
 /**
- * The plan an account runs on: its org's own, from the org's subscription
- * (model/orgBilling.ts). An account with no org behind it (admin-created
- * standalone accounts) is free.
+ * The plan an account runs on: its org's, which follows the subscription of
+ * the org's owner (model/orgBilling.ts). An account with no org behind it
+ * (admin-created standalone accounts) is free.
  */
 export async function accountPlan(
   ctx: QueryCtx,

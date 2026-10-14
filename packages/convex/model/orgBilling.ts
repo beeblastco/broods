@@ -1,11 +1,17 @@
 /**
- * Who pays for an org and how many people it may hold. Each org has its own
- * Stripe subscription, one seat per member (owner included), billed to the
- * org owner; a free org has the owner's seat only. An owner keeps at most
- * `FREE_ORGS_PER_OWNER` free orgs, so new orgs never multiply the free
- * allowance. Both rules hold only on the managed service (`isManagedService`).
- * `orgs.plan` follows the org's own subscription and is what core enforces;
- * `users.plan` only says whether the user pays for any org.
+ * Who pays and how many developers a Pro owner may seat. Pro belongs to the
+ * owner, not to one org: one Stripe subscription per user to one €20 unit
+ * price, filed under their authId. Pro is one unit and gives the owner
+ * `PRO_INCLUDED_DEVELOPER_SEATS` developer seats; each seat past those is one
+ * more unit (`proQuantity`). The seats are a pool across every org the owner
+ * owns: each distinct developer (a member who is not the owner) in any of
+ * them takes one seat, however many of those orgs they are in. A Hobby
+ * (free) owner has no developer seats and keeps one workspace; creating
+ * more orgs needs Pro (`assertCanCreateOrg`). A Hobby user still joins any
+ * org that invites them, on its owner's seat. The rules hold only on the
+ * managed service (`isManagedService`). `orgs.plan` follows its owner's
+ * subscription and is what core enforces, per org; `users.plan` is the
+ * owner's own.
  */
 
 import type Stripe from "stripe";
@@ -13,13 +19,14 @@ import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
+import { userByAuthId } from "./ownership/org";
 import { isManagedService, type Plan } from "./planLimits";
 
-/** Free orgs one owner may hold. Paid orgs do not count. */
-export const FREE_ORGS_PER_OWNER = 1;
+/** Developer seats Pro includes, for its one unit. */
+export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
 
-/** Seats a free org has: the owner's. */
-export const FREE_ORG_SEATS = 1;
+/** One unit a month in euros: the price behind `STRIPE_SEAT_PRICE_ID`, Pro or one extra seat. */
+export const UNIT_PRICE_EUR = 20;
 
 // A subscription in one of these statuses is over: it no longer blocks a new
 // checkout and is not the one billing shows.
@@ -44,116 +51,185 @@ export function isPaid(status: string): boolean {
   return PAID_STATUSES.some((paid) => paid === status);
 }
 
-/** The seats an org's subscriptions give it: the paid quantity, else the owner's seat. */
+/**
+ * The Stripe quantity a Pro owner with `developers` seated developers pays
+ * for: Pro itself, plus one unit per developer past the included seats.
+ */
+export function proQuantity(developers: number): number {
+  return 1 + Math.max(0, developers - PRO_INCLUDED_DEVELOPER_SEATS);
+}
+
+/** The developer seats `quantity` paid units give: the included ones on the first unit, one more per unit after. */
+export function seatsForQuantity(quantity: number): number {
+  return PRO_INCLUDED_DEVELOPER_SEATS + quantity - 1;
+}
+
+/**
+ * The subscription an owner's billing acts on: the paid one with the most
+ * units, the oldest on a tie, else the oldest that has not ended (one waiting
+ * on a payment). Any other paid one is a duplicate that nothing counts; the
+ * most units wins so an owner who paid per org before the pool keeps every
+ * seat they paid for.
+ */
+export function currentOf<Sub extends { status: string; quantity?: number }>(
+  subs: ReadonlyArray<Sub>,
+): Sub | undefined {
+  const paid = subs
+    .filter((sub) => isPaid(sub.status))
+    .reduce<Sub | undefined>(
+      (best, sub) =>
+        best && (best.quantity ?? 1) >= (sub.quantity ?? 1) ? best : sub,
+      undefined,
+    );
+
+  return paid ?? subs.find((sub) => !isEnded(sub.status));
+}
+
+/** The developer seats an owner's subscriptions give: what the one billing acts on buys while paid, else none. */
 export function seatsOf(
   subs: ReadonlyArray<{ status: string; quantity?: number }>,
 ): number {
-  const paid = subs.find((sub) => isPaid(sub.status));
+  const current = currentOf(subs);
 
-  return paid ? (paid.quantity ?? FREE_ORG_SEATS) : FREE_ORG_SEATS;
+  return current && isPaid(current.status)
+    ? seatsForQuantity(current.quantity ?? 1)
+    : 0;
 }
 
-/** The plan a payer's or an org's subscriptions grant: pro while one is paid. */
+/** The plan an owner's subscriptions grant: pro while one is paid. */
 export function planOf(subs: ReadonlyArray<{ status: string }>): Plan {
   return subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
 }
 
-/** How many members an org has, owner included. */
-export async function orgMemberCount(
+/**
+ * The developers an owner seats: every member of an org they own who is not
+ * them, each once, with the orgs they are in.
+ */
+export async function developersOf(
   ctx: QueryCtx,
-  orgId: Id<"orgs">,
-): Promise<number> {
-  const members = await ctx.db
-    .query("orgMembers")
-    .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
+  ownerAuthId: string,
+): Promise<Map<Id<"users">, Array<Doc<"orgs">>>> {
+  const owner = await userByAuthId(ctx, ownerAuthId);
+  const owned = await ctx.db
+    .query("orgs")
+    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", ownerAuthId))
     .collect();
+  const developers = new Map<Id<"users">, Array<Doc<"orgs">>>();
+  for (const org of owned) {
+    const members = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
+      .collect();
+    for (const member of members) {
+      if (member.userId === owner?._id) continue;
+      developers.set(member.userId, [
+        ...(developers.get(member.userId) ?? []),
+        org,
+      ]);
+    }
+  }
 
-  return members.length;
+  return developers;
 }
 
 /**
- * Refuse to add a member to an org whose seats are all taken. The owner buys
- * the seat first (`stripe:addSeat`), so the invite lands only once it is paid.
+ * Refuse to add `userId` to an org when its owner has no developer seat for
+ * them. While the owner pays, someone already seated in another of their
+ * orgs joins free; anyone else needs a free seat, which the owner buys first
+ * (`stripe:addSeat`), so the invite lands only once it is paid. An owner who
+ * does not pay has no seats, so nobody joins, seated or not.
  */
 export async function assertFreeSeat(
   ctx: QueryCtx,
   org: Doc<"orgs">,
+  userId: Id<"users">,
 ): Promise<void> {
   if (!isManagedService()) return;
   const subs = await ctx.runQuery(
-    components.stripe.public.listSubscriptionsByOrgId,
-    { orgId: org._id },
+    components.stripe.public.listSubscriptionsByUserId,
+    { userId: org.ownerAuthId },
   );
-  if ((await orgMemberCount(ctx, org._id)) < seatsOf(subs)) return;
+  const seats = seatsOf(subs);
+  const developers = await developersOf(ctx, org.ownerAuthId);
+  if (seats > 0 && (developers.has(userId) || developers.size < seats)) {
+    return;
+  }
 
   throw new ClientError(
     planOf(subs) === "pro"
-      ? `Every seat in ${org.name} is taken. The owner adds a seat in Billing first.`
-      : `${org.name} is on the free plan, which has one seat. The owner upgrades it to invite members.`,
+      ? "Every developer seat is taken. Add a seat in Billing."
+      : subs.some((sub) => !isEnded(sub.status))
+        ? `Payment for ${org.name}'s owner's Pro plan is due. Their seats come back once they update the card in Billing.`
+        : `${org.name}'s owner is on Hobby, which has no developer seats. They upgrade to Pro to invite developers.`,
     "payment_required",
   );
 }
 
-/** Give back the paid seat of a member who just left an org (`stripe:syncSeatsInternal`). */
+/**
+ * Give back the seat of a developer who just left one of an org's owner's
+ * orgs, or the seats of an org about to be deleted (`stripe:syncSeatsInternal`).
+ */
 export async function releaseSeat(
   ctx: MutationCtx,
   orgId: Id<"orgs">,
 ): Promise<void> {
   if (!isManagedService()) return;
+  const org = await ctx.db.get(orgId);
+  if (!org) return;
   await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
-    orgId: orgId,
+    authId: org.ownerAuthId,
   });
 }
 
-/** Refuse a new org when the owner already holds their free ones. */
-export async function assertFreeOrgSlot(
+/**
+ * Refuse a new org unless its owner is on Pro, and give the plan it starts
+ * on: its owner's. Owning none, everyone gets one: the Hobby workspace made
+ * for them. A Pro owner creates as many as they like. A subscription that
+ * waits on a payment is not Pro until Stripe has it. A self-hosted install
+ * bills no one: every org starts free and the rule does not apply.
+ */
+export async function assertCanCreateOrg(
   ctx: QueryCtx,
   ownerAuthId: string,
-): Promise<void> {
-  if (!isManagedService()) return;
+): Promise<Plan> {
+  if (!isManagedService()) return "free";
+  const subs = await ctx.runQuery(
+    components.stripe.public.listSubscriptionsByUserId,
+    { userId: ownerAuthId },
+  );
+  const plan = planOf(subs);
+  if (plan === "pro") return plan;
   const owned = await ctx.db
     .query("orgs")
     .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", ownerAuthId))
-    .collect();
-  const free = owned.filter((org) => org.plan === "free");
-  if (free.length < FREE_ORGS_PER_OWNER) return;
+    .first();
+  if (!owned) return plan;
 
   throw new ClientError(
-    `You already own a free organization (${free[0].name}). Upgrade it or delete it to create another.`,
+    subs.some((sub) => !isEnded(sub.status))
+      ? "Payment for your Pro plan is due. Update the card in Billing first."
+      : "Creating another organization needs Pro. Upgrade to Pro first.",
     "payment_required",
   );
 }
 
-/** Recompute a user's display plan: pro while they pay for any org. */
+/** Recompute an owner's plan from their subscriptions, and put every org they own on it. */
 export async function syncUserPlan(
   ctx: MutationCtx,
   authId: string,
 ): Promise<void> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-  if (!user) return;
   const subs = await ctx.runQuery(
     components.stripe.public.listSubscriptionsByUserId,
     { userId: authId },
   );
   const plan = planOf(subs);
-  if (user.plan !== plan) await ctx.db.patch(user._id, { plan: plan });
-}
-
-/** Recompute an org's plan from the subscriptions filed under it. */
-export async function syncOrgPlan(
-  ctx: MutationCtx,
-  orgId: string,
-): Promise<void> {
-  const id = ctx.db.normalizeId("orgs", orgId);
-  const org = id ? await ctx.db.get(id) : null;
-  if (!org) return;
-  const subs = await ctx.runQuery(
-    components.stripe.public.listSubscriptionsByOrgId,
-    { orgId: org._id },
-  );
-  const plan = planOf(subs);
-  if (org.plan !== plan) await ctx.db.patch(org._id, { plan: plan });
+  const user = await userByAuthId(ctx, authId);
+  if (user && user.plan !== plan) await ctx.db.patch(user._id, { plan: plan });
+  const owned = await ctx.db
+    .query("orgs")
+    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", authId))
+    .collect();
+  for (const org of owned) {
+    if (org.plan !== plan) await ctx.db.patch(org._id, { plan: plan });
+  }
 }

@@ -103,14 +103,38 @@ export function addUser(
 }
 
 /**
- * File a subscription for an org as the Stripe webhook does once it has read
- * one back. Nothing here reaches Stripe.
+ * Delete a user `addUser` made, from both stores: ours, with their
+ * memberships and the orgs only they belong to, the way a WorkOS deletion
+ * finishes, then the AuthKit component's, the way its `user.deleted` event
+ * does. Run it with the managed service off, so a seat they free calls no
+ * Stripe.
+ */
+export function removeUser(user: StackUser): void {
+  run(null, "org/workosUserDeletion:finalize", { authId: user.authId });
+  convex([
+    "run",
+    "--component",
+    "workOSAuthKit",
+    "lib:processEvent",
+    JSON.stringify({
+      event: {
+        id: `evt_e2e_delete_${user.authId}`,
+        createdAt: new Date().toISOString(),
+        event: "user.deleted",
+        data: { id: user.authId },
+      },
+    }),
+  ]);
+}
+
+/**
+ * File a user's Pro subscription, which covers every org they own, as the
+ * Stripe webhook does once it has read one back. Nothing here reaches Stripe.
  */
 export function fileSubscription(
-  orgId: string,
   payer: StackUser,
   subscriptionId: string,
-  seats: number,
+  quantity: number,
   status: "active" | "past_due" | "canceled",
 ): void {
   const ticket = run(null, "stripe:claimSubscriptionSyncInternal", {
@@ -124,9 +148,9 @@ export function fileSubscription(
       status: status,
       currentPeriodEnd: Math.floor(Date.now() / 1000) + 30 * 86_400,
       cancelAtPeriodEnd: false,
-      quantity: seats,
+      quantity: quantity,
       priceId: "price_local_seat",
-      metadata: { userId: payer.authId, orgId: orgId },
+      metadata: { userId: payer.authId },
     },
   });
 }

@@ -48,10 +48,11 @@ export function OrgSwitcher(): React.JSX.Element {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  // The server refused a new org: the owner already holds their free one.
-  const [freeOrgTaken, setFreeOrgTaken] = useState(false);
+  // The server's refusal when creating an org needs Pro (model/orgBilling.ts).
+  const [needsPro, setNeedsPro] = useState<string | null>(null);
   const openBilling = useOpenBilling();
-  const freeOrg = orgs?.find(
+  // The Hobby org the user owns, which Upgrade opens.
+  const hobbyOrg = orgs?.find(
     (org) => org.plan === "free" && org.ownerAuthId === currentUser?.authId,
   );
 
@@ -100,11 +101,9 @@ export function OrgSwitcher(): React.JSX.Element {
       router.replace("/projects");
       router.refresh();
     } catch (err) {
-      if (clientErrorData(err)?.code === "payment_required" && freeOrg) {
-        setFreeOrgTaken(true);
-      } else {
-        setCreateError(toErrorMessage(err));
-      }
+      const refusal = clientErrorData(err);
+      if (refusal?.code === "payment_required") setNeedsPro(refusal.message);
+      else setCreateError(toErrorMessage(err));
     } finally {
       setCreating(false);
     }
@@ -113,7 +112,7 @@ export function OrgSwitcher(): React.JSX.Element {
   function closeCreate(): void {
     setCreateOpen(false);
     setCreateError(null);
-    setFreeOrgTaken(false);
+    setNeedsPro(null);
   }
 
   const label =
@@ -202,17 +201,14 @@ export function OrgSwitcher(): React.JSX.Element {
               placeholder="Acme Inc."
               autoComplete="off"
             />
-            {freeOrgTaken && freeOrg && (
+            {needsPro && (
               <div
                 className="mt-1 grid gap-1 rounded-md bg-muted px-3 py-2.5 text-xs"
-                data-testid="free-org-taken"
+                data-testid="create-org-needs-pro"
               >
-                <p className="font-medium text-foreground">
-                  You already own a free organization ({freeOrg.name}).
-                </p>
+                <p className="font-medium text-foreground">{needsPro}</p>
                 <p className="text-muted-foreground">
-                  Each owner gets one free organization. Upgrade it or delete it
-                  to create another.
+                  You can still join an org when its owner invites you.
                 </p>
               </div>
             )}
@@ -229,21 +225,21 @@ export function OrgSwitcher(): React.JSX.Element {
             >
               Cancel
             </Button>
-            {freeOrgTaken && freeOrg && (
+            {needsPro && hobbyOrg && (
               <Button
                 variant="outline"
                 className="cursor-pointer"
                 onClick={() => {
                   closeCreate();
-                  void openBilling(freeOrg._id);
+                  void openBilling(hobbyOrg._id);
                 }}
               >
-                Upgrade {freeOrg.name}
+                Upgrade to Pro
               </Button>
             )}
             <Button
               className="cursor-pointer"
-              disabled={creating || !newName.trim() || freeOrgTaken}
+              disabled={creating || !newName.trim() || needsPro !== null}
               onClick={handleCreate}
             >
               {creating ? "Creating..." : "Create"}

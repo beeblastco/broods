@@ -16,7 +16,8 @@ import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
 import { ClientError } from "../model/clientError";
 import { hasDashboardPermission } from "../model/access";
-import { assertFreeOrgSlot } from "../model/orgBilling";
+import { assertCanCreateOrg, syncUserPlan } from "../model/orgBilling";
+import { isManagedService } from "../model/planLimits";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -150,6 +151,8 @@ export const adoptExternalAccount = internalMutation({
     // The secret hash is untouched, so whatever service holds this account's
     // secret keeps authenticating exactly as before.
     await ctx.db.patch(account._id, { orgId: orgId, updatedAt: now });
+    // The org runs on its owner's plan, like every org they own.
+    if (isManagedService()) await syncUserPlan(ctx, owner.authId);
 
     console.log("AUDIT external account adopted", {
       accountId: account._id,
@@ -531,21 +534,22 @@ export async function resolveActiveAccount(
 }
 
 /**
- * Inserts a free org the user owns, with an owner membership, and makes it
- * their active org. Refused once they hold their free orgs (model/orgBilling.ts).
+ * Inserts an org the user owns, on their plan, with an owner membership, and
+ * makes it their active org. Past their first, refused unless they are on
+ * Pro (model/orgBilling.ts).
  */
 async function insertOwnedOrg(
   ctx: MutationCtx,
   user: Doc<"users">,
   name: string,
 ): Promise<Id<"orgs">> {
-  await assertFreeOrgSlot(ctx, user.authId);
+  const plan = await assertCanCreateOrg(ctx, user.authId);
   const now = Date.now();
   const orgId = await ctx.db.insert("orgs", {
     name: name,
     slug: await uniqueOrgSlug(ctx, name),
     ownerAuthId: user.authId,
-    plan: "free",
+    plan: plan,
     createdAt: now,
   });
   await ctx.db.insert("orgMembers", {

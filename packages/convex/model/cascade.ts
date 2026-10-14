@@ -364,14 +364,9 @@ export async function purgeOrg(
     .collect();
   for (const member of members) await ctx.db.delete(member._id);
 
-  // Only the managed service bills orgs (model/orgBilling.ts).
-  if (isManagedService()) {
-    await ctx.scheduler.runAfter(
-      0,
-      internal.stripe.cancelOrgSubscriptionsInternal,
-      { orgId: orgId },
-    );
-  }
+  // Its developers' seats go back to the owner's pool; the owner's Pro stays
+  // for their other orgs (model/orgBilling.ts).
+  await releaseSeat(ctx, orgId);
   await ctx.db.delete(orgId);
 }
 
@@ -389,6 +384,14 @@ export async function purgeUser(
     .query("orgs")
     .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", user.authId))
     .collect();
+  // Only the managed service bills users: a deleted user stops paying for Pro.
+  if (isManagedService()) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.stripe.cancelUserSubscriptionsInternal,
+      { authId: user.authId },
+    );
+  }
 
   const purgedOrgIds = new Set<Id<"orgs">>();
   for (const org of ownedOrgs) {

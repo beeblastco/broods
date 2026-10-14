@@ -67,13 +67,13 @@ import { useSubmit } from "@/app/hooks/useSubmit";
 import { formatDay } from "@/app/lib/allowance";
 import { formatDate } from "@/app/lib/formatTime";
 import { tabHref } from "@/app/lib/navigation";
-import { SEAT_PRICE_EUR } from "@/app/lib/pricing";
+import { perMonth, PRO_OFFER } from "@/app/lib/pricing";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { clientErrorData } from "@broods/convex/model/clientError";
-import { isPaid } from "@broods/convex/model/orgBilling";
+import { proQuantity } from "@broods/convex/model/orgBilling";
 import type { FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
@@ -182,9 +182,9 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
           fields={QUERY_FIELDS}
           placeholder="Search members · role:"
         />
-        {seats?.enforced && (
+        {seats?.enforced && seats.isOwner && (
           <Badge variant="outline">
-            {seats.members} of {seats.seats} seats used
+            {seats.developers} of {seats.seats} developer seats used
           </Badge>
         )}
         <FilterButton columns={[{ label: "Role", filter: filters.role }]} />
@@ -475,10 +475,13 @@ function RoleItem({
 
 /**
  * Adds an existing user by email with a role. On the managed service an
- * invite needs a free seat: with none, the owner pays for one more seat and
- * the invite follows, or upgrades a free org first; anyone else asks the
- * owner. The seat count picks the step up front, and the invite's 402 picks
- * it when the count was stale. Nobody but the owner is ever charged.
+ * invite needs a developer seat from the owner's pool, shared by every org
+ * they own: someone already seated in another of them joins free. With none
+ * free, the owner pays for one more seat and the invite follows, or upgrades
+ * to Pro first; anyone else asks the owner. For the owner the seat count
+ * picks the step up front, and the invite's 402 picks it when the count was
+ * stale; anyone else learns it from the 402 alone, since the owner's seats
+ * are theirs to see. Nobody but the owner is ever charged.
  */
 function InviteDialog({
   org,
@@ -500,7 +503,6 @@ function InviteDialog({
   const [refused, setRefused] = useState(false);
   const { pending, error, run } = useSubmit();
   const step = inviteStep(seats, refused);
-  const upgradeSeats = seats?.members ?? 1;
 
   async function submit(): Promise<void> {
     const pick = options.find((option) => option.value === role)?.pick;
@@ -525,7 +527,7 @@ function InviteDialog({
 
           return;
         }
-        await addSeat({ orgId: org._id });
+        await addSeat({});
         await invite();
       }
     });
@@ -567,7 +569,7 @@ function InviteDialog({
               placeholder="ada@example.com"
             />
           </div>
-          {(step === "invite" || step === "seat") && (
+          {step !== "upgrade" && step !== "billing" && (
             <div className="grid gap-1">
               <Label htmlFor="invite-role" variant="muted" className="text-xs">
                 Role
@@ -598,7 +600,7 @@ function InviteDialog({
             </div>
           )}
           {seats && step !== "invite" && (
-            <SeatNotice org={org} seats={seats} step={step} />
+            <SeatNotice seats={seats} step={step} />
           )}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
@@ -624,14 +626,14 @@ function InviteDialog({
                 ? "Loading…"
                 : step === "billing"
                   ? "Manage billing"
-                  : `Upgrade · €${upgradeSeats * SEAT_PRICE_EUR}/month`}
+                  : `Upgrade · ${perMonth(proQuantity(seats?.developers ?? 0))}`}
             </Button>
           ) : (
             <Button
               size="sm"
               className="cursor-pointer"
               onClick={submit}
-              disabled={pending || !email.trim() || step === "ask"}
+              disabled={pending || !email.trim()}
             >
               {step === "seat"
                 ? pending
@@ -650,16 +652,12 @@ function InviteDialog({
 
 /** Why the invite needs more than an email, in the words of its step. */
 function SeatNotice({
-  org,
   seats,
   step,
 }: {
-  org: Doc<"orgs">;
   seats: OrgSeats;
   step: Exclude<InviteStep, "invite">;
 }): React.JSX.Element {
-  const upgradeSeats = seats.members;
-
   return (
     <div
       className="grid gap-1 rounded-md bg-muted px-3 py-2.5 text-xs"
@@ -667,10 +665,10 @@ function SeatNotice({
     >
       <p className="font-medium text-foreground">
         {step === "upgrade"
-          ? `${org.name} is on the free plan, which has one seat: yours.`
+          ? "You are on Hobby, which has no developer seats."
           : step === "billing"
-            ? `${org.name}'s last payment did not go through.`
-            : `Every seat in ${org.name} is taken.`}
+            ? "Your last payment did not go through."
+            : "Every developer seat is taken."}
       </p>
       {step === "seat" && seats.billing && (
         <>
@@ -680,48 +678,55 @@ function SeatNotice({
                 ? "1 more seat"
                 : `${seats.seatsToAdd} more seats`}
             </span>
-            <span>€{seats.seatsToAdd * SEAT_PRICE_EUR} / month</span>
+            <span>{perMonth(seats.seatsToAdd)}</span>
           </p>
           <p className="text-muted-foreground">
             Charged now to the card on file, prorated to{" "}
-            {formatDay(seats.billing.currentPeriodEnd * 1000)}. If the payment
-            fails, nobody is invited.
+            {formatDay(seats.billing.currentPeriodEnd * 1000)}, and usable in
+            any of your orgs. If the payment fails, nobody is invited. A
+            developer already in another of your orgs joins free.
           </p>
         </>
       )}
       {step === "upgrade" && (
         <p className="text-muted-foreground">
-          Pro is €{SEAT_PRICE_EUR} per member per month. Upgrade opens Stripe
-          Checkout for{" "}
-          {upgradeSeats === 1 ? "your seat" : `all ${upgradeSeats} members`}.
-          Back here, invite them again to pay for 1 more seat.
+          {PRO_OFFER} Upgrade opens Stripe Checkout
+          {seats.developers > 0
+            ? ` for all ${seats.developers} developers: ${perMonth(proQuantity(seats.developers))}`
+            : ""}
+          . Back here, invite them again.
         </p>
       )}
       {step === "billing" && (
         <p className="text-muted-foreground">
-          Its seats come back once Stripe has the payment. Update the card in
+          Your seats come back once Stripe has the payment. Update the card in
           Manage billing, then invite them again.
         </p>
       )}
       {step === "ask" && (
         <p className="text-muted-foreground">
-          Ask {seats.ownerName}, the owner, to add a seat in Billing. You are
-          never charged.
+          Ask {seats.ownerName}, the owner, to add a developer seat in Billing.
+          Someone already on one of their seats joins free. You are never
+          charged.
         </p>
       )}
     </div>
   );
 }
 
-/** The invite dialog's step: the seat count, or a 402 the invite got, says whether a seat is free. */
+/**
+ * The invite dialog's step: the owner's seat count, or a 402 the invite got,
+ * says whether a seat is free. Anyone else does not see the owner's seats,
+ * so only the 402 tells them.
+ */
 function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
   if (!seats) return "invite";
-  const full = refused || (seats.enforced && seats.members >= seats.seats);
+  if (!seats.isOwner) return refused ? "ask" : "invite";
+  const full = refused || (seats.enforced && seats.developers >= seats.seats);
   if (!full) return "invite";
-  if (!seats.isOwner) return "ask";
   if (!seats.billing) return "upgrade";
 
-  return isPaid(seats.billing.status) ? "seat" : "billing";
+  return seats.paid ? "seat" : "billing";
 }
 
 function matchesField(member: Member, _field: Field, value: string): boolean {

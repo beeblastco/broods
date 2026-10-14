@@ -4493,7 +4493,7 @@ components:
                 | `not_configured` | 409 | The channel credential the request needs is not configured on the agent. |
                 | `not_found` | 404 | Default for a 404: the path or resource does not exist. |
                 | `payload_too_large` | 413 | Default for a 413: the body is over the size limit. |
-                | `payment_required` | 402 | The organization's plan does not cover this: its owner already holds a free organization, or every paid seat is taken. The owner upgrades or adds a seat. |
+                | `payment_required` | 402 | The plan does not cover this: creating another organization needs Pro, or every developer seat of the organization's owner is taken. The owner upgrades or adds a seat. |
                 | `plan_limit_exceeded` | 429 | Runs per minute are over the plan's limit. Retry after `Retry-After`. |
                 | `public_access_disabled` | 403 | The agent does not allow runtime-key access (`publicAccess` is off). |
                 | `question_already_answered` | 409 | An `ask_questions` question was already answered. |

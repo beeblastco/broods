@@ -15,7 +15,7 @@ flowchart LR
 
 | Level        | What it is                                                                                                                                  | Managed with                              |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Organization | Your team. Members read, admins and owners change things. The owner pays per seat; billing and the account key live here.                   | Dashboard, `broods org`                   |
+| Organization | Your team. Members read, admins and owners change things. It runs on its owner's plan: one Pro covers all their orgs. Has the account key.  | Dashboard, `broods org`                   |
 | Project      | One product or repo. Groups its stages.                                                                                                     | `broods dev` creates it, `broods project` |
 | Stage        | A deploy target inside a project, such as `development` or `production`. Each has its own resources, environment variables and runtime key. | `broods stage`, `--stage`                 |
 

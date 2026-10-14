@@ -1,18 +1,23 @@
 /**
- * The active org's plan and seats as Billing and the invite dialog show them.
- * Each org pays for its own seats, one per member with the owner included,
- * and only its owner pays (`packages/convex/model/orgBilling.ts`). The
- * server checks every rule again; this only picks what to show.
+ * The active org's plan and its owner's developer seats as Billing and the
+ * invite dialog show them. Pro belongs to the owner and covers every org they
+ * own: it includes `PRO_INCLUDED_DEVELOPER_SEATS` developer seats, shared
+ * across those orgs, and each seat past those is extra. Hobby has none
+ * (`packages/convex/model/orgBilling.ts`). The server checks every rule
+ * again; this only picks what to show.
  */
 
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { FREE_ORG_SEATS } from "@broods/convex/model/orgBilling";
+import { isPaid, seatsForQuantity } from "@broods/convex/model/orgBilling";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useRouter } from "next/navigation";
 
-type BillingInfo = FunctionReturnType<typeof api.stripe.getBillingInfo>;
+type Subscription = Extract<
+  NonNullable<FunctionReturnType<typeof api.stripe.getBillingInfo>>,
+  { kind: "owner" }
+>["subscription"];
 
 export interface OrgSeats {
   org: Doc<"orgs">;
@@ -20,13 +25,26 @@ export interface OrgSeats {
   enforced: boolean;
   isOwner: boolean;
   ownerName: string;
+  /** The viewer's own plan, apart from this org's. */
+  userPlan: Doc<"users">["plan"];
+  /** Members of this org, owner included. */
   members: number;
-  /** Seats the org has: the paid quantity, else the owner's one. */
+  /** The owner's subscription status while it has not ended, else null. Every member sees it. */
+  status: string | null;
+  /** The owner's subscription is paid, so their seats count. */
+  paid: boolean;
+  // The pool and the subscription's period are the owner's alone: for
+  // anyone else they read 0 and null.
+  /** Developers across every org the owner owns, each once. */
+  developers: number;
+  /** Developer seats the owner has: Pro's included ones plus the extra paid ones, else none. */
   seats: number;
-  /** Seats Add seat buys: enough for every member plus one more (`stripe.addSeat`). */
+  /** Seats paid past the ones Pro includes. */
+  extraSeats: number;
+  /** Seats Add seat buys: enough for every developer plus one more (`stripe.addSeat`). */
   seatsToAdd: number;
-  /** The org's subscription that has not ended, or null when it has none. */
-  billing: BillingInfo;
+  /** The viewer's own subscription that has not ended, when they own the org. */
+  billing: Subscription;
 }
 
 /** @returns undefined while any part loads */
@@ -37,22 +55,34 @@ export function useOrgSeats(): OrgSeats | undefined {
     api.org.members.list,
     org ? { orgId: org._id } : "skip",
   );
-  const billing = useQuery(api.stripe.getBillingInfo);
+  const info = useQuery(api.stripe.getBillingInfo);
   const budget = useQuery(api.account.budget.getForActiveOrg, {});
-  if (!org || !user || !members || billing === undefined) return undefined;
+  if (!org || !user || !members || info === undefined) return undefined;
   if (budget === undefined) return undefined;
   const owner = members.find((member) => member.isOwner);
-  const seats = billing?.seats ?? FREE_ORG_SEATS;
+  // Anyone but the owner sees no pool: no seats, developers or period.
+  const pool =
+    info?.kind === "owner"
+      ? info
+      : { seats: 0, developers: 0, subscription: null };
+  const status =
+    info?.kind === "member" ? info.status : (pool.subscription?.status ?? null);
+  const { seats, developers } = pool;
 
   return {
     org: org,
     enforced: budget?.enforced === true,
     isOwner: owner?.userId === user._id,
     ownerName: owner?.name ?? "the owner",
+    userPlan: user.plan,
     members: members.length,
+    status: status,
+    paid: status !== null && isPaid(status),
+    developers: developers,
     seats: seats,
-    seatsToAdd: Math.max(seats, members.length + 1) - seats,
-    billing: billing,
+    extraSeats: Math.max(0, seats - seatsForQuantity(1)),
+    seatsToAdd: Math.max(seats, developers + 1) - seats,
+    billing: pool.subscription,
   };
 }
 
