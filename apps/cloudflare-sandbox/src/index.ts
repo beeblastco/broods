@@ -25,6 +25,8 @@ const KILL_GRACE_SECONDS = 5;
 const BACKSTOP_GRACE_MS = (KILL_GRACE_SECONDS + 5) * 1000;
 // Storage key for the internet and size the running Container started with.
 const LAUNCH_KEY = "launch";
+// Storage key for the idle window (ms) the running Container was given.
+const IDLE_KEY = "idleMs";
 
 const execRequest = z.object({
   argv: z.array(z.string()).min(1),
@@ -71,6 +73,26 @@ export type ExecResult = Required<
 export class Sandbox extends DurableObject<Env> {
   #starting: Promise<void> | null = null;
   #booting = false;
+
+  // The inactivity timeout lives with this Durable Object instance, so one
+  // that restarts while its Container runs sets the stored window again;
+  // otherwise the platform default stops the Container within a minute.
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    const container = ctx.container;
+    const idleMs = ctx.storage.kv.get<number>(IDLE_KEY);
+    if (container?.running && idleMs !== undefined) {
+      // A rejection here would reset the Durable Object; the next exec sets
+      // the window again, so a failure is only logged.
+      void ctx.blockConcurrencyWhile((): Promise<void> =>
+        container
+          .setInactivityTimeout(idleMs)
+          .catch((error: unknown): void =>
+            console.error("restoring the idle window failed", error),
+          ),
+      );
+    }
+  }
 
   /**
    * Starts the Container on first use, then runs one command to completion.
@@ -237,6 +259,7 @@ export class Sandbox extends DurableObject<Env> {
           await container.setInactivityTimeout(
             request.idleTimeoutSeconds * 1000,
           );
+          this.ctx.storage.kv.put(IDLE_KEY, request.idleTimeoutSeconds * 1000);
         } catch (error) {
           await container.destroy();
           throw error;
