@@ -174,7 +174,9 @@ export class Sandbox extends DurableObject<Env> {
     if (!container.running)
       return new Response("Sandbox is not running", { status: 409 });
     const abort = new AbortController();
+    // The image's WORKDIR, where agent commands run; exec alone starts in /.
     const shell = await container.exec(["bash", "-l"], {
+      cwd: "/workspace",
       pty: TERMINAL_SIZE,
       env: { TERM: "xterm-256color" },
       signal: abort.signal,
