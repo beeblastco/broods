@@ -158,7 +158,9 @@ export async function assertFreeSeat(
   throw new ClientError(
     planOf(subs) === "pro"
       ? "Every developer seat is taken. Add a seat in Billing."
-      : `${org.name}'s owner is on Hobby, which has no developer seats. They upgrade to Pro to invite developers.`,
+      : subs.some((sub) => !isEnded(sub.status))
+        ? `Payment for ${org.name}'s owner's Pro plan is due. Their seats come back once they update the card in Billing.`
+        : `${org.name}'s owner is on Hobby, which has no developer seats. They upgrade to Pro to invite developers.`,
     "payment_required",
   );
 }

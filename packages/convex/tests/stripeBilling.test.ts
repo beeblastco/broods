@@ -678,6 +678,26 @@ describe("seat pool", () => {
     expect(await memberCount(t)).toBe(1);
   });
 
+  test("an owner whose payment is due cannot invite, and is told to fix the payment", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const t = billingTest();
+    await seedPayer(t);
+    await seedUser(t, "auth_new", "new@example.com");
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("past_due"),
+    );
+
+    await expect(
+      t.mutation(api.org.members.add, {
+        orgId: payerOrgId,
+        email: "new@example.com",
+      }),
+    ).rejects.toThrow("Payment for Payer Org's owner's Pro plan is due");
+    expect(await memberCount(t)).toBe(1);
+  });
+
   test("Pro invites 2 developers, then the next one needs a seat", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
