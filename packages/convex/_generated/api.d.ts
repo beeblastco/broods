@@ -1581,15 +1581,18 @@ export declare const api: {
       "query",
       "public",
       {},
-      null | {
-        developers: number;
-        seats: number;
-        subscription: null | {
-          cancelAtPeriodEnd: boolean;
-          currentPeriodEnd: number;
-          status: string;
-        };
-      }
+      | null
+      | {
+          developers: number;
+          kind: "owner";
+          seats: number;
+          subscription: null | {
+            cancelAtPeriodEnd: boolean;
+            currentPeriodEnd: number;
+            status: string;
+          };
+        }
+      | { kind: "member"; status: null | string }
     >;
     listOwnedOrgs: FunctionReference<
       "query",

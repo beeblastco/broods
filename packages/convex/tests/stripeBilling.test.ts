@@ -9,7 +9,7 @@ import type { Id } from "../_generated/dataModel";
 // build straight from disk to register it.
 import stripeSchema from "../node_modules/@convex-dev/stripe/dist/component/schema.js";
 import schema from "../schema";
-import { proQuantity } from "../model/orgBilling";
+import { currentOf, proQuantity, seatsForQuantity } from "../model/orgBilling";
 import { stripeClient } from "../stripe";
 
 const AUTH_ID = "auth_payer";
@@ -562,16 +562,8 @@ describe("owner billing", () => {
 
     const info = await t.query(api.stripe.getBillingInfo, {});
 
-    // The seats count only while it is paid; who pays stays with the owner.
-    expect(info).toEqual({
-      seats: 0,
-      developers: 1,
-      subscription: {
-        status: "past_due",
-        currentPeriodEnd: expect.any(Number),
-        cancelAtPeriodEnd: false,
-      },
-    });
+    // Only the status: the owner's pool and billing period stay with them.
+    expect(info).toEqual({ kind: "member", status: "past_due" });
   });
 
   test("getBillingInfo shows no subscription once it is canceled", async () => {
@@ -585,10 +577,39 @@ describe("owner billing", () => {
     );
 
     expect(await t.query(api.stripe.getBillingInfo, {})).toEqual({
+      kind: "owner",
       seats: 0,
       developers: 0,
       subscription: null,
     });
+  });
+
+  test("an owner paying for two subscriptions is billed from the one with the most units, the oldest on a tie", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+    const second = await seedOrg(t, "Second");
+    await addMember(t, "auth_dev_a", "a@example.com");
+    await addMember(t, "auth_dev_b", "b@example.com");
+    await addMember(t, "auth_dev_c", "c@example.com", second);
+    // Per-org billing left a 1-unit subscription, the oldest, and a 4-unit one.
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("active", "sub_big", 4),
+      "evt_big",
+    );
+
+    expect(await t.query(api.stripe.getBillingInfo, {})).toMatchObject({
+      seats: seatsForQuantity(4),
+      developers: 3,
+    });
+    expect(
+      currentOf([
+        { id: "older", status: "active", quantity: 2 },
+        { id: "newer", status: "active", quantity: 2 },
+      ])?.id,
+    ).toBe("older");
   });
 
   test("deleting an org keeps the owner on Pro and gives back the seats only it used", async () => {
@@ -723,7 +744,7 @@ describe("seat pool", () => {
     ).rejects.toThrow("Every developer seat is taken");
   });
 
-  test("billing shows a member the owner's pool, and the owner every org they own", async () => {
+  test("billing shows the owner their pool and every org they own, and a member only the plan's status", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     const t = billingTest();
     await seedPayer(t);
@@ -739,14 +760,38 @@ describe("seat pool", () => {
       { orgId: payerOrgId, name: "Payer Org", plan: "pro" },
       { orgId: second, name: "Second", plan: "pro" },
     ]);
-    caller.authId = "auth_member";
     // 3 units: Pro with its 2 included developer seats, and 2 extra seats.
     expect(await t.query(api.stripe.getBillingInfo, {})).toMatchObject({
+      kind: "owner",
       seats: 4,
       developers: 1,
     });
+    caller.authId = "auth_member";
+    expect(await t.query(api.stripe.getBillingInfo, {})).toEqual({
+      kind: "member",
+      status: "active",
+    });
     expect(await t.query(api.stripe.listOwnedOrgs, {})).toEqual([]);
     expect(await t.query(api.stripe.listSeatHolders, {})).toEqual([]);
+  });
+
+  test("once the owner cancels, a developer seated in one org cannot join another", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const t = billingTest();
+    await seedIncludedSeatsTaken(t);
+    const second = await seedOrg(t, "Second");
+    await sendEvent(
+      t,
+      "customer.subscription.deleted",
+      subscription("canceled"),
+    );
+
+    await expect(
+      t.mutation(api.org.members.add, {
+        orgId: second,
+        email: "dev-one@example.com",
+      }),
+    ).rejects.toThrow("which has no developer seats");
   });
 
   test("a self-hosted install invites without seats", async () => {
@@ -928,6 +973,25 @@ describe("seat pool", () => {
     expect(sub?.quantity).toBe(2);
   });
 
+  test("a seat sync that lands after Stripe ended the subscription changes nothing", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedIncludedSeatsTaken(t, 2);
+    // A deleted owner's cancel reached Stripe; its webhook has not landed yet.
+    stripeCalls.live.set(
+      SUBSCRIPTION_ID,
+      subscription("canceled", SUBSCRIPTION_ID, 2),
+    );
+
+    await t.action(internal.stripe.syncSeatsInternal, { authId: AUTH_ID });
+
+    expect(stripeCalls.subscriptions).not.toHaveBeenCalled();
+    const sub = await t.query(components.stripe.public.getSubscription, {
+      stripeSubscriptionId: SUBSCRIPTION_ID,
+    });
+    expect(sub?.status).toBe("canceled");
+  });
+
   test("a subscription bought at one unit per member drops to the new count on its next sync", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
@@ -1084,6 +1148,32 @@ describe("creating an org", () => {
     expect(await ownedOrgCount(t)).toBe(1);
   });
 
+  test("an adopted account's org runs on its owner's Pro plan", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    const accountId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("accounts", {
+          orgId: "external:payer",
+          username: "payer-external",
+          secretHash: "hash-payer-external",
+          status: "active",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+    );
+
+    const { orgId } = await t.mutation(internal.org.orgs.adoptExternalAccount, {
+      accountId: accountId,
+      ownerEmail: "payer@example.com",
+      orgName: "Adopted",
+    });
+
+    expect(await orgPlan(t, orgId)).toBe("pro");
+  });
+
   test("a self-hosted install creates orgs without Pro", async () => {
     const t = billingTest();
     await seedPayer(t);
@@ -1151,7 +1241,7 @@ describe("seat migration", () => {
     expect(again).toEqual({ done: [], failed: [], duplicates: [] });
   });
 
-  test("an owner paying for two subscriptions keeps the oldest; the other is reported, not canceled", async () => {
+  test("an owner paying for two subscriptions keeps the one with more units; the other is reported, not canceled", async () => {
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t, 3);
@@ -1187,6 +1277,47 @@ describe("seat migration", () => {
       expect.anything(),
     );
     expect(await orgPlan(t, second)).toBe("pro");
+  });
+
+  test("an owner whose newer subscription has more units keeps that one, lowered to what their developers need", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedPayer(t);
+    const second = await seedOrg(t, "Second");
+    await addMember(t, "auth_dev_a", "a@example.com");
+    await addMember(t, "auth_dev_b", "b@example.com");
+    await addMember(t, "auth_dev_c", "c@example.com", second);
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    await sendEvent(
+      t,
+      "customer.subscription.created",
+      subscription("active", "sub_big", 4),
+      "evt_big",
+    );
+    stripeCalls.subscriptions.mockImplementation(updateLive);
+
+    const result = await t.action(internal.seatMigration.resyncAllSeats, {
+      dryRun: false,
+    });
+
+    expect(result).toEqual({
+      done: [
+        {
+          authId: AUTH_ID,
+          stripeSubscriptionId: "sub_big",
+          oldQuantity: 4,
+          newQuantity: proQuantity(3),
+        },
+      ],
+      failed: [],
+      duplicates: [{ authId: AUTH_ID, stripeSubscriptionId: SUBSCRIPTION_ID }],
+    });
+    expect(stripeCalls.subscriptions).toHaveBeenCalledTimes(1);
+    expect(stripeCalls.subscriptions).toHaveBeenCalledWith("sub_big", {
+      items: [{ id: ITEM_ID, price: "price_seat", quantity: 2 }],
+      proration_behavior: "create_prorations",
+      payment_behavior: "error_if_incomplete",
+    });
   });
 
   test("an owner Stripe refuses is reported, and the run carries on with the rest", async () => {

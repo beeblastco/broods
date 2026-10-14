@@ -14,8 +14,9 @@ import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useRouter } from "next/navigation";
 
-type Subscription = NonNullable<
-  FunctionReturnType<typeof api.stripe.getBillingInfo>
+type Subscription = Extract<
+  NonNullable<FunctionReturnType<typeof api.stripe.getBillingInfo>>,
+  { kind: "owner" }
 >["subscription"];
 
 export interface OrgSeats {
@@ -28,17 +29,21 @@ export interface OrgSeats {
   userPlan: Doc<"users">["plan"];
   /** Members of this org, owner included. */
   members: number;
+  /** The owner's subscription status while it has not ended, else null. Every member sees it. */
+  status: string | null;
+  /** The owner's subscription is paid, so their seats count. */
+  paid: boolean;
+  // The pool and the subscription's period are the owner's alone: for
+  // anyone else they read 0 and null.
   /** Developers across every org the owner owns, each once. */
   developers: number;
   /** Developer seats the owner has: Pro's included ones plus the extra paid ones, else none. */
   seats: number;
   /** Seats paid past the ones Pro includes. */
   extraSeats: number;
-  /** The owner's subscription is paid, so their seats count. */
-  paid: boolean;
   /** Seats Add seat buys: enough for every developer plus one more (`stripe.addSeat`). */
   seatsToAdd: number;
-  /** The owner's subscription that has not ended, or null when they have none. */
+  /** The viewer's own subscription that has not ended, when they own the org. */
   billing: Subscription;
 }
 
@@ -55,9 +60,13 @@ export function useOrgSeats(): OrgSeats | undefined {
   if (!org || !user || !members || info === undefined) return undefined;
   if (budget === undefined) return undefined;
   const owner = members.find((member) => member.isOwner);
-  const billing = info?.subscription ?? null;
-  const seats = info?.seats ?? 0;
-  const developers = info?.developers ?? 0;
+  const pool = info?.kind === "owner" ? info : null;
+  const status =
+    info?.kind === "member"
+      ? info.status
+      : (pool?.subscription?.status ?? null);
+  const seats = pool?.seats ?? 0;
+  const developers = pool?.developers ?? 0;
 
   return {
     org: org,
@@ -66,12 +75,13 @@ export function useOrgSeats(): OrgSeats | undefined {
     ownerName: owner?.name ?? "the owner",
     userPlan: user.plan,
     members: members.length,
+    status: status,
+    paid: status !== null && isPaid(status),
     developers: developers,
     seats: seats,
     extraSeats: Math.max(0, seats - seatsForQuantity(1)),
-    paid: billing !== null && isPaid(billing.status),
     seatsToAdd: Math.max(seats, developers + 1) - seats,
-    billing: billing,
+    billing: pool?.subscription ?? null,
   };
 }
 

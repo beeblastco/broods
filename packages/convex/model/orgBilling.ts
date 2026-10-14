@@ -65,20 +65,27 @@ export function seatsForQuantity(quantity: number): number {
 }
 
 /**
- * The subscription an owner's billing acts on: the oldest paid one, else the
- * oldest that has not ended (one waiting on a payment). Any later paid one is
- * a duplicate checkout that nothing counts.
+ * The subscription an owner's billing acts on: the paid one with the most
+ * units, the oldest on a tie, else the oldest that has not ended (one waiting
+ * on a payment). Any other paid one is a duplicate that nothing counts; the
+ * most units wins so an owner who paid per org before the pool keeps every
+ * seat they paid for.
  */
-export function currentOf<Sub extends { status: string }>(
+export function currentOf<Sub extends { status: string; quantity?: number }>(
   subs: ReadonlyArray<Sub>,
 ): Sub | undefined {
-  return (
-    subs.find((sub) => isPaid(sub.status)) ??
-    subs.find((sub) => !isEnded(sub.status))
-  );
+  const paid = subs
+    .filter((sub) => isPaid(sub.status))
+    .reduce<Sub | undefined>(
+      (best, sub) =>
+        best && (best.quantity ?? 1) >= (sub.quantity ?? 1) ? best : sub,
+      undefined,
+    );
+
+  return paid ?? subs.find((sub) => !isEnded(sub.status));
 }
 
-/** The developer seats an owner's subscriptions give: what the oldest paid one buys, else none. */
+/** The developer seats an owner's subscriptions give: what the one billing acts on buys while paid, else none. */
 export function seatsOf(
   subs: ReadonlyArray<{ status: string; quantity?: number }>,
 ): number {
@@ -127,9 +134,10 @@ export async function developersOf(
 
 /**
  * Refuse to add `userId` to an org when its owner has no developer seat for
- * them. Someone already seated in another of the owner's orgs joins free;
- * anyone else needs a free seat, which the owner buys first
- * (`stripe:addSeat`), so the invite lands only once it is paid.
+ * them. While the owner pays, someone already seated in another of their
+ * orgs joins free; anyone else needs a free seat, which the owner buys first
+ * (`stripe:addSeat`), so the invite lands only once it is paid. An owner who
+ * does not pay has no seats, so nobody joins, seated or not.
  */
 export async function assertFreeSeat(
   ctx: QueryCtx,
@@ -137,13 +145,15 @@ export async function assertFreeSeat(
   userId: Id<"users">,
 ): Promise<void> {
   if (!isManagedService()) return;
-  const developers = await developersOf(ctx, org.ownerAuthId);
-  if (developers.has(userId)) return;
   const subs = await ctx.runQuery(
     components.stripe.public.listSubscriptionsByUserId,
     { userId: org.ownerAuthId },
   );
-  if (developers.size < seatsOf(subs)) return;
+  const seats = seatsOf(subs);
+  const developers = await developersOf(ctx, org.ownerAuthId);
+  if (seats > 0 && (developers.has(userId) || developers.size < seats)) {
+    return;
+  }
 
   throw new ClientError(
     planOf(subs) === "pro"

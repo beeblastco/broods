@@ -387,15 +387,18 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
     await expect(page.getByText(/ of \d+ developer seats used/)).toHaveCount(0);
 
     await openMembers(page);
+    // The owner's seats are theirs to see: no count, and only the invite's
+    // refusal sends the admin to the owner.
+    await expect(page.getByText(/developer seats used/)).toHaveCount(0);
     const dialog = await openInvite(page);
+    await expect(dialog.getByTestId("invite-seat-notice")).toHaveCount(0);
+    await dialog.getByLabel("Email").fill(developers[0].email);
+    await dialog.getByRole("button", { name: "Add", exact: true }).click();
     await expect(
       dialog.getByText(
         `Ask ${OWNER.name}, the owner, to add a developer seat in Billing. Someone already on one of their seats joins free. You are never charged.`,
       ),
     ).toBeVisible();
-    await expect(
-      dialog.getByRole("button", { name: "Add", exact: true }),
-    ).toBeDisabled();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
     fileSubscription(owner, subId("acme"), 1, "active");
@@ -472,7 +475,7 @@ async function openMembers(page: Page): Promise<void> {
 async function openInvite(page: Page): Promise<ReturnType<Page["getByRole"]>> {
   await page.getByRole("button", { name: "Invite", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Invite member" });
-  await expect(dialog.getByTestId("invite-seat-notice")).toBeVisible();
+  await expect(dialog).toBeVisible();
 
   return dialog;
 }

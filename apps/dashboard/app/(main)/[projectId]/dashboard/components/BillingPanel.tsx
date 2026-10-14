@@ -83,7 +83,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
-  const billingInfo = seats?.billing;
   const plan: PlanTier = budget?.plan ?? DEFAULT_PLAN;
   const isOwner = seats?.isOwner === true;
   // A live subscription in any state (even past_due) goes through the portal;
@@ -91,7 +90,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   // Self-hosted installs have no plans to buy. Every member sees Upgrade on
   // a free org; only the owner can press it.
   const showUpgrade =
-    billingInfo === null && !isMaxPlan(plan) && budget?.enforced === true;
+    seats?.status === null && !isMaxPlan(plan) && budget?.enforced === true;
   const canUpgrade = showUpgrade && isOwner;
   // What a member of a free org hears instead of a checkout.
   const ownerOnly =
@@ -100,7 +99,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
       : null;
   const notice = pickNotice(
     budget,
-    billingInfo,
+    seats,
     canUpgrade,
     ownerOnly,
     plan,
@@ -519,7 +518,7 @@ function PlanSummary({
 }): React.JSX.Element {
   const selfHosted = budget?.enforced === false;
   // A subscription waiting on a payment is still Pro, held back until paid.
-  const shown: PlanTier = seats?.billing ? "pro" : plan;
+  const shown: PlanTier = seats?.status ? "pro" : plan;
   const detail = planDetail(budget, selfHosted, shown, seats);
 
   return (
@@ -530,7 +529,7 @@ function PlanSummary({
         </span>
         <PlanBadge
           selfHosted={selfHosted}
-          status={seats?.billing?.status}
+          status={seats?.status ?? undefined}
           paidBy={seats && !seats.isOwner ? seats.ownerName : null}
         />
       </div>
@@ -547,16 +546,18 @@ function PlanSummary({
 // The one notice worth showing, most urgent first. `checkoutReturned` is the
 // success=true Stripe adds to the checkout return URL; a payment due outranks
 // it, since the URL keeps that flag after the subscription later fails.
-// `ownerOnly` tells a member of a free org who can upgrade it.
+// `ownerOnly` tells a member of a free org who can upgrade it. A trial's end
+// is the owner's to see.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
-  billing: OrgSeats["billing"] | undefined,
+  seats: OrgSeats | undefined,
   canUpgrade: boolean,
   ownerOnly: string | null,
   plan: PlanTier,
   checkoutReturned: boolean,
 ): Notice | null {
-  if (billing && PAYMENT_DUE_STATUSES.has(billing.status)) {
+  const billing = seats?.billing;
+  if (seats?.status && PAYMENT_DUE_STATUSES.has(seats.status)) {
     return {
       tone: "destructive",
       text: "Payment failed. Update your card to keep Pro.",

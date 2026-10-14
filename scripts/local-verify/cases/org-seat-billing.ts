@@ -95,10 +95,11 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
       );
       const info = result(billing);
       assertStep(
-        "billing shows Pro's 2 developer seats, and no Stripe ids",
+        "billing shows the owner Pro's 2 developer seats, and no Stripe ids",
         typeof info === "object" &&
           info !== null &&
-          Object.keys(info).sort().join() === "developers,seats,subscription" &&
+          Object.keys(info).sort().join() ===
+            "developers,kind,seats,subscription" &&
           "seats" in info &&
           info.seats === 2,
         billing,

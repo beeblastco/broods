@@ -447,7 +447,7 @@ export const orgsFields = {
   name: v.string(),
   slug: v.string(),
   ownerAuthId: v.string(),
-  /** The org's own tier: free at insert, pro while a subscription filed under the org is paid (model/orgBilling.ts). */
+  /** The org's tier: its owner's, pro while the owner's subscription is paid; set at insert and on every change to it (model/orgBilling.ts). */
   plan: planValidator,
   createdAt: v.number(),
   /** Set the first time a project is created in this org; gates the home-page auto-onboarding. */

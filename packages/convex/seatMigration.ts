@@ -6,8 +6,9 @@
  * same seat sync and plan sync the webhook runs, for every owner with a
  * subscription (Stripe credits the units it drops on the next invoice). It
  * never raises a quantity and never cancels anything: an owner who pays for
- * more than one subscription keeps the oldest, and the others are listed
- * under `duplicates` for someone to refund and cancel by hand. An owner
+ * more than one subscription keeps the one with the most units (the oldest
+ * on a tie), and the other paid ones are listed under `duplicates` for
+ * someone to refund and cancel by hand. An owner
  * Stripe refuses is reported and the run carries on, so running it again
  * retries only those. Run it once per deployment after the deploy, dry
  * first: `npx convex run seatMigration:resyncAllSeats '{"dryRun":true}'`.
@@ -64,7 +65,7 @@ type ResyncResult = Infer<typeof resyncResultValidator>;
 /**
  * Put every owner with a subscription on the pool: their units, and the plan
  * of every org they own. Reports the owners whose units it changed, the ones
- * that failed, and the paid subscriptions past each owner's oldest. `dryRun`
+ * that failed, and each owner's paid subscriptions past the one kept. `dryRun`
  * only lists them.
  */
 export const resyncAllSeats = internalAction({
@@ -107,8 +108,8 @@ export const resyncAllSeats = internalAction({
 
 /**
  * One page of users: each one with a subscription that has not ended, with
- * the units it pays for and the units their developers need, and every paid
- * subscription of theirs past the oldest.
+ * the units it pays for and the units their developers need, and every
+ * other paid subscription of theirs.
  */
 export const resyncPageInternal = internalQuery({
   args: { cursor: v.union(v.string(), v.null()) },
@@ -124,14 +125,15 @@ export const resyncPageInternal = internalQuery({
         components.stripe.public.listSubscriptionsByUserId,
         { userId: user.authId },
       );
-      for (const sub of subs.filter((sub) => isPaid(sub.status)).slice(1)) {
+      const current = currentOf(subs);
+      if (!current) continue;
+      for (const sub of subs) {
+        if (sub === current || !isPaid(sub.status)) continue;
         duplicates.push({
           authId: user.authId,
           stripeSubscriptionId: sub.stripeSubscriptionId,
         });
       }
-      const current = currentOf(subs);
-      if (!current) continue;
       const oldQuantity = current.quantity ?? 1;
       resyncs.push({
         authId: user.authId,

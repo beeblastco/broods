@@ -182,7 +182,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
           fields={QUERY_FIELDS}
           placeholder="Search members · role:"
         />
-        {seats?.enforced && (
+        {seats?.enforced && seats.isOwner && (
           <Badge variant="outline">
             {seats.developers} of {seats.seats} developer seats used
           </Badge>
@@ -478,9 +478,10 @@ function RoleItem({
  * invite needs a developer seat from the owner's pool, shared by every org
  * they own: someone already seated in another of them joins free. With none
  * free, the owner pays for one more seat and the invite follows, or upgrades
- * to Pro first; anyone else asks the owner. The seat count picks the step up
- * front, and the invite's 402 picks it when the count was stale or the
- * person was already seated. Nobody but the owner is ever charged.
+ * to Pro first; anyone else asks the owner. For the owner the seat count
+ * picks the step up front, and the invite's 402 picks it when the count was
+ * stale; anyone else learns it from the 402 alone, since the owner's seats
+ * are theirs to see. Nobody but the owner is ever charged.
  */
 function InviteDialog({
   org,
@@ -713,12 +714,16 @@ function SeatNotice({
   );
 }
 
-/** The invite dialog's step: the seat count, or a 402 the invite got, says whether a seat is free. */
+/**
+ * The invite dialog's step: the owner's seat count, or a 402 the invite got,
+ * says whether a seat is free. Anyone else does not see the owner's seats,
+ * so only the 402 tells them.
+ */
 function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
   if (!seats) return "invite";
+  if (!seats.isOwner) return refused ? "ask" : "invite";
   const full = refused || (seats.enforced && seats.developers >= seats.seats);
   if (!full) return "invite";
-  if (!seats.isOwner) return "ask";
   if (!seats.billing) return "upgrade";
 
   return seats.paid ? "seat" : "billing";

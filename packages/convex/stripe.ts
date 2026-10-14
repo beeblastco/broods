@@ -165,16 +165,19 @@ export const createPortalSession = action({
 });
 
 /**
- * The plan behind the caller's active org, for any member: its owner's
- * developer seats, how many are taken across the owner's orgs, and the
- * owner's subscription that has not ended (its status and period). Who pays
- * and the Stripe ids stay with the owner.
+ * The plan behind the caller's active org. Its owner sees their whole pool:
+ * their developer seats, how many are taken across their orgs, and their
+ * subscription that has not ended (its status and period). Anyone else sees
+ * only that subscription's status, which says whether the org runs on Pro
+ * and whether their seat is paid; the owner's other orgs, developers and
+ * billing period stay with the owner.
  */
 export const getBillingInfo = query({
   args: {},
   returns: v.union(
     v.null(),
     v.object({
+      kind: v.literal("owner"),
       seats: v.number(),
       developers: v.number(),
       subscription: v.union(
@@ -185,6 +188,10 @@ export const getBillingInfo = query({
           cancelAtPeriodEnd: v.boolean(),
         }),
       ),
+    }),
+    v.object({
+      kind: v.literal("member"),
+      status: v.union(v.null(), v.string()),
     }),
   ),
   handler: async (ctx) => {
@@ -201,8 +208,12 @@ export const getBillingInfo = query({
     // Any subscription that is not over, including past_due and unpaid ones,
     // so the dashboard offers the portal to fix payment instead of checkout.
     const live = currentOf(subs);
+    if (org.ownerAuthId !== authUser.id) {
+      return { kind: "member" as const, status: live?.status ?? null };
+    }
 
     return {
+      kind: "owner" as const,
       seats: seatsOf(subs),
       developers: (await developersOf(ctx, org.ownerAuthId)).size,
       subscription: live
@@ -302,7 +313,8 @@ export const ownerBillingInternal = internalQuery({
  * after one left their last org of the owner's, or an org was deleted,
  * whether or not the last payment went through. Stripe credits the unused
  * time on the next invoice. Units only go up on the owner's click
- * (`addSeat`).
+ * (`addSeat`). An owner with no live subscription, or one Stripe already
+ * ended (a deleted owner's, canceled while this sync waited), is left alone.
  */
 export const syncSeatsInternal = internalAction({
   args: { authId: v.string() },
@@ -512,7 +524,8 @@ async function changeSeats(
   const item = live.items.data[0];
   if (!item) throw new Error(`Subscription ${subscriptionId} has no items`);
   const paid = item.quantity ?? 1;
-  const quantity = quantityFor(paid);
+  // An ended subscription takes no changes; store it as it is.
+  const quantity = isEnded(live.status) ? paid : quantityFor(paid);
   if (quantity === paid) {
     await applyLive(ctx, ticket, live);
 

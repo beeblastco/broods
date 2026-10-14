@@ -16,7 +16,8 @@ import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
 import { ClientError } from "../model/clientError";
 import { hasDashboardPermission } from "../model/access";
-import { assertCanCreateOrg } from "../model/orgBilling";
+import { assertCanCreateOrg, syncUserPlan } from "../model/orgBilling";
+import { isManagedService } from "../model/planLimits";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -150,6 +151,8 @@ export const adoptExternalAccount = internalMutation({
     // The secret hash is untouched, so whatever service holds this account's
     // secret keeps authenticating exactly as before.
     await ctx.db.patch(account._id, { orgId: orgId, updatedAt: now });
+    // The org runs on its owner's plan, like every org they own.
+    if (isManagedService()) await syncUserPlan(ctx, owner.authId);
 
     console.log("AUDIT external account adopted", {
       accountId: account._id,
