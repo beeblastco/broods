@@ -128,11 +128,11 @@ export function SandboxDock({
             <ChevronDown />
           </Button>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
+        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1">
           {groups.map(({ instance, sessions }) => (
             <div key={instance._id} className="flex flex-col gap-0.5">
               <div className="flex h-7 items-center gap-1 pr-0.5 pl-2">
-                <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">
                   {instance.name}
                 </span>
                 {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
