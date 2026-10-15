@@ -3,13 +3,15 @@
 /**
  * The table-plus-detail split the monitoring, tracing, and sandbox tables
  * share: the table on the left, an optional detail column on the right with a
- * drag handle between them.
+ * drag handle between them. On a phone the detail takes the whole width while
+ * a row is open, and its close brings the table back.
  */
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/app/components/ui/resizable";
+import { useIsMobile } from "@/app/hooks/useIsMobile";
 import {
   DETAIL_DEFAULT_WIDTH,
   DETAIL_MIN_WIDTH,
@@ -83,13 +85,26 @@ export function DetailSplit({
   flush = false,
   tableMinWidth = TABLE_MIN_WIDTH,
 }: DetailSplitProps): React.JSX.Element {
+  const isMobile = useIsMobile();
+  const frame = cn(
+    "min-h-0 flex-1 overflow-hidden bg-card",
+    !flush && "rounded-lg border border-border",
+  );
+  // No room for both side by side: the detail covers the table, which stays
+  // mounted so closing the detail does not rebuild it.
+  if (isMobile) {
+    return (
+      <div className={cn(frame, "flex flex-col")}>
+        <div className={detail ? "hidden" : "min-h-0 flex-1 overflow-auto"}>
+          {children}
+        </div>
+        {detail && <div className="flex min-h-0 flex-1 flex-col">{detail}</div>}
+      </div>
+    );
+  }
+
   return (
-    <ResizablePanelGroup
-      className={cn(
-        "min-h-0 flex-1 overflow-hidden bg-card",
-        !flush && "rounded-lg border border-border",
-      )}
-    >
+    <ResizablePanelGroup className={frame}>
       <ResizablePanel
         minSize={tableMinWidth}
         className="min-h-0 min-w-0 overflow-auto"
