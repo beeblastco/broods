@@ -1,5 +1,6 @@
 "use client";
 
+import { useHydrated } from "@/app/hooks/useHydrated";
 import type { MachineConnection } from "@/app/lib/machineConnection";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { SandboxInstancesTable } from "../(main)/[projectId]/sandbox/components/SandboxInstancesTable";
@@ -128,8 +129,13 @@ const SNAPSHOTS: Doc<"sandboxSnapshots">[] = [
  * here, which is fine: the fixture is about layout.
  */
 export function SandboxInstancesStandIn(): React.JSX.Element {
+  const hydrated = useHydrated();
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div
+      data-hydrated={hydrated ? "true" : undefined}
+      className="flex h-screen flex-col overflow-hidden"
+    >
       <SandboxInstancesTable
         instances={INSTANCES}
         machines={MACHINES}

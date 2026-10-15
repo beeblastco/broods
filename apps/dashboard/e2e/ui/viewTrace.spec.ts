@@ -10,8 +10,8 @@ const TASKS = 60;
 /** The task View trace opens: the last row on Tracing's first page. */
 const TARGET_TASK = 50;
 
-/** Two weeks back, so the tasks age with the clock and stay inside 30 days. */
-const NOW_MS = Date.now() - 14 * 86_400_000;
+/** The page's frozen clock; the fixture's tasks are minutes before it. */
+const NOW_MS = Date.parse("2026-09-15T10:00:00Z");
 
 test("View trace opens Tracing on the task without sliding the page", async ({
   page,
@@ -84,6 +84,7 @@ test("a log line the search hides drops its strip marker and panel", async ({
 
 /** Serve every observability subscription from the fixture data below. */
 async function answerObservabilitySocket(page: Page): Promise<void> {
+  await page.clock.setFixedTime(NOW_MS);
   await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
     socket.onMessage((raw) => {
       const message = JSON.parse(String(raw)) as {

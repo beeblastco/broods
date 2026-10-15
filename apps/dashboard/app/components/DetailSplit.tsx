@@ -91,14 +91,21 @@ export function DetailSplit({
     !flush && "rounded-lg border border-border",
   );
   // No room for both side by side: the detail covers the table, which stays
-  // mounted so closing the detail does not rebuild it.
+  // laid out (invisible, not removed) so closing the detail returns to the
+  // same scroll position.
   if (isMobile) {
     return (
-      <div className={cn(frame, "flex flex-col")}>
-        <div className={detail ? "hidden" : "min-h-0 flex-1 overflow-auto"}>
+      <div className={cn(frame, "relative flex flex-col")}>
+        <div
+          className={cn("min-h-0 flex-1 overflow-auto", detail && "invisible")}
+        >
           {children}
         </div>
-        {detail && <div className="flex min-h-0 flex-1 flex-col">{detail}</div>}
+        {detail && (
+          <div className="absolute inset-0 flex min-h-0 flex-col bg-card">
+            {detail}
+          </div>
+        )}
       </div>
     );
   }

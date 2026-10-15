@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 test("the terminal fills the dock and draws in a real monospace font", async ({
   page,
@@ -25,29 +25,21 @@ test("the session list opens, closes and hides shells", async ({ page }) => {
   await openTerminal(page);
 
   const sessions = page.getByRole("navigation", { name: "Open sessions" });
-  await expect(
-    sessions.getByRole("button", { name: "Shell 1 on browser", exact: true }),
-  ).toBeVisible();
+  await expect(sessionButton(page, "Shell 1")).toBeVisible();
   await sessions.getByRole("button", { name: "New shell on browser" }).click();
-  await expect(
-    sessions.getByRole("button", { name: "Shell 2 on browser", exact: true }),
-  ).toBeVisible();
+  await expect(sessionButton(page, "Shell 2")).toBeVisible();
 
   // Every session has its own close.
   await sessions
     .getByRole("button", { name: "Close Shell 2 on browser" })
     .click();
-  await expect(
-    sessions.getByRole("button", { name: "Shell 2 on browser", exact: true }),
-  ).toHaveCount(0);
+  await expect(sessionButton(page, "Shell 2")).toHaveCount(0);
 
   // Hiding keeps the shells; the backtick brings the dock back.
   await sessions.getByRole("button", { name: "Hide the dock" }).click();
   await expect(sessions).toBeHidden();
   await page.keyboard.press("Backquote");
-  await expect(
-    sessions.getByRole("button", { name: "Shell 1 on browser", exact: true }),
-  ).toBeVisible();
+  await expect(sessionButton(page, "Shell 1")).toBeVisible();
 
   // Closing the last session closes the dock.
   await sessions
@@ -67,6 +59,19 @@ test("hiding the dock hands focus back to the Terminal button", async ({
   await expect(
     page.getByRole("button", { name: "Terminal", exact: true }),
   ).toBeFocused();
+});
+
+test("the backtick hides the dock without taking focus from outside it", async ({
+  page,
+}) => {
+  await openTerminal(page);
+  const filter = page.getByRole("button", { name: "Filter" });
+  await filter.focus();
+  await page.keyboard.press("Backquote");
+  await expect(
+    page.getByRole("navigation", { name: "Open sessions" }),
+  ).toBeHidden();
+  await expect(filter).toBeFocused();
 });
 
 test("on a phone the session list is one row above a full-width shell", async ({
@@ -96,14 +101,17 @@ test("on a phone the session list is one row above a full-width shell", async ({
   expect(second.x).toBeGreaterThan(first.x);
 });
 
-// Opens the gallery's sandbox stand-in and its first shell. The stand-in has
-// no hydration marker, so it clicks until React owns the row.
+// Opens the gallery's sandbox stand-in, once React owns it, and its first shell.
 async function openTerminal(page: Page): Promise<void> {
   await page.goto("/ui-gallery?tab=sandbox");
-  const open = page.getByRole("button", { name: "Terminal", exact: true });
-  await expect(async () => {
-    await page.getByText("browser", { exact: true }).first().click();
-    await expect(open).toBeVisible({ timeout: 1_000 });
-  }).toPass();
-  await open.click();
+  await page.locator('[data-hydrated="true"]').waitFor();
+  await page.getByText("browser", { exact: true }).first().click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+}
+
+// A session's switch button in the dock's list.
+function sessionButton(page: Page, name: string): Locator {
+  return page
+    .getByRole("navigation", { name: "Open sessions" })
+    .getByRole("button", { name: `${name} on browser`, exact: true });
 }

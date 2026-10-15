@@ -86,8 +86,8 @@ export function SandboxDock({
   }
 
   return (
-    <div className="@container/dock h-full min-h-0">
-      <div className="flex h-full min-h-0 flex-col bg-terminal-background @xl/dock:flex-row">
+    <div data-sandbox-dock className="@container/dock h-full min-h-0">
+      <div className="flex h-full min-h-0 flex-col-reverse bg-terminal-background @xl/dock:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {state.sessions.map((session) => {
             const instance = byId.get(session.instanceId);
@@ -115,10 +115,10 @@ export function SandboxDock({
         </div>
         <nav
           aria-label="Open sessions"
-          className="order-first flex h-8 shrink-0 items-center border-b border-border bg-card @xl/dock:order-none @xl/dock:h-auto @xl/dock:w-56 @xl/dock:flex-col @xl/dock:items-stretch @xl/dock:border-b-0 @xl/dock:border-l"
+          className="flex h-8 shrink-0 flex-row-reverse items-center border-b border-border bg-card @xl/dock:h-auto @xl/dock:w-56 @xl/dock:flex-col @xl/dock:items-stretch @xl/dock:border-b-0 @xl/dock:border-l"
         >
-          <div className="order-last flex h-8 shrink-0 items-center gap-1 pr-1 @xl/dock:order-none @xl/dock:border-b @xl/dock:border-border @xl/dock:pl-3">
-            <span className="hidden flex-1 text-xs text-muted-foreground @xl/dock:block">
+          <div className="flex h-8 shrink-0 items-center @xl/dock:border-b @xl/dock:border-border @xl/dock:pl-2">
+            <span className="hidden flex-1 text-xs font-medium @xl/dock:block">
               Sessions
             </span>
             <ShortcutKeys id="sandbox.terminal" bordered />
@@ -133,14 +133,14 @@ export function SandboxDock({
               <ChevronDown />
             </Button>
           </div>
-          <div className="flex min-h-0 min-w-0 flex-1 items-center gap-0.5 overflow-auto px-1 @xl/dock:flex-col @xl/dock:items-stretch @xl/dock:p-1">
+          <div className="flex min-h-0 min-w-0 flex-1 items-center overflow-auto @xl/dock:flex-col @xl/dock:items-stretch">
             {groups.map(({ instance, sessions }) => (
               <div
                 key={instance._id}
-                className="flex shrink-0 items-center gap-0.5 @xl/dock:flex-col @xl/dock:items-stretch"
+                className="contents @xl/dock:flex @xl/dock:flex-col"
               >
-                <div className="flex h-7 items-center gap-1 pr-0.5 pl-2">
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                <div className="flex shrink-0 items-center pl-2">
+                  <span className="max-w-40 min-w-0 flex-1 truncate text-xs font-medium">
                     {instance.name}
                   </span>
                   {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
@@ -163,7 +163,7 @@ export function SandboxDock({
                   return (
                     <div
                       key={session.key}
-                      className="flex items-center gap-0.5"
+                      className="flex shrink-0 items-center"
                     >
                       <Button
                         variant="nav"
@@ -171,7 +171,7 @@ export function SandboxDock({
                         data-active={session.key === state.active}
                         aria-current={session.key === state.active || undefined}
                         aria-label={`${name} on ${instance.name}`}
-                        className="flex-1 cursor-pointer justify-start tabular-nums"
+                        className="cursor-pointer justify-start tabular-nums @xl/dock:flex-1"
                         onClick={() => onActivate(session.key)}
                       >
                         {name}
