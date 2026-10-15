@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
  * runtime key: a new agent refuses the bare runtime key, so a checkout without
  * the secret could not sign a token. It rotates the secret only when the
  * stage has none or this checkout lacks a non-production stage's, and never
- * prints it.
+ * prints it. `--region` rides the manifest as Production's region.
  */
 
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
@@ -30,13 +30,23 @@ type Stage = {
 };
 
 /** A fake control plane for the manifest PUT and the secret rotation. */
-function serveBackend(stage: Stage): { baseUrl: string; rotations: string[] } {
+function serveBackend(stage: Stage): {
+  baseUrl: string;
+  rotations: string[];
+  regions: unknown[];
+} {
   const rotations: string[] = [];
+  const regions: unknown[] = [];
   const server = Bun.serve({
     port: 0,
-    fetch: (request) => {
+    fetch: async (request) => {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/manifest") && request.method === "PUT") {
+        const body = (await request.json()) as {
+          manifest: { region?: string };
+        };
+        regions.push(body.manifest.region);
+
         return Response.json({
           manifest: {
             version: 1,
@@ -75,7 +85,11 @@ function serveBackend(stage: Stage): { baseUrl: string; rotations: string[] } {
   });
   servers.push(server);
 
-  return { baseUrl: `http://127.0.0.1:${server.port}`, rotations: rotations };
+  return {
+    baseUrl: `http://127.0.0.1:${server.port}`,
+    rotations: rotations,
+    regions: regions,
+  };
 }
 
 async function projectDir(envLocal: string[] = []): Promise<string> {
@@ -105,9 +119,10 @@ async function runDeploy(
   cwd: string,
   baseUrl: string,
   shell: Record<string, string> = {},
+  args: string[] = [],
 ): Promise<{ exitCode: number; output: string; envLocal: string }> {
   const proc = Bun.spawn({
-    cmd: [process.execPath, CLI, "deploy"],
+    cmd: [process.execPath, CLI, "deploy", ...args],
     cwd: cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -256,4 +271,33 @@ test("deploy still succeeds when the rotation is refused", async () => {
   expect(result.exitCode).toBe(0);
   expect(result.output).toContain("needs keys:write");
   expect(result.envLocal).not.toContain("BROODS_USER_TOKEN_SECRET");
+});
+
+test("--region rides the manifest; BROODS_REGION, which init writes, does not", async () => {
+  const cwd = await projectDir(['BROODS_REGION="us-east-1"']);
+  const backend = serveBackend({ stageKind: "production" });
+
+  const defaulted = await runDeploy(cwd, backend.baseUrl);
+  const named = await runDeploy(cwd, backend.baseUrl, {}, [
+    "--region",
+    "eu-west-1",
+  ]);
+
+  expect(defaulted.exitCode).toBe(0);
+  expect(named.exitCode).toBe(0);
+  expect(backend.regions).toEqual([undefined, "eu-west-1"]);
+});
+
+test("an unknown --region fails before any request", async () => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  const result = await runDeploy(cwd, backend.baseUrl, {}, [
+    "--region",
+    "mars-1",
+  ]);
+
+  expect(result.exitCode).not.toBe(0);
+  expect(result.output).toContain("Unknown region mars-1");
+  expect(backend.regions).toEqual([]);
 });

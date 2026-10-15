@@ -25,6 +25,7 @@ import {
 } from "./model/ownership/project";
 import { agentsInStage, stageNameEquals } from "./model/projectScope";
 import { deploymentRegionValidator, stagesFields } from "./schema";
+import { LIVE_DEPLOYMENT_REGIONS } from "./cli/types";
 
 const stageDoc = v.object({
   ...stagesFields,
@@ -185,6 +186,9 @@ export const initializeProduction = mutation({
     );
     if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
 
+    if (!LIVE_DEPLOYMENT_REGIONS.includes(deploymentRegion)) {
+      throw new Error(`Region ${deploymentRegion} is not available yet.`);
+    }
     const source = await getOwnedStage(ctx, authUser.id, sourceStageId);
     if (!source || source.projectId !== projectId) {
       throw new Error("Source stage not found.");

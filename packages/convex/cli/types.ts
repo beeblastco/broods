@@ -2,8 +2,8 @@
  * Canonical CLI manifest wire types, the single source of truth shared by the
  * backend (cliSync.ts, cliHttp.ts) and the SDK/CLI (packages/broods).
  *
- * This file intentionally has no runtime imports (its one value is a plain
- * list) so the SDK can import it without pulling the Convex server module
+ * This file intentionally has no runtime imports (its values are plain
+ * lists) so the SDK can import it without pulling the Convex server module
  * graph into its typecheck.
  */
 
@@ -42,6 +42,10 @@ export const DEPLOYMENT_REGIONS = [
   "us-east-1",
 ] as const;
 export type DeploymentRegion = (typeof DEPLOYMENT_REGIONS)[number];
+/** The regions Production can run in today; the first is the default. */
+export const LIVE_DEPLOYMENT_REGIONS: readonly DeploymentRegion[] = [
+  "eu-west-1",
+];
 
 export type CliManifest = {
   version: 1;

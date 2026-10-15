@@ -1,6 +1,5 @@
 import type { CliManifest } from "../../../packages/broods/src/contracts.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
-import { sha256Hex } from "../../../packages/convex/model/accountSecrets.ts";
 import { assertStep, convexResult, type VerifyContext } from "../harness.ts";
 
 /**
@@ -42,25 +41,24 @@ export async function productionRegion(context: VerifyContext): Promise<void> {
     `region ${String(pinned)}`,
   );
 
-  const moved = await sync.putManifest(manifest("us-east-1"), true).then(
-    (): string => "deployed",
-    (error: unknown): string => String(error),
-  );
+  // A refused deploy's error text, or "deployed".
+  const outcome = (body: CliManifest): Promise<string> =>
+    sync.putManifest(body, true).then(
+      (): string => "deployed",
+      (error: unknown): string => String(error),
+    );
+
+  const moved = await outcome(manifest("us-east-1"));
   assertStep(
     "a later deploy cannot move Production to another region",
     moved.includes("409") && moved.includes("already runs in eu-west-1"),
     moved.slice(0, 200),
   );
 
-  const unknown = await sync
-    .putManifest(
-      { ...manifest(), region: "mars-1" as CliManifest["region"] },
-      true,
-    )
-    .then(
-      (): string => "deployed",
-      (error: unknown): string => String(error),
-    );
+  const unknown = await outcome({
+    ...manifest(),
+    region: "mars-1" as CliManifest["region"],
+  });
   assertStep(
     "an unknown region is a 400, not a server error",
     unknown.includes("400") && unknown.includes(`Unknown region "mars-1"`),
@@ -80,16 +78,11 @@ async function productionRegionOf(
   context: VerifyContext,
   project: string,
 ): Promise<string | undefined> {
-  const account = convexResult(
-    context,
-    "account/accounts:getBySecretHash",
-    { secretHash: await sha256Hex(context.accountSecret) },
-    "read the verify account",
-  ) as { _id: string };
+  const { accountId } = await context.account.getAccount();
   const stages = convexResult(
     context,
     "cli/stages:listByAccount",
-    { accountId: account._id, project: project },
+    { accountId: accountId, project: project },
     "list the project's stages",
   ) as Array<{ kind: string; deploymentRegion?: string }>;
 

@@ -1189,7 +1189,15 @@ async function deploy(args: string[]): Promise<void> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
-  const region = productionRegion(args, manifest.stage);
+  // Production's region, pinned by its first deploy; the server refuses a move
+  // or another stage. BROODS_REGION is not read: `init` writes it as a default.
+  const flag = optionValue(args, "--region");
+  const region = DEPLOYMENT_REGIONS.find((known) => known === flag);
+  if (flag !== undefined && !region) {
+    throw new Error(
+      `Unknown region ${flag}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
   const result = await client.putManifest(
     region ? { ...manifest, region: region } : manifest,
     hasFlag(args, "--prune"),
@@ -1210,30 +1218,6 @@ async function deploy(args: string[]): Promise<void> {
   await applyDeploymentKey(client, manifest, result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
-}
-
-/**
- * Production's region from `--region`. Its first deploy pins it (eu-west-1
- * when unnamed) and a later one cannot move it. BROODS_REGION is not read:
- * `init` writes it as a default, which must not pin or fight a region.
- */
-function productionRegion(
-  args: string[],
-  stage: string,
-): DeploymentRegion | undefined {
-  const value = optionValue(args, "--region");
-  if (value === undefined) return undefined;
-  if (!stageNameEquals(stage, "production")) {
-    throw new Error("--region applies only to the production stage");
-  }
-  const region = DEPLOYMENT_REGIONS.find((known) => known === value);
-  if (!region) {
-    throw new Error(
-      `Unknown region ${value}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
-    );
-  }
-
-  return region;
 }
 
 /**

@@ -7,7 +7,11 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { CliManifestResource, DeploymentRegion } from "../cli/types";
+import {
+  LIVE_DEPLOYMENT_REGIONS,
+  type CliManifestResource,
+  type DeploymentRegion,
+} from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
 import {
@@ -363,8 +367,13 @@ export async function ensureStage(
       }
     }
 
-    // The patched row, so a caller reads the kind this call just set.
-    return (await ctx.db.get(existing._id)) ?? existing;
+    // As patched, so a caller reads the kind this call just set.
+    return {
+      ...existing,
+      name: displayStageName(name),
+      kind: kind,
+      isDefault: kind === "development" ? true : existing.isDefault,
+    };
   }
 
   // Only Development is ever the default; Production/custom stages are
@@ -390,9 +399,6 @@ export async function ensureStage(
 
   return created;
 }
-
-/** Regions Production can run in today; the others are not live yet. */
-const AVAILABLE_DEPLOYMENT_REGIONS: readonly DeploymentRegion[] = ["eu-west-1"];
 
 /**
  * The region a manifest PUT pins on Production, or undefined when there is
@@ -421,13 +427,13 @@ export function deploymentRegionToPin(
 
     return undefined;
   }
-  if (region && !AVAILABLE_DEPLOYMENT_REGIONS.includes(region)) {
+  if (region && !LIVE_DEPLOYMENT_REGIONS.includes(region)) {
     throw new ClientError(
-      `Region ${region} is not available yet. Available: ${AVAILABLE_DEPLOYMENT_REGIONS.join(", ")}`,
+      `Region ${region} is not available yet. Available: ${LIVE_DEPLOYMENT_REGIONS.join(", ")}`,
     );
   }
 
-  return region ?? AVAILABLE_DEPLOYMENT_REGIONS[0];
+  return region ?? LIVE_DEPLOYMENT_REGIONS[0];
 }
 
 /** A stage env var name from the CLI, trimmed and held to the one env name rule. */

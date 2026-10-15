@@ -80,4 +80,9 @@ test("a project with no Production stage still offers to initialize it", async (
   await expect(
     page.getByRole("heading", { name: "Initialize Production" }),
   ).toBeVisible();
+  // Only live regions can be picked, the same list a deploy is held to.
+  await expect(
+    page.getByRole("button", { name: /Europe \(Ireland\)/ }),
+  ).toBeEnabled();
+  await expect(page.getByRole("button", { name: /US East/ })).toBeDisabled();
 });

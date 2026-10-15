@@ -558,14 +558,12 @@ async function handleManifestSync(
   if (!manifestMatchesRoute(manifest, route)) {
     return jsonError(400, "Manifest project/stage must match the request path");
   }
-  const region: unknown = (manifest as { region?: unknown }).region;
-  if (
-    region !== undefined &&
-    !DEPLOYMENT_REGIONS.some((known) => known === region)
-  ) {
+  const rawRegion: unknown = (manifest as { region?: unknown }).region;
+  const region = DEPLOYMENT_REGIONS.find((known) => known === rawRegion);
+  if (rawRegion !== undefined && !region) {
     return jsonError(
       400,
-      `Unknown region ${JSON.stringify(region)}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
+      `Unknown region ${JSON.stringify(rawRegion)}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
     );
   }
   if (

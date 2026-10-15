@@ -35,34 +35,28 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import {
+  LIVE_DEPLOYMENT_REGIONS,
+  type DeploymentRegion,
+} from "@broods/convex/cli/types";
 import { useMutation, useQuery } from "convex/react";
 import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type StageKind = Doc<"stages">["kind"];
-type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
 
-const regionOptions: Array<{
-  value: DeploymentRegion;
-  label: string;
-  flag: string;
-  enabled: boolean;
-}> = [
-  { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪", enabled: true },
-  {
-    value: "ap-southeast-1",
-    label: "Asia Pacific (Singapore)",
-    flag: "🇸🇬",
-    enabled: false,
-  },
-  {
-    value: "us-east-1",
-    label: "US East (N. Virginia)",
-    flag: "🇺🇸",
-    enabled: false,
-  },
-];
+// A region is selectable once it is live, the same list a deploy checks.
+const regionOptions = (
+  [
+    { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪" },
+    { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬" },
+    { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸" },
+  ] satisfies Array<{ value: DeploymentRegion; label: string; flag: string }>
+).map((option) => ({
+  ...option,
+  enabled: LIVE_DEPLOYMENT_REGIONS.includes(option.value),
+}));
 
 /** Color dot indicating stage type: green for Development, purple for Production. */
 export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
