@@ -2728,14 +2728,18 @@ async function trace(args: string[]): Promise<void> {
     return;
   }
   console.log(`Trace ${traceId} in ${session.project}/${session.stage}`);
-  const depth = new Map<string, number>();
-  for (const span of spans) {
-    const level = span.parentSpanId
-      ? (depth.get(span.parentSpanId) ?? 0) + 1
-      : 0;
-    depth.set(span.spanId, level);
-    console.log(formatTraceSpan(span, level));
-  }
+  // A span whose parent is not in the trace prints at the top level.
+  const ids = new Set(spans.map((span) => span.spanId));
+  const children = Map.groupBy(spans, (span) =>
+    span.parentSpanId && ids.has(span.parentSpanId) ? span.parentSpanId : "",
+  );
+  const print = (parent: string, depth: number): void => {
+    for (const span of children.get(parent) ?? []) {
+      console.log(formatTraceSpan(span, depth));
+      print(span.spanId, depth + 1);
+    }
+  };
+  print("", 0);
 }
 
 /**
@@ -2752,7 +2756,7 @@ function formatTraceSpan(span: ObservabilitySpanRow, depth: number): string {
 
   return stripVTControlCharacters(
     span.error
-      ? `${line}\n${" ".repeat(37)}${indent}error: ${span.error}`
+      ? `${line}\n${" ".repeat(25)}${indent}error: ${span.error}`
       : line,
   );
 }
