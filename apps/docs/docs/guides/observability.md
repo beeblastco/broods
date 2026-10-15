@@ -13,6 +13,8 @@ Every run produces logs and a trace. You read them in the dashboard or the termi
 
 Each run carries a label for what started it, `task` for a request, `cron` for a scheduled run, `subtask` for a subagent. Each model step is split into time to first token, streaming, and tool wait, so a slow tool never looks like slow generation. A failed `task` or `cron` run has a Continue button. See [Conversations](conversations.md).
 
+To hand a run to your own coding agent, such as Claude Code, open it in Tracing and click **Copy prompt for agent**. The prompt carries the project, stage, agent, task id, trace id, conversation and error, and tells the agent to read the run with `broods trace <trace-id> --json` under its own `broods login`, find the root cause, and fix or audit the agent. It holds ids only, never prompts, tool data or keys. The short trace id beside it copies the full id.
+
 The system prompt shown on a trace is the whole assembled prompt, meaning your `agent.system` plus memory, workspace, skills, subagent and scheduler blocks, and any steering. Large payloads are truncated, but the recorded size is always real.
 
 Members and admins can both read logs and traces. See [Security](security.md).
@@ -28,6 +30,7 @@ broods logs --level info         # INFO and above
 broods logs --all                # every level. DEBUG only appears in history.
 broods logs --json               # one JSON object per line
 broods logs --sandbox <uuid>     # one lambda sandbox's guest output
+broods trace <trace-id> --json   # one run's every span, then exit
 ```
 
 `broods dev` also tails warnings and errors while it watches. These commands need `broods login`. They trade your login for a 15-minute stage ticket and renew it on reconnect. The runtime key in `BROODS_API_KEY` cannot open logs, because logs contain every end user's messages and tool data.

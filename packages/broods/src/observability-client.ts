@@ -1,7 +1,7 @@
 /**
- * Lightweight WebSocket client for the observability gateway's logs stream.
- * Subscribes and yields ObservabilityLogEntry items (backfill then live) until
- * the AbortSignal fires or the socket closes. Imports only the shared contracts.
+ * Lightweight WebSocket client for the observability gateway: the logs stream
+ * (backfill then live, until the AbortSignal fires or the socket closes) and a
+ * one-shot read of a trace by id. Imports only the shared contracts.
  */
 
 import { toWebSocketBaseUrl, webSocketSubprotocols } from "./websocket.ts";
@@ -10,6 +10,7 @@ import type {
   ObservabilityClientMessage,
   ObservabilityLogEntry,
   ObservabilityServerMessage,
+  ObservabilitySpanRow,
 } from "./observability-contracts.ts";
 
 export interface ObservabilityClientOptions {
@@ -288,6 +289,80 @@ async function* subscribeObservabilityLogsOnce(
   } finally {
     cleanup();
   }
+}
+
+/**
+ * Read one trace's spans by id, from long-term storage, on a socket of its own.
+ * Rejects with the gateway's reason when the trace is not in this stage.
+ */
+export async function fetchObservabilityTrace(
+  options: ObservabilityClientOptions,
+  traceId: string,
+): Promise<ObservabilitySpanRow[]> {
+  const url = buildObservabilityUrl(
+    options.baseUrl,
+    options.project,
+    options.stage,
+  );
+  const WebSocketImpl = resolveWebSocket();
+  const socket = new WebSocketImpl(
+    url,
+    webSocketSubprotocols(await options.credential()),
+  );
+
+  return new Promise<ObservabilitySpanRow[]>((resolve, reject): void => {
+    let settled = false;
+    const finish = (
+      error: Error | null,
+      rows?: ObservabilitySpanRow[],
+    ): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING)
+        socket.close(1000, "client closed");
+      if (error) reject(error);
+      else resolve(rows ?? []);
+    };
+    const timer = setTimeout((): void => {
+      finish(
+        new Error(
+          `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
+        ),
+      );
+    }, READY_TIMEOUT_MS);
+
+    socket.onopen = (): void => {
+      const msg: ObservabilityClientMessage = {
+        type: "fetchTrace",
+        traceId: traceId,
+      };
+      socket.send(JSON.stringify(msg));
+    };
+    socket.onmessage = (event: MessageEvent): void => {
+      const msg = parseServerMessage(event.data);
+      if (msg?.type === "error") {
+        finish(new Error(`Observability gateway error: ${msg.error}`));
+      } else if (msg?.type === "backfill" && msg.stream === "traces") {
+        if (msg.error) finish(new Error(msg.error));
+        else finish(null, msg.entries as ObservabilitySpanRow[]);
+      }
+    };
+    socket.onerror = (): void => {
+      finish(
+        new Error(`Cannot connect to the observability gateway at ${url}.`),
+      );
+    };
+    socket.onclose = (event: CloseEvent): void => {
+      finish(
+        new Error(
+          event.reason
+            ? `Observability WebSocket closed: ${event.reason}`
+            : `Observability WebSocket closed with code ${event.code}.`,
+        ),
+      );
+    };
+  });
 }
 
 function buildObservabilityUrl(

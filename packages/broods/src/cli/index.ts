@@ -61,13 +61,16 @@ import {
   parseEnv as parseDotenv,
 } from "../runtime-config.ts";
 import {
+  fetchObservabilityTrace,
   subscribeObservabilityLogs,
   type ObservabilityClientOptions,
 } from "../observability-client.ts";
 import {
   isSandboxLogId,
+  isTraceId,
   type LogLevel,
   type ObservabilityLogEntry,
+  type ObservabilitySpanRow,
 } from "../observability-contracts.ts";
 import { BroodsAccountApiError, BroodsAccountClient } from "../account.ts";
 import {
@@ -140,7 +143,7 @@ const GLOBAL_OPTIONS = `Global options:
 const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage
-  Inspect   agent  whoami
+  Inspect   agent  trace  whoami
   Account   login  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
@@ -161,6 +164,7 @@ const STAGE_SCOPED_COMMANDS = new Set([
   "run",
   "stage",
   "stream",
+  "trace",
 ]);
 
 // One page per command, printed by `broods <command> --help` and by the
@@ -345,6 +349,19 @@ Options:
   --all                 Stream INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
+  trace: `Usage: broods trace <trace-id> [--json]
+
+Prints one run's trace: every model step and tool call with its status,
+duration and error. --json prints every span with its full attributes (system
+prompt, model input, reasoning, response, tool input and output), which is what
+a coding agent should read. The dashboard's Tracing tab copies the id.
+
+Authenticates with your \`broods login\`, like \`broods logs\`.
+
+Options:
+  --json                Print the spans as a JSON array
+
+${GLOBAL_OPTIONS}`,
   mcp: `Usage: broods mcp
 
 Serves the account config plane to a development agent over MCP on stdio, so
@@ -460,6 +477,10 @@ async function main(): Promise<void> {
       return;
     case "logs":
       await logs(args);
+
+      return;
+    case "trace":
+      await trace(args);
 
       return;
     case "machine":
@@ -2688,6 +2709,52 @@ async function logs(args: string[]): Promise<void> {
   } finally {
     process.off("SIGINT", onSigint);
   }
+}
+
+// `broods trace <id>` reads one trace by id and exits, so an agent can run it.
+async function trace(args: string[]): Promise<void> {
+  const [traceId] = positionalArgs(args);
+  if (!isTraceId(traceId))
+    throw new Error(
+      `Missing or malformed trace id: 32 lowercase hex characters, as the dashboard copies it.\n\n${commandHelp("trace")}`,
+    );
+  const session = await openStageSession(args);
+  const spans = (await fetchObservabilityTrace(session, traceId)).toSorted(
+    (a, b) => a.startTimeMs - b.startTimeMs,
+  );
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(spans, null, 2));
+
+    return;
+  }
+  console.log(`Trace ${traceId} in ${session.project}/${session.stage}`);
+  const depth = new Map<string, number>();
+  for (const span of spans) {
+    const level = span.parentSpanId
+      ? (depth.get(span.parentSpanId) ?? 0) + 1
+      : 0;
+    depth.set(span.spanId, level);
+    console.log(formatTraceSpan(span, level));
+  }
+}
+
+/**
+ * One span as `HH:mm:ss.SSS status kind name duration`, indented under its
+ * parent, then its error. Span text can hold tool output, so terminal escapes
+ * are dropped as for sandbox logs.
+ */
+function formatTraceSpan(span: ObservabilitySpanRow, depth: number): string {
+  const time = new Date(span.startTimeMs).toISOString().slice(11, 23);
+  const indent = "  ".repeat(depth);
+  const tool = span.attributes?.["tool.name"];
+  const name = typeof tool === "string" ? `${span.name} ${tool}` : span.name;
+  const line = `${time} ${span.status.padEnd(11)} ${indent}${name} ${span.durationMs} ms`;
+
+  return stripVTControlCharacters(
+    span.error
+      ? `${line}\n${" ".repeat(37)}${indent}error: ${span.error}`
+      : line,
+  );
 }
 
 /**

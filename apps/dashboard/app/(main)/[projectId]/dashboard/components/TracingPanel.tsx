@@ -33,7 +33,9 @@ import {
 import { isEditableTarget } from "@/app/lib/shortcuts";
 import { parseAsTraceId, TRACE_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { useCopied } from "@/app/components/CopyButton";
+import { agentDebugPrompt } from "@/app/lib/agentDebugPrompt";
+import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
   useCallback,
@@ -868,6 +870,8 @@ export function TracingPanel({
             {selectedGroup && (
               <TaskWaterfall
                 attempt={continueAttempts.get(selectedGroup.root.traceId)}
+                projectSlug={projectSlug}
+                stageSlug={stageSlug}
                 onContinue={() => void continueTask(selectedGroup.root)}
                 view={{
                   expanded: expanded,
@@ -1096,13 +1100,20 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   return groups;
 }
 
-/** The task list's failure cause: "rate limit", or the start of the error. */
-export function failureCause(group: SpanGroup): string | null {
+/** The failed task's error: its latest run's, else the first span's that has one. */
+function taskError(group: SpanGroup): string | null {
   if (group.status !== "error") return null;
   const failed = group.spans.filter((span) => span.error);
-  const error = (
-    failed.findLast((span) => isRootSpanKind(span.kind)) ?? failed[0]
-  )?.error;
+
+  return (
+    (failed.findLast((span) => isRootSpanKind(span.kind)) ?? failed[0])
+      ?.error ?? null
+  );
+}
+
+/** The task list's failure cause: "rate limit", or the start of the error. */
+export function failureCause(group: SpanGroup): string | null {
+  const error = taskError(group);
   if (!error) return null;
   if (RATE_LIMIT.test(error)) return "rate limit";
 
@@ -1588,6 +1599,39 @@ function ContinueAction({
   );
 }
 
+/** A small outline button that copies `value`, its icon turning to a check once copied. */
+function CopyChip({
+  value,
+  label,
+  title,
+  className,
+  children,
+}: {
+  value: string;
+  /** The accessible name; it starts with the visible text. */
+  label: string;
+  title: string;
+  className?: string;
+  children: ReactNode;
+}): React.JSX.Element {
+  const { copied, copy } = useCopied(value);
+
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      title={title}
+      aria-label={label}
+      onClick={copy}
+      className={cn("cursor-pointer", className)}
+    >
+      {copied ? <Check className="text-success" /> : <Copy />}
+      {children}
+    </Button>
+  );
+}
+
 function SpanDetails({
   span,
 }: {
@@ -1872,20 +1916,35 @@ function RowStatus({
 }
 
 /**
- * The selected task on the right: its request, conversation and trace, Continue
- * when it failed, then its waterfall scaled to that task alone.
+ * The selected task on the right: its request, conversation and trace, the
+ * copy actions for the user's own coding agent, Continue when it failed, then
+ * its waterfall scaled to that task alone.
  */
 function TaskWaterfall({
   attempt,
   onContinue,
+  projectSlug,
+  stageSlug,
   view,
 }: {
   attempt: ContinueAttempt | undefined;
   onContinue: () => void;
+  projectSlug: string | undefined;
+  stageSlug: string | undefined;
   view: WaterfallView;
 }): React.JSX.Element {
   const { root } = view.group;
   const request = spanLabel(root);
+  const prompt =
+    projectSlug && stageSlug
+      ? agentDebugPrompt({
+          projectSlug: projectSlug,
+          stageSlug: stageSlug,
+          root: root,
+          status: view.group.status,
+          error: taskError(view.group),
+        })
+      : null;
 
   return (
     <>
@@ -1902,9 +1961,23 @@ function TaskWaterfall({
             {unscopedConversationKey(root.conversationKey)}
           </Badge>
         )}
-        <Badge variant="outline" className="font-mono" title={root.traceId}>
+        <CopyChip
+          value={root.traceId}
+          label="Copy trace ID"
+          title={`Copy trace ID ${root.traceId}`}
+          className="font-mono"
+        >
           {root.traceId.slice(0, 8)}
-        </Badge>
+        </CopyChip>
+        {prompt && (
+          <CopyChip
+            value={prompt}
+            label="Copy prompt for agent"
+            title="Copy a prompt that has your coding agent read this run with the broods CLI, then fix or audit it"
+          >
+            Copy prompt for agent
+          </CopyChip>
+        )}
         {canContinue(view.group) && (
           <ContinueAction
             attempt={attempt}
