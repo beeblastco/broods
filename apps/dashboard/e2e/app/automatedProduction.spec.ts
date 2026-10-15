@@ -7,6 +7,7 @@
  * self-hosted stack can run it.
  */
 import { expect, test } from "@playwright/test";
+import type { Doc, Id } from "../../../../packages/convex/_generated/dataModel";
 import { activeOrg, idOf, run, STACK_ADMIN } from "../lib/localStack";
 import { probeAccount } from "../lib/session";
 
@@ -23,12 +24,18 @@ let freshProjectId: string;
 test.beforeAll(() => {
   const account = run(null, "account/accounts:getByOrgId", {
     orgId: activeOrg()._id,
-  }) as { secretHash: string };
+  }) as Doc<"accounts"> | null;
+  if (!account) throw new Error("The admin's org has no API account");
+  // A deploy claims the stage, writes its manifest, then releases the claim.
   const scope = run(null, "cli/sync:ensureScopeBySecretHash", {
     secretHash: account.secretHash,
     project: PROJECT,
     stage: "production",
-  }) as { projectId: string };
+  }) as { projectId: Id<"projects">; stageId: Id<"stages">; revision: number };
+  run(null, "cli/sync:finishManifestSync", {
+    stageId: scope.stageId,
+    revision: scope.revision,
+  });
   projectId = scope.projectId;
   freshProjectId = idOf(
     run(STACK_ADMIN, "project:create", { name: `${PROJECT}-fresh` }),

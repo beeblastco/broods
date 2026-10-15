@@ -391,7 +391,11 @@ export function StageSelector(): React.JSX.Element | null {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={productionOpen} onOpenChange={setProductionOpen}>
+      {/* Closes once Production exists, such as a deploy landing meanwhile. */}
+      <Dialog
+        open={productionOpen && !productionStage}
+        onOpenChange={setProductionOpen}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Initialize Production</DialogTitle>
