@@ -13,7 +13,7 @@ import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
 import { useOpenBilling } from "@/app/hooks/useOrgSeats";
 import { toErrorMessage } from "@/app/lib/errors";
-import { PRO_OFFER } from "@/app/lib/pricing";
+import { PLAN_CONFIGS, PRO_OFFER } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
@@ -326,15 +326,12 @@ function OwnedOrgsBilling(): React.JSX.Element | null {
               <span className="truncate text-sm text-foreground">
                 {org.name}
               </span>
-              {org.plan === "pro" ? (
-                <Badge variant="success" className="justify-self-start">
-                  Pro
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="justify-self-start">
-                  Free
-                </Badge>
-              )}
+              <Badge
+                variant={org.plan === "pro" ? "success" : "secondary"}
+                className="justify-self-start"
+              >
+                {PLAN_CONFIGS[org.plan].label}
+              </Badge>
               <Button
                 size="xs"
                 variant="ghost"
