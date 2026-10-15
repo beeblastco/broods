@@ -1,6 +1,6 @@
 /**
  * The sandbox dock's sessions: which shells and log tails are open, grouped by
- * sandbox in tab order, and which one is shown. Pure, so the table owns the
+ * sandbox in list order, and which one is shown. Pure, so the table owns the
  * state and the dock only renders it.
  */
 
@@ -17,10 +17,15 @@ export interface DockSession {
   shell: number;
 }
 
-/** The dock's sessions in tab order, grouped by sandbox, and the one shown. */
+/** The dock's sessions in list order, grouped by sandbox, and the one shown. */
 export interface DockState {
   sessions: DockSession[];
   active: string;
+}
+
+/** A session's name in the dock: "Logs" or "Shell N". */
+export function dockSessionName(session: DockSession): string {
+  return session.kind === "logs" ? "Logs" : `Shell ${session.shell}`;
 }
 
 /**

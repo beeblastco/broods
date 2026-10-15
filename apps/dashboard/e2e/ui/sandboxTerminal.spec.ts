@@ -1,16 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test("the terminal fills the dock and draws in a real monospace font", async ({
   page,
 }) => {
-  await page.goto("/ui-gallery?tab=sandbox");
-  // The stand-in has no hydration marker, so click until React owns the row.
-  const open = page.getByRole("button", { name: "Terminal", exact: true });
-  await expect(async () => {
-    await page.getByText("browser", { exact: true }).first().click();
-    await expect(open).toBeVisible({ timeout: 1_000 });
-  }).toPass();
-  await open.click();
+  await openTerminal(page);
 
   // Before a connect there is no state word, only a Connect button over the
   // shell for a role that may write, and no explainer.
@@ -29,13 +22,7 @@ test("the terminal fills the dock and draws in a real monospace font", async ({
 });
 
 test("the session list opens, closes and hides shells", async ({ page }) => {
-  await page.goto("/ui-gallery?tab=sandbox");
-  const open = page.getByRole("button", { name: "Terminal", exact: true });
-  await expect(async () => {
-    await page.getByText("browser", { exact: true }).first().click();
-    await expect(open).toBeVisible({ timeout: 1_000 });
-  }).toPass();
-  await open.click();
+  await openTerminal(page);
 
   const sessions = page.getByRole("navigation", { name: "Open sessions" });
   await expect(
@@ -68,3 +55,15 @@ test("the session list opens, closes and hides shells", async ({ page }) => {
     .click();
   await expect(sessions).toHaveCount(0);
 });
+
+// Opens the gallery's sandbox stand-in and its first shell. The stand-in has
+// no hydration marker, so it clicks until React owns the row.
+async function openTerminal(page: Page): Promise<void> {
+  await page.goto("/ui-gallery?tab=sandbox");
+  const open = page.getByRole("button", { name: "Terminal", exact: true });
+  await expect(async () => {
+    await page.getByText("browser", { exact: true }).first().click();
+    await expect(open).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  await open.click();
+}

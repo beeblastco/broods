@@ -143,7 +143,7 @@ interface Props {
   snapshots: Doc<"sandboxSnapshots">[];
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
-  /** Stage-scoped observability WS inputs, handed to the dock's Logs tab. */
+  /** Stage-scoped observability WS inputs, handed to the dock's log tail. */
   observability: SandboxObservabilityScope | null;
 }
 

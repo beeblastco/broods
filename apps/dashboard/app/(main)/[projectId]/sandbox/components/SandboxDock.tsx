@@ -21,7 +21,11 @@ import { ChevronDown, Play, Plus, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
-import type { DockSession, DockState } from "./dockSessions";
+import {
+  dockSessionName,
+  type DockSession,
+  type DockState,
+} from "./dockSessions";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import { controllable, dashboardHref } from "./sandboxFormat";
 import {
@@ -146,8 +150,7 @@ export function SandboxDock({
                   )}
               </div>
               {sessions.map((session) => {
-                const name =
-                  session.kind === "logs" ? "Logs" : `Shell ${session.shell}`;
+                const name = dockSessionName(session);
 
                 return (
                   <div key={session.key} className="flex items-center gap-0.5">
@@ -319,7 +322,7 @@ function SessionBody({
         sandboxId={instance.sandboxConfigId}
         reservationKey={instance.reservationKey}
         disabled={!isRunnable(instance)}
-        label={`${instance.name} · Shell ${session.shell}`}
+        label={`${instance.name} · ${dockSessionName(session)}`}
       />
     );
   }
