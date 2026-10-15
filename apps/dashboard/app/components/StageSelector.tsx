@@ -82,8 +82,10 @@ export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
 
 /**
  * Dropdown to list, switch, and create project stages. The Initialize
- * Production panel opens only when the user selects a Production stage
- * that has no deployment region yet, so nothing else can prompt for one.
+ * Production panel opens only from the Production entry shown while the
+ * project has no Production stage. A stage an automated deploy created
+ * (`broods deploy --stage production`) carries no region and opens like any
+ * other stage.
  */
 export function StageSelector(): React.JSX.Element | null {
   const { canWrite } = useOrgRole();
@@ -147,24 +149,7 @@ export function StageSelector(): React.JSX.Element | null {
   const selectedStage = stages.find((e: Doc<"stages">) => e._id === stageId);
   const selectedKind = selectedStage?.kind ?? "custom";
 
-  function handleSelectStage(stage: Doc<"stages">): void {
-    if (stage.kind === "production" && !stage.deploymentRegion) {
-      setError(null);
-      setProductionOpen(true);
-
-      return;
-    }
-
-    setStageId(stage._id);
-  }
-
-  function handleSelectProductionTarget(): void {
-    if (productionStage?.deploymentRegion) {
-      setStageId(productionStage._id);
-
-      return;
-    }
-
+  function handleOpenProductionSetup(): void {
     setError(null);
     setProductionOpen(true);
   }
@@ -247,7 +232,7 @@ export function StageSelector(): React.JSX.Element | null {
                   key={stage._id}
                   data-active={stage._id === stageId}
                   className="cursor-pointer"
-                  onClick={() => handleSelectStage(stage)}
+                  onClick={() => setStageId(stage._id)}
                 >
                   <StageDot kind={stage.kind} />
                   {stage.name}
@@ -257,7 +242,7 @@ export function StageSelector(): React.JSX.Element | null {
               {!productionStage && canWrite && (
                 <DropdownMenuItem
                   className="cursor-pointer"
-                  onClick={handleSelectProductionTarget}
+                  onClick={handleOpenProductionSetup}
                 >
                   <StageDot kind="production" />
                   Production
