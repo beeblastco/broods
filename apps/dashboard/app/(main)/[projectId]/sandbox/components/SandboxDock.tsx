@@ -159,6 +159,7 @@ export function SandboxDock({
                       size="xs"
                       data-active={session.key === state.active}
                       aria-current={session.key === state.active || undefined}
+                      aria-label={`${name} on ${instance.name}`}
                       className="flex-1 cursor-pointer justify-start tabular-nums"
                       onClick={() => onActivate(session.key)}
                     >

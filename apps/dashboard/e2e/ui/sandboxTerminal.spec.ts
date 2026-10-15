@@ -26,11 +26,11 @@ test("the session list opens, closes and hides shells", async ({ page }) => {
 
   const sessions = page.getByRole("navigation", { name: "Open sessions" });
   await expect(
-    sessions.getByRole("button", { name: "Shell 1", exact: true }),
+    sessions.getByRole("button", { name: "Shell 1 on browser", exact: true }),
   ).toBeVisible();
   await sessions.getByRole("button", { name: "New shell on browser" }).click();
   await expect(
-    sessions.getByRole("button", { name: "Shell 2", exact: true }),
+    sessions.getByRole("button", { name: "Shell 2 on browser", exact: true }),
   ).toBeVisible();
 
   // Every session has its own close.
@@ -38,7 +38,7 @@ test("the session list opens, closes and hides shells", async ({ page }) => {
     .getByRole("button", { name: "Close Shell 2 on browser" })
     .click();
   await expect(
-    sessions.getByRole("button", { name: "Shell 2", exact: true }),
+    sessions.getByRole("button", { name: "Shell 2 on browser", exact: true }),
   ).toHaveCount(0);
 
   // Hiding keeps the shells; the backtick brings the dock back.
@@ -46,7 +46,7 @@ test("the session list opens, closes and hides shells", async ({ page }) => {
   await expect(sessions).toBeHidden();
   await page.keyboard.press("Backquote");
   await expect(
-    sessions.getByRole("button", { name: "Shell 1", exact: true }),
+    sessions.getByRole("button", { name: "Shell 1 on browser", exact: true }),
   ).toBeVisible();
 
   // Closing the last session closes the dock.
