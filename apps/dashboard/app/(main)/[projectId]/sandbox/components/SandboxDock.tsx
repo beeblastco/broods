@@ -87,19 +87,60 @@ export function SandboxDock({
 
   return (
     <div data-sandbox-dock className="@container/dock h-full min-h-0">
-      <div className="flex h-full min-h-0 flex-col bg-terminal-background @xl/dock:flex-row-reverse">
+      <div className="flex h-full min-h-0 flex-col-reverse bg-terminal-background @xl/dock:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {state.sessions.map((session) => {
+            const instance = byId.get(session.instanceId);
+
+            return (
+              instance && (
+                <div
+                  key={session.key}
+                  className={
+                    session.key === state.active
+                      ? "flex min-h-0 flex-1 flex-col"
+                      : "hidden"
+                  }
+                >
+                  <SessionBody
+                    session={session}
+                    instance={instance}
+                    projectId={projectId}
+                    observability={observability}
+                  />
+                </div>
+              )
+            );
+          })}
+        </div>
         <nav
           aria-label="Open sessions"
-          className="flex h-8 shrink-0 items-center border-b border-border bg-card @xl/dock:h-auto @xl/dock:w-56 @xl/dock:flex-col-reverse @xl/dock:items-stretch @xl/dock:border-b-0 @xl/dock:border-l"
+          className="flex h-8 shrink-0 flex-row-reverse items-center border-b border-border bg-card @xl/dock:h-auto @xl/dock:w-56 @xl/dock:flex-col @xl/dock:items-stretch @xl/dock:border-b-0 @xl/dock:border-l"
         >
-          <div className="flex min-h-0 min-w-0 flex-1 items-center gap-0.5 overflow-auto @xl/dock:flex-col @xl/dock:items-stretch">
+          <div className="flex h-8 shrink-0 items-center @xl/dock:border-b @xl/dock:border-border @xl/dock:pl-2">
+            <span className="hidden flex-1 text-xs font-medium @xl/dock:block">
+              Sessions
+            </span>
+            <ShortcutKeys id="sandbox.terminal" bordered />
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              tone="muted"
+              aria-label="Hide the dock"
+              className="cursor-pointer"
+              onClick={onHide}
+            >
+              <ChevronDown />
+            </Button>
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-1 items-center overflow-auto @xl/dock:flex-col @xl/dock:items-stretch">
             {groups.map(({ instance, sessions }) => (
               <div
                 key={instance._id}
                 className="contents @xl/dock:flex @xl/dock:flex-col"
               >
                 <div className="flex shrink-0 items-center pl-2">
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                  <span className="max-w-40 min-w-0 flex-1 truncate text-xs font-medium">
                     {instance.name}
                   </span>
                   {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
@@ -151,48 +192,7 @@ export function SandboxDock({
               </div>
             ))}
           </div>
-          <div className="flex h-8 shrink-0 items-center gap-1 @xl/dock:border-b @xl/dock:border-border @xl/dock:pl-2">
-            <span className="hidden flex-1 text-xs font-medium @xl/dock:block">
-              Sessions
-            </span>
-            <ShortcutKeys id="sandbox.terminal" bordered />
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              tone="muted"
-              aria-label="Hide the dock"
-              className="cursor-pointer"
-              onClick={onHide}
-            >
-              <ChevronDown />
-            </Button>
-          </div>
         </nav>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {state.sessions.map((session) => {
-            const instance = byId.get(session.instanceId);
-
-            return (
-              instance && (
-                <div
-                  key={session.key}
-                  className={
-                    session.key === state.active
-                      ? "flex min-h-0 flex-1 flex-col"
-                      : "hidden"
-                  }
-                >
-                  <SessionBody
-                    session={session}
-                    instance={instance}
-                    projectId={projectId}
-                    observability={observability}
-                  />
-                </div>
-              )
-            );
-          })}
-        </div>
       </div>
     </div>
   );

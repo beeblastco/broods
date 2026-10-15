@@ -270,7 +270,10 @@ export function SandboxInstancesTable({
   };
 
   const showDock = (next: DockState): void => {
-    if (document.activeElement instanceof HTMLElement) {
+    if (
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body
+    ) {
       dockOpener.current = document.activeElement;
     }
     setDock(next);
