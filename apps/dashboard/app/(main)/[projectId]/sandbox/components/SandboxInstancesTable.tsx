@@ -277,20 +277,23 @@ export function SandboxInstancesTable({
     setDockHidden(false);
   };
 
-  // Hiding takes focus out of the dock, so it goes back to what opened it
-  // (the panel's Terminal button) rather than dropping to the page.
+  // Hiding takes focus out of the dock, so focus inside it goes back to what
+  // opened it (the panel's Terminal button) rather than dropping to the page.
   const hideDock = (): void => {
+    const focusInDock =
+      document.activeElement?.closest("[data-sandbox-dock]") != null;
     setDockHidden(true);
-    if (dockOpener.current?.isConnected) dockOpener.current.focus();
+    if (focusInDock && dockOpener.current?.isConnected) {
+      dockOpener.current.focus();
+    }
   };
 
   // The backtick toggles the dock, like an editor's terminal: it opens a
   // shell on the selected instance, and with the dock open it hides it.
   useShortcut("sandbox.terminal", () => {
-    if (dock && !dockHidden) {
-      hideDock();
-    } else if (dock) {
-      setDockHidden(false);
+    if (dock) {
+      if (dockHidden) setDockHidden(false);
+      else hideDock();
     } else if (
       selected?.kind === "instance" &&
       controllable(selected.instance)
