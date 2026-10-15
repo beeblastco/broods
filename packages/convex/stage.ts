@@ -24,13 +24,8 @@ import {
   getProjectForWrite,
 } from "./model/ownership/project";
 import { agentsInStage, stageNameEquals } from "./model/projectScope";
-import { stagesFields } from "./schema";
-
-const deploymentRegion = v.union(
-  v.literal("ap-southeast-1"),
-  v.literal("eu-west-1"),
-  v.literal("us-east-1"),
-);
+import { deploymentRegionValidator, stagesFields } from "./schema";
+import { LIVE_DEPLOYMENT_REGIONS } from "./cli/types";
 
 const stageDoc = v.object({
   ...stagesFields,
@@ -173,7 +168,7 @@ export const initializeProduction = mutation({
   args: {
     projectId: v.id("projects"),
     sourceStageId: v.id("stages"),
-    deploymentRegion: deploymentRegion,
+    deploymentRegion: deploymentRegionValidator,
   },
   returns: v.id("stages"),
   handler: async (
@@ -191,6 +186,9 @@ export const initializeProduction = mutation({
     );
     if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
 
+    if (!LIVE_DEPLOYMENT_REGIONS.includes(deploymentRegion)) {
+      throw new Error(`Region ${deploymentRegion} is not available yet.`);
+    }
     const source = await getOwnedStage(ctx, authUser.id, sourceStageId);
     if (!source || source.projectId !== projectId) {
       throw new Error("Source stage not found.");
@@ -231,7 +229,8 @@ export const initializeProduction = mutation({
     await ctx.db.patch(productionId, {
       name: "Production",
       kind: "production",
-      deploymentRegion: deploymentRegion,
+      // A region a deploy already pinned stays: data does not move.
+      deploymentRegion: production?.deploymentRegion ?? deploymentRegion,
       isDefault: false,
       updatedAt: now,
     });

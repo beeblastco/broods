@@ -35,34 +35,28 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import {
+  LIVE_DEPLOYMENT_REGIONS,
+  type DeploymentRegion,
+} from "@broods/convex/cli/types";
 import { useMutation, useQuery } from "convex/react";
 import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type StageKind = Doc<"stages">["kind"];
-type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
 
-const regionOptions: Array<{
-  value: DeploymentRegion;
-  label: string;
-  flag: string;
-  enabled: boolean;
-}> = [
-  { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪", enabled: true },
-  {
-    value: "ap-southeast-1",
-    label: "Asia Pacific (Singapore)",
-    flag: "🇸🇬",
-    enabled: false,
-  },
-  {
-    value: "us-east-1",
-    label: "US East (N. Virginia)",
-    flag: "🇺🇸",
-    enabled: false,
-  },
-];
+// A region is selectable once it is live, the same list a deploy checks.
+const regionOptions = (
+  [
+    { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪" },
+    { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬" },
+    { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸" },
+  ] satisfies Array<{ value: DeploymentRegion; label: string; flag: string }>
+).map((option) => ({
+  ...option,
+  enabled: LIVE_DEPLOYMENT_REGIONS.includes(option.value),
+}));
 
 /** Color dot indicating stage type: green for Development, purple for Production. */
 export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
@@ -82,8 +76,10 @@ export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
 
 /**
  * Dropdown to list, switch, and create project stages. The Initialize
- * Production panel opens only when the user selects a Production stage
- * that has no deployment region yet, so nothing else can prompt for one.
+ * Production panel opens only from the Production entry shown while the
+ * project has no Production stage. A stage an automated deploy created
+ * (`broods deploy --stage production`) carries no region and opens like any
+ * other stage.
  */
 export function StageSelector(): React.JSX.Element | null {
   const { canWrite } = useOrgRole();
@@ -118,6 +114,9 @@ export function StageSelector(): React.JSX.Element | null {
     (stage) => stage.kind === "development",
   );
   const productionStage = stages?.find((stage) => stage.kind === "production");
+  // Production appeared while the dialog was open (a deploy landed): close it
+  // for good, so removing Production later does not reopen it unasked.
+  if (productionOpen && productionStage) setProductionOpen(false);
 
   // Create the default Development stage on load when the project has none.
   useEffect(() => {
@@ -146,28 +145,6 @@ export function StageSelector(): React.JSX.Element | null {
 
   const selectedStage = stages.find((e: Doc<"stages">) => e._id === stageId);
   const selectedKind = selectedStage?.kind ?? "custom";
-
-  function handleSelectStage(stage: Doc<"stages">): void {
-    if (stage.kind === "production" && !stage.deploymentRegion) {
-      setError(null);
-      setProductionOpen(true);
-
-      return;
-    }
-
-    setStageId(stage._id);
-  }
-
-  function handleSelectProductionTarget(): void {
-    if (productionStage?.deploymentRegion) {
-      setStageId(productionStage._id);
-
-      return;
-    }
-
-    setError(null);
-    setProductionOpen(true);
-  }
 
   async function handleCreate(): Promise<void> {
     if (!newName.trim() || !projectId) return;
@@ -247,7 +224,7 @@ export function StageSelector(): React.JSX.Element | null {
                   key={stage._id}
                   data-active={stage._id === stageId}
                   className="cursor-pointer"
-                  onClick={() => handleSelectStage(stage)}
+                  onClick={() => setStageId(stage._id)}
                 >
                   <StageDot kind={stage.kind} />
                   {stage.name}
@@ -257,7 +234,10 @@ export function StageSelector(): React.JSX.Element | null {
               {!productionStage && canWrite && (
                 <DropdownMenuItem
                   className="cursor-pointer"
-                  onClick={handleSelectProductionTarget}
+                  onClick={() => {
+                    setError(null);
+                    setProductionOpen(true);
+                  }}
                 >
                   <StageDot kind="production" />
                   Production

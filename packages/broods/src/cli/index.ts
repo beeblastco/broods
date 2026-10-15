@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
-import type { CliManifest } from "../contracts.ts";
+import type { CliManifest, DeploymentRegion } from "../contracts.ts";
 import {
   GENERATED_DIR,
   PROJECT_DIR,
@@ -36,6 +36,10 @@ import {
 import { writeGeneratedFiles } from "../codegen.ts";
 import { USER_TOKEN_SECRET_ENV } from "../user-token.ts";
 import { keyHint } from "../../../convex/model/accountSecrets.ts";
+import {
+  DEPLOYMENT_REGIONS,
+  LIVE_DEPLOYMENT_REGIONS,
+} from "../../../convex/cli/types.ts";
 import { USER_TOKEN_SECRET_PREFIX } from "../../../convex/model/userToken.ts";
 import {
   type CliOnboardingContext,
@@ -125,11 +129,14 @@ const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 // How often `broods dev` re-reads the stage when another session keeps syncing it.
 const DEV_SYNC_ATTEMPTS = 3;
 const DEFAULT_SERVICE_REGION = "eu-west-1";
-const SERVICE_REGIONS = [
+const SERVICE_REGIONS: ReadonlyArray<{
+  region: DeploymentRegion;
+  label: string;
+}> = [
   { region: "eu-west-1", label: "eu-west-1 (Ireland)" },
   { region: "us-east-1", label: "us-east-1 (US East)" },
   { region: "ap-southeast-1", label: "ap-southeast-1 (Singapore)" },
-] as const;
+];
 
 // Options every command accepts, appended to each command's own help so a
 // reader never has to jump back to the top-level page for them.
@@ -198,6 +205,8 @@ BROODS_STAGE by design. Pass --stage to deploy anywhere else.
 Options:
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime key and write it to .env.local
+  --region <region>     Production's region, pinned by its first deploy
+                        (default: ${DEFAULT_SERVICE_REGION})
 
 ${GLOBAL_OPTIONS}`,
   dev: `Usage: broods dev [--once] [options]
@@ -1205,8 +1214,17 @@ async function deploy(args: string[]): Promise<void> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
+  // Production's region, pinned by its first deploy; the server refuses a move
+  // or another stage. BROODS_REGION is not read: `init` writes it as a default.
+  const flag = optionValue(args, "--region");
+  const region = DEPLOYMENT_REGIONS.find((known) => known === flag);
+  if (hasFlag(args, "--region") && !region) {
+    throw new Error(
+      `Unknown region ${flag ?? "(empty)"}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
   const result = await client.putManifest(
-    manifest,
+    region ? { ...manifest, region: region } : manifest,
     hasFlag(args, "--prune"),
     hasFlag(args, "--rotate-key"),
   );
@@ -1650,7 +1668,10 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   }
 
   if (process.stdin.isTTY && needsRegion) {
-    const regions = [...SERVICE_REGIONS];
+    // Only live regions: a project's Production cannot move once pinned.
+    const regions = SERVICE_REGIONS.filter((entry) =>
+      LIVE_DEPLOYMENT_REGIONS.includes(entry.region),
+    );
     region = await promptSelect(
       "Select service region",
       regions,

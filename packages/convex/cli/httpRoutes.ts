@@ -8,7 +8,11 @@ import type { FunctionArgs } from "convex/server";
 import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { CliManifest, GeneratedIds } from "./types";
+import {
+  DEPLOYMENT_REGIONS,
+  type CliManifest,
+  type GeneratedIds,
+} from "./types";
 import { terminateReservedInstances } from "../config/routes/shared";
 import {
   isExternalResourceKind,
@@ -554,6 +558,14 @@ async function handleManifestSync(
   if (!manifestMatchesRoute(manifest, route)) {
     return jsonError(400, "Manifest project/stage must match the request path");
   }
+  const rawRegion: unknown = (manifest as { region?: unknown }).region;
+  const region = DEPLOYMENT_REGIONS.find((known) => known === rawRegion);
+  if (rawRegion !== undefined && !region) {
+    return jsonError(
+      400,
+      `Unknown region ${JSON.stringify(rawRegion)}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
   if (
     body.revision !== undefined &&
     (typeof body.revision !== "number" || !Number.isInteger(body.revision))
@@ -568,6 +580,7 @@ async function handleManifestSync(
       secretHash: secretHash,
       project: route.project,
       stage: route.stage,
+      ...(region ? { region: region } : {}),
       revision: body.revision,
     },
   );

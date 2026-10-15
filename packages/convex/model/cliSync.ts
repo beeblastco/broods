@@ -7,7 +7,11 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { CliManifestResource } from "../cli/types";
+import {
+  LIVE_DEPLOYMENT_REGIONS,
+  type CliManifestResource,
+  type DeploymentRegion,
+} from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
 import {
@@ -344,13 +348,13 @@ export async function ensureStage(
   const existing = stages.find((entry) => stageNameEquals(entry.name, name));
   const kind = kindForStageName(name);
   if (existing) {
-    if (existing.kind !== kind || existing.name !== displayStageName(name)) {
-      await ctx.db.patch(existing._id, {
-        name: displayStageName(name),
-        kind: kind,
-        isDefault: kind === "development" ? true : existing.isDefault,
-        updatedAt: Date.now(),
-      });
+    const fixed = {
+      name: displayStageName(name),
+      kind: kind,
+      isDefault: kind === "development" ? true : existing.isDefault,
+    };
+    if (existing.kind !== kind || existing.name !== fixed.name) {
+      await ctx.db.patch(existing._id, { ...fixed, updatedAt: Date.now() });
     }
     if (kind === "development") {
       for (const stage of stages.filter(
@@ -363,7 +367,10 @@ export async function ensureStage(
       }
     }
 
-    return existing;
+    // As patched, so a caller reads the kind this call just set.
+    return existing.kind !== kind || existing.name !== fixed.name
+      ? { ...existing, ...fixed }
+      : existing;
   }
 
   // Only Development is ever the default; Production/custom stages are
@@ -388,6 +395,42 @@ export async function ensureStage(
   }
 
   return created;
+}
+
+/**
+ * The region a manifest PUT pins on Production, or undefined when there is
+ * nothing to pin: another stage, or Production already pinned. The first
+ * deploy pins the manifest's region, else eu-west-1. Data stays where it was
+ * first deployed, so a deploy naming another region is refused, not moved.
+ */
+export function deploymentRegionToPin(
+  stage: Doc<"stages">,
+  region: DeploymentRegion | undefined,
+): DeploymentRegion | undefined {
+  if (stage.kind !== "production") {
+    if (region) {
+      throw new ClientError("A region applies only to the production stage");
+    }
+
+    return undefined;
+  }
+  if (stage.deploymentRegion) {
+    if (region && region !== stage.deploymentRegion) {
+      throw new ClientError(
+        `${stage.name} already runs in ${stage.deploymentRegion} and cannot move to ${region}`,
+        "conflict",
+      );
+    }
+
+    return undefined;
+  }
+  if (region && !LIVE_DEPLOYMENT_REGIONS.includes(region)) {
+    throw new ClientError(
+      `Region ${region} is not available yet. Available: ${LIVE_DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
+
+  return region ?? LIVE_DEPLOYMENT_REGIONS[0];
 }
 
 /** A stage env var name from the CLI, trimmed and held to the one env name rule. */

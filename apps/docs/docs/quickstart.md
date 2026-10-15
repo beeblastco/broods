@@ -125,6 +125,8 @@ Then sync the same resources to your `production` stage once:
 bunx broods deploy
 ```
 
+The first deploy pins Production's region: `eu-west-1` unless you pass `--region`. It cannot move afterwards. The first `env set --stage production` or `deploy` creates the Production stage, and the dashboard's stage menu then opens it directly instead of offering to initialize Production.
+
 ## Check where you are pointed
 
 A sync lands in an organization, a project and a stage. Run `whoami` to see all three before you write somewhere shared.

@@ -32,6 +32,7 @@ import {
   type StageSession,
 } from "../agent/deployments";
 import { ClientError, clientErrorResponse } from "../model/clientError";
+import { deploymentRegionValidator } from "../schema";
 
 const CANONICAL_NAMES = {
   development: "Development",
@@ -47,13 +48,7 @@ const stageValidator = v.object({
     v.literal("custom"),
   ),
   isDefault: v.boolean(),
-  deploymentRegion: v.optional(
-    v.union(
-      v.literal("ap-southeast-1"),
-      v.literal("eu-west-1"),
-      v.literal("us-east-1"),
-    ),
-  ),
+  deploymentRegion: v.optional(deploymentRegionValidator),
   agentCount: v.number(),
   variableCount: v.number(),
   updatedAt: v.number(),
