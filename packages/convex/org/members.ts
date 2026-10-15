@@ -150,7 +150,7 @@ export const add = mutation({
 
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
-      throw new Error("Email is required");
+      throw new ClientError("Email is required");
     }
 
     const target = await ctx.db
@@ -158,14 +158,15 @@ export const add = mutation({
       .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
       .unique();
     if (!target) {
-      throw new Error(
+      throw new ClientError(
         "No user with that email. They must sign in once before being added.",
+        "not_found",
       );
     }
 
     const existing = await getOrgMembership(ctx, orgId, target._id);
     if (existing) {
-      throw new Error("User is already a member of this org");
+      throw new ClientError("User is already a member of this org", "conflict");
     }
     const org = await ctx.db.get(orgId);
     if (!org) {

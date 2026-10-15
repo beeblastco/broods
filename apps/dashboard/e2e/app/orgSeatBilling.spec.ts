@@ -273,7 +273,13 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
   // The invite goes first, so an email nobody signed in with charges nothing.
   await dialog.getByLabel("Email").fill(`nobody-${RUN_ID}@broods.local`);
   await dialog.getByRole("button", { name: "Pay for seat and invite" }).click();
-  await expect(dialog.getByText(/No user with that email/)).toBeVisible();
+  // The refusal reads as a sentence, with no server request line around it.
+  await expect(
+    dialog.getByText(
+      "No user with that email. They must sign in once before being added.",
+      { exact: true },
+    ),
+  ).toBeVisible();
 });
 
 test("an extra seat shows on the seat count and the monthly bill", async ({
