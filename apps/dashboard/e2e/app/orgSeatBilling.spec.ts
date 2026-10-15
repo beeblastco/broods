@@ -331,6 +331,10 @@ test("an owner whose payment failed sees Pro on hold, and is sent to Manage bill
     ).toHaveCount(0);
 
     await openMembers(page);
+    await expect(
+      page.getByText("Seats on hold until Stripe has the payment"),
+    ).toBeVisible();
+    await expect(page.getByText(/developer seats used/)).toHaveCount(0);
     const dialog = await openInvite(page);
     await expect(
       dialog.getByText("Your last payment did not go through."),

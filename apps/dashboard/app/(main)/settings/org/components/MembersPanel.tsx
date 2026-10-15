@@ -184,7 +184,9 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         />
         {seats?.enforced && seats.isOwner && (
           <Badge variant="outline">
-            {seats.developers} of {seats.seats} developer seats used
+            {seats.billing && !seats.paid
+              ? "Seats on hold until Stripe has the payment"
+              : `${seats.developers} of ${seats.seats} developer seats used`}
           </Badge>
         )}
         <FilterButton columns={[{ label: "Role", filter: filters.role }]} />
