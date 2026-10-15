@@ -43,9 +43,17 @@ test.beforeAll(() => {
 });
 
 test.afterAll(() => {
-  for (const id of [projectId, freshProjectId]) {
-    if (id) run(STACK_ADMIN, "project:remove", { projectId: id });
-  }
+  // Each removal runs even when the one before it failed.
+  const failures = [projectId, freshProjectId].flatMap((id) => {
+    try {
+      if (id) run(STACK_ADMIN, "project:remove", { projectId: id });
+
+      return [];
+    } catch (error) {
+      return [error];
+    }
+  });
+  if (failures.length > 0) throw new AggregateError(failures);
 });
 
 test("a Production stage deployed by automation opens without the setup dialog", async ({
