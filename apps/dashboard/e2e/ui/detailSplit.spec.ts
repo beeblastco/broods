@@ -56,6 +56,26 @@ test("the detail column opens beside the table, follows the handle, and keeps th
   expectNear(await width(table), frame);
 });
 
+test("on a phone the open detail takes the table's place, and closing it brings the table back", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="detail-split"]');
+  const table = fixture.getByRole("table");
+  await expect(table).toBeVisible();
+
+  await fixture.getByRole("button", { name: "Open details" }).click();
+  await expect(fixture.getByText("Detail body")).toBeVisible();
+  await expect(table).toBeHidden();
+  // No side-by-side split, so no handle to drag.
+  await expect(fixture.getByRole("separator")).toHaveCount(0);
+
+  await fixture.getByRole("button", { name: "Close details" }).click();
+  await expect(table).toBeVisible();
+  await expect(fixture.getByText("Detail body")).toHaveCount(0);
+});
+
 test.describe("drag performance", () => {
   // A long task is anything over 50ms on the main thread. The drag itself is
   // well under that, but a runner's GC pause can land inside the window.
