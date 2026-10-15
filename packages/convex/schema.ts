@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { DEPLOYMENT_REGIONS } from "./cli/types";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
@@ -39,9 +40,7 @@ export const projectsFields = {
 };
 
 export const deploymentRegionValidator = v.union(
-  v.literal("ap-southeast-1"),
-  v.literal("eu-west-1"),
-  v.literal("us-east-1"),
+  ...DEPLOYMENT_REGIONS.map((region) => v.literal(region)),
 );
 
 export const stagesFields = {

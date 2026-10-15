@@ -1,7 +1,7 @@
 import type { CliManifest } from "../../../packages/broods/src/contracts.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import { sha256Hex } from "../../../packages/convex/model/accountSecrets.ts";
-import { assertStep, type VerifyContext } from "../harness.ts";
+import { assertStep, convexResult, type VerifyContext } from "../harness.ts";
 
 /**
  * An automated deploy chooses where Production runs: the first manifest PUT
@@ -80,26 +80,18 @@ async function productionRegionOf(
   context: VerifyContext,
   project: string,
 ): Promise<string | undefined> {
-  const account = runConvex(context, "account/accounts:getBySecretHash", {
-    secretHash: await sha256Hex(context.accountSecret),
-  }) as { _id: string };
-  const stages = runConvex(context, "cli/stages:listByAccount", {
-    accountId: account._id,
-    project: project,
-  }) as Array<{ kind: string; deploymentRegion?: string }>;
+  const account = convexResult(
+    context,
+    "account/accounts:getBySecretHash",
+    { secretHash: await sha256Hex(context.accountSecret) },
+    "read the verify account",
+  ) as { _id: string };
+  const stages = convexResult(
+    context,
+    "cli/stages:listByAccount",
+    { accountId: account._id, project: project },
+    "list the project's stages",
+  ) as Array<{ kind: string; deploymentRegion?: string }>;
 
   return stages.find((stage) => stage.kind === "production")?.deploymentRegion;
-}
-
-/** Runs an internal Convex function with the stack's admin key and parses its result. */
-function runConvex(
-  context: VerifyContext,
-  fn: string,
-  args: Record<string, unknown>,
-): unknown {
-  const cli = context.convex(["run", fn, JSON.stringify(args)]);
-  assertStep(`convex run ${fn}`, cli.ok, cli.output.slice(-300));
-  const start = cli.output.search(/^[[{"\dn]/m);
-
-  return start < 0 ? null : JSON.parse(cli.output.slice(start));
 }

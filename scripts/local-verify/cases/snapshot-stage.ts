@@ -1,6 +1,6 @@
 import type { CliManifest } from "../../../packages/broods/src/contracts.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
-import { assertStep, type VerifyContext } from "../harness.ts";
+import { assertStep, convexResult, type VerifyContext } from "../harness.ts";
 
 type StageScope = { projectId: string; stageId: string };
 
@@ -157,21 +157,4 @@ export async function snapshotStage(context: VerifyContext): Promise<void> {
   } finally {
     await send("DELETE", `/v1/roles/${roleId}`, context.accountSecret);
   }
-}
-
-/** Runs an internal Convex function with the stack's admin key and parses its result. */
-function convexResult(
-  context: VerifyContext,
-  fn: string,
-  args: Record<string, unknown>,
-  step: string,
-): unknown {
-  const cli = context.convex(["run", fn, JSON.stringify(args)]);
-  assertStep(step, cli.ok, cli.output.slice(-300));
-
-  // `convex run` prints the result as JSON after any log lines, and nothing
-  // for a function that returns null.
-  const start = cli.output.search(/^[[{"\dn]/m);
-
-  return start < 0 ? null : JSON.parse(cli.output.slice(start));
 }

@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /**
- * `broods deploy` sends Production's region, from `--region` or BROODS_REGION
- * in .env.local, so an automated deploy chooses where Production runs. Other
- * stages send none, and `--region` on one is refused before any request.
+ * `broods deploy --region` sends Production's region, so an automated deploy
+ * chooses where Production runs. BROODS_REGION, which `init` writes as a
+ * default, is not sent, and `--region` on another stage is refused before any
+ * request.
  */
 
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
@@ -98,35 +99,27 @@ export const support = defineAgent({
   return { exitCode: exitCode, output: stdout + stderr };
 }
 
-test("--region rides the production manifest, over BROODS_REGION", async () => {
+test("--region rides the production manifest", async () => {
   const backend = serveBackend();
 
-  const result = await deploy(
-    ["--region", "eu-west-1"],
-    ['BROODS_REGION="us-east-1"'],
-    backend.baseUrl,
-  );
+  const result = await deploy(["--region", "eu-west-1"], [], backend.baseUrl);
 
   expect(result.exitCode).toBe(0);
   expect(backend.regions).toEqual(["eu-west-1"]);
 });
 
-test("BROODS_REGION from .env.local is Production's region without the flag", async () => {
+test("BROODS_REGION from .env.local is not sent", async () => {
   const backend = serveBackend();
 
-  await deploy([], ['BROODS_REGION="eu-west-1"'], backend.baseUrl);
+  await deploy([], ['BROODS_REGION="us-east-1"'], backend.baseUrl);
 
-  expect(backend.regions).toEqual(["eu-west-1"]);
+  expect(backend.regions).toEqual([undefined]);
 });
 
 test("a deploy to another stage sends no region, and refuses --region", async () => {
   const backend = serveBackend();
 
-  await deploy(
-    ["--stage", "staging"],
-    ['BROODS_REGION="eu-west-1"'],
-    backend.baseUrl,
-  );
+  await deploy(["--stage", "staging"], [], backend.baseUrl);
   const refused = await deploy(
     ["--stage", "staging", "--region", "eu-west-1"],
     [],

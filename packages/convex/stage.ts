@@ -225,7 +225,8 @@ export const initializeProduction = mutation({
     await ctx.db.patch(productionId, {
       name: "Production",
       kind: "production",
-      deploymentRegion: deploymentRegion,
+      // A region a deploy already pinned stays: data does not move.
+      deploymentRegion: production?.deploymentRegion ?? deploymentRegion,
       isDefault: false,
       updatedAt: now,
     });

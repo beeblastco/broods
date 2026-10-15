@@ -232,3 +232,20 @@ export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
     },
   };
 }
+
+/** Runs an internal Convex function with the stack's admin key and parses its result. */
+export function convexResult(
+  context: VerifyContext,
+  fn: string,
+  args: Record<string, unknown>,
+  step: string,
+): unknown {
+  const cli = context.convex(["run", fn, JSON.stringify(args)]);
+  assertStep(step, cli.ok, cli.output.slice(-300));
+
+  // `convex run` prints the result as JSON after any log lines, and nothing
+  // for a function that returns null.
+  const start = cli.output.search(/^[[{"\dn]/m);
+
+  return start < 0 ? null : JSON.parse(cli.output.slice(start));
+}

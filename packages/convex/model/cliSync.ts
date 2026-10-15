@@ -363,7 +363,8 @@ export async function ensureStage(
       }
     }
 
-    return existing;
+    // The patched row, so a caller reads the kind this call just set.
+    return (await ctx.db.get(existing._id)) ?? existing;
   }
 
   // Only Development is ever the default; Production/custom stages are
@@ -394,21 +395,21 @@ export async function ensureStage(
 const AVAILABLE_DEPLOYMENT_REGIONS: readonly DeploymentRegion[] = ["eu-west-1"];
 
 /**
- * Pin a Production stage's region on the deploy that finds it unset, to the
- * manifest's region or eu-west-1. Data stays where it was first deployed, so
- * a deploy naming another region is refused rather than moving it.
+ * The region a manifest PUT pins on Production, or undefined when there is
+ * nothing to pin: another stage, or Production already pinned. The first
+ * deploy pins the manifest's region, else eu-west-1. Data stays where it was
+ * first deployed, so a deploy naming another region is refused, not moved.
  */
-export async function pinDeploymentRegion(
-  ctx: MutationCtx,
+export function deploymentRegionToPin(
   stage: Doc<"stages">,
   region: DeploymentRegion | undefined,
-): Promise<void> {
+): DeploymentRegion | undefined {
   if (stage.kind !== "production") {
     if (region) {
       throw new ClientError("A region applies only to the production stage");
     }
 
-    return;
+    return undefined;
   }
   if (stage.deploymentRegion) {
     if (region && region !== stage.deploymentRegion) {
@@ -418,17 +419,15 @@ export async function pinDeploymentRegion(
       );
     }
 
-    return;
+    return undefined;
   }
   if (region && !AVAILABLE_DEPLOYMENT_REGIONS.includes(region)) {
     throw new ClientError(
       `Region ${region} is not available yet. Available: ${AVAILABLE_DEPLOYMENT_REGIONS.join(", ")}`,
     );
   }
-  await ctx.db.patch(stage._id, {
-    deploymentRegion: region ?? AVAILABLE_DEPLOYMENT_REGIONS[0],
-    updatedAt: Date.now(),
-  });
+
+  return region ?? AVAILABLE_DEPLOYMENT_REGIONS[0];
 }
 
 /** A stage env var name from the CLI, trimmed and held to the one env name rule. */

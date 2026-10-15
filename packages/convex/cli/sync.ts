@@ -42,7 +42,7 @@ import {
   envName,
   isExternalResourceKind,
   manifestRevision,
-  pinDeploymentRegion,
+  deploymentRegionToPin,
   resourceName,
   releaseManifestSync,
   snapshotExternalConfig,
@@ -464,7 +464,8 @@ export const ensureScopeBySecretHash = internalMutation({
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
-    await pinDeploymentRegion(ctx, stageDoc, args.region);
+    // Refuse a region change before any upload; the sync pins it.
+    deploymentRegionToPin(stageDoc, args.region);
     // The PUT's first write, so a sync refused here writes nothing.
     const revision = await claimManifestRevision(
       ctx,
@@ -1081,6 +1082,13 @@ export const syncManifestBySecretHash = internalMutation({
 
     const projectDoc = await ensureProject(ctx, account, manifest.project);
     const stageDoc = await ensureStage(ctx, projectDoc, manifest.stage);
+    const region = deploymentRegionToPin(stageDoc, manifest.region);
+    if (region) {
+      await ctx.db.patch(stageDoc._id, {
+        deploymentRegion: region,
+        updatedAt: Date.now(),
+      });
+    }
     const envValues = await loadEnvironmentVariableValues(
       ctx,
       projectDoc._id,
