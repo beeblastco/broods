@@ -1,0 +1,61 @@
+name: Real model
+
+# The local-stack verify with a real model key. Every model call is billed,
+# so ci.yaml's local-stack job runs keyless (model cases stop at the provider
+# call) and this runs only when someone asks: the real-model label on a pull
+# request (remove and add it again to re-run), or a manual run on a branch.
+# Same steps as ci.yaml's local-stack job up to the verify: change both.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  verify:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'real-model'
+    # On the job, not the workflow: any other label starts a run whose job is
+    # skipped, and a workflow-level group would cancel a billed run for it.
+    concurrency:
+      group: real-model-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts --frozen-lockfile
+
+      - name: Start the local stack
+        run: bun run local:up
+
+      - name: Verify through the edge
+        # Only this step reads the key: the harness puts it in each test
+        # agent's config, so core and the rest of the job never see it.
+        # Without the key the model cases skip or stop at the provider call and
+        # the run reads green while proving nothing, so a missing key fails.
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          test -n "$ANTHROPIC_API_KEY" || { echo "ANTHROPIC_API_KEY secret is not set" >&2; exit 1; }
+          bun run local:verify
+
+      - name: Upload stack logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: real-model-${{ github.run_id }}
+          path: ~/.broods-local/*/logs/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
