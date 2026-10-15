@@ -2762,7 +2762,8 @@ function formatTraceSpan(span: ObservabilitySpanRow, depth: number): string {
 
   if (!span.error) return stripVTControlCharacters(line);
   const pad = " ".repeat(prefix.length);
-  const error = span.error.replaceAll("\n", `\n${pad}       `);
+  // Every line of the error stays under its span: a bare \r cannot overwrite one.
+  const error = span.error.replaceAll(/\r\n?|\n/g, `\n${pad}       `);
 
   return stripVTControlCharacters(`${line}\n${pad}error: ${error}`);
 }
