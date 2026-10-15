@@ -126,6 +126,7 @@ export function SandboxInstancePanel({
               size="sm"
               tone="muted"
               className="cursor-pointer"
+              nativeButton={false}
               render={
                 <Link
                   href={dashboardHref(projectId, stage, {
