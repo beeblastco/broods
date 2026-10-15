@@ -3,8 +3,9 @@
 /**
  * The panel docked under the sandbox list, like an editor's terminal. It holds
  * any number of sessions, grouped by sandbox: numbered shells and, for a
- * MicroVM, its guest log tail. Every session stays mounted while another one
- * is shown, so switching tabs keeps a shell connected.
+ * MicroVM, its guest log tail. The shown session fills the left; the list on
+ * the right switches, opens and closes them. Every session stays mounted while
+ * another one is shown, so switching keeps a shell connected.
  */
 
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
@@ -16,7 +17,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { Play, Plus, X } from "lucide-react";
+import { ChevronDown, Play, Plus, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
@@ -51,6 +52,7 @@ interface Props {
   onActivate: (key: string) => void;
   onNewShell: (instanceId: Id<"sandboxInstances">) => void;
   onCloseSession: (key: string) => void;
+  onHide: () => void;
 }
 
 export function SandboxDock({
@@ -61,11 +63,9 @@ export function SandboxDock({
   onActivate,
   onNewShell,
   onCloseSession,
+  onHide,
 }: Props): React.JSX.Element {
   const byId = new Map(instances.map((instance) => [instance._id, instance]));
-  const activeInstance = state.sessions.find(
-    (session) => session.key === state.active,
-  )?.instanceId;
   // Sessions are kept grouped by sandbox, so a group is one run of them.
   const groups: { instance: Instance; sessions: DockSession[] }[] = [];
   for (const session of state.sessions) {
@@ -80,83 +80,103 @@ export function SandboxDock({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-terminal-background">
-      <div className="flex h-8 shrink-0 items-stretch border-b border-border bg-card">
-        <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
-          {groups.map(({ instance, sessions }) => (
-            <div
-              key={instance._id}
-              data-active={instance._id === activeInstance || undefined}
-              className="group flex shrink-0 items-center gap-0.5 border-t-2 border-r border-t-transparent border-r-border pr-1 pl-2.5 data-active:border-t-foreground data-active:bg-terminal-background"
-            >
-              <span className="mr-1 max-w-40 truncate text-xs text-muted-foreground group-data-active:font-medium group-data-active:text-foreground">
-                {instance.name}
-              </span>
-              {sessions.map((session) => (
-                <Button
-                  key={session.key}
-                  variant="nav"
-                  size="xs"
-                  data-active={session.key === state.active}
-                  className="cursor-pointer tabular-nums"
-                  onClick={() => onActivate(session.key)}
-                >
-                  {session.kind === "logs" ? "Logs" : session.shell}
-                </Button>
-              ))}
-              {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
-                controllable(instance) && (
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    tone="muted"
-                    aria-label={`New shell on ${instance.name}`}
-                    className="cursor-pointer"
-                    onClick={() => onNewShell(instance._id)}
-                  >
-                    <Plus />
-                  </Button>
-                )}
-            </div>
-          ))}
-        </div>
-        <div className="flex shrink-0 items-center gap-1 pr-2">
+    <div className="flex h-full min-h-0 bg-terminal-background">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {state.sessions.map((session) => {
+          const instance = byId.get(session.instanceId);
+
+          return (
+            instance && (
+              <div
+                key={session.key}
+                className={
+                  session.key === state.active
+                    ? "flex min-h-0 flex-1 flex-col"
+                    : "hidden"
+                }
+              >
+                <SessionBody
+                  session={session}
+                  instance={instance}
+                  projectId={projectId}
+                  observability={observability}
+                />
+              </div>
+            )
+          );
+        })}
+      </div>
+      <nav
+        aria-label="Open sessions"
+        className="flex w-56 shrink-0 flex-col border-l border-border bg-card"
+      >
+        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
+          <span className="flex-1 text-xs text-muted-foreground">Sessions</span>
           <ShortcutKeys id="sandbox.terminal" bordered />
           <Button
             variant="ghost"
             size="icon-xs"
             tone="muted"
-            aria-label="Close this session"
+            aria-label="Hide the dock"
             className="cursor-pointer"
-            onClick={() => onCloseSession(state.active)}
+            onClick={onHide}
           >
-            <X />
+            <ChevronDown />
           </Button>
         </div>
-      </div>
-      {state.sessions.map((session) => {
-        const instance = byId.get(session.instanceId);
+        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
+          {groups.map(({ instance, sessions }) => (
+            <div key={instance._id} className="flex flex-col gap-0.5">
+              <div className="flex h-7 items-center gap-1 pr-0.5 pl-2">
+                <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground">
+                  {instance.name}
+                </span>
+                {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
+                  controllable(instance) && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted"
+                      aria-label={`New shell on ${instance.name}`}
+                      className="cursor-pointer"
+                      onClick={() => onNewShell(instance._id)}
+                    >
+                      <Plus />
+                    </Button>
+                  )}
+              </div>
+              {sessions.map((session) => {
+                const name =
+                  session.kind === "logs" ? "Logs" : `Shell ${session.shell}`;
 
-        return (
-          instance && (
-            <div
-              key={session.key}
-              className={
-                session.key === state.active
-                  ? "flex min-h-0 flex-1 flex-col"
-                  : "hidden"
-              }
-            >
-              <SessionBody
-                session={session}
-                instance={instance}
-                projectId={projectId}
-                observability={observability}
-              />
+                return (
+                  <div key={session.key} className="flex items-center gap-0.5">
+                    <Button
+                      variant="nav"
+                      size="xs"
+                      data-active={session.key === state.active}
+                      className="flex-1 cursor-pointer justify-start tabular-nums"
+                      onClick={() => onActivate(session.key)}
+                    >
+                      {name}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      tone="muted"
+                      aria-label={`Close ${name} on ${instance.name}`}
+                      className="cursor-pointer"
+                      onClick={() => onCloseSession(session.key)}
+                    >
+                      <X />
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
-          )
-        );
-      })}
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }

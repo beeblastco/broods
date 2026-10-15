@@ -485,6 +485,7 @@ export function SandboxInstancesTable({
                   setDock(openDockShell(dock, instanceId))
                 }
                 onCloseSession={(key) => setDock(closeDockSession(dock, key))}
+                onHide={() => setDockHidden(true)}
               />
             </ResizablePanel>
           </>
