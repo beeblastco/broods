@@ -76,6 +76,22 @@ test("on a phone the open detail takes the table's place, and closing it brings 
   await expect(fixture.getByText("Detail body")).toHaveCount(0);
 });
 
+test("crossing the phone width keeps the table and detail mounted", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="detail-split"]');
+  const table = fixture.getByRole("table");
+  await fixture.getByRole("button", { name: "Open details" }).click();
+  await table.evaluate((node) => node.setAttribute("data-probe", "kept"));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(table).toBeHidden();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(table).toBeVisible();
+  await expect(table).toHaveAttribute("data-probe", "kept");
+});
+
 test.describe("drag performance", () => {
   // A long task is anything over 50ms on the main thread. The drag itself is
   // well under that, but a runner's GC pause can land inside the window.

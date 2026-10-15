@@ -171,6 +171,7 @@ export function SandboxDock({
                         data-active={session.key === state.active}
                         aria-current={session.key === state.active || undefined}
                         aria-label={`${name} on ${instance.name}`}
+                        data-session-switch
                         className="cursor-pointer justify-start tabular-nums @xl/dock:flex-1"
                         onClick={() => onActivate(session.key)}
                       >
@@ -182,7 +183,10 @@ export function SandboxDock({
                         tone="muted"
                         aria-label={`Close ${name} on ${instance.name}`}
                         className="cursor-pointer"
-                        onClick={() => onCloseSession(session.key)}
+                        onClick={(event) => {
+                          focusNeighbour(event.currentTarget);
+                          onCloseSession(session.key);
+                        }}
                       >
                         <X />
                       </Button>
@@ -374,4 +378,16 @@ function SessionBody({
 // suspend in flight, and a terminating instance is gone.
 function isRunnable(instance: Instance): boolean {
   return instance.status !== "terminating" && instance.status !== "suspending";
+}
+
+// Moves focus from a session's close button to the next session (or the one
+// before), the one the dock shows next, so closing does not drop it to the page.
+function focusNeighbour(close: HTMLElement): void {
+  const switches = [
+    ...(close
+      .closest("nav")
+      ?.querySelectorAll<HTMLElement>("[data-session-switch]") ?? []),
+  ];
+  const index = switches.findIndex((item) => item.nextElementSibling === close);
+  (switches[index + 1] ?? switches[index - 1])?.focus();
 }

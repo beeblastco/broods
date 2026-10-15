@@ -11,7 +11,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/app/components/ui/resizable";
-import { useIsMobile } from "@/app/hooks/useIsMobile";
 import {
   DETAIL_DEFAULT_WIDTH,
   DETAIL_MIN_WIDTH,
@@ -85,30 +84,15 @@ export function DetailSplit({
   flush = false,
   tableMinWidth = TABLE_MIN_WIDTH,
 }: DetailSplitProps): React.JSX.Element {
-  const isMobile = useIsMobile();
   const frame = cn(
-    "min-h-0 flex-1 overflow-hidden bg-card",
+    "relative min-h-0 flex-1 overflow-hidden bg-card",
     !flush && "rounded-lg border border-border",
+    // On a phone the open detail covers the table, which stays laid out
+    // (invisible, not removed) so closing the detail keeps its scroll. CSS
+    // only, so the same tree renders at every width and nothing remounts.
+    detail &&
+      "max-md:[&>[data-panel]:first-child]:invisible max-md:[&>[data-panel]:first-child]:absolute max-md:[&>[data-panel]:first-child]:inset-0",
   );
-  // No room for both side by side: the detail covers the table, which stays
-  // laid out (invisible, not removed) so closing the detail returns to the
-  // same scroll position.
-  if (isMobile) {
-    return (
-      <div className={cn(frame, "relative flex flex-col")}>
-        <div
-          className={cn("min-h-0 flex-1 overflow-auto", detail && "invisible")}
-        >
-          {children}
-        </div>
-        {detail && (
-          <div className="absolute inset-0 flex min-h-0 flex-col bg-card">
-            {detail}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   return (
     <ResizablePanelGroup className={frame}>
@@ -120,7 +104,7 @@ export function DetailSplit({
       </ResizablePanel>
       {detail && (
         <>
-          <ResizableHandle className="cursor-col-resize" />
+          <ResizableHandle className="cursor-col-resize max-md:hidden" />
           <ResizablePanel
             defaultSize={DETAIL_DEFAULT_WIDTH}
             minSize={DETAIL_MIN_WIDTH}
