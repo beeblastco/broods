@@ -73,6 +73,36 @@ export function run(
   return start < 0 ? null : JSON.parse(output.slice(start));
 }
 
+/** An org the stack knows, by id and name. */
+export interface OrgRow {
+  _id: string;
+  name: string;
+}
+
+/** The org the stack's admin has active. */
+export function activeOrg(): OrgRow {
+  const org = run(STACK_ADMIN, "org/orgs:getActive", {});
+  if (
+    typeof org !== "object" ||
+    org === null ||
+    !("_id" in org) ||
+    !("name" in org)
+  ) {
+    throw new Error("The stack's admin has no active org");
+  }
+
+  return { _id: idOf(org._id), name: idOf(org.name) };
+}
+
+/** A function's string result, such as a new document's id. */
+export function idOf(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error(`Expected a string, got ${JSON.stringify(value)}`);
+  }
+
+  return value;
+}
+
 /** A user who signed in once, in our users table and the AuthKit component's. */
 export function addUser(
   authId: string,

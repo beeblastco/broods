@@ -7,7 +7,7 @@
  * self-hosted stack can run it.
  */
 import { expect, test } from "@playwright/test";
-import { run, STACK_ADMIN } from "../lib/localStack";
+import { activeOrg, idOf, run, STACK_ADMIN } from "../lib/localStack";
 import { probeAccount } from "../lib/session";
 
 test.skip(
@@ -21,9 +21,8 @@ let projectId: string;
 let freshProjectId: string;
 
 test.beforeAll(() => {
-  const org = run(STACK_ADMIN, "org/orgs:getActive", {}) as { _id: string };
   const account = run(null, "account/accounts:getByOrgId", {
-    orgId: org._id,
+    orgId: activeOrg()._id,
   }) as { secretHash: string };
   const scope = run(null, "cli/sync:ensureScopeBySecretHash", {
     secretHash: account.secretHash,
@@ -31,9 +30,9 @@ test.beforeAll(() => {
     stage: "production",
   }) as { projectId: string };
   projectId = scope.projectId;
-  freshProjectId = run(STACK_ADMIN, "project:create", {
-    name: `${PROJECT}-fresh`,
-  }) as string;
+  freshProjectId = idOf(
+    run(STACK_ADMIN, "project:create", { name: `${PROJECT}-fresh` }),
+  );
 });
 
 test.afterAll(() => {

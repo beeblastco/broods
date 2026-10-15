@@ -12,9 +12,12 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import {
+  activeOrg,
   addUser,
   convex,
   fileSubscription,
+  idOf,
+  type OrgRow,
   removeUser,
   run,
   STACK_ADMIN,
@@ -33,11 +36,6 @@ const RUN_ID = Date.now().toString(36);
 const OWNER = { name: "Ada Lovelace", org: "Acme Robotics" };
 // The second org the admin creates once on Pro.
 const LAB = "Tracy Lab";
-
-interface OrgRow {
-  _id: string;
-  name: string;
-}
 
 let adminOrg: OrgRow;
 let owner: StackUser;
@@ -488,29 +486,6 @@ async function openInvite(page: Page): Promise<ReturnType<Page["getByRole"]>> {
   await expect(dialog).toBeVisible();
 
   return dialog;
-}
-
-function activeOrg(): OrgRow {
-  const org = run(STACK_ADMIN, "org/orgs:getActive", {});
-  if (
-    typeof org !== "object" ||
-    org === null ||
-    !("_id" in org) ||
-    !("name" in org)
-  ) {
-    throw new Error("The stack's admin has no active org");
-  }
-
-  return { _id: idOf(org._id), name: idOf(org.name) };
-}
-
-/** A function's string result, such as a new document's id. */
-function idOf(value: unknown): string {
-  if (typeof value !== "string") {
-    throw new Error(`Expected a string, got ${JSON.stringify(value)}`);
-  }
-
-  return value;
 }
 
 function subId(org: string): string {

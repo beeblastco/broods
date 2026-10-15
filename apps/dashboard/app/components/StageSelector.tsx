@@ -149,11 +149,6 @@ export function StageSelector(): React.JSX.Element | null {
   const selectedStage = stages.find((e: Doc<"stages">) => e._id === stageId);
   const selectedKind = selectedStage?.kind ?? "custom";
 
-  function handleOpenProductionSetup(): void {
-    setError(null);
-    setProductionOpen(true);
-  }
-
   async function handleCreate(): Promise<void> {
     if (!newName.trim() || !projectId) return;
     setIsCreating(true);
@@ -242,7 +237,10 @@ export function StageSelector(): React.JSX.Element | null {
               {!productionStage && canWrite && (
                 <DropdownMenuItem
                   className="cursor-pointer"
-                  onClick={handleOpenProductionSetup}
+                  onClick={() => {
+                    setError(null);
+                    setProductionOpen(true);
+                  }}
                 >
                   <StageDot kind="production" />
                   Production
