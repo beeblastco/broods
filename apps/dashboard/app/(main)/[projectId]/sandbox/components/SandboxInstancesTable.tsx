@@ -174,6 +174,7 @@ export function SandboxInstancesTable({
   const [rawDock, setDock] = useState<DockState | null>(null);
   // Hidden, not closed: the backtick keeps every shell connected.
   const [dockHidden, setDockHidden] = useState(false);
+  const dockOpener = useRef<HTMLElement | null>(null);
   // A click on the open row closes its panel.
   const select = (id: TableRow["id"]): void => {
     void setSelectedId(selectedId === id ? null : id);
@@ -269,15 +270,27 @@ export function SandboxInstancesTable({
   };
 
   const showDock = (next: DockState): void => {
+    if (document.activeElement instanceof HTMLElement) {
+      dockOpener.current = document.activeElement;
+    }
     setDock(next);
     setDockHidden(false);
+  };
+
+  // Hiding takes focus out of the dock, so it goes back to what opened it
+  // (the panel's Terminal button) rather than dropping to the page.
+  const hideDock = (): void => {
+    setDockHidden(true);
+    if (dockOpener.current?.isConnected) dockOpener.current.focus();
   };
 
   // The backtick toggles the dock, like an editor's terminal: it opens a
   // shell on the selected instance, and with the dock open it hides it.
   useShortcut("sandbox.terminal", () => {
-    if (dock) {
-      setDockHidden((hidden) => !hidden);
+    if (dock && !dockHidden) {
+      hideDock();
+    } else if (dock) {
+      setDockHidden(false);
     } else if (
       selected?.kind === "instance" &&
       controllable(selected.instance)
@@ -485,7 +498,7 @@ export function SandboxInstancesTable({
                   setDock(openDockShell(dock, instanceId))
                 }
                 onCloseSession={(key) => setDock(closeDockSession(dock, key))}
-                onHide={() => setDockHidden(true)}
+                onHide={hideDock}
               />
             </ResizablePanel>
           </>

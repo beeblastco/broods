@@ -4,7 +4,9 @@
  * The panel docked under the sandbox list, like an editor's terminal. It holds
  * any number of sessions, grouped by sandbox: numbered shells and, for a
  * MicroVM, its guest log tail. The shown session fills the left; the list on
- * the right switches, opens and closes them. Every session stays mounted while
+ * the right switches, opens and closes them. When the dock itself is narrow
+ * (a phone, or a narrow window) the list becomes one scrolling row above the
+ * shell, so the shell keeps the whole width. Every session stays mounted while
  * another one is shown, so switching keeps a shell connected.
  */
 
@@ -84,104 +86,114 @@ export function SandboxDock({
   }
 
   return (
-    <div className="flex h-full min-h-0 bg-terminal-background">
-      <div className="flex min-w-0 flex-1 flex-col">
-        {state.sessions.map((session) => {
-          const instance = byId.get(session.instanceId);
+    <div className="@container/dock h-full min-h-0">
+      <div className="flex h-full min-h-0 flex-col bg-terminal-background @xl/dock:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {state.sessions.map((session) => {
+            const instance = byId.get(session.instanceId);
 
-          return (
-            instance && (
+            return (
+              instance && (
+                <div
+                  key={session.key}
+                  className={
+                    session.key === state.active
+                      ? "flex min-h-0 flex-1 flex-col"
+                      : "hidden"
+                  }
+                >
+                  <SessionBody
+                    session={session}
+                    instance={instance}
+                    projectId={projectId}
+                    observability={observability}
+                  />
+                </div>
+              )
+            );
+          })}
+        </div>
+        <nav
+          aria-label="Open sessions"
+          className="order-first flex h-8 shrink-0 items-center border-b border-border bg-card @xl/dock:order-none @xl/dock:h-auto @xl/dock:w-56 @xl/dock:flex-col @xl/dock:items-stretch @xl/dock:border-b-0 @xl/dock:border-l"
+        >
+          <div className="order-last flex h-8 shrink-0 items-center gap-1 pr-1 @xl/dock:order-none @xl/dock:border-b @xl/dock:border-border @xl/dock:pl-3">
+            <span className="hidden flex-1 text-xs text-muted-foreground @xl/dock:block">
+              Sessions
+            </span>
+            <ShortcutKeys id="sandbox.terminal" bordered />
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              tone="muted"
+              aria-label="Hide the dock"
+              className="cursor-pointer"
+              onClick={onHide}
+            >
+              <ChevronDown />
+            </Button>
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-1 items-center gap-0.5 overflow-auto px-1 @xl/dock:flex-col @xl/dock:items-stretch @xl/dock:p-1">
+            {groups.map(({ instance, sessions }) => (
               <div
-                key={session.key}
-                className={
-                  session.key === state.active
-                    ? "flex min-h-0 flex-1 flex-col"
-                    : "hidden"
-                }
+                key={instance._id}
+                className="flex shrink-0 items-center gap-0.5 @xl/dock:flex-col @xl/dock:items-stretch"
               >
-                <SessionBody
-                  session={session}
-                  instance={instance}
-                  projectId={projectId}
-                  observability={observability}
-                />
-              </div>
-            )
-          );
-        })}
-      </div>
-      <nav
-        aria-label="Open sessions"
-        className="flex w-56 shrink-0 flex-col border-l border-border bg-card"
-      >
-        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
-          <span className="flex-1 text-xs text-muted-foreground">Sessions</span>
-          <ShortcutKeys id="sandbox.terminal" bordered />
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            tone="muted"
-            aria-label="Hide the dock"
-            className="cursor-pointer"
-            onClick={onHide}
-          >
-            <ChevronDown />
-          </Button>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1">
-          {groups.map(({ instance, sessions }) => (
-            <div key={instance._id} className="flex flex-col gap-0.5">
-              <div className="flex h-7 items-center gap-1 pr-0.5 pl-2">
-                <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                  {instance.name}
-                </span>
-                {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
-                  controllable(instance) && (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted"
-                      aria-label={`New shell on ${instance.name}`}
-                      className="cursor-pointer"
-                      onClick={() => onNewShell(instance._id)}
-                    >
-                      <Plus />
-                    </Button>
-                  )}
-              </div>
-              {sessions.map((session) => {
-                const name = dockSessionName(session);
+                <div className="flex h-7 items-center gap-1 pr-0.5 pl-2">
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                    {instance.name}
+                  </span>
+                  {LIVE_TERMINAL_SANDBOX_PROVIDERS.has(instance.provider) &&
+                    controllable(instance) && (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        tone="muted"
+                        aria-label={`New shell on ${instance.name}`}
+                        className="cursor-pointer"
+                        onClick={() => onNewShell(instance._id)}
+                      >
+                        <Plus />
+                      </Button>
+                    )}
+                </div>
+                {sessions.map((session) => {
+                  const name = dockSessionName(session);
 
-                return (
-                  <div key={session.key} className="flex items-center gap-0.5">
-                    <Button
-                      variant="nav"
-                      size="xs"
-                      data-active={session.key === state.active}
-                      aria-current={session.key === state.active || undefined}
-                      aria-label={`${name} on ${instance.name}`}
-                      className="flex-1 cursor-pointer justify-start tabular-nums"
-                      onClick={() => onActivate(session.key)}
+                  return (
+                    <div
+                      key={session.key}
+                      className="flex items-center gap-0.5"
                     >
-                      {name}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted"
-                      aria-label={`Close ${name} on ${instance.name}`}
-                      className="cursor-pointer"
-                      onClick={() => onCloseSession(session.key)}
-                    >
-                      <X />
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      </nav>
+                      <Button
+                        variant="nav"
+                        size="xs"
+                        data-active={session.key === state.active}
+                        aria-current={session.key === state.active || undefined}
+                        aria-label={`${name} on ${instance.name}`}
+                        className="flex-1 cursor-pointer justify-start tabular-nums"
+                        onClick={() => onActivate(session.key)}
+                      >
+                        {name}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        tone="muted"
+                        aria-label={`Close ${name} on ${instance.name}`}
+                        className="cursor-pointer"
+                        onClick={() => onCloseSession(session.key)}
+                      >
+                        <X />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </nav>
+      </div>
     </div>
   );
 }
