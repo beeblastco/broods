@@ -17,6 +17,7 @@ import { lambdaSnapshot } from "./lambda-snapshot.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
+import { productionRegion } from "./production-region.ts";
 import { providerSnapshot } from "./provider-snapshot.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
@@ -71,6 +72,7 @@ export const verifyCases: readonly VerifyCase[] = [
   edgeHeaders,
   credentialPrefixes,
   manifestSync,
+  productionRegion,
   mcpHeaderEnv,
   r2Workspace,
   workToolWebhooks,

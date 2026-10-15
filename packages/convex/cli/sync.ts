@@ -24,6 +24,7 @@ import { hasDashboardPermission } from "../model/access";
 import { userByAuthId } from "../model/ownership/org";
 import { accountCipher } from "../model/accountKeys";
 import { sha256Hex } from "../model/accountSecrets";
+import { deploymentRegionValidator } from "../schema";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
   auditDetailsJson,
@@ -41,6 +42,7 @@ import {
   envName,
   isExternalResourceKind,
   manifestRevision,
+  pinDeploymentRegion,
   resourceName,
   releaseManifestSync,
   snapshotExternalConfig,
@@ -113,6 +115,7 @@ const manifestValidator = v.object({
   version: v.literal(1),
   project: v.string(),
   stage: v.string(),
+  region: v.optional(deploymentRegionValidator),
   resources: v.array(resourceValidator),
 });
 
@@ -441,6 +444,7 @@ export const ensureScopeBySecretHash = internalMutation({
     secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
+    region: v.optional(deploymentRegionValidator),
     revision: v.optional(v.number()),
   },
   returns: v.object({
@@ -460,6 +464,7 @@ export const ensureScopeBySecretHash = internalMutation({
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
+    await pinDeploymentRegion(ctx, stageDoc, args.region);
     // The PUT's first write, so a sync refused here writes nothing.
     const revision = await claimManifestRevision(
       ctx,

@@ -202,13 +202,18 @@ Markers are `[+]` create, `[~]` rename, `[*]` update and `[-]` delete. It also w
 Syncs the `production` stage once, or the `stages.deploy` stage set with `defineBroods`, and writes its runtime key to `.env.local`.
 
 ```bash
-broods deploy [--prune] [--rotate-key] [--stage <name>]
+broods deploy [--prune] [--rotate-key] [--region <region>] [--stage <name>]
 ```
 
 | Flag           | Description                                                                      |
 | -------------- | -------------------------------------------------------------------------------- |
 | `--prune`      | Delete remote resources the project no longer declares                           |
 | `--rotate-key` | Mint a fresh runtime key and write it to `.env.local`. The old key stops working |
+| `--region`     | Production's region. Defaults to `BROODS_REGION`, then `eu-west-1`               |
+
+### Production region
+
+The first deploy to `production` pins its region, so data stays where you chose for GDPR. It takes `--region`, else `BROODS_REGION` from `.env.local`, else `eu-west-1`, the only region live today. A later deploy that names another region is refused with 409 and Production stays put; one that names none keeps the pinned region. `--region` on any other stage is an error. SDK callers set `region` on the manifest they pass to `BroodsSyncClient.putManifest`. A Production stage made this way opens directly in the dashboard, with no Initialize Production step.
 
 Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret).
 

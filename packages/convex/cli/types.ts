@@ -34,9 +34,17 @@ export type GeneratedIds = {
   channelRecords: Record<string, string>;
 };
 
+/** Where a Production stage runs. */
+export type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
+
 export type CliManifest = {
   version: 1;
   project: string;
   stage: string;
+  /**
+   * Production only: the region its first deploy pins (eu-west-1 when unset).
+   * A later deploy naming another region is refused.
+   */
+  region?: DeploymentRegion;
   resources: CliManifestResource[];
 };

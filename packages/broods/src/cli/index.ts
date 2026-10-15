@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
-import type { CliManifest } from "../contracts.ts";
+import type { CliManifest, DeploymentRegion } from "../contracts.ts";
 import {
   GENERATED_DIR,
   PROJECT_DIR,
@@ -121,11 +121,14 @@ const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 // How often `broods dev` re-reads the stage when another session keeps syncing it.
 const DEV_SYNC_ATTEMPTS = 3;
 const DEFAULT_SERVICE_REGION = "eu-west-1";
-const SERVICE_REGIONS = [
+const SERVICE_REGIONS: ReadonlyArray<{
+  region: DeploymentRegion;
+  label: string;
+}> = [
   { region: "eu-west-1", label: "eu-west-1 (Ireland)" },
   { region: "us-east-1", label: "us-east-1 (US East)" },
   { region: "ap-southeast-1", label: "ap-southeast-1 (Singapore)" },
-] as const;
+];
 
 // Options every command accepts, appended to each command's own help so a
 // reader never has to jump back to the top-level page for them.
@@ -193,6 +196,8 @@ BROODS_STAGE by design. Pass --stage to deploy anywhere else.
 Options:
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime key and write it to .env.local
+  --region <region>     Production's region, pinned by its first deploy
+                        (BROODS_REGION otherwise, default: ${DEFAULT_SERVICE_REGION})
 
 ${GLOBAL_OPTIONS}`,
   dev: `Usage: broods dev [--once] [options]
@@ -1183,8 +1188,9 @@ async function deploy(args: string[]): Promise<void> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
+  const region = productionRegion(args, manifest.stage);
   const result = await client.putManifest(
-    manifest,
+    region ? { ...manifest, region: region } : manifest,
     hasFlag(args, "--prune"),
     hasFlag(args, "--rotate-key"),
   );
@@ -1203,6 +1209,32 @@ async function deploy(args: string[]): Promise<void> {
   await applyDeploymentKey(client, manifest, result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
+}
+
+/**
+ * Production's region for a deploy: `--region`, else BROODS_REGION from
+ * .env.local. The first deploy pins it and a later one cannot move it.
+ */
+function productionRegion(
+  args: string[],
+  stage: string,
+): DeploymentRegion | undefined {
+  const flag = optionValue(args, "--region");
+  if (!stageNameEquals(stage, "production")) {
+    if (flag) throw new Error("--region applies only to the production stage");
+
+    return undefined;
+  }
+  const value = flag ?? process.env.BROODS_REGION;
+  if (value === undefined) return undefined;
+  const match = SERVICE_REGIONS.find((entry) => entry.region === value);
+  if (!match) {
+    throw new Error(
+      `Unknown region ${value}. Use one of: ${SERVICE_REGIONS.map((entry) => entry.region).join(", ")}`,
+    );
+  }
+
+  return match.region;
 }
 
 /**

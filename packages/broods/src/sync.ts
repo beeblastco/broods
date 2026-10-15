@@ -2,7 +2,11 @@
  * HTTP client for the SaaS CLI API exposed by the dashboard/Convex backend.
  */
 
-import type { CliManifest, GeneratedIds } from "./contracts.ts";
+import type {
+  CliManifest,
+  DeploymentRegion,
+  GeneratedIds,
+} from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
@@ -118,7 +122,7 @@ export interface CliStage {
   name: string;
   kind: "development" | "production" | "custom";
   isDefault: boolean;
-  deploymentRegion?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
+  deploymentRegion?: DeploymentRegion;
   agentCount: number;
   variableCount: number;
   updatedAt: number;

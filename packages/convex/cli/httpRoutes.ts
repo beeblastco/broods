@@ -568,6 +568,7 @@ async function handleManifestSync(
       secretHash: secretHash,
       project: route.project,
       stage: route.stage,
+      ...(originalManifest.region ? { region: originalManifest.region } : {}),
       revision: body.revision,
     },
   );

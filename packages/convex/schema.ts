@@ -38,6 +38,12 @@ export const projectsFields = {
   updatedAt: v.number(),
 };
 
+export const deploymentRegionValidator = v.union(
+  v.literal("ap-southeast-1"),
+  v.literal("eu-west-1"),
+  v.literal("us-east-1"),
+);
+
 export const stagesFields = {
   authId: v.string(),
   projectId: v.id("projects"),
@@ -48,14 +54,8 @@ export const stagesFields = {
     v.literal("production"),
     v.literal("custom"),
   ),
-  /** Lambda deploy region for promoted/deployable stages. */
-  deploymentRegion: v.optional(
-    v.union(
-      v.literal("ap-southeast-1"),
-      v.literal("eu-west-1"),
-      v.literal("us-east-1"),
-    ),
-  ),
+  /** Where Production runs, set by Initialize Production or its first deploy. */
+  deploymentRegion: v.optional(deploymentRegionValidator),
   isDefault: v.boolean(),
   updatedAt: v.number(),
 };

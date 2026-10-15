@@ -4834,6 +4834,7 @@ export declare const internal: {
         "internal",
         {
           project: string;
+          region?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
           revision?: number;
           secretHash: string;
           stage: string;
@@ -4903,6 +4904,7 @@ export declare const internal: {
         {
           manifest: {
             project: string;
+            region?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
             resources: Array<{
               config: any;
               description?: string;
@@ -5027,6 +5029,7 @@ export declare const internal: {
         {
           manifest: {
             project: string;
+            region?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
             resources: Array<{
               config: any;
               description?: string;
@@ -5070,6 +5073,7 @@ export declare const internal: {
         {
           manifest: {
             project: string;
+            region?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
             resources: Array<{
               config: any;
               description?: string;

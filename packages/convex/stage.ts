@@ -24,13 +24,7 @@ import {
   getProjectForWrite,
 } from "./model/ownership/project";
 import { agentsInStage, stageNameEquals } from "./model/projectScope";
-import { stagesFields } from "./schema";
-
-const deploymentRegion = v.union(
-  v.literal("ap-southeast-1"),
-  v.literal("eu-west-1"),
-  v.literal("us-east-1"),
-);
+import { deploymentRegionValidator, stagesFields } from "./schema";
 
 const stageDoc = v.object({
   ...stagesFields,
@@ -173,7 +167,7 @@ export const initializeProduction = mutation({
   args: {
     projectId: v.id("projects"),
     sourceStageId: v.id("stages"),
-    deploymentRegion: deploymentRegion,
+    deploymentRegion: deploymentRegionValidator,
   },
   returns: v.id("stages"),
   handler: async (

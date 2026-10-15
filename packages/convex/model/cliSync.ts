@@ -7,7 +7,7 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { CliManifestResource } from "../cli/types";
+import type { CliManifestResource, DeploymentRegion } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
 import {
@@ -388,6 +388,47 @@ export async function ensureStage(
   }
 
   return created;
+}
+
+/** Regions Production can run in today; the others are not live yet. */
+const AVAILABLE_DEPLOYMENT_REGIONS: readonly DeploymentRegion[] = ["eu-west-1"];
+
+/**
+ * Pin a Production stage's region on the deploy that finds it unset, to the
+ * manifest's region or eu-west-1. Data stays where it was first deployed, so
+ * a deploy naming another region is refused rather than moving it.
+ */
+export async function pinDeploymentRegion(
+  ctx: MutationCtx,
+  stage: Doc<"stages">,
+  region: DeploymentRegion | undefined,
+): Promise<void> {
+  if (stage.kind !== "production") {
+    if (region) {
+      throw new ClientError("A region applies only to the production stage");
+    }
+
+    return;
+  }
+  if (stage.deploymentRegion) {
+    if (region && region !== stage.deploymentRegion) {
+      throw new ClientError(
+        `${stage.name} already runs in ${stage.deploymentRegion} and cannot move to ${region}`,
+        "conflict",
+      );
+    }
+
+    return;
+  }
+  if (region && !AVAILABLE_DEPLOYMENT_REGIONS.includes(region)) {
+    throw new ClientError(
+      `Region ${region} is not available yet. Available: ${AVAILABLE_DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
+  await ctx.db.patch(stage._id, {
+    deploymentRegion: region ?? AVAILABLE_DEPLOYMENT_REGIONS[0],
+    updatedAt: Date.now(),
+  });
 }
 
 /** A stage env var name from the CLI, trimmed and held to the one env name rule. */
