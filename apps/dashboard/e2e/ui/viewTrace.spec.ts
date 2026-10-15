@@ -10,7 +10,8 @@ const TASKS = 60;
 /** The task View trace opens: the last row on Tracing's first page. */
 const TARGET_TASK = 50;
 
-const NOW_MS = Date.parse("2026-09-15T10:00:00Z");
+/** Two weeks back, so the tasks age with the clock and stay inside 30 days. */
+const NOW_MS = Date.now() - 14 * 86_400_000;
 
 test("View trace opens Tracing on the task without sliding the page", async ({
   page,
