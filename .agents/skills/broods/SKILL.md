@@ -35,6 +35,10 @@ const result = await client.run(api.agents.myAgent, { input: "..." });
 
 `client.stream(...)` and `client.runAsync(...)` cover streaming and async runs. `_generated/` is empty until a sync has run at least once. https://docs.broods.app/reference/sdk has the full client, including account operations through `BroodsAccountClient`.
 
+## Debug a run
+
+When the user hands you a trace id, or a prompt copied from the dashboard's Tracing tab, read the run with `broods trace <trace-id> --project <project> --stage <stage> --json`. It prints every span: system prompt, model input, reasoning, response, each tool call's input and output, and the error. `broods agent list` maps the agent id in it to the agent's name in `broods/`. Fix the cause in the project definition, then show the user the change before syncing.
+
 ## When the CLI has no command
 
 Crons, skills, sandboxes, policies, roles, channels, and hooks have no CLI verb. Prefer changing them in the project definition and syncing. For one-off reads and operations a manifest cannot say, use the MCP server. `claude mcp add broods -- broods mcp` adds it, and its tool names mirror the SDK: `list-agents`, `create-cron`, `update-agent`, and so on. For scoped automation credentials, read the roles section of https://docs.broods.app/guides/security.
