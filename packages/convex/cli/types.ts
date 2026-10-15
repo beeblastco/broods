@@ -2,8 +2,9 @@
  * Canonical CLI manifest wire types, the single source of truth shared by the
  * backend (cliSync.ts, cliHttp.ts) and the SDK/CLI (packages/broods).
  *
- * This file is intentionally type-only with no runtime imports so the SDK can
- * import it without pulling the Convex server module graph into its typecheck.
+ * This file intentionally has no runtime imports (its one value is a plain
+ * list) so the SDK can import it without pulling the Convex server module
+ * graph into its typecheck.
  */
 
 export type CliManifestResource = {
@@ -35,7 +36,12 @@ export type GeneratedIds = {
 };
 
 /** Where a Production stage runs. */
-export type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
+export const DEPLOYMENT_REGIONS = [
+  "ap-southeast-1",
+  "eu-west-1",
+  "us-east-1",
+] as const;
+export type DeploymentRegion = (typeof DEPLOYMENT_REGIONS)[number];
 
 export type CliManifest = {
   version: 1;

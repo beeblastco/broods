@@ -6,7 +6,8 @@ import { assertStep, type VerifyContext } from "../harness.ts";
 /**
  * An automated deploy chooses where Production runs: the first manifest PUT
  * pins the region it names, a later one naming another region is refused
- * with 409 and leaves it, and one naming none keeps it. Config only.
+ * with 409 and leaves it, an unknown one is a 400, and one naming none keeps
+ * it. Config only.
  */
 export async function productionRegion(context: VerifyContext): Promise<void> {
   const sync = new BroodsSyncClient({
@@ -49,6 +50,21 @@ export async function productionRegion(context: VerifyContext): Promise<void> {
     "a later deploy cannot move Production to another region",
     moved.includes("409") && moved.includes("already runs in eu-west-1"),
     moved.slice(0, 200),
+  );
+
+  const unknown = await sync
+    .putManifest(
+      { ...manifest(), region: "mars-1" as CliManifest["region"] },
+      true,
+    )
+    .then(
+      (): string => "deployed",
+      (error: unknown): string => String(error),
+    );
+  assertStep(
+    "an unknown region is a 400, not a server error",
+    unknown.includes("400") && unknown.includes(`Unknown region "mars-1"`),
+    unknown.slice(0, 200),
   );
 
   await sync.putManifest(manifest(), true);
