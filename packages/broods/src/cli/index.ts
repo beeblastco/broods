@@ -36,7 +36,10 @@ import {
 import { writeGeneratedFiles } from "../codegen.ts";
 import { USER_TOKEN_SECRET_ENV } from "../user-token.ts";
 import { keyHint } from "../../../convex/model/accountSecrets.ts";
-import { DEPLOYMENT_REGIONS } from "../../../convex/cli/types.ts";
+import {
+  DEPLOYMENT_REGIONS,
+  LIVE_DEPLOYMENT_REGIONS,
+} from "../../../convex/cli/types.ts";
 import { USER_TOKEN_SECRET_PREFIX } from "../../../convex/model/userToken.ts";
 import {
   type CliOnboardingContext,
@@ -1193,9 +1196,9 @@ async function deploy(args: string[]): Promise<void> {
   // or another stage. BROODS_REGION is not read: `init` writes it as a default.
   const flag = optionValue(args, "--region");
   const region = DEPLOYMENT_REGIONS.find((known) => known === flag);
-  if (flag !== undefined && !region) {
+  if (hasFlag(args, "--region") && !region) {
     throw new Error(
-      `Unknown region ${flag}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
+      `Unknown region ${flag ?? "(empty)"}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
     );
   }
   const result = await client.putManifest(
@@ -1643,7 +1646,10 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   }
 
   if (process.stdin.isTTY && needsRegion) {
-    const regions = [...SERVICE_REGIONS];
+    // Only live regions: a project's Production cannot move once pinned.
+    const regions = SERVICE_REGIONS.filter((entry) =>
+      LIVE_DEPLOYMENT_REGIONS.includes(entry.region),
+    );
     region = await promptSelect(
       "Select service region",
       regions,

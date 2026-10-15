@@ -348,13 +348,13 @@ export async function ensureStage(
   const existing = stages.find((entry) => stageNameEquals(entry.name, name));
   const kind = kindForStageName(name);
   if (existing) {
-    if (existing.kind !== kind || existing.name !== displayStageName(name)) {
-      await ctx.db.patch(existing._id, {
-        name: displayStageName(name),
-        kind: kind,
-        isDefault: kind === "development" ? true : existing.isDefault,
-        updatedAt: Date.now(),
-      });
+    const fixed = {
+      name: displayStageName(name),
+      kind: kind,
+      isDefault: kind === "development" ? true : existing.isDefault,
+    };
+    if (existing.kind !== kind || existing.name !== fixed.name) {
+      await ctx.db.patch(existing._id, { ...fixed, updatedAt: Date.now() });
     }
     if (kind === "development") {
       for (const stage of stages.filter(
@@ -368,12 +368,9 @@ export async function ensureStage(
     }
 
     // As patched, so a caller reads the kind this call just set.
-    return {
-      ...existing,
-      name: displayStageName(name),
-      kind: kind,
-      isDefault: kind === "development" ? true : existing.isDefault,
-    };
+    return existing.kind !== kind || existing.name !== fixed.name
+      ? { ...existing, ...fixed }
+      : existing;
   }
 
   // Only Development is ever the default; Production/custom stages are

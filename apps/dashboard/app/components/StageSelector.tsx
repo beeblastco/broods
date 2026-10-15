@@ -114,6 +114,9 @@ export function StageSelector(): React.JSX.Element | null {
     (stage) => stage.kind === "development",
   );
   const productionStage = stages?.find((stage) => stage.kind === "production");
+  // Production appeared while the dialog was open (a deploy landed): close it
+  // for good, so removing Production later does not reopen it unasked.
+  if (productionOpen && productionStage) setProductionOpen(false);
 
   // Create the default Development stage on load when the project has none.
   useEffect(() => {
@@ -385,11 +388,7 @@ export function StageSelector(): React.JSX.Element | null {
         </DialogContent>
       </Dialog>
 
-      {/* Closes once Production exists, such as a deploy landing meanwhile. */}
-      <Dialog
-        open={productionOpen && !productionStage}
-        onOpenChange={setProductionOpen}
-      >
+      <Dialog open={productionOpen} onOpenChange={setProductionOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Initialize Production</DialogTitle>

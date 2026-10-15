@@ -301,3 +301,15 @@ test("an unknown --region fails before any request", async () => {
   expect(result.output).toContain("Unknown region mars-1");
   expect(backend.regions).toEqual([]);
 });
+
+test("a --region with no value fails rather than falling back", async () => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  // `--region "$REGION"` with REGION unset.
+  const result = await runDeploy(cwd, backend.baseUrl, {}, ["--region="]);
+
+  expect(result.exitCode).not.toBe(0);
+  expect(result.output).toContain("Unknown region (empty)");
+  expect(backend.regions).toEqual([]);
+});
