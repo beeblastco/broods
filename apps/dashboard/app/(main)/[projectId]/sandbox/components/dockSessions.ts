@@ -23,11 +23,6 @@ export interface DockState {
   active: string;
 }
 
-/** A session's name in the dock: "Logs" or "Shell N". */
-export function dockSessionName(session: DockSession): string {
-  return session.kind === "logs" ? "Logs" : `Shell ${session.shell}`;
-}
-
 /**
  * Closes a session. The shown one passes to its neighbour; the dock closes
  * (null) with its last session.
@@ -45,6 +40,11 @@ export function closeDockSession(
       : state.active;
 
   return { sessions: sessions, active: active };
+}
+
+/** A session's name in the dock: "Logs" or "Shell N". */
+export function dockSessionName(session: DockSession): string {
+  return session.kind === "logs" ? "Logs" : `Shell ${session.shell}`;
 }
 
 /** Shows a sandbox's session of this kind, opening one when it has none. */

@@ -158,6 +158,7 @@ export function SandboxDock({
                       variant="nav"
                       size="xs"
                       data-active={session.key === state.active}
+                      aria-current={session.key === state.active || undefined}
                       className="flex-1 cursor-pointer justify-start tabular-nums"
                       onClick={() => onActivate(session.key)}
                     >
