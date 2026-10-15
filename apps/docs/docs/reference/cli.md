@@ -31,7 +31,7 @@ Next
 Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage
-  Inspect   agent  whoami
+  Inspect   agent  trace  whoami
   Account   login  org  project
   Tools     init  machine  mcp  update
 ```
@@ -305,6 +305,20 @@ broods logs [-n <n>] [--level <lvl>] [--all] [--json] [--sandbox <id>]
 | `--sandbox <id>` | Tail one sandbox instance's guest output instead. The id is the UUID in the dashboard Instances sheet |
 
 The CLI trades your login token for a 15-minute stage session ticket and refreshes it on reconnect. The runtime key in `BROODS_API_KEY` cannot open logs, because logs carry every end user's chats. Code hook `console.*` lines appear here too, tagged `source: "user-code"`.
+
+## trace
+
+Prints one run's trace by id and exits: every model step and tool call with its status, duration and error. Needs a `broods login` token and a deployed stage, like `logs`.
+
+```bash
+broods trace <trace-id> [--json]
+```
+
+| Flag     | Description                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--json` | Print every span as a JSON array, with its full attributes: system prompt, model input, reasoning, response, tool input and output, and the error |
+
+The trace id is the 32-character id on the run in the dashboard Tracing tab. Its **Copy prompt for agent** button copies the ids plus this command, so a coding agent can read the run and fix or audit it. Traces older than the seven-day search window still open by id.
 
 ## stream
 

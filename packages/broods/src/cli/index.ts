@@ -61,13 +61,16 @@ import {
   parseEnv as parseDotenv,
 } from "../runtime-config.ts";
 import {
+  fetchObservabilityTrace,
   subscribeObservabilityLogs,
   type ObservabilityClientOptions,
 } from "../observability-client.ts";
 import {
   isSandboxLogId,
+  isTraceId,
   type LogLevel,
   type ObservabilityLogEntry,
+  type ObservabilitySpanRow,
 } from "../observability-contracts.ts";
 import { BroodsAccountApiError, BroodsAccountClient } from "../account.ts";
 import {
@@ -94,6 +97,7 @@ import {
   formatContext,
   formatNext,
   formatTarget,
+  formatDuration,
   formatWarning,
   printDeploymentTarget,
   printDiffEntries,
@@ -140,7 +144,7 @@ const GLOBAL_OPTIONS = `Global options:
 const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage
-  Inspect   agent  whoami
+  Inspect   agent  trace  whoami
   Account   login  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
@@ -161,6 +165,7 @@ const STAGE_SCOPED_COMMANDS = new Set([
   "run",
   "stage",
   "stream",
+  "trace",
 ]);
 
 // One page per command, printed by `broods <command> --help` and by the
@@ -345,6 +350,19 @@ Options:
   --all                 Stream INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
+  trace: `Usage: broods trace <trace-id> [--json]
+
+Prints one run's trace: every model step and tool call with its status,
+duration and error. --json prints every span with its full attributes (system
+prompt, model input, reasoning, response, tool input and output), which is what
+a coding agent should read. The dashboard's Tracing tab copies the id.
+
+Authenticates with your \`broods login\`, like \`broods logs\`.
+
+Options:
+  --json                Print the spans as a JSON array
+
+${GLOBAL_OPTIONS}`,
   mcp: `Usage: broods mcp
 
 Serves the account config plane to a development agent over MCP on stdio, so
@@ -460,6 +478,10 @@ async function main(): Promise<void> {
       return;
     case "logs":
       await logs(args);
+
+      return;
+    case "trace":
+      await trace(args);
 
       return;
     case "machine":
@@ -2688,6 +2710,62 @@ async function logs(args: string[]): Promise<void> {
   } finally {
     process.off("SIGINT", onSigint);
   }
+}
+
+// `broods trace <id>` reads one trace by id and exits, so an agent can run it.
+async function trace(args: string[]): Promise<void> {
+  const [traceId] = positionalArgs(args);
+  if (!isTraceId(traceId))
+    throw new Error(
+      `Missing or malformed trace id: 32 lowercase hex characters, as the dashboard copies it.\n\n${commandHelp("trace")}`,
+    );
+  const session = await openStageSession(args);
+  const spans = (await fetchObservabilityTrace(session, traceId)).toSorted(
+    (a, b) => a.startTimeMs - b.startTimeMs,
+  );
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(spans, null, 2));
+
+    return;
+  }
+  console.log(`Trace ${traceId} in ${session.project}/${session.stage}`);
+  // A span whose parent is not in the trace, or is itself, prints at the top level.
+  const ids = new Set(spans.map((span) => span.spanId));
+  const children = Map.groupBy(spans, (span) =>
+    span.parentSpanId &&
+    span.parentSpanId !== span.spanId &&
+    ids.has(span.parentSpanId)
+      ? span.parentSpanId
+      : "",
+  );
+  const print = (parent: string, depth: number): void => {
+    for (const span of children.get(parent) ?? []) {
+      console.log(formatTraceSpan(span, depth));
+      print(span.spanId, depth + 1);
+    }
+  };
+  print("", 0);
+}
+
+/**
+ * One span as `HH:mm:ss.SSS status kind name duration`, indented under its
+ * parent, then its error. Span text can hold tool output, so terminal escapes
+ * are dropped as for sandbox logs.
+ */
+function formatTraceSpan(span: ObservabilitySpanRow, depth: number): string {
+  const time = new Date(span.startTimeMs).toISOString().slice(11, 23);
+  const indent = "  ".repeat(depth);
+  const tool = span.attributes?.["tool.name"];
+  const name = typeof tool === "string" ? `${span.name} ${tool}` : span.name;
+  const prefix = `${time} ${span.status.padEnd(11)} ${indent}`;
+  const line = `${prefix}${name} ${formatDuration(span.durationMs)}`;
+
+  if (!span.error) return stripVTControlCharacters(line);
+  const pad = " ".repeat(prefix.length);
+  // Every line of the error stays under its span: a bare \r cannot overwrite one.
+  const error = span.error.replaceAll(/\r\n?|\n/g, `\n${pad}       `);
+
+  return stripVTControlCharacters(`${line}\n${pad}error: ${error}`);
 }
 
 /**

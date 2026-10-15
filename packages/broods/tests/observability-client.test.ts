@@ -1,8 +1,12 @@
 import { afterEach, expect, jest, setSystemTime, test } from "bun:test";
-import { subscribeObservabilityLogs } from "../src/observability-client.ts";
+import {
+  fetchObservabilityTrace,
+  subscribeObservabilityLogs,
+} from "../src/observability-client.ts";
 import type {
   ObservabilityLogEntry,
   ObservabilityServerMessage,
+  ObservabilitySpanRow,
 } from "../src/observability-contracts.ts";
 
 class FakeObservabilitySocket {
@@ -246,3 +250,54 @@ test("does not include the credential in connection errors", async () => {
 async function flushMicrotasks(): Promise<void> {
   for (let turn = 0; turn < 10; turn++) await Promise.resolve();
 }
+
+const traceOptions = {
+  baseUrl: "https://app.example",
+  credential: async (): Promise<string> => "ticket",
+  project: "demo",
+  stage: "development",
+};
+const TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+test("fetches one trace by id and closes its socket", async () => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilityTrace(traceOptions, TRACE_ID);
+  await Bun.sleep(0);
+  const socket = FakeObservabilitySocket.instances[0]!;
+  expect(socket.url).toBe(
+    "wss://app.example/v1/projects/demo/stages/development/observability/ws",
+  );
+  expect(JSON.parse(socket.sent[0]!)).toEqual({
+    type: "fetchTrace",
+    traceId: TRACE_ID,
+  });
+  const span: ObservabilitySpanRow = {
+    traceId: TRACE_ID,
+    spanId: "00f067aa0ba902b7",
+    name: "task",
+    kind: "task",
+    startTimeMs: 1,
+    endTimeMs: 2,
+    durationMs: 1,
+    status: "error",
+    error: "boom",
+  };
+  socket.emit({ type: "backfill", stream: "traces", entries: [span] });
+
+  expect(await pending).toEqual([span]);
+  expect(socket.readyState).toBe(3);
+});
+
+test("rejects with the gateway's reason when the trace is not in the stage", async () => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilityTrace(traceOptions, TRACE_ID);
+  await Bun.sleep(0);
+  FakeObservabilitySocket.instances[0]!.emit({
+    type: "backfill",
+    stream: "traces",
+    entries: [],
+    error: "Trace not found in this stage",
+  });
+
+  expect(pending).rejects.toThrow("Trace not found in this stage");
+});
