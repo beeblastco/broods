@@ -61,6 +61,27 @@ test("hiding the dock hands focus back to the Terminal button", async ({
   ).toBeFocused();
 });
 
+test("closing a session hands focus to the next one, the last to the Terminal button", async ({
+  page,
+}) => {
+  await openTerminal(page);
+  const sessions = page.getByRole("navigation", { name: "Open sessions" });
+  await sessions.getByRole("button", { name: "New shell on browser" }).click();
+
+  await sessions
+    .getByRole("button", { name: "Close Shell 1 on browser" })
+    .click();
+  await expect(sessionButton(page, "Shell 2")).toBeFocused();
+
+  await sessions
+    .getByRole("button", { name: "Close Shell 2 on browser" })
+    .click();
+  await expect(sessions).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Terminal", exact: true }),
+  ).toBeFocused();
+});
+
 test("the backtick hides the dock without taking focus from outside it", async ({
   page,
 }) => {

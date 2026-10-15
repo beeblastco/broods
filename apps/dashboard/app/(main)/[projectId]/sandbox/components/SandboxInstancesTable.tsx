@@ -503,7 +503,14 @@ export function SandboxInstancesTable({
                 onNewShell={(instanceId) =>
                   setDock(openDockShell(dock, instanceId))
                 }
-                onCloseSession={(key) => setDock(closeDockSession(dock, key))}
+                onCloseSession={(key) => {
+                  const next = closeDockSession(dock, key);
+                  setDock(next);
+                  // The last session closes the dock; focus goes back to its opener.
+                  if (!next && dockOpener.current?.isConnected) {
+                    dockOpener.current.focus();
+                  }
+                }}
                 onHide={hideDock}
               />
             </ResizablePanel>
