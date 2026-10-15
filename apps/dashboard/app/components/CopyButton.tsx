@@ -2,7 +2,7 @@
 
 import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -58,25 +58,31 @@ export function CopyTextButton({
   children,
 }: {
   value: string;
-  /** The accessible name; it starts with the visible text. */
+  /** The accessible name; it contains the visible text. */
   label: string;
   title: string;
   className?: string;
   children: ReactNode;
 }): React.JSX.Element {
-  const { copied, copy } = useCopied(value);
+  const { copied, failed, copy } = useCopied(value);
 
   return (
     <Button
       type="button"
       size="xs"
       variant="outline"
-      title={title}
+      title={failed ? "The browser refused the copy" : title}
       aria-label={label}
       onClick={copy}
       className={cn("cursor-pointer", className)}
     >
-      {copied ? <Check className="text-success" /> : <Copy />}
+      {copied ? (
+        <Check className="text-success" />
+      ) : failed ? (
+        <X className="text-destructive" />
+      ) : (
+        <Copy />
+      )}
       {children}
     </Button>
   );

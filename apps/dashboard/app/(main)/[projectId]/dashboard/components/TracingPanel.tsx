@@ -1902,20 +1902,26 @@ function TaskWaterfall({
 }): React.JSX.Element {
   const { root } = view.group;
   const request = spanLabel(root);
-  // Built once per task, not on every streamed span that re-renders the panel.
-  const prompt = useMemo(
-    () =>
-      projectSlug && stageSlug
-        ? agentDebugPrompt({
-            projectSlug: projectSlug,
-            stageSlug: stageSlug,
-            root: view.group.root,
-            status: view.group.status,
-            error: taskError(view.group),
-          })
-        : null,
-    [projectSlug, stageSlug, view.group],
-  );
+  const runs = view.group.spans.filter((span) => isRootSpanKind(span.kind));
+  const failedRun = runs.findLast((span) => span.error);
+  const run = failedRun ?? runs.at(-1) ?? root;
+  const prompt =
+    projectSlug && stageSlug
+      ? agentDebugPrompt({
+          dashboardUrl: window.location.origin,
+          projectSlug: projectSlug,
+          stageSlug: stageSlug,
+          run: run,
+          status: view.group.status,
+          otherTraceIds: [
+            ...new Set(
+              runs
+                .map((span) => span.traceId)
+                .filter((id) => id !== run.traceId),
+            ),
+          ],
+        })
+      : null;
 
   return (
     <>
@@ -1934,7 +1940,7 @@ function TaskWaterfall({
         )}
         <CopyTextButton
           value={root.traceId}
-          label="Copy trace ID"
+          label={`Copy trace ID ${root.traceId.slice(0, 8)}`}
           title={`Copy trace ID ${root.traceId}`}
           className="font-mono"
         >
