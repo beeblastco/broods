@@ -22,12 +22,12 @@ const root: ObservabilitySpanRow = {
   },
 };
 
+const base = { projectSlug: "demo", stageSlug: "development", root: root };
+
 describe("agentDebugPrompt", () => {
   test("a failed task names its ids, error and the CLI command that reads it", () => {
     const prompt = agentDebugPrompt({
-      projectSlug: "demo",
-      stageSlug: "development",
-      root: root,
+      ...base,
       status: "error",
       error: "Model provider returned 503",
     });
@@ -54,9 +54,7 @@ describe("agentDebugPrompt", () => {
 
   test("carries ids only, never the run's payloads", () => {
     const prompt = agentDebugPrompt({
-      projectSlug: "demo",
-      stageSlug: "development",
-      root: root,
+      ...base,
       status: "ok",
       error: null,
     });
@@ -69,9 +67,7 @@ describe("agentDebugPrompt", () => {
 
   test("cuts a long error", () => {
     const prompt = agentDebugPrompt({
-      projectSlug: "demo",
-      stageSlug: "development",
-      root: root,
+      ...base,
       status: "error",
       error: "x".repeat(2_000),
     });

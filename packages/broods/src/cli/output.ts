@@ -239,7 +239,7 @@ function formatDiffMarker(
   return `[${paint("-", RED, color)}]`;
 }
 
-function formatDuration(ms: number): string {
+export function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
   return `${Math.max(ms, 0).toFixed(1)}ms`;

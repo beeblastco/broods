@@ -49,6 +49,39 @@ export function CopyButton({ value, label }: Props): React.JSX.Element {
   );
 }
 
+/** A small outline button with text that copies `value`, its icon turning to a check once copied. */
+export function CopyTextButton({
+  value,
+  label,
+  title,
+  className,
+  children,
+}: {
+  value: string;
+  /** The accessible name; it starts with the visible text. */
+  label: string;
+  title: string;
+  className?: string;
+  children: ReactNode;
+}): React.JSX.Element {
+  const { copied, copy } = useCopied(value);
+
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      title={title}
+      aria-label={label}
+      onClick={copy}
+      className={cn("cursor-pointer", className)}
+    >
+      {copied ? <Check className="text-success" /> : <Copy />}
+      {children}
+    </Button>
+  );
+}
+
 /**
  * A whole-row copy target: click anywhere on it to copy `value`. The copy icon
  * only shows on hover or keyboard focus, and the full value is the hover title,

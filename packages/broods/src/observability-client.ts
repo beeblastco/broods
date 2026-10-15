@@ -151,15 +151,10 @@ async function* subscribeObservabilityLogsOnce(
   subscribeOptions: ObservabilitySubscribeOptions,
   onLive: () => void,
 ): AsyncGenerator<ObservabilityLogEntry> {
-  const { baseUrl, credential, project, stage } = options;
   const { backfill = 0, minLevel, sandboxId, signal } = subscribeOptions;
   const liveOnly = subscribeOptions.liveOnly ?? backfill <= 0;
 
   if (signal?.aborted) return;
-
-  const url = buildObservabilityUrl(baseUrl, project, stage);
-  const displayUrl = url;
-  const WebSocketImpl = resolveWebSocket();
 
   // Queues and flow-control for the generator ↔ WS event loop bridge.
   const entries: ObservabilityLogEntry[] = [];
@@ -172,9 +167,9 @@ async function* subscribeObservabilityLogsOnce(
     wake = null;
   };
 
-  const socket = new WebSocketImpl(
-    url,
-    webSocketSubprotocols(await credential()),
+  const { socket, url } = openObservabilitySocket(
+    options,
+    await options.credential(),
   );
 
   // A socket that opens but never answers would wait forever, out of reach of
@@ -254,7 +249,7 @@ async function* subscribeObservabilityLogsOnce(
 
   socket.onerror = (): void => {
     socketError = new Error(
-      `Cannot connect to the observability gateway at ${displayUrl}.`,
+      `Cannot connect to the observability gateway at ${url}.`,
     );
     done = true;
     notify();
@@ -262,13 +257,7 @@ async function* subscribeObservabilityLogsOnce(
 
   socket.onclose = (event: CloseEvent): void => {
     if (!done) {
-      if (event.code !== 1000) {
-        socketError = new Error(
-          event.reason
-            ? `Observability WebSocket closed: ${event.reason}`
-            : `Observability WebSocket closed with code ${event.code}.`,
-        );
-      }
+      if (event.code !== 1000) socketError = closedError(event);
       done = true;
       notify();
     }
@@ -299,33 +288,25 @@ export async function fetchObservabilityTrace(
   options: ObservabilityClientOptions,
   traceId: string,
 ): Promise<ObservabilitySpanRow[]> {
-  const url = buildObservabilityUrl(
-    options.baseUrl,
-    options.project,
-    options.stage,
-  );
-  const WebSocketImpl = resolveWebSocket();
-  const socket = new WebSocketImpl(
-    url,
-    webSocketSubprotocols(await options.credential()),
+  const { socket, url } = openObservabilitySocket(
+    options,
+    await options.credential(),
   );
 
   return new Promise<ObservabilitySpanRow[]>((resolve, reject): void => {
+    // The first outcome wins; the socket closes and later events are ignored.
     let settled = false;
-    const finish = (
-      error: Error | null,
-      rows?: ObservabilitySpanRow[],
-    ): void => {
+    const settle = (outcome: () => void): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING)
         socket.close(1000, "client closed");
-      if (error) reject(error);
-      else resolve(rows ?? []);
+      outcome();
     };
+    const fail = (error: Error): void => settle(() => reject(error));
     const timer = setTimeout((): void => {
-      finish(
+      fail(
         new Error(
           `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
         ),
@@ -342,27 +323,47 @@ export async function fetchObservabilityTrace(
     socket.onmessage = (event: MessageEvent): void => {
       const msg = parseServerMessage(event.data);
       if (msg?.type === "error") {
-        finish(new Error(`Observability gateway error: ${msg.error}`));
+        fail(new Error(`Observability gateway error: ${msg.error}`));
       } else if (msg?.type === "backfill" && msg.stream === "traces") {
-        if (msg.error) finish(new Error(msg.error));
-        else finish(null, msg.entries as ObservabilitySpanRow[]);
+        const rows = msg.entries as ObservabilitySpanRow[];
+        if (msg.error) fail(new Error(msg.error));
+        else settle(() => resolve(rows));
       }
     };
     socket.onerror = (): void => {
-      finish(
-        new Error(`Cannot connect to the observability gateway at ${url}.`),
-      );
+      fail(new Error(`Cannot connect to the observability gateway at ${url}.`));
     };
-    socket.onclose = (event: CloseEvent): void => {
-      finish(
-        new Error(
-          event.reason
-            ? `Observability WebSocket closed: ${event.reason}`
-            : `Observability WebSocket closed with code ${event.code}.`,
-        ),
-      );
-    };
+    socket.onclose = (event: CloseEvent): void => fail(closedError(event));
   });
+}
+
+/**
+ * A socket to the stage's observability gateway. Synchronous, so the caller
+ * attaches its handlers before any event can fire.
+ */
+function openObservabilitySocket(
+  options: ObservabilityClientOptions,
+  credential: string,
+): { socket: WebSocket; url: string } {
+  const url = buildObservabilityUrl(
+    options.baseUrl,
+    options.project,
+    options.stage,
+  );
+  const WebSocketImpl = resolveWebSocket();
+
+  return {
+    socket: new WebSocketImpl(url, webSocketSubprotocols(credential)),
+    url: url,
+  };
+}
+
+function closedError(event: CloseEvent): Error {
+  return new Error(
+    event.reason
+      ? `Observability WebSocket closed: ${event.reason}`
+      : `Observability WebSocket closed with code ${event.code}.`,
+  );
 }
 
 function buildObservabilityUrl(

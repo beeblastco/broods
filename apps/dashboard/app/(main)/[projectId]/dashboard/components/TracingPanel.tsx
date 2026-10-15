@@ -33,9 +33,9 @@ import {
 import { isEditableTarget } from "@/app/lib/shortcuts";
 import { parseAsTraceId, TRACE_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
-import { useCopied } from "@/app/components/CopyButton";
+import { CopyTextButton } from "@/app/components/CopyButton";
 import { agentDebugPrompt } from "@/app/lib/agentDebugPrompt";
-import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
   useCallback,
@@ -1599,39 +1599,6 @@ function ContinueAction({
   );
 }
 
-/** A small outline button that copies `value`, its icon turning to a check once copied. */
-function CopyChip({
-  value,
-  label,
-  title,
-  className,
-  children,
-}: {
-  value: string;
-  /** The accessible name; it starts with the visible text. */
-  label: string;
-  title: string;
-  className?: string;
-  children: ReactNode;
-}): React.JSX.Element {
-  const { copied, copy } = useCopied(value);
-
-  return (
-    <Button
-      type="button"
-      size="xs"
-      variant="outline"
-      title={title}
-      aria-label={label}
-      onClick={copy}
-      className={cn("cursor-pointer", className)}
-    >
-      {copied ? <Check className="text-success" /> : <Copy />}
-      {children}
-    </Button>
-  );
-}
-
 function SpanDetails({
   span,
 }: {
@@ -1935,16 +1902,20 @@ function TaskWaterfall({
 }): React.JSX.Element {
   const { root } = view.group;
   const request = spanLabel(root);
-  const prompt =
-    projectSlug && stageSlug
-      ? agentDebugPrompt({
-          projectSlug: projectSlug,
-          stageSlug: stageSlug,
-          root: root,
-          status: view.group.status,
-          error: taskError(view.group),
-        })
-      : null;
+  // Built once per task, not on every streamed span that re-renders the panel.
+  const prompt = useMemo(
+    () =>
+      projectSlug && stageSlug
+        ? agentDebugPrompt({
+            projectSlug: projectSlug,
+            stageSlug: stageSlug,
+            root: view.group.root,
+            status: view.group.status,
+            error: taskError(view.group),
+          })
+        : null,
+    [projectSlug, stageSlug, view.group],
+  );
 
   return (
     <>
@@ -1961,22 +1932,22 @@ function TaskWaterfall({
             {unscopedConversationKey(root.conversationKey)}
           </Badge>
         )}
-        <CopyChip
+        <CopyTextButton
           value={root.traceId}
           label="Copy trace ID"
           title={`Copy trace ID ${root.traceId}`}
           className="font-mono"
         >
           {root.traceId.slice(0, 8)}
-        </CopyChip>
+        </CopyTextButton>
         {prompt && (
-          <CopyChip
+          <CopyTextButton
             value={prompt}
             label="Copy prompt for agent"
             title="Copy a prompt that has your coding agent read this run with the broods CLI, then fix or audit it"
           >
             Copy prompt for agent
-          </CopyChip>
+          </CopyTextButton>
         )}
         {canContinue(view.group) && (
           <ContinueAction

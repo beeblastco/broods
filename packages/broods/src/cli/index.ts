@@ -97,6 +97,7 @@ import {
   formatContext,
   formatNext,
   formatTarget,
+  formatDuration,
   formatWarning,
   printDeploymentTarget,
   printDiffEntries,
@@ -2752,11 +2753,12 @@ function formatTraceSpan(span: ObservabilitySpanRow, depth: number): string {
   const indent = "  ".repeat(depth);
   const tool = span.attributes?.["tool.name"];
   const name = typeof tool === "string" ? `${span.name} ${tool}` : span.name;
-  const line = `${time} ${span.status.padEnd(11)} ${indent}${name} ${span.durationMs} ms`;
+  const prefix = `${time} ${span.status.padEnd(11)} ${indent}`;
+  const line = `${prefix}${name} ${formatDuration(span.durationMs)}`;
 
   return stripVTControlCharacters(
     span.error
-      ? `${line}\n${" ".repeat(25)}${indent}error: ${span.error}`
+      ? `${line}\n${" ".repeat(prefix.length)}error: ${span.error}`
       : line,
   );
 }
