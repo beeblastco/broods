@@ -46,7 +46,8 @@ type RuntimeFileCacheEntry = {
 };
 
 const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
-// How often the file list is re-read from core, on top of the focus and visibility refreshes.
+// How often the file list is re-read from core. Slow is fine: the focus and
+// visibility refreshes cover active use.
 const RUNTIME_FILES_POLL_MS = 15_000;
 const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
