@@ -223,6 +223,7 @@ export const accept = internalMutation({
       recovered = await promoteQueuedGroup(ctx, {
         coordinator: coordinator,
         queue: queue,
+        rows: prepared.rows,
         now: now,
         leaseTtlMs: args.leaseTtlMs,
         ownerGeneration: coordinator.ownerGeneration + 1,
@@ -735,15 +736,34 @@ export const recoverQueued = internalMutation({
       const account = await ctx.db.get(coordinator.accountId);
       if (account?.status !== "active") continue;
       await expireStaleOwner(ctx, coordinator, now);
-      const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+      // Recovery is the self-heal, so it reads the page without trusting the
+      // counter, and a page short of a full batch is the whole queue: the
+      // counters follow it.
+      const rows = await queuedEnvelopes(ctx, coordinator.conversationKey);
+      const swept = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
+      const live = rows.filter((row) => row.expiresAt > now);
+      const queue =
+        rows.length < MAX_DRAIN_ENVELOPES
+          ? {
+              queuedCount: live.length,
+              queuedBytes: live.reduce(
+                (total, row) => total + row.sizeBytes,
+                0,
+              ),
+            }
+          : swept;
       const applied = await promoteQueuedGroup(ctx, {
         coordinator: coordinator,
         queue: queue,
+        rows: rows,
         now: now,
         leaseTtlMs: args.leaseTtlMs,
         ownerGeneration: coordinator.ownerGeneration + 1,
       });
-      if (!applied) continue;
+      if (!applied) {
+        await patchQueueCounters(ctx, coordinator, queue, now);
+        continue;
+      }
       recovered.push({
         accountId: coordinator.accountId,
         agentId: coordinator.agentId,
@@ -1172,13 +1192,8 @@ async function claimSteering(
   if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
     return null;
   }
-  const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-  const rows = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q.eq("conversationKey", args.conversationKey).eq("status", "queued"),
-    )
-    .take(MAX_DRAIN_ENVELOPES);
+  const rows = await queuedPage(ctx, coordinator);
+  const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
   const active = rows.filter((row) => row.expiresAt > now);
   const steering = active[0]?.requestedMode === "steer";
   // A steer joins the running turn, so it must come from that turn's sender.
@@ -1194,16 +1209,9 @@ async function claimSteering(
     : -1;
   const selected = firstNotText === -1 ? prefix : prefix.slice(0, firstNotText);
   if (selected.length === 0) {
-    if (
-      queue.queuedCount !== coordinator.queuedCount ||
-      queue.queuedBytes !== coordinator.queuedBytes
-    ) {
-      await ctx.db.patch(coordinator._id, {
-        ...queue,
-        leaseExpiresAt: now + args.leaseTtlMs,
-        updatedAt: now,
-      });
-    }
+    await patchQueueCounters(ctx, coordinator, queue, now, {
+      leaseExpiresAt: now + args.leaseTtlMs,
+    });
 
     return null;
   }
@@ -1373,23 +1381,21 @@ async function createCoordinator(
   return (await ctx.db.get(id))!;
 }
 
-/** Marks expired queued work terminal and returns adjusted queue counters. */
+/**
+ * Marks expired queued work terminal and returns adjusted queue counters.
+ * `rows` is the queued page when the caller already read it (`queuedPage`),
+ * so one mutation reads the queue once.
+ */
 async function expireQueuedEnvelopes(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
+  rows?: Doc<"runtimeIngressEnvelopes">[],
 ): Promise<{ queuedCount: number; queuedBytes: number }> {
-  const rows = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q
-        .eq("conversationKey", coordinator.conversationKey)
-        .eq("status", "queued"),
-    )
-    .take(MAX_DRAIN_ENVELOPES);
+  const page = rows ?? (await queuedPage(ctx, coordinator));
   let expiredCount = 0;
   let expiredBytes = 0;
-  for (const row of rows) {
+  for (const row of page) {
     if (row.expiresAt > now) continue;
     expiredCount += 1;
     expiredBytes += row.sizeBytes;
@@ -1484,7 +1490,8 @@ function isLateControl(
  * Coordinator stage of `accept`: loads or creates the conversation
  * coordinator, verifies its scope, pins the latest channel target, and
  * reconciles queue counters after expiring stale queued work and a stale
- * owner's envelope. The returned coordinator reflects every patch applied.
+ * owner's envelope. The returned coordinator reflects every patch applied;
+ * `rows` is the queued page that sweep read, for recovery to promote from.
  */
 async function prepareAdmissionCoordinator(
   ctx: MutationCtx,
@@ -1498,6 +1505,7 @@ async function prepareAdmissionCoordinator(
 ): Promise<{
   coordinator: Doc<"runtimeConversationCoordinators">;
   queue: { queuedCount: number; queuedBytes: number };
+  rows: Doc<"runtimeIngressEnvelopes">[];
 }> {
   let coordinator =
     (await getCoordinator(ctx, args.conversationKey)) ??
@@ -1524,32 +1532,25 @@ async function prepareAdmissionCoordinator(
       updatedAt: now,
     };
   }
-  const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+  const rows = await queuedPage(ctx, coordinator);
+  const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
   await expireStaleOwner(ctx, coordinator, now);
-  if (
-    queue.queuedCount !== coordinator.queuedCount ||
-    queue.queuedBytes !== coordinator.queuedBytes
-  ) {
-    await ctx.db.patch(coordinator._id, {
-      queuedCount: queue.queuedCount,
-      queuedBytes: queue.queuedBytes,
-      updatedAt: now,
-    });
-    coordinator = { ...coordinator, ...queue, updatedAt: now };
-  }
+  coordinator = await patchQueueCounters(ctx, coordinator, queue, now);
 
-  return { coordinator: coordinator, queue: queue };
+  return { coordinator: coordinator, queue: queue, rows: rows };
 }
 
 /**
  * Promotes the oldest runnable queued group (one follow-up, or a contiguous
  * collect/steer prefix) to processing under the supplied owner generation.
+ * `rows` is the queued page when the caller already read it (`queuedPage`).
  */
 async function promoteQueuedGroup(
   ctx: MutationCtx,
   options: {
     coordinator: Doc<"runtimeConversationCoordinators">;
     queue: { queuedCount: number; queuedBytes: number };
+    rows?: Doc<"runtimeIngressEnvelopes">[];
     now: number;
     leaseTtlMs: number;
     ownerGeneration: number;
@@ -1567,14 +1568,7 @@ async function promoteQueuedGroup(
   ephemeralSystem?: unknown[];
 } | null> {
   const { coordinator, queue, now } = options;
-  const rows = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q
-        .eq("conversationKey", coordinator.conversationKey)
-        .eq("status", "queued"),
-    )
-    .take(MAX_DRAIN_ENVELOPES);
+  const rows = options.rows ?? (await queuedPage(ctx, coordinator));
   const active = rows.filter((row) => row.expiresAt > now);
   const first = active[0];
   if (!first) return null;
@@ -1670,6 +1664,58 @@ function publicDeploymentIngressFromDelivery(
     stageSlug: value.stageSlug,
     projectSlug: value.projectSlug,
   };
+}
+
+/**
+ * Writes queue counters a sweep lowered onto the coordinator, only when they
+ * changed, with the lease end when the caller extends it in the same write.
+ * Returns the coordinator as it is now stored.
+ */
+async function patchQueueCounters(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  queue: { queuedCount: number; queuedBytes: number },
+  now: number,
+  lease?: { leaseExpiresAt: number },
+): Promise<Doc<"runtimeConversationCoordinators">> {
+  if (
+    queue.queuedCount === coordinator.queuedCount &&
+    queue.queuedBytes === coordinator.queuedBytes
+  ) {
+    return coordinator;
+  }
+  const patch = { ...queue, ...lease, updatedAt: now };
+  await ctx.db.patch(coordinator._id, patch);
+
+  return { ...coordinator, ...patch };
+}
+
+/** The oldest drain batch of a conversation's queued envelopes, payloads included. */
+async function queuedEnvelopes(
+  ctx: MutationCtx,
+  conversationKey: string,
+): Promise<Doc<"runtimeIngressEnvelopes">[]> {
+  return await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q.eq("conversationKey", conversationKey).eq("status", "queued"),
+    )
+    .take(MAX_DRAIN_ENVELOPES);
+}
+
+/**
+ * `queuedEnvelopes` for the fenced per-step paths, which read nothing when the
+ * coordinator counts none: every queued insert and every move out of `queued`
+ * adjusts `queuedCount` in its own transaction, so zero means an empty queue.
+ * Recovery reads the page unguarded, since it is what heals the counter.
+ */
+async function queuedPage(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+): Promise<Doc<"runtimeIngressEnvelopes">[]> {
+  if (coordinator.queuedCount === 0) return [];
+
+  return await queuedEnvelopes(ctx, coordinator.conversationKey);
 }
 
 /**

@@ -1,7 +1,9 @@
 /**
  * BudgetStore implementation over `account/budget.ts`. A usage write never
  * reaches the run that caused it: it retries in the background, and a write
- * that still fails is logged with its usage.
+ * that still fails is logged with its usage. Both writes skip the Convex
+ * client's process-wide mutation FIFO: the meter adds, the warning claim is a
+ * flag, so neither depends on landing in order with other runs' writes.
  */
 
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
@@ -15,9 +17,11 @@ const RECORD_RETRY_DELAYS_MS = [0, 1_000, 5_000, 30_000];
 
 export const budgets: Storage["budgets"] = {
   claimWarning: async function (accountId): Promise<boolean> {
-    return await adminMutation(internal.account.budget.claimWarning, {
-      accountId: accountId,
-    });
+    return await adminMutation(
+      internal.account.budget.claimWarning,
+      { accountId: accountId },
+      { skipQueue: true },
+    );
   },
   get: async function (accountId): Promise<BudgetStatus | null> {
     return await adminQuery(internal.account.budget.get, {
@@ -30,12 +34,16 @@ export const budgets: Storage["budgets"] = {
     for (const [attempt, delayMs] of RECORD_RETRY_DELAYS_MS.entries()) {
       await Bun.sleep(delayMs);
       try {
-        await adminMutation(internal.account.budget.record, {
-          accountId: accountId,
-          usage: usage,
-          writeId: writeId,
-          ...(source ? { source: source } : {}),
-        });
+        await adminMutation(
+          internal.account.budget.record,
+          {
+            accountId: accountId,
+            usage: usage,
+            writeId: writeId,
+            ...(source ? { source: source } : {}),
+          },
+          { skipQueue: true },
+        );
 
         return;
       } catch (err) {

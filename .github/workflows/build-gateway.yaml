@@ -27,6 +27,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/build-gateway.yaml"
+      - ".github/actions/bun-install/**"
   workflow_dispatch:
 
 env:
@@ -55,13 +56,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --no-save
+        uses: ./.github/actions/bun-install
+        with:
+          args: --ignore-scripts --no-save
 
       - name: Type-check gateway
         run: bun run --filter @broods/gateway check
