@@ -16,6 +16,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/build-discord-forwarder.yaml"
+      - ".github/actions/bun-install/**"
   # checkov:skip=CKV_GHA_7:The boolean rollout input controls deployment only; the image is always built from github.sha.
   workflow_dispatch:
     inputs:
@@ -50,13 +51,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --no-save
+        uses: ./.github/actions/bun-install
+        with:
+          args: --ignore-scripts --no-save
 
       - name: Type-check discord forwarder
         run: bun run --filter @broods/discord-forwarder check
