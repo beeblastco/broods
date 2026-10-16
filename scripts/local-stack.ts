@@ -60,11 +60,25 @@ import {
   type VerifyContext,
 } from "./local-verify/harness.ts";
 
-// Pinned so CI and every laptop run the same backend. To bump, pull
-// convex-backend:latest and copy its RepoDigests entry here.
-const CONVEX_IMAGE =
-  process.env.BROODS_LOCAL_CONVEX_IMAGE ??
-  "ghcr.io/get-convex/convex-backend@sha256:b756b06641d15a55b5ec0692897ce5ad3715ddccfd02e1e213621e9e764255c8";
+// Pinned so CI and every laptop run the same backend. Convex no longer serves
+// its ghcr.io image anonymously, so the image is built here from the
+// precompiled release. To bump, pick a newer tag from
+// https://github.com/get-convex/convex-backend/releases.
+const CONVEX_RELEASE = "precompiled-2026-10-10-72ce13c";
+const CONVEX_IMAGE = `broods-convex-backend:${CONVEX_RELEASE}`;
+// Node runs the "use node" actions. trixie's glibc 2.41 covers the binary's 2.39.
+const CONVEX_DOCKERFILE = `
+FROM node:22-trixie-slim
+ARG TARGETARCH
+WORKDIR /convex
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \\
+  && case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) echo "unsupported arch $TARGETARCH" >&2; exit 1 ;; esac \\
+  && curl -fsSL -o backend.zip "https://github.com/get-convex/convex-backend/releases/download/${CONVEX_RELEASE}/convex-local-backend-\${arch}-unknown-linux-gnu.zip" \\
+  && unzip -q backend.zip && rm backend.zip && chmod +x convex-local-backend \\
+  && rm -rf /var/lib/apt/lists/*
+VOLUME /convex/data
+ENTRYPOINT ["./convex-local-backend"]
+`;
 // The version the cluster runs.
 const TRAEFIK_IMAGE = "traefik:v3.7.12";
 const HEALTH_TIMEOUT_MS = 60_000;
@@ -596,6 +610,7 @@ function ensureConvexContainer(state: InstanceState): void {
     return;
   }
 
+  ensureConvexImage();
   console.log(`creating convex container ${name}...`);
   docker([
     "run",
@@ -610,26 +625,37 @@ function ensureConvexContainer(state: InstanceState): void {
     `${dataVolumeName(state.instanceId)}:/convex/data`,
     "--add-host",
     "host.docker.internal:host-gateway",
-    "-e",
-    `INSTANCE_NAME=${state.instanceId}`,
-    "-e",
-    `INSTANCE_SECRET=${state.instanceSecret}`,
-    "-e",
-    `CONVEX_CLOUD_ORIGIN=http://127.0.0.1:${ports(state).convexApi}`,
-    "-e",
-    `CONVEX_SITE_ORIGIN=http://127.0.0.1:${ports(state).convexSite}`,
-    "-e",
-    "DISABLE_BEACON=true",
-    "-e",
-    "DO_NOT_REQUIRE_SSL=true",
-    "--entrypoint",
-    "bash",
     CONVEX_IMAGE,
-    "-c",
-    // A new image whose script no longer says `--port 3210` fails here, not
-    // as a backend quietly bound to the wrong port.
-    `sed -e 's/--port 3210/--port ${convexApi}/' -e 's/--site-proxy-port 3211/--site-proxy-port ${convexSite}/' run_backend.sh > /tmp/run_backend.sh && grep -q -- '--port ${convexApi} ' /tmp/run_backend.sh && grep -q -- '--site-proxy-port ${convexSite} ' /tmp/run_backend.sh && exec bash /tmp/run_backend.sh || { echo 'run_backend.sh no longer binds --port 3210; update the rewrite in scripts/local-stack.ts' >&2; exit 1; }`,
+    "--instance-name",
+    state.instanceId,
+    "--instance-secret",
+    state.instanceSecret,
+    "--port",
+    String(convexApi),
+    "--site-proxy-port",
+    String(convexSite),
+    "--convex-origin",
+    `http://127.0.0.1:${convexApi}`,
+    "--convex-site",
+    `http://127.0.0.1:${convexSite}`,
+    "--disable-beacon",
+    "--do-not-require-ssl",
+    "--local-storage",
+    "/convex/data/storage",
+    "/convex/data/db.sqlite3",
   ]);
+}
+
+/** Builds the pinned backend image once; later stacks and `--fresh` reuse it. */
+function ensureConvexImage(): void {
+  if (docker(["image", "inspect", CONVEX_IMAGE], { allowFailure: true })) {
+    return;
+  }
+  console.log(`building ${CONVEX_IMAGE}...`);
+  execFileSync("docker", ["build", "--tag", CONVEX_IMAGE, "-"], {
+    input: CONVEX_DOCKERFILE,
+    stdio: ["pipe", "inherit", "inherit"],
+  });
 }
 
 /**
@@ -696,7 +722,13 @@ function generateConvexAdminKey(state: InstanceState): string {
   const output = docker([
     "exec",
     containerName(state.instanceId),
-    "./generate_admin_key.sh",
+    "./convex-local-backend",
+    "keygen",
+    "admin-key",
+    "--instance-name",
+    state.instanceId,
+    "--instance-secret",
+    state.instanceSecret,
   ]);
   const key = output
     .split("\n")
