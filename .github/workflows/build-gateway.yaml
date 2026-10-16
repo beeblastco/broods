@@ -27,6 +27,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/build-gateway.yaml"
+      - ".github/actions/bun-install/**"
   workflow_dispatch:
 
 env:

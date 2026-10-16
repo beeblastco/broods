@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/docs/**"
       - ".github/workflows/deploy-docs.yaml"
+      - ".github/actions/bun-install/**"
   workflow_dispatch:
 
 concurrency:

@@ -13,6 +13,7 @@ on:
     paths:
       - "packages/convex/**"
       - ".github/workflows/deploy-convex.yaml"
+      - ".github/actions/bun-install/**"
   workflow_dispatch:
 
 concurrency:
