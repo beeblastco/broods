@@ -736,8 +736,22 @@ export const recoverQueued = internalMutation({
       const account = await ctx.db.get(coordinator.accountId);
       if (account?.status !== "active") continue;
       await expireStaleOwner(ctx, coordinator, now);
-      const rows = await queuedPage(ctx, coordinator);
-      const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
+      // Recovery is the self-heal, so it reads the page without trusting the
+      // counter, and a page short of a full batch is the whole queue: the
+      // counters follow it.
+      const rows = await queuedEnvelopes(ctx, coordinator.conversationKey);
+      const swept = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
+      const live = rows.filter((row) => row.expiresAt > now);
+      const queue =
+        rows.length < MAX_DRAIN_ENVELOPES
+          ? {
+              queuedCount: live.length,
+              queuedBytes: live.reduce(
+                (total, row) => total + row.sizeBytes,
+                0,
+              ),
+            }
+          : swept;
       const applied = await promoteQueuedGroup(ctx, {
         coordinator: coordinator,
         queue: queue,
@@ -747,14 +761,7 @@ export const recoverQueued = internalMutation({
         ownerGeneration: coordinator.ownerGeneration + 1,
       });
       if (!applied) {
-        // Every queued row had expired: write the counters down, or a clear
-        // and admission capacity keep seeing a queue that is gone.
-        if (
-          queue.queuedCount !== coordinator.queuedCount ||
-          queue.queuedBytes !== coordinator.queuedBytes
-        ) {
-          await ctx.db.patch(coordinator._id, { ...queue, updatedAt: now });
-        }
+        await patchQueueCounters(ctx, coordinator, queue, now);
         continue;
       }
       recovered.push({
@@ -1202,16 +1209,9 @@ async function claimSteering(
     : -1;
   const selected = firstNotText === -1 ? prefix : prefix.slice(0, firstNotText);
   if (selected.length === 0) {
-    if (
-      queue.queuedCount !== coordinator.queuedCount ||
-      queue.queuedBytes !== coordinator.queuedBytes
-    ) {
-      await ctx.db.patch(coordinator._id, {
-        ...queue,
-        leaseExpiresAt: now + args.leaseTtlMs,
-        updatedAt: now,
-      });
-    }
+    await patchQueueCounters(ctx, coordinator, queue, now, {
+      leaseExpiresAt: now + args.leaseTtlMs,
+    });
 
     return null;
   }
@@ -1535,17 +1535,7 @@ async function prepareAdmissionCoordinator(
   const rows = await queuedPage(ctx, coordinator);
   const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
   await expireStaleOwner(ctx, coordinator, now);
-  if (
-    queue.queuedCount !== coordinator.queuedCount ||
-    queue.queuedBytes !== coordinator.queuedBytes
-  ) {
-    await ctx.db.patch(coordinator._id, {
-      queuedCount: queue.queuedCount,
-      queuedBytes: queue.queuedBytes,
-      updatedAt: now,
-    });
-    coordinator = { ...coordinator, ...queue, updatedAt: now };
-  }
+  coordinator = await patchQueueCounters(ctx, coordinator, queue, now);
 
   return { coordinator: coordinator, queue: queue, rows: rows };
 }
@@ -1677,10 +1667,47 @@ function publicDeploymentIngressFromDelivery(
 }
 
 /**
- * The oldest drain batch of a conversation's queued envelopes, payloads
- * included. Read nothing when the coordinator counts none: every queued insert
- * and every move out of `queued` adjusts `queuedCount` in its own transaction,
- * so zero means an empty queue.
+ * Writes queue counters a sweep lowered onto the coordinator, only when they
+ * changed, with the lease end when the caller extends it in the same write.
+ * Returns the coordinator as it is now stored.
+ */
+async function patchQueueCounters(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  queue: { queuedCount: number; queuedBytes: number },
+  now: number,
+  lease?: { leaseExpiresAt: number },
+): Promise<Doc<"runtimeConversationCoordinators">> {
+  if (
+    queue.queuedCount === coordinator.queuedCount &&
+    queue.queuedBytes === coordinator.queuedBytes
+  ) {
+    return coordinator;
+  }
+  const patch = { ...queue, ...lease, updatedAt: now };
+  await ctx.db.patch(coordinator._id, patch);
+
+  return { ...coordinator, ...patch };
+}
+
+/** The oldest drain batch of a conversation's queued envelopes, payloads included. */
+async function queuedEnvelopes(
+  ctx: MutationCtx,
+  conversationKey: string,
+): Promise<Doc<"runtimeIngressEnvelopes">[]> {
+  return await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q.eq("conversationKey", conversationKey).eq("status", "queued"),
+    )
+    .take(MAX_DRAIN_ENVELOPES);
+}
+
+/**
+ * `queuedEnvelopes` for the fenced per-step paths, which read nothing when the
+ * coordinator counts none: every queued insert and every move out of `queued`
+ * adjusts `queuedCount` in its own transaction, so zero means an empty queue.
+ * Recovery reads the page unguarded, since it is what heals the counter.
  */
 async function queuedPage(
   ctx: MutationCtx,
@@ -1688,14 +1715,7 @@ async function queuedPage(
 ): Promise<Doc<"runtimeIngressEnvelopes">[]> {
   if (coordinator.queuedCount === 0) return [];
 
-  return await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q
-        .eq("conversationKey", coordinator.conversationKey)
-        .eq("status", "queued"),
-    )
-    .take(MAX_DRAIN_ENVELOPES);
+  return await queuedEnvelopes(ctx, coordinator.conversationKey);
 }
 
 /**

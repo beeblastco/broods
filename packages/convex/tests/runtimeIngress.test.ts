@@ -2044,6 +2044,56 @@ describe("runtime ingress", () => {
     ).toBe(2);
   });
 
+  test("recovery promotes queued work the counter lost and reconciles the counter", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const role of ["owner", "queued"]) {
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: `lost-${role}`,
+          mode: "followup",
+        }),
+      );
+    }
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: conversationKey,
+      ownerEventId: "lost-owner",
+      ownerGeneration: 1,
+    });
+    const coordinatorId = await t.run(async (ctx) => {
+      const coordinator = await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique();
+      await ctx.db.patch(coordinator!._id, { queuedCount: 0, queuedBytes: 0 });
+
+      return coordinator!._id;
+    });
+
+    const { recovered } = await t.mutation(
+      internal.runtimeIngress.recoverQueued,
+      { leaseTtlMs: 60_000 },
+    );
+
+    expect(recovered).toEqual([
+      expect.objectContaining({
+        conversationKey: conversationKey,
+        applied: expect.objectContaining({ eventId: "lost-queued" }),
+      }),
+    ]);
+    expect(await t.run((ctx) => ctx.db.get(coordinatorId))).toMatchObject({
+      queuedCount: 0,
+      queuedBytes: 0,
+      ownerEventId: "lost-queued",
+    });
+  });
+
   test("a long queue behind a live owner does not hide a released one", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
