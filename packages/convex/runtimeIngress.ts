@@ -990,10 +990,12 @@ export const takeNext = internalMutation({
         ...args.settle,
       });
     }
-    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+    const rows = await queuedPage(ctx, coordinator);
+    const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
     const promoted = await promoteQueuedGroup(ctx, {
       coordinator: coordinator,
       queue: queue,
+      rows: rows,
       now: now,
       leaseTtlMs: args.leaseTtlMs,
       ownerGeneration: args.ownerGeneration + 1,
