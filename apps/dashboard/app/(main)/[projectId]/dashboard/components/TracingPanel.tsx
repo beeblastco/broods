@@ -1336,6 +1336,15 @@ function kindBar(kind: ObservabilitySpanRow["kind"]): string {
   return KIND_BAR[kind] ?? KIND_BAR["tool.call"];
 }
 
+/** A step's reasoning or response when it has one; core writes the key empty on a step without. */
+function noteText(span: ObservabilitySpanRow, key: string): string | undefined {
+  const value = span.attributes?.[key];
+  if (value === undefined || value === null) return undefined;
+  const text = displayAttribute(value);
+
+  return text === "" ? undefined : text;
+}
+
 function numericAttribute(
   span: ObservabilitySpanRow,
   key: string,
@@ -2719,8 +2728,8 @@ function renderSpanRows(
     span.kind === "subtask" && !isTaskRow
       ? []
       : (view.group.childrenByParent.get(span.spanId) ?? []);
-  const reasoning = isStep ? span.attributes?.["model.reasoning"] : undefined;
-  const response = isStep ? span.attributes?.["model.response"] : undefined;
+  const reasoning = isStep ? noteText(span, "model.reasoning") : undefined;
+  const response = isStep ? noteText(span, "model.response") : undefined;
   const hasNotes = reasoning !== undefined || response !== undefined;
   const isRoot = isRootSpanKind(span.kind);
   // A root is judged on its own freshness; a child on its enclosing root's liveness.
