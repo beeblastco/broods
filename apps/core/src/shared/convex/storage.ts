@@ -589,20 +589,24 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
   storageExternalId: async function (accountId) {
     const known = storageExternalIds.get(accountId);
     if (known) return known;
+    // Off the client's mutation FIFO: the id is minted once by the backend
+    // itself, so a mount never waits behind other runs' writes for it.
     const externalId = await adminMutation(
       internal.account.storageTrust.externalId,
       { accountId: accountId },
+      { skipQueue: true },
     );
     storageExternalIds.set(accountId, externalId);
 
     return externalId;
   },
   mintR2Credentials: async function (accountId, workspaceId, prefix) {
-    return await adminMutation(internal.workspace.configs.r2Credentials, {
-      accountId: accountId,
-      workspaceId: workspaceId,
-      prefix: prefix,
-    });
+    // Off the FIFO too: a mint reads the workspace and writes nothing shared.
+    return await adminMutation(
+      internal.workspace.configs.r2Credentials,
+      { accountId: accountId, workspaceId: workspaceId, prefix: prefix },
+      { skipQueue: true },
+    );
   },
   removeAllForAccount: async function (accountId) {
     const docs = await adminQuery(internal.workspace.configs.list, {

@@ -345,13 +345,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
     // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
     // row; recoverable on the next call, so it never holds up the session.
-    void upsertSandboxInstance(
-      this.#config.controlPlane,
-      PROVIDER,
-      request.reservationKey,
-      reservation.microvmId,
-      request.metadata,
-      { specs: configuredSandboxSpecs(this.#config) },
+    void queueMirrorWrite(reservation.microvmId, () =>
+      upsertSandboxInstance(
+        this.#config.controlPlane,
+        PROVIDER,
+        request.reservationKey,
+        reservation.microvmId,
+        request.metadata,
+        { specs: configuredSandboxSpecs(this.#config) },
+      ),
     );
     request.abortSignal?.throwIfAborted();
 
@@ -969,13 +971,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
-        void upsertSandboxInstance(
-          this.#config.controlPlane,
-          PROVIDER,
-          key,
-          existing,
-          request.metadata,
-          { specs: configuredSandboxSpecs(this.#config) },
+        void queueMirrorWrite(existing, () =>
+          upsertSandboxInstance(
+            this.#config.controlPlane,
+            PROVIDER,
+            key,
+            existing,
+            request.metadata,
+            { specs: configuredSandboxSpecs(this.#config) },
+          ),
         );
 
         return {
@@ -1131,16 +1135,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
     payload: SandboxExecRequest,
   ): Promise<SandboxExecResponse | null> {
-    // The reservation's own record has a 30-day TTL, so skipping its refresh costs
-    // nothing, but the dashboard row carries lastUsedAt and the trace link, so it
-    // still mirrors every call. Fire-and-forget, like the acquire path.
-    void upsertSandboxInstance(
-      this.#config.controlPlane,
-      PROVIDER,
-      sandboxReservationKey(request) ?? target.microvmId,
-      target.microvmId,
-      request.metadata,
-      { specs: configuredSandboxSpecs(this.#config) },
+    // Mirrors every call, queued per VM so an ephemeral VM's removal lands after it.
+    void queueMirrorWrite(target.microvmId, () =>
+      upsertSandboxInstance(
+        this.#config.controlPlane,
+        PROVIDER,
+        sandboxReservationKey(request) ?? target.microvmId,
+        target.microvmId,
+        request.metadata,
+        { specs: configuredSandboxSpecs(this.#config) },
+      ),
     );
     try {
       await this.#runLifecycle(
