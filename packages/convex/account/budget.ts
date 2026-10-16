@@ -8,7 +8,7 @@
  */
 
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -24,12 +24,11 @@ import {
   budgetStatus,
   budgetUsage,
   claimBudgetWarning,
-  meterMonth,
   projectUsage,
   type BudgetStatus,
   type BudgetUsage,
-  type ProjectUsage,
 } from "../model/usageMeter";
+import { resourceStageScope } from "../model/projectScope";
 import { getActiveAccountForUser } from "../org/orgs";
 import { planValidator, usageQuantityFields } from "../schema";
 
@@ -65,18 +64,6 @@ const usageAmountsFields = {
 
 const usageAmountsValidator = v.object(usageAmountsFields);
 
-const projectUsageValidator = v.object({
-  month: v.string(),
-  projects: v.array(
-    v.object({
-      projectId: v.id("projects"),
-      name: v.string(),
-      totals: usageAmountsValidator,
-      days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
-    }),
-  ),
-});
-
 const budgetUsageValidator = v.object({
   enforced: v.boolean(),
   plan: planValidator,
@@ -88,6 +75,23 @@ const budgetUsageValidator = v.object({
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
   totals: usageAmountsValidator,
   days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
+  projects: v.optional(
+    v.array(
+      v.object({
+        projectId: v.id("projects"),
+        name: v.string(),
+        totals: usageAmountsValidator,
+        days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
+      }),
+    ),
+  ),
+});
+
+// Where a usage write came from, as far as the writer knows.
+const usageSourceValidator = v.object({
+  projectId: v.optional(v.string()),
+  agentId: v.optional(v.string()),
+  workspaceId: v.optional(v.string()),
 });
 
 /**
@@ -120,11 +124,15 @@ export const get = internalQuery({
 /**
  * Dashboard allowance and billing plan: the active org's usage for `month`
  * ("YYYY-MM", one of the returned `months`; anything else reads the current
- * month) as amounts, days, caps and percentages. Euro figures never leave the
+ * month) as amounts, days, caps and percentages, and with `withProjects` each
+ * of the org's projects' part of that month. Euro figures never leave the
  * backend, so the plan budgets stay private.
  */
 export const getForActiveOrg = query({
-  args: { month: v.optional(v.string()) },
+  args: {
+    month: v.optional(v.string()),
+    withProjects: v.optional(v.boolean()),
+  },
   returns: v.union(budgetUsageValidator, v.null()),
   handler: async (ctx, args): Promise<BudgetUsage | null> => {
     // Check authenticated user
@@ -133,39 +141,12 @@ export const getForActiveOrg = query({
       throw new Error("User not found or not authenticated");
     }
     const account = await getActiveAccountForUser(ctx);
-
-    return account
-      ? await budgetUsage(ctx, account._id, Date.now(), args.month)
-      : null;
-  },
-});
-
-/**
- * The Usage tab's split of the allowance: each of the active org's projects'
- * usage for `month` ("YYYY-MM"; anything else reads the current month).
- */
-export const projectsForActiveOrg = query({
-  args: { month: v.optional(v.string()) },
-  returns: v.union(projectUsageValidator, v.null()),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ month: string; projects: ProjectUsage[] } | null> => {
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-    const account = await getActiveAccountForUser(ctx);
     if (!account) return null;
-    const month =
-      args.month !== undefined && /^\d{4}-\d{2}$/.test(args.month)
-        ? args.month
-        : meterMonth(Date.now());
+    const usage = await budgetUsage(ctx, account._id, Date.now(), args.month);
 
-    return {
-      month: month,
-      projects: await projectUsage(ctx, account, month),
-    };
+    return args.withProjects === true
+      ? { ...usage, projects: await projectUsage(ctx, account, usage) }
+      : usage;
   },
 });
 
@@ -197,7 +178,7 @@ export const listAccountIds = internalQuery({
  * The account's workspaces, whose S3 namespaces the storage snapshot sums,
  * with the project each belongs to (none for an account-wide one).
  */
-export const listWorkspaceIds = internalQuery({
+export const listWorkspaces = internalQuery({
   args: {
     accountId: v.id("accounts"),
     paginationOpts: paginationOptsValidator,
@@ -264,14 +245,7 @@ export const record = internalMutation({
     at: v.optional(v.number()),
     /** Same on every retry of one write, so a retry is applied once. */
     writeId: v.optional(v.string()),
-    /** Where the usage came from, as far as the writer knows. */
-    source: v.optional(
-      v.object({
-        projectId: v.optional(v.string()),
-        agentId: v.optional(v.string()),
-        workspaceId: v.optional(v.string()),
-      }),
-    ),
+    source: v.optional(usageSourceValidator),
     /** Storage snapshot only: GB-months of `usage` that each project's workspaces hold. */
     projectStorage: v.optional(
       v.array(
@@ -342,33 +316,29 @@ export const pruneUsageWrites = internalMutation({
   },
 });
 
-// The account's project a usage write names, by the first id that resolves to
-// one of the account's own projects.
+// The account's project a usage write names, by the first id it carries.
 async function usageProject(
   ctx: QueryCtx,
   account: Doc<"accounts">,
-  source: { projectId?: string; agentId?: string; workspaceId?: string },
+  source: Infer<typeof usageSourceValidator>,
 ): Promise<Id<"projects"> | undefined> {
-  let projectId: Id<"projects"> | null | undefined;
   if (source.projectId !== undefined) {
-    projectId = ctx.db.normalizeId("projects", source.projectId);
-  } else if (source.agentId !== undefined) {
-    const agentId = source.agentId;
-    const agent = await ctx.db
-      .query("agentConfigs")
-      .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
-      .first();
-    projectId = agent?.projectId;
-  } else if (source.workspaceId !== undefined) {
-    const workspaceId = ctx.db.normalizeId(
-      "workspaceConfigs",
-      source.workspaceId,
-    );
-    const workspace = workspaceId ? await ctx.db.get(workspaceId) : null;
-    projectId =
-      workspace?.accountId === account._id ? workspace.projectId : undefined;
-  }
-  const project = projectId ? await ctx.db.get(projectId) : null;
+    const projectId = ctx.db.normalizeId("projects", source.projectId);
+    const project = projectId ? await ctx.db.get(projectId) : null;
 
-  return project && project.orgId === account.orgId ? project._id : undefined;
+    return project?.orgId === account.orgId ? project._id : undefined;
+  }
+  const scope =
+    source.agentId !== undefined
+      ? await resourceStageScope(ctx, account._id, "agents", source.agentId)
+      : source.workspaceId !== undefined
+        ? await resourceStageScope(
+            ctx,
+            account._id,
+            "workspaces",
+            source.workspaceId,
+          )
+        : null;
+
+  return scope?.projectId;
 }

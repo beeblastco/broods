@@ -194,7 +194,7 @@ export declare const api: {
       getForActiveOrg: FunctionReference<
         "query",
         "public",
-        { month?: string },
+        { month?: string; withProjects?: boolean },
         {
           caps: {
             egressGb: number;
@@ -215,29 +215,7 @@ export declare const api: {
           month: string;
           months: Array<string>;
           plan: "free" | "pro";
-          shares: {
-            egressGb: number;
-            hostedMcpHours: number;
-            sandboxHours: number;
-            storageGb: number;
-          };
-          totals: {
-            egressGb: number;
-            hostedMcpHours: number;
-            ingressGb: number;
-            sandboxHours: number;
-            storageGb: number | null;
-          };
-          usedPercent: number | null;
-        } | null
-      >;
-      projectsForActiveOrg: FunctionReference<
-        "query",
-        "public",
-        { month?: string },
-        {
-          month: string;
-          projects: Array<{
+          projects?: Array<{
             days: Array<{
               day: string;
               egressGb: number;
@@ -256,6 +234,20 @@ export declare const api: {
               storageGb: number | null;
             };
           }>;
+          shares: {
+            egressGb: number;
+            hostedMcpHours: number;
+            sandboxHours: number;
+            storageGb: number;
+          };
+          totals: {
+            egressGb: number;
+            hostedMcpHours: number;
+            ingressGb: number;
+            sandboxHours: number;
+            storageGb: number | null;
+          };
+          usedPercent: number | null;
         } | null
       >;
     };
@@ -2039,7 +2031,7 @@ export declare const internal: {
         },
         { continueCursor: string; isDone: boolean; page: Array<Id<"accounts">> }
       >;
-      listWorkspaceIds: FunctionReference<
+      listWorkspaces: FunctionReference<
         "query",
         "internal",
         {

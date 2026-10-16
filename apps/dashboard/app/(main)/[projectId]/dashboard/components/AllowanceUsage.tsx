@@ -24,11 +24,11 @@ import {
   type AmountUnit,
   type BudgetUsage,
   dailySeries,
+  EMPTY_AMOUNTS,
   formatAmount,
   formatPercent,
   monthLabel,
   OTHER_USAGE_COLOR,
-  type ProjectsUsage,
   type UsageAmounts,
   type UsageSlice,
   usageSlices,
@@ -39,7 +39,7 @@ import { useQuery } from "convex/react";
 import Link from "next/link";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
-import { UsageChart } from "./UsageChart";
+import { UsageChart, UsageLegend } from "./UsageChart";
 
 const DAY_SECONDS = 24 * 60 * 60;
 
@@ -127,22 +127,15 @@ export function AllowanceUsage({
 }): React.JSX.Element {
   const [month, setMonth] = useState<string | undefined>(undefined);
   const [scope, setScope] = useQueryState("allowance", SCOPE_PARAM);
-  const usage = useQuery(api.account.budget.getForActiveOrg, { month: month });
-  const split = useQuery(api.account.budget.projectsForActiveOrg, {
+  const usage = useQuery(api.account.budget.getForActiveOrg, {
     month: month,
+    withProjects: true,
   });
-  const [held, setHeld] = useState<{
-    budget: BudgetUsage | null | undefined;
-    split: ProjectsUsage | null | undefined;
-  }>({ budget: undefined, split: undefined });
-  if (usage !== undefined && usage !== held.budget) {
-    setHeld((last) => ({ ...last, budget: usage }));
+  const [held, setHeld] = useState<BudgetUsage | null | undefined>(usage);
+  if (usage !== undefined && usage !== held) {
+    setHeld(usage);
   }
-  if (split !== undefined && split !== held.split) {
-    setHeld((last) => ({ ...last, split: split }));
-  }
-  const budget = usage === undefined ? held.budget : usage;
-  const projects = split === undefined ? held.split : split;
+  const budget = usage === undefined ? held : usage;
 
   // The current month leads `months` and is Billing's own query: leave
   // `month` unset to share it.
@@ -153,12 +146,6 @@ export function AllowanceUsage({
   return (
     <AllowanceView
       budget={budget}
-      // Only the split of the month the table shows; a held one is another's.
-      projects={
-        projects && budget && projects.month === budget.month
-          ? projects.projects
-          : undefined
-      }
       projectId={projectId}
       scope={scope}
       onScopeChange={(next) => void setScope(next)}
@@ -170,11 +157,10 @@ export function AllowanceUsage({
 
 /**
  * The Allowance as drawn, from data: the live tab feeds it from Convex, the
- * gallery from fixtures. `projects` undefined is still loading.
+ * gallery from fixtures. `budget` undefined is still loading.
  */
 export function AllowanceView({
   budget,
-  projects,
   projectId,
   scope,
   onScopeChange,
@@ -182,7 +168,6 @@ export function AllowanceView({
   onMonthChange,
 }: {
   budget: BudgetUsage | null | undefined;
-  projects: ProjectsUsage["projects"] | undefined;
   projectId: string;
   scope: AllowanceScope;
   onScopeChange: (scope: AllowanceScope) => void;
@@ -235,150 +220,116 @@ export function AllowanceView({
           )}
         </div>
       </div>
-      {budget === undefined || projects === undefined ? (
+      {budget === undefined ? (
         <Skeleton className="h-96 rounded-lg" />
       ) : budget === null ? (
         <p className="text-sm text-muted-foreground">
           No account in this organization yet.
         </p>
-      ) : scope === "project" ? (
-        <ProjectAllowance
-          budget={budget}
-          projects={projects}
-          projectId={projectId}
-        />
       ) : (
-        <AllProjectsAllowance
-          budget={budget}
-          projects={projects}
-          projectId={projectId}
-        />
+        <ScopedAllowance budget={budget} projectId={projectId} scope={scope} />
       )}
     </section>
   );
 }
 
-// This project against the org's caps: its amount, everyone's, and a bar
-// whose dark part is this project and light part the other projects.
-function ProjectAllowance({
+/**
+ * The org's caps per resource and a daily chart of the picked one. From this
+ * project: its amount leads, and each bar's solid part is it and the grey
+ * part the other projects. From all projects: each bar is split by project,
+ * and a table of the projects follows.
+ */
+function ScopedAllowance({
   budget,
-  projects,
   projectId,
+  scope,
 }: {
   budget: BudgetUsage;
-  projects: ProjectsUsage["projects"];
   projectId: string;
+  scope: AllowanceScope;
 }): React.JSX.Element {
   const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
-  // This project, then everything else as one part.
+  const projects = budget.projects ?? [];
   const slices = useMemo(() => {
+    if (scope === "all") return usageSlices(budget);
+    // This project, then everything else as one part.
     const [own, rest] = usageSlices(
       budget,
       projects.filter((project) => project.projectId === projectId),
     );
-    const others = rest ?? { ...own, totals: ZERO_AMOUNTS, days: [] };
+    const others = rest ?? { ...own, totals: EMPTY_AMOUNTS, days: [] };
 
     return [
       { ...own, color: "var(--color-foreground)" },
       { ...others, name: "Other projects", color: OTHER_USAGE_COLOR },
     ];
-  }, [budget, projects, projectId]);
-  const count = projects.length;
-
-  return (
-    <div className="grid gap-2">
-      <p className="text-xs text-muted-foreground">
-        {count > 1
-          ? `Limits are shared by all ${count} projects in this organization. The solid part of each bar is this project, the grey part the others.`
-          : "Limits are shared by every project in this organization."}
-      </p>
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Resource</TableHead>
-              <TableHead className="text-right">This project</TableHead>
-              <TableHead className="text-right">All projects</TableHead>
-              <TableHead className="text-right">Limit</TableHead>
-              <TableHead className="w-1/4 min-w-24" />
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {ROWS.map((row) => (
-              <AllowanceTableRow
-                key={row.key}
-                budget={budget}
-                row={row}
-                slices={slices}
-                own={slices[0]}
-                active={row.key === picked.key}
-                onPick={() => setPicked(row)}
-              />
-            ))}
-          </TableBody>
-        </Table>
-        <Separator />
-        <DailyChart budget={budget} row={picked} slices={slices} />
-        <ProjectLegend slices={slices} />
-      </div>
-    </div>
-  );
-}
-
-// Every project's part of the org's caps, then the projects side by side.
-function AllProjectsAllowance({
-  budget,
-  projects,
-  projectId,
-}: {
-  budget: BudgetUsage;
-  projects: ProjectsUsage["projects"];
-  projectId: string;
-}): React.JSX.Element {
-  const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
-  const slices = useMemo(
-    () => usageSlices(budget, projects),
-    [budget, projects],
+  }, [budget, projects, projectId, scope]);
+  const own = scope === "project" ? slices[0] : null;
+  const legend = useMemo(
+    () =>
+      slices.map((slice) => ({
+        key: slice.projectId ?? "other",
+        label: slice.name,
+        color: slice.color,
+      })),
+    [slices],
   );
 
   return (
     <div className="grid gap-6 *:min-w-0">
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Resource</TableHead>
-              <TableHead className="text-right">Used</TableHead>
-              <TableHead className="text-right">Limit</TableHead>
-              <TableHead className="w-2/5 min-w-24" />
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {ROWS.map((row) => (
-              <AllowanceTableRow
-                key={row.key}
-                budget={budget}
-                row={row}
-                slices={slices}
-                own={null}
-                active={row.key === picked.key}
-                onPick={() => setPicked(row)}
-              />
-            ))}
-          </TableBody>
-        </Table>
-        <Separator />
-        <DailyChart budget={budget} row={picked} slices={slices} />
-        <ProjectLegend slices={slices} />
+      <div className="grid gap-2">
+        {own && (
+          <p className="text-xs text-muted-foreground">
+            {projects.length > 1
+              ? `Limits are shared by all ${projects.length} projects in this organization. The solid part of each bar is this project, the grey part the others.`
+              : "Limits are shared by every project in this organization."}
+          </p>
+        )}
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Resource</TableHead>
+                {own && (
+                  <TableHead className="text-right">This project</TableHead>
+                )}
+                <TableHead className="text-right">
+                  {own ? "All projects" : "Used"}
+                </TableHead>
+                <TableHead className="text-right">Limit</TableHead>
+                <TableHead
+                  className={cn("min-w-24", own ? "w-1/4" : "w-2/5")}
+                />
+                <TableHead className="w-16" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {ROWS.map((row) => (
+                <AllowanceTableRow
+                  key={row.key}
+                  budget={budget}
+                  row={row}
+                  slices={slices}
+                  own={own}
+                  active={row.key === picked.key}
+                  onPick={() => setPicked(row)}
+                />
+              ))}
+            </TableBody>
+          </Table>
+          <Separator />
+          <DailyChart budget={budget} row={picked} slices={slices} />
+          <UsageLegend series={legend} className="px-4 pb-3" />
+        </div>
       </div>
-      <ProjectsTable
-        budget={budget}
-        slices={slices}
-        picked={picked}
-        projectId={projectId}
-      />
+      {!own && (
+        <ProjectsTable
+          budget={budget}
+          slices={slices}
+          picked={picked}
+          projectId={projectId}
+        />
+      )}
     </div>
   );
 }
@@ -504,14 +455,14 @@ function SplitBar({
         style={{ "--bar-width": `${Math.min(share, 100)}%` }}
       >
         {known ? (
-          parts.map((part) =>
-            (part.amount ?? 0) > 0 ? (
+          parts.map(({ key, amount, color }) =>
+            amount !== null && amount > 0 ? (
               <div
-                key={part.key}
+                key={key}
                 className="h-full w-(--bar-width) shrink-0 bg-(--series-color)"
                 style={{
-                  "--bar-width": `${((part.amount ?? 0) / total) * 100}%`,
-                  "--series-color": part.color,
+                  "--bar-width": `${(amount / total) * 100}%`,
+                  "--series-color": color,
                 }}
               />
             ) : null,
@@ -520,30 +471,6 @@ function SplitBar({
           <div className="h-full w-full bg-foreground" />
         )}
       </div>
-    </div>
-  );
-}
-
-// Swatch and name per slice, under the all-projects chart.
-function ProjectLegend({
-  slices,
-}: {
-  slices: UsageSlice[];
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-wrap gap-3 px-4 pb-3 text-2xs text-muted-foreground">
-      {slices.map((slice) => (
-        <span
-          key={slice.projectId ?? "other"}
-          className="flex items-center gap-1.5"
-        >
-          <span
-            className="size-2 rounded-sm bg-(--series-color)"
-            style={{ "--series-color": slice.color }}
-          />
-          {slice.name}
-        </span>
-      ))}
     </div>
   );
 }
@@ -721,14 +648,6 @@ function ProjectsTable({
     </section>
   );
 }
-
-const ZERO_AMOUNTS: UsageAmounts = {
-  sandboxHours: 0,
-  hostedMcpHours: 0,
-  storageGb: 0,
-  egressGb: 0,
-  ingressGb: 0,
-};
 
 // "Resets Oct 1" for the current month, nothing for a past one or no limits.
 function resetLabel(budget: BudgetUsage): string {

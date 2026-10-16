@@ -1,5 +1,6 @@
 import type { api } from "@broods/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
+import { SERIES_COLORS } from "./usageChart";
 
 // Display units for each amount unit, largest first, with how many make one
 // of the amount's own unit. formatAmount picks the largest that reads >= 1.
@@ -24,11 +25,6 @@ export type BudgetUsage = NonNullable<
   FunctionReturnType<typeof api.account.budget.getForActiveOrg>
 >;
 
-/** Each project's share of the same month, as `api.account.budget.projectsForActiveOrg` returns it. */
-export type ProjectsUsage = NonNullable<
-  FunctionReturnType<typeof api.account.budget.projectsForActiveOrg>
->;
-
 export type UsageAmounts = BudgetUsage["totals"];
 
 type UsageDay = BudgetUsage["days"][number];
@@ -48,48 +44,34 @@ export interface UsageSlice {
 
 export type AmountUnit = "hours" | "gb";
 
-const AMOUNT_KEYS: Array<keyof UsageAmounts> = [
-  "sandboxHours",
-  "hostedMcpHours",
-  "storageGb",
-  "egressGb",
-  "ingressGb",
-];
-
 // Amounts below this are float noise left from subtracting the projects from
 // the org's total, not usage.
 const NOISE = 1e-9;
-
-const PROJECT_COLORS = [
-  "var(--color-usage-model-1)",
-  "var(--color-usage-model-2)",
-  "var(--color-usage-model-3)",
-  "var(--color-usage-model-4)",
-  "var(--color-usage-model-5)",
-  "var(--color-usage-model-6)",
-];
 
 /** The color of the part no project used, and of "other projects". */
 export const OTHER_USAGE_COLOR = "var(--color-muted-foreground)";
 
 /**
- * The org's month split into its projects, each with a color kept in the
- * projects' own order, then "Other usage": the org's total less the projects
- * (account-wide resources, deleted projects, usage metered before projects
- * were), left out when it is nothing. A storage amount no snapshot measured
- * stays null on every side.
+ * The org's month split into `projects` (all of `budget.projects` unless
+ * given), each with a color kept in the projects' own order, then "Other
+ * usage": the org's total less the projects (account-wide resources, deleted
+ * projects, usage metered before projects were), left out when it is
+ * nothing. A storage amount no snapshot measured stays null on every side.
  */
 export function usageSlices(
   budget: BudgetUsage,
-  projects: ProjectsUsage["projects"],
+  projects: NonNullable<BudgetUsage["projects"]> = budget.projects ?? [],
 ): UsageSlice[] {
   const slices: UsageSlice[] = projects.map((project, index) => ({
     projectId: project.projectId,
     name: project.name,
-    color: PROJECT_COLORS[index % PROJECT_COLORS.length],
+    color: SERIES_COLORS[index % SERIES_COLORS.length],
     totals: project.totals,
     days: project.days,
   }));
+  const byDay = slices.map(
+    (slice) => new Map(slice.days.map((day) => [day.day, day])),
+  );
   const other: UsageSlice = {
     projectId: null,
     name: "Other usage",
@@ -102,19 +84,19 @@ export function usageSlices(
       day: day.day,
       ...remainder(
         day,
-        slices.map(
-          (slice) =>
-            slice.days.find((own) => own.day === day.day) ?? EMPTY_AMOUNTS,
-        ),
+        byDay.map((days) => days.get(day.day) ?? EMPTY_AMOUNTS),
       ),
     })),
   };
-  const hasOther = AMOUNT_KEYS.some((key) => (other.totals[key] ?? 0) > 0);
+  const hasOther = Object.values(other.totals).some(
+    (amount) => (amount ?? 0) > 0,
+  );
 
   return hasOther ? [...slices, other] : slices;
 }
 
-const EMPTY_AMOUNTS: UsageAmounts = {
+/** No usage of anything. */
+export const EMPTY_AMOUNTS: UsageAmounts = {
   sandboxHours: 0,
   hostedMcpHours: 0,
   storageGb: 0,
@@ -125,26 +107,23 @@ const EMPTY_AMOUNTS: UsageAmounts = {
 // `whole` less each of `parts`, never below zero. Storage is unknown when the
 // whole or any part is.
 function remainder(whole: UsageAmounts, parts: UsageAmounts[]): UsageAmounts {
-  const left = (key: keyof UsageAmounts): number | null => {
-    const total = whole[key];
-    if (total === null) return null;
-    let sum = 0;
-    for (const part of parts) {
-      const value = part[key];
-      if (value === null) return null;
-      sum += value;
-    }
-    const rest = total - sum;
+  const left = (key: Exclude<keyof UsageAmounts, "storageGb">): number => {
+    const rest = parts.reduce((sum, part) => sum - part[key], whole[key]);
 
     return rest > NOISE ? rest : 0;
   };
+  const storage = parts.reduce<number | null>(
+    (sum, part) =>
+      sum === null || part.storageGb === null ? null : sum - part.storageGb,
+    whole.storageGb,
+  );
 
   return {
-    sandboxHours: left("sandboxHours") ?? 0,
-    hostedMcpHours: left("hostedMcpHours") ?? 0,
-    storageGb: left("storageGb"),
-    egressGb: left("egressGb") ?? 0,
-    ingressGb: left("ingressGb") ?? 0,
+    sandboxHours: left("sandboxHours"),
+    hostedMcpHours: left("hostedMcpHours"),
+    storageGb: storage === null ? null : storage > NOISE ? storage : 0,
+    egressGb: left("egressGb"),
+    ingressGb: left("ingressGb"),
   };
 }
 

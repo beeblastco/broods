@@ -111,7 +111,9 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
         "the sandbox is released",
       );
 
-      const split = asAdmin("account/budget:projectsForActiveOrg", {}) as {
+      const split = asAdmin("account/budget:getForActiveOrg", {
+        withProjects: true,
+      }) as {
         projects: ProjectAmounts[];
       };
       const byId = new Map(split.projects.map((p) => [p.projectId, p]));

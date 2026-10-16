@@ -99,6 +99,8 @@ export interface BudgetUsage {
   totals: UsageAmounts;
   /** Days of the month with usage or a storage snapshot, oldest first. */
   days: Array<UsageAmounts & { day: string }>;
+  /** Each of the org's projects' part of the month, when asked for. */
+  projects?: ProjectUsage[];
 }
 
 /** One project's share of an account's month, in the allowance's units. */
@@ -224,16 +226,16 @@ export async function addProjectUsage(
 }
 
 /**
- * Each of the org's projects' usage for `month`, as amounts and days. Storage
- * is what each project's workspaces held at the account's latest snapshot in
- * the month, so the projects add up to the snapshot the allowance shows. What
- * no project used (account-wide resources, deleted projects, usage metered
- * before projects were) is the allowance's total less these.
+ * Each of the org's projects' part of `usage`'s month, as amounts and days.
+ * Storage is what each project's workspaces held at the account's latest
+ * snapshot in the month, so the projects add up to the snapshot the allowance
+ * shows. What no project used (account-wide resources, deleted projects,
+ * usage metered before projects were) is the allowance's total less these.
  */
 export async function projectUsage(
   ctx: QueryCtx,
   account: Doc<"accounts">,
-  month: string,
+  usage: BudgetUsage,
 ): Promise<ProjectUsage[]> {
   const orgId = ctx.db.normalizeId("orgs", account.orgId);
   if (!orgId) return [];
@@ -241,30 +243,20 @@ export async function projectUsage(
     .query("projects")
     .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
     .collect();
-  const range = { from: `${month}-01`, to: `${month}-31` };
   const rows = await ctx.db
     .query("usageProjectDays")
     .withIndex("by_accountId_and_day_and_projectId", (q) =>
       q
         .eq("accountId", account._id)
-        .gte("day", range.from)
-        .lte("day", range.to),
+        .gte("day", `${usage.month}-01`)
+        .lte("day", `${usage.month}-31`),
     )
     .collect();
   // Days the account's snapshot ran: a project with no row on one held 0 GB.
-  const snapshotDays = (
-    await ctx.db
-      .query("usageDays")
-      .withIndex("by_accountId_and_day", (q) =>
-        q
-          .eq("accountId", account._id)
-          .gte("day", range.from)
-          .lte("day", range.to),
-      )
-      .collect()
-  )
-    .filter((row) => row.storageGb !== undefined)
-    .map((row) => row.day);
+  const snapshotDays = usage.days
+    .filter((day) => day.storageGb !== null)
+    .map((day) => day.day);
+  const snapshotDaySet = new Set(snapshotDays);
   const lastSnapshot = snapshotDays.at(-1) ?? null;
   const byProject = new Map<Id<"projects">, Doc<"usageProjectDays">[]>();
   for (const row of rows) {
@@ -275,20 +267,19 @@ export async function projectUsage(
 
   return projects.map((project): ProjectUsage => {
     const own = byProject.get(project._id) ?? [];
-    let usage = pickUsage(null);
-    for (const row of own) usage = withUsage(row, usage);
+    let total = pickUsage(null);
+    for (const row of own) total = withUsage(row, total);
     const byDay = new Map(own.map((row) => [row.day, row]));
     const storedOn = (day: string | null): number | null =>
       day === null
         ? null
-        : (byDay.get(day)?.storageGb ??
-          (snapshotDays.includes(day) ? 0 : null));
+        : (byDay.get(day)?.storageGb ?? (snapshotDaySet.has(day) ? 0 : null));
     const days = [...new Set([...byDay.keys(), ...snapshotDays])].sort();
 
     return {
       projectId: project._id,
       name: project.name,
-      totals: toAmounts(usage, storedOn(lastSnapshot)),
+      totals: toAmounts(total, storedOn(lastSnapshot)),
       days: days.map((day) => {
         const row = byDay.get(day) ?? null;
 

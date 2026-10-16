@@ -72,7 +72,7 @@ export const snapshotAccount = internalAction({
         page: typeof workspaces;
         isDone: boolean;
         continueCursor: string;
-      } = await ctx.runQuery(internal.account.budget.listWorkspaceIds, {
+      } = await ctx.runQuery(internal.account.budget.listWorkspaces, {
         accountId: args.accountId,
         paginationOpts: { numItems: WORKSPACE_PAGE_SIZE, cursor: cursor },
       });

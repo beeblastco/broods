@@ -4,11 +4,7 @@ import {
   AllowanceView,
   type AllowanceScope,
 } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
-import type {
-  BudgetUsage,
-  ProjectsUsage,
-  UsageAmounts,
-} from "@/app/lib/allowance";
+import type { BudgetUsage, UsageAmounts } from "@/app/lib/allowance";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useState } from "react";
 
@@ -94,7 +90,6 @@ export function AllowanceStandIn(): React.JSX.Element {
     <div className="w-full max-w-5xl">
       <AllowanceView
         budget={BUDGET}
-        projects={SPLIT.projects}
         projectId="support-bot"
         scope={scope}
         onScopeChange={setScope}
@@ -114,7 +109,7 @@ function dayAmounts(perDay: UsageAmounts, day: number): UsageAmounts {
     hostedMcpHours: perDay.hostedMcpHours * wave,
     storageGb: perDay.storageGb,
     egressGb: perDay.egressGb * wave,
-    ingressGb: (perDay.ingressGb ?? 0) * wave,
+    ingressGb: perDay.ingressGb * wave,
   };
 }
 
@@ -145,22 +140,19 @@ function monthTotals(
   return { ...sum(rows), storageGb: rows.at(-1)?.storageGb ?? null };
 }
 
-const SPLIT: ProjectsUsage = {
-  month: MONTH,
-  projects: PROJECTS.map((project) => {
-    const own = days(project.perDay);
+const SPLIT: NonNullable<BudgetUsage["projects"]> = PROJECTS.map((project) => {
+  const own = days(project.perDay);
 
-    return {
-      projectId: project.id as Id<"projects">,
-      name: project.name,
-      totals: monthTotals(own),
-      days: own,
-    };
-  }),
-};
+  return {
+    projectId: project.id as Id<"projects">,
+    name: project.name,
+    totals: monthTotals(own),
+    days: own,
+  };
+});
 
 const ORG_DAYS = days(OTHER_PER_DAY).map((other, index) => ({
-  ...sum([other, ...SPLIT.projects.map((project) => project.days[index])]),
+  ...sum([other, ...SPLIT.map((project) => project.days[index])]),
   day: other.day,
 }));
 
@@ -182,6 +174,7 @@ const BUDGET: BudgetUsage = {
   level: "ok",
   totals: ORG_TOTALS,
   days: ORG_DAYS,
+  projects: SPLIT,
 };
 
 function percent(part: number, base: number): number {

@@ -11,7 +11,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, components, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { projectUsage } from "../model/usageMeter";
+import { budgetUsage, projectUsage } from "../model/usageMeter";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -273,13 +273,13 @@ describe("projectUsage", () => {
   });
 });
 
-describe("projectsForActiveOrg", () => {
+describe("getForActiveOrg with projects", () => {
   test("refuses a caller who is not signed in", async () => {
     const t = meterTest();
     workosTest.register(t);
 
     await expect(
-      t.query(api.account.budget.projectsForActiveOrg, {}),
+      t.query(api.account.budget.getForActiveOrg, { withProjects: true }),
     ).rejects.toThrow("not authenticated");
   });
 
@@ -315,15 +315,18 @@ describe("projectsForActiveOrg", () => {
       source: { projectId: projectId },
     });
 
-    const split = await caller.query(api.account.budget.projectsForActiveOrg, {
+    const split = await caller.query(api.account.budget.getForActiveOrg, {
       month: "October",
+      withProjects: true,
     });
+    const plain = await caller.query(api.account.budget.getForActiveOrg, {});
 
     expect(split?.month).toBe("2026-10");
-    expect(split?.projects.map((project) => project.name)).toEqual([
+    expect(split?.projects?.map((project) => project.name)).toEqual([
       "Support bot",
     ]);
-    expect(split?.projects[0].totals.egressGb).toBe(2);
+    expect(split?.projects?.[0].totals.egressGb).toBe(2);
+    expect(plain?.projects).toBeUndefined();
   });
 });
 
@@ -369,7 +372,7 @@ async function seedAgentAndWorkspace(
   t: T,
   org: Org,
   projectId: Id<"projects">,
-): Promise<{ agentId: string; workspaceId: Id<"workspaceConfigs"> }> {
+): Promise<{ agentId: Id<"agents">; workspaceId: Id<"workspaceConfigs"> }> {
   return await t.run(async (ctx) => {
     const stageId = await ctx.db.insert("stages", {
       authId: "auth",
@@ -379,7 +382,12 @@ async function seedAgentAndWorkspace(
       isDefault: true,
       updatedAt: NOW,
     });
-    const agentId = `agent_${projectId}`;
+    const agentId = await ctx.db.insert("agents", {
+      accountId: org.accountId,
+      name: `agent-${projectId}`,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
     await ctx.db.insert("agentConfigs", {
       authId: "auth",
       projectId: projectId,
@@ -432,7 +440,11 @@ async function readProjects(t: T, org: Org, month: string) {
     const account = await ctx.db.get(org.accountId);
     if (!account) throw new Error("account missing");
 
-    return await projectUsage(ctx, account, month);
+    return await projectUsage(
+      ctx,
+      account,
+      await budgetUsage(ctx, account._id, NOW, month),
+    );
   });
 }
 

@@ -3,7 +3,6 @@ import {
   type BudgetUsage,
   dailySeries,
   OTHER_USAGE_COLOR,
-  type ProjectsUsage,
   type UsageAmounts,
   usageSlices,
 } from "../app/lib/allowance";
@@ -39,7 +38,7 @@ function project(
   id: string,
   totals: Partial<UsageAmounts>,
   days: Array<Partial<UsageAmounts> & { day: string }> = [],
-): ProjectsUsage["projects"][number] {
+): NonNullable<BudgetUsage["projects"]>[number] {
   return {
     projectId: id as Id<"projects">,
     name: id,
