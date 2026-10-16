@@ -576,9 +576,15 @@ export class Session {
     };
     await this.writeFenced([], settle).catch(
       async (err: unknown): Promise<void> => {
-        // The outcome beats the history: a settle that failed with rows to
-        // carry goes out without them.
+        // The outcome beats the history: a settle that fails twice with rows
+        // to carry goes out without them. The rows are keyed, so the retry
+        // stores nothing a committed first attempt already did.
         if (this.pendingStoredEvents.length === 0) throw err;
+        const retried = await this.writeFenced([], settle).then(
+          (): boolean => true,
+          (): boolean => false,
+        );
+        if (retried) return;
         logError("History rows dropped so the turn could settle", {
           eventId: this.eventId,
           rows: this.pendingStoredEvents.length,
