@@ -46,16 +46,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
         # Skip workspace postinstall (`sst install`). This validation job does
         # not deploy infrastructure, and `bun run check` / `bun run build`
         # regenerate the prompt artifacts they need.
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Lint, format check and typecheck
         # `check` lints with `lint:types`: the type-aware pass (floating
@@ -172,13 +167,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Test the regression gate
         # The gate's own grading rules. A gate that silently stops failing is
@@ -247,13 +237,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Start the local stack
         run: bun run local:up
@@ -314,13 +299,8 @@ jobs:
           # Nothing in this job pushes, so it needs no token left on disk.
           persist-credentials: false
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       # Types and lint for every workspace run once, in validate's `bun run
       # check`, and the convex tests in its `bun run test`.
@@ -373,6 +353,15 @@ jobs:
 
       - name: Check dashboard bundle budget
         run: bun bench/bundles.ts --check dashboard
+
+      - name: Cache Chromium
+        # Playwright's browser downloads, keyed on the lock that pins its
+        # version; the install below is a no-op on a hit.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: playwright-${{ runner.os }}-
 
       - name: Install Chromium for the dashboard fixtures
         # No --with-deps: that runs apt, which fails whenever a mirror is off,
@@ -442,15 +431,9 @@ jobs:
             echo "docs=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Bun
-        if: steps.changed.outputs.docs == 'true'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
         if: steps.changed.outputs.docs == 'true'
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Build docs
         if: steps.changed.outputs.docs == 'true'

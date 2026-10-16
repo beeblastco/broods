@@ -19,6 +19,12 @@ on:
   schedule:
     - cron: "35 17 * * 2"
 
+# A new push to a pull request cancels its stale run, as in ci.yaml. Branch
+# and scheduled runs are never cancelled mid-run.
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Each job grants only the token permissions it needs.
 permissions: {}
 
