@@ -271,7 +271,7 @@ function ScopedAllowance({
         {own && (
           <p className="text-xs text-muted-foreground">
             {projectCount > 1
-              ? `Limits are shared by all ${projectCount} projects in this organization. The solid part of each bar is this project, the grey part the others.`
+              ? `Limits are shared by all ${projectCount} projects in this organization. The solid part of each bar is this project, the grey part the rest of the organization.`
               : "Limits are shared by every project in this organization."}
           </p>
         )}
@@ -540,7 +540,7 @@ function ProjectsTable({
   picked: AllowanceRow;
   projectId: string;
 }): React.JSX.Element {
-  const total = budget.totals[picked.key] ?? 0;
+  const total = budget.totals[picked.key];
   const sorted = [...slices].sort((a, b) => {
     // "Other usage" closes the list whatever it holds.
     if (a.projectId === null || b.projectId === null) {
@@ -568,8 +568,14 @@ function ProjectsTable({
           </TableHeader>
           <TableBody>
             {sorted.map((slice) => {
-              const amount = slice.totals[picked.key] ?? 0;
-              const part = total > 0 ? (amount / total) * 100 : 0;
+              const amount = slice.totals[picked.key];
+              // Null while storage has no snapshot this month: no share yet.
+              const part =
+                amount === null || total === null
+                  ? null
+                  : total > 0
+                    ? (amount / total) * 100
+                    : 0;
 
               return (
                 <TableRow key={slice.projectId ?? "other"}>
@@ -619,13 +625,13 @@ function ProjectsTable({
                         <span
                           className="h-full w-(--bar-width) rounded-full bg-(--series-color)"
                           style={{
-                            "--bar-width": `${part}%`,
+                            "--bar-width": `${part ?? 0}%`,
                             "--series-color": slice.color,
                           }}
                         />
                       </span>
                       <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">
-                        {formatPercent(part)}
+                        {part === null ? "–" : formatPercent(part)}
                       </span>
                     </span>
                   </TableCell>

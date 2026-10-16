@@ -52,6 +52,7 @@ export const budgets: Storage["budgets"] = {
         logError("Usage meter write failed (convex)", {
           accountId: accountId,
           usage: usage,
+          ...(source ? { source: source } : {}),
           error: err instanceof Error ? err.message : String(err),
         });
       }

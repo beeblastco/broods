@@ -98,7 +98,8 @@ export function usageSlices(
 
 /**
  * The org's month from one project: the project, colored as the foreground,
- * then every other project and what no project used as one grey part. A
+ * then every other project and what no project used as one grey part,
+ * "Rest of the organization". A
  * project the org's list lacks (just created, or another org's) used nothing.
  */
 export function projectSlices(
@@ -120,7 +121,7 @@ export function projectSlices(
     { ...own, color: "var(--color-foreground)" },
     {
       projectId: null,
-      name: "Other projects",
+      name: "Rest of the organization",
       color: OTHER_USAGE_COLOR,
       totals: others?.totals ?? EMPTY_AMOUNTS,
       days: others?.days ?? [],

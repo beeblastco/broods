@@ -160,7 +160,7 @@ test("one project's view folds every other project into one grey part", () => {
   expect(own).toMatchObject({ projectId: "a", name: "a" });
   expect(own.totals.egressGb).toBe(3);
   expect(others.projectId).toBeNull();
-  expect(others.name).toBe("Other projects");
+  expect(others.name).toBe("Rest of the organization");
   expect(others.color).toBe(OTHER_USAGE_COLOR);
   expect(others.totals.egressGb).toBe(7);
 });
