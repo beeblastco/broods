@@ -31,6 +31,14 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      - name: Cache the bun package cache
+        # Package tarballs only; bun install still links node_modules from them.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
       - name: Install dependencies
         working-directory: .
         run: bun install --ignore-scripts --frozen-lockfile
@@ -43,12 +51,26 @@ jobs:
         working-directory: .
         run: bun run verification:test
 
+      - name: Cache the Lean toolchain and build
+        # elan with its Lean, and lake's build outputs. A manifest change keeps
+        # the toolchain and rebuilds; a toolchain change downloads a fresh one.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.elan
+            verification/.lake
+          key: lean-${{ runner.os }}-${{ hashFiles('verification/lean-toolchain') }}-${{ hashFiles('verification/lake-manifest.json') }}
+          restore-keys: lean-${{ runner.os }}-${{ hashFiles('verification/lean-toolchain') }}-
+
       # elan reads verification/lean-toolchain and installs that exact Lean.
-      # The installer is pinned to the v4.2.4 release commit.
+      # The installer is pinned to the v4.2.4 release commit. A cached elan
+      # is kept; the step still puts it on PATH.
       - name: Install elan
         run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
+          if [[ ! -x "$HOME/.elan/bin/elan" ]]; then
+            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
+              | sh -s -- -y --default-toolchain none
+          fi
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       # Broods.lean fails the build when a proof rests on `sorry`,
