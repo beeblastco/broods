@@ -61,10 +61,11 @@ import {
 } from "./local-verify/harness.ts";
 
 // Pinned so CI and every laptop run the same backend. To bump, pull
-// convex-backend:latest and copy its RepoDigests entry here.
+// convex-backend:latest and copy its RepoDigests entry here. The org is
+// `convex` since the rename from `get-convex`; ghcr does not redirect it.
 const CONVEX_IMAGE =
   process.env.BROODS_LOCAL_CONVEX_IMAGE ??
-  "ghcr.io/get-convex/convex-backend@sha256:b756b06641d15a55b5ec0692897ce5ad3715ddccfd02e1e213621e9e764255c8";
+  "ghcr.io/convex/convex-backend@sha256:b756b06641d15a55b5ec0692897ce5ad3715ddccfd02e1e213621e9e764255c8";
 // The version the cluster runs.
 const TRAEFIK_IMAGE = "traefik:v3.7.12";
 const HEALTH_TIMEOUT_MS = 60_000;
