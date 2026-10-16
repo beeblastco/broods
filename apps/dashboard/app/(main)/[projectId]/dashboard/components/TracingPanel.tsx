@@ -494,9 +494,11 @@ export function TracingPanel({
     parseAsTraceId,
   );
   const [toggled, setToggled] = useState<Set<string>>(new Set());
-  // Requests whose subagent rows the person flipped from the default, which
-  // is open for the selected run's request and closed for the rest.
-  const [stackToggles, setStackToggles] = useState<Set<string>>(new Set());
+  // Whether a request's subagent rows list, where the person chose; with no
+  // choice they list while the selected run is that request or under it.
+  const [stackChoices, setStackChoices] = useState<
+    ReadonlyMap<string, boolean>
+  >(new Map());
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
   const {
@@ -613,14 +615,14 @@ export function TracingPanel({
     () =>
       visibleGroups.flatMap((group): ListRow[] => [
         { group: group, parent: null },
-        ...(isStackOpen(group, selectedGroup, stackToggles)
+        ...(isStackOpen(group, selectedGroup, stackChoices)
           ? group.subagents.map((subagent): ListRow => ({
               group: subagent,
               parent: group,
             }))
           : []),
       ]),
-    [visibleGroups, selectedGroup, stackToggles],
+    [visibleGroups, selectedGroup, stackChoices],
   );
   // The span open in the side panel, resolved against the selected run so
   // it tracks live updates and closes when its run leaves the view.
@@ -699,9 +701,11 @@ export function TracingPanel({
 
       return;
     }
-    // A subagent's trace selects the subagent, under its request.
+    // A subagent's trace selects the subagent, under its request, whose
+    // stack opens again if the person had closed it.
     const target = groupByTrace.get(focusTraceId) ?? groups[index];
     setSelectedTaskKey(spanKey(target.root));
+    if (target !== groups[index]) openStack(groups[index]);
     // A request beyond the current page isn't listed yet: page it in and
     // finish on the re-run (visibleCount is a dep).
     if (index >= visibleCount) {
@@ -731,6 +735,18 @@ export function TracingPanel({
     setTimeWindow,
     setFocusTraceId,
   ]);
+
+  // Drops a request's closed choice, so its subagent rows list again.
+  const openStack = (request: SpanGroup): void => {
+    const key = spanKey(request.root);
+    setStackChoices((current) => {
+      if (current.get(key) !== false) return current;
+      const next = new Map(current);
+      next.delete(key);
+
+      return next;
+    });
+  };
 
   // A click or j/k pick: select the run and put its trace in the URL. The
   // focus effect is told it already ran, so it does not scan and scroll again,
@@ -936,11 +952,14 @@ export function TracingPanel({
                 key={spanKey(row.group.root)}
                 row={row}
                 isSelected={row.group === selectedGroup}
-                stackOpen={isStackOpen(row.group, selectedGroup, stackToggles)}
+                stackOpen={isStackOpen(row.group, selectedGroup, stackChoices)}
                 onSelect={() => pickTask(row.group)}
                 onToggleStack={() =>
-                  setStackToggles((current) =>
-                    flipped(current, spanKey(row.group.root)),
+                  setStackChoices((current) =>
+                    new Map(current).set(
+                      spanKey(row.group.root),
+                      !isStackOpen(row.group, selectedGroup, current),
+                    ),
                   )
                 }
               />
@@ -1284,19 +1303,19 @@ function inlinePayload(value: unknown): string {
 }
 
 /**
- * Whether a request's subagent rows list: by default while the selected run
- * is the request or one of its subagents, and the stack flips that.
+ * Whether a request's subagent rows list: the person's choice for it, else
+ * while the selected run is the request or one of its subagents.
  */
 function isStackOpen(
   group: SpanGroup,
   selected: SpanGroup | null,
-  stackToggles: Set<string>,
+  choices: ReadonlyMap<string, boolean>,
 ): boolean {
-  const inTree =
-    selected !== null &&
-    (selected === group || group.subagents.includes(selected));
-
-  return stackToggles.has(spanKey(group.root)) ? !inTree : inTree;
+  return (
+    choices.get(spanKey(group.root)) ??
+    (selected !== null &&
+      (selected === group || group.subagents.includes(selected)))
+  );
 }
 
 /** A live "running" span under a task that already finished never reported its end. */
