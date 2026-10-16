@@ -249,13 +249,15 @@ function ScopedAllowance({
   scope: AllowanceScope;
 }): React.JSX.Element {
   const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
-  const projects = budget.projects ?? [];
+  const projectCount = budget.projects?.length ?? 0;
   const slices = useMemo(() => {
     if (scope === "all") return usageSlices(budget);
     // This project, then everything else as one part.
     const [own, rest] = usageSlices(
       budget,
-      projects.filter((project) => project.projectId === projectId),
+      (budget.projects ?? []).filter(
+        (project) => project.projectId === projectId,
+      ),
     );
     const others = rest ?? { ...own, totals: EMPTY_AMOUNTS, days: [] };
 
@@ -263,7 +265,7 @@ function ScopedAllowance({
       { ...own, color: "var(--color-foreground)" },
       { ...others, name: "Other projects", color: OTHER_USAGE_COLOR },
     ];
-  }, [budget, projects, projectId, scope]);
+  }, [budget, projectId, scope]);
   const own = scope === "project" ? slices[0] : null;
   const legend = useMemo(
     () =>
@@ -280,8 +282,8 @@ function ScopedAllowance({
       <div className="grid gap-2">
         {own && (
           <p className="text-xs text-muted-foreground">
-            {projects.length > 1
-              ? `Limits are shared by all ${projects.length} projects in this organization. The solid part of each bar is this project, the grey part the others.`
+            {projectCount > 1
+              ? `Limits are shared by all ${projectCount} projects in this organization. The solid part of each bar is this project, the grey part the others.`
               : "Limits are shared by every project in this organization."}
           </p>
         )}
