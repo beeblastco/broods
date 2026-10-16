@@ -82,6 +82,34 @@ describe("usage lands on its project's day", () => {
     });
   });
 
+  test("a reservation relaunched in another project bills the launch to the new one", async () => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const org = await seedOrg(t, "beeblast", ["Support bot", "Sales"]);
+    const [support, sales] = org.projects;
+    const launch = (projectId: Id<"projects">, externalId: string) =>
+      t.mutation(internal.sandbox.instances.upsert, {
+        accountId: org.accountId,
+        projectId: projectId,
+        provider: "lambda",
+        reservationKey: "fs-moved",
+        externalId: externalId,
+        name: "default",
+        specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+      });
+
+    await launch(support, "vm-1");
+    vi.setSystemTime(NOW + 60 * 1000);
+    await launch(sales, "vm-2");
+
+    const days = await projectDays(t);
+    expect(days.get(support)).toMatchObject({
+      sandboxVcpuSeconds: 60,
+      sandboxSnapshotGb: 2,
+    });
+    expect(days.get(sales)).toMatchObject({ sandboxSnapshotGb: 2 });
+  });
+
   test("core's writes find their project by id, agent or workspace", async () => {
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();

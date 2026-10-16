@@ -348,7 +348,8 @@ export const upsert = internalMutation({
           args.accountId,
           sandboxLaunchUsage(args),
           now,
-          existing.projectId,
+          // The refreshed sandbox's project, which the patch below sets.
+          args.projectId ?? existing.projectId,
         );
       }
       const patch = {
