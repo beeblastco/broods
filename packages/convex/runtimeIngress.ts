@@ -817,7 +817,8 @@ export const renewOwner = internalMutation({
  * Settles every envelope whose work was applied to the current owner event.
  * An async run passes its polling rows as `asyncResult`; they are written in
  * the same transaction, and only by the settle that finishes the owner's own
- * envelope, so they can never disagree with it.
+ * envelope, so they can never disagree with it. `events` are the owner's
+ * history rows still unwritten, stored under the same fence first.
  */
 export const settle = internalMutation({
   args: {
@@ -833,10 +834,14 @@ export const settle = internalMutation({
         outcome: asyncAgentOutcomeValidator,
       }),
     ),
+    events: v.optional(conversationEventsValidator),
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const coordinator = await requireOwner(ctx, args);
+    if (args.events && args.events.length > 0) {
+      await insertOwnedEvents(ctx, coordinator, args.events);
+    }
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     if (args.asyncResult && settled.ownerFinished) {
       for (const eventId of args.asyncResult.eventIds) {
@@ -931,7 +936,8 @@ export const stopOwner = internalMutation({
 
 /**
  * Applies the oldest runnable group, or releases ownership when none remains.
- * With `settle`, first settles the owner's envelopes in the same transaction.
+ * With `settle`, first settles the owner's envelopes in the same transaction,
+ * after storing any `events` the owner still had to write.
  */
 export const takeNext = internalMutation({
   args: {
@@ -946,6 +952,7 @@ export const takeNext = internalMutation({
         error: v.optional(v.string()),
       }),
     ),
+    events: v.optional(conversationEventsValidator),
   },
   returns: v.union(appliedEnvelopeValidator, v.null()),
   handler: async (
@@ -954,6 +961,9 @@ export const takeNext = internalMutation({
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
     const coordinator = await requireOwner(ctx, { ...args, now: now });
+    if (args.events && args.events.length > 0) {
+      await insertOwnedEvents(ctx, coordinator, args.events);
+    }
     if (args.settle) {
       await settleAppliedEnvelopes(ctx, coordinator, {
         ...args,

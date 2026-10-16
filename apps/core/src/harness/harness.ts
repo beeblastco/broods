@@ -2119,6 +2119,8 @@ export async function runAgentLoop(
           "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
         );
       }
+      // No step boundary carries the turn's input on this path: store it now.
+      await session.flushPendingStoredEvents();
       await applyHarnessSteeringBeforeTurn(session, turnContext, agentConfig);
       const harnessType = agentConfig.harness!.type;
       const stored = await session.loadHarnessSession();
