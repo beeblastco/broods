@@ -584,21 +584,31 @@ function deploymentEnvEntries(state: InstanceState): Record<string, string> {
 
 // Maps host.docker.internal so Convex reaches core on Linux; Docker Desktop
 // resolves it on its own. The backend binds the host's port numbers, not the
-// image's fixed 3210/3211: Node actions call it back at CONVEX_CLOUD_ORIGIN
-// from inside the container.
+// default 3210/3211: Node actions call it back at --convex-origin from inside
+// the container.
 function ensureConvexContainer(state: InstanceState): void {
   const name = containerName(state.instanceId);
   const { convexApi, convexSite } = ports(state);
   const containerState = dockerContainerState(name);
-  // The configured bindings, which a stopped container keeps; `docker port`
-  // lists only a running one's.
-  if (
-    containerState &&
-    !docker(
-      ["inspect", "--format", "{{json .HostConfig.PortBindings}}", name],
-      { allowFailure: true },
-    ).includes(`"${convexApi}/tcp"`)
-  ) {
+  // The image and the configured bindings, which a stopped container keeps;
+  // `docker port` lists only a running one's.
+  const created = containerState
+    ? docker(
+        [
+          "inspect",
+          "--format",
+          "{{.Config.Image}} {{json .HostConfig.PortBindings}}",
+          name,
+        ],
+        { allowFailure: true },
+      )
+    : "";
+  if (containerState && !created.startsWith(`${CONVEX_IMAGE} `)) {
+    throw new Error(
+      `this stack runs an older Convex image, CI runs ${CONVEX_IMAGE}; run \`bun run local:up -- --fresh\` to recreate it`,
+    );
+  }
+  if (containerState && !created.includes(`"${convexApi}/tcp"`)) {
     throw new Error(
       "this stack predates Node action callbacks; run `bun run local:up -- --fresh` to recreate it",
     );
