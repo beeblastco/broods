@@ -46,6 +46,9 @@ type RuntimeFileCacheEntry = {
 };
 
 const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
+// How often the file list is re-read from core. Slow is fine: the focus and
+// visibility refreshes cover active use.
+const RUNTIME_FILES_POLL_MS = 15_000;
 const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
 export function WorkspaceFilesTab({
@@ -181,7 +184,10 @@ export function WorkspaceFilesTab({
         void refreshRuntimeFiles().catch(() => {});
       }
     };
-    const interval = window.setInterval(refreshWhenVisible, 5000);
+    const interval = window.setInterval(
+      refreshWhenVisible,
+      RUNTIME_FILES_POLL_MS,
+    );
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 

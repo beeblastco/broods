@@ -38,6 +38,7 @@ import { agentDebugPrompt } from "@/app/lib/agentDebugPrompt";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
+  memo,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -387,6 +388,25 @@ export interface SpanGroup {
   // The next task or cron in the same conversation. Once it exists the failed
   // task was picked up, so it links there instead of offering Continue.
   nextRun: ObservabilitySpanRow | null;
+  // What the task's list row draws, computed once per grouping.
+  row: TaskRow;
+}
+
+// The list row's primitives, so the memoized row skips a flush that left
+// them as they were.
+interface TaskRow {
+  status: SpanStatus;
+  tone: StatusTone;
+  taskDurationMs: number;
+  steps: number;
+  subagents: number;
+  cause: string | null;
+}
+
+interface TaskListRowProps extends TaskRow {
+  root: ObservabilitySpanRow;
+  isSelected: boolean;
+  onSelect: (root: ObservabilitySpanRow) => void;
 }
 
 // The `field:value` tokens the search box understands, in the placeholder's order.
@@ -641,10 +661,10 @@ export function TracingPanel({
   // focus effect is told it already ran, so it does not scan and scroll again,
   // and a held j/k writes the URL once it settles.
   const pickTask = useCallback(
-    (group: SpanGroup): void => {
-      setSelectedTaskKey(spanKey(group.root));
-      focusedRef.current = `${group.root.traceId}:${refocusNonce}`;
-      void setFocusTraceId(group.root.traceId, {
+    (root: ObservabilitySpanRow): void => {
+      setSelectedTaskKey(spanKey(root));
+      focusedRef.current = `${root.traceId}:${refocusNonce}`;
+      void setFocusTraceId(root.traceId, {
         limitUrlUpdates: debounce(200),
       });
     },
@@ -675,7 +695,7 @@ export function TracingPanel({
       event.preventDefault();
       // Stepping past the last listed task pages the next one in.
       if (nextIndex >= visibleCount) setVisibleCount(nextIndex + 1);
-      pickTask(next);
+      pickTask(next.root);
       requestAnimationFrame(() =>
         document
           .getElementById(`task-${next.root.traceId}`)
@@ -841,9 +861,10 @@ export function TracingPanel({
             {visibleGroups.map((group) => (
               <TaskListRow
                 key={spanKey(group.root)}
-                group={group}
+                root={group.root}
+                {...group.row}
                 isSelected={group === selectedGroup}
-                onSelect={() => pickTask(group)}
+                onSelect={pickTask}
               />
             ))}
             {groups.length === 0 && (
@@ -1101,7 +1122,7 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
 }
 
 /** The failed task's error: its latest run's, else the first span's that has one. */
-function taskError(group: SpanGroup): string | null {
+function taskError(group: Pick<SpanGroup, "status" | "spans">): string | null {
   if (group.status !== "error") return null;
   const failed = group.spans.filter((span) => span.error);
 
@@ -1112,7 +1133,9 @@ function taskError(group: SpanGroup): string | null {
 }
 
 /** The task list's failure cause: "rate limit", or the start of the error. */
-export function failureCause(group: SpanGroup): string | null {
+export function failureCause(
+  group: Pick<SpanGroup, "status" | "spans">,
+): string | null {
   const error = taskError(group);
   if (!error) return null;
   if (RATE_LIMIT.test(error)) return "rate limit";
@@ -1279,7 +1302,7 @@ function taskGroup(
     (run) => run.kind === "subtask" && isTaskRunning(run),
   );
 
-  return {
+  const group = {
     root: root,
     status: last.status === "ok" && subagentRunning ? "waiting" : last.status,
     live: live,
@@ -1292,6 +1315,20 @@ function taskGroup(
     windowSpan: Math.max(1, windowEnd - windowStart),
     taskDurationMs: Math.max(windowEnd - root.startTimeMs, 1),
     nextRun: null,
+  };
+
+  return { ...group, row: taskRow(group) };
+}
+
+/** The list row's primitives for a task. */
+function taskRow(group: Omit<SpanGroup, "row">): TaskRow {
+  return {
+    status: group.status,
+    tone: groupTone(group),
+    taskDurationMs: group.taskDurationMs,
+    steps: group.spans.filter((span) => span.kind === "model.step").length,
+    subagents: group.spans.filter((span) => span.kind === "subtask").length,
+    cause: failureCause(group),
   };
 }
 
@@ -1336,7 +1373,7 @@ function waitSpan(
 }
 
 /** A task's dot: a stale "running" reads as ended. */
-function groupTone(group: SpanGroup): StatusTone {
+function groupTone(group: Pick<SpanGroup, "status" | "live">): StatusTone {
   return group.status === "running" && !group.live
     ? "ended"
     : STATUS_TONE[group.status];
@@ -1990,28 +2027,27 @@ function TaskWaterfall({
 /**
  * One task in the left list: dot, request and duration, then start time,
  * channel, steps, subagents and the failure cause. The id is the `?trace=`
- * focus target.
+ * focus target. Memoized on the root span, which the stream keeps across
+ * flushes, and the group's row primitives.
  */
-function TaskListRow({
-  group,
+const TaskListRow = memo(function TaskListRow({
+  root,
+  status,
+  tone,
+  taskDurationMs,
+  steps,
+  subagents,
+  cause,
   isSelected,
   onSelect,
-}: {
-  group: SpanGroup;
-  isSelected: boolean;
-  onSelect: () => void;
-}): React.JSX.Element {
-  const { root, spans } = group;
-  const steps = spans.filter((span) => span.kind === "model.step").length;
-  const subagents = spans.filter((span) => span.kind === "subtask").length;
-  const cause = failureCause(group);
+}: TaskListRowProps): React.JSX.Element {
   const request = spanLabel(root);
 
   return (
     <button
       type="button"
       id={`task-${root.traceId}`}
-      onClick={onSelect}
+      onClick={() => onSelect(root)}
       aria-current={isSelected || undefined}
       className={cn(
         "block w-full cursor-pointer border-b border-border/40 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/20",
@@ -2019,12 +2055,12 @@ function TaskListRow({
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <StatusDot tone={groupTone(group)} label={group.status} />
+        <StatusDot tone={tone} label={status} />
         <span className="min-w-0 flex-1 truncate" title={request}>
           {request}
         </span>
         <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
-          {formatDuration(group.taskDurationMs)}
+          {formatDuration(taskDurationMs)}
         </span>
       </span>
       <span className="mt-0.5 block truncate pl-4 text-muted-foreground">
@@ -2036,7 +2072,7 @@ function TaskListRow({
       </span>
     </button>
   );
-}
+});
 
 /**
  * A span's row, its inline detail when selected, then its children (steps
