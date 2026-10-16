@@ -9,6 +9,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"
+      - ".github/actions/bun-install/**"
       - "scripts/sdk-tarball-smoke.sh"
       - ".github/workflows/publish-npm.yaml"
   # dev only, like ci.yaml: a branch push is already checked by its pull request.
@@ -22,6 +23,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/check-broods-sdk.yaml"
+      - ".github/actions/bun-install/**"
       - "scripts/sdk-tarball-smoke.sh"
       - ".github/workflows/publish-npm.yaml"
   workflow_dispatch:
@@ -45,18 +47,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
         with:
-          bun-version-file: .bun-version
+          args: --ignore-scripts --no-save
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
-
-      - name: Install dependencies
-        run: bun install --ignore-scripts --no-save
 
       - name: Typecheck SDK
         run: bun run --filter broods check

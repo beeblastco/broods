@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/docs/**"
       - ".github/workflows/deploy-docs.yaml"
+      - ".github/actions/bun-install/**"
   workflow_dispatch:
 
 concurrency:
@@ -36,21 +37,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Install dependencies
+        # Skip the postinstall (`sst install`): building the docs needs neither the
+        # SST providers nor project env vars.
+        uses: ./.github/actions/bun-install
         with:
-          bun-version-file: .bun-version
+          args: --ignore-scripts --no-save
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
-
-      - name: Install dependencies
-        # Skip the postinstall (`sst install`): building the docs needs neither the
-        # SST providers nor project env vars.
-        run: bun install --ignore-scripts --no-save
 
       - name: Build Docusaurus
         run: bun run docs:build

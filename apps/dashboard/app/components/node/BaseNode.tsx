@@ -60,8 +60,15 @@ const STATE_TEXT_TONE: Record<WorkspaceSandboxState["kind"], string> = {
   readonly: "text-warning/90",
 };
 
-const zoomSelector = (state: { transform: [number, number, number] }): number =>
-  state.transform[2];
+// The header's counter-scale from the viewport zoom, clamped and rounded to
+// two decimals in the selector so a node renders only when its visible size
+// changes, not on every zoom frame.
+const scaleSelector = (state: {
+  transform: [number, number, number];
+}): number =>
+  Math.round(
+    Math.min(Math.max(1 / Math.sqrt(state.transform[2]), 0.9), 1.2) * 100,
+  ) / 100;
 
 export function BaseNode({
   id,
@@ -88,8 +95,7 @@ export function BaseNode({
   /** Render left/right handles for mount connections (workspace ↔ sandbox). */
   showSideHandles?: boolean;
 }): React.JSX.Element {
-  const zoom = useStore(zoomSelector);
-  const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
+  const scale = useStore(scaleSelector);
 
   const sideHandlesConnectable = useSideHandlesConnectable(nodeType);
 
