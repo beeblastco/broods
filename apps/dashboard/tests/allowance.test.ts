@@ -190,3 +190,17 @@ test("a project missing from the org's list shows nothing used, not the org's re
   expect(own.totals).toEqual(ZERO);
   expect(others.totals.egressGb).toBe(4);
 });
+
+test("before the month's first snapshot both parts keep storage unknown", () => {
+  const usage = {
+    ...budget({ storageGb: null, egressGb: 1 }),
+    projects: [project("a", { storageGb: null, egressGb: 1 })],
+  };
+
+  const [own, others] = projectSlices(usage, "a");
+  const [missing] = projectSlices(usage, "new");
+
+  expect(own.totals.storageGb).toBeNull();
+  expect(others.totals.storageGb).toBeNull();
+  expect(missing.totals.storageGb).toBeNull();
+});

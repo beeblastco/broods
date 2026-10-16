@@ -106,12 +106,17 @@ export function projectSlices(
   budget: BudgetUsage,
   projectId: string,
 ): [UsageSlice, UsageSlice] {
+  // Nothing used, with storage unknown wherever the org's is.
+  const nothing: UsageAmounts = {
+    ...EMPTY_AMOUNTS,
+    storageGb: budget.totals.storageGb === null ? null : 0,
+  };
   const mine = budget.projects?.find(
     (project) => project.projectId === projectId,
   ) ?? {
     projectId: projectId as Id<"projects">,
     name: "This project",
-    totals: EMPTY_AMOUNTS,
+    totals: nothing,
     days: [],
   };
   const [own, ...rest] = usageSlices(budget, [mine]);
@@ -123,7 +128,7 @@ export function projectSlices(
       projectId: null,
       name: "Rest of the organization",
       color: OTHER_USAGE_COLOR,
-      totals: others?.totals ?? EMPTY_AMOUNTS,
+      totals: others?.totals ?? nothing,
       days: others?.days ?? [],
     },
   ];
