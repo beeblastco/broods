@@ -558,9 +558,7 @@ export function TracingPanel({
     const byTrace = new Map<string, SpanGroup>();
     for (const group of allGroups) {
       for (const run of [group, ...group.subagents]) {
-        for (const span of run.spans) {
-          if (isRootSpanKind(span.kind)) byTrace.set(span.traceId, run);
-        }
+        for (const traceId of runTraceIds(run)) byTrace.set(traceId, run);
       }
     }
 
@@ -782,20 +780,16 @@ export function TracingPanel({
         Math.max(0, index + (event.key === "j" ? 1 : -1)),
       );
       event.preventDefault();
-      // Stepping past the last listed request pages the next one in.
-      if (nextIndex >= listRows.length) {
-        setVisibleCount(visibleCount + 1);
-        const next = groups[visibleCount];
-        if (next) pickTask(next);
-
-        return;
-      }
-      const next = listRows[nextIndex];
+      // Stepping past the last listed request pages the next one in; its
+      // row exists on the next frame, after the list re-rendered.
+      const paged = nextIndex >= listRows.length;
+      if (paged) setVisibleCount(visibleCount + 1);
+      const next = paged ? groups[visibleCount] : listRows[nextIndex]?.group;
       if (!next) return;
-      pickTask(next.group);
+      pickTask(next);
       requestAnimationFrame(() =>
         document
-          .getElementById(`task-${next.group.root.traceId}`)
+          .getElementById(`task-${next.root.traceId}`)
           ?.scrollIntoView({ block: "nearest" }),
       );
     }
@@ -1051,9 +1045,7 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
 
   const taskByTrace = new Map(
     tasks.flatMap((task) =>
-      task.spans
-        .filter((span) => isRootSpanKind(span.kind))
-        .map((run): [string, SpanGroup] => [run.traceId, task]),
+      runTraceIds(task).map((traceId): [string, SpanGroup] => [traceId, task]),
     ),
   );
   const subagentByTrace = new Map(
@@ -1354,7 +1346,11 @@ function numericAttribute(
   return typeof value === "number" ? value : undefined;
 }
 
-/** The request a subagent lists under: the top of its parent chain, if it arrived. */
+/**
+ * The run a subagent lists under: the request at the top of its parent
+ * chain, or the subagent at the top when the request never arrived. That
+ * top subagent itself lists on its own, as does any subagent in a cycle.
+ */
 function ownerOf(
   subagent: SpanGroup,
   taskByTrace: Map<string, SpanGroup>,
@@ -1367,7 +1363,7 @@ function ownerOf(
     const task = taskByTrace.get(current.parentTraceId);
     if (task) return task;
     const parent = subagentByTrace.get(current.parentTraceId);
-    if (!parent) return undefined;
+    if (!parent) return current === subagent ? undefined : current;
     current = parent;
   }
 
@@ -1503,6 +1499,20 @@ function spanTokens(span: ObservabilitySpanRow): number | undefined {
     numericAttribute(span, "usage.total_tokens") ??
     numericAttribute(span, "model.total_tokens")
   );
+}
+
+/**
+ * The traces a run itself ran: its root and its resumed passes, never the
+ * subagents it delegated to, which are runs of their own.
+ */
+function runTraceIds(group: SpanGroup): string[] {
+  return group.spans
+    .filter(
+      (span) =>
+        span === group.root ||
+        (isRootSpanKind(span.kind) && span.kind !== "subtask"),
+    )
+    .map((span) => span.traceId);
 }
 
 /** Keeps a click inside a line's own control from selecting the row. */

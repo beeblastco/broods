@@ -128,6 +128,23 @@ describe("groupSpans", () => {
     ]);
   });
 
+  test("keeps a subagent of an orphan under the orphan, not the other way round", () => {
+    const orphan = root("orphan", 1_000, 5_000, "ok", {
+      "parent.trace_id": "trace-missing",
+    });
+    orphan.kind = "subtask";
+    const child = root("child", 2_000, 3_000, "ok", {
+      "parent.trace_id": "trace-orphan",
+    });
+    child.kind = "subtask";
+
+    const [group, ...rest] = groupSpans([child, orphan]);
+
+    expect(rest).toHaveLength(0);
+    expect(group.root.spanId).toBe("orphan");
+    expect(group.subagents.map((s) => s.root.spanId)).toEqual(["child"]);
+  });
+
   test("lists a subagent whose parent never arrived on its own", () => {
     const orphan = root("orphan", 2_000, 5_000, "ok", {
       "parent.trace_id": "trace-missing",
