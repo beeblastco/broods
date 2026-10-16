@@ -957,9 +957,10 @@ export class Session {
   /**
    * Runs one fenced write with the rows waiting for it in front of `events`.
    * Rows beyond what one mutation takes are appended first, in cursor order;
-   * `write` gets the last batch to carry, and every row for its bookkeeping. A
-   * write that throws keeps the rows for the next one, keyed by cursor so a
-   * commit whose reply was lost stores nothing twice.
+   * `write` gets the last batch to carry, and every row for its bookkeeping.
+   * Every row is keyed by its cursor from the first attempt, so a write that
+   * throws keeps the rows for the next one and a commit whose reply was lost
+   * stores nothing twice.
    */
   private async writeFenced<T>(
     events: AppendedConversationEvent[],
@@ -968,7 +969,12 @@ export class Session {
       rows: AppendedConversationEvent[],
     ) => Promise<T>,
   ): Promise<T> {
-    const rows = [...this.pendingStoredEvents, ...events];
+    const rows = [...this.pendingStoredEvents, ...events].map(
+      (row): AppendedConversationEvent => ({
+        ...row,
+        dedupeKey: row.dedupeKey ?? row.cursor,
+      }),
+    );
     this.pendingStoredEvents = [];
     try {
       const batches = storedEventBatches(rows);
@@ -977,13 +983,7 @@ export class Session {
 
       return await write(inline, rows);
     } catch (err) {
-      this.pendingStoredEvents = [
-        ...rows.map((row): AppendedConversationEvent => ({
-          ...row,
-          dedupeKey: row.dedupeKey ?? row.cursor,
-        })),
-        ...this.pendingStoredEvents,
-      ];
+      this.pendingStoredEvents = [...rows, ...this.pendingStoredEvents];
       throw err;
     }
   }

@@ -248,14 +248,14 @@ describe("settling with takeNext", (): void => {
       { event: { message: { role: "user", content: "hello" } } },
     ]);
     const rows = takeNext.mock.calls[0]?.[2] ?? [];
-    expect(rows[0]?.dedupeKey).toBeUndefined();
+    expect(rows[0]?.dedupeKey).toBe(rows[0]?.cursor);
     expect(settle).toHaveBeenCalledWith({
       conversationKey: candidate().conversationKey,
       ownerEventId: "event-1",
       ownerGeneration: 1,
       status: "failed",
       error: "no step ran",
-      events: [{ ...rows[0], dedupeKey: rows[0]?.cursor }],
+      events: rows,
     });
   });
 });
@@ -334,18 +334,17 @@ describe("step boundary", (): void => {
       { cursor: string; dedupeKey?: string }[],
       { cursor: string; dedupeKey?: string }[],
     ];
+    // Keyed from the first attempt: a commit whose reply was lost is skipped.
     expect(first.map((row): string | undefined => row.dedupeKey)).toEqual([
-      undefined,
+      first[0]!.cursor,
     ]);
-    expect(
-      second.map((row): [string, string | undefined] => [
-        row.cursor,
-        row.dedupeKey,
-      ]),
-    ).toEqual([
-      [first[0]!.cursor, first[0]!.cursor],
-      [second[1]!.cursor, undefined],
+    expect(second.map((row): string => row.cursor)).toEqual([
+      first[0]!.cursor,
+      second[1]!.cursor,
     ]);
+    expect(second.map((row): string | undefined => row.dedupeKey)).toEqual(
+      second.map((row): string => row.cursor),
+    );
   });
 
   it("stores the step, renews and claims steers in one fenced mutation that proves ownership", async (): Promise<void> => {
