@@ -3,6 +3,7 @@ import {
   type BudgetUsage,
   dailySeries,
   OTHER_USAGE_COLOR,
+  projectSlices,
   type UsageAmounts,
   usageSlices,
 } from "../app/lib/allowance";
@@ -146,4 +147,46 @@ test("charts a storage day with no snapshot as unknown, not zero", () => {
   );
 
   expect(series.rows.slice(0, 2)).toEqual([[null], [4]]);
+});
+
+test("one project's view folds every other project into one grey part", () => {
+  const usage = {
+    ...budget({ egressGb: 10 }),
+    projects: [project("a", { egressGb: 3 }), project("b", { egressGb: 5 })],
+  };
+
+  const [own, others] = projectSlices(usage, "a");
+
+  expect(own).toMatchObject({ projectId: "a", name: "a" });
+  expect(own.totals.egressGb).toBe(3);
+  expect(others.projectId).toBeNull();
+  expect(others.name).toBe("Other projects");
+  expect(others.color).toBe(OTHER_USAGE_COLOR);
+  expect(others.totals.egressGb).toBe(7);
+});
+
+test("a project alone in its org has an empty other part with its own key", () => {
+  const usage = {
+    ...budget({ egressGb: 3 }),
+    projects: [project("a", { egressGb: 3 })],
+  };
+
+  const [own, others] = projectSlices(usage, "a");
+
+  expect(own.projectId).toBe("a");
+  expect(others.projectId).toBeNull();
+  expect(others.totals).toEqual(ZERO);
+});
+
+test("a project missing from the org's list shows nothing used, not the org's rest", () => {
+  const usage = {
+    ...budget({ egressGb: 4 }),
+    projects: [project("b", { egressGb: 1 })],
+  };
+
+  const [own, others] = projectSlices(usage, "new");
+
+  expect(own.projectId).toBe("new");
+  expect(own.totals).toEqual(ZERO);
+  expect(others.totals.egressGb).toBe(4);
 });

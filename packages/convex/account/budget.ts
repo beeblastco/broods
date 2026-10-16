@@ -28,7 +28,6 @@ import {
   type BudgetStatus,
   type BudgetUsage,
 } from "../model/usageMeter";
-import { resourceStageScope } from "../model/projectScope";
 import { getActiveAccountForUser } from "../org/orgs";
 import { planValidator, usageQuantityFields } from "../schema";
 
@@ -317,28 +316,37 @@ export const pruneUsageWrites = internalMutation({
 });
 
 // The account's project a usage write names, by the first id it carries.
+// Only the project matters here, so an agent deployed to several stages of
+// one project still counts for it.
 async function usageProject(
   ctx: QueryCtx,
   account: Doc<"accounts">,
   source: Infer<typeof usageSourceValidator>,
 ): Promise<Id<"projects"> | undefined> {
+  let projectId: Id<"projects"> | null | undefined;
   if (source.projectId !== undefined) {
-    const projectId = ctx.db.normalizeId("projects", source.projectId);
-    const project = projectId ? await ctx.db.get(projectId) : null;
-
-    return project?.orgId === account.orgId ? project._id : undefined;
-  }
-  const scope =
-    source.agentId !== undefined
-      ? await resourceStageScope(ctx, account._id, "agents", source.agentId)
-      : source.workspaceId !== undefined
-        ? await resourceStageScope(
-            ctx,
-            account._id,
-            "workspaces",
-            source.workspaceId,
-          )
+    projectId = ctx.db.normalizeId("projects", source.projectId);
+  } else if (source.agentId !== undefined) {
+    const agentId = ctx.db.normalizeId("agents", source.agentId);
+    const agent = agentId ? await ctx.db.get(agentId) : null;
+    const config =
+      agent?.accountId === account._id
+        ? await ctx.db
+            .query("agentConfigs")
+            .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+            .first()
         : null;
+    projectId = config?.projectId;
+  } else if (source.workspaceId !== undefined) {
+    const workspaceId = ctx.db.normalizeId(
+      "workspaceConfigs",
+      source.workspaceId,
+    );
+    const workspace = workspaceId ? await ctx.db.get(workspaceId) : null;
+    projectId =
+      workspace?.accountId === account._id ? workspace.projectId : undefined;
+  }
+  const project = projectId ? await ctx.db.get(projectId) : null;
 
-  return scope?.projectId;
+  return project?.orgId === account.orgId ? project._id : undefined;
 }

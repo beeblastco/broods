@@ -229,7 +229,8 @@ export async function addProjectUsage(
  * Each of the org's projects' part of `usage`'s month, as amounts and days.
  * Storage is what each project's workspaces held at the account's latest
  * snapshot in the month, so the projects add up to the snapshot the allowance
- * shows. What no project used (account-wide resources, deleted projects,
+ * shows; before the month's first snapshot it is unknown (null) while the
+ * allowance still shows last month's size. What no project used (account-wide resources, deleted projects,
  * usage metered before projects were) is the allowance's total less these.
  */
 export async function projectUsage(

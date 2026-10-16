@@ -1,4 +1,5 @@
 import type { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { SERIES_COLORS } from "./usageChart";
 
@@ -93,6 +94,38 @@ export function usageSlices(
   );
 
   return hasOther ? [...slices, other] : slices;
+}
+
+/**
+ * The org's month from one project: the project, colored as the foreground,
+ * then every other project and what no project used as one grey part. A
+ * project the org's list lacks (just created, or another org's) used nothing.
+ */
+export function projectSlices(
+  budget: BudgetUsage,
+  projectId: string,
+): [UsageSlice, UsageSlice] {
+  const mine = budget.projects?.find(
+    (project) => project.projectId === projectId,
+  ) ?? {
+    projectId: projectId as Id<"projects">,
+    name: "This project",
+    totals: EMPTY_AMOUNTS,
+    days: [],
+  };
+  const [own, ...rest] = usageSlices(budget, [mine]);
+  const others = rest.at(0);
+
+  return [
+    { ...own, color: "var(--color-foreground)" },
+    {
+      projectId: null,
+      name: "Other projects",
+      color: OTHER_USAGE_COLOR,
+      totals: others?.totals ?? EMPTY_AMOUNTS,
+      days: others?.days ?? [],
+    },
+  ];
 }
 
 /** No usage of anything. */

@@ -319,11 +319,6 @@ interface RoleSessionStore {
   resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;
 }
 
-/**
- * The account's monthly compute budget and the usage only core sees:
- * hosted-MCP invokes, media egress and attachment ingress. Sandbox time and
- * storage are metered in Convex itself.
- */
 /** The project a usage write came from, or the agent or workspace that names it. */
 export interface UsageSource {
   projectId?: string;
@@ -331,6 +326,11 @@ export interface UsageSource {
   workspaceId?: string;
 }
 
+/**
+ * The account's monthly compute budget and the usage only core sees:
+ * hosted-MCP invokes, media egress and attachment ingress. Sandbox time and
+ * storage are metered in Convex itself.
+ */
 interface BudgetStore {
   /** Null for an unknown account. */
   get(accountId: string): Promise<BudgetStatus | null>;

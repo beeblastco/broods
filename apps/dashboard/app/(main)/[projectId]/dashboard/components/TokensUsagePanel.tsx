@@ -354,7 +354,6 @@ export function TokensUsagePanel({
   );
 }
 
-/** Swatch and label per series, under each chart. */
 /** Model filter as one checkbox menu, so the toolbar never wraps however many models ran. */
 function ModelMenu({
   modelColors,

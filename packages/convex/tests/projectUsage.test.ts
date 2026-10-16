@@ -106,6 +106,38 @@ describe("usage lands on its project's day", () => {
     });
   });
 
+  test("an agent deployed to several stages of its project still counts for it", async () => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const org = await seedOrg(t, "beeblast", ["Support bot"]);
+    const [support] = org.projects;
+    const { agentId } = await seedAgentAndWorkspace(t, org, support);
+    await t.run(async (ctx) => {
+      const prodId = await ctx.db.insert("stages", {
+        authId: "auth",
+        projectId: support,
+        name: "Production",
+        kind: "production",
+        isDefault: false,
+        updatedAt: NOW,
+      });
+      await ctx.db.insert("agentConfigs", {
+        authId: "auth",
+        projectId: support,
+        stageId: prodId,
+        agentId: agentId,
+        name: "Agent",
+        updatedAt: NOW,
+      });
+    });
+
+    await record(t, org, { ingressGb: 2 }, { agentId: agentId });
+
+    expect((await projectDays(t)).get(support)).toMatchObject({
+      ingressGb: 2,
+    });
+  });
+
   test("a source outside the account, or unknown, counts for the account alone", async () => {
     vi.useFakeTimers({ now: NOW });
     const t = meterTest();

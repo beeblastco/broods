@@ -24,11 +24,10 @@ import {
   type AmountUnit,
   type BudgetUsage,
   dailySeries,
-  EMPTY_AMOUNTS,
   formatAmount,
   formatPercent,
   monthLabel,
-  OTHER_USAGE_COLOR,
+  projectSlices,
   type UsageAmounts,
   type UsageSlice,
   usageSlices,
@@ -137,8 +136,8 @@ export function AllowanceUsage({
   }
   const budget = usage === undefined ? held : usage;
 
-  // The current month leads `months` and is Billing's own query: leave
-  // `month` unset to share it.
+  // The current month leads `months`: leave `month` unset for it, so the
+  // query keeps one set of args while the picker returns to it.
   function handleMonthChange(value: string): void {
     setMonth(value === budget?.months[0] ? undefined : value);
   }
@@ -250,22 +249,11 @@ function ScopedAllowance({
 }): React.JSX.Element {
   const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
   const projectCount = budget.projects?.length ?? 0;
-  const slices = useMemo(() => {
-    if (scope === "all") return usageSlices(budget);
-    // This project, then everything else as one part.
-    const [own, rest] = usageSlices(
-      budget,
-      (budget.projects ?? []).filter(
-        (project) => project.projectId === projectId,
-      ),
-    );
-    const others = rest ?? { ...own, totals: EMPTY_AMOUNTS, days: [] };
-
-    return [
-      { ...own, color: "var(--color-foreground)" },
-      { ...others, name: "Other projects", color: OTHER_USAGE_COLOR },
-    ];
-  }, [budget, projectId, scope]);
+  const slices = useMemo(
+    () =>
+      scope === "all" ? usageSlices(budget) : projectSlices(budget, projectId),
+    [budget, projectId, scope],
+  );
   const own = scope === "project" ? slices[0] : null;
   const legend = useMemo(
     () =>
