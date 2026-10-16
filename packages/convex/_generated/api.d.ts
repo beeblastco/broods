@@ -231,6 +231,33 @@ export declare const api: {
           usedPercent: number | null;
         } | null
       >;
+      projectsForActiveOrg: FunctionReference<
+        "query",
+        "public",
+        { month?: string },
+        {
+          month: string;
+          projects: Array<{
+            days: Array<{
+              day: string;
+              egressGb: number;
+              hostedMcpHours: number;
+              ingressGb: number;
+              sandboxHours: number;
+              storageGb: number | null;
+            }>;
+            name: string;
+            projectId: Id<"projects">;
+            totals: {
+              egressGb: number;
+              hostedMcpHours: number;
+              ingressGb: number;
+              sandboxHours: number;
+              storageGb: number | null;
+            };
+          }>;
+        } | null
+      >;
     };
     connectionsPublic: {
       disconnect: FunctionReference<
@@ -2029,7 +2056,10 @@ export declare const internal: {
         {
           continueCursor: string;
           isDone: boolean;
-          page: Array<Id<"workspaceConfigs">>;
+          page: Array<{
+            projectId?: Id<"projects">;
+            workspaceId: Id<"workspaceConfigs">;
+          }>;
         }
       >;
       pruneUsageWrites: FunctionReference<"mutation", "internal", {}, null>;
@@ -2039,6 +2069,15 @@ export declare const internal: {
         {
           accountId: string;
           at?: number;
+          projectStorage?: Array<{
+            projectId: Id<"projects">;
+            storageGbMonths: number;
+          }>;
+          source?: {
+            agentId?: string;
+            projectId?: string;
+            workspaceId?: string;
+          };
           usage: {
             egressGb?: number;
             hostedMcpGbSeconds?: number;

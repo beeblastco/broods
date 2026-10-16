@@ -40,7 +40,7 @@ const ACCOUNT = "acct_1";
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const SECRET = "media-ticket-secret";
 
-let meterWrites: { accountId: string; usage: unknown }[] = [];
+let meterWrites: { accountId: string; usage: unknown; source?: unknown }[] = [];
 
 beforeEach(() => {
   meterWrites = [];
@@ -78,6 +78,14 @@ describe("handleMediaRequest", () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(
       new Uint8Array([1, 2, 3]),
     );
+    // Egress from a workspace is billed to that workspace's project.
+    expect(meterWrites).toEqual([
+      {
+        accountId: ACCOUNT,
+        usage: { egressGb: 3 / 1e9 },
+        source: { workspaceId: "ws_a" },
+      },
+    ]);
   });
 
   it("answers a HEAD without reading the body", async (): Promise<void> => {
@@ -219,8 +227,12 @@ function mediaRequest(token: string): CoreRequest {
 
 function meterRecorder(): Pick<Storage["budgets"], "record"> {
   return {
-    record: async function (accountId, usage): Promise<void> {
-      meterWrites.push({ accountId: accountId, usage: usage });
+    record: async function (accountId, usage, source): Promise<void> {
+      meterWrites.push({
+        accountId: accountId,
+        usage: usage,
+        ...(source ? { source: source } : {}),
+      });
     },
   };
 }

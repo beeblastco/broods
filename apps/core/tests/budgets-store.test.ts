@@ -46,4 +46,33 @@ describe("budgets.record", () => {
       (writes[1] as { writeId: string }).writeId,
     );
   });
+
+  it("names the usage's source when the caller knows it", async () => {
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_DEPLOY_KEY = "dev:test|key";
+    const writes: unknown[] = [];
+    const mutation = spyOn(
+      ConvexHttpClient.prototype,
+      "mutation",
+    ).mockImplementation(async (_ref, ...args) => {
+      writes.push(args[0]);
+
+      return null;
+    });
+
+    try {
+      await budgets.record("acct_1", { ingressGb: 1 }, { agentId: "agent_1" });
+    } finally {
+      mutation.mockRestore();
+    }
+
+    expect(writes).toEqual([
+      {
+        accountId: "acct_1",
+        usage: { ingressGb: 1 },
+        writeId: expect.any(String),
+        source: { agentId: "agent_1" },
+      },
+    ]);
+  });
 });

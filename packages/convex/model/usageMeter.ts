@@ -101,6 +101,15 @@ export interface BudgetUsage {
   days: Array<UsageAmounts & { day: string }>;
 }
 
+/** One project's share of an account's month, in the allowance's units. */
+export interface ProjectUsage {
+  projectId: Id<"projects">;
+  name: string;
+  totals: UsageAmounts;
+  /** Days the project used something or the account's snapshot ran, oldest first. */
+  days: Array<UsageAmounts & { day: string }>;
+}
+
 /** Usage in the units the billing tab shows. */
 export interface UsageAmounts {
   /** Hours at the default 1 vCPU / 2 GB size, resumes and suspended snapshots included. */
@@ -122,22 +131,19 @@ export interface SandboxAccrual {
   meteredUntil: number;
 }
 
-/** Add usage to the account's meter for the month and the day `now` falls in. */
+/**
+ * Add usage to the account's meter for the month and the day `now` falls in,
+ * and to `projectId`'s day when the usage came from one project.
+ */
 export async function addUsage(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   usage: Partial<UsageQuantities>,
   now: number,
+  projectId?: Id<"projects">,
 ): Promise<void> {
-  const hasUsage = Object.values(usage).some((value) => value > 0);
-  if (!hasUsage && usage.storageGbMonths === undefined) return;
-  // A storage snapshot also sets the stored size, zero-byte ones included, so
-  // an empty account reads 0 GB for the month and the day. Days with no
-  // snapshot and no usage keep no row and read as unknown.
-  const snapshot =
-    usage.storageGbMonths === undefined
-      ? {}
-      : { storageGb: usage.storageGbMonths * DAYS_PER_MONTH };
+  if (!hasUsage(usage)) return;
+  const snapshot = snapshotFields(usage);
   const month = meterMonth(now);
   const meter = await readMeter(ctx, accountId, month);
   if (meter) {
@@ -177,6 +183,119 @@ export async function addUsage(
       updatedAt: now,
     });
   }
+  if (projectId) await addProjectUsage(ctx, accountId, projectId, usage, now);
+}
+
+/**
+ * Add usage to one project's day only, for the storage snapshot's split of a
+ * size the account's meter already took whole.
+ */
+export async function addProjectUsage(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  projectId: Id<"projects">,
+  usage: Partial<UsageQuantities>,
+  now: number,
+): Promise<void> {
+  if (!hasUsage(usage)) return;
+  const day = meterDay(now);
+  const row = await ctx.db
+    .query("usageProjectDays")
+    .withIndex("by_accountId_and_day_and_projectId", (q) =>
+      q.eq("accountId", accountId).eq("day", day).eq("projectId", projectId),
+    )
+    .unique();
+  if (row) {
+    await ctx.db.patch(row._id, {
+      ...withUsage(row, usage),
+      ...snapshotFields(usage),
+      updatedAt: now,
+    });
+  } else {
+    await ctx.db.insert("usageProjectDays", {
+      accountId: accountId,
+      projectId: projectId,
+      day: day,
+      ...withUsage(null, usage),
+      ...snapshotFields(usage),
+      updatedAt: now,
+    });
+  }
+}
+
+/**
+ * Each of the org's projects' usage for `month`, as amounts and days. Storage
+ * is what each project's workspaces held at the account's latest snapshot in
+ * the month, so the projects add up to the snapshot the allowance shows. What
+ * no project used (account-wide resources, deleted projects, usage metered
+ * before projects were) is the allowance's total less these.
+ */
+export async function projectUsage(
+  ctx: QueryCtx,
+  account: Doc<"accounts">,
+  month: string,
+): Promise<ProjectUsage[]> {
+  const orgId = ctx.db.normalizeId("orgs", account.orgId);
+  if (!orgId) return [];
+  const projects = await ctx.db
+    .query("projects")
+    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
+    .collect();
+  const range = { from: `${month}-01`, to: `${month}-31` };
+  const rows = await ctx.db
+    .query("usageProjectDays")
+    .withIndex("by_accountId_and_day_and_projectId", (q) =>
+      q
+        .eq("accountId", account._id)
+        .gte("day", range.from)
+        .lte("day", range.to),
+    )
+    .collect();
+  // Days the account's snapshot ran: a project with no row on one held 0 GB.
+  const snapshotDays = (
+    await ctx.db
+      .query("usageDays")
+      .withIndex("by_accountId_and_day", (q) =>
+        q
+          .eq("accountId", account._id)
+          .gte("day", range.from)
+          .lte("day", range.to),
+      )
+      .collect()
+  )
+    .filter((row) => row.storageGb !== undefined)
+    .map((row) => row.day);
+  const lastSnapshot = snapshotDays.at(-1) ?? null;
+  const byProject = new Map<Id<"projects">, Doc<"usageProjectDays">[]>();
+  for (const row of rows) {
+    const list = byProject.get(row.projectId);
+    if (list) list.push(row);
+    else byProject.set(row.projectId, [row]);
+  }
+
+  return projects.map((project): ProjectUsage => {
+    const own = byProject.get(project._id) ?? [];
+    let usage = pickUsage(null);
+    for (const row of own) usage = withUsage(row, usage);
+    const byDay = new Map(own.map((row) => [row.day, row]));
+    const storedOn = (day: string | null): number | null =>
+      day === null
+        ? null
+        : (byDay.get(day)?.storageGb ??
+          (snapshotDays.includes(day) ? 0 : null));
+    const days = [...new Set([...byDay.keys(), ...snapshotDays])].sort();
+
+    return {
+      projectId: project._id,
+      name: project.name,
+      totals: toAmounts(usage, storedOn(lastSnapshot)),
+      days: days.map((day) => {
+        const row = byDay.get(day) ?? null;
+
+        return { day: day, ...toAmounts(pickUsage(row), storedOn(day)) };
+      }),
+    };
+  });
 }
 
 /** The account's plan, meter cost and limits for the month `now` falls in. */
@@ -482,9 +601,9 @@ function costShares(
   };
 }
 
-function pickUsage(
-  row: Doc<"usageMeters"> | Doc<"usageDays"> | null,
-): UsageQuantities {
+type MeterRow = Doc<"usageMeters"> | Doc<"usageDays"> | Doc<"usageProjectDays">;
+
+function pickUsage(row: MeterRow | null): UsageQuantities {
   if (!row) return { ...EMPTY_USAGE };
 
   return {
@@ -515,6 +634,26 @@ function toAmounts(
   };
 }
 
+// Whether there is anything to write: some usage, or a storage snapshot,
+// which counts even at zero bytes.
+function hasUsage(usage: Partial<UsageQuantities>): boolean {
+  return (
+    usage.storageGbMonths !== undefined ||
+    Object.values(usage).some((value) => value > 0)
+  );
+}
+
+// A storage snapshot also sets the stored size, zero-byte ones included, so
+// an empty account reads 0 GB for the month and the day. Days with no
+// snapshot and no usage keep no row and read as unknown.
+function snapshotFields(usage: Partial<UsageQuantities>): {
+  storageGb?: number;
+} {
+  return usage.storageGbMonths === undefined
+    ? {}
+    : { storageGb: usage.storageGbMonths * DAYS_PER_MONTH };
+}
+
 // A share of `base` as a percentage with one decimal; 0 when there is no base.
 function toPercent(part: number, base: number): number {
   return base > 0 ? Math.round((part / base) * 1000) / 10 : 0;
@@ -522,7 +661,7 @@ function toPercent(part: number, base: number): number {
 
 // The row's quantities with `usage` added.
 function withUsage(
-  row: Doc<"usageMeters"> | Doc<"usageDays"> | null,
+  row: MeterRow | null,
   usage: Partial<UsageQuantities>,
 ): UsageQuantities {
   const totals = pickUsage(row);

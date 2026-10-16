@@ -1403,6 +1403,7 @@ export async function ingestChannelAttachments(
   );
   const parts = await ingestInboundAttachments(attachments, {
     accountId: context.accountId,
+    agentId: context.agentId,
     channelName: context.channelName,
     eventId: context.eventId,
     agentConfig: context.agentConfig,

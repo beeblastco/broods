@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { HelpMark } from "@/app/components/HelpMark";
+import { SegmentedControl } from "@/app/components/SegmentedControl";
 import { Separator } from "@/app/components/ui/separator";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import {
@@ -26,14 +27,33 @@ import {
   formatAmount,
   formatPercent,
   monthLabel,
+  OTHER_USAGE_COLOR,
+  type ProjectsUsage,
+  type UsageAmounts,
+  type UsageSlice,
+  usageSlices,
 } from "@/app/lib/allowance";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
+import Link from "next/link";
+import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
 import { UsageChart } from "./UsageChart";
 
 const DAY_SECONDS = 24 * 60 * 60;
+
+export type AllowanceScope = "project" | "all";
+
+const SCOPES: Array<{ id: AllowanceScope; label: string }> = [
+  { id: "project", label: "This project" },
+  { id: "all", label: "All projects" },
+];
+
+// The scope in the URL, so a link opens the same view.
+const SCOPE_PARAM = parseAsStringLiteral(SCOPES.map((scope) => scope.id))
+  .withDefault("project")
+  .withOptions({ clearOnDefault: true });
 
 // One row per resource. `share` names the cap it counts toward; ingress is
 // free, so it has none. `help` says what the amount is counted from, where
@@ -61,7 +81,7 @@ const ROWS: AllowanceRow[] = [
     unit: "gb",
     share: "storageGb",
     color: "var(--color-usage-storage)",
-    help: "What the latest daily snapshot found stored in your workspaces, chat attachments, skills and bundles. A size, not a monthly total.",
+    help: "What the latest daily snapshot found stored in your workspaces, chat attachments, skills and bundles. A size, not a monthly total. A project counts its own workspaces; the rest is the organization's.",
   },
   {
     key: "egressGb",
@@ -80,8 +100,11 @@ const ROWS: AllowanceRow[] = [
   },
 ];
 
+const OTHER_USAGE_HELP =
+  "Usage no single project made: account-wide sandboxes and workspaces, chat attachments, skills and bundles, deleted projects, and anything metered before usage was split by project.";
+
 interface AllowanceRow {
-  key: keyof BudgetUsage["totals"];
+  key: keyof UsageAmounts;
   label: string;
   unit: AmountUnit;
   share: keyof BudgetUsage["shares"] | null;
@@ -90,17 +113,36 @@ interface AllowanceRow {
 }
 
 /**
- * The Usage tab's Allowance: the org's month per resource against its cap,
- * with a month picker. Clicking a row charts that resource per day under the
- * table. Holds the last month while another loads, so the table and chart
- * ease to it instead of dropping to a skeleton first.
+ * The Usage tab's Allowance: the org's month per resource against its caps,
+ * with a month picker, seen from this project (its part of each cap) or from
+ * all projects (each project's part, and a table of them). Clicking a row
+ * charts that resource per day under the table. Holds the last month while
+ * another loads, so the table and chart ease to it instead of dropping to a
+ * skeleton first.
  */
-export function AllowanceUsage(): React.JSX.Element {
+export function AllowanceUsage({
+  projectId,
+}: {
+  projectId: string;
+}): React.JSX.Element {
   const [month, setMonth] = useState<string | undefined>(undefined);
+  const [scope, setScope] = useQueryState("allowance", SCOPE_PARAM);
   const usage = useQuery(api.account.budget.getForActiveOrg, { month: month });
-  const [held, setHeld] = useState<BudgetUsage | null | undefined>(undefined);
-  if (usage !== undefined && usage !== held) setHeld(usage);
-  const budget = usage === undefined ? held : usage;
+  const split = useQuery(api.account.budget.projectsForActiveOrg, {
+    month: month,
+  });
+  const [held, setHeld] = useState<{
+    budget: BudgetUsage | null | undefined;
+    split: ProjectsUsage | null | undefined;
+  }>({ budget: undefined, split: undefined });
+  if (usage !== undefined && usage !== held.budget) {
+    setHeld((last) => ({ ...last, budget: usage }));
+  }
+  if (split !== undefined && split !== held.split) {
+    setHeld((last) => ({ ...last, split: split }));
+  }
+  const budget = usage === undefined ? held.budget : usage;
+  const projects = split === undefined ? held.split : split;
 
   // The current month leads `months` and is Billing's own query: leave
   // `month` unset to share it.
@@ -109,8 +151,50 @@ export function AllowanceUsage(): React.JSX.Element {
   }
 
   return (
-    <section className="grid gap-3">
-      <div className="flex items-center justify-between gap-4">
+    <AllowanceView
+      budget={budget}
+      // Only the split of the month the table shows; a held one is another's.
+      projects={
+        projects && budget && projects.month === budget.month
+          ? projects.projects
+          : undefined
+      }
+      projectId={projectId}
+      scope={scope}
+      onScopeChange={(next) => void setScope(next)}
+      month={month}
+      onMonthChange={handleMonthChange}
+    />
+  );
+}
+
+/**
+ * The Allowance as drawn, from data: the live tab feeds it from Convex, the
+ * gallery from fixtures. `projects` undefined is still loading.
+ */
+export function AllowanceView({
+  budget,
+  projects,
+  projectId,
+  scope,
+  onScopeChange,
+  month,
+  onMonthChange,
+}: {
+  budget: BudgetUsage | null | undefined;
+  projects: ProjectsUsage["projects"] | undefined;
+  projectId: string;
+  scope: AllowanceScope;
+  onScopeChange: (scope: AllowanceScope) => void;
+  month: string | undefined;
+  onMonthChange: (month: string) => void;
+}): React.JSX.Element {
+  return (
+    <section
+      className="grid min-w-0 gap-3 *:min-w-0"
+      data-allowance-scope={scope}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-semibold text-foreground">Allowance</h2>
           {budget && (
@@ -119,90 +203,200 @@ export function AllowanceUsage(): React.JSX.Element {
             </span>
           )}
         </div>
-        {budget && (
-          <Select
-            items={budget.months.map((option) => ({
-              label: monthLabel(option),
-              value: option,
-            }))}
-            value={month ?? budget.month}
-            onValueChange={(value) => {
-              if (value) handleMonthChange(value);
-            }}
-          >
-            <SelectTrigger size="sm" className="cursor-pointer">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {budget.months.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {monthLabel(option)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentedControl
+            options={SCOPES}
+            value={scope}
+            onChange={onScopeChange}
+            ariaLabel="Usage of"
+          />
+          {budget && (
+            <Select
+              items={budget.months.map((option) => ({
+                label: monthLabel(option),
+                value: option,
+              }))}
+              value={month ?? budget.month}
+              onValueChange={(value) => {
+                if (value) onMonthChange(value);
+              }}
+            >
+              <SelectTrigger size="sm" className="cursor-pointer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {budget.months.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {monthLabel(option)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
       </div>
-      {budget === undefined ? (
+      {budget === undefined || projects === undefined ? (
         <Skeleton className="h-96 rounded-lg" />
       ) : budget === null ? (
         <p className="text-sm text-muted-foreground">
           No account in this organization yet.
         </p>
+      ) : scope === "project" ? (
+        <ProjectAllowance
+          budget={budget}
+          projects={projects}
+          projectId={projectId}
+        />
       ) : (
-        <AllowanceTable budget={budget} />
+        <AllProjectsAllowance
+          budget={budget}
+          projects={projects}
+          projectId={projectId}
+        />
       )}
     </section>
   );
 }
 
-// The resources against their caps, and the picked one's daily chart.
-function AllowanceTable({
+// This project against the org's caps: its amount, everyone's, and a bar
+// whose dark part is this project and light part the other projects.
+function ProjectAllowance({
   budget,
+  projects,
+  projectId,
 }: {
   budget: BudgetUsage;
+  projects: ProjectsUsage["projects"];
+  projectId: string;
 }): React.JSX.Element {
   const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
+  // This project, then everything else as one part.
+  const slices = useMemo(() => {
+    const [own, rest] = usageSlices(
+      budget,
+      projects.filter((project) => project.projectId === projectId),
+    );
+    const others = rest ?? { ...own, totals: ZERO_AMOUNTS, days: [] };
+
+    return [
+      { ...own, color: "var(--color-foreground)" },
+      { ...others, name: "Other projects", color: OTHER_USAGE_COLOR },
+    ];
+  }, [budget, projects, projectId]);
+  const count = projects.length;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Resource</TableHead>
-            <TableHead className="text-right">Used</TableHead>
-            <TableHead className="text-right">Limit</TableHead>
-            <TableHead className="w-2/5" />
-            <TableHead className="w-16" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {ROWS.map((row) => (
-            <AllowanceTableRow
-              key={row.key}
-              budget={budget}
-              row={row}
-              active={row.key === picked.key}
-              onPick={() => setPicked(row)}
-            />
-          ))}
-        </TableBody>
-      </Table>
-      <Separator />
-      <DailyChart budget={budget} row={picked} />
+    <div className="grid gap-2">
+      <p className="text-xs text-muted-foreground">
+        {count > 1
+          ? `Limits are shared by all ${count} projects in this organization. The solid part of each bar is this project, the grey part the others.`
+          : "Limits are shared by every project in this organization."}
+      </p>
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Resource</TableHead>
+              <TableHead className="text-right">This project</TableHead>
+              <TableHead className="text-right">All projects</TableHead>
+              <TableHead className="text-right">Limit</TableHead>
+              <TableHead className="w-1/4 min-w-24" />
+              <TableHead className="w-16" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {ROWS.map((row) => (
+              <AllowanceTableRow
+                key={row.key}
+                budget={budget}
+                row={row}
+                slices={slices}
+                own={slices[0]}
+                active={row.key === picked.key}
+                onPick={() => setPicked(row)}
+              />
+            ))}
+          </TableBody>
+        </Table>
+        <Separator />
+        <DailyChart budget={budget} row={picked} slices={slices} />
+        <ProjectLegend slices={slices} />
+      </div>
     </div>
   );
 }
 
-// One resource: used, its cap, and how close it is. Ingress reads Free.
+// Every project's part of the org's caps, then the projects side by side.
+function AllProjectsAllowance({
+  budget,
+  projects,
+  projectId,
+}: {
+  budget: BudgetUsage;
+  projects: ProjectsUsage["projects"];
+  projectId: string;
+}): React.JSX.Element {
+  const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
+  const slices = useMemo(
+    () => usageSlices(budget, projects),
+    [budget, projects],
+  );
+
+  return (
+    <div className="grid gap-6 *:min-w-0">
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Resource</TableHead>
+              <TableHead className="text-right">Used</TableHead>
+              <TableHead className="text-right">Limit</TableHead>
+              <TableHead className="w-2/5 min-w-24" />
+              <TableHead className="w-16" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {ROWS.map((row) => (
+              <AllowanceTableRow
+                key={row.key}
+                budget={budget}
+                row={row}
+                slices={slices}
+                own={null}
+                active={row.key === picked.key}
+                onPick={() => setPicked(row)}
+              />
+            ))}
+          </TableBody>
+        </Table>
+        <Separator />
+        <DailyChart budget={budget} row={picked} slices={slices} />
+        <ProjectLegend slices={slices} />
+      </div>
+      <ProjectsTable
+        budget={budget}
+        slices={slices}
+        picked={picked}
+        projectId={projectId}
+      />
+    </div>
+  );
+}
+
+// One resource: used, its cap, and how close it is, the bar split into the
+// slices' parts. With `own`, its amount leads. Ingress reads Free.
 function AllowanceTableRow({
   budget,
   row,
+  slices,
+  own,
   active,
   onPick,
 }: {
   budget: BudgetUsage;
   row: AllowanceRow;
+  slices: UsageSlice[];
+  own: UsageSlice | null;
   active: boolean;
   onPick: () => void;
 }): React.JSX.Element {
@@ -236,8 +430,15 @@ function AllowanceTableRow({
           {row.help && <HelpMark text={row.help} />}
         </span>
       </TableCell>
+      {own && (
+        <TableCell className="text-right">
+          <span className="font-medium tabular-nums">
+            {formatAmount(own.totals[row.key], row.unit)}
+          </span>
+        </TableCell>
+      )}
       <TableCell className="text-right">
-        <span className="tabular-nums">
+        <span className={cn("tabular-nums", own && "text-muted-foreground")}>
           {formatAmount(budget.totals[row.key], row.unit)}
         </span>
       </TableCell>
@@ -252,12 +453,15 @@ function AllowanceTableRow({
       </TableCell>
       <TableCell>
         {share !== null && (
-          <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full w-(--bar-width) rounded-full bg-foreground"
-              style={{ "--bar-width": `${Math.min(share, 100)}%` }}
-            />
-          </div>
+          <SplitBar
+            share={share}
+            total={budget.totals[row.key]}
+            parts={slices.map((slice) => ({
+              key: slice.projectId ?? "other",
+              amount: slice.totals[row.key],
+              color: slice.color,
+            }))}
+          />
         )}
       </TableCell>
       <TableCell className="text-right">
@@ -278,17 +482,103 @@ function AllowanceTableRow({
   );
 }
 
-// The picked resource per day of the month, in one unit from the tallest day.
+/**
+ * A cap's bar, `share` percent long, cut into each part's piece of `total`.
+ * Unknown amounts (a storage day no snapshot measured) draw as one piece.
+ */
+function SplitBar({
+  share,
+  total,
+  parts,
+}: {
+  share: number;
+  total: number | null;
+  parts: Array<{ key: string; amount: number | null; color: string }>;
+}): React.JSX.Element {
+  const known = total !== null && total > 0;
+
+  return (
+    <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+      <div
+        className="flex h-full w-(--bar-width) gap-px overflow-hidden rounded-full"
+        style={{ "--bar-width": `${Math.min(share, 100)}%` }}
+      >
+        {known ? (
+          parts.map((part) =>
+            (part.amount ?? 0) > 0 ? (
+              <div
+                key={part.key}
+                className="h-full w-(--bar-width) shrink-0 bg-(--series-color)"
+                style={{
+                  "--bar-width": `${((part.amount ?? 0) / total) * 100}%`,
+                  "--series-color": part.color,
+                }}
+              />
+            ) : null,
+          )
+        ) : (
+          <div className="h-full w-full bg-foreground" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Swatch and name per slice, under the all-projects chart.
+function ProjectLegend({
+  slices,
+}: {
+  slices: UsageSlice[];
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap gap-3 px-4 pb-3 text-2xs text-muted-foreground">
+      {slices.map((slice) => (
+        <span
+          key={slice.projectId ?? "other"}
+          className="flex items-center gap-1.5"
+        >
+          <span
+            className="size-2 rounded-sm bg-(--series-color)"
+            style={{ "--series-color": slice.color }}
+          />
+          {slice.name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// The picked resource per day of the month, one stacked part per slice, in
+// one unit from the tallest day.
 function DailyChart({
   budget,
   row,
+  slices,
 }: {
   budget: BudgetUsage;
   row: AllowanceRow;
+  slices: UsageSlice[];
 }): React.JSX.Element {
   // UsageChart eases to each new rows array, so only rebuild on real change.
-  const daily = useMemo(() => dailySeries(budget, row.key), [budget, row.key]);
-  const axisMax = Math.max(0, ...daily.rows.map(([value]) => value ?? 0));
+  const daily = useMemo(
+    () => dailySeries(budget.month, slices, row.key),
+    [budget.month, slices, row.key],
+  );
+  const series = useMemo(
+    () =>
+      slices.map((slice) => ({
+        key: slice.projectId ?? "other",
+        label: slice.name,
+        color: slice.color,
+      })),
+    [slices],
+  );
+  const axisMax = Math.max(
+    0,
+    ...daily.rows.map((values) =>
+      values.reduce<number>((sum, value) => sum + (value ?? 0), 0),
+    ),
+  );
   const used = formatAmount(budget.totals[row.key], row.unit);
   const cap =
     row.share === null || !budget.caps ? null : budget.caps[row.share];
@@ -305,7 +595,7 @@ function DailyChart({
         kind="bars"
         height={150}
         tickCount={3}
-        series={[{ key: row.key, label: row.label, color: row.color }]}
+        series={series}
         rows={daily.rows}
         bucketStarts={daily.bucketStarts}
         binSeconds={DAY_SECONDS}
@@ -316,6 +606,129 @@ function DailyChart({
     </div>
   );
 }
+
+/**
+ * Each project's month side by side, busiest first on the picked resource,
+ * with its part of the org's total of it. A project's name opens its own
+ * Usage tab.
+ */
+function ProjectsTable({
+  budget,
+  slices,
+  picked,
+  projectId,
+}: {
+  budget: BudgetUsage;
+  slices: UsageSlice[];
+  picked: AllowanceRow;
+  projectId: string;
+}): React.JSX.Element {
+  const total = budget.totals[picked.key] ?? 0;
+  const sorted = [...slices].sort((a, b) => {
+    // "Other usage" closes the list whatever it holds.
+    if (a.projectId === null || b.projectId === null) {
+      return a.projectId === null ? 1 : -1;
+    }
+
+    return (b.totals[picked.key] ?? 0) - (a.totals[picked.key] ?? 0);
+  });
+
+  return (
+    <section className="grid gap-3">
+      <h3 className="text-sm font-semibold text-foreground">By project</h3>
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Project</TableHead>
+              {ROWS.map((row) => (
+                <TableHead key={row.key} className="text-right">
+                  {row.label}
+                </TableHead>
+              ))}
+              <TableHead className="w-44">Share of {picked.label}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((slice) => {
+              const amount = slice.totals[picked.key] ?? 0;
+              const part = total > 0 ? (amount / total) * 100 : 0;
+
+              return (
+                <TableRow key={slice.projectId ?? "other"}>
+                  <TableCell>
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="size-2 shrink-0 rounded-sm bg-(--series-color)"
+                        style={{ "--series-color": slice.color }}
+                      />
+                      {slice.projectId === null ? (
+                        <>
+                          <span className="text-muted-foreground">
+                            {slice.name}
+                          </span>
+                          <HelpMark text={OTHER_USAGE_HELP} />
+                        </>
+                      ) : (
+                        <Link
+                          href={`/${slice.projectId}/dashboard?tab=usage`}
+                          className="truncate hover:underline"
+                        >
+                          {slice.name}
+                        </Link>
+                      )}
+                      {slice.projectId === projectId && (
+                        <span className="text-2xs text-muted-foreground">
+                          This project
+                        </span>
+                      )}
+                    </span>
+                  </TableCell>
+                  {ROWS.map((row) => (
+                    <TableCell key={row.key} className="text-right">
+                      <span
+                        className={cn(
+                          "tabular-nums",
+                          row.key !== picked.key && "text-muted-foreground",
+                        )}
+                      >
+                        {formatAmount(slice.totals[row.key], row.unit)}
+                      </span>
+                    </TableCell>
+                  ))}
+                  <TableCell>
+                    <span className="flex items-center gap-2">
+                      <span className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                        <span
+                          className="h-full w-(--bar-width) rounded-full bg-(--series-color)"
+                          style={{
+                            "--bar-width": `${part}%`,
+                            "--series-color": slice.color,
+                          }}
+                        />
+                      </span>
+                      <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">
+                        {formatPercent(part)}
+                      </span>
+                    </span>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </section>
+  );
+}
+
+const ZERO_AMOUNTS: UsageAmounts = {
+  sandboxHours: 0,
+  hostedMcpHours: 0,
+  storageGb: 0,
+  egressGb: 0,
+  ingressGb: 0,
+};
 
 // "Resets Oct 1" for the current month, nothing for a past one or no limits.
 function resetLabel(budget: BudgetUsage): string {

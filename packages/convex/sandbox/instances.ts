@@ -199,7 +199,13 @@ export const recordBurst = internalMutation({
       gbSeconds: args.gbSeconds,
     });
     if (instance.ownCredentials !== true) {
-      await addUsage(ctx, instance.accountId, burst.usage, Date.now());
+      await addUsage(
+        ctx,
+        instance.accountId,
+        burst.usage,
+        Date.now(),
+        instance.projectId,
+      );
     }
     await ctx.db.patch(instance._id, { burstBilled: burst.billed });
 
@@ -240,7 +246,13 @@ export const setStatus = internalMutation({
     const now = Date.now();
     await accrue(ctx, instance, now);
     if (instance.status === "suspended" && status === "running") {
-      await addUsage(ctx, accountId, sandboxLaunchUsage(instance), now);
+      await addUsage(
+        ctx,
+        accountId,
+        sandboxLaunchUsage(instance),
+        now,
+        instance.projectId,
+      );
     }
     await ctx.db.patch(instance._id, {
       meteredUntil: now,
@@ -331,7 +343,13 @@ export const upsert = internalMutation({
         existing.status === "suspended" ||
         now > existing.lastUsedAt + sandboxIdleMs(existing)
       ) {
-        await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
+        await addUsage(
+          ctx,
+          args.accountId,
+          sandboxLaunchUsage(args),
+          now,
+          existing.projectId,
+        );
       }
       const patch = {
         ...fields,
@@ -375,7 +393,13 @@ export const upsert = internalMutation({
       ...fields,
     };
     await ctx.db.insert("sandboxInstances", { ...row, meteredUntil: now });
-    await addUsage(ctx, args.accountId, sandboxLaunchUsage(args), now);
+    await addUsage(
+      ctx,
+      args.accountId,
+      sandboxLaunchUsage(args),
+      now,
+      args.projectId,
+    );
     await recordRuntimeAction(ctx, row, "reserve");
 
     return null;
@@ -516,7 +540,13 @@ async function accrue(
   now: number,
 ): Promise<number> {
   const accrual = sandboxAccrual(instance, now);
-  await addUsage(ctx, instance.accountId, accrual.usage, now);
+  await addUsage(
+    ctx,
+    instance.accountId,
+    accrual.usage,
+    now,
+    instance.projectId,
+  );
 
   return accrual.meteredUntil;
 }

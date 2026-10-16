@@ -10,16 +10,25 @@
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
-import { internalMutation, internalQuery, query } from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type QueryCtx,
+} from "../_generated/server";
 import { authKit } from "../auth";
 import {
+  addProjectUsage,
   addUsage,
   budgetStatus,
   budgetUsage,
   claimBudgetWarning,
+  meterMonth,
+  projectUsage,
   type BudgetStatus,
   type BudgetUsage,
+  type ProjectUsage,
 } from "../model/usageMeter";
 import { getActiveAccountForUser } from "../org/orgs";
 import { planValidator, usageQuantityFields } from "../schema";
@@ -54,6 +63,20 @@ const usageAmountsFields = {
   ingressGb: v.number(),
 };
 
+const usageAmountsValidator = v.object(usageAmountsFields);
+
+const projectUsageValidator = v.object({
+  month: v.string(),
+  projects: v.array(
+    v.object({
+      projectId: v.id("projects"),
+      name: v.string(),
+      totals: usageAmountsValidator,
+      days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
+    }),
+  ),
+});
+
 const budgetUsageValidator = v.object({
   enforced: v.boolean(),
   plan: planValidator,
@@ -63,7 +86,7 @@ const budgetUsageValidator = v.object({
   caps: v.union(resourceCapsValidator, v.null()),
   shares: resourceCapsValidator,
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
-  totals: v.object(usageAmountsFields),
+  totals: usageAmountsValidator,
   days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
 });
 
@@ -117,6 +140,35 @@ export const getForActiveOrg = query({
   },
 });
 
+/**
+ * The Usage tab's split of the allowance: each of the active org's projects'
+ * usage for `month` ("YYYY-MM"; anything else reads the current month).
+ */
+export const projectsForActiveOrg = query({
+  args: { month: v.optional(v.string()) },
+  returns: v.union(projectUsageValidator, v.null()),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ month: string; projects: ProjectUsage[] } | null> => {
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+    const account = await getActiveAccountForUser(ctx);
+    if (!account) return null;
+    const month =
+      args.month !== undefined && /^\d{4}-\d{2}$/.test(args.month)
+        ? args.month
+        : meterMonth(Date.now());
+
+    return {
+      month: month,
+      projects: await projectUsage(ctx, account, month),
+    };
+  },
+});
+
 /** One page of account ids, for the storage snapshot. */
 export const listAccountIds = internalQuery({
   args: { paginationOpts: paginationOptsValidator },
@@ -141,14 +193,22 @@ export const listAccountIds = internalQuery({
   },
 });
 
-/** The account's workspace ids, whose S3 namespaces the storage snapshot sums. */
+/**
+ * The account's workspaces, whose S3 namespaces the storage snapshot sums,
+ * with the project each belongs to (none for an account-wide one).
+ */
 export const listWorkspaceIds = internalQuery({
   args: {
     accountId: v.id("accounts"),
     paginationOpts: paginationOptsValidator,
   },
   returns: v.object({
-    page: v.array(v.id("workspaceConfigs")),
+    page: v.array(
+      v.object({
+        workspaceId: v.id("workspaceConfigs"),
+        projectId: v.optional(v.id("projects")),
+      }),
+    ),
     isDone: v.boolean(),
     continueCursor: v.string(),
   }),
@@ -157,7 +217,10 @@ export const listWorkspaceIds = internalQuery({
     args,
   ): Promise<
     Pick<
-      PaginationResult<Id<"workspaceConfigs">>,
+      PaginationResult<{
+        workspaceId: Id<"workspaceConfigs">;
+        projectId?: Id<"projects">;
+      }>,
       "page" | "isDone" | "continueCursor"
     >
   > => {
@@ -169,7 +232,10 @@ export const listWorkspaceIds = internalQuery({
       .paginate(args.paginationOpts);
 
     return {
-      page: result.page.map((workspace) => workspace._id),
+      page: result.page.map((workspace) => ({
+        workspaceId: workspace._id,
+        ...(workspace.projectId ? { projectId: workspace.projectId } : {}),
+      })),
       isDone: result.isDone,
       continueCursor: result.continueCursor,
     };
@@ -177,8 +243,12 @@ export const listWorkspaceIds = internalQuery({
 });
 
 /**
- * Add usage core measured to the account's meter. Unknown ids and deleted
- * accounts are dropped, so a late write never re-creates purged rows.
+ * Add usage core measured to the account's meter, and to the project it came
+ * from when the write names one, directly or by the agent or workspace that
+ * used it. Unknown ids and deleted accounts are dropped, so a late write
+ * never re-creates purged rows; a source outside the account counts for the
+ * account alone. The storage snapshot also sends each project's share of the
+ * size it measured.
  */
 export const record = internalMutation({
   args: {
@@ -194,11 +264,29 @@ export const record = internalMutation({
     at: v.optional(v.number()),
     /** Same on every retry of one write, so a retry is applied once. */
     writeId: v.optional(v.string()),
+    /** Where the usage came from, as far as the writer knows. */
+    source: v.optional(
+      v.object({
+        projectId: v.optional(v.string()),
+        agentId: v.optional(v.string()),
+        workspaceId: v.optional(v.string()),
+      }),
+    ),
+    /** Storage snapshot only: GB-months of `usage` that each project's workspaces hold. */
+    projectStorage: v.optional(
+      v.array(
+        v.object({
+          projectId: v.id("projects"),
+          storageGbMonths: v.number(),
+        }),
+      ),
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = ctx.db.normalizeId("accounts", args.accountId);
-    if (!accountId || !(await ctx.db.get(accountId))) return null;
+    const account = accountId ? await ctx.db.get(accountId) : null;
+    if (!account) return null;
     const now = Date.now();
     if (args.writeId !== undefined) {
       const writeId = args.writeId;
@@ -209,7 +297,20 @@ export const record = internalMutation({
       if (applied) return null;
       await ctx.db.insert("usageWrites", { writeId: writeId, createdAt: now });
     }
-    await addUsage(ctx, accountId, args.usage, args.at ?? now);
+    const at = args.at ?? now;
+    const projectId = args.source
+      ? await usageProject(ctx, account, args.source)
+      : undefined;
+    await addUsage(ctx, account._id, args.usage, at, projectId);
+    for (const share of args.projectStorage ?? []) {
+      await addProjectUsage(
+        ctx,
+        account._id,
+        share.projectId,
+        { storageGbMonths: share.storageGbMonths },
+        at,
+      );
+    }
 
     return null;
   },
@@ -240,3 +341,34 @@ export const pruneUsageWrites = internalMutation({
     return null;
   },
 });
+
+// The account's project a usage write names, by the first id that resolves to
+// one of the account's own projects.
+async function usageProject(
+  ctx: QueryCtx,
+  account: Doc<"accounts">,
+  source: { projectId?: string; agentId?: string; workspaceId?: string },
+): Promise<Id<"projects"> | undefined> {
+  let projectId: Id<"projects"> | null | undefined;
+  if (source.projectId !== undefined) {
+    projectId = ctx.db.normalizeId("projects", source.projectId);
+  } else if (source.agentId !== undefined) {
+    const agentId = source.agentId;
+    const agent = await ctx.db
+      .query("agentConfigs")
+      .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+      .first();
+    projectId = agent?.projectId;
+  } else if (source.workspaceId !== undefined) {
+    const workspaceId = ctx.db.normalizeId(
+      "workspaceConfigs",
+      source.workspaceId,
+    );
+    const workspace = workspaceId ? await ctx.db.get(workspaceId) : null;
+    projectId =
+      workspace?.accountId === account._id ? workspace.projectId : undefined;
+  }
+  const project = projectId ? await ctx.db.get(projectId) : null;
+
+  return project && project.orgId === account.orgId ? project._id : undefined;
+}

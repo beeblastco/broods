@@ -24,7 +24,7 @@ export const budgets: Storage["budgets"] = {
       accountId: accountId,
     });
   },
-  record: async function (accountId, usage): Promise<void> {
+  record: async function (accountId, usage, source): Promise<void> {
     // One id for every attempt: a retry after a lost response is applied once.
     const writeId = crypto.randomUUID();
     for (const [attempt, delayMs] of RECORD_RETRY_DELAYS_MS.entries()) {
@@ -34,6 +34,7 @@ export const budgets: Storage["budgets"] = {
           accountId: accountId,
           usage: usage,
           writeId: writeId,
+          ...(source ? { source: source } : {}),
         });
 
         return;
