@@ -38,6 +38,7 @@ import { agentDebugPrompt } from "@/app/lib/agentDebugPrompt";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
+  memo,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -387,6 +388,12 @@ export interface SpanGroup {
   // The next task or cron in the same conversation. Once it exists the failed
   // task was picked up, so it links there instead of offering Continue.
   nextRun: ObservabilitySpanRow | null;
+}
+
+interface TaskListRowProps {
+  group: SpanGroup;
+  isSelected: boolean;
+  onSelect: (group: SpanGroup) => void;
 }
 
 // The `field:value` tokens the search box understands, in the placeholder's order.
@@ -843,7 +850,7 @@ export function TracingPanel({
                 key={spanKey(group.root)}
                 group={group}
                 isSelected={group === selectedGroup}
-                onSelect={() => pickTask(group)}
+                onSelect={pickTask}
               />
             ))}
             {groups.length === 0 && (
@@ -1990,20 +1997,21 @@ function TaskWaterfall({
 /**
  * One task in the left list: dot, request and duration, then start time,
  * channel, steps, subagents and the failure cause. The id is the `?trace=`
- * focus target.
+ * focus target. Memoized with `sameTaskRow`: every stream flush regroups, so
+ * the group object is new while what the row shows is not.
  */
-function TaskListRow({
+const TaskListRow = memo(function TaskListRow({
   group,
   isSelected,
   onSelect,
-}: {
-  group: SpanGroup;
-  isSelected: boolean;
-  onSelect: () => void;
-}): React.JSX.Element {
+}: TaskListRowProps): React.JSX.Element {
   const { root, spans } = group;
-  const steps = spans.filter((span) => span.kind === "model.step").length;
-  const subagents = spans.filter((span) => span.kind === "subtask").length;
+  let steps = 0;
+  let subagents = 0;
+  for (const span of spans) {
+    if (span.kind === "model.step") steps += 1;
+    else if (span.kind === "subtask") subagents += 1;
+  }
   const cause = failureCause(group);
   const request = spanLabel(root);
 
@@ -2011,7 +2019,7 @@ function TaskListRow({
     <button
       type="button"
       id={`task-${root.traceId}`}
-      onClick={onSelect}
+      onClick={() => onSelect(group)}
       aria-current={isSelected || undefined}
       className={cn(
         "block w-full cursor-pointer border-b border-border/40 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/20",
@@ -2035,6 +2043,38 @@ function TaskListRow({
         {cause && <span className="text-destructive"> · {cause}</span>}
       </span>
     </button>
+  );
+}, sameTaskRow);
+
+/**
+ * Whether two groupings of a task draw the same list row. The stream keeps a
+ * span's object across flushes, so the spans are compared by identity; only
+ * the wait spans `groupSpans` synthesizes are new each time and go by key.
+ */
+function sameTaskRow(prev: TaskListRowProps, next: TaskListRowProps): boolean {
+  const { group: a } = prev;
+  const { group: b } = next;
+
+  return (
+    prev.isSelected === next.isSelected &&
+    prev.onSelect === next.onSelect &&
+    a.root === b.root &&
+    a.status === b.status &&
+    a.live === b.live &&
+    a.taskDurationMs === b.taskDurationMs &&
+    a.spans.length === b.spans.length &&
+    a.spans.every((span, index) => {
+      const other = b.spans[index];
+
+      return (
+        span === other ||
+        (other !== undefined &&
+          span.name === WAIT_SPAN_NAME &&
+          other.name === WAIT_SPAN_NAME &&
+          span.spanId === other.spanId &&
+          span.status === other.status)
+      );
+    })
   );
 }
 

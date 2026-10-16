@@ -25,7 +25,7 @@ import { LOG_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
@@ -267,14 +267,18 @@ export function MonitoringPanel({
             </tr>
           </thead>
           <tbody>
-            {visible.map((entry) => (
-              <LogRow
-                key={entryKey(entry)}
-                entry={entry}
-                isSelected={entryKey(entry) === selectedKey}
-                onSelect={() => setSelectedKey(entryKey(entry))}
-              />
-            ))}
+            {visible.map((entry) => {
+              const key = entryKey(entry);
+
+              return (
+                <LogRow
+                  key={key}
+                  entry={entry}
+                  isSelected={key === selectedKey}
+                  onSelect={setSelectedKey}
+                />
+              );
+            })}
             {filtered.length === 0 && (
               <tr>
                 <td
@@ -427,21 +431,26 @@ function LogDetails({
   );
 }
 
-function LogRow({
+/**
+ * One log line in the table. Memoized: the stream keeps an entry's object
+ * across flushes, so only a new or replaced entry, or a selection change on
+ * this row, renders again.
+ */
+const LogRow = memo(function LogRow({
   entry,
   isSelected,
   onSelect,
 }: {
   entry: ObservabilityLogEntry;
   isSelected: boolean;
-  onSelect: () => void;
+  onSelect: (key: string) => void;
 }): React.JSX.Element {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
   const eventType = parsed.eventType ?? entry.eventType;
 
   return (
     <tr
-      onClick={onSelect}
+      onClick={() => onSelect(entryKey(entry))}
       className={cn(
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
         isSelected && "bg-accent/30",
@@ -470,4 +479,4 @@ function LogRow({
       </td>
     </tr>
   );
-}
+});
