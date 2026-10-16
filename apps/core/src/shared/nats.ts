@@ -586,6 +586,10 @@ function jetstreamManagerFor(
   if (!manager) {
     manager = connection.jetstreamManager({ checkAPI: false });
     jetstreamManagers.set(connection, manager);
+    // A failed build is not kept: the next call tries again.
+    void manager.catch((): void => {
+      jetstreamManagers.delete(connection);
+    });
   }
 
   return manager;
