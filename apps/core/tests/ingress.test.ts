@@ -306,6 +306,48 @@ describe("step boundary", (): void => {
     });
   });
 
+  it("keeps the rows of a boundary that threw for the next one, keyed by cursor", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+      if (calls.length === 1) throw new Error("boundary lost");
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+
+    const error = await session
+      .stepBoundary([{ role: "assistant", content: "first" }])
+      .catch((err: unknown): unknown => err);
+    await session.stepBoundary([{ role: "assistant", content: "second" }]);
+
+    expect(error).toEqual(new Error("boundary lost"));
+    const [first, second] = calls.map(([, args]): unknown => args.events) as [
+      { cursor: string; dedupeKey?: string }[],
+      { cursor: string; dedupeKey?: string }[],
+    ];
+    expect(first.map((row): string | undefined => row.dedupeKey)).toEqual([
+      undefined,
+    ]);
+    expect(
+      second.map((row): [string, string | undefined] => [
+        row.cursor,
+        row.dedupeKey,
+      ]),
+    ).toEqual([
+      [first[0]!.cursor, first[0]!.cursor],
+      [second[1]!.cursor, undefined],
+    ]);
+  });
+
   it("stores the step, renews and claims steers in one fenced mutation that proves ownership", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     const steering: AppliedIngress = {

@@ -443,7 +443,13 @@ export class Session {
 
   async releaseConversationLease(): Promise<void> {
     if (this.ownerGeneration === undefined || this.ownerHandedOff) return;
-    await this.flushPendingStoredEvents();
+    // The release must happen either way: a held lease blocks the conversation.
+    await this.flushPendingStoredEvents().catch((err: unknown): void => {
+      logError("History rows lost before the lease release", {
+        eventId: this.eventId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
     await releaseIngressOwner({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
@@ -469,8 +475,9 @@ export class Session {
   /**
    * The model step boundary as one fenced mutation: stores the step's new
    * messages, reports a stop or a lost lease, renews the lease, and claims the
-   * steers waiting to join this turn, unless `claimSteering` is false. Rows
-   * that do not fit one mutation are appended first, in cursor order.
+   * steers waiting to join this turn, unless `claimSteering` is false. The
+   * first boundary also carries the turn's own input. A stale boundary stores
+   * nothing and drops it: the conversation has moved on.
    */
   async stepBoundary(
     messages: ModelMessage[],
@@ -484,24 +491,24 @@ export class Session {
     }
     const ownerGeneration = this.ownerGeneration;
 
-    return this.writeFenced(events, async (rows): Promise<StepBoundary> => {
-      const batches = storedEventBatches(rows);
-      const inline = batches.pop() ?? [];
-      for (const batch of batches) await this.appendConversationEvents(batch);
-      const startedAt = performance.now();
-      const boundary = await runtime.mutate("stepIngressBoundary", {
-        conversationKey: this.conversationKey,
-        ownerEventId: this.eventId,
-        ownerGeneration: ownerGeneration,
-        leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
-        ...(inline.length > 0 ? { events: inline } : {}),
-        claimSteering: options.claimSteering,
-      });
-      if (boundary.renewal !== "stale") this.trackSystemCursor(rows);
-      if (boundary.renewal === "renewed") this.confirmOwner(startedAt);
+    return this.writeFenced(
+      events,
+      async (inline, rows): Promise<StepBoundary> => {
+        const startedAt = performance.now();
+        const boundary = await runtime.mutate("stepIngressBoundary", {
+          conversationKey: this.conversationKey,
+          ownerEventId: this.eventId,
+          ownerGeneration: ownerGeneration,
+          leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+          ...(inline.length > 0 ? { events: inline } : {}),
+          claimSteering: options.claimSteering,
+        });
+        if (boundary.renewal !== "stale") this.trackSystemCursor(rows);
+        if (boundary.renewal === "renewed") this.confirmOwner(startedAt);
 
-      return boundary;
-    });
+        return boundary;
+      },
+    );
   }
 
   /**
@@ -510,7 +517,7 @@ export class Session {
    */
   async flushPendingStoredEvents(): Promise<void> {
     if (this.pendingStoredEvents.length === 0) return;
-    await this.writeFenced([], (rows) => this.appendStoredEvents(rows));
+    await this.writeFenced([], (inline) => this.appendStoredEvents(inline));
   }
 
   async appendIngressEvents(
@@ -555,7 +562,7 @@ export class Session {
   ): Promise<boolean> {
     if (this.ownerGeneration === undefined) return false;
     const ownerGeneration = this.ownerGeneration;
-    await this.writeFenced([], async (rows): Promise<void> => {
+    const settle = async (rows: AppendedConversationEvent[]): Promise<void> => {
       const startedAt = performance.now();
       await settleIngress({
         conversationKey: this.conversationKey,
@@ -566,7 +573,21 @@ export class Session {
         ...(rows.length > 0 ? { events: rows } : {}),
       });
       this.confirmOwner(startedAt);
-    });
+    };
+    await this.writeFenced([], settle).catch(
+      async (err: unknown): Promise<void> => {
+        // The outcome beats the history: a settle that failed with rows to
+        // carry goes out without them.
+        if (this.pendingStoredEvents.length === 0) throw err;
+        logError("History rows dropped so the turn could settle", {
+          eventId: this.eventId,
+          rows: this.pendingStoredEvents.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        this.pendingStoredEvents = [];
+        await settle([]);
+      },
+    );
 
     return true;
   }
@@ -587,11 +608,12 @@ export class Session {
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
     };
-    const next = await this.writeFenced([], (rows) =>
-      takeNextIngress(owner, settle, rows),
+    const next = await this.writeFenced([], (inline) =>
+      takeNextIngress(owner, settle, inline),
     ).catch(async (err: unknown): Promise<never> => {
       if (settle) {
-        await this.settleIngress(settle.status, settle).catch(
+        const { status, ...outcome } = settle;
+        await this.settleIngress(status, outcome).catch(
           (settleErr: unknown): boolean => {
             logError("Turn outcome lost: settle after a failed takeNext", {
               eventId: this.eventId,
@@ -934,17 +956,26 @@ export class Session {
 
   /**
    * Runs one fenced write with the rows waiting for it in front of `events`.
-   * A write that throws keeps the rows for the next one, keyed by cursor so a
+   * Rows beyond what one mutation takes are appended first, in cursor order;
+   * `write` gets the last batch to carry, and every row for its bookkeeping. A
+   * write that throws keeps the rows for the next one, keyed by cursor so a
    * commit whose reply was lost stores nothing twice.
    */
   private async writeFenced<T>(
     events: AppendedConversationEvent[],
-    write: (rows: AppendedConversationEvent[]) => Promise<T>,
+    write: (
+      inline: AppendedConversationEvent[],
+      rows: AppendedConversationEvent[],
+    ) => Promise<T>,
   ): Promise<T> {
     const rows = [...this.pendingStoredEvents, ...events];
     this.pendingStoredEvents = [];
     try {
-      return await write(rows);
+      const batches = storedEventBatches(rows);
+      const inline = batches.pop() ?? [];
+      for (const batch of batches) await this.appendConversationEvents(batch);
+
+      return await write(inline, rows);
     } catch (err) {
       this.pendingStoredEvents = [
         ...rows.map((row): AppendedConversationEvent => ({
