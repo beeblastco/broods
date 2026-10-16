@@ -808,24 +808,15 @@ const accountHooks: Storage["accountHooks"] = {
   },
 };
 
-// Off the client's mutation FIFO. The row is fenced by connectionId, so a
-// disconnect or heartbeat that lands late is a no-op, and the dashboard reads
-// a row with no fresh heartbeat as offline either way.
 const machineConnections: Storage["machineConnections"] = {
   connected: async function (connection) {
-    await adminMutation(internal.sandbox.machines.connected, connection, {
-      skipQueue: true,
-    });
+    await adminMutation(internal.sandbox.machines.connected, connection);
   },
   disconnected: async function (ref) {
-    await adminMutation(internal.sandbox.machines.disconnected, ref, {
-      skipQueue: true,
-    });
+    await adminMutation(internal.sandbox.machines.disconnected, ref);
   },
   seen: async function (ref) {
-    await adminMutation(internal.sandbox.machines.seen, ref, {
-      skipQueue: true,
-    });
+    await adminMutation(internal.sandbox.machines.seen, ref);
   },
 };
 
