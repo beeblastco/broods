@@ -789,6 +789,73 @@ test("closes a zero-frame attach after durable completion and emits one terminal
   }
 });
 
+test("backs off status polls while an attached run stays quiet", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let consumerClosed = false;
+  const polledAt: number[] = [];
+  const connection = zeroBufferConnection(async () => ({
+    [Symbol.asyncIterator]: async function* () {
+      for (;;) {
+        if (consumerClosed) break;
+        await Bun.sleep(10);
+      }
+    },
+    close: async () => {
+      consumerClosed = true;
+    },
+  }));
+  globalThis.fetch = (async () => {
+    polledAt.push(Date.now());
+
+    return new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        status: "processing",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-quiet",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    // The attach reads status once up front; with no frames the loop then
+    // polls after 500ms and again 1000ms later, not every 500ms.
+    await waitForCondition(
+      () => polledAt.length >= 3,
+      600,
+      () => `three status reads, saw ${polledAt.length}`,
+    );
+    const gaps = polledAt
+      .slice(1)
+      .map((at, index) => at - (polledAt[index] ?? at));
+    expect(gaps[0]).toBeLessThan(900);
+    expect(gaps[1]).toBeGreaterThanOrEqual(950);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+}, 10_000);
+
 test("does not duplicate a streamed error when durable failure arrives without done", async () => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
