@@ -60,6 +60,7 @@ import {
 } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
+  memo,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -481,6 +482,23 @@ interface ListRow {
   parent: SpanGroup | null;
 }
 
+// The list row's props, primitives and stable callbacks so the memoized row
+// skips a flush that left them as they were.
+interface TaskListRowProps {
+  root: ObservabilitySpanRow;
+  status: SpanStatus;
+  tone: StatusTone;
+  taskDurationMs: number;
+  cause: string | null;
+  isSubagent: boolean;
+  // The subagents' names, newline-joined so the memo compares one string.
+  subagentNames: string;
+  isSelected: boolean;
+  stackOpen: boolean;
+  onSelect: (root: ObservabilitySpanRow) => void;
+  onToggleStack: (root: ObservabilitySpanRow, open: boolean) => void;
+}
+
 export function TracingPanel({
   projectSlug,
   stageSlug,
@@ -750,14 +768,21 @@ export function TracingPanel({
   // focus effect is told it already ran, so it does not scan and scroll again,
   // and a held j/k writes the URL once it settles.
   const pickTask = useCallback(
-    (group: SpanGroup): void => {
-      setSelectedTaskKey(spanKey(group.root));
-      focusedRef.current = `${group.root.traceId}:${refocusNonce}`;
-      void setFocusTraceId(group.root.traceId, {
+    (root: ObservabilitySpanRow): void => {
+      setSelectedTaskKey(spanKey(root));
+      focusedRef.current = `${root.traceId}:${refocusNonce}`;
+      void setFocusTraceId(root.traceId, {
         limitUrlUpdates: debounce(200),
       });
     },
     [refocusNonce, setFocusTraceId],
+  );
+  // A click on a request's avatar stack: list or hide its subagent rows.
+  const toggleStack = useCallback(
+    (root: ObservabilitySpanRow, open: boolean): void => {
+      setStackChoices((current) => new Map(current).set(spanKey(root), open));
+    },
+    [],
   );
 
   // j and k walk the listed rows, open subagents included. `/` is the
@@ -786,7 +811,7 @@ export function TracingPanel({
       if (paged) setVisibleCount(visibleCount + 1);
       const next = paged ? groups[visibleCount] : listRows[nextIndex]?.group;
       if (!next) return;
-      pickTask(next);
+      pickTask(next.root);
       requestAnimationFrame(() =>
         document
           .getElementById(`task-${next.root.traceId}`)
@@ -941,21 +966,22 @@ export function TracingPanel({
             data-scroll-pane
             className="max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-80 md:border-r md:border-b-0"
           >
-            {listRows.map((row) => (
+            {listRows.map(({ group, parent }) => (
               <TaskListRow
-                key={spanKey(row.group.root)}
-                row={row}
-                isSelected={row.group === selectedGroup}
-                stackOpen={isStackOpen(row.group, selectedGroup, stackChoices)}
-                onSelect={() => pickTask(row.group)}
-                onToggleStack={() =>
-                  setStackChoices((current) =>
-                    new Map(current).set(
-                      spanKey(row.group.root),
-                      !isStackOpen(row.group, selectedGroup, current),
-                    ),
-                  )
-                }
+                key={spanKey(group.root)}
+                root={group.root}
+                status={group.status}
+                tone={groupTone(group)}
+                taskDurationMs={group.taskDurationMs}
+                cause={failureCause(group)}
+                isSubagent={parent !== null}
+                subagentNames={group.subagents
+                  .map((subagent) => subagentName(subagent.root))
+                  .join("\n")}
+                isSelected={group === selectedGroup}
+                stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
+                onSelect={pickTask}
+                onToggleStack={toggleStack}
               />
             ))}
             {groups.length === 0 && (
@@ -1774,15 +1800,14 @@ function waitSpan(
  * button, not inside it.
  */
 function AvatarStack({
-  subagents,
+  names,
   open,
   onToggle,
 }: {
-  subagents: SpanGroup[];
+  names: string[];
   open: boolean;
   onToggle: () => void;
 }): React.JSX.Element {
-  const names = subagents.map((subagent) => subagentName(subagent.root));
   const shown = names.slice(0, STACK_AVATARS);
 
   return (
@@ -2384,29 +2409,26 @@ function SpanTimings({
  * the failure cause or open wait. A subagent row is indented under its
  * request and names its agent, with its task after the time. A request with
  * subagents ends in their avatar stack. The button's id is the `?trace=` focus
- * target.
+ * target. Memoized on the root span, which the stream keeps across flushes,
+ * and the row's primitives.
  */
-function TaskListRow({
-  row,
+const TaskListRow = memo(function TaskListRow({
+  root,
+  status,
+  tone,
+  taskDurationMs,
+  cause,
+  isSubagent,
+  subagentNames,
   isSelected,
   stackOpen,
   onSelect,
   onToggleStack,
-}: {
-  row: ListRow;
-  isSelected: boolean;
-  stackOpen: boolean;
-  onSelect: () => void;
-  onToggleStack: () => void;
-}): React.JSX.Element {
-  const { group, parent } = row;
-  const { root } = group;
-  const cause = failureCause(group);
+}: TaskListRowProps): React.JSX.Element {
   const request = spanLabel(root);
-  const isSubagent = parent !== null;
   const waiting =
-    group.status === "needs_input" || group.status === "waiting"
-      ? TASK_STATUS_WORD[group.status].toLowerCase()
+    status === "needs_input" || status === "waiting"
+      ? TASK_STATUS_WORD[status].toLowerCase()
       : null;
 
   return (
@@ -2419,7 +2441,7 @@ function TaskListRow({
       <button
         type="button"
         id={`task-${root.traceId}`}
-        onClick={onSelect}
+        onClick={() => onSelect(root)}
         aria-current={isSelected || undefined}
         className={cn(
           "block min-w-0 flex-1 cursor-pointer py-1.5 pr-3 text-left text-xs",
@@ -2427,7 +2449,7 @@ function TaskListRow({
         )}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <StatusDot tone={groupTone(group)} label={group.status} />
+          <StatusDot tone={tone} label={status} />
           {isSubagent && (
             <DitherAvatarSVG seed={request} size={14} className="shrink-0" />
           )}
@@ -2435,7 +2457,7 @@ function TaskListRow({
             {request}
           </span>
           <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
-            {formatDuration(group.taskDurationMs)}
+            {formatDuration(taskDurationMs)}
           </span>
         </span>
         <span
@@ -2450,16 +2472,16 @@ function TaskListRow({
           {waiting && <span className="text-needs-input"> · {waiting}</span>}
         </span>
       </button>
-      {group.subagents.length > 0 && (
+      {subagentNames !== "" && (
         <AvatarStack
-          subagents={group.subagents}
+          names={subagentNames.split("\n")}
           open={stackOpen}
-          onToggle={onToggleStack}
+          onToggle={() => onToggleStack(root, !stackOpen)}
         />
       )}
     </div>
   );
-}
+});
 
 /**
  * The selected run on the right: its request, or its chain for a subagent,
@@ -2479,7 +2501,7 @@ function TaskWaterfall({
   attempt: ContinueAttempt | undefined;
   chain: SpanGroup[];
   onContinue: () => void;
-  onPickRun: (group: SpanGroup) => void;
+  onPickRun: (root: ObservabilitySpanRow) => void;
   projectSlug: string | undefined;
   stageSlug: string | undefined;
   view: WaterfallView;
@@ -2519,7 +2541,7 @@ function TaskWaterfall({
             >
               <button
                 type="button"
-                onClick={() => onPickRun(ancestor)}
+                onClick={() => onPickRun(ancestor.root)}
                 title={spanLabel(ancestor.root)}
                 className="max-w-56 cursor-pointer truncate hover:text-foreground hover:underline"
               >

@@ -31,6 +31,7 @@ import {
   workdirConnection,
   workdirPtyUrl,
 } from "../harness/sandbox/workdir-executor.ts";
+import { queueMirrorWrite } from "../harness/sandbox/utils.ts";
 import {
   extractBearerToken,
   isServiceToken,
@@ -756,10 +757,14 @@ async function suspendOrResumeSandbox(
     else await context.executor.resume?.(context.ref);
   });
   const status = action === "suspend" ? "suspended" : "running";
-  await setSandboxInstanceStatus(
-    context.accountId,
+  // Queued behind the machine's in-flight exec upserts, or one of those could
+  // land after the suspend and mark a suspended machine running.
+  const externalId = await getSandboxExternalId(
+    context.provider,
     context.reservationKey,
-    status,
+  );
+  await queueMirrorWrite(externalId ?? context.reservationKey, () =>
+    setSandboxInstanceStatus(context.accountId, context.reservationKey, status),
   );
   await context.audit("ok", { status: status });
 
@@ -776,6 +781,12 @@ async function terminateSandbox(
   if (!context.executor.release) {
     return unsupportedSandboxAction(context, "terminate");
   }
+  // Read before the reservation goes: the registry row is removed behind the
+  // machine's in-flight exec upserts, or one could recreate it for a dead machine.
+  const externalId = await getSandboxExternalId(
+    context.provider,
+    context.reservationKey,
+  );
   await auditedSandboxCall(context, async () => {
     await context.executor.release?.(context.ref);
   });
@@ -787,7 +798,9 @@ async function terminateSandbox(
     context.reservationKey,
     context.accountId,
   );
-  await removeSandboxInstance(context.accountId, context.reservationKey);
+  await queueMirrorWrite(externalId ?? context.reservationKey, () =>
+    removeSandboxInstance(context.accountId, context.reservationKey),
+  );
   await context.audit("ok", { status: "terminating" });
 
   return jsonResponse(200, { status: "terminated" });

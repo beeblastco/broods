@@ -33,6 +33,7 @@ import {
   StorageType,
   type ConsumerConfig,
   type ConsumerMessages,
+  type JetStreamManager,
   type NatsConnection,
   type Subscription,
 } from "nats.ws";
@@ -170,7 +171,7 @@ export async function ensureResponseStream(
 ): Promise<void> {
   if (!ensureStreamPromise) {
     ensureStreamPromise = (async () => {
-      const jsm = await connection.jetstreamManager();
+      const jsm = await jetstreamManagerFor(connection);
       // retention/storage/name are immutable after creation; the retention knobs
       // (max_age, max_msgs_per_subject, duplicate_window) are mutable, so apply
       // them on update too. That's how a shortened buffer reaches an existing
@@ -224,7 +225,7 @@ export async function ensureObservabilityStream(
 ): Promise<void> {
   if (!ensureObservabilityStreamPromise) {
     ensureObservabilityStreamPromise = (async () => {
-      const jsm = await connection.jetstreamManager();
+      const jsm = await jetstreamManagerFor(connection);
       // retention/storage/name are immutable after creation; the limit knobs are
       // mutable, so apply them on update too (how a retuned window reaches an
       // existing stream without a destructive recreate).
@@ -372,7 +373,7 @@ export async function conversationBufferedCount(options: {
   conversationKey: string;
 }): Promise<number> {
   try {
-    const jsm = await options.connection.jetstreamManager();
+    const jsm = await jetstreamManagerFor(options.connection);
     const subject = streamResponseSubject(
       options.accountId,
       options.agentId,
@@ -400,7 +401,7 @@ export async function conversationLastSequence(options: {
   conversationKey: string;
 }): Promise<number | null> {
   try {
-    const jsm = await options.connection.jetstreamManager();
+    const jsm = await jetstreamManagerFor(options.connection);
     const message = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
       last_by_subj: streamResponseSubject(
         options.accountId,
@@ -430,7 +431,7 @@ export async function conversationReplaySnapshot(options: {
   bufferedCount: number;
 }> {
   await ensureResponseStream(options.connection);
-  const jsm = await options.connection.jetstreamManager();
+  const jsm = await jetstreamManagerFor(options.connection);
   const subject = streamResponseSubject(
     options.accountId,
     options.agentId,
@@ -472,7 +473,7 @@ export async function retainedMessageSubject(
   sequence: number,
 ): Promise<string | null> {
   try {
-    const jsm = await connection.jetstreamManager();
+    const jsm = await jetstreamManagerFor(connection);
     const message = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
       seq: sequence,
     });
@@ -567,4 +568,29 @@ export function tracesSubjectWildcard(
   stage: string,
 ): string {
   return `v1.${accountId}.${project}.${subjectToken(stage)}.traces.>`;
+}
+
+// One JetStream manager per connection, built without the account-info probe
+// (`checkAPI`) that every fresh manager would otherwise send first. Keyed weakly
+// so a connection that closes and leaves the memo takes its manager with it.
+const jetstreamManagers = new WeakMap<
+  NatsConnection,
+  Promise<JetStreamManager>
+>();
+
+// Every helper here that needs the JetStream admin API goes through this.
+function jetstreamManagerFor(
+  connection: NatsConnection,
+): Promise<JetStreamManager> {
+  let manager = jetstreamManagers.get(connection);
+  if (!manager) {
+    manager = connection.jetstreamManager({ checkAPI: false });
+    jetstreamManagers.set(connection, manager);
+    // A failed build is not kept: the next call tries again.
+    void manager.catch((): void => {
+      jetstreamManagers.delete(connection);
+    });
+  }
+
+  return manager;
 }

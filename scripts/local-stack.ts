@@ -61,8 +61,7 @@ import {
 } from "./local-verify/harness.ts";
 
 // Pinned so CI and every laptop run the same backend. To bump, pull
-// convex-backend:latest and copy its RepoDigests entry here. The org is
-// `convex` since the rename from `get-convex`; ghcr does not redirect it.
+// ghcr.io/convex/convex-backend:latest and copy its RepoDigests entry here.
 const CONVEX_IMAGE =
   process.env.BROODS_LOCAL_CONVEX_IMAGE ??
   "ghcr.io/convex/convex-backend@sha256:b756b06641d15a55b5ec0692897ce5ad3715ddccfd02e1e213621e9e764255c8";
