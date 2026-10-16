@@ -1133,14 +1133,17 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): Promise<SandboxExecResponse | null> {
     // The reservation's own record has a 30-day TTL, so skipping its refresh costs
     // nothing, but the dashboard row carries lastUsedAt and the trace link, so it
-    // still mirrors every call. Fire-and-forget, like the acquire path.
-    void upsertSandboxInstance(
-      this.#config.controlPlane,
-      PROVIDER,
-      sandboxReservationKey(request) ?? target.microvmId,
-      target.microvmId,
-      request.metadata,
-      { specs: configuredSandboxSpecs(this.#config) },
+    // still mirrors every call. Fire-and-forget, like the acquire path, and queued
+    // per VM so an ephemeral VM's removal lands after it.
+    void queueMirrorWrite(target.microvmId, () =>
+      upsertSandboxInstance(
+        this.#config.controlPlane,
+        PROVIDER,
+        sandboxReservationKey(request) ?? target.microvmId,
+        target.microvmId,
+        request.metadata,
+        { specs: configuredSandboxSpecs(this.#config) },
+      ),
     );
     try {
       await this.#runLifecycle(

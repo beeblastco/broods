@@ -4,6 +4,11 @@
  * endpoints write after the provider lifecycle call succeeds, so the dashboard's
  * live sandboxInstances query reflects the new state. Wrapped so a mirror failure
  * never fails the lifecycle request, the same pattern as usage.ts.
+ *
+ * Every write skips the Convex client's process-wide mutation FIFO: each one
+ * keys on its own row, so an acquire never waits behind other runs' usage and
+ * audit writes. A caller that needs two writes to one row in order awaits
+ * them in sequence, or queues them per sandbox with `queueMirrorWrite`.
  */
 
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
@@ -60,33 +65,37 @@ export async function upsertSandboxInstance(
   try {
     // The Convex client drops undefined object fields, so an unset optional
     // stays absent on the row rather than becoming null.
-    await adminMutation(internal.sandbox.instances.upsert, {
-      accountId: controlPlane.accountId,
-      projectId: controlPlane.projectId,
-      stageId: controlPlane.stageId,
-      provider: provider,
-      reservationKey: reservationKey,
-      externalId: externalId,
-      name: controlPlane.name,
-      specs: options?.specs ?? controlPlane.specs,
-      specsVerified: options?.specs !== undefined ? true : undefined,
-      sandboxConfigId: controlPlane.sandboxConfigId,
-      snapshotId: controlPlane.snapshotId,
-      egress: controlPlane.egress,
-      permissionMode: controlPlane.permissionMode,
-      ownCredentials: controlPlane.ownCredentials,
-      idleTimeoutSeconds: controlPlane.idleTimeoutSeconds,
-      lastUsedTraceId: meta.traceId,
-      createdByTraceId: meta.traceId,
-      lastUsedTaskId: meta.taskId,
-      createdByTaskId: meta.taskId,
-      agentId: meta.agentId,
-      conversationKey: meta.conversationKey,
-      workspaceName: meta.workspaceName,
-      workspaceId: meta.workspaceId,
-      logStream: options?.logStream,
-      ephemeral: ephemeral ? true : undefined,
-    });
+    await adminMutation(
+      internal.sandbox.instances.upsert,
+      {
+        accountId: controlPlane.accountId,
+        projectId: controlPlane.projectId,
+        stageId: controlPlane.stageId,
+        provider: provider,
+        reservationKey: reservationKey,
+        externalId: externalId,
+        name: controlPlane.name,
+        specs: options?.specs ?? controlPlane.specs,
+        specsVerified: options?.specs !== undefined ? true : undefined,
+        sandboxConfigId: controlPlane.sandboxConfigId,
+        snapshotId: controlPlane.snapshotId,
+        egress: controlPlane.egress,
+        permissionMode: controlPlane.permissionMode,
+        ownCredentials: controlPlane.ownCredentials,
+        idleTimeoutSeconds: controlPlane.idleTimeoutSeconds,
+        lastUsedTraceId: meta.traceId,
+        createdByTraceId: meta.traceId,
+        lastUsedTaskId: meta.taskId,
+        createdByTaskId: meta.taskId,
+        agentId: meta.agentId,
+        conversationKey: meta.conversationKey,
+        workspaceName: meta.workspaceName,
+        workspaceId: meta.workspaceId,
+        logStream: options?.logStream,
+        ephemeral: ephemeral ? true : undefined,
+      },
+      { skipQueue: true },
+    );
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
@@ -106,12 +115,16 @@ export async function setSandboxInstanceSpecs(
   specs: SandboxSpecs,
 ): Promise<void> {
   try {
-    await adminMutation(internal.sandbox.instances.setSpecs, {
-      accountId: accountId,
-      reservationKey: reservationKey,
-      externalId: externalId,
-      specs: specs,
-    });
+    await adminMutation(
+      internal.sandbox.instances.setSpecs,
+      {
+        accountId: accountId,
+        reservationKey: reservationKey,
+        externalId: externalId,
+        specs: specs,
+      },
+      { skipQueue: true },
+    );
   } catch (err) {
     logError("Sandbox instance size mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
@@ -143,6 +156,7 @@ export async function setSandboxInstanceStatus(
         observed: options?.observed === true,
         errorMessage: options?.errorMessage,
       },
+      { skipQueue: true },
     );
 
     return changed;
@@ -188,12 +202,16 @@ export async function recordSandboxBurst(
   totals: { vcpuSeconds: number; gbSeconds: number },
 ): Promise<boolean> {
   try {
-    return await adminMutation(internal.sandbox.instances.recordBurst, {
-      accountId: accountId,
-      externalId: externalId,
-      vcpuSeconds: totals.vcpuSeconds,
-      gbSeconds: totals.gbSeconds,
-    });
+    return await adminMutation(
+      internal.sandbox.instances.recordBurst,
+      {
+        accountId: accountId,
+        externalId: externalId,
+        vcpuSeconds: totals.vcpuSeconds,
+        gbSeconds: totals.gbSeconds,
+      },
+      { skipQueue: true },
+    );
   } catch (err) {
     logError("Sandbox burst mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
@@ -219,11 +237,15 @@ export async function removeSandboxInstance(
     for (const [attempt, delayMs] of REMOVE_RETRY_DELAYS_MS.entries()) {
       await Bun.sleep(delayMs);
       try {
-        await adminMutation(internal.sandbox.instances.remove, {
-          accountId: accountId,
-          reservationKey: reservationKey,
-          externalId: externalId,
-        });
+        await adminMutation(
+          internal.sandbox.instances.remove,
+          {
+            accountId: accountId,
+            reservationKey: reservationKey,
+            externalId: externalId,
+          },
+          { skipQueue: true },
+        );
 
         return;
       } catch (err) {

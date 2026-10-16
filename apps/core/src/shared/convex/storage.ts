@@ -589,20 +589,24 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
   storageExternalId: async function (accountId) {
     const known = storageExternalIds.get(accountId);
     if (known) return known;
+    // Off the client's mutation FIFO: the id is minted once by the backend
+    // itself, so a mount never waits behind other runs' writes for it.
     const externalId = await adminMutation(
       internal.account.storageTrust.externalId,
       { accountId: accountId },
+      { skipQueue: true },
     );
     storageExternalIds.set(accountId, externalId);
 
     return externalId;
   },
   mintR2Credentials: async function (accountId, workspaceId, prefix) {
-    return await adminMutation(internal.workspace.configs.r2Credentials, {
-      accountId: accountId,
-      workspaceId: workspaceId,
-      prefix: prefix,
-    });
+    // Off the FIFO too: a mint reads the workspace and writes nothing shared.
+    return await adminMutation(
+      internal.workspace.configs.r2Credentials,
+      { accountId: accountId, workspaceId: workspaceId, prefix: prefix },
+      { skipQueue: true },
+    );
   },
   removeAllForAccount: async function (accountId) {
     const docs = await adminQuery(internal.workspace.configs.list, {
@@ -804,15 +808,24 @@ const accountHooks: Storage["accountHooks"] = {
   },
 };
 
+// Off the client's mutation FIFO. The row is fenced by connectionId, so a
+// disconnect or heartbeat that lands late is a no-op, and the dashboard reads
+// a row with no fresh heartbeat as offline either way.
 const machineConnections: Storage["machineConnections"] = {
   connected: async function (connection) {
-    await adminMutation(internal.sandbox.machines.connected, connection);
+    await adminMutation(internal.sandbox.machines.connected, connection, {
+      skipQueue: true,
+    });
   },
   disconnected: async function (ref) {
-    await adminMutation(internal.sandbox.machines.disconnected, ref);
+    await adminMutation(internal.sandbox.machines.disconnected, ref, {
+      skipQueue: true,
+    });
   },
   seen: async function (ref) {
-    await adminMutation(internal.sandbox.machines.seen, ref);
+    await adminMutation(internal.sandbox.machines.seen, ref, {
+      skipQueue: true,
+    });
   },
 };
 

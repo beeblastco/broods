@@ -2031,6 +2031,17 @@ describe("runtime ingress", () => {
         runId: "run_released-queued",
       }),
     ).toMatchObject({ status: "expired" });
+    // The sweep wrote the counters down with the rows, so nothing is left
+    // queued to refuse a clear.
+    expect(
+      await t.mutation(internal.runtimeIngress.acquireClear, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+        ownerEventId: "clear",
+        leaseTtlMs: 60_000,
+      }),
+    ).toBe(2);
   });
 
   test("a long queue behind a live owner does not hide a released one", async (): Promise<void> => {
