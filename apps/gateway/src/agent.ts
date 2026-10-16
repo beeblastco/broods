@@ -117,7 +117,14 @@ const SUBJECT_TOKEN = /^[^\s.*>]+$/;
 // queued `collect` or `followup` stays in flight until the run ends, so this
 // bounds poll loops per socket without serializing batching.
 const MAX_CONTROLS_IN_FLIGHT = 8;
+// Loop tick, and the first gap between status polls; a done frame or abort is
+// noticed within one tick.
 const STATUS_POLL_INTERVAL_MS = 500;
+// The gap between a run's status polls doubles from STATUS_POLL_INTERVAL_MS up
+// to this while no frame arrives.
+const STATUS_POLL_MAX_INTERVAL_MS = 5_000;
+// A control has no frames to reset its backoff, so it caps lower.
+const CONTROL_POLL_MAX_INTERVAL_MS = 2_000;
 const STATUS_QUIET_MS = 3_000;
 const NATS_TAIL_GRACE_POLLS = 4;
 const NATS_TAIL_MAX_WAIT_MS = 10_000;
@@ -432,6 +439,10 @@ async function followExecution(
   let sawDone = false;
   let sawError = false;
   let lastFrameAt = 0;
+  // Status poll backoff: the next poll is due at nextPollAt, and each poll
+  // doubles the gap; a frame resets both so a live run is polled promptly again.
+  let pollGapMs = STATUS_POLL_INTERVAL_MS;
+  let nextPollAt = 0;
   let streamSettled = messages === null;
   const closeOnAbort = () => void messages?.close().catch(() => {});
   if (messages) {
@@ -452,6 +463,8 @@ async function followExecution(
               continue;
             }
             lastFrameAt = Date.now();
+            pollGapMs = STATUS_POLL_INTERVAL_MS;
+            nextPollAt = 0;
             if (typeof event.data.type === "string") {
               sendAgentTest(socket, {
                 type: "output",
@@ -494,6 +507,9 @@ async function followExecution(
       // Frames arriving prove the run is alive, so status is only asked for
       // once the stream has gone quiet.
       if (Date.now() - lastFrameAt < STATUS_QUIET_MS) continue;
+      if (Date.now() < nextPollAt) continue;
+      pollGapMs = Math.min(pollGapMs * 2, STATUS_POLL_MAX_INTERVAL_MS);
+      nextPollAt = Date.now() + pollGapMs;
       const status = await fetchStatus(
         socket,
         execution.runId,
@@ -636,8 +652,14 @@ async function pollControlStatus(
   statusUrl?: string,
 ): Promise<void> {
   let previous = "";
+  // Same backoff as the run loop, with the lower control cap.
+  let pollGapMs = STATUS_POLL_INTERVAL_MS;
+  let nextPollAt = 0;
   while (!active.abort.signal.aborted) {
     await Bun.sleep(STATUS_POLL_INTERVAL_MS);
+    if (Date.now() < nextPollAt) continue;
+    pollGapMs = Math.min(pollGapMs * 2, CONTROL_POLL_MAX_INTERVAL_MS);
+    nextPollAt = Date.now() + pollGapMs;
     const payload = await fetchStatus(
       socket,
       runId,
