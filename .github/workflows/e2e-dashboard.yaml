@@ -99,28 +99,16 @@ jobs:
           # This job never pushes, so it needs no git credential left on disk.
           persist-credentials: false
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
-      - name: Cache the bun package cache
-        # Package tarballs only; bun install still links node_modules from them.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Cache Chromium
-        # Playwright's browser downloads; the install below is a no-op on a hit.
+        # Playwright's browser downloads, keyed on the lock that pins its
+        # version; the install below is a no-op on a hit.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('apps/dashboard/package.json') }}
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: playwright-${{ runner.os }}-
 
       - name: Install Chromium

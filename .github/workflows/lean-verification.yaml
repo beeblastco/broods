@@ -26,22 +26,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
-      - name: Cache the bun package cache
-        # Package tarballs only; bun install still links node_modules from them.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
-
       - name: Install dependencies
-        working-directory: .
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Generate the core prompt
         working-directory: apps/core
@@ -52,15 +38,18 @@ jobs:
         run: bun run verification:test
 
       - name: Cache the Lean toolchain and build
-        # elan with its Lean, and lake's build outputs. A manifest change keeps
-        # the toolchain and rebuilds; a toolchain change downloads a fresh one.
+        # elan with its Lean, and lake's build outputs. A source change saves
+        # fresh outputs over the last ones; a manifest change keeps the
+        # toolchain and rebuilds; a toolchain change downloads a fresh one.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.elan
             verification/.lake
-          key: lean-${{ runner.os }}-${{ hashFiles('verification/lean-toolchain') }}-${{ hashFiles('verification/lake-manifest.json') }}
-          restore-keys: lean-${{ runner.os }}-${{ hashFiles('verification/lean-toolchain') }}-
+          key: lean-${{ runner.os }}-${{ hashFiles('verification/lean-toolchain') }}-${{ hashFiles('verification/lake-manifest.json') }}-${{ hashFiles('verification/**/*.lean', 'verification/lakefile.toml') }}
+          restore-keys: |
+            lean-${{ runner.os }}-${{ hashFiles('verification/lean-toolchain') }}-${{ hashFiles('verification/lake-manifest.json') }}-
+            lean-${{ runner.os }}-${{ hashFiles('verification/lean-toolchain') }}-
 
       # elan reads verification/lean-toolchain and installs that exact Lean.
       # The installer is pinned to the v4.2.4 release commit. A cached elan
