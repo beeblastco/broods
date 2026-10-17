@@ -130,6 +130,8 @@ let mediaCacheBytes = 0;
 /** What `ingestInboundAttachments` needs to know about the message's run. */
 export interface InboundMediaContext {
   accountId?: string;
+  /** The agent the message is for; its project is billed the ingress. */
+  agentId?: string;
   /**
    * Decides which media types go over as native parts, and supplies the
    * credentials audio is transcribed with. Absent means neither: every
@@ -258,7 +260,11 @@ export async function ingestInboundAttachments(
   // show the data its channels sent in.
   const receivedBytes = read.reduce((sum, item) => sum + item.receivedBytes, 0);
   if (context.accountId && receivedBytes > 0) {
-    recordUsage(context.accountId, { ingressGb: receivedBytes / 1e9 });
+    recordUsage(
+      context.accountId,
+      { ingressGb: receivedBytes / 1e9 },
+      context.agentId === undefined ? undefined : { agentId: context.agentId },
+    );
   }
 
   const provider = context.agentConfig?.model?.provider;
@@ -714,7 +720,7 @@ async function readSealedMedia(
       return null;
     }
     replay.remainingBytes -= size;
-    const bytes = Buffer.from(await readMediaObject(object, ticket.accountId));
+    const bytes = Buffer.from(await readMediaObject(object, ticket));
     cacheMedia(link, bytes);
 
     return { bytes: bytes };

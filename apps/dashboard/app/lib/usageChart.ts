@@ -1,5 +1,15 @@
 import { formatNumber } from "./formatNumber";
 
+/** Colors for a chart's series in order, such as models or projects. */
+export const SERIES_COLORS = [
+  "var(--color-usage-model-1)",
+  "var(--color-usage-model-2)",
+  "var(--color-usage-model-3)",
+  "var(--color-usage-model-4)",
+  "var(--color-usage-model-5)",
+  "var(--color-usage-model-6)",
+];
+
 /** Token counts as the AI SDK reports them: input and output are totals. */
 export interface TokenCounts {
   inputTokens: number;

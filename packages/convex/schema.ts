@@ -1560,6 +1560,22 @@ export const usageDaysFields = {
 };
 
 /**
+ * The same daily usage split by the project it came from, for the Usage tab's
+ * per-project view. Usage with no project (account-wide sandboxes and
+ * workspaces, chat attachments, skills, bundles) only lands on `usageDays`.
+ */
+export const usageProjectDaysFields = {
+  accountId: v.id("accounts"),
+  projectId: v.id("projects"),
+  /** "YYYY-MM-DD", UTC. */
+  day: v.string(),
+  ...usageQuantityFields,
+  /** GB the project's workspaces held at the day's latest snapshot. */
+  storageGb: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+/**
  * Ids of core usage writes already on a meter, so a retry after a lost
  * response is not counted twice. Pruned after a day; retries end in seconds.
  */
@@ -1888,6 +1904,10 @@ export default defineSchema({
     "accountId",
     "day",
   ]),
+  usageProjectDays: defineTable(usageProjectDaysFields).index(
+    "by_accountId_and_day_and_projectId",
+    ["accountId", "day", "projectId"],
+  ),
   usageWrites: defineTable(usageWritesFields)
     .index("by_writeId", ["writeId"])
     .index("by_createdAt", ["createdAt"]),

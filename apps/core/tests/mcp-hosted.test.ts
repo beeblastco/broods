@@ -175,7 +175,7 @@ describe("hosted MCP invoke", () => {
 });
 
 describe("hosted MCP metering", () => {
-  const recorded: { accountId: string; usage: unknown }[] = [];
+  const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
 
   beforeEach(() => {
     recorded.length = 0;
@@ -186,8 +186,12 @@ describe("hosted MCP metering", () => {
     process.env.TOOL_BUNDLES_BUCKET_NAME = "bundles";
     setStorageForTests({
       budgets: {
-        record: async (accountId: string, usage: unknown): Promise<void> => {
-          recorded.push({ accountId: accountId, usage: usage });
+        record: async (
+          accountId: string,
+          usage: unknown,
+          source: unknown,
+        ): Promise<void> => {
+          recorded.push({ accountId: accountId, usage: usage, source: source });
         },
       },
     } as never);
@@ -221,6 +225,8 @@ describe("hosted MCP metering", () => {
       {
         accountId: "acct_test",
         usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
+        // Billed to the server's own project.
+        source: { projectId: "proj" },
       },
     ]);
   });
@@ -309,6 +315,7 @@ describe("hosted MCP metering", () => {
     const charge = {
       accountId: "acct_test",
       usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
+      source: { projectId: "proj" },
     };
     expect(recorded).toEqual([charge, charge]);
   });

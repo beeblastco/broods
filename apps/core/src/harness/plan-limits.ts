@@ -20,7 +20,11 @@ import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { errorResponse } from "../shared/http.ts";
 import { waitUntil } from "../shared/in-flight.ts";
 import { logWarn } from "../shared/log.ts";
-import { getStorage, type Storage } from "../shared/storage.ts";
+import {
+  getStorage,
+  type Storage,
+  type UsageSource,
+} from "../shared/storage.ts";
 
 const WINDOW_MS = 60_000;
 // How stale a budget read may be. Usage that lands inside it can take an
@@ -158,8 +162,9 @@ export function planRefusalText(refusal: PlanRefusal): string {
 export function recordUsage(
   accountId: string,
   usage: Parameters<Storage["budgets"]["record"]>[1],
+  source?: UsageSource,
 ): void {
-  waitUntil(getStorage().budgets.record(accountId, usage));
+  waitUntil(getStorage().budgets.record(accountId, usage, source));
 }
 
 export function resetPlanLimitsForTests(): void {

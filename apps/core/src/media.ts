@@ -107,7 +107,7 @@ export async function handleMediaRequest(
     return new Response(null, { status: 200, headers: headers });
   }
 
-  const bytes = await readMediaObject(object, ticket.accountId);
+  const bytes = await readMediaObject(object, ticket);
 
   return new Response(bytes, { status: 200, headers: headers });
 }
@@ -174,7 +174,7 @@ export async function locateMediaObject(
 // own bucket is the tenant's bill.
 export async function readMediaObject(
   object: MediaObject,
-  accountId: string,
+  ticket: MediaTicket,
 ): Promise<Uint8Array> {
   const bytes = await readS3Bytes(
     object.bucket,
@@ -183,7 +183,11 @@ export async function readMediaObject(
     MAX_MEDIA_BYTES,
   );
   if (!object.access) {
-    recordUsage(accountId, { egressGb: bytes.byteLength / 1e9 });
+    recordUsage(
+      ticket.accountId,
+      { egressGb: bytes.byteLength / 1e9 },
+      "workspaceId" in ticket ? { workspaceId: ticket.workspaceId } : undefined,
+    );
   }
 
   return bytes;

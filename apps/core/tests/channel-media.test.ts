@@ -32,6 +32,7 @@ import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 const meterWrites: Array<{
   accountId: string;
   usage: Parameters<Storage["budgets"]["record"]>[1];
+  source?: Parameters<Storage["budgets"]["record"]>[2];
 }> = [];
 
 const headS3ObjectMock = mock(
@@ -144,8 +145,13 @@ beforeEach(() => {
       record: async function (
         accountId: string,
         usage: Parameters<Storage["budgets"]["record"]>[1],
+        source?: Parameters<Storage["budgets"]["record"]>[2],
       ): Promise<void> {
-        meterWrites.push({ accountId: accountId, usage: usage });
+        meterWrites.push({
+          accountId: accountId,
+          usage: usage,
+          ...(source ? { source: source } : {}),
+        });
       },
     },
   } as never);
@@ -193,6 +199,7 @@ describe("ingestInboundAttachments", () => {
   it("stores a picture and hands the model a durable link, not the bytes", async () => {
     const parts = await ingestInboundAttachments([imageAttachment()], {
       accountId: ACCOUNT,
+      agentId: "agent_1",
       channelName: "telegram",
       eventId: "evt-1",
       workspace: workspace(),
@@ -221,9 +228,14 @@ describe("ingestInboundAttachments", () => {
     expect(workspaceOptions).toEqual({ contentType: "image/png" });
     expect(storeKey).toStartWith(`attachments/${ACCOUNT}/media/`);
     expect(storeKey).toEndWith("-photo.png");
-    // Received once, metered once, however many copies are stored.
+    // Received once, metered once, however many copies are stored, and
+    // billed to the agent's project.
     expect(meterWrites).toEqual([
-      { accountId: ACCOUNT, usage: { ingressGb: PNG_BYTES.byteLength / 1e9 } },
+      {
+        accountId: ACCOUNT,
+        usage: { ingressGb: PNG_BYTES.byteLength / 1e9 },
+        source: { agentId: "agent_1" },
+      },
     ]);
   });
 
@@ -273,6 +285,7 @@ describe("ingestInboundAttachments", () => {
   it("seals the link against the attachment store, not the workspace", async () => {
     const parts = await ingestInboundAttachments([imageAttachment()], {
       accountId: ACCOUNT,
+      agentId: "agent_1",
       channelName: "telegram",
       eventId: "evt-1",
       workspace: workspace(),
@@ -812,8 +825,17 @@ describe("rehydrateStoredMedia", () => {
     // Both links are read once; the replay comes from the media cache. Bytes
     // out of the managed bucket are metered as egress, as the media route did.
     expect(readS3BytesMock).toHaveBeenCalledTimes(2);
+    // A workspace link is billed to that workspace's project; the
+    // attachment store belongs to no project.
     const egress = { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } };
-    expect(meterWrites).toEqual([egress, egress]);
+    // The two links are read side by side, so in either order.
+    expect(meterWrites).toHaveLength(2);
+    expect(meterWrites).toEqual(
+      expect.arrayContaining([
+        { ...egress, source: { workspaceId: "ws_1" } },
+        egress,
+      ]),
+    );
   });
 
   // The read runs on core's credentials and meters the ticket's account, so a
@@ -1198,8 +1220,13 @@ function storageWithWorkspace(): Storage {
       record: async function (
         accountId: string,
         usage: Parameters<Storage["budgets"]["record"]>[1],
+        source?: Parameters<Storage["budgets"]["record"]>[2],
       ): Promise<void> {
-        meterWrites.push({ accountId: accountId, usage: usage });
+        meterWrites.push({
+          accountId: accountId,
+          usage: usage,
+          ...(source ? { source: source } : {}),
+        });
       },
     },
     workspaceConfigs: {

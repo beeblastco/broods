@@ -569,11 +569,15 @@ async function runBatch(
     // Cloudflare is metered the same way, so the tariff does not depend on
     // which runtime a row picked.
     if (invokedAt !== undefined) {
-      recordUsage(record.accountId, {
-        hostedMcpGbSeconds:
-          ((Date.now() - invokedAt) / 1000) * HOSTED_MCP_MEMORY_GB,
-        hostedMcpRequests: 1,
-      });
+      recordUsage(
+        record.accountId,
+        {
+          hostedMcpGbSeconds:
+            ((Date.now() - invokedAt) / 1000) * HOSTED_MCP_MEMORY_GB,
+          hostedMcpRequests: 1,
+        },
+        { projectId: record.projectId },
+      );
     }
   }
 }
