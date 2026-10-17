@@ -126,10 +126,10 @@ export const scratch = defineWorkspace({
 
 ### When a child folder is deleted
 
-| Channel                                                                                                             | End of conversation       | Folder deleted |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------------- | -------------- |
-| GitHub issue or pull request                                                                                        | closed                    | yes            |
-| Slack, Discord, Telegram, Matrix, Pancake, Zalo, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger, Instagram | never, threads do not end | no             |
+| Channel                                                                                                                     | End of conversation       | Folder deleted |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------- | -------------- |
+| GitHub issue or pull request                                                                                                | closed                    | yes            |
+| Slack, Discord, Telegram, Matrix, Pancake, Zalo, Linear, Notion, WhatsApp, Teams, Google Chat, Twilio, Messenger, Instagram | never, threads do not end | no             |
 
 Only `conversation` folders are ever deleted, shortly after the close event. On chat channels they pile up one per thread, so prune them from the dashboard Files view or the files API, or use `shared` there.
 

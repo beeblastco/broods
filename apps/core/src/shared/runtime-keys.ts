@@ -33,6 +33,7 @@ export const CHANNEL_THREAD_SEPARATOR = "|";
 export const GCHAT_INTEGRATION_PREFIX = "gchat:";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
 export const LINEAR_INTEGRATION_PREFIX = "linear:";
+export const NOTION_INTEGRATION_PREFIX = "notion:";
 export const SLACK_INTEGRATION_PREFIX = "slack:";
 export const SLACK_COMMAND_INTEGRATION_PREFIX = "slack-command:";
 export const TEAMS_INTEGRATION_PREFIX = "teams:";
@@ -54,6 +55,7 @@ const RESERVED_EVENT_ID_PREFIXES = [
   GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
   LINEAR_INTEGRATION_PREFIX,
+  NOTION_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
   SLACK_COMMAND_INTEGRATION_PREFIX,
   TEAMS_INTEGRATION_PREFIX,
@@ -78,6 +80,7 @@ const RESERVED_CONVERSATION_PREFIXES = [
   GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
   LINEAR_INTEGRATION_PREFIX,
+  NOTION_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
   TEAMS_INTEGRATION_PREFIX,
   TELEGRAM_INTEGRATION_PREFIX,
@@ -95,6 +98,7 @@ const CHANNEL_CONVERSATION_PREFIXES = [
   GCHAT_INTEGRATION_PREFIX,
   GITHUB_INTEGRATION_PREFIX,
   LINEAR_INTEGRATION_PREFIX,
+  NOTION_INTEGRATION_PREFIX,
   SLACK_INTEGRATION_PREFIX,
   TEAMS_INTEGRATION_PREFIX,
   TELEGRAM_INTEGRATION_PREFIX,
@@ -178,6 +182,12 @@ export function channelScopeKeyFromConversation(
     const parts = unscopedKey.split(":");
 
     return parts.length >= 4 ? parts.slice(0, 2).join(":") : unscopedKey;
+  }
+  // A Notion thread is `notion:{pageId}:{discussionId}` on its page.
+  if (unscopedKey.startsWith(NOTION_INTEGRATION_PREFIX)) {
+    const parts = unscopedKey.split(":");
+
+    return parts.length >= 3 ? parts.slice(0, 2).join(":") : unscopedKey;
   }
   if (unscopedKey.startsWith(GITHUB_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
