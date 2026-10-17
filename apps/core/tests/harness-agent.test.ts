@@ -189,6 +189,7 @@ async function runHarnessTurn(
         sandboxes: () => [{ sandbox: { provider: "lambda" } }],
         environmentText: () => "<environment>",
         persistModelMessages: async () => {},
+        flushPendingStoredEvents: async () => {},
         applySteeringIngress: applySteeringIngress,
         appendIngressEvents: appendIngressEvents,
         loadHarnessSession: async () => null,

@@ -288,6 +288,9 @@ export function ownerCheckForStream(
   session: Pick<Session, "assertCurrentOwner" | "assertRecentOwner">,
 ): (frame: Record<string, unknown>) => Promise<void> {
   return async (frame): Promise<void> => {
+    // The SDK emits `start` before the first step boundary has proved the
+    // owner, and it carries nothing from the model: every later frame does.
+    if (frame.type === "start") return;
     const exact =
       typeof frame.type === "string" &&
       OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type);
