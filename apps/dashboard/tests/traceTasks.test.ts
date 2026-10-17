@@ -67,7 +67,7 @@ describe("groupSpans", () => {
     expect(group.childrenByParent.get("parent")?.[0]?.spanId).toBe("sub");
   });
 
-  test("nests a subagent's own steps and tool calls under its row", () => {
+  test("lists a subagent as its own run under the task, one line in the task's rows", () => {
     const parent = root("parent", 1_000, 9_000, "ok", { "task.id": TASK_ID });
     const subagent = root("sub", 2_000, 5_000, "ok", {
       "parent.trace_id": "trace-parent",
@@ -77,17 +77,85 @@ describe("groupSpans", () => {
     const subTool = child("sub", "bash", 2_200, "ok");
     subTool.parentSpanId = subStep.spanId;
 
-    const [group] = groupSpans([parent, subagent, subStep, subTool]);
+    const [group, ...rest] = groupSpans([parent, subagent, subStep, subTool]);
 
+    expect(rest).toHaveLength(0);
     expect(group.childrenByParent.get("parent")?.map((s) => s.spanId)).toEqual([
       "sub",
     ]);
-    expect(group.childrenByParent.get("sub")?.map((s) => s.spanId)).toEqual([
+    expect(group.childrenByParent.get("sub")).toBeUndefined();
+    expect(group.subagents.map((s) => s.root.spanId)).toEqual(["sub"]);
+    const [run] = group.subagents;
+    expect(run.parentTraceId).toBe("trace-parent");
+    expect(run.childrenByParent.get("sub")?.map((s) => s.spanId)).toEqual([
       subStep.spanId,
     ]);
     expect(
-      group.childrenByParent.get(subStep.spanId)?.map((s) => s.spanId),
+      run.childrenByParent.get(subStep.spanId)?.map((s) => s.spanId),
     ).toEqual(["sub-bash"]);
+  });
+
+  test("lists a subagent's subagent flat under the task, in start order", () => {
+    const parent = root("parent", 1_000, 9_000, "ok", { "task.id": TASK_ID });
+    const first = root("first", 2_000, 6_000, "ok", {
+      "parent.trace_id": "trace-parent",
+    });
+    first.kind = "subtask";
+    const nested = root("nested", 3_000, 4_000, "ok", {
+      "parent.trace_id": "trace-first",
+    });
+    nested.kind = "subtask";
+    const second = root("second", 5_000, 8_000, "ok", {
+      "parent.trace_id": "trace-parent",
+    });
+    second.kind = "subtask";
+
+    const [group, ...rest] = groupSpans([second, nested, parent, first]);
+
+    expect(rest).toHaveLength(0);
+    expect(group.subagents.map((s) => s.root.spanId)).toEqual([
+      "first",
+      "nested",
+      "second",
+    ]);
+    expect(group.childrenByParent.get("parent")?.map((s) => s.spanId)).toEqual([
+      "first",
+      "second",
+    ]);
+    const [run] = group.subagents;
+    expect(run.childrenByParent.get("first")?.map((s) => s.spanId)).toEqual([
+      "nested",
+    ]);
+  });
+
+  test("keeps a subagent of an orphan under the orphan, not the other way round", () => {
+    const orphan = root("orphan", 1_000, 5_000, "ok", {
+      "parent.trace_id": "trace-missing",
+    });
+    orphan.kind = "subtask";
+    const child = root("child", 2_000, 3_000, "ok", {
+      "parent.trace_id": "trace-orphan",
+    });
+    child.kind = "subtask";
+
+    const [group, ...rest] = groupSpans([child, orphan]);
+
+    expect(rest).toHaveLength(0);
+    expect(group.root.spanId).toBe("orphan");
+    expect(group.subagents.map((s) => s.root.spanId)).toEqual(["child"]);
+  });
+
+  test("lists a subagent whose parent never arrived on its own", () => {
+    const orphan = root("orphan", 2_000, 5_000, "ok", {
+      "parent.trace_id": "trace-missing",
+    });
+    orphan.kind = "subtask";
+
+    const [group, ...rest] = groupSpans([orphan]);
+
+    expect(rest).toHaveLength(0);
+    expect(group.root.spanId).toBe("orphan");
+    expect(group.subagents).toHaveLength(0);
   });
 });
 
@@ -219,6 +287,24 @@ describe("task search", () => {
     expect(matches("channel:slack")).toBe(false);
     expect(matches("status:error 429")).toBe(true);
     expect(matches("status:error nothing-here")).toBe(false);
+  });
+
+  test("matches a task on what its subagents ran", () => {
+    const parent = root("parent", 1_000, 9_000, "ok", { "task.id": TASK_ID });
+    const subagent = root("sub", 2_000, 5_000, "ok", {
+      "parent.trace_id": "trace-parent",
+    });
+    subagent.kind = "subtask";
+    subagent.agentId = "researcher";
+    const subTool = child("sub", "web_search", 2_200, "ok");
+    const [group] = groupSpans([parent, subagent, subTool]);
+    const matches = (input: string): boolean =>
+      matchesTaskQuery(group, parseTaskQuery(input));
+
+    expect(matches("tool:web_search")).toBe(true);
+    expect(matches("agent:researcher")).toBe(true);
+    expect(matches("trace:trace-sub")).toBe(true);
+    expect(matches("tool:bash")).toBe(false);
   });
 });
 
