@@ -7,7 +7,7 @@
 import type { SandboxExecAnswer } from "../../core/src/shared/domain/sandbox-config.ts";
 
 /** One command from core, after the host validated it. */
-export interface IsolateExecRequest {
+export interface WorkerExecRequest {
   /** A bash script, run as `bash -c` would with `args` as its positionals. */
   script: string;
   args: string[];
@@ -21,15 +21,12 @@ export interface IsolateExecRequest {
   persist: boolean;
 }
 
-/** One finished command, as core's exec contract; the host measures `duration_ms`. */
-export type ExecResult = SandboxExecAnswer;
-
 /**
  * The runtime's answer: the result, and the disk after the command as the
  * bytes R2 stores, null for an empty disk, or "unchanged" when the command
  * left the disk as it found it.
  */
 export interface RuntimeExecResult {
-  result: Omit<ExecResult, "duration_ms">;
+  result: Omit<SandboxExecAnswer, "duration_ms">;
   state: Uint8Array | null | "unchanged";
 }

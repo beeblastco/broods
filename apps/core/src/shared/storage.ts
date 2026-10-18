@@ -328,7 +328,7 @@ export interface UsageSource {
 
 /**
  * The account's monthly compute budget and the usage only core sees:
- * hosted-MCP invokes, isolate commands, media egress and attachment ingress.
+ * hosted-MCP invokes, worker commands, media egress and attachment ingress.
  * Other sandbox time and storage are metered in Convex itself.
  */
 interface BudgetStore {
@@ -344,8 +344,8 @@ interface BudgetStore {
       Partial<UsageQuantities>,
       | "hostedMcpGbSeconds"
       | "hostedMcpRequests"
-      | "isolateMs"
-      | "isolateRequests"
+      | "workerMs"
+      | "workerRequests"
       | "egressGb"
       | "ingressGb"
     >,

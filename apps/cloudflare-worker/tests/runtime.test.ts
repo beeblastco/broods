@@ -8,7 +8,8 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { buildRuntime } from "../scripts/build-runtime.ts";
-import type { ExecResult, IsolateExecRequest } from "../src/contract.ts";
+import type { SandboxExecAnswer } from "../../core/src/shared/domain/sandbox-config.ts";
+import type { WorkerExecRequest } from "../src/contract.ts";
 
 const API_KEY = "local-key";
 
@@ -32,7 +33,7 @@ beforeAll(async (): Promise<void> => {
       compatibilityDate: "2026-09-30",
       workerLoaders: { LOADER: {} },
       r2Buckets: ["STATE"],
-      bindings: { ISOLATE_API_KEY: API_KEY },
+      bindings: { WORKER_API_KEY: API_KEY },
       outboundService: async (): Promise<Response> => {
         outboundHits++;
 
@@ -75,6 +76,9 @@ it("runs a script with its positionals in the requested directory", async (): Pr
 
 it("keeps a reserved sandbox's files between calls and drops them on delete", async (): Promise<void> => {
   expect(await exists("sb-keep")).toBe(false);
+  // A command that only reads stores no disk, not even its working directory.
+  await exec("sb-keep", { script: "ls", persist: true });
+  expect(await exists("sb-keep")).toBe(false);
   await exec("sb-keep", {
     script: "mkdir -p src && echo 'const a = 1' > src/a.ts",
     persist: true,
@@ -102,6 +106,43 @@ it("stores only the first of two calls that raced on one disk and answers the ot
   expect([first.status, second.status]).toEqual([409, 200]);
   const files = await exec("sb-race", { script: "ls", persist: true });
   expect(files.stdout).toBe("two.txt\n");
+});
+
+it("answers 409 to a write that raced with a call emptying the disk", async (): Promise<void> => {
+  await exec("sb-wipe", { script: "echo a > a.txt", persist: true });
+  const [wipe, write] = await Promise.all([
+    send("sb-wipe", { script: "sleep 1; rm -rf /workspace", persist: true }),
+    send("sb-wipe", { script: "echo b > b.txt", persist: true }),
+  ]);
+
+  expect([wipe.status, write.status]).toEqual([409, 200]);
+  const files = await exec("sb-wipe", { script: "ls", persist: true });
+  expect(files.stdout).toBe("a.txt\nb.txt\n");
+});
+
+it("keeps what a command wrote before it timed out", async (): Promise<void> => {
+  const result = await exec("sb-late", {
+    script: "echo kept > kept.txt; sleep 10",
+    persist: true,
+    timeoutMs: 500,
+  });
+
+  expect(result.timed_out).toBe(true);
+  const files = await exec("sb-late", {
+    script: "cat kept.txt",
+    persist: true,
+  });
+  expect(files.stdout).toBe("kept\n");
+});
+
+it("answers a runtime failure with its message", async (): Promise<void> => {
+  const bucket = await runtime.getR2Bucket("STATE");
+  await bucket.put("sandboxes/sb-corrupt", new Uint8Array([1, 2, 3, 4, 5]));
+
+  const response = await send("sb-corrupt", { script: "ls", persist: true });
+
+  expect(response.status).toBe(500);
+  expect(await response.text()).toContain("the sandbox's isolate failed");
 });
 
 it("gives an ephemeral call an empty disk every time", async (): Promise<void> => {
@@ -145,21 +186,30 @@ it("caps each stream at the output limit on a character boundary", async (): Pro
     outputLimitBytes: 1024,
   });
 
+  // Past just-bash's old total cap: cut, not dropped.
+  const huge = await exec("sb-huge", {
+    script:
+      "awk 'BEGIN{for(i=0;i<60000;i++) print \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}'",
+    outputLimitBytes: 64 * 1024,
+  });
+
   expect(result.truncated).toBe(true);
   expect(result.stdout).toHaveLength(1024);
   expect(wide.truncated).toBe(true);
   expect(wide.stdout).toBe("€".repeat(341));
+  expect(huge).toMatchObject({ ok: true, exit_code: 0, truncated: true });
+  expect(huge.stdout).toHaveLength(64 * 1024);
 });
 
 async function exec(
   id: string,
-  request: Partial<IsolateExecRequest>,
-): Promise<ExecResult> {
+  request: Partial<WorkerExecRequest>,
+): Promise<SandboxExecAnswer> {
   const response = await send(id, request);
   if (response.status !== 200)
     throw new Error(`exec ${response.status}: ${await response.text()}`);
 
-  return (await response.json()) as ExecResult;
+  return (await response.json()) as SandboxExecAnswer;
 }
 
 async function exists(id: string): Promise<boolean> {
@@ -171,11 +221,11 @@ async function exists(id: string): Promise<boolean> {
 
 function send(
   id: string,
-  request: Partial<IsolateExecRequest> | undefined,
+  request: Partial<WorkerExecRequest> | undefined,
   key: string = API_KEY,
   method: "DELETE" | "GET" | "POST" = "POST",
 ): Promise<Response> {
-  const body: IsolateExecRequest | undefined =
+  const body: WorkerExecRequest | undefined =
     request === undefined
       ? undefined
       : {

@@ -1316,7 +1316,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -1367,7 +1367,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -1491,7 +1491,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           pulledCount: number;
@@ -2078,9 +2078,9 @@ export declare const internal: {
             hostedMcpGbSeconds?: number;
             hostedMcpRequests?: number;
             ingressGb?: number;
-            isolateMs?: number;
-            isolateRequests?: number;
             storageGbMonths?: number;
+            workerMs?: number;
+            workerRequests?: number;
           };
           writeId?: string;
         },
@@ -5282,7 +5282,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5309,7 +5309,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5385,7 +5385,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5436,7 +5436,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5521,7 +5521,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5562,7 +5562,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5586,7 +5586,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5604,7 +5604,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5628,7 +5628,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5652,7 +5652,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         scope: "account" | { projectId: Id<"projects">; stageId: Id<"stages"> };
@@ -5687,7 +5687,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5711,7 +5711,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5746,7 +5746,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5854,7 +5854,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
-          | "isolate"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5914,7 +5914,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6374,7 +6374,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6567,7 +6567,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6661,7 +6661,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6759,7 +6759,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
-            | "isolate"
+            | "worker"
             | "machine"
             | "custom";
           scope:

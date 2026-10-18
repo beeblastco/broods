@@ -60,10 +60,10 @@ export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 // Cloudflare refuses a Container inactivity timeout over six hours.
 export const CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60;
 // An isolate's CPU limit is its call's timeout, so one command may run this
-// long at most: `MAX_TIMEOUT_MS` in `apps/cloudflare-isolate/src/limits.ts`.
-export const ISOLATE_MAX_TIMEOUT_SECONDS = 60;
+// long at most: `MAX_TIMEOUT_MS` in `apps/cloudflare-worker/src/limits.ts`.
+export const WORKER_MAX_TIMEOUT_SECONDS = 60;
 // The only options core reads for a platform-run provider (lambda, cloudflare,
-// isolate): the executor's workspaceRoot and the reservation pin every provider
+// worker): the executor's workspaceRoot and the reservation pin every provider
 // shares. Images, roles and the Workers are platform resources core takes from
 // its env, so anything else is refused.
 const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
@@ -153,8 +153,8 @@ export function workspaceSandboxLimits(
             "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
             LAMBDA_MAX_TIMEOUT_SECONDS,
           )
-        : provider === "isolate"
-          ? ISOLATE_MAX_TIMEOUT_SECONDS
+        : provider === "worker"
+          ? WORKER_MAX_TIMEOUT_SECONDS
           : positiveIntegerEnv(
               "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
               PERSISTENT_MAX_TIMEOUT_SECONDS,
@@ -726,10 +726,10 @@ function assertWorkerLifecycle(
         `config.${field} is not supported by the ${provider} provider; the Worker sets the machine`,
       );
   }
-  if (provider === "isolate") {
+  if (provider === "worker") {
     if (lifecycle !== undefined)
       throw new ClientError(
-        "config.lifecycle is not supported by the isolate provider: nothing runs between commands, and stored files stay until the sandbox is terminated",
+        "config.lifecycle is not supported by the worker provider: nothing runs between commands, and stored files stay until the sandbox is terminated",
       );
 
     return;

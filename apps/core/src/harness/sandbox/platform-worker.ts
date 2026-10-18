@@ -1,13 +1,12 @@
 /**
  * What the executors behind a platform Cloudflare Worker share: the bridge
- * for `cloudflare` and the isolate Worker for `isolate`. Both reach their
+ * for `cloudflare` and the isolate Worker for `worker`. Both reach their
  * Worker over bearer-authenticated HTTPS from core's env, and both reserve a
  * persistent sandbox as a claim on an id, since the Worker-side resource
  * exists as soon as it is named. Provider-specific calls stay in each executor.
  */
 
 import { optionalEnv } from "../../shared/env.ts";
-import { waitUntil } from "../../shared/in-flight.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
@@ -123,9 +122,9 @@ export async function releasePlatformSandbox(
  * Worker-side resource exists as soon as it is named, so reserving is only
  * the claim, and the loser of a race takes the winner's id and creates
  * nothing. An existing reservation is reused by key alone (the dashboard
- * console carries no account) and its deadline refreshed off the command's
- * path; claiming a new one needs the account, so without it the run is
- * ephemeral.
+ * console carries no account), its deadline refreshed before the command so
+ * the sweeper cannot take the row from under it; claiming a new one needs
+ * the account, so without it the run is ephemeral.
  */
 export async function reservePlatformSandbox(
   provider: SandboxProvider,
@@ -134,7 +133,7 @@ export async function reservePlatformSandbox(
 ): Promise<string | undefined> {
   const existing = await getSandboxExternalId(provider, key);
   if (existing) {
-    waitUntil(saveSandboxInstance(provider, key, existing, accountId));
+    await saveSandboxInstance(provider, key, existing, accountId);
 
     return existing;
   }
