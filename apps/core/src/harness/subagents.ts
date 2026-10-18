@@ -1338,8 +1338,9 @@ export class SubagentCoordinator {
       } else {
         this.completions.push(visible);
       }
-    } else if (detached) {
-      // Never told, so the recovery sweep must not tell it either.
+    } else {
+      // Never told, so the recovery sweep must not tell it either: a finished
+      // row left `pending` would be swept past the parent's hold.
       await markAsyncAgentHandback(completion.eventId, "stored");
     }
     this.handled.add(completion.eventId);
