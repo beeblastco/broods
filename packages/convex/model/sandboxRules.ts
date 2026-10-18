@@ -731,6 +731,10 @@ function assertWorkerLifecycle(
         `config.${field} is not supported by the ${provider} provider; the Worker sets the machine`,
       );
   }
+  if (provider === "isolate" && lifecycle !== undefined)
+    throw new ClientError(
+      "config.lifecycle is not supported by the isolate provider: nothing runs between commands, and stored files stay until the sandbox is terminated",
+    );
   if (provider !== "cloudflare") return;
   if (lifecycle?.maxLifetimeSeconds !== undefined)
     throw new ClientError(

@@ -198,6 +198,56 @@ it("reserves one persistent sandbox, keeps its files across runs and mirrors it"
   ]);
 });
 
+it("runs a command again when another changed the files under it, up to three times", async (): Promise<void> => {
+  let conflicts = 0;
+  const racing = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    calls.push({
+      method: init?.method ?? "GET",
+      url: urlOf(input),
+      authorization: null,
+      body: null,
+    });
+    if (conflicts < 2) {
+      conflicts++;
+
+      return new Response("another command changed the files", {
+        status: 409,
+      });
+    }
+
+    return Response.json(EXEC_OK);
+  };
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(racing, { preconnect: (): void => {} }),
+  );
+  restores.unshift((): void => fetchSpy.mockRestore());
+
+  const result = await new IsolateSandboxExecutor({
+    ...config,
+    persistent: true,
+  }).run(request);
+
+  expect(result.ok).toBe(true);
+  expect(calls).toHaveLength(3);
+
+  conflicts = -10;
+  const failure = await new IsolateSandboxExecutor({
+    ...config,
+    persistent: true,
+  })
+    .run(request)
+    .then(
+      (): string => "ran",
+      (error: unknown): string => String(error),
+    );
+
+  expect(failure).toContain("another command changed the files");
+  expect(calls).toHaveLength(7);
+});
+
 it("never mirrors a reservation whose first command was refused", async (): Promise<void> => {
   const refused = async (): Promise<Response> =>
     new Response("Unauthorized", { status: 401 });
