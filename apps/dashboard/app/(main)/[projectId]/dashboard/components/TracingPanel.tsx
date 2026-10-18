@@ -1960,6 +1960,42 @@ function NoteRow({
   const Icon = icon;
 
   return (
+    <WideRow
+      depth={depth}
+      isSelected={isSelected}
+      label={title}
+      onClick={onClick}
+    >
+      <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
+        <TraceLine size="xs">
+          <TraceIcon>
+            <Icon />
+          </TraceIcon>
+          <TraceTitle>{title}</TraceTitle>
+        </TraceLine>
+      </FoldTrigger>
+    </WideRow>
+  );
+}
+
+/**
+ * A row across all five columns, indented like a Span cell at `depth`: a
+ * step's note line, or an open line's payload. Selects a span, like a row.
+ */
+function WideRow({
+  children,
+  depth,
+  isSelected,
+  label,
+  onClick,
+}: {
+  children: ReactNode;
+  depth: number;
+  isSelected: boolean;
+  label?: string;
+  onClick: () => void;
+}): React.JSX.Element {
+  return (
     <tr
       onClick={onClick}
       className={cn(
@@ -1970,18 +2006,11 @@ function NoteRow({
       {/* Past the Started column (w-22), then the row's own indent. */}
       <td
         colSpan={5}
-        aria-label={title}
+        aria-label={label}
         className="py-1.5 pr-3 pl-(--row-indent)"
         style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
       >
-        <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
-          <TraceLine size="xs">
-            <TraceIcon>
-              <Icon />
-            </TraceIcon>
-            <TraceTitle>{title}</TraceTitle>
-          </TraceLine>
-        </FoldTrigger>
+        {children}
       </td>
     </tr>
   );
@@ -2013,38 +2042,18 @@ function FoldTrigger({
 /**
  * What an open line holds, as its own row under the line so the line keeps
  * its start, duration and bar on one short row and the text gets the whole
- * table width, pane open or not. Selects the line's span, like the line.
+ * table width, pane open or not. Hangs off a rule under the line's icon.
  */
 function PayloadRow({
   children,
-  depth,
-  isSelected,
-  onClick,
-}: {
-  children: ReactNode;
-  depth: number;
-  isSelected: boolean;
-  onClick: () => void;
-}): React.JSX.Element {
+  ...row
+}: React.ComponentProps<typeof WideRow>): React.JSX.Element {
   return (
-    <tr
-      onClick={onClick}
-      className={cn(
-        "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
-        isSelected && "bg-accent",
-      )}
-    >
-      {/* Under the line's icon: past the Started column, then the line's indent. */}
-      <td
-        colSpan={5}
-        className="pb-2 pr-3 pl-(--row-indent)"
-        style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
-      >
-        <div className="ml-2 grid min-w-0 gap-2 border-l pr-1 pl-4 text-xs leading-relaxed text-muted-foreground">
-          {children}
-        </div>
-      </td>
-    </tr>
+    <WideRow {...row}>
+      <div className="ml-2 grid min-w-0 gap-2 border-l pr-1 pl-4 text-xs leading-relaxed text-muted-foreground">
+        {children}
+      </div>
+    </WideRow>
   );
 }
 
