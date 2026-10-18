@@ -1,13 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "broods-isolate",
+  "name": "broods-worker",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-30",
-  // Set with `wrangler secret put ISOLATE_API_KEY`; core sends it as CLOUDFLARE_ISOLATE_API_KEY.
-  "secrets": { "required": ["ISOLATE_API_KEY"] },
+  // Set with `wrangler secret put WORKER_API_KEY`; core sends it as CLOUDFLARE_WORKER_API_KEY.
+  "secrets": { "required": ["WORKER_API_KEY"] },
   "worker_loaders": [{ "binding": "LOADER" }],
   // A reserved sandbox's files between calls, one object per sandbox id.
-  "r2_buckets": [{ "binding": "STATE", "bucket_name": "broods-isolate-state" }],
+  "r2_buckets": [{ "binding": "STATE", "bucket_name": "broods-worker-state" }],
   // `bun run build` writes the runtime the isolates run; the host ships it as text.
   "rules": [{ "type": "Text", "globs": ["**/*.txt"] }],
   "observability": { "enabled": true },
