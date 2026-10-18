@@ -15,6 +15,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { recordUsage } from "../plan-limits.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
@@ -115,6 +116,7 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
       "cloudflare isolate worker",
     );
     if (reserved && key) this.#mirror(key, reserved, request.metadata);
+    this.#meter(result.duration_ms);
 
     return execRunResult(request, result, "isolate", startedAt);
   }
@@ -149,6 +151,21 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
       key,
       this.#config.controlPlane?.accountId,
       id,
+    );
+  }
+
+  // Nothing runs between commands, so each one is metered as it ends: its
+  // wall time on the Worker, plus the request. The platform always pays for
+  // an isolate, so only a config with no account goes unmetered.
+  #meter(durationMs: number): void {
+    const plane = this.#config.controlPlane;
+    if (!plane) return;
+    recordUsage(
+      plane.accountId,
+      { isolateCpuMs: durationMs, isolateRequests: 1 },
+      plane.projectId === undefined
+        ? undefined
+        : { projectId: plane.projectId },
     );
   }
 

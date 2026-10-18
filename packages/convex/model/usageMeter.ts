@@ -442,7 +442,9 @@ export function ephemeralSandboxMaxMs(
  * call ends, and never past `ephemeralSandboxMaxMs`, so a row whose removal
  * was lost stops billing there.
  * Nothing is billed when the platform does not pay: a sandbox on the account's
- * own provider credentials, or a machine (the user's own computer).
+ * own provider credentials, or a machine (the user's own computer). An
+ * isolate's row bills nothing either: nothing runs between its commands, and
+ * each command is metered as it ends (`isolateCpuMs`, `isolateRequests`).
  */
 export function sandboxAccrual(
   instance: Pick<
@@ -462,6 +464,7 @@ export function sandboxAccrual(
   if (
     instance.ownCredentials === true ||
     instance.provider === "machine" ||
+    instance.provider === "isolate" ||
     instance.status === "error"
   ) {
     return { usage: {}, meteredUntil: start };
@@ -605,6 +608,8 @@ function pickUsage(row: MeterRow | null): UsageQuantities {
     sandboxSnapshotGbMonths: row.sandboxSnapshotGbMonths ?? 0,
     hostedMcpGbSeconds: row.hostedMcpGbSeconds,
     hostedMcpRequests: row.hostedMcpRequests,
+    isolateCpuMs: row.isolateCpuMs ?? 0,
+    isolateRequests: row.isolateRequests ?? 0,
     storageGbMonths: row.storageGbMonths,
     egressGb: row.egressGb,
     ingressGb: row.ingressGb ?? 0,

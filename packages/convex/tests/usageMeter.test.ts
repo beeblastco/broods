@@ -17,6 +17,7 @@ import {
 import {
   EMPTY_USAGE,
   HOSTED_MCP_MEMORY_GB,
+  meterCostByCategoryEur,
   meterCostEur,
 } from "../model/pricing";
 import {
@@ -143,6 +144,10 @@ describe("sandboxAccrual", () => {
     expect(sandboxAccrual({ ...base, provider: "machine" }, NOW).usage).toEqual(
       {},
     );
+    // An isolate's commands are metered as they end; its row never bills.
+    expect(sandboxAccrual({ ...base, provider: "isolate" }, NOW).usage).toEqual(
+      {},
+    );
     expect(
       sandboxAccrual({ ...daytona, ownCredentials: true }, NOW).usage,
     ).toEqual({});
@@ -182,6 +187,17 @@ test("an hour of the default MicroVM costs about €0.14", () => {
   });
 
   expect(cost).toBeCloseTo(0.1368, 4);
+});
+
+test("an hour of isolate commands costs about €0.07 and counts as sandbox time", () => {
+  const usage = {
+    ...EMPTY_USAGE,
+    isolateCpuMs: 3600 * 1000,
+    isolateRequests: 3600,
+  };
+
+  expect(meterCostEur(usage)).toBeCloseTo(0.07308, 4);
+  expect(meterCostByCategoryEur(usage).sandboxes).toBeCloseTo(0.07308, 4);
 });
 
 test("maxing every cap costs no more than the plan's budget", () => {

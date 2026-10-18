@@ -116,6 +116,7 @@ sequenceDiagram
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
+- An `isolate` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its wall time on the Worker as `isolateCpuMs` and one `isolateRequests`, priced at Cloudflare's Workers rates (`packages/convex/model/pricing.ts`) and shown inside Sandbox time.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -572,6 +573,7 @@ sequenceDiagram
 | `DELETE /v1/sandboxes/:id`    | Drops the stored disk                                                     |
 
 - Nothing runs between commands. A persistent sandbox is its stored disk: the gzip of the paths commands wrote, one R2 object per id, restored into a fresh shell on every call. An ephemeral call runs on an empty disk and stores nothing. There is no idle, no suspend, no snapshot, no terminal, no workspace mount and no background job.
+- Billing follows: each command is metered as it ends (its wall time on the Worker plus one request), an ephemeral call keeps no instance row, and a reserved sandbox's row reads `suspended` while its disk is stored and bills nothing.
 - The isolate is keyed by sandbox id plus what is fixed at load: its network (`globalOutbound: null` without internet, so `curl` is not even registered) and its CPU limit, `limits.cpuMs` from the call's timeout. That limit is the real guard for a busy command, because inside an isolate the clock moves only while the shell waits; just-bash's own deadline (exit 124) catches a `sleep` or a slow `curl`.
 - The isolate runs with `nodejs_compat` for `node:zlib` (gzip, tar, file sniffing) and the `Buffer` global; nothing else from Node is in the build. `bun run build` in the workspace writes `.generated/runtime.txt` from `src/runtime.ts`, and the host ships it as a text module.
 - Limits are in `apps/cloudflare-isolate/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.

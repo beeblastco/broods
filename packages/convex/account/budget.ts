@@ -236,6 +236,8 @@ export const record = internalMutation({
     usage: v.object({
       hostedMcpGbSeconds: v.optional(usageQuantityFields.hostedMcpGbSeconds),
       hostedMcpRequests: v.optional(usageQuantityFields.hostedMcpRequests),
+      isolateCpuMs: v.optional(usageQuantityFields.isolateCpuMs),
+      isolateRequests: v.optional(usageQuantityFields.isolateRequests),
       storageGbMonths: v.optional(usageQuantityFields.storageGbMonths),
       egressGb: v.optional(usageQuantityFields.egressGb),
       ingressGb: v.optional(usageQuantityFields.ingressGb),

@@ -2078,6 +2078,8 @@ export declare const internal: {
             hostedMcpGbSeconds?: number;
             hostedMcpRequests?: number;
             ingressGb?: number;
+            isolateCpuMs?: number;
+            isolateRequests?: number;
             storageGbMonths?: number;
           };
           writeId?: string;

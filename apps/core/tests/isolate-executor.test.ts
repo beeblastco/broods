@@ -5,6 +5,7 @@
  */
 
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
+import * as planLimits from "../src/harness/plan-limits.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import {
@@ -49,6 +50,7 @@ interface WorkerCall {
 
 const calls: WorkerCall[] = [];
 const mirrored: string[] = [];
+const metered: string[] = [];
 const restores: (() => void)[] = [];
 let stored: string | null = null;
 let claimWins = true;
@@ -60,6 +62,14 @@ beforeEach((): void => {
   claimWins = true;
   calls.length = 0;
   mirrored.length = 0;
+  metered.length = 0;
+  const usageSpy = spyOn(planLimits, "recordUsage").mockImplementation(
+    (accountId, usage, source): void => {
+      metered.push(
+        `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"}`,
+      );
+    },
+  );
   const worker = async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -114,6 +124,7 @@ beforeEach((): void => {
     },
   );
   restores.push(
+    (): void => usageSpy.mockRestore(),
     (): void => fetchSpy.mockRestore(),
     (): void => getSpy.mockRestore(),
     (): void => claimSpy.mockRestore(),
@@ -168,6 +179,18 @@ it("runs an ephemeral command on an empty disk and keeps no row for it", async (
     persist: false,
   });
   expect(mirrored).toEqual([]);
+});
+
+it("meters each command's time and request to the account and its project", async (): Promise<void> => {
+  await new IsolateSandboxExecutor({
+    ...config,
+    controlPlane: { ...config.controlPlane!, projectId: "proj" },
+  }).run(request);
+  await new IsolateSandboxExecutor({ ...config, controlPlane: undefined }).run(
+    request,
+  );
+
+  expect(metered).toEqual(['acct {"isolateCpuMs":5,"isolateRequests":1} proj']);
 });
 
 it("clamps the timeout to the Worker's ceiling and turns internet on from the network mode", async (): Promise<void> => {
