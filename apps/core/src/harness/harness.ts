@@ -313,11 +313,75 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   traceId(): string;
 };
 
+/**
+ * What a run does at a step boundary near its deadline: yield its worker slot
+ * or wind down in its next step. Decided once per boundary in stopWhen; read by
+ * prepareStep, onEnd and the control surface.
+ */
+export interface DeadlinePolicy {
+  /**
+   * stopWhen: true when the run should stop here to yield its slot. Past the
+   * wind-down line with no open question it yields when it may and a next pass
+   * would not start at the step cap; otherwise it winds down instead.
+   */
+  shouldStop: (stepCount: number, questionsPending: number) => boolean;
+  /** prepareStep: the next step is the tool-free last one, with no new steers. */
+  isWindingDown: () => boolean;
+  /** onEnd and the control surface: the run stopped to give up its slot. */
+  hasYielded: () => boolean;
+  /** onEnd: a step waiting on an approval stops for that instead of yielding. */
+  withdrawYield: () => void;
+}
+
+export interface DeadlinePolicyOptions {
+  /** When the request or worker budget ends; undefined means no deadline. */
+  deadlineMs: number | undefined;
+  /** The worker pool will run the conversation on in another slot. */
+  canYield: boolean;
+  /** How long before the deadline the run stops taking normal steps. */
+  windDownMs: number;
+  /** The run's step cap, or AGENT_MAX_TURN_UNLIMITED. */
+  maxTurn: number;
+  /** Clock in epoch ms; a test seam. */
+  now: () => number;
+}
+
 // Every consumer reads through this so a run is finalized, and aborted when
 // the consumer stops early, no matter how the read loop exits. A consumer that
 // drains the stream itself when it gives up passes false: the run has to
 // survive the early exit for that drain to finish it. `raw` parts never leave
 // this reader; the Claude Code harness forwards whole upstream messages as them.
+export function createDeadlinePolicy(
+  options: DeadlinePolicyOptions,
+): DeadlinePolicy {
+  let windingDown = false;
+  let yielded = false;
+
+  return {
+    shouldStop: (stepCount, questionsPending) => {
+      if (
+        options.deadlineMs === undefined ||
+        options.now() < options.deadlineMs - options.windDownMs ||
+        questionsPending > 0
+      ) {
+        return false;
+      }
+      yielded =
+        options.canYield &&
+        (options.maxTurn === AGENT_MAX_TURN_UNLIMITED ||
+          stepCount < options.maxTurn);
+      windingDown = !yielded;
+
+      return yielded;
+    },
+    isWindingDown: () => windingDown,
+    hasYielded: () => yielded,
+    withdrawYield: () => {
+      yielded = false;
+    },
+  };
+}
+
 export async function* readAgentFullStream(
   stream: Pick<AgentLoopStream, "stream" | "ensureFinalized">,
   abortOnEarlyExit = true,
@@ -1149,26 +1213,13 @@ export async function runAgentLoop(
   });
 
   const maxTurn = agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS;
-  // Decided once per step boundary, in stopWhen: near the deadline the run
-  // yields its slot, or, when it may not (last slot, or at its step cap, where
-  // a next pass would start a fresh count), winds down in its next step.
-  let windingDown = false;
-  let yielded = false;
-  const stopForDeadline = (stepCount: number): boolean => {
-    if (
-      options.deadlineMs === undefined ||
-      Date.now() < options.deadlineMs - DEADLINE_WIND_DOWN_MS ||
-      questionSummaries.length > 0
-    ) {
-      return false;
-    }
-    yielded =
-      options.canYield === true &&
-      (maxTurn === AGENT_MAX_TURN_UNLIMITED || stepCount < maxTurn);
-    windingDown = !yielded;
-
-    return yielded;
-  };
+  const deadline = createDeadlinePolicy({
+    deadlineMs: options.deadlineMs,
+    canYield: options.canYield === true,
+    windDownMs: DEADLINE_WIND_DOWN_MS,
+    maxTurn: maxTurn,
+    now: Date.now,
+  });
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
@@ -1199,7 +1250,8 @@ export async function runAgentLoop(
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
-      ({ steps }): boolean => stopForDeadline(steps.length),
+      ({ steps }): boolean =>
+        deadline.shouldStop(steps.length, questionSummaries.length),
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
@@ -1207,7 +1259,7 @@ export async function runAgentLoop(
       // steer is never claimed by a turn whose step failed to store or stopped.
       const { renewal, steering } = await session.stepBoundary(
         responseMessages.slice(persistedResponseCount),
-        { claimSteering: !windingDown },
+        { claimSteering: !deadline.isWindingDown() },
       );
       if (renewal === "stopped") {
         throw new Error(stopMessage);
@@ -1270,7 +1322,7 @@ export async function runAgentLoop(
       // (newly persisted rows, steering, skills a tool loaded), and the step and
       // root spans both trace off this.
       turnContext.system = refreshed.system;
-      if (windingDown) {
+      if (deadline.isWindingDown()) {
         logInfo("Run winding down before its deadline", {
           eventId: session.eventId,
           conversationKey: session.conversationKey,
@@ -1791,8 +1843,8 @@ export async function runAgentLoop(
         // A run that gave up its slot ends on tool results; its next pass
         // answers from them, so nothing is delivered or failed here. A step
         // waiting on an approval stops for that instead.
-        yielded &&= approvals.length === 0;
-        if (yielded) {
+        if (approvals.length > 0) deadline.withdrawYield();
+        if (deadline.hasYielded()) {
           logInfo(
             `Run yielded its worker slot after ${stepCount} step(s)`,
             finishLog,
@@ -2245,7 +2297,7 @@ export async function runAgentLoop(
     consumeStream: wrappedConsumeStream,
     ensureFinalized: ensureFinalized,
     didFail: (): boolean => didFail,
-    yielded: (): boolean => yielded && !didFail,
+    yielded: (): boolean => deadline.hasYielded() && !didFail,
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,
