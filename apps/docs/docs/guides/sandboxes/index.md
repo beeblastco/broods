@@ -73,7 +73,7 @@ flowchart TD
 | ---------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `provider`             | `lambda`               | Compute backend, from the table above                                                                                                              |
 | `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`                                               |
-| `size`                 | provider default       | Sizes `sandbox` and `cloudflare`. Ignored on `lambda`, `daytona`, `e2b`, `vercel`. Rejected on `isolate`, `machine`, `custom`. See [Sizes](#sizes) |
+| `size`                 | provider default       | Sizes `sandbox` and `cloudflare`. Ignored on `lambda`, `isolate`, `daytona`, `e2b`, `vercel`. Rejected on `machine`, `custom`. See [Sizes](#sizes) |
 | `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Web browsing](browsing.md#browser-images)               |
 | `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                                                    |
 | `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                                                           |
@@ -153,7 +153,7 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `daytona`    | Nothing, the snapshot and Daytona's defaults size it                                         | vCPU, memory and disk Daytona reports                                         |
 | `e2b`        | Nothing, the template sizes it                                                               | vCPU and memory E2B reports. Disk is `?`, E2B does not report it              |
 | `vercel`     | Nothing, Vercel sizes it                                                                     | vCPU and memory Vercel reports. Disk is `?`, Vercel does not report it        |
-| `isolate`    | Rejected                                                                                     | `?`: an isolate has no machine, each command gets 128 MB of memory            |
+| `isolate`    | Nothing, every isolate is the same                                                           | `?`: an isolate has no machine, each command gets 128 MB of memory            |
 | `machine`    | Rejected                                                                                     | CPUs, memory and home disk of your computer, as `broods machine` reports them |
 | `custom`     | Rejected                                                                                     | No instance row: Broods cannot see your server's hardware                     |
 

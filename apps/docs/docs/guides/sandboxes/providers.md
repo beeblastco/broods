@@ -209,7 +209,7 @@ export const box = defineSandbox({
 - Only built-ins run. There is no `python`, `node`, `git`, `npm` or any binary, no process and no port; a command outside the 81 answers `command not found`. Use `sandbox` or `lambda` for a real machine.
 - Files are the sandbox's whole state. A persistent sandbox restores them into a fresh shell on every call and stores what changed, up to 16 MiB compressed; an ephemeral one keeps nothing. The shell's own layout (`/bin`, `/dev`, `/proc`) is rebuilt every time and never stored.
 - Each call runs in 128 MB of memory, and a command that never yields is stopped at the timeout by the isolate's CPU limit.
-- `size`, `snapshot`, `onCreate`, `onResume` and workspaces are rejected. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
+- `size` does nothing, like on `lambda`: every command gets the same 128 MB. `snapshot`, `lifecycle`, `onCreate`, `onResume` and workspaces are rejected. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
 - `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
 - Billing counts only the milliseconds commands ran plus one request each, inside Sandbox time; nothing idles.
 - The provider needs the deployment's isolate Worker. Without it every run fails with an error saying the Worker is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#isolate).

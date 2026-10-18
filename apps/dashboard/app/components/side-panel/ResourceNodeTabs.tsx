@@ -158,7 +158,6 @@ export function SandboxResourceDetailsTab({
     onUpdateNodeData({ config: { ...config, ...patch } });
   }
 
-  // An isolate has one size, so a size carried over from another provider is dropped.
   function setProvider(provider: string): void {
     setConfig(
       provider === "machine"
@@ -170,12 +169,7 @@ export function SandboxResourceDetailsTab({
             image: undefined,
             snapshot: undefined,
           }
-        : {
-            provider: provider,
-            ...(provider === "isolate" ? { size: undefined } : {}),
-            image: undefined,
-            snapshot: undefined,
-          },
+        : { provider: provider, image: undefined, snapshot: undefined },
     );
   }
 
