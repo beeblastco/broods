@@ -10,13 +10,13 @@
 
 import { z } from "zod";
 import RUNTIME from "../.generated/runtime.txt";
+import { bearerMatches } from "../../cloudflare-sandbox/src/bearer.ts";
 import type { ExecResult, RuntimeExecResult } from "./contract.ts";
 import { MAX_OUTPUT_BYTES, MAX_STATE_BYTES, MAX_TIMEOUT_MS } from "./limits.ts";
 import type { Runtime } from "./runtime.ts";
 
 const COMPATIBILITY_DATE = "2026-09-30";
 const SANDBOX_PATH = /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec)?$/;
-const STATE_PREFIX = "sandboxes/";
 // Fetches one command may make once the sandbox has internet.
 const INTERNET_SUBREQUESTS = 50;
 // How the runtime reports a command the isolate's CPU limit stopped.
@@ -41,15 +41,20 @@ interface Env {
   ISOLATE_API_KEY: string;
 }
 
+/** A stored disk and the etag it was read under. */
+interface StoredState {
+  bytes: Uint8Array;
+  etag: string;
+}
+
 const handler: ExportedHandler<Env> = {
   /** Authenticates core's bearer token, then routes to the sandbox it names. */
   fetch: async function (request: Request, env: Env): Promise<Response> {
-    if (!(await authorized(request, env.ISOLATE_API_KEY)))
+    if (!(await bearerMatches(request, env.ISOLATE_API_KEY)))
       return new Response("Unauthorized", { status: 401 });
     const match = SANDBOX_PATH.exec(new URL(request.url).pathname);
     const id = match?.[1];
     if (!id) return new Response("Not found", { status: 404 });
-    const key = `${STATE_PREFIX}${id}`;
     if (match[2] === "/exec" && request.method === "POST") {
       const body = execRequest.safeParse(
         await request.json().catch((): null => null),
@@ -57,12 +62,14 @@ const handler: ExportedHandler<Env> = {
       if (!body.success)
         return Response.json({ error: body.error.message }, { status: 400 });
 
-      return exec(env, id, key, body.data);
+      return exec(env, id, body.data);
     }
     if (!match[2] && request.method === "GET")
-      return Response.json({ exists: (await env.STATE.head(key)) !== null });
+      return Response.json({
+        exists: (await env.STATE.head(stateKey(id))) !== null,
+      });
     if (!match[2] && request.method === "DELETE") {
-      await env.STATE.delete(key);
+      await env.STATE.delete(stateKey(id));
 
       return new Response(null, { status: 204 });
     }
@@ -73,43 +80,20 @@ const handler: ExportedHandler<Env> = {
 
 export default handler;
 
-// Hashing first makes the compare constant-time whatever the token lengths.
-async function authorized(request: Request, apiKey: string): Promise<boolean> {
-  if (!apiKey) return false;
-  const header = request.headers.get("Authorization") ?? "";
-  const encoder = new TextEncoder();
-  const [given, expected] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(header)),
-    crypto.subtle.digest("SHA-256", encoder.encode(`Bearer ${apiKey}`)),
-  ]);
-
-  return crypto.subtle.timingSafeEqual(given, expected);
-}
-
-/** A stored disk and the etag it was read under. */
-interface StoredState {
-  bytes: Uint8Array;
-  etag: string;
-}
-
-/** Another call changed or dropped the stored disk while this one ran. */
-class StateConflict extends Error {}
-
 /**
  * Runs one command in the sandbox's isolate: its stored disk goes in, the
  * disk after the command comes back and is stored again if it changed. The
  * isolate is keyed by what is fixed at load (its network and CPU limit), so a
- * sandbox whose config changes gets a fresh one. Two calls on one sandbox at
- * once each start from the same disk; the write is conditional on the etag
- * it was read under, so the second to finish answers 409 and stores nothing,
- * and core runs it again on the disk the first left.
+ * sandbox whose config changes gets a fresh one. The write is conditional on
+ * the etag the disk was read under, so of two calls on one sandbox at once
+ * the second to finish answers 409 and stores nothing.
  */
 async function exec(
   env: Env,
   id: string,
-  key: string,
   request: ExecRequest,
 ): Promise<Response> {
+  const key = stateKey(id);
   const before = request.persist ? await readState(env.STATE, key) : null;
   const worker = env.LOADER.get(
     `${id}:${request.enableInternet ? "internet" : "offline"}:${request.timeoutMs}`,
@@ -134,20 +118,19 @@ async function exec(
       const message = error instanceof Error ? error.message : String(error);
       if (!CPU_LIMIT.test(message)) throw error;
 
-      return { result: stopped(message), state: null };
+      return { result: stopped(message), state: "unchanged" };
     });
   const result: ExecResult = {
     ...answer.result,
     duration_ms: Date.now() - startedAt,
   };
-  if (request.persist && !answer.result.timed_out) {
-    try {
-      await writeState(env.STATE, key, before, answer.state);
-    } catch (error) {
-      if (!(error instanceof StateConflict)) throw error;
-
-      return new Response(error.message, { status: 409 });
-    }
+  if (answer.state !== "unchanged" && !answer.result.timed_out) {
+    const stored = await writeState(env.STATE, key, before, answer.state);
+    if (!stored)
+      return new Response(
+        "another command changed the sandbox's files while this one ran; it stored nothing",
+        { status: 409 },
+      );
   }
 
   return Response.json(result);
@@ -166,44 +149,37 @@ async function readState(
   };
 }
 
-function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
-  if (a === null || b === null) return a === b;
-  if (a.byteLength !== b.byteLength) return false;
-  for (let index = 0; index < a.byteLength; index++) {
-    if (a[index] !== b[index]) return false;
-  }
-
-  return true;
+function stateKey(id: string): string {
+  return `sandboxes/${id}`;
 }
 
 // A command the isolate's CPU limit ended: its output is gone with the isolate.
-function stopped(message: string): ExecResult {
+function stopped(message: string): RuntimeExecResult["result"] {
   return {
     ok: false,
     exit_code: null,
     timed_out: true,
-    duration_ms: 0,
     stdout: "",
     stderr: message,
     truncated: false,
   };
 }
 
-// A disk past the cap stays as it was, so one runaway write cannot make the
-// sandbox unloadable; the error tells the agent what to clean up. The put is
-// conditional on the disk still being the one the command started from: the
-// etag it was read under, or no object at all.
+// Stores the disk after a command, only if the disk is still the one the
+// command started from: the etag it was read under, or no object at all.
+// False when another call got there first. A disk past the cap stays as it
+// was, so one runaway write cannot make the sandbox unloadable; the error
+// tells the agent what to clean up.
 async function writeState(
   bucket: R2Bucket,
   key: string,
   before: StoredState | null,
   after: Uint8Array | null,
-): Promise<void> {
-  if (sameBytes(before?.bytes ?? null, after)) return;
+): Promise<boolean> {
   if (after === null) {
     if (before !== null) await bucket.delete(key);
 
-    return;
+    return true;
   }
   if (after.byteLength > MAX_STATE_BYTES)
     throw new Error(
@@ -215,8 +191,6 @@ async function writeState(
         ? new Headers({ "If-None-Match": "*" })
         : { etagMatches: before.etag },
   });
-  if (stored === null)
-    throw new StateConflict(
-      "another command changed the sandbox's files while this one ran; it stored nothing",
-    );
+
+  return stored !== null;
 }
