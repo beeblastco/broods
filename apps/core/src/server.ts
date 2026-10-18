@@ -26,7 +26,7 @@ import {
 } from "@broods/convex/model/requestId";
 import { logError, logInfo } from "./shared/log.ts";
 import { flushObservabilityNats } from "./shared/nats.ts";
-import { forceFlushOtel, initOtel } from "./shared/otel.ts";
+import { emitPostHogLog, forceFlushOtel, initOtel } from "./shared/otel.ts";
 
 const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
 // How long shutdown waits to hand back the leases of runs it is abandoning.
@@ -227,12 +227,18 @@ if (import.meta.main) {
   });
 
   logInfo("Core server listening", { port: server.port });
+  emitPostHogLog("Core server started", {
+    lifecycle: "started",
+  });
 
   let shuttingDown = false;
   const shutdown = async (signal: string, exitCode = 0): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     logInfo("Core server shutting down", { signal: signal });
+    emitPostHogLog("Core server shutdown started", {
+      lifecycle: "shutdown_started",
+    });
     stopIngressRecovery();
     let drained = false;
     const deadline = new Promise<void>((resolve) =>

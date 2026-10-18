@@ -209,6 +209,7 @@ Refuses to start without `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `TERMINAL
 | `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                                                                         | for policies           | Default `http://127.0.0.1:8181`                                      |
 | `MATRIX_FORWARDER_URL`                                                                                                                                  | for Matrix             | In-cluster URL of the matrix-forwarder                               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `SERVICE_NAME`, `DEPLOYMENT_ENVIRONMENT`                                                   | no                     | No endpoint means no export                                          |
+| `POSTHOG_API_KEY`, `POSTHOG_HOST`                                                                                                                       | no                     | PostHog AI Observability + Logs. Unset either means no export        |
 | `ENABLE_DIRECT_API`                                                                                                                                     | no                     | Default `true`. `false` turns `POST /v1/runs` off                    |
 | `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                                                                                                       | no                     | Same as on Convex                                                    |
 | `BROODS_CONTAINER_RUNTIME`                                                                                                                              | no                     | Set in a deployed pod; enables isolate prewarm. Leave unset locally  |
@@ -252,6 +253,8 @@ Stateless; scale it with replicas.
 | ----------------------------- | ---------- | ------------------------------------------------------------------------------- |
 | `NEXT_PUBLIC_CONVEX_URL`      | build time | Your Convex URL                                                                 |
 | `NEXT_PUBLIC_BROODS_BASE_URL` | build time | The public host                                                                 |
+| `NEXT_PUBLIC_POSTHOG_KEY`     | build time | PostHog project key. Unset means no analytics, errors or logs                   |
+| `NEXT_PUBLIC_POSTHOG_HOST`    | build time | PostHog ingest host, e.g. `https://eu.i.posthog.com`                            |
 | `ADMIN_ACCOUNT_SECRET`        | runtime    | The admin sign-in key. At least 32 characters or the dashboard refuses to start |
 | `BROODS_SESSION_SIGNING_KEY`  | runtime    | Private ES256 JWK that signs the session                                        |
 | `CONVEX_SITE_URL`             | runtime    | A self-hosted Convex has no derivable `.convex.site` host                       |

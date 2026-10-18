@@ -19,6 +19,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, Trash2 } from "lucide-react";
+import posthog from "posthog-js";
 import { useState } from "react";
 
 interface Props {
@@ -65,6 +66,24 @@ export function WebhooksPanel({
   const [deletingWebhook, setDeletingWebhook] =
     useState<PendingWebhookDelete | null>(null);
   const [isDeletingWebhook, setIsDeletingWebhook] = useState(false);
+
+  async function handleToggleWebhook(
+    agentConfigId: Id<"agentConfigs">,
+    index: number,
+    enabled: boolean,
+  ): Promise<void> {
+    setToggleError(null);
+    try {
+      await setEnabled({
+        agentConfigId: agentConfigId,
+        index: index,
+        enabled: enabled,
+      });
+      posthog.capture("webhook_enabled_changed", { enabled: enabled });
+    } catch (error) {
+      setToggleError(toErrorMessage(error));
+    }
+  }
 
   async function handleDeleteWebhook(): Promise<void> {
     if (!deletingWebhook) return;
@@ -185,16 +204,13 @@ export function WebhooksPanel({
                       <button
                         type="button"
                         disabled={!canWrite}
-                        onClick={() => {
-                          setToggleError(null);
-                          setEnabled({
-                            agentConfigId: agent.agentConfigId,
-                            index: webhook.index,
-                            enabled: !webhook.enabled,
-                          }).catch((error: unknown) =>
-                            setToggleError(toErrorMessage(error)),
-                          );
-                        }}
+                        onClick={() =>
+                          void handleToggleWebhook(
+                            agent.agentConfigId,
+                            webhook.index,
+                            !webhook.enabled,
+                          )
+                        }
                         className={cn(
                           "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
                           canWrite ? "cursor-pointer" : "cursor-not-allowed",
@@ -316,6 +332,9 @@ function AddWebhookForm({
           .split(",")
           .map((event) => event.trim())
           .filter(Boolean),
+      });
+      posthog.capture("webhook_added", {
+        has_event_filter: Boolean(events.trim()),
       });
       onDone();
     } catch (err) {

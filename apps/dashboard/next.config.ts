@@ -14,11 +14,12 @@ const httpBackendSources = [
 });
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://*.posthog.com${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' blob: data: https:",
   "font-src 'self' data:",
   ["connect-src 'self' https: wss:", ...httpBackendSources].join(" "),
+  "worker-src 'self' blob:",
   "frame-src 'self' https://checkout.stripe.com https://js.stripe.com",
   "object-src 'none'",
   "base-uri 'self'",

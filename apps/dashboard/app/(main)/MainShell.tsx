@@ -20,6 +20,7 @@ import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
+import posthog from "posthog-js";
 import { notFound, useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
@@ -58,6 +59,7 @@ export function MainShell({
   const syncProfile = useMutation(api.user.syncProfile);
   const signedIn = useSignedIn();
   const currentUser = useQuery(api.user.getCurrent, signedIn ? {} : "skip");
+  const identifiedUserId = useRef<string | null>(null);
   const profileSynced = useRef(false);
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
   const [syncRetry, setSyncRetry] = useState(0);
@@ -109,6 +111,19 @@ export function MainShell({
       profileSynced.current = false;
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
+
+  // The Convex user row exists only after authentication and its `_id` is the
+  // app's stable user primary key, including for self-hosted accounts.
+  useEffect(() => {
+    if (!currentUser || identifiedUserId.current === currentUser._id) return;
+
+    posthog.identify(currentUser._id, {
+      email: currentUser.email,
+      name: currentUser.name,
+      plan: currentUser.plan,
+    });
+    identifiedUserId.current = currentUser._id;
+  }, [currentUser]);
 
   // The reporter is the first child of both fragments, one tree position, so
   // it survives the auth flip instead of registering every observer twice.
