@@ -1,6 +1,5 @@
 import type { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { BUDGET_WARNING_RATIO } from "@broods/convex/model/planLimits";
 import type { FunctionReturnType } from "convex/server";
 import { SERIES_COLORS } from "./usageChart";
 
@@ -55,9 +54,6 @@ export const OTHER_USAGE_COLOR = "var(--color-muted-foreground)";
 
 /** The color of the pool's part the owner's other organizations used. */
 export const OTHER_ORGS_COLOR = "var(--color-usage-other-orgs)";
-
-/** How a share of a cap reads: plain below the warning, "warning" from 80%, "destructive" once runs stop at 100%. */
-export type ShareTone = "muted" | "warning" | "destructive";
 
 /**
  * The org's month split into `projects` (all of `budget.projects` unless
@@ -143,32 +139,17 @@ export function projectSlices(
 
 /**
  * The pool's part the owner's other organizations used, drawn behind this
- * org's slices on each bar: a cap's pooled amount (the cap times its share)
- * less this org's own. No days, since the chart stays this org's. Null when
- * the pool is this org's alone or nothing is enforced.
+ * org's slices on each bar: the pool's amounts less this org's own. No days,
+ * since the chart stays this org's. Null when the pool is this org's alone.
  */
 export function otherOrgsSlice(budget: BudgetUsage): UsageSlice | null {
-  const caps = budget.caps;
-  if (!budget.pool?.shared || !caps) return null;
-  const pooled = (key: keyof BudgetUsage["shares"]): number =>
-    (caps[key] * budget.shares[key]) / 100;
+  if (!budget.pool?.shared) return null;
 
   return {
     projectId: null,
     name: "Other organizations",
     color: OTHER_ORGS_COLOR,
-    totals: remainder(
-      {
-        sandboxHours: pooled("sandboxHours"),
-        hostedMcpHours: pooled("hostedMcpHours"),
-        storageGb:
-          budget.totals.storageGb === null ? null : pooled("storageGb"),
-        egressGb: pooled("egressGb"),
-        // Free, so not pooled: nothing beyond this org's own.
-        ingressGb: budget.totals.ingressGb,
-      },
-      [budget.totals],
-    ),
+    totals: remainder(budget.pool.totals, [budget.totals]),
     days: [],
   };
 }
@@ -305,13 +286,4 @@ export function poolNote(budget: BudgetUsage): string | null {
   return pool.orgs === undefined
     ? "Limits are shared with the owner's other organizations."
     : `Limits are shared across ${pool.orgs} organizations.`;
-}
-
-/** The tone a share of a cap is drawn in, on the Usage tab and the Billing panel alike. */
-export function shareTone(percent: number): ShareTone {
-  return percent >= 100
-    ? "destructive"
-    : percent >= BUDGET_WARNING_RATIO * 100
-      ? "warning"
-      : "muted";
 }

@@ -521,11 +521,14 @@ function PlanSummary({
   // A subscription waiting on a payment is still Pro, held back until paid.
   const shown: PlanTier = seats?.status ? "pro" : plan;
   const detail = planDetail(budget, selfHosted, shown, seats);
+  // Nothing until the budget is known, so the line never swaps under the reader.
   const note =
-    (budget ? poolNote(budget) : null) ??
-    (seats?.isOwner && seats.billing && !selfHosted
-      ? "Covers every organization you own."
-      : null);
+    budget === undefined
+      ? null
+      : ((budget ? poolNote(budget) : null) ??
+        (seats?.isOwner && seats.billing && !selfHosted
+          ? "Covers every organization you own."
+          : null));
 
   return (
     <div className="grid gap-0.5">

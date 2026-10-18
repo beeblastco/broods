@@ -7,7 +7,6 @@ import {
   otherOrgsSlice,
   poolNote,
   projectSlices,
-  shareTone,
   type UsageAmounts,
   usageSlices,
 } from "../app/lib/allowance";
@@ -35,7 +34,11 @@ const EXHAUSTED_POOL: Partial<BudgetUsage> = {
   level: "exhausted",
   caps: PLAN_LIMITS.pro.caps,
   shares: { ...NO_SHARES, egressGb: 100, storageGb: 30 },
-  pool: { orgs: 2, shared: true },
+  pool: {
+    orgs: 2,
+    shared: true,
+    totals: { ...ZERO, egressGb: 30, storageGb: 15 },
+  },
 };
 
 function budget(
@@ -235,7 +238,6 @@ test("an exhausted pool with nothing used by this org draws the bar destructive 
   const others = otherOrgsSlice(usage);
 
   expect(usage.level).toBe("exhausted");
-  expect(shareTone(usage.shares.egressGb)).toBe("destructive");
   expect(others).toMatchObject({
     projectId: null,
     name: "Other organizations",
@@ -248,22 +250,22 @@ test("an exhausted pool with nothing used by this org draws the bar destructive 
 });
 
 test("this org's own part of the pool is taken off the other organizations' slice, never below zero", () => {
-  const [full] = [otherOrgsSlice(budget({ egressGb: 30 }, [], EXHAUSTED_POOL))];
+  const full = otherOrgsSlice(budget({ egressGb: 30 }, [], EXHAUSTED_POOL));
   const ahead = otherOrgsSlice(budget({ egressGb: 31 }, [], EXHAUSTED_POOL));
 
   expect(full?.totals.egressGb).toBe(0);
   expect(ahead?.totals.egressGb).toBe(0);
 });
 
-test("no other organizations when the pool is this org's alone, nothing is enforced, or storage is unknown", () => {
+test("no other organizations when the pool is this org's alone or nothing is enforced, and storage stays unknown", () => {
   expect(otherOrgsSlice(budget({}))).toBeNull();
   expect(
     otherOrgsSlice(
-      budget({}, [], { ...EXHAUSTED_POOL, pool: { orgs: 1, shared: false } }),
+      budget({}, [], {
+        ...EXHAUSTED_POOL,
+        pool: { orgs: 1, shared: false, totals: ZERO },
+      }),
     ),
-  ).toBeNull();
-  expect(
-    otherOrgsSlice(budget({}, [], { ...EXHAUSTED_POOL, caps: null })),
   ).toBeNull();
   expect(
     otherOrgsSlice(budget({ storageGb: null }, [], EXHAUSTED_POOL))?.totals
@@ -275,18 +277,13 @@ test("the note counts the owner's organizations, says only shared to a member, a
   expect(poolNote(budget({}, [], EXHAUSTED_POOL))).toBe(
     "Limits are shared across 2 organizations.",
   );
-  expect(poolNote(budget({}, [], { pool: { shared: true } }))).toBe(
-    "Limits are shared with the owner's other organizations.",
-  );
-  expect(poolNote(budget({}, [], { pool: { orgs: 1, shared: false } }))).toBe(
-    null,
-  );
+  expect(
+    poolNote(budget({}, [], { pool: { shared: true, totals: ZERO } })),
+  ).toBe("Limits are shared with the owner's other organizations.");
+  expect(
+    poolNote(
+      budget({}, [], { pool: { orgs: 1, shared: false, totals: ZERO } }),
+    ),
+  ).toBeNull();
   expect(poolNote(budget({}))).toBeNull();
-});
-
-test("a share reads plain below 80%, warning from 80%, destructive at 100%", () => {
-  expect(shareTone(79.9)).toBe("muted");
-  expect(shareTone(80)).toBe("warning");
-  expect(shareTone(99.9)).toBe("warning");
-  expect(shareTone(100)).toBe("destructive");
 });

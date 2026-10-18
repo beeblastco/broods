@@ -30,13 +30,13 @@ import {
   otherOrgsSlice,
   poolNote,
   projectSlices,
-  shareTone,
   type UsageAmounts,
   type UsageSlice,
   usageSlices,
 } from "@/app/lib/allowance";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
+import { budgetLevel } from "@broods/convex/model/planLimits";
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
@@ -284,7 +284,7 @@ function ScopedAllowance({
           : "Limits are shared by every project in this organization."
         : null),
     own && projectCount > 1
-      ? "The solid part of each bar is this project, the grey part the rest of the organization."
+      ? `The solid part of each bar is this project, the grey part the rest of the organization${pool ? ", the faded part the owner's other organizations" : ""}.`
       : null,
   ].filter((note): note is string => note !== null);
 
@@ -367,13 +367,12 @@ function AllowanceTableRow({
   onPick: () => void;
 }): React.JSX.Element {
   const share = row.share === null ? null : budget.shares[row.share];
-  const tone = share === null ? null : shareTone(share);
+  const level = share === null ? null : budgetLevel(share);
   const cap =
     row.share === null || !budget.caps ? null : budget.caps[row.share];
-  const pooled =
-    pool === null
-      ? budget.totals[row.key]
-      : plus(budget.totals[row.key], pool.totals[row.key]);
+  const pooled = budget.pool?.shared
+    ? budget.pool.totals[row.key]
+    : budget.totals[row.key];
 
   return (
     <TableRow
@@ -447,9 +446,9 @@ function AllowanceTableRow({
           <span
             className={cn(
               "tabular-nums",
-              tone === "muted" && "text-muted-foreground",
-              tone === "warning" && "text-warning",
-              tone === "destructive" && "text-destructive",
+              level === "ok" && "text-muted-foreground",
+              level === "warning" && "text-warning",
+              level === "exhausted" && "text-destructive",
             )}
           >
             {formatPercent(share)}
@@ -458,11 +457,6 @@ function AllowanceTableRow({
       </TableCell>
     </TableRow>
   );
-}
-
-// Two amounts added; unknown (a storage day no snapshot measured) stays unknown.
-function plus(a: number | null, b: number | null): number | null {
-  return a === null || b === null ? null : a + b;
 }
 
 /**

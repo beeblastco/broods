@@ -165,11 +165,18 @@ const ORG_SHARES = {
 };
 // The owner's other org on the same pool, busy on egress: the pool sits
 // above this org on every cap and has used egress up.
+const POOL_TOTALS: UsageAmounts = {
+  sandboxHours: ORG_TOTALS.sandboxHours + 37.1,
+  hostedMcpHours: ORG_TOTALS.hostedMcpHours + 0.8,
+  storageGb: (ORG_TOTALS.storageGb ?? 0) + 6,
+  egressGb: CAPS.egressGb,
+  ingressGb: ORG_TOTALS.ingressGb,
+};
 const POOL_SHARES = {
-  sandboxHours: Math.min(100, ORG_SHARES.sandboxHours + 18.5),
-  hostedMcpHours: Math.min(100, ORG_SHARES.hostedMcpHours + 4),
-  storageGb: Math.min(100, ORG_SHARES.storageGb + 12),
-  egressGb: 100,
+  sandboxHours: percent(POOL_TOTALS.sandboxHours, CAPS.sandboxHours),
+  hostedMcpHours: percent(POOL_TOTALS.hostedMcpHours, CAPS.hostedMcpHours),
+  storageGb: percent(POOL_TOTALS.storageGb ?? 0, CAPS.storageGb),
+  egressGb: percent(POOL_TOTALS.egressGb, CAPS.egressGb),
 };
 
 const BUDGET: BudgetUsage = {
@@ -185,7 +192,7 @@ const BUDGET: BudgetUsage = {
   totals: ORG_TOTALS,
   days: ORG_DAYS,
   projects: SPLIT,
-  pool: { orgs: 2, shared: true },
+  pool: { orgs: 2, shared: true, totals: POOL_TOTALS },
 };
 
 function percent(part: number, base: number): number {
