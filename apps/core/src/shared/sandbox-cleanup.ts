@@ -6,6 +6,7 @@
  */
 
 import {
+  PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
 } from "@broods/convex/model/sandboxRules";
@@ -163,7 +164,10 @@ function releaseCandidates(
     ];
   }
 
-  return provider === "lambda" ? [platform] : configs;
+  return provider === "lambda" ||
+    PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider)
+    ? [platform]
+    : configs;
 }
 
 /**

@@ -10,8 +10,9 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import { Bash, InMemoryFs, type IFileSystem } from "just-bash/browser";
 
-// What one disk may hold uncompressed, well inside an isolate's memory.
-const MAX_FS_BYTES = 32 * 1024 * 1024;
+// What one disk may hold uncompressed: inside an isolate's memory, and with
+// the header under the 32 MiB an RPC message may carry.
+const MAX_FS_BYTES = 24 * 1024 * 1024;
 // Paths every fresh disk already has once a shell starts on it, so they are never stored.
 const DEFAULT_PATHS: ReadonlySet<string> = defaultPaths();
 const HEADER_LENGTH_BYTES = 4;
@@ -30,9 +31,9 @@ export interface DecodedState {
   packed: Uint8Array;
 }
 
-/** A fresh disk with nothing but the shell's own layout. */
-export function emptyFs(): InMemoryFs {
-  return new InMemoryFs(undefined, { maxTotalBytes: MAX_FS_BYTES });
+/** A packed disk as the bytes R2 stores. */
+export function compressState(packed: Uint8Array): Uint8Array {
+  return new Uint8Array(gzipSync(packed));
 }
 
 /** A disk holding what `packState` stored. */
@@ -70,8 +71,20 @@ export async function decodeState(bytes: Uint8Array): Promise<DecodedState> {
   return { fs: fs, packed: packed };
 }
 
-/** The disk's own entries, uncompressed; null when no command left anything behind. */
-export async function packState(fs: IFileSystem): Promise<Uint8Array | null> {
+/** A fresh disk with nothing but the shell's own layout. */
+export function emptyFs(): InMemoryFs {
+  return new InMemoryFs(undefined, { maxTotalBytes: MAX_FS_BYTES });
+}
+
+/**
+ * The disk's own entries, uncompressed; null when no command left anything
+ * behind. The working directory the runtime created for the command counts
+ * as the shell's own layout while it stays empty.
+ */
+export async function packState(
+  fs: IFileSystem,
+  cwd: string,
+): Promise<Uint8Array | null> {
   const entries: StateEntry[] = [];
   const blobs: Uint8Array[] = [];
   // Parents sort before their children, so a restore creates them in order.
@@ -79,7 +92,9 @@ export async function packState(fs: IFileSystem): Promise<Uint8Array | null> {
     .getAllPaths()
     .filter((path): boolean => !DEFAULT_PATHS.has(path))
     .sort();
+  const cwdInUse = paths.some((path): boolean => path.startsWith(`${cwd}/`));
   for (const path of paths) {
+    if (path === cwd && !cwdInUse) continue;
     const stat = await fs.lstat(path);
     if (stat.isSymbolicLink) {
       entries.push({
@@ -132,11 +147,7 @@ export function samePacked(
   );
 }
 
-/** A packed disk as the bytes R2 stores. */
-export function compressState(packed: Uint8Array): Uint8Array {
-  return new Uint8Array(gzipSync(packed));
-}
-
+// The layout just-bash lays down when a shell starts on an empty disk.
 function defaultPaths(): ReadonlySet<string> {
   const fs = new InMemoryFs();
   new Bash({ fs: fs, cwd: "/" });

@@ -1,318 +1,1067 @@
 /**
- * The isolate executor against a mocked Worker: what it sends, when it
- * reserves and reuses stored files, and which instance rows it mirrors. The
- * Worker itself is tested in its own workspace under Miniflare.
+ * Real isolated-vm runner tests run when BROODS_TEST_ISOLATE_RUNNER_PATH points
+ * at a runner.mjs whose directory has node_modules/isolated-vm installed.
  */
 
-import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
-import { MAX_TIMEOUT_MS } from "../../cloudflare-isolate/src/limits.ts";
-import * as planLimits from "../src/harness/plan-limits.ts";
-import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
-import {
-  IsolateSandboxExecutor,
-  isolateConnection,
-} from "../src/harness/sandbox/isolate-executor.ts";
-import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
-import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
-import { requestUrl } from "./helpers/http.ts";
-import { ISOLATE_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
+import { afterEach, describe, expect, it } from "bun:test";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-// A successful Worker exec answer, in the shared exec contract's shape.
-const EXEC_OK = {
-  ok: true,
-  exit_code: 0,
-  timed_out: false,
-  duration_ms: 5,
-  stdout: "ok\n",
-  stderr: "",
-  truncated: false,
-};
-const config: SandboxExecutorConfig = {
-  provider: "isolate",
-  network: { mode: "deny-all" },
-  envVars: { ACCOUNT_VAR: "a" },
-  controlPlane: {
-    accountId: "acct",
-    name: "box",
-    specs: { vcpu: 1, memoryMb: 128, storageGb: 0 },
-  },
-};
-const request = {
-  code: "true",
-  reservationKey: "acct:workspace",
-  timeoutSeconds: 10,
-  outputLimitBytes: 1024,
-};
+const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
+const realRunnerIt = runnerPath ? it : it.skip;
 
-interface WorkerCall {
-  method: string;
-  url: string;
-  authorization: string | null;
-  body: Record<string, unknown> | null;
-}
-
-const calls: WorkerCall[] = [];
-const mirrored: string[] = [];
-const metered: string[] = [];
-let stored: string | null = null;
-let claimWins = true;
-
-beforeEach((): void => {
-  process.env.CLOUDFLARE_ISOLATE_URL = "https://isolate.example.com/";
-  process.env.CLOUDFLARE_ISOLATE_API_KEY = "isolate-key";
-  stored = null;
-  claimWins = true;
-  calls.length = 0;
-  mirrored.length = 0;
-  metered.length = 0;
-  spyOn(planLimits, "recordUsage").mockImplementation(
-    (accountId, usage, source): void => {
-      metered.push(
-        `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"} ${source?.agentId ?? "-"}`,
+describe("isolate runner", () => {
+  realRunnerIt(
+    "runs a trivial bundle and returns the final result",
+    async () => {
+      const result = await runRealRunner(
+        "export default { name: 'echo', execute(input, options) { return { echo: input }; } };",
+        {
+          toolName: "echo",
+          input: { message: "hi" },
+        },
       );
+
+      expect(result.frames).toEqual([
+        { t: "final", result: { echo: { message: "hi" } } },
+      ]);
     },
   );
-  mockFetch(async (input, init): Promise<Response> => {
-    const headers = new Headers(init?.headers);
-    calls.push({
-      method: init?.method ?? "GET",
-      url: requestUrl(input),
-      authorization: headers.get("Authorization"),
-      body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
-    });
-    if (requestUrl(input).endsWith("/exec")) return Response.json(EXEC_OK);
-    if (init?.method === "GET") return Response.json({ exists: true });
 
-    return new Response(null, { status: 204 });
-  });
-  spyOn(instanceStore, "getSandboxExternalId").mockImplementation(
-    async (): Promise<string | null> => stored,
-  );
-  // A claim is a compare-and-swap: only the first one under a key wins.
-  spyOn(instanceStore, "claimSandboxInstance").mockImplementation(
-    async (_provider, _key, externalId): Promise<boolean> => {
-      if (stored !== null) return false;
-      stored = claimWins ? externalId : "winner-id";
+  realRunnerIt(
+    "streams async-generator chunks and repeats the last chunk as final",
+    async () => {
+      const result = await runRealRunner(
+        "export default { name: 'streamer', async *execute() { yield { step: 1 }; yield { step: 2 }; } };",
+        {
+          toolName: "streamer",
+        },
+      );
 
-      return claimWins;
+      expect(result.frames).toEqual([
+        { t: "chunk", output: { step: 1 } },
+        { t: "chunk", output: { step: 2 } },
+        { t: "final", result: { step: 2 } },
+      ]);
     },
   );
-  spyOn(instanceStore, "saveSandboxInstance").mockImplementation(
-    async (): Promise<void> => {},
-  );
-  spyOn(instanceStore, "deleteSandboxInstance").mockImplementation(
-    async (_provider, key): Promise<boolean> => {
-      mirrored.push(`delete ${key}`);
 
-      return true;
-    },
-  );
-  spyOn(sandboxInstances, "upsertSandboxInstance").mockImplementation(
-    async (_plane, _provider, key, _id, _meta, options): Promise<void> => {
-      mirrored.push(`upsert ${key} ${options?.ephemeral === true}`);
-    },
-  );
-});
-
-afterEach((): void => {
-  mock.restore();
-  delete process.env.CLOUDFLARE_ISOLATE_URL;
-  delete process.env.CLOUDFLARE_ISOLATE_API_KEY;
-});
-
-it("runs an ephemeral command on an empty disk and keeps no row for it", async (): Promise<void> => {
-  const result = await new IsolateSandboxExecutor(config).run({
-    code: "echo ok",
-    timeoutSeconds: 10,
-    outputLimitBytes: 1024,
-    envVars: { PATH: "/evil", CALL_VAR: "b" },
-    args: ["one"],
-    principal: { accountId: "acct", agentId: "agent", runToken: "tok" },
-  });
-  await settled();
-
-  expect(result).toMatchObject({
-    ok: true,
-    stdout: "ok\n",
-    provider: "isolate",
-  });
-  expect(calls).toHaveLength(1);
-  const [exec] = calls;
-  expect(exec?.url).toMatch(
-    /^https:\/\/isolate\.example\.com\/v1\/sandboxes\/fp-e-[0-9a-f-]+\/exec$/,
-  );
-  expect(exec?.authorization).toBe("Bearer isolate-key");
-  expect(exec?.body).toEqual({
-    script: "echo ok",
-    args: ["one"],
-    cwd: "/workspace",
-    env: {
-      ACCOUNT_VAR: "a",
-      CALL_VAR: "b",
-      BROODS_ACCOUNT_ID: "acct",
-      BROODS_AGENT_ID: "agent",
-      BROODS_RUN_TOKEN: "tok",
-    },
-    timeoutMs: 10_000,
-    outputLimitBytes: 1024,
-    enableInternet: false,
-    persist: false,
-  });
-  expect(mirrored).toEqual([]);
-});
-
-it("meters each command's time and request to the account, its project or the run's agent", async (): Promise<void> => {
-  await new IsolateSandboxExecutor({
-    ...config,
-    controlPlane: { ...config.controlPlane!, projectId: "proj" },
-  }).run(request);
-  await new IsolateSandboxExecutor(config).run({
-    ...request,
-    metadata: { agentId: "agent-1" },
-  });
-  await new IsolateSandboxExecutor({ ...config, controlPlane: undefined }).run(
-    request,
-  );
-
-  expect(metered).toEqual([
-    'acct {"isolateMs":5,"isolateRequests":1} proj -',
-    'acct {"isolateMs":5,"isolateRequests":1} - agent-1',
-  ]);
-});
-
-it("clamps the timeout to the Worker's ceiling, the one the config plane enforces, and turns internet on from the network mode", async (): Promise<void> => {
-  await new IsolateSandboxExecutor({
-    ...config,
-    network: { mode: "allow-all" },
-  }).run({ code: "true", timeoutSeconds: 600, outputLimitBytes: 1024 });
-
-  expect(calls[0]?.body).toMatchObject({
-    timeoutMs: MAX_TIMEOUT_MS,
-    enableInternet: true,
-  });
-  expect(ISOLATE_MAX_TIMEOUT_SECONDS * 1000).toBe(MAX_TIMEOUT_MS);
-});
-
-it("reserves one persistent sandbox, keeps its files across runs and mirrors it", async (): Promise<void> => {
-  const executor = new IsolateSandboxExecutor({ ...config, persistent: true });
-  await executor.run(request);
-  await executor.run(request);
-  await settled();
-
-  expect(calls.map((call): string => call.method)).toEqual(["POST", "POST"]);
-  expect(calls[0]?.url).toBe(calls[1]?.url);
-  expect(calls[0]?.url).toContain(`/v1/sandboxes/${stored}/exec`);
-  expect(calls[0]?.body).toMatchObject({ persist: true });
-  expect(mirrored).toEqual([
-    "upsert acct:workspace false",
-    "upsert acct:workspace false",
-  ]);
-});
-
-it("runs commands on one reservation one at a time, so none starts from stale files", async (): Promise<void> => {
-  const inFlight: string[] = [];
-  let peak = 0;
-  mockFetch(async (input): Promise<Response> => {
-    inFlight.push(requestUrl(input));
-    peak = Math.max(peak, inFlight.length);
-    await Bun.sleep(5);
-    inFlight.pop();
-
-    return Response.json(EXEC_OK);
-  });
-  const executor = new IsolateSandboxExecutor({ ...config, persistent: true });
-
-  await Promise.all([executor.run(request), executor.run(request)]);
-
-  expect(peak).toBe(1);
-});
-
-it("surfaces the Worker's refusal of a command that lost a race as a plain error", async (): Promise<void> => {
-  mockFetch(
-    async (): Promise<Response> =>
-      new Response("another command changed the files", { status: 409 }),
-  );
-
-  const failure = await new IsolateSandboxExecutor({
-    ...config,
-    persistent: true,
-  })
-    .run(request)
-    .then(
-      (): string => "ran",
-      (error: unknown): string => String(error),
+  // Parity with the sandbox tier: a bundle sees the AI SDK's own options, and
+  // ctx no longer advertises the env/asyncTool fields that were always empty.
+  realRunnerIt("passes the full AI SDK execution options through", async () => {
+    const result = await runRealRunner(
+      `export default { name: 'opts', execute(input, options) {
+         return {
+           callId: options.toolCallId,
+           roles: options.messages.map((m) => m.role),
+           ctxKeys: Object.keys(options.context).sort(),
+           experimental: options.experimental_context,
+         };
+       } };`,
+      {
+        toolName: "opts",
+        toolCallId: "call_123",
+        messages: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: "second" },
+        ],
+        experimentalContext: { tenant: "acct_1" },
+      },
     );
-  await settled();
 
-  expect(failure).toContain("failed (409): another command changed the files");
-  expect(mirrored).toEqual([]);
-});
-
-it("takes the winner's id when it loses the reservation race", async (): Promise<void> => {
-  claimWins = false;
-  await new IsolateSandboxExecutor({ ...config, persistent: true }).run(
-    request,
-  );
-
-  expect(calls[0]?.url).toContain("/v1/sandboxes/winner-id/exec");
-});
-
-it("runs a persistent config with no account and no reservation as ephemeral", async (): Promise<void> => {
-  await new IsolateSandboxExecutor({
-    ...config,
-    persistent: true,
-    controlPlane: undefined,
-  }).run(request);
-
-  expect(calls[0]?.url).toContain("/v1/sandboxes/fp-e-");
-  expect(calls[0]?.body).toMatchObject({ persist: false });
-});
-
-it("reports stored files as a kept sandbox and drops them on release", async (): Promise<void> => {
-  stored = "fp-p-existing";
-  const executor = new IsolateSandboxExecutor({ ...config, persistent: true });
-
-  expect(await executor.getInstanceInfo(request)).toEqual({
-    externalId: "fp-p-existing",
-    state: "suspended",
+    expect(result.frames).toEqual([
+      {
+        t: "final",
+        result: {
+          callId: "call_123",
+          roles: ["user", "assistant"],
+          ctxKeys: ["config", "fetch", "state"],
+          experimental: { tenant: "acct_1" },
+        },
+      },
+    ]);
   });
-  await executor.release(request);
 
-  expect(calls.map((call): string => `${call.method} ${call.url}`)).toEqual([
-    "GET https://isolate.example.com/v1/sandboxes/fp-p-existing",
-    "DELETE https://isolate.example.com/v1/sandboxes/fp-p-existing",
-  ]);
-  expect(mirrored).toEqual(["delete acct:workspace"]);
-});
+  realRunnerIt("surfaces thrown tool errors", async () => {
+    const result = await runRealRunner(
+      "export default { name: 'boom', execute() { throw new Error('boom'); } };",
+      {
+        toolName: "boom",
+      },
+    );
 
-it("refuses a workspace mount and a plain-HTTP Worker outside loopback", (): void => {
-  expect(
-    (): IsolateSandboxExecutor =>
-      new IsolateSandboxExecutor({
-        ...config,
-        storage: { provider: "s3", bucket: "b" } as never,
-      }),
-  ).toThrow("cannot mount workspaces");
-  process.env.CLOUDFLARE_ISOLATE_URL = "http://isolate.example.com";
-  expect(isolateConnection).toThrow("must be https outside loopback");
-  process.env.CLOUDFLARE_ISOLATE_URL = "http://127.0.0.1:8787/";
-  expect(isolateConnection().baseURL).toBe("http://127.0.0.1:8787");
-});
+    expect(result.frames).toEqual([{ t: "error", error: "boom" }]);
+    expect(result.exitCode).toBe(1);
+  });
 
-function mockFetch(
-  handler: (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ) => Promise<Response>,
-): void {
-  spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(handler, { preconnect: (): void => {} }),
+  realRunnerIt("rejects sha256 mismatches", async () => {
+    const result = await runRealRunner(
+      "export default { name: 'bad', execute() { return 1; } };",
+      {
+        toolName: "bad",
+        expectedSha256: "b".repeat(64),
+      },
+    );
+
+    expect(result.frames).toEqual([
+      {
+        t: "error",
+        error: "custom tool bundle hash mismatch inside isolate runner",
+      },
+    ]);
+    expect(result.exitCode).toBe(1);
+  });
+
+  realRunnerIt("enforces timeout", async () => {
+    const result = await runRealRunner(
+      "export default { name: 'slow', execute() { while (true) {} } };",
+      {
+        toolName: "slow",
+        env: { ISOLATE_RUNNER_TIMEOUT_SECONDS: "1" },
+      },
+    );
+
+    expect(result.frames.at(-1)).toEqual({
+      t: "error",
+      error: "custom tool isolate execution timed out",
+    });
+    expect(result.exitCode).toBe(1);
+  });
+
+  realRunnerIt("provides the web globals a bare V8 isolate lacks", async () => {
+    // A zod-shaped bundle reaches for TextDecoder and URL at import time, so
+    // these are what stands between the isolate tier and a ReferenceError.
+    const result = await runRealRunner(
+      `export default { name: "web_globals", execute() {
+          const url = new URL("/a?x=1#f", "https://Example.com:8443");
+          url.searchParams.set("y", "a b");
+          const decoder = new TextDecoder();
+          const bytes = new TextEncoder().encode("héllo 🌍");
+          return {
+            href: url.href,
+            origin: url.origin,
+            invalid: (() => { try { new URL("nope"); return "no-throw"; } catch (error) { return error.name; } })(),
+            roundTrip: decoder.decode(bytes),
+            // Split mid-codepoint: a streaming decoder must hold the tail back.
+            streamed: decoder.decode(bytes.slice(0, 3), { stream: true }) + decoder.decode(bytes.slice(3)),
+            base64: atob(btoa("abc")),
+            uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(crypto.randomUUID()),
+            random: crypto.getRandomValues(new Uint8Array(8)).length,
+          };
+        } };`,
+      { toolName: "web_globals", input: {} },
+    );
+
+    expect(result.frames).toEqual([
+      {
+        t: "final",
+        result: {
+          href: "https://example.com:8443/a?x=1&y=a+b#f",
+          origin: "https://example.com:8443",
+          invalid: "TypeError",
+          roundTrip: "héllo 🌍",
+          streamed: "héllo 🌍",
+          base64: "abc",
+          uuid: true,
+          random: 8,
+        },
+      },
+    ]);
+  });
+
+  realRunnerIt(
+    "reports a truncated encodeInto and refuses an oversized random buffer",
+    async () => {
+      // Both silent-corruption shapes: encodeInto claiming it consumed input it
+      // did not write, and getRandomValues zero-filling past the host's quota.
+      const result = await runRealRunner(
+        `export default { name: "edges", execute() {
+          const encoder = new TextEncoder();
+          const small = new Uint8Array(4);
+          const partial = encoder.encodeInto("ab🌍cd", small);
+          const exact = encoder.encodeInto("ab", new Uint8Array(8));
+          let quota = "no-throw";
+          try { crypto.getRandomValues(new Uint8Array(65537)); } catch (error) { quota = error.name; }
+          let floats = "no-throw";
+          try { crypto.getRandomValues(new Float64Array(4)); } catch (error) { floats = error.name; }
+          return { partial: partial, exact: exact, quota: quota, floats: floats };
+        } };`,
+        { toolName: "edges", input: {} },
+      );
+
+      expect(result.frames).toEqual([
+        {
+          t: "final",
+          result: {
+            // "ab" fits; the 4-byte emoji does not, so read stops at 2 units.
+            partial: { read: 2, written: 2 },
+            exact: { read: 2, written: 2 },
+            quota: "QuotaExceededError",
+            // Raw bytes in a float array are not uniform values, so the spec
+            // rejects the view rather than hand back misleading numbers.
+            floats: "TypeMismatchError",
+          },
+        },
+      ]);
+    },
   );
+
+  realRunnerIt(
+    "provides timers, console, and a global fetch to the bundle",
+    async () => {
+      const result = await runRealRunner(
+        `export default { name: "runtime_surface", async *execute(input, options) {
+        console.log("hello from the isolate");
+        const started = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        yield { waitedMs: Date.now() - started >= 10 };
+        const cancelled = setTimeout(() => { throw new Error("should not fire"); }, 5);
+        clearTimeout(cancelled);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        yield {
+          waited: true,
+          hasFetch: typeof fetch === "function",
+          fetchIsCtxFetch: fetch === options.context.fetch,
+          hasMicrotask: typeof queueMicrotask === "function",
+        };
+      } };`,
+        { toolName: "runtime_surface", input: {} },
+      );
+
+      expect(result.frames).toEqual([
+        { t: "log", level: "log", message: "hello from the isolate" },
+        { t: "chunk", output: { waitedMs: true } },
+        {
+          t: "chunk",
+          output: {
+            waited: true,
+            hasFetch: true,
+            fetchIsCtxFetch: true,
+            hasMicrotask: true,
+          },
+        },
+        {
+          t: "final",
+          result: {
+            waited: true,
+            hasFetch: true,
+            fetchIsCtxFetch: true,
+            hasMicrotask: true,
+          },
+        },
+      ]);
+      // Console now rides the frame protocol. Writing to stderr instead is what
+      // lost the pooled worker's logs, so the old channel must stay empty.
+      expect(result.stderr).not.toContain("hello from the isolate");
+    },
+  );
+
+  realRunnerIt("supports setInterval with clearInterval", async () => {
+    const result = await runRealRunner(
+      `export default { name: "interval_tool", async execute() {
+        let ticks = 0;
+        await new Promise((resolve) => {
+          const id = setInterval(() => {
+            ticks += 1;
+            if (ticks >= 3) { clearInterval(id); resolve(); }
+          }, 5);
+        });
+        return { ticks };
+      } };`,
+      { toolName: "interval_tool", input: {} },
+    );
+
+    expect(result.frames).toEqual([{ t: "final", result: { ticks: 3 } }]);
+  });
+
+  realRunnerIt(
+    "passes SDK execution options (context, toolCallId, abortSignal) to the tool",
+    async () => {
+      const result = await runRealRunner(
+        `export default { name: "opts", execute(input, options) {
+          return {
+            echo: input,
+            cfg: options.context.config,
+            callId: options.toolCallId,
+            signalOk: options.abortSignal != null && options.abortSignal.aborted === false,
+          };
+        } };`,
+        {
+          toolName: "opts",
+          input: { q: "hi" },
+          config: { k: "v" },
+          toolCallId: "call_123",
+        },
+      );
+
+      expect(result.frames).toEqual([
+        {
+          t: "final",
+          result: {
+            echo: { q: "hi" },
+            cfg: { k: "v" },
+            callId: "call_123",
+            signalOk: true,
+          },
+        },
+      ]);
+    },
+  );
+
+  realRunnerIt(
+    "trips the in-isolate abortSignal when the host sends SIGUSR2",
+    async () => {
+      const result = await runRealRunner(
+        `export default { name: "abortable", async execute(input, options) {
+          return await new Promise((resolve) => {
+            options.abortSignal.addEventListener("abort", () => resolve({ aborted: true }));
+          });
+        } };`,
+        { toolName: "abortable", input: {}, abortAfterMs: 300 },
+      );
+
+      expect(result.frames.at(-1)).toEqual({
+        t: "final",
+        result: { aborted: true },
+      });
+    },
+  );
+});
+
+describe("isolate pooled worker (--pool)", () => {
+  realRunnerIt(
+    "emits ready, streams chunks, meters, and returns final",
+    async () => {
+      const { byCall, ready } = await runPoolRunner([
+        {
+          callId: "1",
+          tenantId: "acct_a",
+          toolName: "streamer",
+          source:
+            "export default { name: 'streamer', async *execute() { yield { step: 1 }; yield { step: 2 }; } };",
+        },
+      ]);
+
+      expect(ready).toEqual({ t: "ready" });
+      const frames = byCall.get("1")!;
+      expect(frames.filter((f) => f.t === "chunk")).toEqual([
+        { t: "chunk", callId: "1", output: { step: 1 } },
+        { t: "chunk", callId: "1", output: { step: 2 } },
+      ]);
+      expect(frames.find((f) => f.t === "final")).toEqual({
+        t: "final",
+        callId: "1",
+        result: { step: 2 },
+      });
+      const meter = frames.find((f) => f.t === "meter");
+      expect(meter?.tenantId).toBe("acct_a");
+      expect(typeof meter?.cpuMs).toBe("number");
+    },
+  );
+
+  realRunnerIt(
+    "gives each call a fresh context on a reused tenant isolate (no state leak)",
+    async () => {
+      const source =
+        "export default { name: 'counter', execute() { globalThis.__n = (globalThis.__n || 0) + 1; return { n: globalThis.__n }; } };";
+      const { byCall } = await runPoolRunner([
+        {
+          callId: "1",
+          tenantId: "acct_a",
+          toolName: "counter",
+          source: source,
+        },
+        {
+          callId: "2",
+          tenantId: "acct_a",
+          toolName: "counter",
+          source: source,
+        },
+      ]);
+
+      // Same tenant reuses the isolate, but the fresh context resets globals, so
+      // the second call must NOT observe the first call's write.
+      expect(byCall.get("1")!.find((f) => f.t === "final")).toEqual({
+        t: "final",
+        callId: "1",
+        result: { n: 1 },
+      });
+      expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({
+        t: "final",
+        callId: "2",
+        result: { n: 1 },
+      });
+    },
+  );
+
+  realRunnerIt("does not leak globals across tenants", async () => {
+    const writer =
+      "export default { name: 'w', execute() { globalThis.__secret = 'A'; return { wrote: true }; } };";
+    const reader =
+      "export default { name: 'r', execute() { return { secret: globalThis.__secret ?? null }; } };";
+    const { byCall } = await runPoolRunner([
+      { callId: "1", tenantId: "acct_a", toolName: "w", source: writer },
+      { callId: "2", tenantId: "acct_b", toolName: "r", source: reader },
+    ]);
+
+    expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({
+      t: "final",
+      callId: "2",
+      result: { secret: null },
+    });
+  });
+
+  realRunnerIt(
+    "surfaces thrown errors and poisoned-isolate recovery on the next call",
+    async () => {
+      const { byCall } = await runPoolRunner([
+        {
+          callId: "1",
+          tenantId: "acct_a",
+          toolName: "boom",
+          source:
+            "export default { name: 'boom', execute() { throw new Error('boom'); } };",
+        },
+        {
+          callId: "2",
+          tenantId: "acct_a",
+          toolName: "ok",
+          source:
+            "export default { name: 'ok', execute() { return { ok: true }; } };",
+        },
+      ]);
+
+      expect(byCall.get("1")!.find((f) => f.t === "error")).toEqual({
+        t: "error",
+        callId: "1",
+        error: "boom",
+      });
+      // The tripped isolate is disposed + evicted; the next same-tenant call still works.
+      expect(byCall.get("2")!.find((f) => f.t === "final")).toEqual({
+        t: "final",
+        callId: "2",
+        result: { ok: true },
+      });
+    },
+  );
+});
+
+// Runs against a stub runner (no isolated-vm), so it exercises the core-side
+// forwarding of the AI SDK abortSignal into the runner process on every CI run.
+describe("streamIsolatePayload cross-process abort", () => {
+  const created: string[] = [];
+  // Every knob these tests set, put back as it was (or unset) after each one,
+  // so a later test file never inherits a stub runner or a shrunken pool.
+  const savedEnv = [
+    "ISOLATE_RUNNER_PATH",
+    "ISOLATE_POOL",
+    "ISOLATE_WORKER_POOL_SIZE",
+    "ISOLATE_RUNNER_TIMEOUT_SECONDS",
+  ].map((key): [string, string | undefined] => [key, process.env[key]]);
+
+  afterEach(async () => {
+    for (const [key, value] of savedEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    // Never hand a worker spawned against this file's stub runner to whatever
+    // runs next: the pool outlives the file that filled it.
+    const { shutdownIsolatePool } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    for (const dir of created.splice(0))
+      await rm(dir, { recursive: true, force: true });
+  });
+
+  it("forwards the AI SDK abortSignal to the runner as SIGUSR2", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broods-runner-stub-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-runner.mjs");
+    const readyPath = join(dir, "ready");
+    await writeFile(
+      stubPath,
+      [
+        `import { writeFileSync } from "node:fs";`,
+        "process.stdin.resume();",
+        "process.stdin.on('data', () => {});",
+        "process.on('SIGUSR2', () => {",
+        "  process.stdout.write(JSON.stringify({ t: 'final', result: { aborted: true } }) + '\\n');",
+        "  process.exit(0);",
+        "});",
+        `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
+        "setTimeout(() => process.exit(3), 5000);",
+      ].join("\n"),
+      "utf8",
+    );
+    process.env.ISOLATE_POOL = "0"; // exercise the one-shot fallback path
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    const controller = new AbortController();
+    const aborted = abortWhenReady(readyPath, controller);
+
+    const outputs: unknown[] = [];
+    for await (const output of streamIsolatePayload(
+      "acct_test",
+      {
+        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+        expectedSha256: sha256("export default {};"),
+        toolName: "stub",
+        input: {},
+        config: {},
+      },
+      { abortSignal: controller.signal },
+    )) {
+      outputs.push(output);
+    }
+    await aborted;
+
+    expect(outputs).toEqual([{ aborted: true }]);
+  });
+
+  it("forwards the abortSignal on the pooled path too", async () => {
+    // The pooled path is the default, so this is the forwarding that runs in
+    // production; the worker is checked out of the shared pool, not spawned here.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-stub-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-pool-runner.mjs");
+    const readyPath = join(dir, "ready");
+    await writeFile(
+      stubPath,
+      [
+        `import { writeFileSync } from "node:fs";`,
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let callId;",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  for (const line of chunk.split('\\n')) {",
+        "    if (!line.trim()) continue;",
+        "    try { callId = JSON.parse(line).callId; } catch {}",
+        "  }",
+        "});",
+        "process.on('SIGUSR2', () => {",
+        "  process.stdout.write(JSON.stringify({ t: 'final', callId, result: { aborted: true } }) + '\\n');",
+        "  process.exit(0);",
+        "});",
+        `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
+        "setTimeout(() => process.exit(3), 5000);",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    // The pool is module-global and acquireWorker takes any idle worker, but
+    // ISOLATE_RUNNER_PATH is only read when one is spawned. Without this, a
+    // worker some earlier test left behind serves the call on the real runner,
+    // which rejects this stub bundle instead of answering the abort.
+    shutdownIsolatePool();
+    const controller = new AbortController();
+    const aborted = abortWhenReady(readyPath, controller);
+
+    const outputs: unknown[] = [];
+    try {
+      for await (const output of streamIsolatePayload(
+        "acct_pooled",
+        {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        },
+        { abortSignal: controller.signal },
+      )) {
+        outputs.push(output);
+      }
+    } finally {
+      // A stub worker surviving the abort would hold a child process for the
+      // rest of the run: the pool outlives this file.
+      shutdownIsolatePool();
+    }
+    await aborted;
+
+    expect(outputs).toEqual([{ aborted: true }]);
+  });
+
+  it("hands the runner PATH and the ISOLATE_* keys, never core's other variables", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broods-runner-env-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-runner.mjs");
+    await writeFile(
+      stubPath,
+      "process.stdout.write(JSON.stringify({ t: 'final', result: Object.keys(process.env) }) + '\\n');",
+      "utf8",
+    );
+    process.env.ISOLATE_POOL = "0";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+    process.env.BROODS_TEST_CORE_SECRET = "leak";
+
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    const outputs: unknown[] = [];
+    try {
+      for await (const output of streamIsolatePayload("acct_env", {
+        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+        expectedSha256: sha256("export default {};"),
+        toolName: "stub",
+        input: {},
+        config: {},
+      })) {
+        outputs.push(output);
+      }
+    } finally {
+      delete process.env.BROODS_TEST_CORE_SECRET;
+    }
+
+    // Not an exact list: macOS adds __CF_USER_TEXT_ENCODING to every child.
+    // HOME was set before the executor loaded, the secret after it.
+    expect(outputs[0]).toContain("PATH");
+    expect(outputs[0]).not.toContain("HOME");
+    expect(outputs[0]).not.toContain("BROODS_TEST_CORE_SECRET");
+  });
+
+  it("accepts a result over 1 MiB that stays under 1 MiB plus the request size", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broods-runner-cap-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-runner.mjs");
+    const resultLength = 1024 * 1024 + 1024;
+    await writeFile(
+      stubPath,
+      `process.stdout.write(JSON.stringify({ t: 'final', result: 'x'.repeat(${resultLength}) }) + '\\n');`,
+      "utf8",
+    );
+    process.env.ISOLATE_POOL = "0";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    const outputs: unknown[] = [];
+    for await (const output of streamIsolatePayload("acct_cap", {
+      bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+      expectedSha256: sha256("export default {};"),
+      toolName: "stub",
+      input: { text: "y".repeat(64 * 1024) },
+      config: {},
+    })) {
+      outputs.push(output);
+    }
+
+    expect(outputs.map((output): number => String(output).length)).toEqual([
+      resultLength,
+    ]);
+  });
+
+  it("serves sequential calls from one worker instead of filling the pool", async () => {
+    // What makes the pool safe to have on by default: core's pod budgets memory
+    // for one process, not for ISOLATE_WORKER_POOL_SIZE resident Node runtimes.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-count-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "counting-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `appendFileSync(${JSON.stringify(marker)}, process.pid + "\\n");`,
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let buffer = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  let index;",
+        "  while ((index = buffer.indexOf('\\n')) >= 0) {",
+        "    const line = buffer.slice(0, index);",
+        "    buffer = buffer.slice(index + 1);",
+        "    if (!line.trim()) continue;",
+        "    const request = JSON.parse(line);",
+        "    process.stdout.write(JSON.stringify({ t: 'final', callId: request.callId, result: { ok: true } }) + '\\n');",
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      for (let call = 0; call < 3; call += 1) {
+        const outputs: unknown[] = [];
+        for await (const output of streamIsolatePayload("acct_count", {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          outputs.push(output);
+        }
+        expect(outputs).toEqual([{ ok: true }]);
+      }
+
+      const spawned = (await readFile(marker, "utf8")).trim().split("\n");
+      expect(spawned).toHaveLength(1);
+    } finally {
+      shutdownIsolatePool();
+    }
+  });
+
+  it("queues past the pool cap instead of spawning past it", async () => {
+    // The cap is what keeps resident memory bounded, so concurrent demand above
+    // it has to wait for a worker rather than grow the pool or fail.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-cap-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "slow-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `appendFileSync(${JSON.stringify(marker)}, process.pid + "\\n");`,
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let buffer = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  let index;",
+        "  while ((index = buffer.indexOf('\\n')) >= 0) {",
+        "    const line = buffer.slice(0, index);",
+        "    buffer = buffer.slice(index + 1);",
+        "    if (!line.trim()) continue;",
+        "    const request = JSON.parse(line);",
+        "    setTimeout(() => process.stdout.write(JSON.stringify({ t: 'final', callId: request.callId, result: { ok: true } }) + '\\n'), 120);",
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_WORKER_POOL_SIZE = "2";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      const call = async (tenant: string): Promise<unknown[]> => {
+        const outputs: unknown[] = [];
+        for await (const output of streamIsolatePayload(tenant, {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          outputs.push(output);
+        }
+
+        return outputs;
+      };
+      const results = await Promise.all(
+        ["a", "b", "c", "d", "e"].map((tenant) => call(`acct_${tenant}`)),
+      );
+
+      expect(results).toEqual(Array.from({ length: 5 }, () => [{ ok: true }]));
+      const spawned = (await readFile(marker, "utf8")).trim().split("\n");
+      expect(spawned).toHaveLength(2);
+    } finally {
+      shutdownIsolatePool();
+    }
+  });
+
+  it("fails calls whose runner never starts after three spawns, then recovers once it does", async () => {
+    // A missing addon or broken runner exits before `ready`; the pool used to
+    // respawn it forever and the hook waiting on it never settled.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-start-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "broken-runner.mjs");
+    await writeFile(
+      stubPath,
+      `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(marker)}, "x"); process.exit(1);`,
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_WORKER_POOL_SIZE = "1";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    const call = async (): Promise<unknown[]> => {
+      const outputs: unknown[] = [];
+      for await (const output of streamIsolatePayload("acct_start", {
+        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+        expectedSha256: sha256("export default {};"),
+        toolName: "stub",
+        input: {},
+        config: {},
+      })) {
+        outputs.push(output);
+      }
+
+      return outputs;
+    };
+    try {
+      const started = performance.now();
+      // The second call queues behind the first on the one-worker pool, so it
+      // also proves a queued call is not left waiting on the failed slot.
+      const failures = await Promise.all(
+        [call(), call()].map((pending) =>
+          pending.then(String, (error: Error) => error.message),
+        ),
+      );
+
+      expect(failures).toEqual([
+        "isolate worker failed to start: isolate worker exited (1)",
+        "isolate worker failed to start: isolate worker exited (1)",
+      ]);
+      expect(await readFile(marker, "utf8")).toBe("x".repeat(6));
+      expect(performance.now() - started).toBeLessThan(3_000);
+
+      await writeFile(
+        stubPath,
+        [
+          "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (line) => process.stdout.write(JSON.stringify({ t: 'final', callId: JSON.parse(line).callId, result: { ok: true } }) + '\\n'));",
+        ].join("\n"),
+        "utf8",
+      );
+      expect(await call()).toEqual([{ ok: true }]);
+    } finally {
+      shutdownIsolatePool();
+    }
+  }, 10_000);
+
+  it("gives up on a runner that never says ready after its start deadline, not the run timeout", async () => {
+    // The start deadline used to be the 30 s run timeout, so each hook fire
+    // waited three of them (~90 s) on a hung runner before skipping the hook.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-hang-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "silent-runner.mjs");
+    await writeFile(
+      stubPath,
+      `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(marker)}, "x"); setInterval(() => {}, 1000);`,
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+    process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS = "60";
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      const started = performance.now();
+      const failure = await (async (): Promise<string> => {
+        for await (const output of streamIsolatePayload("acct_hang", {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          return String(output);
+        }
+
+        return "no output";
+      })().catch((error: Error) => error.message);
+
+      expect(failure).toBe(
+        "isolate worker failed to start: isolate worker did not become ready",
+      );
+      expect(await readFile(marker, "utf8")).toBe("xxx");
+      // Three 5 s start deadlines plus 300 ms of backoff, about 15 s. The bound
+      // leaves room for a loaded runner and still sits under one 60 s run timeout.
+      expect(performance.now() - started).toBeLessThan(30_000);
+    } finally {
+      shutdownIsolatePool();
+    }
+  }, 35_000);
+});
+
+// A fixed timer here raced the runner's startup: abort before the stub installs
+// its SIGUSR2 handler and the default disposition kills it, so no final frame.
+async function abortWhenReady(
+  readyPath: string,
+  controller: AbortController,
+): Promise<void> {
+  const deadline = Date.now() + 4_000;
+  while (!existsSync(readyPath) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  controller.abort();
 }
 
-// Lets the queued mirror writes, which run off the command's path, settle.
-async function settled(): Promise<void> {
-  await new Promise((resolve): void => {
-    setTimeout(resolve, 0);
+async function runPoolRunner(
+  requests: Array<{
+    callId: string;
+    tenantId: string;
+    toolName: string;
+    source: string;
+    input?: unknown;
+  }>,
+  env?: Record<string, string>,
+): Promise<{
+  byCall: Map<string, Array<{ t: string; [key: string]: unknown }>>;
+  ready: unknown;
+  stderr: string;
+}> {
+  const child = spawn("node", [runnerPath!, "--pool"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...env },
   });
+  const frames: Array<{ t: string; [key: string]: unknown }> = [];
+  let wake: (() => void) | null = null;
+  let buffer = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    let index: number;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (!line.trim()) continue;
+      try {
+        frames.push(JSON.parse(line));
+      } catch {
+        continue; // ignore any non-protocol stdout noise instead of crashing the run
+      }
+      wake?.();
+      wake = null;
+    }
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+
+  const next = async (): Promise<{ t: string; [key: string]: unknown }> => {
+    while (!frames.length)
+      await new Promise<void>((resolve) => (wake = resolve));
+
+    return frames.shift()!;
+  };
+
+  try {
+    const ready = await next();
+    const byCall = new Map<
+      string,
+      Array<{ t: string; [key: string]: unknown }>
+    >();
+    for (const request of requests) {
+      child.stdin.write(
+        JSON.stringify({
+          t: "run",
+          callId: request.callId,
+          tenantId: request.tenantId,
+          payload: {
+            bundleSourceB64: Buffer.from(request.source).toString("base64"),
+            expectedSha256: sha256(request.source),
+            toolName: request.toolName,
+            input: request.input ?? {},
+            config: {},
+          },
+        }) + "\n",
+      );
+      const collected: Array<{ t: string; [key: string]: unknown }> = [];
+      for (;;) {
+        const frame = await next();
+        collected.push(frame);
+        if (frame.t === "final" || frame.t === "error" || frame.t === "end")
+          break;
+      }
+      byCall.set(request.callId, collected);
+    }
+
+    return { byCall: byCall, ready: ready, stderr: stderr };
+  } finally {
+    child.kill();
+  }
+}
+
+async function runRealRunner(
+  source: string,
+  options: {
+    toolName: string;
+    input?: unknown;
+    expectedSha256?: string;
+    env?: Record<string, string>;
+    config?: Record<string, unknown>;
+    toolCallId?: string;
+    messages?: unknown[];
+    experimentalContext?: unknown;
+    abortAfterMs?: number;
+  },
+): Promise<{ frames: unknown[]; exitCode: number | null; stderr: string }> {
+  const expectedSha256 = options.expectedSha256 ?? sha256(source);
+  const child = spawn("node", [runnerPath!], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      ...options.env,
+    },
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  child.stdin.end(
+    JSON.stringify({
+      bundleSourceB64: Buffer.from(source).toString("base64"),
+      expectedSha256: expectedSha256,
+      toolName: options.toolName,
+      input: options.input ?? {},
+      config: options.config ?? {},
+      ...(options.toolCallId !== undefined
+        ? { toolCallId: options.toolCallId }
+        : {}),
+      ...(options.messages !== undefined ? { messages: options.messages } : {}),
+      ...(options.experimentalContext !== undefined
+        ? { experimentalContext: options.experimentalContext }
+        : {}),
+    }) + "\n",
+  );
+  if (options.abortAfterMs !== undefined) {
+    setTimeout(() => {
+      try {
+        child.kill("SIGUSR2");
+      } catch {}
+    }, options.abortAfterMs);
+  }
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+
+  return {
+    frames: stdout
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line)),
+    exitCode: exitCode,
+    stderr: stderr,
+  };
+}
+
+function sha256(value: string): string {
+  return new Bun.CryptoHasher("sha256").update(value).digest("hex");
 }

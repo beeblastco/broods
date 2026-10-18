@@ -1,5 +1,5 @@
 {
-  "name": "@broods/cloudflare-isolate",
+  "name": "@broods/cloudflare-worker",
   "version": "0.1.0",
   "private": true,
   "license": "FSL-1.1-ALv2",
