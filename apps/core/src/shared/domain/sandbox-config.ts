@@ -74,3 +74,11 @@ export interface SandboxExecResponse {
   /** The machine's vCPU-s and GB-s above its baseline since boot. MicroVM only. */
   burst?: { vcpu_seconds: number; gb_seconds: number };
 }
+
+/**
+ * What a platform Worker answers one exec with: every field of the contract
+ * it can fill, so a field added above fails the Worker's own `check`.
+ */
+export type SandboxExecAnswer = Required<
+  Omit<SandboxExecResponse, "burst" | "cpu_usec" | "runtime">
+>;

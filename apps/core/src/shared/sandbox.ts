@@ -1,19 +1,11 @@
 /** Shared sandbox configuration limits and their environment overrides. */
 
-import { ISOLATE_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
+import { workspaceSandboxLimits as configPlaneLimits } from "@broods/convex/model/sandboxRules";
 import type { SandboxProvider } from "./domain/sandbox-config.ts";
 import { optionalEnv } from "./env.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
-const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
-
-// Per-call timeout ceilings, lambda and the other providers each with their own
-// env override; an isolate's is the Worker's CPU limit and takes no override.
-// A blocking exec is also bounded by the harness request budget (~10 min);
-// detached background jobs are not bounded here.
-const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
-const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 
 // Reserved (long-lived) sandbox lifecycle defaults. A reserved sandbox stays
 // running while in use and scales to 0 / stops after an idle cooldown, resuming
@@ -72,10 +64,11 @@ export function workspaceNamespacePrefix(namespace: string): string {
 }
 
 /**
- * Per-call sandbox limits for a provider. Defaults and output caps are universal
- * (they protect the harness runtime); the timeout maximum is provider-aware. Output
- * truncation always applies (output is read back into the harness regardless of
- * provider).
+ * Per-call sandbox limits for a provider: the defaults a call starts from,
+ * and the ceilings the config plane validates against, read from the same
+ * table (`packages/convex/model/sandboxRules.ts`) so core never clamps to a
+ * number the config plane did not. A blocking exec is also bounded by the
+ * harness request budget (~10 min); detached background jobs are not.
  */
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
@@ -89,22 +82,7 @@ export function workspaceSandboxLimits(
       "WORKSPACE_SANDBOX_DEFAULT_OUTPUT_LIMIT_BYTES",
       DEFAULT_OUTPUT_LIMIT_BYTES,
     ),
-    maxTimeoutSeconds:
-      provider === "lambda"
-        ? positiveIntegerEnv(
-            "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
-            LAMBDA_MAX_TIMEOUT_SECONDS,
-          )
-        : provider === "isolate"
-          ? ISOLATE_MAX_TIMEOUT_SECONDS
-          : positiveIntegerEnv(
-              "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
-              PERSISTENT_MAX_TIMEOUT_SECONDS,
-            ),
-    maxOutputLimitBytes: positiveIntegerEnv(
-      "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
-      DEFAULT_MAX_OUTPUT_LIMIT_BYTES,
-    ),
+    ...configPlaneLimits(provider),
   };
 }
 

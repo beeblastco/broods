@@ -3,54 +3,77 @@
  * has no snapshot of its own, so the runtime walks the tree after each command
  * and the host stores the result in R2 under the sandbox id. Only what a
  * command wrote is kept; the shell's own layout (`/bin`, `/dev`, `/proc`) is
- * rebuilt by every fresh disk.
+ * rebuilt by every fresh disk. A disk is one gzip of a JSON header (paths,
+ * kinds, modes, file sizes) followed by the files' raw bytes in header order.
  */
 
+import { gunzipSync, gzipSync } from "node:zlib";
 import { Bash, InMemoryFs, type IFileSystem } from "just-bash/browser";
 
 // What one disk may hold uncompressed, well inside an isolate's memory.
 const MAX_FS_BYTES = 32 * 1024 * 1024;
 // Paths every fresh disk already has once a shell starts on it, so they are never stored.
 const DEFAULT_PATHS: ReadonlySet<string> = defaultPaths();
-const BASE64_CHUNK = 0x8000;
+const HEADER_LENGTH_BYTES = 4;
+const UTF8_ENCODER = new TextEncoder();
+const UTF8_DECODER = new TextDecoder();
 
-/** One stored path: a file with its bytes, a directory, or a symlink with its target. */
+/** One stored path: a file with its size, a directory, or a symlink with its target. */
 type StateEntry =
   | { path: string; kind: "dir"; mode: number }
-  | { path: string; kind: "file"; mode: number; mtime: number; base64: string }
+  | { path: string; kind: "file"; mode: number; mtime: number; size: number }
   | { path: string; kind: "link"; target: string };
+
+/** A disk and the uncompressed bytes it was built from, to tell a change from a read. */
+export interface DecodedState {
+  fs: InMemoryFs;
+  packed: Uint8Array;
+}
 
 /** A fresh disk with nothing but the shell's own layout. */
 export function emptyFs(): InMemoryFs {
   return new InMemoryFs(undefined, { maxTotalBytes: MAX_FS_BYTES });
 }
 
-/** A disk holding what `encodeState` stored. */
-export async function decodeState(bytes: Uint8Array): Promise<InMemoryFs> {
+/** A disk holding what `packState` stored. */
+export async function decodeState(bytes: Uint8Array): Promise<DecodedState> {
+  const packed = new Uint8Array(gunzipSync(bytes));
+  const headerLength = new DataView(
+    packed.buffer,
+    packed.byteOffset,
+    HEADER_LENGTH_BYTES,
+  ).getUint32(0);
   const entries: StateEntry[] = JSON.parse(
-    new TextDecoder().decode(await gunzip(bytes)),
+    UTF8_DECODER.decode(
+      packed.subarray(HEADER_LENGTH_BYTES, HEADER_LENGTH_BYTES + headerLength),
+    ),
   );
   const fs = emptyFs();
+  let offset = HEADER_LENGTH_BYTES + headerLength;
   for (const entry of entries) {
     if (entry.kind === "dir") {
       fs.mkdirSync(entry.path, { recursive: true });
       await fs.chmod(entry.path, entry.mode);
     } else if (entry.kind === "file") {
-      fs.writeFileSync(entry.path, fromBase64(entry.base64), undefined, {
-        mode: entry.mode,
-        mtime: new Date(entry.mtime),
-      });
+      fs.writeFileSync(
+        entry.path,
+        packed.subarray(offset, offset + entry.size),
+        undefined,
+        { mode: entry.mode, mtime: new Date(entry.mtime) },
+      );
+      offset += entry.size;
     } else {
       await fs.symlink(entry.target, entry.path);
     }
   }
 
-  return fs;
+  return { fs: fs, packed: packed };
 }
 
-/** The disk's own entries, compressed; null when a command left nothing behind. */
-export async function encodeState(fs: IFileSystem): Promise<Uint8Array | null> {
+/** The disk's own entries, uncompressed; null when no command left anything behind. */
+export async function packState(fs: IFileSystem): Promise<Uint8Array | null> {
   const entries: StateEntry[] = [];
+  const blobs: Uint8Array[] = [];
   // Parents sort before their children, so a restore creates them in order.
   const paths = fs
     .getAllPaths()
@@ -67,18 +90,51 @@ export async function encodeState(fs: IFileSystem): Promise<Uint8Array | null> {
     } else if (stat.isDirectory) {
       entries.push({ path: path, kind: "dir", mode: stat.mode });
     } else {
+      const bytes = await fs.readFileBuffer(path);
       entries.push({
         path: path,
         kind: "file",
         mode: stat.mode,
         mtime: stat.mtime.getTime(),
-        base64: toBase64(await fs.readFileBuffer(path)),
+        size: bytes.byteLength,
       });
+      blobs.push(bytes);
     }
   }
   if (entries.length === 0) return null;
+  const header = UTF8_ENCODER.encode(JSON.stringify(entries));
+  const packed = new Uint8Array(
+    HEADER_LENGTH_BYTES +
+      header.byteLength +
+      blobs.reduce((total, blob): number => total + blob.byteLength, 0),
+  );
+  new DataView(packed.buffer).setUint32(0, header.byteLength);
+  packed.set(header, HEADER_LENGTH_BYTES);
+  let offset = HEADER_LENGTH_BYTES + header.byteLength;
+  for (const blob of blobs) {
+    packed.set(blob, offset);
+    offset += blob.byteLength;
+  }
 
-  return await gzip(new TextEncoder().encode(JSON.stringify(entries)));
+  return packed;
+}
+
+/** Whether two packed disks hold the same bytes; a read-only command leaves them equal. */
+export function samePacked(
+  a: Uint8Array | null,
+  b: Uint8Array | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+
+  return (
+    a.byteLength === b.byteLength &&
+    a.every((byte, index): boolean => byte === b[index])
+  );
+}
+
+/** A packed disk as the bytes R2 stores. */
+export function compressState(packed: Uint8Array): Uint8Array {
+  return new Uint8Array(gzipSync(packed));
 }
 
 function defaultPaths(): ReadonlySet<string> {
@@ -86,43 +142,4 @@ function defaultPaths(): ReadonlySet<string> {
   new Bash({ fs: fs, cwd: "/" });
 
   return new Set(fs.getAllPaths());
-}
-
-function fromBase64(text: string): Uint8Array {
-  const binary = atob(text);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return bytes;
-}
-
-async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
-  return await piped(bytes, new DecompressionStream("gzip"));
-}
-
-async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
-  return await piped(bytes, new CompressionStream("gzip"));
-}
-
-async function piped(
-  bytes: Uint8Array,
-  through: CompressionStream | DecompressionStream,
-): Promise<Uint8Array> {
-  const stream = new Response(bytes).body!.pipeThrough(through);
-
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-// Chunked, so a large file does not spread into one giant argument list.
-function toBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK) {
-    binary += String.fromCharCode(
-      ...bytes.subarray(offset, offset + BASE64_CHUNK),
-    );
-  }
-
-  return btoa(binary);
 }

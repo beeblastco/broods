@@ -4,7 +4,7 @@
  * side fails the other's `check`.
  */
 
-import type { SandboxExecResponse } from "../../core/src/shared/domain/sandbox-config.ts";
+import type { SandboxExecAnswer } from "../../core/src/shared/domain/sandbox-config.ts";
 
 /** One command from core, after the host validated it. */
 export interface IsolateExecRequest {
@@ -21,26 +21,15 @@ export interface IsolateExecRequest {
   persist: boolean;
 }
 
-/**
- * One finished command, its output capped at the request's limit per stream:
- * core's `SandboxExecResponse` (the sandbox exec contract), so core reads it
- * with the parser every exec server goes through.
- */
-export type ExecResult = Required<
-  Pick<
-    SandboxExecResponse,
-    | "duration_ms"
-    | "exit_code"
-    | "ok"
-    | "stderr"
-    | "stdout"
-    | "timed_out"
-    | "truncated"
-  >
->;
+/** One finished command, as core's exec contract; the host measures `duration_ms`. */
+export type ExecResult = SandboxExecAnswer;
 
-/** The runtime's answer: the result and the files after it, compressed, or null for an empty disk. */
+/**
+ * The runtime's answer: the result, and the disk after the command as the
+ * bytes R2 stores, null for an empty disk, or "unchanged" when the command
+ * left the disk as it found it.
+ */
 export interface RuntimeExecResult {
-  result: ExecResult;
-  state: Uint8Array | null;
+  result: Omit<ExecResult, "duration_ms">;
+  state: Uint8Array | null | "unchanged";
 }
