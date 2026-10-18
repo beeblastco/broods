@@ -2,13 +2,14 @@
 
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
+import { track } from "@/app/lib/analytics";
 import { DASHBOARD_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { useParams, useSearchParams } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BillingPanel } from "./components/BillingPanel";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
@@ -35,6 +36,9 @@ export default function DashboardPage(): React.JSX.Element {
   const { stageId: activeStageId } = useStage();
   const tab = pickTab(DASHBOARD_TABS, searchParams.get("tab"));
   const activeTab = tab.id;
+  useEffect(() => {
+    track({ name: "dashboard_tab_opened", tab: activeTab });
+  }, [activeTab]);
 
   // Source of projectSlug, stageSlug and endpointId: the observability WS and
   // the session-storage key lookup are both keyed on them.

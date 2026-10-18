@@ -72,6 +72,8 @@ import {
   runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
+import { durationBucket } from "@broods/convex/model/productAnalytics";
+import { captureAnalytics, modelFamily } from "../shared/product-analytics.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import type { RunSessionMessageDispatch } from "./ingress.ts";
@@ -1125,6 +1127,24 @@ export async function runAgentLoop(
         context,
       );
       waitUntil(Promise.allSettled([usageRecorded, rootPublished]));
+      captureAnalytics(
+        {
+          name: "run_finished",
+          status: status,
+          stepCount: stepCount,
+          durationBucket: durationBucket(durationMs),
+          modelFamily: modelFamily(
+            configuredModel.providerName ?? "unknown",
+            agentConfig.model?.modelId ?? "unknown",
+          ),
+          sandboxProvider: sandboxes[0]?.sandbox.provider ?? null,
+          channelKind:
+            session.delivery?.kind === "channel"
+              ? session.delivery.channelName
+              : (session.delivery?.kind ?? "direct"),
+        },
+        session.accountId,
+      );
     } finally {
       // The container process is reused, so never retain one task's tenant,
       // trace, or secret values past the run.

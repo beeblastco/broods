@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
+import { track } from "@/app/lib/analytics";
 import { Label } from "@/app/components/ui/label";
 import {
   Select,
@@ -96,6 +97,7 @@ export function CreateAgentConfigDialog({
         systemPrompt: systemPrompt.trim() || undefined,
         position: initialCanvasPosition ?? undefined,
       });
+      track({ name: "agent_created", provider: provider });
 
       handleClose();
     } finally {

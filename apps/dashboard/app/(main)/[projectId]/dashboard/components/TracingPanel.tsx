@@ -45,6 +45,7 @@ import { parseAsTraceId, TRACE_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { CopyTextButton } from "@/app/components/CopyButton";
 import { agentDebugPrompt } from "@/app/lib/agentDebugPrompt";
+import { track } from "@/app/lib/analytics";
 import {
   ArrowUpRight,
   Brain,
@@ -769,6 +770,7 @@ export function TracingPanel({
   // and a held j/k writes the URL once it settles.
   const pickTask = useCallback(
     (root: ObservabilitySpanRow): void => {
+      track({ name: "trace_opened" });
       setSelectedTaskKey(spanKey(root));
       focusedRef.current = `${root.traceId}:${refocusNonce}`;
       void setFocusTraceId(root.traceId, {
