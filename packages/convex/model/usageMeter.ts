@@ -444,7 +444,7 @@ export function ephemeralSandboxMaxMs(
  * Nothing is billed when the platform does not pay: a sandbox on the account's
  * own provider credentials, or a machine (the user's own computer). An
  * isolate's row bills nothing either: nothing runs between its commands, and
- * each command is metered as it ends (`isolateMs`, `isolateRequests`).
+ * each command is metered as it ends (`workerMs`, `workerRequests`).
  */
 export function sandboxAccrual(
   instance: Pick<
@@ -464,7 +464,7 @@ export function sandboxAccrual(
   if (
     instance.ownCredentials === true ||
     instance.provider === "machine" ||
-    instance.provider === "isolate" ||
+    instance.provider === "worker" ||
     instance.status === "error"
   ) {
     return { usage: {}, meteredUntil: start };
@@ -608,8 +608,8 @@ function pickUsage(row: MeterRow | null): UsageQuantities {
     sandboxSnapshotGbMonths: row.sandboxSnapshotGbMonths ?? 0,
     hostedMcpGbSeconds: row.hostedMcpGbSeconds,
     hostedMcpRequests: row.hostedMcpRequests,
-    isolateMs: row.isolateMs ?? 0,
-    isolateRequests: row.isolateRequests ?? 0,
+    workerMs: row.workerMs ?? 0,
+    workerRequests: row.workerRequests ?? 0,
     storageGbMonths: row.storageGbMonths,
     egressGb: row.egressGb,
     ingressGb: row.ingressGb ?? 0,

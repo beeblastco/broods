@@ -145,7 +145,7 @@ describe("sandboxAccrual", () => {
       {},
     );
     // An isolate's commands are metered as they end; its row never bills.
-    expect(sandboxAccrual({ ...base, provider: "isolate" }, NOW).usage).toEqual(
+    expect(sandboxAccrual({ ...base, provider: "worker" }, NOW).usage).toEqual(
       {},
     );
     expect(
@@ -189,11 +189,11 @@ test("an hour of the default MicroVM costs about €0.14", () => {
   expect(cost).toBeCloseTo(0.1368, 4);
 });
 
-test("an hour of isolate commands costs about €0.07 and counts as sandbox time", () => {
+test("an hour of worker commands costs about €0.07 and counts as sandbox time", () => {
   const usage = {
     ...EMPTY_USAGE,
-    isolateMs: 3600 * 1000,
-    isolateRequests: 3600,
+    workerMs: 3600 * 1000,
+    workerRequests: 3600,
   };
 
   expect(meterCostEur(usage)).toBeCloseTo(0.07308, 4);

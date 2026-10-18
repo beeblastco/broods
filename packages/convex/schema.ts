@@ -1515,9 +1515,9 @@ export const usageQuantityFields = {
   sandboxSnapshotGbMonths: v.number(),
   hostedMcpGbSeconds: v.number(),
   hostedMcpRequests: v.number(),
-  /** Milliseconds `isolate` sandbox commands ran on the Worker, waits included; nothing runs between them. */
-  isolateMs: v.number(),
-  isolateRequests: v.number(),
+  /** Milliseconds `worker` sandbox commands ran on the Worker, waits included; nothing runs between them. */
+  workerMs: v.number(),
+  workerRequests: v.number(),
   storageGbMonths: v.number(),
   egressGb: v.number(),
   /** Channel attachments core received. Free; shown, never priced. */
@@ -1526,10 +1526,10 @@ export const usageQuantityFields = {
 
 export const usageQuantitiesValidator = v.object(usageQuantityFields);
 
-/** The isolate quantities, absent on rows metered before the provider existed. */
-const isolateUsageFields = {
-  isolateMs: v.optional(v.number()),
-  isolateRequests: v.optional(v.number()),
+/** The V8 Worker quantities, absent on rows metered before the provider existed. */
+const workerUsageFields = {
+  workerMs: v.optional(v.number()),
+  workerRequests: v.optional(v.number()),
 };
 
 /**
@@ -1541,7 +1541,7 @@ export const usageMetersFields = {
   /** "YYYY-MM", UTC. */
   month: v.string(),
   ...usageQuantityFields,
-  ...isolateUsageFields,
+  ...workerUsageFields,
   /** Absent on months metered before ingress was. */
   ingressGb: v.optional(v.number()),
   /** Absent on months metered before suspended snapshots were. */
@@ -1562,7 +1562,7 @@ export const usageDaysFields = {
   /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
-  ...isolateUsageFields,
+  ...workerUsageFields,
   /** Absent on days metered before suspended snapshots were. */
   sandboxSnapshotGbMonths: v.optional(v.number()),
   /** GB stored at the day's latest snapshot; absent before one runs. */
@@ -1581,7 +1581,7 @@ export const usageProjectDaysFields = {
   /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
-  ...isolateUsageFields,
+  ...workerUsageFields,
   /** GB the project's workspaces held at the day's latest snapshot. */
   storageGb: v.optional(v.number()),
   updatedAt: v.number(),

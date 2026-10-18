@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
 import { MAX_TIMEOUT_MS } from "../../cloudflare-worker/src/limits.ts";
+import * as planLimits from "../src/harness/plan-limits.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import {
   WorkerSandboxExecutor,
@@ -52,6 +53,7 @@ interface WorkerCall {
 
 const calls: WorkerCall[] = [];
 const mirrored: string[] = [];
+const metered: string[] = [];
 let stored: string | null = null;
 let claimWins = true;
 
@@ -62,6 +64,14 @@ beforeEach((): void => {
   claimWins = true;
   calls.length = 0;
   mirrored.length = 0;
+  metered.length = 0;
+  spyOn(planLimits, "recordUsage").mockImplementation(
+    (accountId, usage, source): void => {
+      metered.push(
+        `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"} ${source?.agentId ?? "-"} ${source?.workspaceId ?? "-"}`,
+      );
+    },
+  );
   mockFetch(async (input, init): Promise<Response> => {
     const headers = new Headers(init?.headers);
     calls.push({
@@ -149,6 +159,46 @@ it("runs an ephemeral command on an empty disk and keeps no row for it", async (
     persist: false,
   });
   expect(mirrored).toEqual([]);
+});
+
+it("meters each command's time and request to the account, its project, or the run's agent or workspace", async (): Promise<void> => {
+  await new WorkerSandboxExecutor({
+    ...config,
+    controlPlane: { ...config.controlPlane!, projectId: "proj" },
+  }).run(request);
+  await new WorkerSandboxExecutor(config).run({
+    ...request,
+    metadata: { agentId: "agent-1" },
+  });
+  await new WorkerSandboxExecutor(config).run({
+    ...request,
+    metadata: { workspaceId: "ws-1" },
+  });
+  await new WorkerSandboxExecutor({ ...config, controlPlane: undefined }).run(
+    request,
+  );
+
+  expect(metered).toEqual([
+    'acct {"workerMs":5,"workerRequests":1} proj - -',
+    'acct {"workerMs":5,"workerRequests":1} - agent-1 -',
+    'acct {"workerMs":5,"workerRequests":1} - - ws-1',
+  ]);
+});
+
+it("meters a command the Worker refused after running it, on its own clock", async (): Promise<void> => {
+  mockFetch(
+    async (): Promise<Response> =>
+      new Response("another command changed the files", { status: 409 }),
+  );
+
+  await new WorkerSandboxExecutor({ ...config, persistent: true })
+    .run(request)
+    .catch((): void => {});
+
+  expect(metered).toHaveLength(1);
+  expect(metered[0]).toMatch(
+    /^acct \{"workerMs":\d+,"workerRequests":1\} - - -$/,
+  );
 });
 
 it("clamps the timeout to the Worker's ceiling, the one the config plane enforces, and turns internet on from the network mode", async (): Promise<void> => {

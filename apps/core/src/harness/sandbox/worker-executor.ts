@@ -94,7 +94,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
         request,
         false,
       );
-      this.#meter(result.duration_ms, request.metadata);
 
       return execRunResult(request, result, "worker", startedAt);
     }
@@ -102,7 +101,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       reserved,
       (): Promise<SandboxExecResponse> => this.#exec(reserved, request, true),
     );
-    this.#meter(result.duration_ms, request.metadata);
     this.#mirror(key, reserved, request.metadata);
 
     return execRunResult(request, result, "worker", startedAt);
@@ -150,29 +148,43 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     persist: boolean,
   ): Promise<SandboxExecResponse> {
     const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
-    const response = await callPlatformWorker(
-      workerConnection(),
-      LABEL,
-      `/v1/sandboxes/${id}/exec`,
-      "POST",
-      {
-        script: request.code,
-        args: request.args ?? [],
-        cwd: requiredWorkspacePath(request, "/workspace"),
-        env: mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
-        timeoutMs: timeoutMs,
-        outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
-        enableInternet: this.#config.network?.mode === "allow-all",
-        persist: persist,
-      },
-      timeoutMs + WORKER_OVERHEAD_MS,
-    );
+    // Metered whatever the Worker answers: a command it refused after running
+    // (a 409, a late answer) still ran, and its own measure of the time is
+    // taken when it gave one.
+    const startedAt = Date.now();
+    let durationMs: number | undefined;
+    try {
+      const response = await callPlatformWorker(
+        workerConnection(),
+        LABEL,
+        `/v1/sandboxes/${id}/exec`,
+        "POST",
+        {
+          script: request.code,
+          args: request.args ?? [],
+          cwd: requiredWorkspacePath(request, "/workspace"),
+          env: mergeSandboxEnv(
+            this.#config.envVars,
+            request.envVars,
+            request.principal,
+          ),
+          timeoutMs: timeoutMs,
+          outputLimitBytes: Math.min(
+            request.outputLimitBytes,
+            MAX_OUTPUT_BYTES,
+          ),
+          enableInternet: this.#config.network?.mode === "allow-all",
+          persist: persist,
+        },
+        timeoutMs + WORKER_OVERHEAD_MS,
+      );
+      const result = parseExecResponse(await response.text(), LABEL);
+      durationMs = result.duration_ms;
 
-    return parseExecResponse(await response.text(), LABEL);
+      return result;
+    } finally {
+      this.#meter(durationMs ?? Date.now() - startedAt, request.metadata);
+    }
   }
 
   // Nothing runs between commands, so each one is metered as it ends: its
@@ -184,7 +196,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     if (!plane) return;
     recordUsage(
       plane.accountId,
-      { isolateMs: durationMs, isolateRequests: 1 },
+      { workerMs: durationMs, workerRequests: 1 },
       {
         ...(plane.projectId !== undefined
           ? { projectId: plane.projectId }
