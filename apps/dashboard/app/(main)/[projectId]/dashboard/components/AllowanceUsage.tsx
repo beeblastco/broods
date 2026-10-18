@@ -461,7 +461,8 @@ function AllowanceTableRow({
 
 /**
  * A cap's bar, `share` percent long, cut into each part's piece of `total`.
- * Unknown amounts (a storage day no snapshot measured) draw as one piece.
+ * An unknown amount (a storage day no snapshot measured), in the total or in
+ * any part, draws the bar as one piece.
  */
 function SplitBar({
   share,
@@ -472,7 +473,10 @@ function SplitBar({
   total: number | null;
   parts: Array<{ key: string; amount: number | null; color: string }>;
 }): React.JSX.Element {
-  const known = total !== null && total > 0;
+  // The split is unknown as soon as one part is: this org before its first
+  // storage snapshot on a pool another org has measured.
+  const known =
+    total !== null && total > 0 && parts.every((part) => part.amount !== null);
 
   return (
     <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">

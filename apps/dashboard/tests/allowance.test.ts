@@ -267,10 +267,12 @@ test("no other organizations when the pool is this org's alone or nothing is enf
       }),
     ),
   ).toBeNull();
-  expect(
-    otherOrgsSlice(budget({ storageGb: null }, [], EXHAUSTED_POOL))?.totals
-      .storageGb,
-  ).toBeNull();
+  // This org has no snapshot yet while the pool has one: the pool's storage
+  // stays what the All organizations column shows, and the other
+  // organizations' part of it stays unknown, so the bar draws as one piece.
+  const unmeasured = budget({ storageGb: null }, [], EXHAUSTED_POOL);
+  expect(unmeasured.pool?.totals.storageGb).toBe(15);
+  expect(otherOrgsSlice(unmeasured)?.totals.storageGb).toBeNull();
 });
 
 test("the note counts the owner's organizations, says only shared to a member, and is silent for one org", () => {
