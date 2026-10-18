@@ -7,18 +7,20 @@ import { describe, expect, it } from "bun:test";
 import { AGENT_MAX_TURN_UNLIMITED } from "../src/shared/domain/agent-config.ts";
 import {
   createDeadlinePolicy,
+  type DeadlinePolicy,
   type DeadlinePolicyOptions,
-} from "../src/harness/harness.ts";
+} from "../src/harness/deadline-policy.ts";
 
-const policy = (
-  overrides: Partial<DeadlinePolicyOptions> & { nowMs?: number } = {},
-): ReturnType<typeof createDeadlinePolicy> =>
+const policy = ({
+  nowMs = 0,
+  ...overrides
+}: Partial<DeadlinePolicyOptions> & { nowMs?: number } = {}): DeadlinePolicy =>
   createDeadlinePolicy({
     deadlineMs: 10_000,
     canYield: false,
     windDownMs: 3_000,
     maxTurn: 30,
-    now: (): number => overrides.nowMs ?? 0,
+    now: (): number => nowMs,
     ...overrides,
   });
 
@@ -62,12 +64,12 @@ describe("createDeadlinePolicy", () => {
     expect(deadline.isWindingDown()).toBe(false);
   });
 
-  it("winds down rather than yields at the step cap", () => {
-    // A next pass would start a fresh count, so the cap would never bind.
+  it("does not yield at the step cap", () => {
+    // A next pass would start a fresh count, so the cap would never bind; the
+    // step-count rule stops the run at this boundary instead.
     const deadline = policy({ canYield: true, maxTurn: 2, nowMs: 7_000 });
 
     expect(deadline.shouldStop(2, 0)).toBe(false);
-    expect(deadline.isWindingDown()).toBe(true);
     expect(deadline.hasYielded()).toBe(false);
   });
 

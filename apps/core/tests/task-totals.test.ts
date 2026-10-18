@@ -5,7 +5,11 @@
 
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelUsage } from "ai";
-import { createTaskTotals } from "../src/harness/usage-metering.ts";
+import {
+  createTaskTotals,
+  usageTokenTotals,
+  type UsageTokenTotals,
+} from "../src/harness/usage-metering.ts";
 
 const stepUsage = (
   input: number,
@@ -26,6 +30,10 @@ const stepUsage = (
   totalTokens: input + output,
 });
 
+/** A finished step as onStepEnd hands it over: the flattened usage. */
+const step = (...args: Parameters<typeof stepUsage>): UsageTokenTotals =>
+  usageTokenTotals(stepUsage(...args));
+
 describe("createTaskTotals", () => {
   it("starts empty", () => {
     const totals = createTaskTotals();
@@ -37,8 +45,8 @@ describe("createTaskTotals", () => {
 
   it("sums input, output, cached and reasoning tokens across steps", () => {
     const totals = createTaskTotals();
-    totals.addStep(0, stepUsage(10, 5, { cached: 4, reasoning: 2 }), 0);
-    totals.addStep(1, stepUsage(20, 7, { cached: 6, reasoning: 3 }), 0);
+    totals.addStep(0, step(10, 5, { cached: 4, reasoning: 2 }), 0);
+    totals.addStep(1, step(20, 7, { cached: 6, reasoning: 3 }), 0);
 
     expect(totals.usage()).toEqual({
       inputTokens: 30,
@@ -55,19 +63,19 @@ describe("createTaskTotals", () => {
 
   it("counts a step with no usage as zero tokens", () => {
     const totals = createTaskTotals();
-    totals.addStep(0, stepUsage(10, 5), 0);
-    totals.addStep(1, undefined, 0);
+    totals.addStep(0, step(10, 5), 0);
+    totals.addStep(1, usageTokenTotals(undefined), 0);
 
     expect(totals.usage()?.totalTokens).toBe(15);
     expect(totals.steps()).toBe(2);
   });
 
-  it("accumulates the metered cache-write tokens separately from the usage shape", () => {
+  it("meters cache-write tokens from the usage shape, else from the fallback", () => {
     const totals = createTaskTotals();
-    // The usage shape carries the count on step 0; step 1 only had it in
-    // providerMetadata, so the caller metered it and the shape reads 0.
-    totals.addStep(0, stepUsage(10, 5, { cacheWrite: 100 }), 100);
-    totals.addStep(1, stepUsage(10, 5), 40);
+    // Step 0 carries the count in its usage shape, so the fallback is ignored;
+    // step 1 only had it in providerMetadata.
+    totals.addStep(0, step(10, 5, { cacheWrite: 100 }), 7);
+    totals.addStep(1, step(10, 5), 40);
 
     expect(totals.cacheWriteTokens()).toBe(140);
     expect(totals.usage()?.inputTokenDetails?.cacheWriteTokens).toBe(100);
@@ -75,16 +83,16 @@ describe("createTaskTotals", () => {
 
   it("reports the step count as the last finished step number plus one", () => {
     const totals = createTaskTotals();
-    totals.addStep(0, stepUsage(1, 1), 0);
+    totals.addStep(0, step(1, 1), 0);
     expect(totals.steps()).toBe(1);
-    totals.addStep(1, stepUsage(1, 1), 0);
+    totals.addStep(1, step(1, 1), 0);
     expect(totals.steps()).toBe(2);
   });
 
   it("lets the turn total from onEnd replace the step sum", () => {
     const totals = createTaskTotals();
-    totals.addStep(0, stepUsage(10, 5), 0);
-    totals.addStep(1, stepUsage(10, 5), 0);
+    totals.addStep(0, step(10, 5), 0);
+    totals.addStep(1, step(10, 5), 0);
     // A harness counts calls no step reported, so the turn total is larger.
     totals.finish(stepUsage(50, 20), 3);
 
@@ -94,7 +102,7 @@ describe("createTaskTotals", () => {
 
   it("keeps the step sum when onEnd reports an empty turn total", () => {
     const totals = createTaskTotals();
-    totals.addStep(0, stepUsage(10, 5), 7);
+    totals.addStep(0, step(10, 5), 7);
     // A stop thrown from prepareStep leaves the turn total empty.
     totals.finish(stepUsage(0, 0), 1);
 

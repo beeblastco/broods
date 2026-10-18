@@ -398,13 +398,14 @@ export interface TaskTotals {
   /**
    * onStepEnd: folds a finished step in. An aborted run never reaches onEnd,
    * and a stopped one gets an empty total there, so finished steps are summed
-   * here. `cacheWriteTokens` is the step's metered count, which may come from
-   * providerMetadata when the usage shape lacks it.
+   * here. `stepTokens` is the step's flattened usage, which the step span also
+   * reads; `cacheWriteTokensFallback` is the providerMetadata count, metered
+   * only when that usage lacks one.
    */
   addStep: (
     stepNumber: number,
-    usage: LanguageModelUsage | undefined,
-    cacheWriteTokens: number,
+    stepTokens: UsageTokenTotals,
+    cacheWriteTokensFallback: number,
   ) => void;
   /**
    * onEnd: the turn total wins (a harness counts calls no step reported),
@@ -426,10 +427,10 @@ export function createTaskTotals(): TaskTotals {
   let cacheWriteTokens = 0;
 
   return {
-    addStep: (stepNumber, stepUsage, stepCacheWriteTokens) => {
-      cacheWriteTokens += stepCacheWriteTokens;
+    addStep: (stepNumber, stepTokens, cacheWriteTokensFallback) => {
       const soFar = usageTokenTotals(usage);
-      const stepTokens = usageTokenTotals(stepUsage);
+      cacheWriteTokens +=
+        stepTokens.cacheWriteTokens || cacheWriteTokensFallback;
       usage = {
         inputTokens: soFar.inputTokens + stepTokens.inputTokens,
         inputTokenDetails: {

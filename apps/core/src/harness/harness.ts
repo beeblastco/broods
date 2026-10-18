@@ -121,6 +121,7 @@ import {
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
 } from "./provider.ts";
+import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import {
   stripEnvelopeFieldsFromMessages,
@@ -313,75 +314,11 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   traceId(): string;
 };
 
-/**
- * What a run does at a step boundary near its deadline: yield its worker slot
- * or wind down in its next step. Decided once per boundary in stopWhen; read by
- * prepareStep, onEnd and the control surface.
- */
-export interface DeadlinePolicy {
-  /**
-   * stopWhen: true when the run should stop here to yield its slot. Past the
-   * wind-down line with no open question it yields when it may and a next pass
-   * would not start at the step cap; otherwise it winds down instead.
-   */
-  shouldStop: (stepCount: number, questionsPending: number) => boolean;
-  /** prepareStep: the next step is the tool-free last one, with no new steers. */
-  isWindingDown: () => boolean;
-  /** onEnd and the control surface: the run stopped to give up its slot. */
-  hasYielded: () => boolean;
-  /** onEnd: a step waiting on an approval stops for that instead of yielding. */
-  withdrawYield: () => void;
-}
-
-export interface DeadlinePolicyOptions {
-  /** When the request or worker budget ends; undefined means no deadline. */
-  deadlineMs: number | undefined;
-  /** The worker pool will run the conversation on in another slot. */
-  canYield: boolean;
-  /** How long before the deadline the run stops taking normal steps. */
-  windDownMs: number;
-  /** The run's step cap, or AGENT_MAX_TURN_UNLIMITED. */
-  maxTurn: number;
-  /** Clock in epoch ms; a test seam. */
-  now: () => number;
-}
-
 // Every consumer reads through this so a run is finalized, and aborted when
 // the consumer stops early, no matter how the read loop exits. A consumer that
 // drains the stream itself when it gives up passes false: the run has to
 // survive the early exit for that drain to finish it. `raw` parts never leave
 // this reader; the Claude Code harness forwards whole upstream messages as them.
-export function createDeadlinePolicy(
-  options: DeadlinePolicyOptions,
-): DeadlinePolicy {
-  let windingDown = false;
-  let yielded = false;
-
-  return {
-    shouldStop: (stepCount, questionsPending) => {
-      if (
-        options.deadlineMs === undefined ||
-        options.now() < options.deadlineMs - options.windDownMs ||
-        questionsPending > 0
-      ) {
-        return false;
-      }
-      yielded =
-        options.canYield &&
-        (options.maxTurn === AGENT_MAX_TURN_UNLIMITED ||
-          stepCount < options.maxTurn);
-      windingDown = !yielded;
-
-      return yielded;
-    },
-    isWindingDown: () => windingDown,
-    hasYielded: () => yielded,
-    withdrawYield: () => {
-      yielded = false;
-    },
-  };
-}
-
 export async function* readAgentFullStream(
   stream: Pick<AgentLoopStream, "stream" | "ensureFinalized">,
   abortOnEarlyExit = true,
@@ -1597,12 +1534,8 @@ export async function runAgentLoop(
       const stepTokens = usageTokenTotals(usage);
       taskTotals.addStep(
         stepNumber,
-        usage,
-        stepTokens.cacheWriteTokens ||
-          extractCacheWriteTokens(
-            configuredModel.providerName,
-            providerMetadata,
-          ),
+        stepTokens,
+        extractCacheWriteTokens(configuredModel.providerName, providerMetadata),
       );
 
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
