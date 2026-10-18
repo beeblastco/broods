@@ -11,7 +11,9 @@ Every run produces logs and a trace. You read them in the dashboard or the termi
 | Instances  | Sandbox instances, their activity, a terminal, and a Logs tab with the guest's own output for `lambda` sandboxes                         |
 | Settings   | Audit log of config changes, webhooks                                                                                                    |
 
-Each run carries a label for what started it, `task` for a request, `cron` for a scheduled run, `subtask` for a subagent. Each model step is split into time to first token, streaming, and tool wait, so a slow tool never looks like slow generation. A failed `task` or `cron` run has a Continue button. See [Conversations](conversations.md).
+Each run carries a label for what started it, `task` for a request, `cron` for a scheduled run, `subtask` for a subagent. A run's rows read as lines: each model step, then its reasoning, its tool calls with their first argument, and its answer, each opening inline on its text. Each model step is split into time to first token, streaming, and tool wait, so a slow tool never looks like slow generation. A failed `task` or `cron` run has a Continue button. See [Conversations](conversations.md).
+
+A subagent is its own run. It lists under the request that started it, at any depth, behind the avatar stack at the end of the request's row, and the request's trace shows it as one line that opens it. The run's header then carries the chain back to the request.
 
 To hand a run to your own coding agent, such as Claude Code, open it in Tracing and click **Copy prompt for agent**. The prompt carries the dashboard, project, stage, agent, task id, trace id (plus the trace ids of the task's other runs), conversation and the run's error quoted as data, and tells the agent to read the run with `broods trace <trace-id> --json` under its own `broods login`, find the root cause, and fix or audit the agent. Besides the ids it holds only the run's own error, which Broods redacts before recording it, never prompts, tool data or keys. The short trace id beside it copies the full id.
 
