@@ -319,6 +319,9 @@ jobs:
       - name: Test Cloudflare MCP runtime
         run: bun run --filter @broods/cloudflare-mcp test
 
+      - name: Test Cloudflare isolate sandbox
+        run: bun run --filter @broods/cloudflare-isolate test
+
       - name: Test dashboard
         run: bun run --filter @broods/dashboard test
 
