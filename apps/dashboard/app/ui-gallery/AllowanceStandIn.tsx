@@ -157,6 +157,13 @@ const ORG_DAYS = days(OTHER_PER_DAY).map((other, index) => ({
 }));
 
 const ORG_TOTALS = monthTotals(ORG_DAYS);
+// One org on its own pool: its shares are the pool's.
+const ORG_SHARES = {
+  sandboxHours: percent(ORG_TOTALS.sandboxHours, CAPS.sandboxHours),
+  hostedMcpHours: percent(ORG_TOTALS.hostedMcpHours, CAPS.hostedMcpHours),
+  storageGb: percent(ORG_TOTALS.storageGb ?? 0, CAPS.storageGb),
+  egressGb: percent(ORG_TOTALS.egressGb, CAPS.egressGb),
+};
 
 const BUDGET: BudgetUsage = {
   enforced: true,
@@ -165,12 +172,8 @@ const BUDGET: BudgetUsage = {
   months: [MONTH, "2026-09", "2026-08"],
   usedPercent: 0,
   caps: CAPS,
-  shares: {
-    sandboxHours: percent(ORG_TOTALS.sandboxHours, CAPS.sandboxHours),
-    hostedMcpHours: percent(ORG_TOTALS.hostedMcpHours, CAPS.hostedMcpHours),
-    storageGb: percent(ORG_TOTALS.storageGb ?? 0, CAPS.storageGb),
-    egressGb: percent(ORG_TOTALS.egressGb, CAPS.egressGb),
-  },
+  shares: ORG_SHARES,
+  orgShares: ORG_SHARES,
   level: "ok",
   totals: ORG_TOTALS,
   days: ORG_DAYS,

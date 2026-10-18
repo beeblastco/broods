@@ -29,6 +29,12 @@ function budget(
     usedPercent: 0,
     caps: null,
     shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+    orgShares: {
+      sandboxHours: 0,
+      hostedMcpHours: 0,
+      storageGb: 0,
+      egressGb: 0,
+    },
     level: "ok",
     totals: { ...ZERO, ...totals },
     days: days.map((day) => ({ ...ZERO, ...day })),
