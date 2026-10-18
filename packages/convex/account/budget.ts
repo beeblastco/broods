@@ -65,9 +65,6 @@ const usageAmountsFields = {
 const usageAmountsValidator = v.object(usageAmountsFields);
 
 const poolUsageValidator = v.object({
-  usedPercent: v.number(),
-  shares: resourceCapsValidator,
-  caps: resourceCapsValidator,
   orgs: v.optional(v.number()),
   shared: v.boolean(),
 });
@@ -80,6 +77,7 @@ const budgetUsageValidator = v.object({
   usedPercent: v.union(v.number(), v.null()),
   caps: v.union(resourceCapsValidator, v.null()),
   shares: resourceCapsValidator,
+  orgShares: resourceCapsValidator,
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
   totals: usageAmountsValidator,
   days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
@@ -133,11 +131,11 @@ export const get = internalQuery({
 /**
  * Dashboard allowance and billing plan: the active org's usage for `month`
  * ("YYYY-MM", one of the returned `months`; anything else reads the current
- * month) as amounts, days, caps and percentages, the owner's pool those caps
- * are measured against, and with `withProjects` each of the org's projects'
- * part of that month. Euro figures never leave the backend, so the plan
- * budgets stay private; a member who does not own the org sees of the pool
- * only its percentages and that the owner's other organizations share it.
+ * month) as amounts, days, caps and percentages (the pool's, as core enforces
+ * them, next to this org's own part), and with `withProjects` each of the
+ * org's projects' part of that month. Euro figures never leave the backend,
+ * so the plan budgets stay private; a member who does not own the org learns
+ * that the owner's other organizations share the pool, not how many.
  */
 export const getForActiveOrg = query({
   args: {

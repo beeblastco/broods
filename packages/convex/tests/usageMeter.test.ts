@@ -544,17 +544,12 @@ describe("budget", () => {
       usedPercent: 110,
       caps: PLAN_LIMITS.free.caps,
       shares: shares,
+      // The owner's one org is its own pool.
+      orgShares: shares,
       level: "exhausted",
       totals: amounts,
       days: [{ day: "2026-09-23", ...amounts }],
-      // The owner's one org is its own pool.
-      pool: {
-        usedPercent: 110,
-        shares: shares,
-        caps: PLAN_LIMITS.free.caps,
-        orgs: 1,
-        shared: false,
-      },
+      pool: { orgs: 1, shared: false },
     });
   });
 

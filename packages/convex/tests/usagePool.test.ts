@@ -74,16 +74,15 @@ test("a Pro owner's orgs draw on one pool: usage on one stops the other, and the
   });
   await activate(t, PAYER, b.orgId);
   const usage = await t.query(api.account.budget.getForActiveOrg, {});
-  // B's own month is empty; the pool it draws on is not.
-  expect(usage).toMatchObject({ usedPercent: 0, level: "ok" });
-  expect(usage?.totals.egressGb).toBe(0);
-  expect(usage?.pool).toEqual({
+  // B's own month is empty, but what it shows as used is what stops its runs.
+  expect(usage).toMatchObject({
     usedPercent: 100,
+    level: "exhausted",
     shares: { ...NO_SHARES, egressGb: 100 },
-    caps: PLAN_LIMITS.pro.caps,
-    orgs: 2,
-    shared: true,
+    orgShares: NO_SHARES,
+    pool: { orgs: 2, shared: true },
   });
+  expect(usage?.totals.egressGb).toBe(0);
 });
 
 test("pools never mix: another payer's org and a member's own Hobby workspace stay at zero", async () => {
@@ -114,13 +113,62 @@ test("a member sees the pool's percent and that it is shared, not the owner's or
   caller.authId = MEMBER;
   const usage = await t.query(api.account.budget.getForActiveOrg, {});
 
-  expect(usage?.pool).toEqual({
-    usedPercent: 50,
-    shares: { ...NO_SHARES, egressGb: 50 },
-    caps: PLAN_LIMITS.pro.caps,
-    shared: true,
-  });
+  expect(usage).toMatchObject({ usedPercent: 50, pool: { shared: true } });
   expect(usage?.pool).not.toHaveProperty("orgs");
+});
+
+test("usage metered before the pool existed counts: reads sum the owner's meters, the first write seeds the row once", async () => {
+  vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+  vi.useFakeTimers({ now: NOW });
+  const t = poolTest();
+  const a = await seedOrg(t, PAYER, "pro", "A");
+  const b = await seedOrg(t, PAYER, "pro", "B");
+  const other = await seedOrg(t, "auth_other", "pro", "Other");
+  await t.run(async (ctx) => {
+    for (const [accountId, egressGb, storageGb] of [
+      [a.accountId, 6, 2],
+      [b.accountId, 9, 3],
+      [other.accountId, 30, 50],
+    ] as const) {
+      await ctx.db.insert("usageMeters", {
+        accountId: accountId,
+        month: "2026-09",
+        sandboxVcpuSeconds: 0,
+        sandboxGbSeconds: 0,
+        sandboxSnapshotGb: 0,
+        sandboxSnapshotGbMonths: 0,
+        hostedMcpGbSeconds: 0,
+        hostedMcpRequests: 0,
+        storageGbMonths: 0,
+        egressGb: egressGb,
+        ingressGb: 0,
+        storageGb: storageGb,
+        updatedAt: NOW,
+      });
+    }
+  });
+  const pools = async (): Promise<
+    Array<{ egressGb: number; storageGb?: number }>
+  > =>
+    (await t.run(async (ctx) => ctx.db.query("usagePools").collect())).map(
+      (row) => ({ egressGb: row.egressGb, storageGb: row.storageGb }),
+    );
+
+  // Before any write: (6 + 9) / 30 of egress, 5 / 50 of storage, no row.
+  expect((await status(t, b.accountId))?.shares).toEqual({
+    ...NO_SHARES,
+    egressGb: 50,
+    storageGb: 10,
+  });
+  expect(await pools()).toEqual([]);
+
+  // The first write starts the row from the meters, the delta counted once.
+  await record(t, a.accountId, { egressGb: 3 });
+  expect(await pools()).toEqual([{ egressGb: 18, storageGb: 5 }]);
+  // A later write adds to the row and seeds nothing again.
+  await record(t, b.accountId, { egressGb: 3 });
+  expect(await pools()).toEqual([{ egressGb: 21, storageGb: 5 }]);
+  expect((await status(t, a.accountId))?.shares.egressGb).toBe(70);
 });
 
 test("deleting an org leaves the owner's pool where it was", async () => {
