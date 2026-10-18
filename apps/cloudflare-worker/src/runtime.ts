@@ -13,7 +13,7 @@ import {
   type BashExecResult,
   type NetworkConfig,
 } from "just-bash/browser";
-import type { IsolateExecRequest, RuntimeExecResult } from "./contract.ts";
+import type { WorkerExecRequest, RuntimeExecResult } from "./contract.ts";
 import { MAX_OUTPUT_BYTES } from "./limits.ts";
 import {
   compressState,
@@ -33,6 +33,9 @@ const INTERNET: NetworkConfig = {
 };
 // What just-bash exits with at its deadline; before it, a `timeout` command's own.
 const DEADLINE_EXIT_CODE = 124;
+// just-bash's own output cap is total and fatal, so it sits well above the
+// per-stream cut below and only bounds the isolate's memory.
+const MAX_TOTAL_OUTPUT_BYTES = 8 * MAX_OUTPUT_BYTES;
 // A UTF-16 unit never takes more than three UTF-8 bytes.
 const MAX_UTF8_BYTES_PER_UNIT = 3;
 const UTF8_ENCODER = new TextEncoder();
@@ -40,7 +43,7 @@ const UTF8_ENCODER = new TextEncoder();
 /** The host calls `exec` over RPC, the only thing this module answers. */
 export class Runtime extends WorkerEntrypoint {
   async exec(
-    request: IsolateExecRequest,
+    request: WorkerExecRequest,
     state: Uint8Array | null,
   ): Promise<RuntimeExecResult> {
     const before = state === null ? null : await decodeState(state);
@@ -52,7 +55,7 @@ export class Runtime extends WorkerEntrypoint {
       env: request.env,
       executionLimits: {
         maxExecutionTimeMs: request.timeoutMs,
-        maxOutputSize: MAX_OUTPUT_BYTES,
+        maxOutputSize: MAX_TOTAL_OUTPUT_BYTES,
       },
       ...(request.enableInternet ? { network: INTERNET } : {}),
     });
@@ -86,7 +89,7 @@ export class Runtime extends WorkerEntrypoint {
           ),
       );
     if (!request.persist) return { result: result, state: null };
-    const after = await packState(fs);
+    const after = await packState(fs, request.cwd);
     if (samePacked(before?.packed ?? null, after))
       return { result: result, state: "unchanged" };
 
@@ -97,9 +100,28 @@ export class Runtime extends WorkerEntrypoint {
   }
 }
 
+// Keeps the first `limit` bytes of a stream, whole characters only: a
+// streaming decode holds back a character the cut split instead of replacing
+// it, so what is kept re-encodes within the limit.
+function capped(
+  text: string,
+  limit: number,
+): { text: string; truncated: boolean } {
+  if (text.length * MAX_UTF8_BYTES_PER_UNIT <= limit)
+    return { text: text, truncated: false };
+  const bytes = UTF8_ENCODER.encode(text);
+  if (bytes.byteLength <= limit) return { text: text, truncated: false };
+
+  return {
+    text: new TextDecoder().decode(bytes.subarray(0, limit), { stream: true }),
+    truncated: true,
+  };
+}
+
+// One finished command as the exec contract, each stream cut to the request's limit.
 function execResult(
   finished: BashExecResult,
-  request: IsolateExecRequest,
+  request: WorkerExecRequest,
   timedOut: boolean,
 ): RuntimeExecResult["result"] {
   const stdout = capped(finished.stdout, request.outputLimitBytes);
@@ -121,22 +143,4 @@ function withPositionals(script: string, args: string[]): string {
   const quoted = args.map((arg): string => `'${arg.replaceAll("'", "'\\''")}'`);
 
   return `set -- ${quoted.join(" ")}\n${script}`;
-}
-
-// Keeps the first `limit` bytes of a stream, whole characters only: a
-// streaming decode holds back a character the cut split instead of replacing
-// it, so what is kept re-encodes within the limit.
-function capped(
-  text: string,
-  limit: number,
-): { text: string; truncated: boolean } {
-  if (text.length * MAX_UTF8_BYTES_PER_UNIT <= limit)
-    return { text: text, truncated: false };
-  const bytes = UTF8_ENCODER.encode(text);
-  if (bytes.byteLength <= limit) return { text: text, truncated: false };
-
-  return {
-    text: new TextDecoder().decode(bytes.subarray(0, limit), { stream: true }),
-    truncated: true,
-  };
 }

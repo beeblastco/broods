@@ -1,5 +1,5 @@
 /**
- * The Worker behind core's `isolate` sandbox provider. Core calls it over
+ * The Worker behind core's `worker` sandbox provider. Core calls it over
  * bearer-authenticated HTTP with one bash command per request; the Worker
  * runs the command in a V8 isolate of its own per sandbox (a Dynamic Worker
  * running just-bash, see `runtime.ts`) and keeps a reserved sandbox's files
@@ -11,7 +11,8 @@
 import { z } from "zod";
 import RUNTIME from "../.generated/runtime.txt";
 import { bearerMatches } from "../../cloudflare-sandbox/src/bearer.ts";
-import type { ExecResult, RuntimeExecResult } from "./contract.ts";
+import type { SandboxExecAnswer } from "../../core/src/shared/domain/sandbox-config.ts";
+import type { WorkerExecRequest } from "./contract.ts";
 import { MAX_OUTPUT_BYTES, MAX_STATE_BYTES, MAX_TIMEOUT_MS } from "./limits.ts";
 import type { Runtime } from "./runtime.ts";
 
@@ -19,10 +20,11 @@ const COMPATIBILITY_DATE = "2026-09-30";
 const SANDBOX_PATH = /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec)?$/;
 // Fetches one command may make once the sandbox has internet.
 const INTERNET_SUBREQUESTS = 50;
-// How the runtime reports a command the isolate's CPU limit stopped.
-const CPU_LIMIT = /cpu|exceeded|limit/i;
+// What an emptied disk is stored as, so the next write still has an etag to
+// condition on: R2 can delete unconditionally only.
+const EMPTY_DISK = new Uint8Array(0);
 
-const execRequest = z.object({
+const execRequest: z.ZodType<WorkerExecRequest> = z.object({
   script: z.string().min(1),
   args: z.array(z.string()).max(64),
   cwd: z.string().startsWith("/"),
@@ -33,24 +35,28 @@ const execRequest = z.object({
   persist: z.boolean(),
 });
 
-type ExecRequest = z.infer<typeof execRequest>;
-
 interface Env {
   LOADER: WorkerLoader;
   STATE: R2Bucket;
-  ISOLATE_API_KEY: string;
+  WORKER_API_KEY: string;
 }
 
-/** A stored disk and the etag it was read under. */
+/** The stored object under a sandbox id: its disk, or null once emptied, and the etag it was read under. */
 interface StoredState {
-  bytes: Uint8Array;
+  bytes: Uint8Array | null;
   etag: string;
 }
+
+/** Another command changed or dropped the stored disk while this one ran. */
+class StateConflict extends Error {}
+
+/** The disk after a command would not fit the store. */
+class StateTooLarge extends Error {}
 
 const handler: ExportedHandler<Env> = {
   /** Authenticates core's bearer token, then routes to the sandbox it names. */
   fetch: async function (request: Request, env: Env): Promise<Response> {
-    if (!(await bearerMatches(request, env.ISOLATE_API_KEY)))
+    if (!(await bearerMatches(request, env.WORKER_API_KEY)))
       return new Response("Unauthorized", { status: 401 });
     const match = SANDBOX_PATH.exec(new URL(request.url).pathname);
     const id = match?.[1];
@@ -84,14 +90,15 @@ export default handler;
  * Runs one command in the sandbox's isolate: its stored disk goes in, the
  * disk after the command comes back and is stored again if it changed. The
  * isolate is keyed by what is fixed at load (its network and CPU limit), so a
- * sandbox whose config changes gets a fresh one. The write is conditional on
- * the etag the disk was read under, so of two calls on one sandbox at once
- * the second to finish answers 409 and stores nothing.
+ * sandbox whose config changes gets a fresh one. Every store is conditional
+ * on the etag the disk was read under, so of two calls on one sandbox at
+ * once the second to finish answers 409 and stores nothing. A failure in the
+ * runtime or the store answers its message, so core can show it.
  */
 async function exec(
   env: Env,
   id: string,
-  request: ExecRequest,
+  request: WorkerExecRequest,
 ): Promise<Response> {
   const key = stateKey(id);
   const before = request.persist ? await readState(env.STATE, key) : null;
@@ -111,86 +118,72 @@ async function exec(
     }),
   );
   const startedAt = Date.now();
-  const answer = await worker
-    .getEntrypoint<Runtime>("Runtime")
-    .exec(request, before?.bytes ?? null)
-    .catch((error: unknown): RuntimeExecResult => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!CPU_LIMIT.test(message)) throw error;
+  try {
+    const answer = await worker
+      .getEntrypoint<Runtime>("Runtime")
+      .exec(request, before?.bytes ?? null);
+    const result: SandboxExecAnswer = {
+      ...answer.result,
+      duration_ms: Date.now() - startedAt,
+    };
+    if (answer.state !== "unchanged")
+      await writeState(env.STATE, key, before, answer.state);
 
-      return { result: stopped(message), state: "unchanged" };
+    return Response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof StateConflict)
+      return new Response(message, { status: 409 });
+    if (error instanceof StateTooLarge)
+      return new Response(message, { status: 413 });
+
+    return new Response(`the sandbox's isolate failed: ${message}`, {
+      status: 500,
     });
-  const result: ExecResult = {
-    ...answer.result,
-    duration_ms: Date.now() - startedAt,
-  };
-  if (answer.state !== "unchanged" && !answer.result.timed_out) {
-    const stored = await writeState(env.STATE, key, before, answer.state);
-    if (!stored)
-      return new Response(
-        "another command changed the sandbox's files while this one ran; it stored nothing",
-        { status: 409 },
-      );
   }
-
-  return Response.json(result);
 }
 
+// The stored disk under `key`, with its etag; an emptied disk reads as null bytes.
 async function readState(
   bucket: R2Bucket,
   key: string,
 ): Promise<StoredState | null> {
   const object = await bucket.get(key);
   if (object === null) return null;
+  const bytes = new Uint8Array(await object.arrayBuffer());
 
-  return {
-    bytes: new Uint8Array(await object.arrayBuffer()),
-    etag: object.etag,
-  };
+  return { bytes: bytes.byteLength === 0 ? null : bytes, etag: object.etag };
 }
 
+// Where a sandbox's disk lives in the bucket.
 function stateKey(id: string): string {
   return `sandboxes/${id}`;
 }
 
-// A command the isolate's CPU limit ended: its output is gone with the isolate.
-function stopped(message: string): RuntimeExecResult["result"] {
-  return {
-    ok: false,
-    exit_code: null,
-    timed_out: true,
-    stdout: "",
-    stderr: message,
-    truncated: false,
-  };
-}
-
 // Stores the disk after a command, only if the disk is still the one the
-// command started from: the etag it was read under, or no object at all.
-// False when another call got there first. A disk past the cap stays as it
-// was, so one runaway write cannot make the sandbox unloadable; the error
-// tells the agent what to clean up.
+// command started from: the etag it was read under, or no object at all. An
+// emptied disk is stored as an empty object for the same reason. A disk past
+// the cap stays as it was, so one runaway write cannot make the sandbox
+// unloadable; the error tells the agent what to clean up.
 async function writeState(
   bucket: R2Bucket,
   key: string,
   before: StoredState | null,
   after: Uint8Array | null,
-): Promise<boolean> {
-  if (after === null) {
-    if (before !== null) await bucket.delete(key);
-
-    return true;
-  }
-  if (after.byteLength > MAX_STATE_BYTES)
-    throw new Error(
+): Promise<void> {
+  if (after === null && before === null) return;
+  if (after !== null && after.byteLength > MAX_STATE_BYTES)
+    throw new StateTooLarge(
       `the sandbox's files exceed ${MAX_STATE_BYTES} bytes compressed; remove some before the next command`,
     );
-  const stored = await bucket.put(key, after, {
+  const stored = await bucket.put(key, after ?? EMPTY_DISK, {
     onlyIf:
       before === null
         ? new Headers({ "If-None-Match": "*" })
         : { etagMatches: before.etag },
   });
-
-  return stored !== null;
+  if (stored === null)
+    throw new StateConflict(
+      "another command changed the sandbox's files while this one ran; it stored nothing",
+    );
 }

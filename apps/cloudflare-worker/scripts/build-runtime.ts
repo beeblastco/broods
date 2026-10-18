@@ -19,10 +19,13 @@ export async function buildRuntime(): Promise<string> {
       {
         name: "keep-node-zlib",
         setup: function (build): void {
-          build.onResolve({ filter: /^node:zlib$/ }, (args) => ({
-            path: args.path,
-            external: true,
-          }));
+          build.onResolve(
+            { filter: /^node:zlib$/ },
+            (args): { path: string; external: boolean } => ({
+              path: args.path,
+              external: true,
+            }),
+          );
         },
       },
     ],

@@ -20,9 +20,9 @@ flowchart TB
   REG -->|"SDK"| VER["vercel"]
   REG -->|"HTTPS, bearer"| CFW["cloudflare: bridge Worker<br/>apps/cloudflare-sandbox"]
   CFW --> DO["Sandbox Durable Object<br/>one per sandbox id"] --> CT["Container"]
-  REG -->|"HTTPS, bearer"| ISO["isolate: Worker<br/>apps/cloudflare-isolate"]
-  ISO --> DW["Dynamic Worker per sandbox id<br/>just-bash"]
-  ISO --> R2[("R2: stored disks")]
+  REG -->|"HTTPS, bearer"| WRK["worker: fast Cloudflare V8 Worker<br/>apps/cloudflare-worker"]
+  WRK --> DW["Dynamic Worker per sandbox id<br/>just-bash"]
+  WRK --> R2[("R2: stored disks")]
   REG ---|"machine frames"| GW["apps/gateway"]
   GW ---|"/v1/machines/ws"| DAEMON["machine: broods machine daemon"]
   REG -->|"POST :endpoint/exec"| CUSTOM["custom: account server"]
@@ -540,14 +540,14 @@ stateDiagram-v2
 - Exit 124 or 137 counts as a timeout only once the deadline passed; earlier it is the command's own exit or an OOM kill.
 - `deploy.yaml` does not deploy the bridge. A deployment that offers the provider runs `wrangler deploy` and sets `SANDBOX_API_KEY` on the Worker equal to core's `CLOUDFLARE_SANDBOX_API_KEY`, with `CLOUDFLARE_SANDBOX_URL` pointing at it.
 
-## Isolate
+## Worker
 
-Bash in a V8 isolate, no container and no Durable Object. `isolate-executor.ts` calls the Worker in `apps/cloudflare-isolate` (`src/index.ts`), which loads one Dynamic Worker per sandbox id running [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands (`cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `tar`, `gzip`, `curl` with internet). No processes, no `python`, no `git`, no `eval`: a command is either a built-in or `command not found`. The Worker stays dumb: ids, env, working directory and output limit all come from core.
+Bash in a V8 isolate, no container and no Durable Object. `worker-executor.ts` calls the Worker in `apps/cloudflare-worker` (`src/index.ts`), which loads one Dynamic Worker per sandbox id running [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands (`cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `tar`, `gzip`, `curl` with internet). No processes, no `python`, no `git`, no `eval`: a command is either a built-in or `command not found`. The Worker stays dumb: ids, env, working directory and output limit all come from core.
 
 ```mermaid
 sequenceDiagram
-  participant E as isolate-executor
-  participant W as isolate Worker
+  participant E as worker-executor
+  participant W as V8 Worker
   participant R2 as R2 sandboxes/:id
   participant I as isolate (just-bash)
 
@@ -573,9 +573,9 @@ sequenceDiagram
 
 - Nothing runs between commands. A persistent sandbox is its stored disk: one gzip of a JSON header and the files' raw bytes, one R2 object per id, restored into a fresh shell on every call. The runtime packs the disk again after the command and answers "unchanged" when nothing differs, so a read-only command stores nothing. An ephemeral call runs on an empty disk and stores nothing. There is no idle, no suspend, no snapshot, no terminal, no workspace mount and no background job.
 - The isolate is keyed by sandbox id plus what is fixed at load: its network (`globalOutbound: null` without internet, so `curl` is not even registered) and its CPU limit, `limits.cpuMs` from the call's timeout. That limit is the real guard for a busy command, because inside an isolate the clock moves only while the shell waits; just-bash's own deadline (exit 124) catches a `sleep` or a slow `curl`.
-- The isolate runs with `nodejs_compat` for `node:zlib` (gzip, tar, file sniffing) and the `Buffer` global; nothing else from Node is in the build. `bun run build` in the workspace writes `.generated/runtime.txt` from `src/runtime.ts`, and the host ships it as a text module.
-- Limits are in `apps/cloudflare-isolate/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.
-- `deploy.yaml` does not deploy the Worker. A deployment that offers the provider runs `wrangler deploy` and sets `ISOLATE_API_KEY` on the Worker equal to core's `CLOUDFLARE_ISOLATE_API_KEY`, with `CLOUDFLARE_ISOLATE_URL` pointing at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
+- The isolate runs with `nodejs_compat` for `node:zlib` (gzip and file sniffing, and the stored disk) and the `Buffer` global; nothing else from Node is in the build. `bun run build` in the workspace writes `.generated/runtime.txt` from `src/runtime.ts`, and the host ships it as a text module.
+- Limits are in `apps/cloudflare-worker/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.
+- `deploy.yaml` does not deploy the Worker. A deployment that offers the provider runs `wrangler deploy` and sets `WORKER_API_KEY` on the Worker equal to core's `CLOUDFLARE_WORKER_API_KEY`, with `CLOUDFLARE_WORKER_URL` pointing at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
 
 ## Machine
 
