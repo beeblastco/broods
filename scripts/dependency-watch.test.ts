@@ -22,7 +22,7 @@ describe("judgeException", () => {
     expect(judgeException(braces, "3.0.3", "3.0.3", TODAY)).toEqual([]);
   });
 
-  test("ignores a package missing from the install and the lock", () => {
+  test("ignores a package missing from the lock", () => {
     expect(judgeException(braces, undefined, "3.0.4", TODAY)).toEqual([]);
   });
 

@@ -99,17 +99,22 @@ export function judgeException(
   return rows;
 }
 
+/**
+ * Judges every audit exception against the registry. The locked version is the
+ * one the audit gate judges, so it is the one compared here.
+ */
 async function collectExceptionRows(today: string): Promise<ExceptionRow[]> {
+  const lock = await readFile("bun.lock", "utf8");
   const rows = await Promise.all(
     EXCEPTIONS.map(async (exception) => {
-      const [installed, latest] = await Promise.all([
-        readLockedVersion(exception.package).then(
-          (version) => version ?? readInstalledVersion(exception.package, "."),
-        ),
-        readLatest(exception.package),
-      ]);
+      const latest = await readLatest(exception.package);
 
-      return judgeException(exception, installed, latest.version, today);
+      return judgeException(
+        exception,
+        readLockedVersion(lock, exception.package),
+        latest.version,
+        today,
+      );
     }),
   );
 
@@ -201,10 +206,9 @@ async function readLatest(
 
 /**
  * A transitive package has no hoisted copy under an isolated install, so its
- * resolved version comes from bun.lock: the lowest one when several are locked.
+ * version comes from the lock text: the lowest one when several are locked.
  */
-async function readLockedVersion(name: string): Promise<string | undefined> {
-  const lock = await readFile("bun.lock", "utf8").catch(() => "");
+function readLockedVersion(lock: string, name: string): string | undefined {
   const marker = `["${name}@`;
   const versions = lock.split("\n").flatMap((line) => {
     const start = line.indexOf(marker);
