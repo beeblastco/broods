@@ -241,11 +241,6 @@ export function normalizeSandboxConfig(
     );
   }
   assertStatelessProviderFields(config, provider);
-  if (provider === "isolate" && config.size !== undefined) {
-    throw new ClientError(
-      "config.size does not apply to the isolate provider: every isolate is the same size",
-    );
-  }
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
@@ -731,11 +726,14 @@ function assertWorkerLifecycle(
         `config.${field} is not supported by the ${provider} provider; the Worker sets the machine`,
       );
   }
-  if (provider === "isolate" && lifecycle !== undefined)
-    throw new ClientError(
-      "config.lifecycle is not supported by the isolate provider: nothing runs between commands, and stored files stay until the sandbox is terminated",
-    );
-  if (provider !== "cloudflare") return;
+  if (provider === "isolate") {
+    if (lifecycle !== undefined)
+      throw new ClientError(
+        "config.lifecycle is not supported by the isolate provider: nothing runs between commands, and stored files stay until the sandbox is terminated",
+      );
+
+    return;
+  }
   if (lifecycle?.maxLifetimeSeconds !== undefined)
     throw new ClientError(
       "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
