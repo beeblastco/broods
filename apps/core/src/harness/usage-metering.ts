@@ -3,8 +3,9 @@
  * shape (nested input/output token details) for span attributes and usage rows,
  * meters cache-write tokens with a providerMetadata fallback for providers
  * that only surface cache creation there, keeps one run's sandbox CPU
- * ledger for its usage row, its root span and each tool.call span, and
- * tracks each model.step's timing (ttft, streaming windows, retries).
+ * ledger for its usage row, its root span and each tool.call span, tracks
+ * each model.step's timing (ttft, streaming windows, retries), and sums one
+ * run's token totals across its steps.
  */
 
 import {
@@ -388,5 +389,77 @@ export function createStepTimingTracker(): StepTimingTracker {
       stepAttempts.clear();
       activeStepNumber = undefined;
     },
+  };
+}
+
+/**
+ * One run's token totals for its usage row and root span: onStepEnd adds each
+ * finished step, onEnd may replace the sum with the turn total, finalize reads.
+ */
+export interface TaskTotals {
+  /**
+   * onStepEnd: folds a finished step in. An aborted run never reaches onEnd,
+   * and a stopped one gets an empty total there, so finished steps are summed
+   * here. `cacheWriteTokens` is the step's metered count, which may come from
+   * providerMetadata when the usage shape lacks it.
+   */
+  addStep: (
+    stepNumber: number,
+    usage: LanguageModelUsage | undefined,
+    cacheWriteTokens: number,
+  ) => void;
+  /**
+   * onEnd: the turn total wins (a harness counts calls no step reported),
+   * unless a stop thrown from prepareStep left it empty: then the step sum
+   * stands. The step count is the turn's either way.
+   */
+  finish: (usage: LanguageModelUsage, stepCount: number) => void;
+  /** Steps finished so far, or the turn's count after `finish`. */
+  steps: () => number;
+  /** The summed or turn usage; undefined before the first step ends. */
+  usage: () => LanguageModelUsage | undefined;
+  /** Cache-write tokens summed over every finished step. */
+  cacheWriteTokens: () => number;
+}
+
+export function createTaskTotals(): TaskTotals {
+  let usage: LanguageModelUsage | undefined;
+  let steps = 0;
+  let cacheWriteTokens = 0;
+
+  return {
+    addStep: (stepNumber, stepUsage, stepCacheWriteTokens) => {
+      cacheWriteTokens += stepCacheWriteTokens;
+      const soFar = usageTokenTotals(usage);
+      const stepTokens = usageTokenTotals(stepUsage);
+      usage = {
+        inputTokens: soFar.inputTokens + stepTokens.inputTokens,
+        inputTokenDetails: {
+          noCacheTokens: undefined,
+          cacheReadTokens:
+            soFar.cachedInputTokens + stepTokens.cachedInputTokens,
+          cacheWriteTokens:
+            soFar.cacheWriteTokens + stepTokens.cacheWriteTokens,
+        },
+        outputTokens: soFar.outputTokens + stepTokens.outputTokens,
+        outputTokenDetails: {
+          textTokens: undefined,
+          reasoningTokens: soFar.reasoningTokens + stepTokens.reasoningTokens,
+        },
+        totalTokens: soFar.totalTokens + stepTokens.totalTokens,
+      };
+      steps = stepNumber + 1;
+    },
+    finish: (turnUsage, stepCount) => {
+      if (
+        Object.values(usageTokenTotals(turnUsage)).some((tokens) => tokens > 0)
+      ) {
+        usage = turnUsage;
+      }
+      steps = stepCount;
+    },
+    steps: () => steps,
+    usage: () => usage,
+    cacheWriteTokens: () => cacheWriteTokens,
   };
 }

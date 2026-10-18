@@ -148,6 +148,7 @@ import {
 import {
   createSandboxCpuLedger,
   createStepTimingTracker,
+  createTaskTotals,
   extractCacheWriteTokens,
   usageTokenTotals,
 } from "./usage-metering.ts";
@@ -372,7 +373,7 @@ export async function runAgentLoop(
     (await createAgentHookDispatcher(session.accountId, agentConfig));
 
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
-  let taskCacheWriteTokens = 0;
+  const taskTotals = createTaskTotals();
   const sandboxCpu = createSandboxCpuLedger();
   // Child OTel spans remain open until the corresponding AI SDK finish hook.
   // Their real OTel IDs are reused in the live NATS trace rows.
@@ -836,8 +837,6 @@ export async function runAgentLoop(
   let finishObserved = false;
   let persistedResponseCount = 0;
   const runAbort = new AbortController();
-  let taskUsage: LanguageModelUsage | undefined;
-  let taskStepCount = 0;
   let terminalError: Error | undefined;
   const abortRun = (): void => {
     const reason: unknown = options.abortSignal?.reason;
@@ -1061,7 +1060,7 @@ export async function runAgentLoop(
             outputTokens: taskTokens.outputTokens,
             reasoningTokens: taskTokens.reasoningTokens,
             cachedInputTokens: taskTokens.cachedInputTokens,
-            cacheWriteTokens: taskCacheWriteTokens,
+            cacheWriteTokens: taskTotals.cacheWriteTokens(),
             totalTokens: taskTokens.totalTokens,
             runtimeKind: "container",
             runtimeWallMs: durationMs,
@@ -1549,29 +1548,15 @@ export async function runAgentLoop(
       }
 
       const stepTokens = usageTokenTotals(usage);
-      taskCacheWriteTokens +=
+      taskTotals.addStep(
+        stepNumber,
+        usage,
         stepTokens.cacheWriteTokens ||
-        extractCacheWriteTokens(configuredModel.providerName, providerMetadata);
-      // An aborted run never reaches onEnd, and a stopped one gets an empty
-      // total there, so finished steps are summed here.
-      const soFar = usageTokenTotals(taskUsage);
-      taskUsage = {
-        inputTokens: soFar.inputTokens + stepTokens.inputTokens,
-        inputTokenDetails: {
-          noCacheTokens: undefined,
-          cacheReadTokens:
-            soFar.cachedInputTokens + stepTokens.cachedInputTokens,
-          cacheWriteTokens:
-            soFar.cacheWriteTokens + stepTokens.cacheWriteTokens,
-        },
-        outputTokens: soFar.outputTokens + stepTokens.outputTokens,
-        outputTokenDetails: {
-          textTokens: undefined,
-          reasoningTokens: soFar.reasoningTokens + stepTokens.reasoningTokens,
-        },
-        totalTokens: soFar.totalTokens + stepTokens.totalTokens,
-      };
-      taskStepCount = stepNumber + 1;
+          extractCacheWriteTokens(
+            configuredModel.providerName,
+            providerMetadata,
+          ),
+      );
 
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
       // dropped setting) are silent in the stream; surface them in Loki.
@@ -1771,12 +1756,7 @@ export async function runAgentLoop(
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       finishObserved = true;
-      // The turn total wins (a harness counts calls no step reported), unless
-      // a stop thrown from prepareStep left it empty: then the step sum stands.
-      if (Object.values(usageTokenTotals(usage)).some((tokens) => tokens > 0)) {
-        taskUsage = usage;
-      }
-      taskStepCount = stepCount;
+      taskTotals.finish(usage, stepCount);
       const approvalRequests = extractApprovalRequests(steps);
       // `isAutomatic` records a decision the SDK already answered this run, so
       // only a request still waiting on a human may gate the turn.
@@ -1795,7 +1775,7 @@ export async function runAgentLoop(
         toolsUsed: tools.toolsUsed,
         toolUsage: tools.toolUsage,
         toolCalls: tools.toolCalls,
-        usage: taskUsage,
+        usage: taskTotals.usage(),
       };
 
       try {
@@ -1862,7 +1842,7 @@ export async function runAgentLoop(
               toolsUsed: tools.toolsUsed,
               toolUsage: tools.toolUsage,
               toolCalls: tools.toolCalls,
-              usage: taskUsage,
+              usage: taskTotals.usage(),
             },
           );
           await lifecycle.emit("agent.failed", {
@@ -1883,7 +1863,7 @@ export async function runAgentLoop(
         // parsing or reply delivery below fails, so record the metric line once
         // here; a later failure adds its own model.invocation.failed line.
         logInfo(
-          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(taskUsage)}, ${formatDuration(finishLog.durationMs)}`,
+          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(taskTotals.usage())}, ${formatDuration(finishLog.durationMs)}`,
           finishLog,
         );
 
@@ -1983,8 +1963,8 @@ export async function runAgentLoop(
       } finally {
         await finalizeUsage(
           didFail ? "failed" : "completed",
-          taskUsage,
-          taskStepCount,
+          taskTotals.usage(),
+          taskTotals.steps(),
           toolCallCount,
           Date.now() - runStartedAt,
           terminalError,
@@ -2136,8 +2116,8 @@ export async function runAgentLoop(
     await reply?.onErrorText(message).catch(() => {});
     await finalizeUsage(
       "failed",
-      taskUsage,
-      taskStepCount,
+      taskTotals.usage(),
+      taskTotals.steps(),
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
@@ -2231,8 +2211,8 @@ export async function runAgentLoop(
     }
     await finalizeUsage(
       "failed",
-      taskUsage,
-      taskStepCount,
+      taskTotals.usage(),
+      taskTotals.steps(),
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
