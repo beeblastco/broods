@@ -799,7 +799,16 @@ export function TracingPanel({
       ) {
         return;
       }
-      const index = listRows.findIndex((row) => row.group === selectedGroup);
+      const listed = listRows.findIndex((row) => row.group === selectedGroup);
+      // A selected subagent whose stack is closed steps from its request.
+      const index =
+        listed !== -1
+          ? listed
+          : listRows.findIndex(
+              (row) =>
+                selectedGroup !== null &&
+                row.group.subagents.includes(selectedGroup),
+            );
       const nextIndex = Math.min(
         listRows.length - 1 + (remaining > 0 ? 1 : 0),
         Math.max(0, index + (event.key === "j" ? 1 : -1)),
