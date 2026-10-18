@@ -513,6 +513,36 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("a result the release before handback detached finishes detached, not pending", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "legacy",
+      conversationKey: `acct:${accountId}:agent:child:api:legacy`,
+      subagent: { parentConversationKey: conversationKeyFor(accountId) },
+    });
+    // The old release wrote only `observed: false` when the parent stopped waiting.
+    await t.run(async (ctx): Promise<void> => {
+      const row = await ctx.db
+        .query("runtimeAsyncAgentResults")
+        .withIndex("by_eventId", (q) => q.eq("eventId", "legacy"))
+        .unique();
+      await ctx.db.patch(row!._id, { observed: false });
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "legacy",
+      status: "completed",
+      response: "answer",
+    });
+
+    // The sweep's detached window takes it after the grace, not the pending one.
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: "legacy",
+      }),
+    ).toMatchObject({ status: "completed", handback: "detached" });
+  });
+
   test("fails a dead child's row only while it is still processing", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

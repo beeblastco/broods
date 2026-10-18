@@ -18,6 +18,7 @@ import {
   asyncAgentResultRow,
   conversationEventsValidator,
   insertConversationEvents,
+  handbackPatch,
   markAsyncAgentResultSeen,
   writeAsyncAgentResult,
 } from "./runtime";
@@ -1178,7 +1179,7 @@ async function checkDuplicateAdmission(
       )
       .first();
     if (stored) {
-      await markAsyncAgentResultSeen(ctx, args.accountId, result.eventId);
+      await ctx.db.patch(result._id, handbackPatch("stored"));
 
       return { outcome: "duplicate" as const, eventId: args.eventId };
     }

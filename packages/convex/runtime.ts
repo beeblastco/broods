@@ -188,8 +188,8 @@ export const appendConversationEvent = internalMutation({
  * Inserts history rows in order. A row whose dedupe key this conversation
  * already stores is skipped: its first append committed and only the reply
  * was lost, so the retry must not store it again. A row keyed as a subagent
- * result marks that result's hand-back stored in the same transaction, so
- * the row and the flag can never disagree.
+ * result marks that result's hand-back stored in the transaction that inserts
+ * it, so the row and the flag can never disagree.
  */
 export async function insertConversationEvents(
   ctx: MutationCtx,
@@ -198,29 +198,31 @@ export async function insertConversationEvents(
   events: Infer<typeof conversationEventsValidator>,
 ): Promise<void> {
   for (const entry of events) {
-    if (entry.dedupeKey !== undefined) {
-      const handback = parseHandbackDedupeKey(entry.dedupeKey);
-      if (handback) {
-        await markAsyncAgentResultSeen(ctx, accountId, handback.eventId);
-      }
-      if (
-        await ctx.db
-          .query("runtimeConversationEvents")
-          .withIndex("by_conversationKey_and_dedupeKey", (q) =>
-            q
-              .eq("conversationKey", conversationKey)
-              .eq("dedupeKey", entry.dedupeKey),
-          )
-          .first()
-      ) {
-        continue;
-      }
+    if (
+      entry.dedupeKey !== undefined &&
+      (await ctx.db
+        .query("runtimeConversationEvents")
+        .withIndex("by_conversationKey_and_dedupeKey", (q) =>
+          q
+            .eq("conversationKey", conversationKey)
+            .eq("dedupeKey", entry.dedupeKey),
+        )
+        .first())
+    ) {
+      continue;
     }
     await ctx.db.insert("runtimeConversationEvents", {
       ...entry,
       accountId: accountId,
       conversationKey: conversationKey,
     });
+    const handback =
+      entry.dedupeKey === undefined
+        ? undefined
+        : parseHandbackDedupeKey(entry.dedupeKey);
+    if (handback) {
+      await markAsyncAgentResultSeen(ctx, accountId, handback.eventId);
+    }
   }
 }
 
@@ -606,6 +608,17 @@ export async function asyncAgentResultRow(
 }
 
 /**
+ * The patch for a hand-back move, with the `observed` flag the previous
+ * release read kept in step: stored is seen, detached is not.
+ */
+export function handbackPatch(handback: Exclude<Handback, "pending">): {
+  handback: Handback;
+  observed: boolean;
+} {
+  return { handback: handback, observed: handback === "stored" };
+}
+
+/**
  * Marks a subagent result's hand-back stored inside the transaction that
  * delivers it: the parent's append of the result row, or the admission of the
  * late resume carrying it (`accept`). Only when the row is `accountId`'s own
@@ -625,8 +638,10 @@ export async function markAsyncAgentResultSeen(
 /**
  * Patches the polling row for `eventId` with a run's outcome. A subagent's
  * row that finishes starts its hand-back `pending`: the parent owes it the
- * write until it stores it. A hand-back already `detached` or `stored` keeps
- * that state; the outcome never moves it back.
+ * write until it stores it, unless the release before `handback` already
+ * detached it (`observed: false`): that row is the sweep's at once. A
+ * hand-back already `detached` or `stored` keeps that state; the outcome
+ * never moves it back.
  * @returns false when the row no longer exists
  */
 export async function writeAsyncAgentResult(
@@ -646,7 +661,7 @@ export async function writeAsyncAgentResult(
     approvals: outcome.approvals,
     questions: outcome.questions,
     ...(row.subagent && finished && row.handback === undefined
-      ? { handback: "pending" as const }
+      ? { handback: row.observed === false ? "detached" : "pending" }
       : {}),
     updatedAt: new Date().toISOString(),
     expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
@@ -1603,17 +1618,6 @@ function constantTimeDigestEqual(actual: string, expected: string): boolean {
   }
 
   return difference === 0;
-}
-
-/**
- * The patch for a hand-back move, with the `observed` flag the previous
- * release read kept in step: stored is seen, detached is not.
- */
-function handbackPatch(handback: Exclude<Handback, "pending">): {
-  handback: Handback;
-  observed: boolean;
-} {
-  return { handback: handback, observed: handback === "stored" };
 }
 
 /** Removes callback authorization from general async-tool result reads. */

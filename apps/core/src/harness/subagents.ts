@@ -35,6 +35,7 @@ import {
   subagentParentEventId,
 } from "../shared/runtime-keys.ts";
 import { subagentKeyTag } from "../shared/run-token.ts";
+import { WORKER_TIMEOUT_BUDGET_MS } from "../shared/env.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
@@ -117,10 +118,13 @@ const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
 // Past this age a finished child's result is nobody's: a child still
 // processing died with its pod, and a result still `pending` has no live
 // parent run left to store it. A live parent drains a result at its next step
-// boundary or in its last write, within one child budget plus wind-down, and
-// a parent that stopped waiting wrote `detached`, swept after the grace.
+// boundary or in its last write, within one run budget (a worker slot's, or
+// a child's when the parent is itself a subagent) plus wind-down, and a
+// parent that stopped waiting wrote `detached`, swept after the grace.
 const PENDING_HANDBACK_MAX_AGE_MS =
-  SUBAGENT_BUDGET_MS + DEADLINE_WIND_DOWN_MS + LATE_RESULT_GRACE_MS;
+  Math.max(SUBAGENT_BUDGET_MS, WORKER_TIMEOUT_BUDGET_MS) +
+  DEADLINE_WIND_DOWN_MS +
+  LATE_RESULT_GRACE_MS;
 const SUBAGENT_BUDGET_INSTRUCTION = `You are a subagent with a ${SUBAGENT_BUDGET_MS / 60_000}-minute budget for this task. Pace yourself: near the end your tools are turned off and you must answer with what you have.`;
 const SUBAGENT_BUDGET_EXCEEDED = `Subagent ran far past its ${SUBAGENT_BUDGET_MS / 60_000}-minute budget and was cut off before it answered.`;
 
