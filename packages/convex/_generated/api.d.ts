@@ -214,7 +214,14 @@ export declare const api: {
           level: "ok" | "warning" | "exhausted";
           month: string;
           months: Array<string>;
+          orgShares: {
+            egressGb: number;
+            hostedMcpHours: number;
+            sandboxHours: number;
+            storageGb: number;
+          };
           plan: "free" | "pro";
+          pool?: { orgs?: number; shared: boolean };
           projects?: Array<{
             days: Array<{
               day: string;

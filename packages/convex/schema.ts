@@ -1542,7 +1542,25 @@ export const usageMetersFields = {
   sandboxSnapshotGbMonths: v.optional(v.number()),
   /** GB stored at the month's latest snapshot, zero-byte ones included. */
   storageGb: v.optional(v.number()),
-  /** When the 80% warning went out; at most once per month. */
+  /** When the 80% warning went out, before `usagePools.warnedAt` took it over. */
+  warnedAt: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+/**
+ * The same usage summed over every account whose org one user owns, for one
+ * UTC calendar month: the pool the owner's plan caps are measured against
+ * (`model/usageMeter.ts`). Written together with each account's meter.
+ */
+export const usagePoolsFields = {
+  /** The paying user: `orgs.ownerAuthId` of every org drawing on the pool. */
+  ownerAuthId: v.string(),
+  /** "YYYY-MM", UTC. */
+  month: v.string(),
+  ...usageQuantityFields,
+  /** GB the owner's accounts hold at their latest snapshots, summed. */
+  storageGb: v.optional(v.number()),
+  /** When the 80% warning went out; at most once per owner per month. */
   warnedAt: v.optional(v.number()),
   updatedAt: v.number(),
 };
@@ -1907,6 +1925,10 @@ export default defineSchema({
     ]),
   usageMeters: defineTable(usageMetersFields).index("by_accountId_and_month", [
     "accountId",
+    "month",
+  ]),
+  usagePools: defineTable(usagePoolsFields).index("by_ownerAuthId_and_month", [
+    "ownerAuthId",
     "month",
   ]),
   usageDays: defineTable(usageDaysFields).index("by_accountId_and_day", [
