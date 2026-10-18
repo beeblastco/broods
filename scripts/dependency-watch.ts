@@ -103,8 +103,8 @@ async function collectExceptionRows(today: string): Promise<ExceptionRow[]> {
   const rows = await Promise.all(
     EXCEPTIONS.map(async (exception) => {
       const [installed, latest] = await Promise.all([
-        readInstalledVersion(exception.package, ".").then(
-          (version) => version ?? readLockedVersion(exception.package),
+        readLockedVersion(exception.package).then(
+          (version) => version ?? readInstalledVersion(exception.package, "."),
         ),
         readLatest(exception.package),
       ]);
