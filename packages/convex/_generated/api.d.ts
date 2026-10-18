@@ -2078,7 +2078,7 @@ export declare const internal: {
             hostedMcpGbSeconds?: number;
             hostedMcpRequests?: number;
             ingressGb?: number;
-            isolateCpuMs?: number;
+            isolateMs?: number;
             isolateRequests?: number;
             storageGbMonths?: number;
           };

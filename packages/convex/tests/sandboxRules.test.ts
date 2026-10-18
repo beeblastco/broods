@@ -398,10 +398,16 @@ describe("sandbox config defaults & validation", () => {
         provider: "isolate",
         network: { mode: "allow-all" },
         timeout: 60,
-        lifecycle: { idleTimeoutSeconds: 3600 },
         persistent: true,
       }),
-    ).toMatchObject({ timeout: 60, lifecycle: { idleTimeoutSeconds: 3600 } });
+    ).toMatchObject({ timeout: 60, network: { mode: "allow-all" } });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "isolate",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 3600 },
+      }),
+    ).toThrow("config.lifecycle is not supported by the isolate provider");
     expect(() =>
       normalizeSandboxConfig({
         provider: "isolate",

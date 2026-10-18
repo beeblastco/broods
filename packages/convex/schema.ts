@@ -1515,8 +1515,8 @@ export const usageQuantityFields = {
   sandboxSnapshotGbMonths: v.number(),
   hostedMcpGbSeconds: v.number(),
   hostedMcpRequests: v.number(),
-  /** Milliseconds `isolate` sandbox commands ran; nothing runs between them. */
-  isolateCpuMs: v.number(),
+  /** Milliseconds `isolate` sandbox commands ran on the Worker, waits included; nothing runs between them. */
+  isolateMs: v.number(),
   isolateRequests: v.number(),
   storageGbMonths: v.number(),
   egressGb: v.number(),
@@ -1528,7 +1528,7 @@ export const usageQuantitiesValidator = v.object(usageQuantityFields);
 
 /** The isolate quantities, absent on rows metered before the provider existed. */
 const isolateUsageFields = {
-  isolateCpuMs: v.optional(v.number()),
+  isolateMs: v.optional(v.number()),
   isolateRequests: v.optional(v.number()),
 };
 

@@ -41,9 +41,10 @@ export const UNIT_RATES_EUR: UsageQuantities = {
   // Same source, $0.20 per 1M requests.
   hostedMcpRequests: 0.0000002,
   // Cloudflare Workers Paid, $0.02 per million CPU-ms past the included
-  // 30 million, published 2026-10-18. An isolate command is billed on its
-  // wall time, which inside an isolate is CPU time plus what it waited on.
-  isolateCpuMs: 0.00000002,
+  // 30 million, published 2026-10-18. Cloudflare bills CPU time, which a
+  // Worker cannot read; a command is metered on its time on the Worker,
+  // waits included, so a `sleep` or a slow `curl` rounds up, the safe side.
+  isolateMs: 0.00000002,
   // Same source, $0.30 per million requests past the included 10 million.
   isolateRequests: 0.0000003,
   // S3 Standard eu-west-1, $0.023/GB-month, published 2026-09-18.
@@ -79,7 +80,7 @@ export const EMPTY_USAGE: UsageQuantities = {
   sandboxSnapshotGbMonths: 0,
   hostedMcpGbSeconds: 0,
   hostedMcpRequests: 0,
-  isolateCpuMs: 0,
+  isolateMs: 0,
   isolateRequests: 0,
   storageGbMonths: 0,
   egressGb: 0,
@@ -98,7 +99,7 @@ export const USAGE_CATEGORY: Record<keyof UsageQuantities, UsageCategory> = {
   hostedMcpGbSeconds: "hostedMcp",
   hostedMcpRequests: "hostedMcp",
   // Sandbox time too: an isolate is a sandbox that only runs while a command does.
-  isolateCpuMs: "sandboxes",
+  isolateMs: "sandboxes",
   isolateRequests: "sandboxes",
   storageGbMonths: "storage",
   egressGb: "egress",

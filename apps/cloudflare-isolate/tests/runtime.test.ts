@@ -92,6 +92,18 @@ it("keeps a reserved sandbox's files between calls and drops them on delete", as
   expect(gone.exit_code).not.toBe(0);
 });
 
+it("stores only the first of two calls that raced on one disk and answers the other 409", async (): Promise<void> => {
+  // The first call holds its disk open while the second reads the same one.
+  const [first, second] = await Promise.all([
+    send("sb-race", { script: "sleep 1; echo one > one.txt", persist: true }),
+    send("sb-race", { script: "echo two > two.txt", persist: true }),
+  ]);
+
+  expect([first.status, second.status]).toEqual([409, 200]);
+  const files = await exec("sb-race", { script: "ls", persist: true });
+  expect(files.stdout).toBe("two.txt\n");
+});
+
 it("gives an ephemeral call an empty disk every time", async (): Promise<void> => {
   await exec("sb-once", { script: "echo x > x.txt" });
 
@@ -122,14 +134,21 @@ it("stops a command at its timeout", async (): Promise<void> => {
   expect(result).toMatchObject({ ok: false, exit_code: null, timed_out: true });
 });
 
-it("caps each stream at the output limit", async (): Promise<void> => {
+it("caps each stream at the output limit on a character boundary", async (): Promise<void> => {
   const result = await exec("sb-big", {
     script: "yes | head -c 5000",
+    outputLimitBytes: 1024,
+  });
+  // Three-byte characters: 1024 bytes cut one in half, so 341 whole ones stay.
+  const wide = await exec("sb-wide", {
+    script: "printf '€%.0s' $(seq 1 400)",
     outputLimitBytes: 1024,
   });
 
   expect(result.truncated).toBe(true);
   expect(result.stdout).toHaveLength(1024);
+  expect(wide.truncated).toBe(true);
+  expect(wide.stdout).toBe("€".repeat(341));
 });
 
 async function exec(

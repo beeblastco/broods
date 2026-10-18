@@ -192,7 +192,7 @@ test("an hour of the default MicroVM costs about €0.14", () => {
 test("an hour of isolate commands costs about €0.07 and counts as sandbox time", () => {
   const usage = {
     ...EMPTY_USAGE,
-    isolateCpuMs: 3600 * 1000,
+    isolateMs: 3600 * 1000,
     isolateRequests: 3600,
   };
 

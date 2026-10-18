@@ -15,6 +15,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { recordUsage } from "../plan-limits.ts";
 import {
   claimSandboxInstance,
@@ -44,6 +45,10 @@ import {
 // Headroom over the command timeout for the Worker to load the isolate and
 // move the stored files.
 const WORKER_OVERHEAD_MS = 15_000;
+// How often one command runs again after another changed the sandbox's
+// files under it. The Worker stored nothing for the lost attempt, so the
+// rerun starts from the files the other command left.
+const CONFLICT_RETRIES = 3;
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
   "127.0.0.1",
   "[::1]",
@@ -51,6 +56,9 @@ const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 const statusResult = z.object({ exists: z.boolean() });
+
+/** The Worker's 409: another command changed the files while this one ran. */
+class IsolateConflict extends Error {}
 
 /** The platform Worker from core's env; every executor call uses it. */
 export function isolateConnection(): { baseURL: string; apiKey: string } {
@@ -81,7 +89,9 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
   /**
    * Runs one command. A persistent config reuses its reservation's stored
    * files; anything else runs on an empty disk that is gone afterwards, so
-   * there is nothing to destroy and no instance row to keep for it.
+   * there is nothing to destroy and no instance row to keep for it. Two
+   * commands at once on one reservation each start from the same files, and
+   * the Worker stores only the first to finish; the other is run again.
    */
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
@@ -91,34 +101,18 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
         ? await this.#reserve(key)
         : undefined;
     const id = reserved ?? `fp-e-${crypto.randomUUID()}`;
-    const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
-    const response = await this.#worker(
-      `/v1/sandboxes/${id}/exec`,
-      "POST",
-      {
-        script: request.code,
-        args: request.args ?? [],
-        cwd: requiredWorkspacePath(request, "/workspace"),
-        env: mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
-        timeoutMs: timeoutMs,
-        outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
-        enableInternet: this.#config.network?.mode === "allow-all",
-        persist: reserved !== undefined,
-      },
-      timeoutMs + WORKER_OVERHEAD_MS,
-    );
-    const result = parseExecResponse(
-      await response.text(),
-      "cloudflare isolate worker",
-    );
-    if (reserved && key) this.#mirror(key, reserved, request.metadata);
-    this.#meter(result.duration_ms);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const result = await this.#exec(id, request, reserved !== undefined);
+        if (reserved && key) this.#mirror(key, reserved, request.metadata);
+        this.#meter(result.duration_ms, request.metadata);
 
-    return execRunResult(request, result, "isolate", startedAt);
+        return execRunResult(request, result, "isolate", startedAt);
+      } catch (error) {
+        if (!(error instanceof IsolateConflict) || attempt > CONFLICT_RETRIES)
+          throw error;
+      }
+    }
   }
 
   /** A reservation whose files are stored: kept, not running, since nothing runs between calls. */
@@ -155,17 +149,26 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
   }
 
   // Nothing runs between commands, so each one is metered as it ends: its
-  // wall time on the Worker, plus the request. The platform always pays for
-  // an isolate, so only a config with no account goes unmetered.
-  #meter(durationMs: number): void {
+  // time on the Worker, plus the request. The platform always pays for an
+  // isolate, so only a config with no account goes unmetered. The project is
+  // the config's, else the one the run's agent or workspace belongs to.
+  #meter(durationMs: number, metadata: SandboxRunMetadata | undefined): void {
     const plane = this.#config.controlPlane;
     if (!plane) return;
     recordUsage(
       plane.accountId,
-      { isolateCpuMs: durationMs, isolateRequests: 1 },
-      plane.projectId === undefined
-        ? undefined
-        : { projectId: plane.projectId },
+      { isolateMs: durationMs, isolateRequests: 1 },
+      {
+        ...(plane.projectId !== undefined
+          ? { projectId: plane.projectId }
+          : {}),
+        ...(metadata?.agentId !== undefined
+          ? { agentId: metadata.agentId }
+          : {}),
+        ...(metadata?.workspaceId !== undefined
+          ? { workspaceId: metadata.workspaceId }
+          : {}),
+      },
     );
   }
 
@@ -212,6 +215,39 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
     return winner;
   }
 
+  // One command on the Worker, clamped to its limits.
+  async #exec(
+    id: string,
+    request: SandboxRunRequest,
+    persist: boolean,
+  ): Promise<SandboxExecResponse> {
+    const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
+    const response = await this.#worker(
+      `/v1/sandboxes/${id}/exec`,
+      "POST",
+      {
+        script: request.code,
+        args: request.args ?? [],
+        cwd: requiredWorkspacePath(request, "/workspace"),
+        env: mergeSandboxEnv(
+          this.#config.envVars,
+          request.envVars,
+          request.principal,
+        ),
+        timeoutMs: timeoutMs,
+        outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
+        enableInternet: this.#config.network?.mode === "allow-all",
+        persist: persist,
+      },
+      timeoutMs + WORKER_OVERHEAD_MS,
+    );
+
+    return parseExecResponse(
+      await response.text(),
+      "cloudflare isolate worker",
+    );
+  }
+
   // One authenticated call to the Worker; a non-2xx answer throws.
   async #worker(
     path: string,
@@ -230,6 +266,8 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
       signal: AbortSignal.timeout(timeoutMs),
       redirect: "error",
     });
+    if (response.status === 409)
+      throw new IsolateConflict(await response.text());
     if (!response.ok)
       throw new Error(
         `cloudflare isolate worker ${method} ${path} failed (${response.status}): ${await response.text()}`,

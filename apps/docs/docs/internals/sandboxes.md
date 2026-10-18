@@ -116,7 +116,7 @@ sequenceDiagram
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `isolate` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its wall time on the Worker as `isolateCpuMs` and one `isolateRequests`, priced at Cloudflare's Workers rates (`packages/convex/model/pricing.ts`) and shown inside Sandbox time.
+- An `isolate` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `isolateMs` and one `isolateRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
