@@ -222,8 +222,9 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
 
   await openBilling(page, readProjectId());
   await expect(page.getByText(/^€20\/month · renews /)).toBeVisible();
+  // Two orgs on one pool of caps: the note counts them for the owner.
   await expect(
-    page.getByText("Covers every organization you own."),
+    page.getByText("Limits are shared across 2 organizations."),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Manage subscription", exact: true }),
@@ -416,7 +417,9 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
         `This org runs on ${OWNER.name}'s Pro plan. You are not charged.`,
       ),
     ).toBeVisible();
-    await expect(page.getByText(`Paid by ${OWNER.name}`)).toBeVisible();
+    // Who pays is the plain line above; the badge is only the state.
+    await expect(page.getByText("Active", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Paid by /)).toHaveCount(0);
     await expect(
       page.getByText(`Developer seat in ${OWNER.org}`),
     ).toBeVisible();

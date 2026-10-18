@@ -27,7 +27,10 @@ import {
   formatAmount,
   formatPercent,
   monthLabel,
+  otherOrgsSlice,
+  poolNote,
   projectSlices,
+  shareTone,
   type UsageAmounts,
   type UsageSlice,
   usageSlices,
@@ -233,10 +236,12 @@ export function AllowanceView({
 }
 
 /**
- * The org's caps per resource and a daily chart of the picked one. From this
- * project: its amount leads, and each bar's solid part is it and the grey
- * part the other projects. From all projects: each bar is split by project,
- * and a table of the projects follows.
+ * The caps per resource and a daily chart of the picked one. Each bar is the
+ * owner's pool, what stops runs: this org's slices, then the faded part the
+ * owner's other organizations used. From this project: its amount leads, and
+ * the solid part of the bar is it and the grey part the other projects. From
+ * all projects: the bar is split by project, and a table of the projects
+ * follows. The chart and the table stay this org's own.
  */
 function ScopedAllowance({
   budget,
@@ -254,26 +259,35 @@ function ScopedAllowance({
       scope === "all" ? usageSlices(budget) : projectSlices(budget, projectId),
     [budget, projectId, scope],
   );
+  const pool = useMemo(() => otherOrgsSlice(budget), [budget]);
   const own = scope === "project" ? slices[0] : null;
   const legend = useMemo(
     () =>
-      slices.map((slice) => ({
-        key: slice.projectId ?? "other",
+      [...slices, ...(pool ? [pool] : [])].map((slice) => ({
+        key: slice.projectId ?? slice.name,
         label: slice.name,
         color: slice.color,
       })),
-    [slices],
+    [slices, pool],
   );
+  // One plain line: whose limits these are, then how to read a split bar.
+  const notes = [
+    poolNote(budget) ??
+      (own
+        ? projectCount > 1
+          ? `Limits are shared by all ${projectCount} projects in this organization.`
+          : "Limits are shared by every project in this organization."
+        : null),
+    own && projectCount > 1
+      ? "The solid part of each bar is this project, the grey part the rest of the organization."
+      : null,
+  ].filter((note): note is string => note !== null);
 
   return (
     <div className="grid gap-6 *:min-w-0">
       <div className="grid gap-2">
-        {own && (
-          <p className="text-xs text-muted-foreground">
-            {projectCount > 1
-              ? `Limits are shared by all ${projectCount} projects in this organization. The solid part of each bar is this project, the grey part the rest of the organization.`
-              : "Limits are shared by every project in this organization."}
-          </p>
+        {notes.length > 0 && (
+          <p className="text-xs text-muted-foreground">{notes.join(" ")}</p>
         )}
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <Table>
@@ -283,9 +297,12 @@ function ScopedAllowance({
                 {own && (
                   <TableHead className="text-right">This project</TableHead>
                 )}
-                <TableHead className="text-right">
-                  {own ? "All projects" : "Used"}
-                </TableHead>
+                <TableHead className="text-right">This organization</TableHead>
+                {pool && (
+                  <TableHead className="text-right">
+                    All organizations
+                  </TableHead>
+                )}
                 <TableHead className="text-right">Limit</TableHead>
                 <TableHead
                   className={cn("min-w-24", own ? "w-1/4" : "w-2/5")}
@@ -300,6 +317,7 @@ function ScopedAllowance({
                   budget={budget}
                   row={row}
                   slices={slices}
+                  pool={pool}
                   own={own}
                   active={row.key === picked.key}
                   onPick={() => setPicked(row)}
@@ -324,12 +342,14 @@ function ScopedAllowance({
   );
 }
 
-// One resource: used, its cap, and how close it is, the bar split into the
-// slices' parts. With `own`, its amount leads. Ingress reads Free.
+// One resource: used, its cap, and how close the pool is to it, the bar split
+// into the slices' parts and then the pool's. With `own`, its amount leads.
+// Ingress reads Free.
 function AllowanceTableRow({
   budget,
   row,
   slices,
+  pool,
   own,
   active,
   onPick,
@@ -337,13 +357,19 @@ function AllowanceTableRow({
   budget: BudgetUsage;
   row: AllowanceRow;
   slices: UsageSlice[];
+  pool: UsageSlice | null;
   own: UsageSlice | null;
   active: boolean;
   onPick: () => void;
 }): React.JSX.Element {
   const share = row.share === null ? null : budget.shares[row.share];
+  const tone = share === null ? null : shareTone(share);
   const cap =
     row.share === null || !budget.caps ? null : budget.caps[row.share];
+  const pooled =
+    pool === null
+      ? budget.totals[row.key]
+      : plus(budget.totals[row.key], pool.totals[row.key]);
 
   return (
     <TableRow
@@ -383,6 +409,13 @@ function AllowanceTableRow({
           {formatAmount(budget.totals[row.key], row.unit)}
         </span>
       </TableCell>
+      {pool && (
+        <TableCell className="text-right">
+          <span className="tabular-nums text-muted-foreground">
+            {formatAmount(pooled, row.unit)}
+          </span>
+        </TableCell>
+      )}
       <TableCell className="text-right">
         <span className="tabular-nums text-muted-foreground">
           {row.share === null
@@ -396,9 +429,9 @@ function AllowanceTableRow({
         {share !== null && (
           <SplitBar
             share={share}
-            total={budget.totals[row.key]}
-            parts={slices.map((slice) => ({
-              key: slice.projectId ?? "other",
+            total={pooled}
+            parts={[...slices, ...(pool ? [pool] : [])].map((slice) => ({
+              key: slice.projectId ?? slice.name,
               amount: slice.totals[row.key],
               color: slice.color,
             }))}
@@ -410,9 +443,9 @@ function AllowanceTableRow({
           <span
             className={cn(
               "tabular-nums",
-              share < 80 && "text-muted-foreground",
-              share >= 80 && share < 100 && "text-warning",
-              share >= 100 && "text-destructive",
+              tone === "muted" && "text-muted-foreground",
+              tone === "warning" && "text-warning",
+              tone === "destructive" && "text-destructive",
             )}
           >
             {formatPercent(share)}
@@ -421,6 +454,11 @@ function AllowanceTableRow({
       </TableCell>
     </TableRow>
   );
+}
+
+// Two amounts added; unknown (a storage day no snapshot measured) stays unknown.
+function plus(a: number | null, b: number | null): number | null {
+  return a === null || b === null ? null : a + b;
 }
 
 /**
@@ -484,7 +522,7 @@ function DailyChart({
   const series = useMemo(
     () =>
       slices.map((slice) => ({
-        key: slice.projectId ?? "other",
+        key: slice.projectId ?? slice.name,
         label: slice.name,
         color: slice.color,
       })),
@@ -578,7 +616,7 @@ function ProjectsTable({
                     : 0;
 
               return (
-                <TableRow key={slice.projectId ?? "other"}>
+                <TableRow key={slice.projectId ?? slice.name}>
                   <TableCell>
                     <span className="flex items-center gap-2">
                       <span

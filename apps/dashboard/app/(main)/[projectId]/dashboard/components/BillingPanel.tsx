@@ -11,6 +11,7 @@ import {
   type BudgetUsage,
   formatDay,
   formatPercent,
+  poolNote,
 } from "@/app/lib/allowance";
 import { toErrorMessage } from "@/app/lib/errors";
 import type { PlanTier } from "@/app/lib/pricing";
@@ -486,23 +487,17 @@ function NoticeBar({
   );
 }
 
+// The subscription's state, nothing more: who pays is plain text in the summary.
 function PlanBadge({
   selfHosted,
   status,
-  paidBy,
 }: {
   selfHosted: boolean;
   status: string | undefined;
-  /** Who pays, for a member: shown in place of Active. */
-  paidBy: string | null;
 }): React.JSX.Element {
   if (selfHosted) return <Badge variant="secondary">Unlimited</Badge>;
   if (status === "trialing") return <Badge variant="info">Trial</Badge>;
-  if (status === "active") {
-    return (
-      <Badge variant="success">{paidBy ? `Paid by ${paidBy}` : "Active"}</Badge>
-    );
-  }
+  if (status === "active") return <Badge variant="success">Active</Badge>;
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return <Badge variant="destructive">Payment due</Badge>;
   }
@@ -510,7 +505,8 @@ function PlanBadge({
   return <Badge variant="secondary">Free</Badge>;
 }
 
-// Plan name, status badge, and what it costs and when it renews or resets.
+// Plan name, status, what it costs and when it renews or resets, and whose
+// limits these are: the same note line as the Usage tab.
 function PlanSummary({
   budget,
   plan,
@@ -524,6 +520,11 @@ function PlanSummary({
   // A subscription waiting on a payment is still Pro, held back until paid.
   const shown: PlanTier = seats?.status ? "pro" : plan;
   const detail = planDetail(budget, selfHosted, shown, seats);
+  const note =
+    (budget ? poolNote(budget) : null) ??
+    (seats?.isOwner && seats.billing && !selfHosted
+      ? "Covers every organization you own."
+      : null);
 
   return (
     <div className="grid gap-0.5">
@@ -534,15 +535,10 @@ function PlanSummary({
         <PlanBadge
           selfHosted={selfHosted}
           status={seats?.status ?? undefined}
-          paidBy={seats && !seats.isOwner ? seats.ownerName : null}
         />
       </div>
       {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
-      {seats?.isOwner && seats.billing && !selfHosted && (
-        <p className="text-xs text-muted-foreground">
-          Covers every organization you own.
-        </p>
-      )}
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   );
 }
