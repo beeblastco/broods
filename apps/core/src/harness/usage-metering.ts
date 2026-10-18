@@ -2,8 +2,9 @@
  * Per-task metering helpers. Flattens the AI SDK v7 `LanguageModelUsage`
  * shape (nested input/output token details) for span attributes and usage rows,
  * meters cache-write tokens with a providerMetadata fallback for providers
- * that only surface cache creation there, and keeps one run's sandbox CPU
- * ledger for its usage row, its root span and each tool.call span.
+ * that only surface cache creation there, keeps one run's sandbox CPU
+ * ledger for its usage row, its root span and each tool.call span, and
+ * tracks each model.step's timing (ttft, streaming windows, retries).
  */
 
 import {
@@ -12,7 +13,20 @@ import {
 } from "@broods/convex/model/modelPricing";
 import type { LanguageModelUsage } from "ai";
 import { isPlainObject } from "../shared/object.ts";
+import type { ModelAttempt } from "./provider.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
+
+// Generated-content stream parts that count toward per-step streaming windows
+// (time-to-first-token / last-token). v7 delivers every TextStreamPart to
+// onChunk, so boundary, lifecycle, and post-execution parts must not qualify.
+const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "tool-input-start",
+  "tool-input-delta",
+  "tool-call",
+  "file",
+]);
 
 export interface UsageTokenTotals {
   inputTokens: number;
@@ -180,5 +194,199 @@ export function createSandboxCpuLedger(): SandboxCpuLedger {
       );
     },
     usage: () => [...sandboxUsageByKey.values()],
+  };
+}
+
+/** First and last generated chunk of one kind in a step, in epoch ms. */
+interface StreamWindow {
+  first: number;
+  last: number;
+}
+
+/**
+ * One run's per-step timing: `runAgentLoop` feeds it from the stream callbacks
+ * and reads the step's duration attributes back when the model.step span
+ * closes. Timestamps are passed in; it holds nothing but the per-step maps.
+ */
+export interface StepTimingTracker {
+  /** onStepStart: starts the step's clock and attributes chunks and attempts to it. */
+  startStep: (step: number, nowMs: number) => void;
+  /** The step chunks and attempts attribute to; undefined between steps. */
+  activeStep: () => number | undefined;
+  /** onStepEnd: stops attributing to `step` unless a newer step already took over. */
+  endActiveStep: (step: number) => void;
+  /** When `step` started; undefined before `startStep` and after `closeStep`. */
+  stepStartMs: (step: number) => number | undefined;
+  /** onChunk: a generated-content part extends the step's generation and per-kind streaming windows. */
+  recordChunk: (chunkType: string, nowMs: number) => void;
+  /** attemptRecordingMiddleware: one entry per doStream call of the active step. */
+  recordAttempt: (attempt: ModelAttempt) => void;
+  /**
+   * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
+   * server wait, so a retried 429 is distinguishable from queueing. Read on
+   * its own for a step whose every attempt failed and never reached onStepEnd.
+   */
+  attemptAttributes: (
+    step: number,
+    stepStartMs: number,
+    serialize: (value: unknown) => string,
+  ) => Record<string, string | number>;
+  /**
+   * The step's span attributes: ttft, attempts, streaming, tool wait and the
+   * per-kind streaming windows, each only when observed. Clears that step's
+   * state.
+   */
+  closeStep: (
+    step: number,
+    stepStartMs: number,
+    stepEndMs: number,
+    serialize: (value: unknown) => string,
+  ) => Record<string, string | number>;
+  /** Drops every step's state once the run is finalized. */
+  clear: () => void;
+}
+
+export function createStepTimingTracker(): StepTimingTracker {
+  // Per-step timing state, read when each step's span closes.
+  const stepStartedAt = new Map<number, number>();
+  // First and last generated chunk per step, attributed to the active step since
+  // onChunk has no step number. They split a step into ttft, streaming and tool
+  // wait; tool results are not generation, so a slow tool never inflates streaming.
+  const firstChunkAt = new Map<number, number>();
+  const lastModelChunkAt = new Map<number, number>();
+  // Per-part streaming windows (first/last delta per kind) so the dashboard can show
+  // how long the model spent streaming reasoning vs text vs tool-call input. Windows
+  // are first->last per kind and may overlap slightly for models that interleave.
+  const reasoningWindow = new Map<number, StreamWindow>();
+  const textWindow = new Map<number, StreamWindow>();
+  const toolInputWindow = new Map<number, StreamWindow>();
+  // The SDK retries a failed stream start inside the ttft window with nothing
+  // recorded; attemptRecordingMiddleware fills this per doStream call.
+  const stepAttempts = new Map<number, ModelAttempt[]>();
+  let activeStepNumber: number | undefined;
+
+  const attemptAttributes: StepTimingTracker["attemptAttributes"] = (
+    step,
+    stepStartMs,
+    serialize,
+  ) => {
+    const attempts = stepAttempts.get(step) ?? [];
+    const errors = attempts.flatMap((attempt) =>
+      attempt.error ? [attempt.error] : [],
+    );
+    const lastAttemptAt = attempts.at(-1)?.startedAt;
+
+    return {
+      ...(attempts.length > 0 ? { "model.attempts": attempts.length } : {}),
+      ...(attempts.length > 1 && lastAttemptAt !== undefined
+        ? { "model.retry_wait_ms": Math.max(0, lastAttemptAt - stepStartMs) }
+        : {}),
+      ...(errors.length > 0
+        ? { "model.attempt_errors": serialize(errors) }
+        : {}),
+    };
+  };
+
+  return {
+    startStep: (step, nowMs) => {
+      stepStartedAt.set(step, nowMs);
+      activeStepNumber = step;
+    },
+    activeStep: () => activeStepNumber,
+    endActiveStep: (step) => {
+      if (activeStepNumber === step) activeStepNumber = undefined;
+    },
+    stepStartMs: (step) => stepStartedAt.get(step),
+    recordChunk: (chunkType, nowMs) => {
+      if (!MODEL_CONTENT_CHUNK_TYPES.has(chunkType)) return;
+      const step = activeStepNumber;
+      if (step === undefined) return;
+      if (!firstChunkAt.has(step)) firstChunkAt.set(step, nowMs);
+      lastModelChunkAt.set(step, nowMs);
+      const bump = (windows: Map<number, StreamWindow>): void => {
+        const existing = windows.get(step);
+        if (existing) existing.last = nowMs;
+        else windows.set(step, { first: nowMs, last: nowMs });
+      };
+      if (chunkType === "text-delta") {
+        bump(textWindow);
+      } else if (chunkType === "reasoning-delta") {
+        bump(reasoningWindow);
+      } else if (
+        chunkType === "tool-input-start" ||
+        chunkType === "tool-input-delta" ||
+        chunkType === "tool-call"
+      ) {
+        bump(toolInputWindow);
+      }
+    },
+    recordAttempt: (attempt) => {
+      const step = activeStepNumber ?? 0;
+      stepAttempts.set(step, [...(stepAttempts.get(step) ?? []), attempt]);
+    },
+    attemptAttributes: attemptAttributes,
+    closeStep: (step, stepStartMs, stepEndMs, serialize) => {
+      // Non-overlapping segments that sum to the step duration; their windows
+      // are defined at firstChunkAt/lastModelChunkAt above.
+      const firstTokenMs = firstChunkAt.get(step);
+      const lastTokenMs = lastModelChunkAt.get(step) ?? firstTokenMs;
+      const ttftMs =
+        firstTokenMs !== undefined
+          ? Math.max(0, firstTokenMs - stepStartMs)
+          : undefined;
+      const streamMs =
+        firstTokenMs !== undefined && lastTokenMs !== undefined
+          ? Math.max(0, lastTokenMs - firstTokenMs)
+          : undefined;
+      const toolWaitMs =
+        lastTokenMs !== undefined
+          ? Math.max(0, stepEndMs - lastTokenMs)
+          : undefined;
+      const windowMs = (
+        window: StreamWindow | undefined,
+      ): number | undefined =>
+        window ? Math.max(0, window.last - window.first) : undefined;
+      const reasoningMs = windowMs(reasoningWindow.get(step));
+      const textMs = windowMs(textWindow.get(step));
+      const toolInputMs = windowMs(toolInputWindow.get(step));
+      const stepAttemptAttributes = attemptAttributes(
+        step,
+        stepStartMs,
+        serialize,
+      );
+      stepStartedAt.delete(step);
+      firstChunkAt.delete(step);
+      lastModelChunkAt.delete(step);
+      reasoningWindow.delete(step);
+      textWindow.delete(step);
+      toolInputWindow.delete(step);
+      stepAttempts.delete(step);
+
+      return {
+        ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
+        ...stepAttemptAttributes,
+        ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
+        ...(toolWaitMs !== undefined
+          ? { "model.tool_wait_ms": toolWaitMs }
+          : {}),
+        ...(reasoningMs !== undefined
+          ? { "model.reasoning_stream_ms": reasoningMs }
+          : {}),
+        ...(textMs !== undefined ? { "model.text_stream_ms": textMs } : {}),
+        ...(toolInputMs !== undefined
+          ? { "model.tool_input_stream_ms": toolInputMs }
+          : {}),
+      };
+    },
+    clear: () => {
+      stepStartedAt.clear();
+      firstChunkAt.clear();
+      lastModelChunkAt.clear();
+      reasoningWindow.clear();
+      textWindow.clear();
+      toolInputWindow.clear();
+      stepAttempts.clear();
+      activeStepNumber = undefined;
+    },
   };
 }

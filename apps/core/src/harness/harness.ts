@@ -120,7 +120,6 @@ import {
   modelSettingsFromModelConfig,
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
-  type ModelAttempt,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import {
@@ -148,6 +147,7 @@ import {
 } from "./tools/utils.ts";
 import {
   createSandboxCpuLedger,
+  createStepTimingTracker,
   extractCacheWriteTokens,
   usageTokenTotals,
 } from "./usage-metering.ts";
@@ -204,18 +204,6 @@ const MAX_TASK_INPUT_CHARS = 500;
 const USAGE_INPUT_PREVIEW_CHARS = 160;
 
 const SPAN_ENCODER = new TextEncoder();
-
-// Generated-content stream parts that count toward per-step streaming windows
-// (time-to-first-token / last-token). v7 delivers every TextStreamPart to
-// onChunk, so boundary, lifecycle, and post-execution parts must not qualify.
-const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
-  "text-delta",
-  "reasoning-delta",
-  "tool-input-start",
-  "tool-input-delta",
-  "tool-call",
-  "file",
-]);
 
 /** An open model.step or tool.call span plus the ids its live NATS rows reuse. */
 type TrackedSpan = {
@@ -796,48 +784,9 @@ export async function runAgentLoop(
     };
   };
 
-  // Per-step timing state, read when each step's span closes.
-  const stepStartedAt = new Map<number, number>();
-  // First and last generated chunk per step, attributed to the active step since
-  // onChunk has no step number. They split a step into ttft, streaming and tool
-  // wait; tool results are not generation, so a slow tool never inflates streaming.
-  const firstChunkAt = new Map<number, number>();
-  const lastModelChunkAt = new Map<number, number>();
-  // Per-part streaming windows (first/last delta per kind) so the dashboard can show
-  // how long the model spent streaming reasoning vs text vs tool-call input. Windows
-  // are first->last per kind and may overlap slightly for models that interleave.
-  type StreamWindow = { first: number; last: number };
-  const reasoningWindow = new Map<number, StreamWindow>();
-  const textWindow = new Map<number, StreamWindow>();
-  const toolInputWindow = new Map<number, StreamWindow>();
-  // The SDK retries a failed stream start inside the ttft window with nothing
-  // recorded; attemptRecordingMiddleware fills this per doStream call.
-  const stepAttempts = new Map<number, ModelAttempt[]>();
-  /**
-   * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
-   * server wait, so a retried 429 is distinguishable from queueing.
-   */
-  const attemptAttributes = (
-    stepNumber: number,
-    stepStartMs: number,
-  ): Record<string, string | number> => {
-    const attempts = stepAttempts.get(stepNumber) ?? [];
-    const errors = attempts.flatMap((attempt) =>
-      attempt.error ? [attempt.error] : [],
-    );
-    const lastAttemptAt = attempts.at(-1)?.startedAt;
-
-    return {
-      ...(attempts.length > 0 ? { "model.attempts": attempts.length } : {}),
-      ...(attempts.length > 1 && lastAttemptAt !== undefined
-        ? { "model.retry_wait_ms": Math.max(0, lastAttemptAt - stepStartMs) }
-        : {}),
-      ...(errors.length > 0
-        ? { "model.attempt_errors": traceAttribute(errors) }
-        : {}),
-    };
-  };
-  let activeStepNumber: number | undefined;
+  // Per-step timing (ttft, streaming windows, retries), read when each step's
+  // span closes.
+  const stepTiming = createStepTimingTracker();
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
     accountId: session.accountId,
@@ -981,7 +930,11 @@ export async function runAgentLoop(
       // attempt attributes are attached here instead.
       ...[...stepSpans.entries()].map(([stepNumber, tracked]) => ({
         tracked: tracked,
-        extraAttributes: attemptAttributes(stepNumber, tracked.startTimeMs),
+        extraAttributes: stepTiming.attemptAttributes(
+          stepNumber,
+          tracked.startTimeMs,
+          traceAttribute,
+        ),
       })),
     ];
     for (const { tracked, extraAttributes } of orphanedSpans) {
@@ -1016,7 +969,7 @@ export async function runAgentLoop(
     }
     toolSpans.clear();
     stepSpans.clear();
-    stepAttempts.clear();
+    stepTiming.clear();
     // Task totals on the root span: token usage and sandbox CPU split per provider
     // so the dashboard reads final usage straight off the trace stream.
     const sandboxCpuAttributes = sandboxCpu.typeAttributes();
@@ -1188,16 +1141,11 @@ export async function runAgentLoop(
 
   const attemptTrackedModel = wrapLanguageModel({
     model: configuredModel.model,
-    middleware: attemptRecordingMiddleware(
-      (attempt) => {
-        const step = activeStepNumber ?? 0;
-        stepAttempts.set(step, [...(stepAttempts.get(step) ?? []), attempt]);
-      },
-      (error) =>
-        redactSensitiveText(
-          toErrorMessage(error),
-          getObservabilityContext()?.secretValues,
-        ),
+    middleware: attemptRecordingMiddleware(stepTiming.recordAttempt, (error) =>
+      redactSensitiveText(
+        toErrorMessage(error),
+        getObservabilityContext()?.secretValues,
+      ),
     ),
   });
 
@@ -1346,34 +1294,12 @@ export async function runAgentLoop(
     },
     onChunk: ({ chunk }) => {
       // Kept synchronous and cheap: onChunk pauses the stream until it returns.
-      if (!MODEL_CONTENT_CHUNK_TYPES.has(chunk.type)) return;
-      const step = activeStepNumber;
-      if (step === undefined) return;
-      const now = Date.now();
-      if (!firstChunkAt.has(step)) firstChunkAt.set(step, now);
-      lastModelChunkAt.set(step, now);
-      const bump = (windows: Map<number, StreamWindow>): void => {
-        const existing = windows.get(step);
-        if (existing) existing.last = now;
-        else windows.set(step, { first: now, last: now });
-      };
-      if (chunk.type === "text-delta") {
-        bump(textWindow);
-      } else if (chunk.type === "reasoning-delta") {
-        bump(reasoningWindow);
-      } else if (
-        chunk.type === "tool-input-start" ||
-        chunk.type === "tool-input-delta" ||
-        chunk.type === "tool-call"
-      ) {
-        bump(toolInputWindow);
-      }
+      stepTiming.recordChunk(chunk.type, Date.now());
     },
     onStepStart: async ({ stepNumber, messages }) => {
       startApprovalStep();
       const now = Date.now();
-      stepStartedAt.set(stepNumber, now);
-      activeStepNumber = stepNumber;
+      stepTiming.startStep(stepNumber, now);
       const attributes = {
         "agent.step_number": stepNumber,
         "step.state": "running",
@@ -1407,10 +1333,13 @@ export async function runAgentLoop(
     onToolExecutionStart: async ({ toolCall }) => {
       // Before any await: the SDK gets here in the model's call order.
       reserveComputerTurn(toolCall);
-      const stepNumber = activeStepNumber;
+      const stepNumber = stepTiming.activeStep();
       const now = Date.now();
-      if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
-        stepStartedAt.set(stepNumber, now);
+      if (
+        stepNumber !== undefined &&
+        stepTiming.stepStartMs(stepNumber) === undefined
+      ) {
+        stepTiming.startStep(stepNumber, now);
       }
       const parent =
         stepNumber !== undefined ? stepSpans.get(stepNumber) : undefined;
@@ -1606,10 +1535,9 @@ export async function runAgentLoop(
       text,
       reasoningText,
     }) => {
-      const startedAt = stepStartedAt.get(stepNumber);
+      const startedAt = stepTiming.stepStartMs(stepNumber);
       const durationMs =
         startedAt === undefined ? undefined : Date.now() - startedAt;
-      stepStartedAt.delete(stepNumber);
       const stepText = (text ?? "").trim();
       if (stepText) {
         lastStepText = stepText;
@@ -1721,60 +1649,21 @@ export async function runAgentLoop(
       const tracked = stepSpans.get(stepNumber);
       if (tracked) {
         const stepEndMs = Date.now();
-        // Non-overlapping segments that sum to the step duration; their windows
-        // are defined at firstChunkAt/lastModelChunkAt above.
-        const firstTokenMs = firstChunkAt.get(stepNumber);
-        const lastTokenMs = lastModelChunkAt.get(stepNumber) ?? firstTokenMs;
-        const ttftMs =
-          firstTokenMs !== undefined
-            ? Math.max(0, firstTokenMs - tracked.startTimeMs)
-            : undefined;
-        const streamMs =
-          firstTokenMs !== undefined && lastTokenMs !== undefined
-            ? Math.max(0, lastTokenMs - firstTokenMs)
-            : undefined;
-        const toolWaitMs =
-          lastTokenMs !== undefined
-            ? Math.max(0, stepEndMs - lastTokenMs)
-            : undefined;
-        const windowMs = (
-          window: StreamWindow | undefined,
-        ): number | undefined =>
-          window ? Math.max(0, window.last - window.first) : undefined;
-        const reasoningMs = windowMs(reasoningWindow.get(stepNumber));
-        const textMs = windowMs(textWindow.get(stepNumber));
-        const toolInputMs = windowMs(toolInputWindow.get(stepNumber));
-        const stepAttemptAttributes = attemptAttributes(
-          stepNumber,
-          tracked.startTimeMs,
-        );
-        firstChunkAt.delete(stepNumber);
-        lastModelChunkAt.delete(stepNumber);
-        reasoningWindow.delete(stepNumber);
-        textWindow.delete(stepNumber);
-        toolInputWindow.delete(stepNumber);
-        stepAttempts.delete(stepNumber);
-        // Per-step token usage on the span so the dashboard can accumulate live
-        // usage straight off the trace stream (no separate usage channel).
+        // Per-step timing and token usage on the span so the dashboard can
+        // accumulate live usage straight off the trace stream (no separate
+        // usage channel).
         const attributes = {
           ...tracked.attributes,
           "agent.step_number": stepNumber,
           "step.state": "completed",
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
-          ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
-          ...stepAttemptAttributes,
-          ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
-          ...(toolWaitMs !== undefined
-            ? { "model.tool_wait_ms": toolWaitMs }
-            : {}),
-          ...(reasoningMs !== undefined
-            ? { "model.reasoning_stream_ms": reasoningMs }
-            : {}),
-          ...(textMs !== undefined ? { "model.text_stream_ms": textMs } : {}),
-          ...(toolInputMs !== undefined
-            ? { "model.tool_input_stream_ms": toolInputMs }
-            : {}),
+          ...stepTiming.closeStep(
+            stepNumber,
+            tracked.startTimeMs,
+            stepEndMs,
+            traceAttribute,
+          ),
           "model.input_tokens": stepTokens.inputTokens,
           "model.output_tokens": stepTokens.outputTokens,
           "model.reasoning_tokens": stepTokens.reasoningTokens,
@@ -1831,9 +1720,7 @@ export async function runAgentLoop(
         });
       }
       stepSpans.delete(stepNumber);
-      if (activeStepNumber === stepNumber) {
-        activeStepNumber = undefined;
-      }
+      stepTiming.endActiveStep(stepNumber);
     },
     onError: async ({ error }) => {
       const errorText = errorMessage(error);
