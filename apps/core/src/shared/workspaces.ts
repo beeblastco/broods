@@ -403,7 +403,7 @@ export function runsOnOwnCredentials(config: SandboxConfig): boolean {
     case "custom":
       return true;
     case "cloudflare":
-    case "isolate":
+    case "worker":
     case "lambda":
       return false;
   }

@@ -1,7 +1,7 @@
 /**
  * Isolate sandbox executor: bash in a V8 isolate on Cloudflare Workers, no
  * container. Commands go over authenticated HTTP to the Worker in
- * `apps/cloudflare-isolate`, which runs each in a Dynamic Worker per sandbox
+ * `apps/cloudflare-worker`, which runs each in a Dynamic Worker per sandbox
  * id and keeps a reserved sandbox's files in R2 between calls. Nothing runs
  * between commands, so a persistent sandbox is its stored files, not a warm
  * machine. Reservation bookkeeping stays here.
@@ -11,7 +11,7 @@ import { z } from "zod";
 import {
   MAX_OUTPUT_BYTES,
   MAX_TIMEOUT_MS,
-} from "../../../../cloudflare-isolate/src/limits.ts";
+} from "../../../../cloudflare-worker/src/limits.ts";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
@@ -40,7 +40,7 @@ import {
   sandboxReservationKey,
 } from "./utils.ts";
 
-const LABEL = "cloudflare isolate worker";
+const LABEL = "cloudflare v8 worker";
 // Headroom over the command timeout for the Worker to load the isolate and
 // move the stored files.
 const WORKER_OVERHEAD_MS = 15_000;
@@ -51,21 +51,21 @@ const runsByReservation = new Map<string, Promise<unknown>>();
 const statusResult = z.object({ exists: z.boolean() });
 
 /** The platform Worker from core's env; every executor call uses it. */
-export function isolateConnection(): PlatformWorkerConnection {
+export function workerConnection(): PlatformWorkerConnection {
   return platformWorkerConnection(
-    "CLOUDFLARE_ISOLATE_URL",
-    "CLOUDFLARE_ISOLATE_API_KEY",
-    "isolate",
+    "CLOUDFLARE_WORKER_URL",
+    "CLOUDFLARE_WORKER_API_KEY",
+    "worker",
   );
 }
 
-/** Runs bash in a Cloudflare isolate; picked by `providerExecutor` for `provider: "isolate"`. */
-export class IsolateSandboxExecutor implements SandboxExecutor {
+/** Runs bash in a Cloudflare V8 Worker; picked by `providerExecutor` for `provider: "worker"`. */
+export class WorkerSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
 
   constructor(config: SandboxExecutorConfig) {
     if (config.storage)
-      throw new Error("the isolate sandbox provider cannot mount workspaces");
+      throw new Error("the worker sandbox provider cannot mount workspaces");
     this.#config = config;
   }
 
@@ -81,7 +81,7 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
     const reserved =
       this.#config.persistent === true && key !== undefined
         ? await reservePlatformSandbox(
-            "isolate",
+            "worker",
             this.#config.controlPlane?.accountId,
             key,
           )
@@ -93,7 +93,7 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
         false,
       );
 
-      return execRunResult(request, result, "isolate", startedAt);
+      return execRunResult(request, result, "worker", startedAt);
     }
     const result = await serializedByReservation(
       reserved,
@@ -101,7 +101,7 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
     );
     this.#mirror(key, reserved, request.metadata);
 
-    return execRunResult(request, result, "isolate", startedAt);
+    return execRunResult(request, result, "worker", startedAt);
   }
 
   /** A reservation whose files are stored: kept, not running, since nothing runs between calls. */
@@ -109,10 +109,10 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
     request: SandboxReservationRef,
   ): Promise<SandboxInstanceInfo | null> {
     const key = sandboxReservationKey(request);
-    const id = key ? await getSandboxExternalId("isolate", key) : null;
+    const id = key ? await getSandboxExternalId("worker", key) : null;
     if (!id) return null;
     const response = await callPlatformWorker(
-      isolateConnection(),
+      workerConnection(),
       LABEL,
       `/v1/sandboxes/${id}`,
       "GET",
@@ -125,12 +125,12 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
   /** Drops a reservation's stored files and the reservation; cleanup and terminate call it. */
   async release(request: SandboxReleaseRequest): Promise<void> {
     await releasePlatformSandbox(
-      "isolate",
+      "worker",
       this.#config.controlPlane?.accountId,
       request,
       async (id): Promise<void> => {
         await callPlatformWorker(
-          isolateConnection(),
+          workerConnection(),
           LABEL,
           `/v1/sandboxes/${id}`,
           "DELETE",
@@ -147,7 +147,7 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
   ): Promise<SandboxExecResponse> {
     const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
     const response = await callPlatformWorker(
-      isolateConnection(),
+      workerConnection(),
       LABEL,
       `/v1/sandboxes/${id}/exec`,
       "POST",
@@ -181,7 +181,7 @@ export class IsolateSandboxExecutor implements SandboxExecutor {
     void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(
         this.#config.controlPlane,
-        "isolate",
+        "worker",
         key,
         id,
         metadata,
