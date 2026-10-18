@@ -12,7 +12,6 @@ import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
   TraceCollapsible,
-  TraceCollapsibleContent,
   TraceCollapsibleTrigger,
   TraceDescription,
   TraceIcon,
@@ -301,6 +300,13 @@ const TOOL_ICONS: ReadonlyArray<{ icon: LucideIcon; test: RegExp }> = [
   { icon: MessageCircleQuestionMark, test: /approv|question|ask/i },
 ];
 
+// The icon a step's note line opens with; the line's title is the kind itself.
+const NOTE_ICONS: Record<NoteKind, LucideIcon> = {
+  thought: Brain,
+  answer: MessageSquare,
+  question: MessageCircleQuestionMark,
+};
+
 // Avatars a task row stacks before "+N" for the rest of its subagents.
 const STACK_AVATARS = 4;
 
@@ -457,6 +463,10 @@ export interface StepFold {
   span: ObservabilitySpanRow;
   steps: ObservabilitySpanRow[];
 }
+
+// A step's text lines: its reasoning, and its response, which is the question
+// when the run stopped on it to ask the person.
+type NoteKind = "thought" | "answer" | "question";
 
 // One sibling row in the waterfall: a span, or a fold of steps.
 export type WaterfallItem =
@@ -1200,6 +1210,18 @@ function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   ];
 }
 
+/** The step whose response is the question a run stopped on, when it stopped on one. */
+function askedStepId(
+  run: ObservabilitySpanRow,
+  childrenByParent: Map<string, ObservabilitySpanRow[]>,
+): string | undefined {
+  if (run.attributes?.["task.waiting_on"] !== "question") return undefined;
+
+  return (childrenByParent.get(run.spanId) ?? []).findLast(
+    (child) => child.kind === "model.step",
+  )?.spanId;
+}
+
 function attributeText(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "number") return value.toLocaleString();
@@ -1526,6 +1548,19 @@ function spanSearchText(span: ObservabilitySpanRow): string {
   SPAN_SEARCH_TEXT.set(span, text);
 
   return text;
+}
+
+/** A model step's reasoning and response texts, when it has them; nothing for any other span. */
+function stepNotes(span: ObservabilitySpanRow): {
+  reasoning: string | undefined;
+  response: string | undefined;
+} {
+  const isStep = span.kind === "model.step";
+
+  return {
+    reasoning: isStep ? noteText(span, "model.reasoning") : undefined,
+    response: isStep ? noteText(span, "model.response") : undefined,
+  };
 }
 
 /** Total tokens, in the root's spelling or a model step's. */
@@ -1908,16 +1943,18 @@ function ContinueAction({
 function NoteRow({
   depth,
   icon,
+  isOpen,
   isSelected,
   onClick,
-  text,
+  onToggle,
   title,
 }: {
   depth: number;
   icon: LucideIcon;
+  isOpen: boolean;
   isSelected: boolean;
   onClick: () => void;
-  text: string;
+  onToggle: () => void;
   title: string;
 }): React.JSX.Element {
   const Icon = icon;
@@ -1937,21 +1974,100 @@ function NoteRow({
         className="py-1.5 pr-3 pl-(--row-indent)"
         style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
       >
-        <TraceCollapsible>
-          <TraceCollapsibleTrigger onClick={(event) => event.stopPropagation()}>
-            <TraceLine size="xs">
-              <TraceIcon>
-                <Icon />
-              </TraceIcon>
-              <TraceTitle>{title}</TraceTitle>
-            </TraceLine>
-          </TraceCollapsibleTrigger>
-          <TraceCollapsibleContent size="xs">
-            <pre className="whitespace-pre-wrap wrap-anywhere">{text}</pre>
-          </TraceCollapsibleContent>
-        </TraceCollapsible>
+        <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
+          <TraceLine size="xs">
+            <TraceIcon>
+              <Icon />
+            </TraceIcon>
+            <TraceTitle>{title}</TraceTitle>
+          </TraceLine>
+        </FoldTrigger>
       </td>
     </tr>
+  );
+}
+
+/**
+ * A line's chevron trigger. The open state lives in the waterfall, not here,
+ * because what it opens is the `PayloadRow` under the line, not a panel
+ * inside the cell: the payload then reads at the table's full width.
+ */
+function FoldTrigger({
+  children,
+  isOpen,
+  onToggle,
+}: {
+  children: ReactNode;
+  isOpen: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  return (
+    <TraceCollapsible open={isOpen} onOpenChange={onToggle}>
+      <TraceCollapsibleTrigger onClick={stopRowClick}>
+        {children}
+      </TraceCollapsibleTrigger>
+    </TraceCollapsible>
+  );
+}
+
+/**
+ * What an open line holds, as its own row under the line so the line keeps
+ * its start, duration and bar on one short row and the text gets the whole
+ * table width, pane open or not. Selects the line's span, like the line.
+ */
+function PayloadRow({
+  children,
+  depth,
+  isSelected,
+  onClick,
+}: {
+  children: ReactNode;
+  depth: number;
+  isSelected: boolean;
+  onClick: () => void;
+}): React.JSX.Element {
+  return (
+    <tr
+      onClick={onClick}
+      className={cn(
+        "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
+        isSelected && "bg-accent",
+      )}
+    >
+      {/* Under the line's icon: past the Started column, then the line's indent. */}
+      <td
+        colSpan={5}
+        className="pb-2 pr-3 pl-(--row-indent)"
+        style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
+      >
+        <div className="ml-2 grid min-w-0 gap-2 border-l pr-1 pl-4 text-xs leading-relaxed text-muted-foreground">
+          {children}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** One payload of an open line, capped in height and scrolling inside itself. */
+function PayloadText({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}): React.JSX.Element {
+  return (
+    <div className="grid min-w-0 gap-1">
+      <span className="flex items-center gap-2 text-2xs text-muted-foreground/70">
+        {label}
+        <span className="font-mono tabular-nums">
+          {formatNumber(value.length)} chars
+        </span>
+      </span>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md border border-border/60 px-2 py-1 text-foreground/80">
+        {inlinePayload(value)}
+      </pre>
+    </div>
   );
 }
 
@@ -2041,14 +2157,17 @@ function SpanDetails({
 
 /** A context prepare, cold start or wait: its name, the messages it loaded, the questions it asked. */
 function PhaseLine({
+  isOpen,
+  onToggle,
   span,
 }: {
+  isOpen: boolean;
+  onToggle: () => void;
   span: ObservabilitySpanRow;
 }): React.JSX.Element {
   const name = spanLabel(span);
   const Icon = span.name === WAIT_SPAN_NAME ? MessageCircleQuestionMark : Zap;
   const historyRows = numericAttribute(span, "prepare.history_rows");
-  const questions = span.attributes?.["task.questions"];
   const line = (
     <TraceLine size="xs">
       <TraceIcon>
@@ -2062,19 +2181,12 @@ function PhaseLine({
       )}
     </TraceLine>
   );
-  if (questions === undefined) return line;
+  if (span.attributes?.["task.questions"] === undefined) return line;
 
   return (
-    <TraceCollapsible>
-      <TraceCollapsibleTrigger onClick={stopRowClick}>
-        {line}
-      </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent size="xs">
-        <pre className="whitespace-pre-wrap wrap-anywhere">
-          {inlinePayload(questions)}
-        </pre>
-      </TraceCollapsibleContent>
-    </TraceCollapsible>
+    <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
+      {line}
+    </FoldTrigger>
   );
 }
 
@@ -2113,8 +2225,12 @@ function SpanLine({
   if (span.kind === "subtask") {
     return <SubagentLine span={span} onFocusTrace={onFocusTrace} />;
   }
-  if (span.kind === "tool.call") return <ToolLine span={span} />;
-  if (span.kind === "phase") return <PhaseLine span={span} />;
+  if (span.kind === "tool.call") {
+    return <ToolLine isOpen={isOpen} onToggle={onToggle} span={span} />;
+  }
+  if (span.kind === "phase") {
+    return <PhaseLine isOpen={isOpen} onToggle={onToggle} span={span} />;
+  }
 
   return (
     <StepLine
@@ -2204,51 +2320,62 @@ function SubagentLine({
   );
 }
 
-/** A tool call: its icon, name and first argument; opens on its input, output and error. */
-function ToolLine({ span }: { span: ObservabilitySpanRow }): React.JSX.Element {
+/** A tool call: its icon, name and first argument; opens its input, output and error under the row. */
+function ToolLine({
+  isOpen,
+  onToggle,
+  span,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  span: ObservabilitySpanRow;
+}): React.JSX.Element {
   const name = spanLabel(span);
   const Icon = toolIcon(span);
   const summary = toolSummary(span);
-  const input = span.attributes?.["tool.input"];
-  const output = span.attributes?.["tool.output"];
 
   return (
-    <TraceCollapsible>
-      <TraceCollapsibleTrigger onClick={stopRowClick}>
-        <TraceLine
-          size="xs"
-          status={span.status === "error" ? "error" : undefined}
-        >
-          <TraceIcon>
-            <Icon />
-          </TraceIcon>
-          <TraceTitle title={summary ? `${name} ${summary}` : name}>
-            {name}
-            {summary && (
-              <>
-                {" "}
-                <span className="text-muted-foreground/70">{summary}</span>
-              </>
-            )}
-          </TraceTitle>
-        </TraceLine>
-      </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent size="xs">
-        <div className="grid gap-2">
-          {span.error && <span className="text-destructive">{span.error}</span>}
-          {input !== undefined && (
-            <pre className="whitespace-pre-wrap wrap-anywhere">
-              {inlinePayload(input)}
-            </pre>
+    <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
+      <TraceLine
+        size="xs"
+        status={span.status === "error" ? "error" : undefined}
+      >
+        <TraceIcon>
+          <Icon />
+        </TraceIcon>
+        <TraceTitle title={summary ? `${name} ${summary}` : name}>
+          {name}
+          {summary && (
+            <>
+              {" "}
+              <span className="text-muted-foreground/70">{summary}</span>
+            </>
           )}
-          {output !== undefined && (
-            <pre className="whitespace-pre-wrap wrap-anywhere text-foreground/80">
-              {inlinePayload(output)}
-            </pre>
-          )}
-        </div>
-      </TraceCollapsibleContent>
-    </TraceCollapsible>
+        </TraceTitle>
+      </TraceLine>
+    </FoldTrigger>
+  );
+}
+
+/** What an open tool call or wait row shows under its line: the tool's error, input and output, or the wait's questions. */
+function spanPayload(span: ObservabilitySpanRow): ReactNode {
+  const input = span.attributes?.["tool.input"];
+  const output = span.attributes?.["tool.output"];
+  const questions = span.attributes?.["task.questions"];
+
+  return (
+    <>
+      {span.error && <span className="text-destructive">{span.error}</span>}
+      {input !== undefined && (
+        <PayloadText label="input" value={displayAttribute(input)} />
+      )}
+      {output !== undefined && (
+        <PayloadText label="output" value={displayAttribute(output)} />
+      )}
+      {questions !== undefined && (
+        <PayloadText label="questions" value={displayAttribute(questions)} />
+      )}
+    </>
   );
 }
 
@@ -2615,7 +2742,9 @@ function TaskWaterfall({
             <th className="px-3 py-2 font-medium">Timeline</th>
           </tr>
         </thead>
-        <tbody>{renderSpanRows(root, 0, view.group.live, view)}</tbody>
+        <tbody>
+          {renderSpanRows(root, 0, view.group.live, view, undefined)}
+        </tbody>
       </table>
     </>
   );
@@ -2718,6 +2847,7 @@ function renderFoldRows(
   depth: number,
   enclosingRootLive: boolean,
   view: WaterfallView,
+  askingStepId: string | undefined,
 ): ReactNode[] {
   const key = spanKey(fold.span);
   const isOpen = view.toggled.has(key);
@@ -2740,7 +2870,9 @@ function renderFoldRows(
   ];
   if (!isOpen) return rows;
   for (const step of fold.steps) {
-    rows.push(...renderSpanRows(step, depth + 1, enclosingRootLive, view));
+    rows.push(
+      ...renderSpanRows(step, depth + 1, enclosingRootLive, view, askingStepId),
+    );
   }
 
   return rows;
@@ -2759,22 +2891,26 @@ function renderSpanRows(
   depth: number,
   enclosingRootLive: boolean,
   view: WaterfallView,
+  askingStepId: string | undefined,
 ): ReactNode[] {
   const key = spanKey(span);
   const isTaskRow = depth === 0;
   const isStep = span.kind === "model.step";
   const isOpen = isTaskRow || isStep !== view.toggled.has(key);
   const isSelected = key === view.selectedKey;
+  const select = (): void => view.onSelect(key);
   const children =
     span.kind === "subtask" && !isTaskRow
       ? []
       : (view.group.childrenByParent.get(span.spanId) ?? []);
-  const reasoning = isStep ? noteText(span, "model.reasoning") : undefined;
-  const response = isStep ? noteText(span, "model.response") : undefined;
+  const { reasoning, response } = stepNotes(span);
   const hasNotes = reasoning !== undefined || response !== undefined;
   const isRoot = isRootSpanKind(span.kind);
   // A root is judged on its own freshness; a child on its enclosing root's liveness.
   const rootLive = isRoot ? isTaskRunning(span) : enclosingRootLive;
+  const asking = isRoot
+    ? askedStepId(span, view.group.childrenByParent)
+    : askingStepId;
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}
@@ -2784,7 +2920,7 @@ function renderSpanRows(
       hasChildren={!isTaskRow && (children.length > 0 || hasNotes)}
       onToggle={() => view.toggle(key)}
       isSelected={isSelected}
-      onClick={() => view.onSelect(key)}
+      onClick={select}
       group={view.group}
       taskRunning={rootLive}
       highlighted={isRoot && span.traceId === view.focusTraceId}
@@ -2792,37 +2928,89 @@ function renderSpanRows(
     />,
   ];
   if (!isOpen) return rows;
+  if (span.kind === "tool.call" || span.kind === "phase") {
+    rows.push(
+      <PayloadRow
+        key={`payload:${key}`}
+        depth={depth}
+        isSelected={isSelected}
+        onClick={select}
+      >
+        {spanPayload(span)}
+      </PayloadRow>,
+    );
+  }
   if (reasoning !== undefined) {
     rows.push(
-      <NoteRow
-        key={`reasoning:${key}`}
-        depth={depth + 1}
-        icon={Brain}
-        isSelected={isSelected}
-        onClick={() => view.onSelect(key)}
-        text={inlinePayload(reasoning)}
-        title="thought"
-      />,
+      ...noteRows(`reasoning:${key}`, "thought", reasoning, {
+        depth: depth + 1,
+        isSelected: isSelected,
+        onClick: select,
+        view: view,
+      }),
     );
   }
   for (const item of foldSteps(children, view.group.childrenByParent)) {
     rows.push(
       ...(item.type === "span"
-        ? renderSpanRows(item.span, depth + 1, rootLive, view)
-        : renderFoldRows(item.fold, depth + 1, rootLive, view)),
+        ? renderSpanRows(item.span, depth + 1, rootLive, view, asking)
+        : renderFoldRows(item.fold, depth + 1, rootLive, view, asking)),
     );
   }
   if (response !== undefined) {
     rows.push(
-      <NoteRow
-        key={`response:${key}`}
-        depth={depth + 1}
-        icon={MessageSquare}
-        isSelected={isSelected}
-        onClick={() => view.onSelect(key)}
-        text={inlinePayload(response)}
-        title="answer"
-      />,
+      ...noteRows(
+        `response:${key}`,
+        span.spanId === asking ? "question" : "answer",
+        response,
+        {
+          depth: depth + 1,
+          isSelected: isSelected,
+          onClick: select,
+          view: view,
+        },
+      ),
+    );
+  }
+
+  return rows;
+}
+
+/** A step's thought, answer or question line, then its text as a payload row when open. */
+function noteRows(
+  key: string,
+  kind: NoteKind,
+  text: string,
+  row: {
+    depth: number;
+    isSelected: boolean;
+    onClick: () => void;
+    view: WaterfallView;
+  },
+): ReactNode[] {
+  const isOpen = row.view.toggled.has(key);
+  const rows: ReactNode[] = [
+    <NoteRow
+      key={key}
+      depth={row.depth}
+      icon={NOTE_ICONS[kind]}
+      isOpen={isOpen}
+      isSelected={row.isSelected}
+      onClick={row.onClick}
+      onToggle={() => row.view.toggle(key)}
+      title={kind}
+    />,
+  ];
+  if (isOpen) {
+    rows.push(
+      <PayloadRow
+        key={`payload:${key}`}
+        depth={row.depth}
+        isSelected={row.isSelected}
+        onClick={row.onClick}
+      >
+        <PayloadText label={kind} value={text} />
+      </PayloadRow>,
     );
   }
 
