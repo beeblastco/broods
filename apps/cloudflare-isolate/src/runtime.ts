@@ -13,13 +13,15 @@ import {
   type BashExecResult,
   type NetworkConfig,
 } from "just-bash/browser";
-import type {
-  ExecResult,
-  IsolateExecRequest,
-  RuntimeExecResult,
-} from "./contract.ts";
+import type { IsolateExecRequest, RuntimeExecResult } from "./contract.ts";
 import { MAX_OUTPUT_BYTES } from "./limits.ts";
-import { decodeState, emptyFs, encodeState } from "./vfs-state.ts";
+import {
+  compressState,
+  decodeState,
+  emptyFs,
+  packState,
+  samePacked,
+} from "./vfs-state.ts";
 
 // What `curl` may do once the sandbox has internet; the policy is on or off.
 // Private-range checks need DNS pinning, which a Worker has no way to do, and
@@ -31,14 +33,18 @@ const INTERNET: NetworkConfig = {
 };
 // What just-bash exits with at its deadline; before it, a `timeout` command's own.
 const DEADLINE_EXIT_CODE = 124;
+// A UTF-16 unit never takes more than three UTF-8 bytes.
+const MAX_UTF8_BYTES_PER_UNIT = 3;
+const UTF8_ENCODER = new TextEncoder();
 
-/** The host calls `exec` over RPC; the default export only names the module a Worker. */
+/** The host calls `exec` over RPC, the only thing this module answers. */
 export class Runtime extends WorkerEntrypoint {
   async exec(
     request: IsolateExecRequest,
     state: Uint8Array | null,
   ): Promise<RuntimeExecResult> {
-    const fs = state === null ? emptyFs() : await decodeState(state);
+    const before = state === null ? null : await decodeState(state);
+    const fs = before === null ? emptyFs() : before.fs;
     await fs.mkdir(request.cwd, { recursive: true });
     const bash = new Bash({
       fs: fs,
@@ -61,13 +67,13 @@ export class Runtime extends WorkerEntrypoint {
         rawScript: true,
       })
       .then(
-        (finished): ExecResult =>
+        (finished): RuntimeExecResult["result"] =>
           execResult(
             finished,
             request,
             finished.exitCode === DEADLINE_EXIT_CODE && pastDeadline(),
           ),
-        (error: unknown): ExecResult =>
+        (error: unknown): RuntimeExecResult["result"] =>
           execResult(
             {
               stdout: "",
@@ -79,28 +85,23 @@ export class Runtime extends WorkerEntrypoint {
             pastDeadline(),
           ),
       );
+    if (!request.persist) return { result: result, state: null };
+    const after = await packState(fs);
+    if (samePacked(before?.packed ?? null, after))
+      return { result: result, state: "unchanged" };
 
     return {
       result: result,
-      state: request.persist ? await encodeState(fs) : null,
+      state: after === null ? null : compressState(after),
     };
   }
 }
 
-export default {
-  fetch: function (): Response {
-    return new Response("The isolate runtime answers RPC only", {
-      status: 404,
-    });
-  },
-};
-
-// The host measures the call, so `duration_ms` is filled there.
 function execResult(
   finished: BashExecResult,
   request: IsolateExecRequest,
   timedOut: boolean,
-): ExecResult {
+): RuntimeExecResult["result"] {
   const stdout = capped(finished.stdout, request.outputLimitBytes);
   const stderr = capped(finished.stderr, request.outputLimitBytes);
 
@@ -108,7 +109,6 @@ function execResult(
     ok: !timedOut && finished.exitCode === 0,
     exit_code: timedOut ? null : finished.exitCode,
     timed_out: timedOut,
-    duration_ms: 0,
     stdout: stdout.text,
     stderr: stderr.text,
     truncated: stdout.truncated || stderr.truncated,
@@ -130,7 +130,9 @@ function capped(
   text: string,
   limit: number,
 ): { text: string; truncated: boolean } {
-  const bytes = new TextEncoder().encode(text);
+  if (text.length * MAX_UTF8_BYTES_PER_UNIT <= limit)
+    return { text: text, truncated: false };
+  const bytes = UTF8_ENCODER.encode(text);
   if (bytes.byteLength <= limit) return { text: text, truncated: false };
 
   return {

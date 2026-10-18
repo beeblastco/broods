@@ -389,7 +389,7 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
-  it("isolate takes on/off networking, no size, no hooks and a 60 s timeout", () => {
+  it("isolate takes on/off networking, no hooks, no lifecycle and a 60 s timeout", () => {
     expect(
       normalizeSandboxConfig({ provider: "isolate", persistent: true }),
     ).toMatchObject({ provider: "isolate", network: { mode: "deny-all" } });
@@ -414,9 +414,10 @@ describe("sandbox config defaults & validation", () => {
         network: { mode: "restricted", allowDomains: ["pypi.org"] },
       }),
     ).toThrow("deny-all or allow-all");
-    expect(() =>
-      normalizeSandboxConfig({ provider: "isolate", size: "large" }),
-    ).toThrow("config.size does not apply to the isolate provider");
+    // Like lambda, one fixed size: a `size` is kept and ignored.
+    expect(
+      normalizeSandboxConfig({ provider: "isolate", size: "large" }).size,
+    ).toBe("large");
     expect(() =>
       normalizeSandboxConfig({ provider: "isolate", snapshot: "img" }),
     ).toThrow("config.snapshot does not apply to the isolate provider");

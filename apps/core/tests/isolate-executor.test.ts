@@ -4,15 +4,18 @@
  * Worker itself is tested in its own workspace under Miniflare.
  */
 
-import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
+import { MAX_TIMEOUT_MS } from "../../cloudflare-isolate/src/limits.ts";
 import * as planLimits from "../src/harness/plan-limits.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
-import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import {
   IsolateSandboxExecutor,
   isolateConnection,
 } from "../src/harness/sandbox/isolate-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
+import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
+import { requestUrl } from "./helpers/http.ts";
+import { ISOLATE_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
 
 // A successful Worker exec answer, in the shared exec contract's shape.
 const EXEC_OK = {
@@ -51,7 +54,6 @@ interface WorkerCall {
 const calls: WorkerCall[] = [];
 const mirrored: string[] = [];
 const metered: string[] = [];
-const restores: (() => void)[] = [];
 let stored: string | null = null;
 let claimWins = true;
 
@@ -63,79 +65,57 @@ beforeEach((): void => {
   calls.length = 0;
   mirrored.length = 0;
   metered.length = 0;
-  const usageSpy = spyOn(planLimits, "recordUsage").mockImplementation(
+  spyOn(planLimits, "recordUsage").mockImplementation(
     (accountId, usage, source): void => {
       metered.push(
         `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"} ${source?.agentId ?? "-"}`,
       );
     },
   );
-  const worker = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
+  mockFetch(async (input, init): Promise<Response> => {
     const headers = new Headers(init?.headers);
     calls.push({
       method: init?.method ?? "GET",
-      url: urlOf(input),
+      url: requestUrl(input),
       authorization: headers.get("Authorization"),
       body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
     });
-    if (urlOf(input).endsWith("/exec")) return Response.json(EXEC_OK);
+    if (requestUrl(input).endsWith("/exec")) return Response.json(EXEC_OK);
     if (init?.method === "GET") return Response.json({ exists: true });
 
     return new Response(null, { status: 204 });
-  };
-  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(worker, { preconnect: (): void => {} }),
+  });
+  spyOn(instanceStore, "getSandboxExternalId").mockImplementation(
+    async (): Promise<string | null> => stored,
   );
-  const getSpy = spyOn(
-    instanceStore,
-    "getSandboxExternalId",
-  ).mockImplementation(async (): Promise<string | null> => stored);
-  const claimSpy = spyOn(
-    instanceStore,
-    "claimSandboxInstance",
-  ).mockImplementation(
+  // A claim is a compare-and-swap: only the first one under a key wins.
+  spyOn(instanceStore, "claimSandboxInstance").mockImplementation(
     async (_provider, _key, externalId): Promise<boolean> => {
+      if (stored !== null) return false;
       stored = claimWins ? externalId : "winner-id";
 
       return claimWins;
     },
   );
-  const saveSpy = spyOn(
-    instanceStore,
-    "saveSandboxInstance",
-  ).mockImplementation(async (): Promise<void> => {});
-  const deleteSpy = spyOn(
-    instanceStore,
-    "deleteSandboxInstance",
-  ).mockImplementation(async (_provider, key): Promise<boolean> => {
-    mirrored.push(`delete ${key}`);
+  spyOn(instanceStore, "saveSandboxInstance").mockImplementation(
+    async (): Promise<void> => {},
+  );
+  spyOn(instanceStore, "deleteSandboxInstance").mockImplementation(
+    async (_provider, key): Promise<boolean> => {
+      mirrored.push(`delete ${key}`);
 
-    return true;
-  });
-  const upsertSpy = spyOn(
-    sandboxInstances,
-    "upsertSandboxInstance",
-  ).mockImplementation(
+      return true;
+    },
+  );
+  spyOn(sandboxInstances, "upsertSandboxInstance").mockImplementation(
     async (_plane, _provider, key, _id, _meta, options): Promise<void> => {
       mirrored.push(`upsert ${key} ${options?.ephemeral === true}`);
     },
   );
-  restores.push(
-    (): void => usageSpy.mockRestore(),
-    (): void => fetchSpy.mockRestore(),
-    (): void => getSpy.mockRestore(),
-    (): void => claimSpy.mockRestore(),
-    (): void => saveSpy.mockRestore(),
-    (): void => deleteSpy.mockRestore(),
-    (): void => upsertSpy.mockRestore(),
-  );
 });
 
 afterEach((): void => {
-  for (const restore of restores.splice(0)) restore();
+  mock.restore();
   delete process.env.CLOUDFLARE_ISOLATE_URL;
   delete process.env.CLOUDFLARE_ISOLATE_API_KEY;
 });
@@ -200,16 +180,17 @@ it("meters each command's time and request to the account, its project or the ru
   ]);
 });
 
-it("clamps the timeout to the Worker's ceiling and turns internet on from the network mode", async (): Promise<void> => {
+it("clamps the timeout to the Worker's ceiling, the one the config plane enforces, and turns internet on from the network mode", async (): Promise<void> => {
   await new IsolateSandboxExecutor({
     ...config,
     network: { mode: "allow-all" },
   }).run({ code: "true", timeoutSeconds: 600, outputLimitBytes: 1024 });
 
   expect(calls[0]?.body).toMatchObject({
-    timeoutMs: 60_000,
+    timeoutMs: MAX_TIMEOUT_MS,
     enableInternet: true,
   });
+  expect(ISOLATE_MAX_TIMEOUT_SECONDS * 1000).toBe(MAX_TIMEOUT_MS);
 });
 
 it("reserves one persistent sandbox, keeps its files across runs and mirrors it", async (): Promise<void> => {
@@ -228,63 +209,29 @@ it("reserves one persistent sandbox, keeps its files across runs and mirrors it"
   ]);
 });
 
-it("runs a command again when another changed the files under it, up to three times", async (): Promise<void> => {
-  let conflicts = 0;
-  const racing = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    calls.push({
-      method: init?.method ?? "GET",
-      url: urlOf(input),
-      authorization: null,
-      body: null,
-    });
-    if (conflicts < 2) {
-      conflicts++;
-
-      return new Response("another command changed the files", {
-        status: 409,
-      });
-    }
+it("runs commands on one reservation one at a time, so none starts from stale files", async (): Promise<void> => {
+  const inFlight: string[] = [];
+  let peak = 0;
+  mockFetch(async (input): Promise<Response> => {
+    inFlight.push(requestUrl(input));
+    peak = Math.max(peak, inFlight.length);
+    await Bun.sleep(5);
+    inFlight.pop();
 
     return Response.json(EXEC_OK);
-  };
-  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(racing, { preconnect: (): void => {} }),
-  );
-  restores.unshift((): void => fetchSpy.mockRestore());
+  });
+  const executor = new IsolateSandboxExecutor({ ...config, persistent: true });
 
-  const result = await new IsolateSandboxExecutor({
-    ...config,
-    persistent: true,
-  }).run(request);
+  await Promise.all([executor.run(request), executor.run(request)]);
 
-  expect(result.ok).toBe(true);
-  expect(calls).toHaveLength(3);
-
-  conflicts = -10;
-  const failure = await new IsolateSandboxExecutor({
-    ...config,
-    persistent: true,
-  })
-    .run(request)
-    .then(
-      (): string => "ran",
-      (error: unknown): string => String(error),
-    );
-
-  expect(failure).toContain("another command changed the files");
-  expect(calls).toHaveLength(7);
+  expect(peak).toBe(1);
 });
 
-it("never mirrors a reservation whose first command was refused", async (): Promise<void> => {
-  const refused = async (): Promise<Response> =>
-    new Response("Unauthorized", { status: 401 });
-  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(refused, { preconnect: (): void => {} }),
+it("surfaces the Worker's refusal of a command that lost a race as a plain error", async (): Promise<void> => {
+  mockFetch(
+    async (): Promise<Response> =>
+      new Response("another command changed the files", { status: 409 }),
   );
-  restores.unshift((): void => fetchSpy.mockRestore());
 
   const failure = await new IsolateSandboxExecutor({
     ...config,
@@ -297,7 +244,7 @@ it("never mirrors a reservation whose first command was refused", async (): Prom
     );
   await settled();
 
-  expect(failure).toContain("failed (401)");
+  expect(failure).toContain("failed (409): another command changed the files");
   expect(mirrored).toEqual([]);
 });
 
@@ -352,15 +299,20 @@ it("refuses a workspace mount and a plain-HTTP Worker outside loopback", (): voi
   expect(isolateConnection().baseURL).toBe("http://127.0.0.1:8787");
 });
 
+function mockFetch(
+  handler: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>,
+): void {
+  spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(handler, { preconnect: (): void => {} }),
+  );
+}
+
 // Lets the queued mirror writes, which run off the command's path, settle.
 async function settled(): Promise<void> {
   await new Promise((resolve): void => {
     setTimeout(resolve, 0);
   });
-}
-
-function urlOf(input: string | URL | Request): string {
-  if (typeof input === "string") return input;
-
-  return input instanceof URL ? input.href : input.url;
 }
