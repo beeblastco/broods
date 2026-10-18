@@ -100,6 +100,7 @@ On the managed service, sandbox time counts from each use until `idleTimeoutSeco
 | `sandbox`, `daytona`, `lambda` | on every call                                |
 | `vercel`                       | only when a stopped sandbox resumes          |
 | `e2b`                          | not supported. Put setup in the E2B template |
+| `cloudflare`, `isolate`        | not supported. The Worker sets the machine   |
 
 Make `onResume` idempotent, since on most providers it runs every time.
 

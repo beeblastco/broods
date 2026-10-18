@@ -1955,7 +1955,7 @@ paths:
                     timeout:
                       {
                         type: integer,
-                        description: "per-call seconds (max 600 for every provider)",
+                        description: "per-call seconds (max 600; 60 on isolate)",
                       }
                     outputLimitBytes: { type: integer }
                     envVars:

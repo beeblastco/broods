@@ -62,6 +62,7 @@ flowchart TB
   Core --> MicroVM
   Core --> McpWorker
   Core --> SbxWorker
+  Core --> IsoWorker
   Convex --> S3
   MicroVM -->|CloudWatch| LogFwd
   LogFwd -->|OTLP| Obs

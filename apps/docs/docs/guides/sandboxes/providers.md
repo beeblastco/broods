@@ -186,7 +186,7 @@ export const box = defineSandbox({
 
 ## `isolate`
 
-Runs `bash` in a V8 isolate on Cloudflare Workers: no container, no machine, nothing running between commands. The shell is [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands: `cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `cut`, `tar`, `gzip`, `base64`, `sha256sum`, `date`, `curl` with internet, and the rest of the text toolbox. Use it for the fastest, cheapest compute an agent can get: a command starts in milliseconds and costs only the milliseconds it ran.
+Runs `bash` in a V8 isolate on Cloudflare Workers: no container, no machine, nothing running between commands. The shell is [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 built-in commands: `cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `cut`, `gzip`, `base64`, `sha256sum`, `date` and the rest of the text toolbox, plus `curl` once internet is on. Use it for the cheapest compute an agent can get: a command starts in well under a second and costs only the milliseconds it ran.
 
 ```ts
 export const box = defineSandbox({
@@ -207,7 +207,7 @@ export const box = defineSandbox({
 | `options`      | Only `workspaceRoot` and `reservationKey`                                                                      |
 
 - Only built-ins run. There is no `python`, `node`, `git`, `npm` or any binary, no process and no port; a command outside the 81 answers `command not found`. Use `sandbox` or `lambda` for a real machine.
-- Files are the sandbox's whole state. A persistent sandbox restores them into a fresh shell on every call and stores what changed, up to 16 MiB compressed; an ephemeral one keeps nothing. The shell's own layout (`/bin`, `/dev`, `/proc`) is rebuilt every time and never stored.
+- Files are the sandbox's whole state. A persistent sandbox restores them into a fresh shell on every call and stores what changed, up to 32 MiB on disk and 16 MiB compressed; an ephemeral one keeps nothing. The shell's own layout (`/bin`, `/dev`, `/proc`) is rebuilt every time and never stored.
 - Each call runs in 128 MB of memory, and a command that never yields is stopped at the timeout by the isolate's CPU limit.
 - `size` does nothing, like on `lambda`: every command gets the same 128 MB. `snapshot`, `lifecycle`, `onCreate`, `onResume` and workspaces are rejected. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
 - `config.harness` agents cannot run here. Use `sandbox` or `lambda`.

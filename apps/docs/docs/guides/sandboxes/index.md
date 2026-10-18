@@ -82,10 +82,10 @@ flowchart TD
 | `timeout`              | 30                     | Seconds per call. Maximum 600, or 60 on `isolate`                                                                                                  |
 | `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                                                               |
 | `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                                                        |
-| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey`                                  |
+| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, `cloudflare` and `isolate`, only `workspaceRoot` and `reservationKey`      |
 | `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                                                            |
 | `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                                                               |
-| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                                                    |
+| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`, `cloudflare`, `isolate`                                                           |
 
 `envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, the background-job slots and the run identity `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID`, `BROODS_BASE_URL`. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
 
