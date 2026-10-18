@@ -283,7 +283,7 @@ export function TokensUsagePanel({
 
   return (
     <div className="grid gap-8">
-      <AllowanceUsage projectId={projectId} />
+      <AllowanceUsage view={{ scope: "project", projectId: projectId }} />
       <section className="grid gap-4">
         <h2 className="text-sm font-semibold text-foreground">Tokens</h2>
         <UsageToolbar

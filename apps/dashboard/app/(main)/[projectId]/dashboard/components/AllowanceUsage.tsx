@@ -8,7 +8,6 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { HelpMark } from "@/app/components/HelpMark";
-import { SegmentedControl } from "@/app/components/SegmentedControl";
 import { Separator } from "@/app/components/ui/separator";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import {
@@ -36,23 +35,21 @@ import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
 import Link from "next/link";
-import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
 import { UsageChart, UsageLegend } from "./UsageChart";
 
 const DAY_SECONDS = 24 * 60 * 60;
 
-export type AllowanceScope = "project" | "all";
+// Where the org's page of every project's month lives.
+const ORG_USAGE_HREF = "/settings/org?tab=usage";
 
-const SCOPES: Array<{ id: AllowanceScope; label: string }> = [
-  { id: "project", label: "This project" },
-  { id: "all", label: "All projects" },
-];
-
-// The scope in the URL, so a link opens the same view.
-const SCOPE_PARAM = parseAsStringLiteral(SCOPES.map((scope) => scope.id))
-  .withDefault("project")
-  .withOptions({ clearOnDefault: true });
+/**
+ * Whose month the resources show: one project's part of the org's caps, on
+ * its Usage tab, or every project's, on the organization's Usage page.
+ */
+export type AllowanceView =
+  | { scope: "project"; projectId: string }
+  | { scope: "all" };
 
 // One row per resource. `share` names the cap it counts toward; ingress is
 // free, so it has none. `help` says what the amount is counted from, where
@@ -112,20 +109,19 @@ interface AllowanceRow {
 }
 
 /**
- * The Usage tab's Allowance: the org's month per resource against its caps,
- * with a month picker, seen from this project (its part of each cap) or from
- * all projects (each project's part, and a table of them). Clicking a row
- * charts that resource per day under the table. Holds the last month while
- * another loads, so the table and chart ease to it instead of dropping to a
- * skeleton first.
+ * Resources: the org's month per resource against its caps, with a month
+ * picker, seen from one project (its part of each cap, the rest grey) or
+ * from all projects (each project's part, and a table of them). Clicking a
+ * row charts that resource per day under the table. Holds the last month
+ * while another loads, so the table and chart ease to it instead of
+ * dropping to a skeleton first.
  */
 export function AllowanceUsage({
-  projectId,
+  view,
 }: {
-  projectId: string;
+  view: AllowanceView;
 }): React.JSX.Element {
   const [month, setMonth] = useState<string | undefined>(undefined);
-  const [scope, setScope] = useQueryState("allowance", SCOPE_PARAM);
   const usage = useQuery(api.account.budget.getForActiveOrg, {
     month: month,
     withProjects: true,
@@ -143,11 +139,9 @@ export function AllowanceUsage({
   }
 
   return (
-    <AllowanceView
+    <AllowancePanel
       budget={budget}
-      projectId={projectId}
-      scope={scope}
-      onScopeChange={(next) => void setScope(next)}
+      view={view}
       month={month}
       onMonthChange={handleMonthChange}
     />
@@ -155,32 +149,28 @@ export function AllowanceUsage({
 }
 
 /**
- * The Allowance as drawn, from data: the live tab feeds it from Convex, the
+ * Resources as drawn, from data: the live pages feed it from Convex, the
  * gallery from fixtures. `budget` undefined is still loading.
  */
-export function AllowanceView({
+export function AllowancePanel({
   budget,
-  projectId,
-  scope,
-  onScopeChange,
+  view,
   month,
   onMonthChange,
 }: {
   budget: BudgetUsage | null | undefined;
-  projectId: string;
-  scope: AllowanceScope;
-  onScopeChange: (scope: AllowanceScope) => void;
+  view: AllowanceView;
   month: string | undefined;
   onMonthChange: (month: string) => void;
 }): React.JSX.Element {
   return (
     <section
       className="grid min-w-0 gap-3 *:min-w-0"
-      data-allowance-scope={scope}
+      data-allowance-scope={view.scope}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-foreground">Allowance</h2>
+          <h2 className="text-sm font-semibold text-foreground">Resources</h2>
           {budget && (
             <span className="text-xs text-muted-foreground">
               {resetLabel(budget)}
@@ -188,12 +178,14 @@ export function AllowanceView({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl
-            options={SCOPES}
-            value={scope}
-            onChange={onScopeChange}
-            ariaLabel="Usage of"
-          />
+          {view.scope === "project" && (
+            <Link
+              href={ORG_USAGE_HREF}
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              All projects →
+            </Link>
+          )}
           {budget && (
             <Select
               items={budget.months.map((option) => ({
@@ -226,35 +218,37 @@ export function AllowanceView({
           No account in this organization yet.
         </p>
       ) : (
-        <ScopedAllowance budget={budget} projectId={projectId} scope={scope} />
+        <ScopedAllowance budget={budget} view={view} />
       )}
     </section>
   );
 }
 
 /**
- * The org's caps per resource and a daily chart of the picked one. From this
+ * The org's caps per resource and a daily chart of the picked one. From one
  * project: its amount leads, and each bar's solid part is it and the grey
  * part the other projects. From all projects: each bar is split by project,
  * and a table of the projects follows.
  */
 function ScopedAllowance({
   budget,
-  projectId,
-  scope,
+  view,
 }: {
   budget: BudgetUsage;
-  projectId: string;
-  scope: AllowanceScope;
+  view: AllowanceView;
 }): React.JSX.Element {
   const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
   const projectCount = budget.projects?.length ?? 0;
+  // The project's id, not the view object: the page rebuilds that on every render.
+  const projectId = view.scope === "project" ? view.projectId : null;
   const slices = useMemo(
     () =>
-      scope === "all" ? usageSlices(budget) : projectSlices(budget, projectId),
-    [budget, projectId, scope],
+      projectId === null
+        ? usageSlices(budget)
+        : projectSlices(budget, projectId),
+    [budget, projectId],
   );
-  const own = scope === "project" ? slices[0] : null;
+  const own = projectId === null ? null : slices[0];
   const legend = useMemo(
     () =>
       slices.map((slice) => ({
@@ -313,12 +307,7 @@ function ScopedAllowance({
         </div>
       </div>
       {!own && (
-        <ProjectsTable
-          budget={budget}
-          slices={slices}
-          picked={picked}
-          projectId={projectId}
-        />
+        <ProjectsTable budget={budget} slices={slices} picked={picked} />
       )}
     </div>
   );
@@ -533,12 +522,10 @@ function ProjectsTable({
   budget,
   slices,
   picked,
-  projectId,
 }: {
   budget: BudgetUsage;
   slices: UsageSlice[];
   picked: AllowanceRow;
-  projectId: string;
 }): React.JSX.Element {
   const total = budget.totals[picked.key];
   const sorted = [...slices].sort((a, b) => {
@@ -599,11 +586,6 @@ function ProjectsTable({
                         >
                           {slice.name}
                         </Link>
-                      )}
-                      {slice.projectId === projectId && (
-                        <span className="text-2xs text-muted-foreground">
-                          This project
-                        </span>
                       )}
                     </span>
                   </TableCell>

@@ -1,5 +1,6 @@
 "use client";
 
+import { AllowanceUsage } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import { ORG_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -13,8 +14,9 @@ import { OrgPoliciesPanel } from "./components/OrgPoliciesPanel";
 import { PermissionsPanel } from "./components/PermissionsPanel";
 import { RolesPanel } from "./components/RolesPanel";
 
-// The key list takes the full width but keeps the card frame and margins.
-const WIDE_TABS = new Set<string>(["api-access"]);
+// The key list and the usage tables take the full width but keep the card
+// frame and margins.
+const WIDE_TABS = new Set<string>(["api-access", "usage"]);
 
 // The member and access lists are laid out like Monitoring: the toolbar, the
 // table and the detail panel fill the page edge to edge, nothing scrolls but
@@ -36,6 +38,8 @@ export default function OrgSettingsPage(): React.JSX.Element {
     switch (tab.id) {
       case "general":
         return <OrgGeneralPanel org={org} />;
+      case "usage":
+        return <AllowanceUsage view={{ scope: "all" }} />;
       case "api-access":
         return <ApiAccessPanel org={org} />;
       case "members":

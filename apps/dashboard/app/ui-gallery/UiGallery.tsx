@@ -448,8 +448,15 @@ export function UiGallery(): React.JSX.Element {
       </section>
 
       <section data-fixture="allowance" className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">Allowance by project</h2>
-        <AllowanceStandIn />
+        <h2 className="text-sm font-medium">Resources, one project</h2>
+        <AllowanceStandIn
+          view={{ scope: "project", projectId: "support-bot" }}
+        />
+      </section>
+
+      <section data-fixture="allowance-org" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Resources, every project</h2>
+        <AllowanceStandIn view={{ scope: "all" }} />
       </section>
 
       <section data-fixture="canvas-controls" className="flex flex-col gap-2">

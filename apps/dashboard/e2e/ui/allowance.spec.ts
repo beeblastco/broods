@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// The fixture: one org's October across four projects, seen from Support bot.
+// The fixtures: one org's October across four projects, seen from Support
+// bot's Usage tab, and the same month on the organization's Usage page.
 const ALLOWANCE = '[data-fixture="allowance"]';
+const ORG_ALLOWANCE = '[data-fixture="allowance-org"]';
 
 test("this project leads each resource, and its piece of the bar is its share of the org's", async ({
   page,
@@ -21,6 +23,9 @@ test("this project leads each resource, and its piece of the bar is its share of
   await expect(sandbox).toContainText("28.9 h");
   await expect(sandbox).toContainText("92.7 h");
   await expect(sandbox).toContainText("46%");
+  await expect(
+    allowance.getByRole("link", { name: "All projects →" }),
+  ).toHaveAttribute("href", "/settings/org?tab=usage");
 
   const track = (await sandbox.locator("div.bg-muted").boundingBox())!;
   const used = (await sandbox.locator("div.bg-muted > div").boundingBox())!;
@@ -38,8 +43,7 @@ test("all projects lists every project, busiest first on the picked resource", a
   page,
 }) => {
   await openGallery(page);
-  const allowance = page.locator(ALLOWANCE);
-  await allowance.getByRole("button", { name: "All projects" }).click();
+  const allowance = page.locator(ORG_ALLOWANCE);
 
   await expect(allowance.locator("[data-allowance-scope]")).toHaveAttribute(
     "data-allowance-scope",
@@ -48,7 +52,7 @@ test("all projects lists every project, busiest first on the picked resource", a
   const byProject = allowance.locator("section:has(> h3)").getByRole("row");
   const names = async (): Promise<string[]> =>
     (await byProject.locator("td:first-child").allTextContents()).map((name) =>
-      name.replace("This project", "").replace("?", "").trim(),
+      name.replace("?", "").trim(),
     );
 
   await expect(
@@ -79,8 +83,8 @@ test("on a phone the tables scroll inside their card, not the page", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openGallery(page);
-  const allowance = page.locator(ALLOWANCE);
-  await allowance.getByRole("button", { name: "All projects" }).click();
+  const allowance = page.locator(ORG_ALLOWANCE);
+  await allowance.scrollIntoViewIfNeeded();
 
   const box = (await allowance.boundingBox())!;
   expect(box.x + box.width).toBeLessThanOrEqual(390);

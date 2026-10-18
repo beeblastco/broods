@@ -64,6 +64,7 @@ export const SETTINGS_TABS = [
 
 export const ORG_TABS = [
   { id: "general", label: "General" },
+  { id: "usage", label: "Usage" },
   { id: "members", label: "Members" },
   { id: "roles", label: "Roles" },
   { id: "policies", label: "Policies" },
