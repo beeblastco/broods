@@ -319,6 +319,13 @@ interface RoleSessionStore {
   resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;
 }
 
+/** The project a usage write came from, or the agent or workspace that names it. */
+export interface UsageSource {
+  projectId?: string;
+  agentId?: string;
+  workspaceId?: string;
+}
+
 /**
  * The account's monthly compute budget and the usage only core sees:
  * hosted-MCP invokes, media egress and attachment ingress. Sandbox time and
@@ -327,13 +334,17 @@ interface RoleSessionStore {
 interface BudgetStore {
   /** Null for an unknown account. */
   get(accountId: string): Promise<BudgetStatus | null>;
-  /** Never throws: a failed write is retried, then logged with its usage. */
+  /**
+   * Never throws: a failed write is retried, then logged with its usage.
+   * `source` names what used it, so the Usage tab can split it by project.
+   */
   record(
     accountId: string,
     usage: Pick<
       Partial<UsageQuantities>,
       "hostedMcpGbSeconds" | "hostedMcpRequests" | "egressGb" | "ingressGb"
     >,
+    source?: UsageSource,
   ): Promise<void>;
   /** True for the one caller that should send this month's 80% warning. */
   claimWarning(accountId: string): Promise<boolean>;

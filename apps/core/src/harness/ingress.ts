@@ -68,6 +68,11 @@ export interface AsyncResultSettlement {
   outcome: AsyncAgentOutcome;
 }
 
+/** History rows a fenced settle or takeNext stores before it settles. */
+export type OwnedEventRows = NonNullable<
+  Parameters<typeof runtime.mutate<"takeNextIngress">>[1]["events"]
+>;
+
 /** The terminal outcome `takeNextIngress` can settle in the same mutation. */
 export interface IngressSettlement {
   status: "completed" | "failed";
@@ -655,7 +660,8 @@ export function renewIngressOwner(
 
 /**
  * Settles every envelope applied to one active event under the fencing token,
- * and an async run's polling rows in the same mutation.
+ * and an async run's polling rows and unwritten history rows in the same
+ * mutation.
  */
 export function settleIngress(options: {
   conversationKey: string;
@@ -665,6 +671,7 @@ export function settleIngress(options: {
   result?: unknown;
   error?: string;
   asyncResult?: AsyncResultSettlement;
+  events?: OwnedEventRows;
 }): Promise<number> {
   return runtime.mutate("settleIngress", options);
 }
@@ -686,15 +693,20 @@ export function outcomeSettlement(
   return { status: "completed", result: outcome };
 }
 
-/** Takes the next FIFO follow-up or contiguous collect application, settling first when given one. */
+/**
+ * Takes the next FIFO follow-up or contiguous collect application, storing
+ * `events` and settling first when given them.
+ */
 export async function takeNextIngress(
   options: LiveOwner,
   settle?: IngressSettlement,
+  events: OwnedEventRows = [],
 ): Promise<AppliedIngress | null> {
   const next = await runtime.mutate("takeNextIngress", {
     ...options,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
     ...(settle ? { settle: settle } : {}),
+    ...(events.length > 0 ? { events: events } : {}),
   });
   // Either the lease moved to the next application or it was released.
   forgetOwner(options);

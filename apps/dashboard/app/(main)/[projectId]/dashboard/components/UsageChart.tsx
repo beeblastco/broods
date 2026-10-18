@@ -7,6 +7,7 @@ import {
   resampleRows,
   type TokenParts,
 } from "@/app/lib/usageChart";
+import { cn } from "@/app/lib/utils";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 const PAD_TOP = 6;
@@ -123,8 +124,12 @@ export function UsageChart({
   const yMax = useTween(yMaxTarget)[0][0] || 1;
   const tweened = useTween(drawn);
   const n = bucketStarts.length;
-  // The first frame after a range switch still holds the old bin count.
-  const shown = tweened.length === n ? tweened : resampleRows(tweened, n);
+  // The first frame after a range switch still holds the old bin count, and
+  // after a series switch the old series count: a series it lacks starts at 0.
+  const shown = (tweened.length === n ? tweened : resampleRows(tweened, n)).map(
+    (row) =>
+      row.length === series.length ? row : series.map((_, k) => row[k] ?? 0),
+  );
   const innerH = height - PAD_TOP - PAD_BOTTOM;
   const scale: Scale = {
     width: width,
@@ -223,6 +228,34 @@ export function UsageChart({
           clickable={onSelect !== undefined}
         />
       )}
+    </div>
+  );
+}
+
+/** A swatch and label per series, under a chart. */
+export function UsageLegend({
+  series,
+  className,
+}: {
+  series: UsageChartSeries[];
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap gap-3 text-2xs text-muted-foreground",
+        className,
+      )}
+    >
+      {series.map((s) => (
+        <span key={s.key} className="flex items-center gap-1.5">
+          <span
+            className="size-2 rounded-sm bg-(--series-color)"
+            style={{ "--series-color": s.color }}
+          />
+          {s.label}
+        </span>
+      ))}
     </div>
   );
 }

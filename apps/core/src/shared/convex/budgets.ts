@@ -28,7 +28,7 @@ export const budgets: Storage["budgets"] = {
       accountId: accountId,
     });
   },
-  record: async function (accountId, usage): Promise<void> {
+  record: async function (accountId, usage, source): Promise<void> {
     // One id for every attempt: a retry after a lost response is applied once.
     const writeId = crypto.randomUUID();
     for (const [attempt, delayMs] of RECORD_RETRY_DELAYS_MS.entries()) {
@@ -36,7 +36,12 @@ export const budgets: Storage["budgets"] = {
       try {
         await adminMutation(
           internal.account.budget.record,
-          { accountId: accountId, usage: usage, writeId: writeId },
+          {
+            accountId: accountId,
+            usage: usage,
+            writeId: writeId,
+            ...(source ? { source: source } : {}),
+          },
           { skipQueue: true },
         );
 
@@ -47,6 +52,7 @@ export const budgets: Storage["budgets"] = {
         logError("Usage meter write failed (convex)", {
           accountId: accountId,
           usage: usage,
+          ...(source ? { source: source } : {}),
           error: err instanceof Error ? err.message : String(err),
         });
       }

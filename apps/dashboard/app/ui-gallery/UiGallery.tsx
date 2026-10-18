@@ -104,6 +104,7 @@ import { SandboxInstancesStandIn } from "./SandboxInstancesStandIn";
 import { DataTableStandIn } from "./DataTableStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
+import { AllowanceStandIn } from "./AllowanceStandIn";
 
 // The press-and-drag fixture's select, a level list like the side panel's.
 const LEVEL_OPTIONS = [
@@ -444,6 +445,11 @@ export function UiGallery(): React.JSX.Element {
       <section data-fixture="usage-chart" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Usage chart</h2>
         <UsageChartStandIn />
+      </section>
+
+      <section data-fixture="allowance" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Allowance by project</h2>
+        <AllowanceStandIn />
       </section>
 
       <section data-fixture="canvas-controls" className="flex flex-col gap-2">

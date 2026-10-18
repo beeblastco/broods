@@ -61,19 +61,22 @@ export const snapshotAccount = internalAction({
   args: { accountId: v.id("accounts"), snapshotAt: v.number() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const workspaceIds: Id<"workspaceConfigs">[] = [];
+    const workspaces: Array<{
+      workspaceId: Id<"workspaceConfigs">;
+      projectId?: Id<"projects">;
+    }> = [];
     let cursor: string | null = null;
     let isDone = false;
     while (!isDone) {
       const result: {
-        page: Id<"workspaceConfigs">[];
+        page: typeof workspaces;
         isDone: boolean;
         continueCursor: string;
-      } = await ctx.runQuery(internal.account.budget.listWorkspaceIds, {
+      } = await ctx.runQuery(internal.account.budget.listWorkspaces, {
         accountId: args.accountId,
         paginationOpts: { numItems: WORKSPACE_PAGE_SIZE, cursor: cursor },
       });
-      workspaceIds.push(...result.page);
+      workspaces.push(...result.page);
       cursor = result.continueCursor;
       isDone = result.isDone;
     }
@@ -90,22 +93,43 @@ export const snapshotAccount = internalAction({
         [bundles, `account-mcp/${encoded}/`],
       );
     }
-    for (const workspaceId of workspaceIds) {
-      const namespace = await workspaceNamespace(args.accountId, workspaceId);
-      prefixes.push([filesystem, `${namespace}/`]);
-    }
     let bytes = 0;
     for (const [bucket, prefix] of prefixes) {
-      for (const object of await listS3Prefix(bucket, prefix)) {
-        bytes += object.size ?? 0;
+      bytes += await prefixBytes(bucket, prefix);
+    }
+    // A project's share is what its own workspaces hold.
+    const projectBytes = new Map<Id<"projects">, number>();
+    for (const { workspaceId, projectId } of workspaces) {
+      const namespace = await workspaceNamespace(args.accountId, workspaceId);
+      const held = await prefixBytes(filesystem, `${namespace}/`);
+      bytes += held;
+      if (projectId) {
+        projectBytes.set(projectId, (projectBytes.get(projectId) ?? 0) + held);
       }
     }
     await ctx.runMutation(internal.account.budget.record, {
       accountId: args.accountId,
-      usage: { storageGbMonths: bytes / BYTES_PER_GB / DAYS_PER_MONTH },
+      usage: { storageGbMonths: toGbMonths(bytes) },
       at: args.snapshotAt,
+      projectStorage: [...projectBytes].map(([projectId, held]) => ({
+        projectId: projectId,
+        storageGbMonths: toGbMonths(held),
+      })),
     });
 
     return null;
   },
 });
+
+async function prefixBytes(bucket: string, prefix: string): Promise<number> {
+  let bytes = 0;
+  for (const object of await listS3Prefix(bucket, prefix)) {
+    bytes += object.size ?? 0;
+  }
+
+  return bytes;
+}
+
+function toGbMonths(bytes: number): number {
+  return bytes / BYTES_PER_GB / DAYS_PER_MONTH;
+}

@@ -18,6 +18,7 @@ import { machineSandbox } from "./machine-sandbox.ts";
 import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { productionRegion } from "./production-region.ts";
+import { projectUsage } from "./project-usage.ts";
 import { providerSnapshot } from "./provider-snapshot.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
@@ -75,6 +76,7 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   manifestSync,
   productionRegion,
+  projectUsage,
   mcpHeaderEnv,
   r2Workspace,
   workToolWebhooks,

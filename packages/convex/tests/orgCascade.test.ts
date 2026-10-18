@@ -74,6 +74,28 @@ test("org deletion drains account contents in scheduled batches", async () => {
         ingressGb: 0,
         updatedAt: now,
       });
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: orgId,
+        name: "Support bot",
+        slug: "support-bot",
+        updatedAt: now,
+      });
+      await ctx.db.insert("usageProjectDays", {
+        accountId: accountId,
+        projectId: projectId,
+        day: "2026-09-01",
+        sandboxVcpuSeconds: 1,
+        sandboxGbSeconds: 2,
+        sandboxSnapshotGb: 0,
+        sandboxSnapshotGbMonths: 0,
+        hostedMcpGbSeconds: 0,
+        hostedMcpRequests: 0,
+        storageGbMonths: 0,
+        egressGb: 0,
+        ingressGb: 0,
+        updatedAt: now,
+      });
       await ctx.db.insert("accountKeys", {
         accountId: accountId,
         keyId: "key_1",
@@ -122,6 +144,7 @@ test("org deletion drains account contents in scheduled batches", async () => {
       expect(await ctx.db.query("accountRoles").collect()).toEqual([]);
       expect(await ctx.db.query("usageMeters").collect()).toEqual([]);
       expect(await ctx.db.query("usageDays").collect()).toEqual([]);
+      expect(await ctx.db.query("usageProjectDays").collect()).toEqual([]);
     });
   } finally {
     vi.useRealTimers();

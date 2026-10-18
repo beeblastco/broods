@@ -577,6 +577,61 @@ describe("runtime ingress", () => {
     }
   });
 
+  test("takeNext and settle store the owner's last rows under the same fence", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    const fence = {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+    };
+
+    await t.mutation(internal.runtimeIngress.settle, {
+      ...fence,
+      status: "completed",
+      result: "done",
+      events: [{ cursor: "001", event: { role: "user", content: "hello" } }],
+    });
+    expect(
+      await t.mutation(internal.runtimeIngress.takeNext, {
+        ...fence,
+        leaseTtlMs: 60_000,
+        events: [
+          { cursor: "002", event: { role: "assistant", content: "hi" } },
+        ],
+      }),
+    ).toBeNull();
+
+    const stored = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
+    expect(stored.page.map((row) => row.cursor)).toEqual(["001", "002"]);
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_owner",
+      }),
+    ).toMatchObject({ status: "completed", result: "done" });
+    // A moved fence stores nothing.
+    await expect(
+      t.mutation(internal.runtimeIngress.settle, {
+        ...fence,
+        status: "failed",
+        events: [{ cursor: "003", event: { role: "user", content: "late" } }],
+      }),
+    ).rejects.toThrow();
+  });
+
   test("stepBoundary stores the step and claims the waiting steer for its owner", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

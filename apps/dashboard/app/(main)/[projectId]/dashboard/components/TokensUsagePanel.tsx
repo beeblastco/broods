@@ -20,6 +20,7 @@ import { formatNumber } from "@/app/lib/formatNumber";
 import {
   bucketStartsAcrossRange,
   formatAxisNumber,
+  SERIES_COLORS,
   tokenParts,
 } from "@/app/lib/usageChart";
 import { parseAsEpochMs, parseAsModelKeys } from "@/app/lib/urlState";
@@ -36,7 +37,7 @@ import {
   formatBucketLabel,
   TOKEN_SERIES,
   UsageChart,
-  type UsageChartSeries,
+  UsageLegend,
 } from "./UsageChart";
 import { AllowanceUsage } from "./AllowanceUsage";
 import { UsageTraceRail } from "./UsageTraceRail";
@@ -127,15 +128,6 @@ const COUNTER_KEYS: CounterKey[] = [
   "invocations",
   "modelCalls",
   "runtimeWallMs",
-];
-
-const MODEL_COLORS = [
-  "var(--color-usage-model-1)",
-  "var(--color-usage-model-2)",
-  "var(--color-usage-model-3)",
-  "var(--color-usage-model-4)",
-  "var(--color-usage-model-5)",
-  "var(--color-usage-model-6)",
 ];
 
 const EMPTY_LIVE_OVERLAY: LiveOverlay = {
@@ -291,7 +283,7 @@ export function TokensUsagePanel({
 
   return (
     <div className="grid gap-8">
-      <AllowanceUsage />
+      <AllowanceUsage projectId={projectId} />
       <section className="grid gap-4">
         <h2 className="text-sm font-semibold text-foreground">Tokens</h2>
         <UsageToolbar
@@ -342,7 +334,7 @@ export function TokensUsagePanel({
               formatAxis={formatAxisNumber}
               formatValue={formatNumber}
             />
-            <Legend series={TOKEN_SERIES} />
+            <UsageLegend series={TOKEN_SERIES} className="pt-2" />
           </div>
           {selected !== null && (
             <UsageTraceRail
@@ -358,23 +350,6 @@ export function TokensUsagePanel({
           )}
         </div>
       </section>
-    </div>
-  );
-}
-
-/** Swatch and label per series, under each chart. */
-function Legend({ series }: { series: UsageChartSeries[] }): React.JSX.Element {
-  return (
-    <div className="flex flex-wrap gap-3 pt-2 text-2xs text-muted-foreground">
-      {series.map((s) => (
-        <span key={s.key} className="flex items-center gap-1.5">
-          <span
-            className="size-2 rounded-sm bg-(--series-color)"
-            style={{ "--series-color": s.color }}
-          />
-          {s.label}
-        </span>
-      ))}
     </div>
   );
 }
@@ -641,7 +616,7 @@ function colorModels(buckets: Bucket[]): Map<string, string> {
   const keys = [...new Set(buckets.map(modelKey))].sort();
 
   return new Map(
-    keys.map((key, i) => [key, MODEL_COLORS[i % MODEL_COLORS.length]]),
+    keys.map((key, i) => [key, SERIES_COLORS[i % SERIES_COLORS.length]]),
   );
 }
 

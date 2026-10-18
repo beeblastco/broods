@@ -219,9 +219,134 @@ describe("settling with takeNext", (): void => {
       result: "answer",
     });
   });
+
+  it("hands the rows still waiting to takeNext, and to its fallback settle keyed for a retry", async (): Promise<void> => {
+    const takeNext = spyOn(ingress, "takeNextIngress").mockRejectedValue(
+      new Error("takeNext failed"),
+    );
+    const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    runtime.query = (async (name: string): Promise<unknown> =>
+      name === "listConversationEvents"
+        ? { page: [], isDone: true, continueCursor: null }
+        : null) as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      accountId: "acct_1",
+      agentId: "agent_1",
+      agentConfig: { skills: { enabled: false } },
+      ownerGeneration: 1,
+    });
+    await session.createTurnContext([], [{ role: "user", content: "hello" }]);
+
+    const error = await session
+      .takeNextIngress({ status: "failed", error: "no step ran" })
+      .catch((err: unknown): unknown => err);
+
+    expect(error).toEqual(new Error("takeNext failed"));
+    expect(takeNext.mock.calls[0]?.[2]).toMatchObject([
+      { event: { message: { role: "user", content: "hello" } } },
+    ]);
+    const rows = takeNext.mock.calls[0]?.[2] ?? [];
+    expect(rows[0]?.dedupeKey).toBe(rows[0]?.cursor);
+    expect(settle).toHaveBeenCalledWith({
+      conversationKey: candidate().conversationKey,
+      ownerEventId: "event-1",
+      ownerGeneration: 1,
+      status: "failed",
+      error: "no step ran",
+      events: rows,
+    });
+  });
 });
 
 describe("step boundary", (): void => {
+  it("stores the turn's input with the first boundary, and nothing before it", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    runtime.query = (async (name: string): Promise<unknown> =>
+      name === "listConversationEvents"
+        ? { page: [], isDone: true, continueCursor: null }
+        : null) as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      accountId: "acct_1",
+      agentId: "agent_1",
+      agentConfig: { skills: { enabled: false } },
+      ownerGeneration: 1,
+    });
+
+    const turnContext = await session.createTurnContext(
+      [],
+      [{ role: "user", content: "hello" }],
+    );
+    expect(turnContext.messages).toMatchObject([
+      { role: "user", content: "hello" },
+    ]);
+    expect(calls).toEqual([]);
+
+    await session.stepBoundary([{ role: "assistant", content: "hi" }]);
+
+    expect(calls.map(([name]): string => name)).toEqual([
+      "stepIngressBoundary",
+    ]);
+    expect(calls[0]?.[1]).toMatchObject({
+      events: [
+        { event: { message: { role: "user", content: "hello" } } },
+        { event: { message: { role: "assistant", content: "hi" } } },
+      ],
+    });
+  });
+
+  it("keeps the rows of a boundary that threw for the next one, keyed by cursor", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+      if (calls.length === 1) throw new Error("boundary lost");
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+
+    const error = await session
+      .stepBoundary([{ role: "assistant", content: "first" }])
+      .catch((err: unknown): unknown => err);
+    await session.stepBoundary([{ role: "assistant", content: "second" }]);
+
+    expect(error).toEqual(new Error("boundary lost"));
+    const [first, second] = calls.map(([, args]): unknown => args.events) as [
+      { cursor: string; dedupeKey?: string }[],
+      { cursor: string; dedupeKey?: string }[],
+    ];
+    // Keyed from the first attempt: a commit whose reply was lost is skipped.
+    expect(first.map((row): string | undefined => row.dedupeKey)).toEqual([
+      first[0]!.cursor,
+    ]);
+    expect(second.map((row): string => row.cursor)).toEqual([
+      first[0]!.cursor,
+      second[1]!.cursor,
+    ]);
+    expect(second.map((row): string | undefined => row.dedupeKey)).toEqual(
+      second.map((row): string => row.cursor),
+    );
+  });
+
   it("stores the step, renews and claims steers in one fenced mutation that proves ownership", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     const steering: AppliedIngress = {
