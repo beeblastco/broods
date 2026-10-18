@@ -2,12 +2,15 @@ import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   MODEL_KEY_HINT,
   assertStep,
+  convexResult,
   lastJsonLine,
   runToTerminal,
   type VerifyContext,
 } from "../harness.ts";
 
 const CODE = "ALPHA-47";
+// The scope every runtime key carries, `acct:<account>:agent:<agent>`, ends here.
+const API_SCOPE_MARKER = ":api:";
 
 interface SubagentStartedLog {
   agentId: string;
@@ -54,6 +57,7 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     console.log("  skip subagent resume (the parent answered without one)");
     return;
   }
+  assertHandedBackOnce(context, first, key);
   // The model gets the exact key, so the check does not hang on it recalling
   // the key from history: it once started a fresh child and resumed that one.
   // Matching the resume on this key still catches it reaching another child.
@@ -85,6 +89,50 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     "the resumed virtual subagent loaded its first task's prompt and answer",
     prepared !== null && prepared.historyRows >= 3,
     JSON.stringify(prepared),
+  );
+}
+
+/**
+ * The child's result reached the parent exactly once: the parent's
+ * conversation holds one result row for the task, and the child's result row
+ * records the hand-back as stored, so no late resume or sweep repeats it.
+ */
+function assertHandedBackOnce(
+  context: VerifyContext,
+  child: SubagentStartedLog,
+  parentKey: string,
+): void {
+  const scopeOf = (scopedKey: string): string =>
+    scopedKey.slice(0, scopedKey.indexOf(API_SCOPE_MARKER));
+  const row = convexResult(
+    context,
+    "runtime:getAsyncAgentResult",
+    { eventId: `${scopeOf(child.conversationKey)}:api:${child.taskId}` },
+    "read the child's result row",
+  ) as { status: string; handback?: string } | null;
+  assertStep(
+    "the child's result row is stored with its parent",
+    row?.status === "completed" && row.handback === "stored",
+    JSON.stringify(row),
+  );
+  const history = convexResult(
+    context,
+    "runtime:listConversationEvents",
+    { conversationKey: `${scopeOf(child.parentEventId)}:api:${parentKey}` },
+    "read the parent's conversation",
+  ) as { page: Array<{ event: unknown }> };
+  const results = history.page.filter((entry): boolean => {
+    const text = JSON.stringify(entry.event);
+
+    return (
+      text.includes(`taskId: ${child.taskId}`) &&
+      text.includes("status: completed")
+    );
+  });
+  assertStep(
+    "the parent's conversation holds the child's result once",
+    results.length === 1,
+    JSON.stringify(results),
   );
 }
 

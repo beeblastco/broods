@@ -5,6 +5,7 @@ import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
+import { handbackValidator } from "./model/subagentResults";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:applySubscriptionInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -1325,7 +1326,10 @@ export const runtimeAsyncAgentResultsFields = {
   subagent: v.optional(subagentTaskValidator),
   // False once the parent stopped waiting on this subagent and has not seen its
   // result; true once it has, read with get_subagent_status or resumed with it.
+  // Read beside `handback` for one release, for rows written before it.
   observed: v.optional(v.boolean()),
+  // Set once a subagent's row finishes; see `handbackValidator`.
+  handback: v.optional(handbackValidator),
   status: v.union(
     v.literal("processing"),
     v.literal("awaiting_approval"),
@@ -1867,6 +1871,11 @@ export default defineSchema({
     .index("by_expiresAt", ["expiresAt"])
     .index("by_observed_and_status_and_updatedAt", [
       "observed",
+      "status",
+      "updatedAt",
+    ])
+    .index("by_handback_and_status_and_updatedAt", [
+      "handback",
       "status",
       "updatedAt",
     ]),
