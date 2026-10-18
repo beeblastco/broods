@@ -48,6 +48,9 @@
   "overrides": {
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
+    "guarded-fetch": {
+      "undici": "7.30.0"
+    },
     "katex": "^0.18.2",
     "pi-mcp-adapter": {
       "@modelcontextprotocol/client": "2.2.0"

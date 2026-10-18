@@ -66,7 +66,7 @@ beforeEach((): void => {
   const usageSpy = spyOn(planLimits, "recordUsage").mockImplementation(
     (accountId, usage, source): void => {
       metered.push(
-        `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"}`,
+        `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"} ${source?.agentId ?? "-"}`,
       );
     },
   );
@@ -181,16 +181,23 @@ it("runs an ephemeral command on an empty disk and keeps no row for it", async (
   expect(mirrored).toEqual([]);
 });
 
-it("meters each command's time and request to the account and its project", async (): Promise<void> => {
+it("meters each command's time and request to the account, its project or the run's agent", async (): Promise<void> => {
   await new IsolateSandboxExecutor({
     ...config,
     controlPlane: { ...config.controlPlane!, projectId: "proj" },
   }).run(request);
+  await new IsolateSandboxExecutor(config).run({
+    ...request,
+    metadata: { agentId: "agent-1" },
+  });
   await new IsolateSandboxExecutor({ ...config, controlPlane: undefined }).run(
     request,
   );
 
-  expect(metered).toEqual(['acct {"isolateCpuMs":5,"isolateRequests":1} proj']);
+  expect(metered).toEqual([
+    'acct {"isolateMs":5,"isolateRequests":1} proj -',
+    'acct {"isolateMs":5,"isolateRequests":1} - agent-1',
+  ]);
 });
 
 it("clamps the timeout to the Worker's ceiling and turns internet on from the network mode", async (): Promise<void> => {
@@ -219,6 +226,56 @@ it("reserves one persistent sandbox, keeps its files across runs and mirrors it"
     "upsert acct:workspace false",
     "upsert acct:workspace false",
   ]);
+});
+
+it("runs a command again when another changed the files under it, up to three times", async (): Promise<void> => {
+  let conflicts = 0;
+  const racing = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    calls.push({
+      method: init?.method ?? "GET",
+      url: urlOf(input),
+      authorization: null,
+      body: null,
+    });
+    if (conflicts < 2) {
+      conflicts++;
+
+      return new Response("another command changed the files", {
+        status: 409,
+      });
+    }
+
+    return Response.json(EXEC_OK);
+  };
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(racing, { preconnect: (): void => {} }),
+  );
+  restores.unshift((): void => fetchSpy.mockRestore());
+
+  const result = await new IsolateSandboxExecutor({
+    ...config,
+    persistent: true,
+  }).run(request);
+
+  expect(result.ok).toBe(true);
+  expect(calls).toHaveLength(3);
+
+  conflicts = -10;
+  const failure = await new IsolateSandboxExecutor({
+    ...config,
+    persistent: true,
+  })
+    .run(request)
+    .then(
+      (): string => "ran",
+      (error: unknown): string => String(error),
+    );
+
+  expect(failure).toContain("another command changed the files");
+  expect(calls).toHaveLength(7);
 });
 
 it("never mirrors a reservation whose first command was refused", async (): Promise<void> => {

@@ -1,5 +1,6 @@
 /** Shared sandbox configuration limits and their environment overrides. */
 
+import { ISOLATE_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
 import type { SandboxProvider } from "./domain/sandbox-config.ts";
 import { optionalEnv } from "./env.ts";
 
@@ -8,8 +9,9 @@ const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 
 // Per-call timeout ceilings, lambda and the other providers each with their own
-// env override. A blocking exec is also bounded by the harness request budget
-// (~10 min); detached background jobs are not bounded here.
+// env override; an isolate's is the Worker's CPU limit and takes no override.
+// A blocking exec is also bounded by the harness request budget (~10 min);
+// detached background jobs are not bounded here.
 const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
 const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 
@@ -93,10 +95,12 @@ export function workspaceSandboxLimits(
             "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
             LAMBDA_MAX_TIMEOUT_SECONDS,
           )
-        : positiveIntegerEnv(
-            "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
-            PERSISTENT_MAX_TIMEOUT_SECONDS,
-          ),
+        : provider === "isolate"
+          ? ISOLATE_MAX_TIMEOUT_SECONDS
+          : positiveIntegerEnv(
+              "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
+              PERSISTENT_MAX_TIMEOUT_SECONDS,
+            ),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,

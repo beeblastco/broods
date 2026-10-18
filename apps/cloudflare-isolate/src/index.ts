@@ -86,11 +86,23 @@ async function authorized(request: Request, apiKey: string): Promise<boolean> {
   return crypto.subtle.timingSafeEqual(given, expected);
 }
 
+/** A stored disk and the etag it was read under. */
+interface StoredState {
+  bytes: Uint8Array;
+  etag: string;
+}
+
+/** Another call changed or dropped the stored disk while this one ran. */
+class StateConflict extends Error {}
+
 /**
  * Runs one command in the sandbox's isolate: its stored disk goes in, the
  * disk after the command comes back and is stored again if it changed. The
  * isolate is keyed by what is fixed at load (its network and CPU limit), so a
- * sandbox whose config changes gets a fresh one.
+ * sandbox whose config changes gets a fresh one. Two calls on one sandbox at
+ * once each start from the same disk; the write is conditional on the etag
+ * it was read under, so the second to finish answers 409 and stores nothing,
+ * and core runs it again on the disk the first left.
  */
 async function exec(
   env: Env,
@@ -117,7 +129,7 @@ async function exec(
   const startedAt = Date.now();
   const answer = await worker
     .getEntrypoint<Runtime>("Runtime")
-    .exec(request, before)
+    .exec(request, before?.bytes ?? null)
     .catch((error: unknown): RuntimeExecResult => {
       const message = error instanceof Error ? error.message : String(error);
       if (!CPU_LIMIT.test(message)) throw error;
@@ -128,8 +140,15 @@ async function exec(
     ...answer.result,
     duration_ms: Date.now() - startedAt,
   };
-  if (request.persist && !answer.result.timed_out)
-    await writeState(env.STATE, key, before, answer.state);
+  if (request.persist && !answer.result.timed_out) {
+    try {
+      await writeState(env.STATE, key, before, answer.state);
+    } catch (error) {
+      if (!(error instanceof StateConflict)) throw error;
+
+      return new Response(error.message, { status: 409 });
+    }
+  }
 
   return Response.json(result);
 }
@@ -137,10 +156,14 @@ async function exec(
 async function readState(
   bucket: R2Bucket,
   key: string,
-): Promise<Uint8Array | null> {
+): Promise<StoredState | null> {
   const object = await bucket.get(key);
+  if (object === null) return null;
 
-  return object === null ? null : new Uint8Array(await object.arrayBuffer());
+  return {
+    bytes: new Uint8Array(await object.arrayBuffer()),
+    etag: object.etag,
+  };
 }
 
 function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
@@ -167,16 +190,18 @@ function stopped(message: string): ExecResult {
 }
 
 // A disk past the cap stays as it was, so one runaway write cannot make the
-// sandbox unloadable; the error tells the agent what to clean up.
+// sandbox unloadable; the error tells the agent what to clean up. The put is
+// conditional on the disk still being the one the command started from: the
+// etag it was read under, or no object at all.
 async function writeState(
   bucket: R2Bucket,
   key: string,
-  before: Uint8Array | null,
+  before: StoredState | null,
   after: Uint8Array | null,
 ): Promise<void> {
-  if (sameBytes(before, after)) return;
+  if (sameBytes(before?.bytes ?? null, after)) return;
   if (after === null) {
-    await bucket.delete(key);
+    if (before !== null) await bucket.delete(key);
 
     return;
   }
@@ -184,5 +209,14 @@ async function writeState(
     throw new Error(
       `the sandbox's files exceed ${MAX_STATE_BYTES} bytes compressed; remove some before the next command`,
     );
-  await bucket.put(key, after);
+  const stored = await bucket.put(key, after, {
+    onlyIf:
+      before === null
+        ? new Headers({ "If-None-Match": "*" })
+        : { etagMatches: before.etag },
+  });
+  if (stored === null)
+    throw new StateConflict(
+      "another command changed the sandbox's files while this one ran; it stored nothing",
+    );
 }

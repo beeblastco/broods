@@ -344,7 +344,7 @@ interface BudgetStore {
       Partial<UsageQuantities>,
       | "hostedMcpGbSeconds"
       | "hostedMcpRequests"
-      | "isolateCpuMs"
+      | "isolateMs"
       | "isolateRequests"
       | "egressGb"
       | "ingressGb"
