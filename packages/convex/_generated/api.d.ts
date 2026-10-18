@@ -5465,6 +5465,7 @@ export declare const internal: {
         error?: string;
         eventId: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         observed?: boolean;
         questions?: Array<any>;
         response?: any;
@@ -5761,6 +5762,7 @@ export declare const internal: {
       "internal",
       {
         cursor: string | null;
+        handback?: "pending" | "detached";
         status:
           | "processing"
           | "awaiting_approval"
@@ -5783,6 +5785,7 @@ export declare const internal: {
           error?: string;
           eventId: string;
           expiresAt: number;
+          handback?: "pending" | "detached" | "stored";
           observed?: boolean;
           questions?: Array<any>;
           response?: any;
@@ -5821,10 +5824,10 @@ export declare const internal: {
         }>;
       }
     >;
-    observeAsyncAgentResult: FunctionReference<
+    markAsyncAgentHandback: FunctionReference<
       "mutation",
       "internal",
-      { eventId: string; observed: boolean },
+      { eventId: string; handback: "detached" | "stored" },
       null
     >;
     observeAsyncToolResult: FunctionReference<
