@@ -215,6 +215,23 @@ export declare const api: {
           month: string;
           months: Array<string>;
           plan: "free" | "pro";
+          pool?: {
+            caps: {
+              egressGb: number;
+              hostedMcpHours: number;
+              sandboxHours: number;
+              storageGb: number;
+            };
+            orgs?: number;
+            shared: boolean;
+            shares: {
+              egressGb: number;
+              hostedMcpHours: number;
+              sandboxHours: number;
+              storageGb: number;
+            };
+            usedPercent: number;
+          };
           projects?: Array<{
             days: Array<{
               day: string;

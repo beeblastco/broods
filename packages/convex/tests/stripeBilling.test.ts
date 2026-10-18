@@ -1081,21 +1081,26 @@ describe("creating an org", () => {
     expect(await ownedOrgCount(t)).toBe(1);
   });
 
-  test("a Pro owner creates 3 more orgs, each on Pro", async () => {
+  test("a Pro owner creates orgs up to 10, each on Pro, and the eleventh is refused", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     const t = billingTest();
     await seedPayer(t);
     await sendEvent(t, "customer.subscription.created", subscription("active"));
 
     const created = [];
-    for (const name of ["Second", "Third", "Fourth"]) {
-      created.push(await t.mutation(api.org.orgs.create, { name: name }));
+    for (let index = 2; index <= 10; index += 1) {
+      created.push(
+        await t.mutation(api.org.orgs.create, { name: `Org ${index}` }),
+      );
     }
 
     expect(
       await Promise.all(created.map(async (orgId) => await orgPlan(t, orgId))),
-    ).toEqual(["pro", "pro", "pro"]);
-    expect(await ownedOrgCount(t)).toBe(4);
+    ).toEqual(Array<string>(9).fill("pro"));
+    await expect(
+      t.mutation(api.org.orgs.create, { name: "Org 11" }),
+    ).rejects.toThrow("You own 10 organizations, the most Pro allows.");
+    expect(await ownedOrgCount(t)).toBe(10);
   });
 
   test("an owner whose payment is due is told to fix it, not to upgrade", async () => {
