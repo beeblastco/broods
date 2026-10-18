@@ -13,6 +13,8 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
   accountOrg,
   BUDGET_WARNING_RATIO,
+  type BudgetLevel,
+  budgetLevel,
   isManagedService,
   PLAN_LIMITS,
   type Plan,
@@ -83,12 +85,14 @@ export interface BudgetStatus {
   warned: boolean;
 }
 
-/** Who else draws on the pool an org's caps are measured against. */
+/** The pool an org's caps are measured against, and who else draws on it. */
 export interface PoolUsage {
   /** Orgs drawing on the pool. Absent for a member, who sees only `shared`. */
   orgs?: number;
   /** The owner's other organizations draw on this pool too. */
   shared: boolean;
+  /** The pool's amounts this month, the ones `shares` are measured from. */
+  totals: UsageAmounts;
 }
 
 /**
@@ -114,7 +118,7 @@ export interface BudgetUsage {
   /** This org's own part of `shares`: its amounts over the same caps or cost. */
   orgShares: Record<keyof ResourceCaps, number>;
   /** "warning" from 80% of the closest cap, "exhausted" once runs stop at 100%. */
-  level: "ok" | "warning" | "exhausted";
+  level: BudgetLevel;
   totals: UsageAmounts;
   /** Days of the month with usage or a storage snapshot, oldest first. */
   days: Array<UsageAmounts & { day: string }>;
@@ -368,9 +372,8 @@ export async function budgetUsage(
     enforced && org
       ? await readPool(ctx, accountId, org, month, month === currentMonth)
       : null;
-  const shares = pool
-    ? capShares(toAmounts(pool.usage, pool.storageGb), caps)
-    : orgShares;
+  const poolTotals = pool ? toAmounts(pool.usage, pool.storageGb) : null;
+  const shares = poolTotals ? capShares(poolTotals, caps) : orgShares;
   const usedPercent = closestShare(shares);
   const owned =
     org && pool
@@ -407,7 +410,15 @@ export async function budgetUsage(
     level: enforced ? budgetLevel(usedPercent) : "ok",
     totals: totals,
     days: days,
-    ...(pool ? { pool: { orgs: owned.length, shared: owned.length > 1 } } : {}),
+    ...(poolTotals
+      ? {
+          pool: {
+            orgs: owned.length,
+            shared: owned.length > 1,
+            totals: poolTotals,
+          },
+        }
+      : {}),
   };
 }
 
@@ -582,15 +593,6 @@ function billedSize(
     vcpu: instance.specs.vcpu,
     memoryGb: instance.specs.memoryMb / 1024,
   };
-}
-
-// "warning" from 80% of the closest cap, "exhausted" once runs stop at 100%.
-function budgetLevel(usedPercent: number): BudgetUsage["level"] {
-  return usedPercent >= 100
-    ? "exhausted"
-    : usedPercent >= BUDGET_WARNING_RATIO * 100
-      ? "warning"
-      : "ok";
 }
 
 // Each capped resource's share of its cap.

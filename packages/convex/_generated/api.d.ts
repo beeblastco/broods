@@ -221,7 +221,17 @@ export declare const api: {
             storageGb: number;
           };
           plan: "free" | "pro";
-          pool?: { orgs?: number; shared: boolean };
+          pool?: {
+            orgs?: number;
+            shared: boolean;
+            totals: {
+              egressGb: number;
+              hostedMcpHours: number;
+              ingressGb: number;
+              sandboxHours: number;
+              storageGb: number | null;
+            };
+          };
           projects?: Array<{
             days: Array<{
               day: string;

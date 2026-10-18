@@ -67,6 +67,7 @@ const usageAmountsValidator = v.object(usageAmountsFields);
 const poolUsageValidator = v.object({
   orgs: v.optional(v.number()),
   shared: v.boolean(),
+  totals: usageAmountsValidator,
 });
 
 const budgetUsageValidator = v.object({

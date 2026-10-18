@@ -27,6 +27,18 @@ export const PLAN_LIMIT_EXCEEDED = "plan_limit_exceeded";
 /** Share of the closest cap that triggers the one warning a month. */
 export const BUDGET_WARNING_RATIO = 0.8;
 
+/** How far into its caps a pool is: "warning" from 80% of the closest one, "exhausted" once runs stop at 100%. */
+export type BudgetLevel = "ok" | "warning" | "exhausted";
+
+/** The level a share of a cap reads at, for admission, the warning and every bar that shows it. */
+export function budgetLevel(usedPercent: number): BudgetLevel {
+  return usedPercent >= 100
+    ? "exhausted"
+    : usedPercent >= BUDGET_WARNING_RATIO * 100
+      ? "warning"
+      : "ok";
+}
+
 /** Most EUR of real platform cost a free account can reach per month. */
 export const FREE_MONTHLY_BUDGET_EUR = 5;
 

@@ -157,12 +157,26 @@ const ORG_DAYS = days(OTHER_PER_DAY).map((other, index) => ({
 }));
 
 const ORG_TOTALS = monthTotals(ORG_DAYS);
-// One org on its own pool: its shares are the pool's.
 const ORG_SHARES = {
   sandboxHours: percent(ORG_TOTALS.sandboxHours, CAPS.sandboxHours),
   hostedMcpHours: percent(ORG_TOTALS.hostedMcpHours, CAPS.hostedMcpHours),
   storageGb: percent(ORG_TOTALS.storageGb ?? 0, CAPS.storageGb),
   egressGb: percent(ORG_TOTALS.egressGb, CAPS.egressGb),
+};
+// The owner's other org on the same pool, busy on egress: the pool sits
+// above this org on every cap and has used egress up.
+const POOL_TOTALS: UsageAmounts = {
+  sandboxHours: ORG_TOTALS.sandboxHours + 37.1,
+  hostedMcpHours: ORG_TOTALS.hostedMcpHours + 0.8,
+  storageGb: (ORG_TOTALS.storageGb ?? 0) + 6,
+  egressGb: CAPS.egressGb,
+  ingressGb: ORG_TOTALS.ingressGb,
+};
+const POOL_SHARES = {
+  sandboxHours: percent(POOL_TOTALS.sandboxHours, CAPS.sandboxHours),
+  hostedMcpHours: percent(POOL_TOTALS.hostedMcpHours, CAPS.hostedMcpHours),
+  storageGb: percent(POOL_TOTALS.storageGb ?? 0, CAPS.storageGb),
+  egressGb: percent(POOL_TOTALS.egressGb, CAPS.egressGb),
 };
 
 const BUDGET: BudgetUsage = {
@@ -170,14 +184,15 @@ const BUDGET: BudgetUsage = {
   plan: "pro",
   month: MONTH,
   months: [MONTH, "2026-09", "2026-08"],
-  usedPercent: 0,
+  usedPercent: 100,
   caps: CAPS,
-  shares: ORG_SHARES,
+  shares: POOL_SHARES,
   orgShares: ORG_SHARES,
-  level: "ok",
+  level: "exhausted",
   totals: ORG_TOTALS,
   days: ORG_DAYS,
   projects: SPLIT,
+  pool: { orgs: 2, shared: true, totals: POOL_TOTALS },
 };
 
 function percent(part: number, base: number): number {
