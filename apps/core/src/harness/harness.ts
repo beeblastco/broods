@@ -786,7 +786,7 @@ export async function runAgentLoop(
 
   // Per-step timing (ttft, streaming windows, retries), read when each step's
   // span closes.
-  const stepTiming = createStepTimingTracker();
+  const stepTiming = createStepTimingTracker(traceAttribute);
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
     accountId: session.accountId,
@@ -930,11 +930,7 @@ export async function runAgentLoop(
       // attempt attributes are attached here instead.
       ...[...stepSpans.entries()].map(([stepNumber, tracked]) => ({
         tracked: tracked,
-        extraAttributes: stepTiming.attemptAttributes(
-          stepNumber,
-          tracked.startTimeMs,
-          traceAttribute,
-        ),
+        extraAttributes: stepTiming.attemptAttributes(stepNumber),
       })),
     ];
     for (const { tracked, extraAttributes } of orphanedSpans) {
@@ -1293,7 +1289,6 @@ export async function runAgentLoop(
       };
     },
     onChunk: ({ chunk }) => {
-      // Kept synchronous and cheap: onChunk pauses the stream until it returns.
       stepTiming.recordChunk(chunk.type, Date.now());
     },
     onStepStart: async ({ stepNumber, messages }) => {
@@ -1658,12 +1653,7 @@ export async function runAgentLoop(
           "step.state": "completed",
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
-          ...stepTiming.closeStep(
-            stepNumber,
-            tracked.startTimeMs,
-            stepEndMs,
-            traceAttribute,
-          ),
+          ...stepTiming.closeStep(stepNumber, stepEndMs),
           "model.input_tokens": stepTokens.inputTokens,
           "model.output_tokens": stepTokens.outputTokens,
           "model.reasoning_tokens": stepTokens.reasoningTokens,
