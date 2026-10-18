@@ -3,6 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { subagentResultDedupeKey } from "../model/subagentResults";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -322,7 +323,7 @@ describe("runtime persistence", () => {
     });
   });
 
-  test("lists late subagent results no parent has seen, in their window, of active accounts only", async (): Promise<void> => {
+  test("lists detached, pending and pre-handback subagent results in their own windows, of active accounts only", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const disabledId = await createActiveAccount(t);
@@ -331,34 +332,48 @@ describe("runtime persistence", () => {
       ["unseen", accountId],
       ["seen", accountId],
       ["in-turn", accountId],
+      ["legacy", accountId],
       ["disabled", disabledId],
     ];
     for (const [eventId, owner] of rows) {
       await t.mutation(internal.runtime.createAsyncAgentResult, {
         eventId: eventId,
         conversationKey: conversationKeyFor(owner),
+        subagent: { parentConversationKey: conversationKeyFor(owner) },
       });
     }
     for (const eventId of ["running", "unseen", "seen", "disabled"]) {
-      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      await t.mutation(internal.runtime.markAsyncAgentHandback, {
         eventId: eventId,
-        observed: false,
+        handback: "detached",
       });
     }
-    for (const eventId of ["unseen", "seen", "in-turn", "disabled"]) {
+    for (const eventId of ["unseen", "seen", "in-turn", "legacy", "disabled"]) {
       await t.mutation(internal.runtime.updateAsyncAgentResult, {
         eventId: eventId,
         status: "completed",
         response: "answer",
       });
     }
-    // Only a finished row can be seen.
+    // Only a finished row can be stored.
     for (const eventId of ["running", "seen"]) {
-      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      await t.mutation(internal.runtime.markAsyncAgentHandback, {
         eventId: eventId,
-        observed: true,
+        handback: "stored",
       });
     }
+    // A row the release before `handback` detached carries only `observed`.
+    await t.run(async (ctx): Promise<void> => {
+      const legacy = await ctx.db
+        .query("runtimeAsyncAgentResults")
+        .withIndex("by_eventId", (q) => q.eq("eventId", "legacy"))
+        .unique();
+      await ctx.db.replace(legacy!._id, {
+        ...legacy!,
+        handback: undefined,
+        observed: false,
+      });
+    });
     // No resume of a disabled account's row can be admitted.
     await t.run(
       async (ctx) =>
@@ -368,12 +383,14 @@ describe("runtime persistence", () => {
         }),
     );
     const listed = async (
+      handback: "pending" | "detached" | undefined,
       status: "completed" | "processing",
       updatedBefore: number,
     ): Promise<string[]> => {
       const result = await t.query(
         internal.runtime.listUnobservedAsyncAgentResults,
         {
+          ...(handback ? { handback: handback } : {}),
           status: status,
           updatedAfter: new Date(Date.now() - 60_000).toISOString(),
           updatedBefore: new Date(updatedBefore).toISOString(),
@@ -384,13 +401,116 @@ describe("runtime persistence", () => {
 
       return result.page.map((row) => row.eventId);
     };
+    const soon = Date.now() + 60_000;
 
-    expect(await listed("completed", Date.now() + 60_000)).toEqual(["unseen"]);
-    expect(await listed("processing", Date.now() + 60_000)).toEqual([
-      "running",
-    ]);
+    expect(await listed("detached", "completed", soon)).toEqual(["unseen"]);
+    expect(await listed("detached", "processing", soon)).toEqual(["running"]);
+    // A finished row no run detached is the parent's until it stores it.
+    expect(await listed("pending", "completed", soon)).toEqual(["in-turn"]);
+    expect(await listed("pending", "processing", soon)).toEqual([]);
+    expect(await listed(undefined, "completed", soon)).toEqual(["legacy"]);
     // Nothing written inside the grace before `updatedBefore` yet.
-    expect(await listed("completed", Date.now() - 30_000)).toEqual([]);
+    expect(await listed("detached", "completed", Date.now() - 30_000)).toEqual(
+      [],
+    );
+  });
+
+  test("a finished subagent result starts pending and the parent's append stores it", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const eventId of ["child", "plain"]) {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: eventId,
+        conversationKey: `acct:${accountId}:agent:child:api:${eventId}`,
+        ...(eventId === "child"
+          ? { subagent: { parentConversationKey: conversationKey } }
+          : {}),
+      });
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: eventId,
+        status: "completed",
+        response: "answer",
+      });
+    }
+    const row = async (
+      eventId: string,
+    ): Promise<{ handback?: string; observed?: boolean } | null> =>
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: eventId,
+      });
+
+    expect(await row("child")).toMatchObject({ handback: "pending" });
+    expect(await row("child")).not.toHaveProperty("observed");
+    // Only a subagent's row is owed to a parent.
+    expect(await row("plain")).not.toHaveProperty("handback");
+
+    // A running notice is not the result.
+    await t.mutation(internal.runtime.appendConversationEvent, {
+      conversationKey: conversationKey,
+      events: [
+        {
+          cursor: "001",
+          dedupeKey: subagentResultDedupeKey("child", "running"),
+          event: { role: "user", content: "still working" },
+        },
+      ],
+    });
+    expect(await row("child")).toMatchObject({ handback: "pending" });
+
+    await t.mutation(internal.runtime.appendConversationEvent, {
+      conversationKey: conversationKey,
+      events: [
+        {
+          cursor: "002",
+          dedupeKey: subagentResultDedupeKey("child", "completed"),
+          event: { role: "user", content: "subagent result" },
+        },
+      ],
+    });
+    expect(await row("child")).toMatchObject({
+      handback: "stored",
+      observed: true,
+    });
+    // Stored is final: a later detach does not reopen it.
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
+      eventId: "child",
+      handback: "detached",
+    });
+    expect(await row("child")).toMatchObject({
+      handback: "stored",
+      observed: true,
+    });
+  });
+
+  test("a detached subagent result is not downgraded by its finish", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "child",
+      conversationKey: `acct:${accountId}:agent:child:api:child`,
+      subagent: { parentConversationKey: conversationKeyFor(accountId) },
+    });
+    // The parent stops waiting while the child still runs.
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
+      eventId: "child",
+      handback: "detached",
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "child",
+      status: "failed",
+      error: "boom",
+    });
+
+    expect(
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: "child",
+      }),
+    ).toMatchObject({
+      status: "failed",
+      handback: "detached",
+      observed: false,
+    });
   });
 
   test("fails a dead child's row only while it is still processing", async (): Promise<void> => {
