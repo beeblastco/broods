@@ -88,6 +88,12 @@
   --color-usage-storage: #818cf8;
   --color-usage-egress: #f472b6;
   --color-usage-ingress: #60a5fa;
+  /* The pool's part the owner's other organizations used: muted, faded toward the empty track. */
+  --color-usage-other-orgs: color-mix(
+    in oklab,
+    var(--color-muted-foreground) 45%,
+    var(--color-muted)
+  );
   /* One per model in the usage filter, table and trace rail, in model order. */
   --color-usage-model-1: #38bdf8;
   --color-usage-model-2: #f472b6;

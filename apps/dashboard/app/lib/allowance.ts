@@ -53,9 +53,8 @@ const NOISE = 1e-9;
 /** The color of the part no project used, and of "other projects". */
 export const OTHER_USAGE_COLOR = "var(--color-muted-foreground)";
 
-/** The color of the pool's part the owner's other organizations used: that grey, faded toward the empty track. */
-export const OTHER_ORGS_COLOR =
-  "color-mix(in oklab, var(--color-muted-foreground) 45%, var(--color-muted))";
+/** The color of the pool's part the owner's other organizations used. */
+export const OTHER_ORGS_COLOR = "var(--color-usage-other-orgs)";
 
 /** How a share of a cap reads: plain below the warning, "warning" from 80%, "destructive" once runs stop at 100%. */
 export type ShareTone = "muted" | "warning" | "destructive";

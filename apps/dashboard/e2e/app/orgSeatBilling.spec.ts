@@ -417,8 +417,8 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
         `This org runs on ${OWNER.name}'s Pro plan. You are not charged.`,
       ),
     ).toBeVisible();
-    // Who pays is the plain line above; the badge is only the state.
-    await expect(page.getByText("Active", { exact: true })).toBeVisible();
+    // Who pays is the plain line above; a paid plan in good standing wears no badge.
+    await expect(page.getByText("Active", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/^Paid by /)).toHaveCount(0);
     await expect(
       page.getByText(`Developer seat in ${OWNER.org}`),

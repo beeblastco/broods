@@ -260,15 +260,20 @@ function ScopedAllowance({
     [budget, projectId, scope],
   );
   const pool = useMemo(() => otherOrgsSlice(budget), [budget]);
+  // What each bar is cut into: this org's slices, then the other organizations'.
+  const bars = useMemo(
+    () => (pool ? [...slices, pool] : slices),
+    [slices, pool],
+  );
   const own = scope === "project" ? slices[0] : null;
   const legend = useMemo(
     () =>
-      [...slices, ...(pool ? [pool] : [])].map((slice) => ({
+      bars.map((slice) => ({
         key: slice.projectId ?? slice.name,
         label: slice.name,
         color: slice.color,
       })),
-    [slices, pool],
+    [bars],
   );
   // One plain line: whose limits these are, then how to read a split bar.
   const notes = [
@@ -316,7 +321,7 @@ function ScopedAllowance({
                   key={row.key}
                   budget={budget}
                   row={row}
-                  slices={slices}
+                  bars={bars}
                   pool={pool}
                   own={own}
                   active={row.key === picked.key}
@@ -342,13 +347,12 @@ function ScopedAllowance({
   );
 }
 
-// One resource: used, its cap, and how close the pool is to it, the bar split
-// into the slices' parts and then the pool's. With `own`, its amount leads.
-// Ingress reads Free.
+// One resource: used, its cap, and how close the pool is to it, the bar cut
+// into `bars`. With `own`, its amount leads. Ingress reads Free.
 function AllowanceTableRow({
   budget,
   row,
-  slices,
+  bars,
   pool,
   own,
   active,
@@ -356,7 +360,7 @@ function AllowanceTableRow({
 }: {
   budget: BudgetUsage;
   row: AllowanceRow;
-  slices: UsageSlice[];
+  bars: UsageSlice[];
   pool: UsageSlice | null;
   own: UsageSlice | null;
   active: boolean;
@@ -430,7 +434,7 @@ function AllowanceTableRow({
           <SplitBar
             share={share}
             total={pooled}
-            parts={[...slices, ...(pool ? [pool] : [])].map((slice) => ({
+            parts={bars.map((slice) => ({
               key: slice.projectId ?? slice.name,
               amount: slice.totals[row.key],
               color: slice.color,
