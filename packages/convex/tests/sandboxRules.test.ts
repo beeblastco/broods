@@ -389,6 +389,49 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
+  it("isolate takes on/off networking, no size, no hooks and a 60 s timeout", () => {
+    expect(
+      normalizeSandboxConfig({ provider: "isolate", persistent: true }),
+    ).toMatchObject({ provider: "isolate", network: { mode: "deny-all" } });
+    expect(
+      normalizeSandboxConfig({
+        provider: "isolate",
+        network: { mode: "allow-all" },
+        timeout: 60,
+        lifecycle: { idleTimeoutSeconds: 3600 },
+        persistent: true,
+      }),
+    ).toMatchObject({ timeout: 60, lifecycle: { idleTimeoutSeconds: 3600 } });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "isolate",
+        network: { mode: "restricted", allowDomains: ["pypi.org"] },
+      }),
+    ).toThrow("deny-all or allow-all");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "isolate", size: "large" }),
+    ).toThrow("config.size does not apply to the isolate provider");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "isolate", snapshot: "img" }),
+    ).toThrow("config.snapshot does not apply to the isolate provider");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "isolate", timeout: 61 }),
+    ).toThrow("config.timeout");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "isolate",
+        options: { baseURL: "https://isolate.example.com" },
+      }),
+    ).toThrow("config.options.baseURL is not supported");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "isolate",
+        persistent: true,
+        onCreate: ["npm install"],
+      }),
+    ).toThrow("config.onCreate is not supported by the isolate provider");
+  });
+
   it("machine sandbox takes only allow-all network, envVars and options.cwd", () => {
     expect(
       normalizeSandboxConfig({

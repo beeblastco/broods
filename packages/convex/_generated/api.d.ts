@@ -1316,6 +1316,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -1366,6 +1367,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -1489,6 +1491,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           pulledCount: number;
@@ -5277,6 +5280,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5303,6 +5307,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5378,6 +5383,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5428,6 +5434,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5512,6 +5519,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5552,6 +5560,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5575,6 +5584,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5592,6 +5602,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5615,6 +5626,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5638,6 +5650,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         scope: "account" | { projectId: Id<"projects">; stageId: Id<"stages"> };
@@ -5672,6 +5685,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5695,6 +5709,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5729,6 +5744,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5836,6 +5852,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "isolate"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5895,6 +5912,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6354,6 +6372,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6546,6 +6565,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6639,6 +6659,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6736,6 +6757,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "isolate"
             | "machine"
             | "custom";
           scope:

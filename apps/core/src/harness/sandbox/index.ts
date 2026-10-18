@@ -9,6 +9,7 @@ import { CloudflareSandboxExecutor } from "./cloudflare-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
 import { HttpSandboxExecutor } from "./http-executor.ts";
+import { IsolateSandboxExecutor } from "./isolate-executor.ts";
 import { MachineSandboxExecutor } from "./machine-executor.ts";
 import { assertSandboxBudget } from "../plan-limits.ts";
 import { MicrovmSandboxExecutor } from "./microvm-executor.ts";
@@ -35,6 +36,7 @@ const EXECUTORS: Record<SandboxProvider, SandboxExecutorFactory> = {
   custom: (config): SandboxExecutor => new HttpSandboxExecutor(config),
   daytona: (config): SandboxExecutor => new DaytonaSandboxExecutor(config),
   e2b: (config): SandboxExecutor => new E2BSandboxExecutor(config),
+  isolate: (config): SandboxExecutor => new IsolateSandboxExecutor(config),
   lambda: (config): SandboxExecutor => new MicrovmSandboxExecutor(config),
   machine: (config): SandboxExecutor => new MachineSandboxExecutor(config),
   sandbox: (config): SandboxExecutor => new WorkdirSandboxExecutor(config),

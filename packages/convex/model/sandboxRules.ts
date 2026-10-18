@@ -9,6 +9,7 @@ import { mergeConfigObjects } from "./configValues";
 import { normalizeHeaders } from "./mcp";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
+  PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
   SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
@@ -18,6 +19,7 @@ import { assertStorageEndpoint } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
 export {
+  PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
   SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
@@ -57,9 +59,12 @@ export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 // Cloudflare refuses a Container inactivity timeout over six hours.
 export const CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60;
-// The only options core reads for a platform-run provider (lambda, cloudflare):
-// the executor's workspaceRoot and the reservation pin every provider shares.
-// Images, roles and the cloudflare bridge are platform resources core takes from
+// An isolate's CPU limit is its call's timeout, so one command may run this
+// long at most: `MAX_TIMEOUT_MS` in `apps/cloudflare-isolate/src/limits.ts`.
+export const ISOLATE_MAX_TIMEOUT_SECONDS = 60;
+// The only options core reads for a platform-run provider (lambda, cloudflare,
+// isolate): the executor's workspaceRoot and the reservation pin every provider
+// shares. Images, roles and the Workers are platform resources core takes from
 // its env, so anything else is refused.
 const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
@@ -148,10 +153,12 @@ export function workspaceSandboxLimits(
             "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
             LAMBDA_MAX_TIMEOUT_SECONDS,
           )
-        : positiveIntegerEnv(
-            "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
-            PERSISTENT_MAX_TIMEOUT_SECONDS,
-          ),
+        : provider === "isolate"
+          ? ISOLATE_MAX_TIMEOUT_SECONDS
+          : positiveIntegerEnv(
+              "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
+              PERSISTENT_MAX_TIMEOUT_SECONDS,
+            ),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,
@@ -234,6 +241,11 @@ export function normalizeSandboxConfig(
     );
   }
   assertStatelessProviderFields(config, provider);
+  if (provider === "isolate" && config.size !== undefined) {
+    throw new ClientError(
+      "config.size does not apply to the isolate provider: every isolate is the same size",
+    );
+  }
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
@@ -473,9 +485,12 @@ function assertNetworkEnforceable(
       `${provider} cannot enforce egress restrictions; set config.network.mode to allow-all explicitly`,
     );
   }
-  if (provider === "cloudflare" && network.mode === "restricted") {
+  if (
+    PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider) &&
+    network.mode === "restricted"
+  ) {
     throw new ClientError(
-      "cloudflare can only turn a container's internet on or off; use config.network.mode deny-all or allow-all",
+      `${provider} can only turn a sandbox's internet on or off; use config.network.mode deny-all or allow-all`,
     );
   }
   if (
@@ -702,6 +717,33 @@ function normalizeOptionalStringList(
   return entries;
 }
 
+// The platform Workers set the machine themselves, so no hook runs on them; a
+// Container's idle window is capped by Cloudflare and it has no lifetime cap.
+function assertWorkerLifecycle(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+  lifecycle: SandboxConfig["lifecycle"],
+): void {
+  if (!PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider)) return;
+  for (const field of ["onCreate", "onResume"]) {
+    if (config[field] !== undefined)
+      throw new ClientError(
+        `config.${field} is not supported by the ${provider} provider; the Worker sets the machine`,
+      );
+  }
+  if (provider !== "cloudflare") return;
+  if (lifecycle?.maxLifetimeSeconds !== undefined)
+    throw new ClientError(
+      "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
+    );
+  if (
+    (lifecycle?.idleTimeoutSeconds ?? 0) > CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS
+  )
+    throw new ClientError(
+      `config.lifecycle.idleTimeoutSeconds must be at most ${CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS} on the cloudflare provider`,
+    );
+}
+
 function normalizePersistentFields(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -728,24 +770,7 @@ function normalizePersistentFields(
       "config.onCreate and config.onResume require config.persistent to be true",
     );
   }
-  if (provider === "cloudflare") {
-    for (const field of ["onCreate", "onResume"]) {
-      if (config[field] !== undefined)
-        throw new ClientError(
-          `config.${field} is not supported by the cloudflare provider; the bridge Worker's image sets the machine`,
-        );
-    }
-    if (lifecycle?.maxLifetimeSeconds !== undefined)
-      throw new ClientError(
-        "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
-      );
-    if (
-      (lifecycle?.idleTimeoutSeconds ?? 0) > CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS
-    )
-      throw new ClientError(
-        `config.lifecycle.idleTimeoutSeconds must be at most ${CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS} on the cloudflare provider`,
-      );
-  }
+  assertWorkerLifecycle(config, provider, lifecycle);
   if (provider === "e2b" && (onCreate || onResume)) {
     throw new ClientError(
       "config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly",
@@ -808,7 +833,10 @@ function validateProviderOptions(
       );
     }
   }
-  if (provider === "lambda" || provider === "cloudflare") {
+  if (
+    provider === "lambda" ||
+    PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider)
+  ) {
     for (const key of Object.keys(options)) {
       if (!PLATFORM_OPTION_KEYS.has(key)) {
         throw new ClientError(
