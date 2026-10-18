@@ -82,6 +82,7 @@ flowchart TD
 | `e2b`        | `e2b-executor.ts`        | rejected                            | native pause on timeout            | no              | yes      | launch and callback, no logs, stop |
 | `vercel`     | `vercel-executor.ts`     | rejected                            | named sandbox                      | no              | yes      | yes, logs and stop                 |
 | `cloudflare` | `cloudflare-executor.ts` | rejected                            | same Container while warm, no disk | no              | no       | no                                 |
+| `isolate`    | `isolate-executor.ts`    | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
 | `machine`    | `machine-executor.ts`    | rejected                            | no                                 | no              | no       | no                                 |
 | `custom`     | `http-executor.ts`       | rejected                            | no                                 | no              | no       | no                                 |
 

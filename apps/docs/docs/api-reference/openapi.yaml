@@ -1865,11 +1865,12 @@ paths:
                             daytona,
                             vercel,
                             cloudflare,
+                            isolate,
                             machine,
                             custom,
                           ],
                         default: lambda,
-                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec), stateless and on your compute, so never metered; see the Your own server guide for what it refuses.",
+                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `isolate` is bash in a V8 isolate on Cloudflare Workers (just-bash, 81 built-in commands, no processes), on or off networking, a 60 s timeout, files kept in storage when persistent, metered per command. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec), stateless and on your compute, so never metered; see the Your own server guide for what it refuses.",
                       }
                     network:
                       type: object
@@ -1893,7 +1894,7 @@ paths:
                       {
                         type: string,
                         enum: [tiny, xsmall, small, medium, large],
-                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Rejected on machine and custom. Defaults to the provider's own default when unset. tiny and xsmall are the free-tier size names; usage counts at the machine a name starts, so on cloudflare both start a 0.5 vCPU / 4 GB instance.",
+                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Rejected on isolate, machine and custom. Defaults to the provider's own default when unset. tiny and xsmall are the free-tier size names; usage counts at the machine a name starts, so on cloudflare both start a 0.5 vCPU / 4 GB instance.",
                       }
                     image:
                       {
@@ -1904,7 +1905,7 @@ paths:
                     snapshot:
                       {
                         type: string,
-                        description: "What the sandbox boots from, in its provider's own format (see the Sandboxes guide, Images). On lambda, a MicroVM image ARN in the same AWS account and region as the default image; any other ARN fails the run. Rejected on cloudflare, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row. A snapshot taken with the Snapshot action is locked to the stage of the sandbox it was taken from (a sandbox with no stage, as this API creates, boots only snapshots of a sandbox with no stage): naming one from another stage or account answers 400, and a run never boots it. A snapshot taken before snapshots recorded their stage boots nowhere and must be taken again.",
+                        description: "What the sandbox boots from, in its provider's own format (see the Sandboxes guide, Images). On lambda, a MicroVM image ARN in the same AWS account and region as the default image; any other ARN fails the run. Rejected on cloudflare, isolate, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row. A snapshot taken with the Snapshot action is locked to the stage of the sandbox it was taken from (a sandbox with no stage, as this API creates, boots only snapshots of a sandbox with no stage): naming one from another stage or account answers 400, and a run never boots it. A snapshot taken before snapshots recorded their stage boots nowhere and must be taken again.",
                       }
                     persistent:
                       {
@@ -1915,7 +1916,15 @@ paths:
                       {
                         type: string,
                         enum:
-                          [sandbox, lambda, e2b, daytona, vercel, cloudflare],
+                          [
+                            sandbox,
+                            lambda,
+                            e2b,
+                            daytona,
+                            vercel,
+                            cloudflare,
+                            isolate,
+                          ],
                         description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine or custom. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:

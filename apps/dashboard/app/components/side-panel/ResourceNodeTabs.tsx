@@ -158,6 +158,7 @@ export function SandboxResourceDetailsTab({
     onUpdateNodeData({ config: { ...config, ...patch } });
   }
 
+  // An isolate has one size, so a size carried over from another provider is dropped.
   function setProvider(provider: string): void {
     setConfig(
       provider === "machine"
@@ -169,7 +170,12 @@ export function SandboxResourceDetailsTab({
             image: undefined,
             snapshot: undefined,
           }
-        : { provider: provider, image: undefined, snapshot: undefined },
+        : {
+            provider: provider,
+            ...(provider === "isolate" ? { size: undefined } : {}),
+            image: undefined,
+            snapshot: undefined,
+          },
     );
   }
 
@@ -206,6 +212,7 @@ export function SandboxResourceDetailsTab({
             { value: "lambda", label: "Lambda" },
             { value: "e2b", label: "e2b" },
             { value: "daytona", label: "Daytona" },
+            { value: "isolate", label: "Isolate (Cloudflare Workers)" },
             { value: "machine", label: "Your computer" },
           ]}
         />

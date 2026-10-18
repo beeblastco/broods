@@ -8,6 +8,7 @@ Every provider runs the same tools, but setup, storage and network support diffe
 | `lambda`                   | AWS Lambda MicroVM           | [`lambda`](#lambda)                                       |
 | `daytona`, `e2b`, `vercel` | A vendor account you bring   | [`daytona`](#daytona), [`e2b`](#e2b), [`vercel`](#vercel) |
 | `cloudflare`               | Cloudflare Container         | [`cloudflare`](#cloudflare)                               |
+| `isolate`                  | Cloudflare Workers isolate   | [`isolate`](#isolate)                                     |
 | `machine`                  | Your own computer            | [Your computer](machine.md)                               |
 | `custom`                   | Your server over HTTP        | [Your own server](custom.md)                              |
 
@@ -182,6 +183,36 @@ export const box = defineSandbox({
 - `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
 - A `persistent` sandbox gets the live dashboard terminal, a login shell in `/workspace`. It opens only on a running Container, so run a command first to wake one that slept.
 - The provider needs the deployment's Cloudflare bridge. Without it every run fails with an error saying the bridge is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).
+
+## `isolate`
+
+Runs `bash` in a V8 isolate on Cloudflare Workers: no container, no machine, nothing running between commands. The shell is [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands: `cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `cut`, `tar`, `gzip`, `base64`, `sha256sum`, `date`, `curl` with internet, and the rest of the text toolbox. Use it for the fastest, cheapest compute an agent can get: a command starts in milliseconds and costs only the milliseconds it ran.
+
+```ts
+export const box = defineSandbox({
+  name: "isolate",
+  provider: "isolate",
+  persistent: true,
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  timeout: 30,
+});
+```
+
+| Field          | Behavior                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `persistent`   | `true` keeps the sandbox's files between calls, in storage. `false` runs every call on an empty disk           |
+| `network.mode` | `allow-all` registers `curl` and turns internet on, `deny-all` has no network at all, `restricted` is rejected |
+| `timeout`      | Seconds per call, at most 60: the isolate's CPU limit is the call's timeout                                    |
+| `options`      | Only `workspaceRoot` and `reservationKey`                                                                      |
+
+- Only built-ins run. There is no `python`, `node`, `git`, `npm` or any binary, no process and no port; a command outside the 81 answers `command not found`. Use `sandbox` or `lambda` for a real machine.
+- Files are the sandbox's whole state. A persistent sandbox restores them into a fresh shell on every call and stores what changed, up to 16 MiB compressed; an ephemeral one keeps nothing. The shell's own layout (`/bin`, `/dev`, `/proc`) is rebuilt every time and never stored.
+- Each call runs in 128 MB of memory, and a command that never yields is stopped at the timeout by the isolate's CPU limit.
+- `size`, `snapshot`, `onCreate`, `onResume` and workspaces are rejected. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
+- `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
+- Billing counts only the milliseconds commands ran plus one request each, inside Sandbox time; nothing idles.
+- The provider needs the deployment's isolate Worker. Without it every run fails with an error saying the Worker is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#isolate).
 
 ## Environment variables in every provider
 
