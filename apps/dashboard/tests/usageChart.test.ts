@@ -3,9 +3,24 @@ import {
   bucketStartsAcrossRange,
   formatAxisNumber,
   niceTicks,
+  perTaskAverages,
   resampleRows,
   tokenParts,
 } from "../app/lib/usageChart";
+
+test("per-task averages divide each bin by its own tasks, 0 when it had none", () => {
+  const bins = [
+    { invocations: 4, modelCalls: 14, totalTokens: 40_000 },
+    { invocations: 0, modelCalls: 0, totalTokens: 0 },
+    { invocations: 1, modelCalls: 2, totalTokens: 500 },
+  ];
+
+  expect(perTaskAverages(bins, [0.4, 0, 0.01])).toEqual({
+    cost: [0.1, 0, 0.01],
+    calls: [3.5, 0, 2],
+    tokens: [10_000, 0, 500],
+  });
+});
 
 test("token parts stack to input + output without double counting", () => {
   const parts = tokenParts({

@@ -59,7 +59,7 @@ export const TOKEN_SERIES: Array<UsageChartSeries & { key: keyof TokenParts }> =
   ];
 
 interface Props {
-  kind: "area" | "bars";
+  kind: "area" | "bars" | "line";
   /** Plot height in px, axis labels included. */
   height: number;
   series: UsageChartSeries[];
@@ -76,6 +76,8 @@ interface Props {
   formatAxis: (n: number) => string;
   formatValue: (n: number) => string;
   tickCount?: number;
+  /** One muted line under a bin's tooltip values, such as what the bin averaged over. */
+  detail?: (index: number) => string;
 }
 
 interface Scale {
@@ -103,6 +105,7 @@ export function UsageChart({
   formatAxis,
   formatValue,
   tickCount = 4,
+  detail,
 }: Props): React.JSX.Element {
   const [width, measureRef] = useElementWidth(0);
   const [hover, setHover] = useState<number | null>(null);
@@ -199,6 +202,13 @@ export function UsageChart({
                 scale={scale}
                 hover={hover}
               />
+            ) : kind === "line" ? (
+              <LineLayers
+                rows={shown}
+                series={series}
+                scale={scale}
+                hover={hover}
+              />
             ) : (
               <BarLayers
                 rows={shown}
@@ -226,6 +236,7 @@ export function UsageChart({
           values={rows[hover]}
           formatValue={formatValue}
           clickable={onSelect !== undefined}
+          detail={detail?.(hover)}
         />
       )}
     </div>
@@ -425,6 +436,63 @@ function AxisLabels({
   );
 }
 
+/** One 2px line per series through the bin centres, plus the hover crosshair and dots. */
+function LineLayers({
+  rows,
+  series,
+  scale,
+  hover,
+}: {
+  rows: number[][];
+  series: UsageChartSeries[];
+  scale: Scale;
+  hover: number | null;
+}): React.JSX.Element {
+  const { slot, y } = scale;
+
+  return (
+    <>
+      {series.map((s, k) => (
+        <path
+          key={s.key}
+          d={monotonePath(
+            rows.map((row, i): [number, number] => [
+              i * slot + slot / 2,
+              y(row[k]),
+            ]),
+          )}
+          fill="none"
+          strokeWidth={2}
+          strokeLinejoin="round"
+          className="stroke-(--series-color)"
+          style={{ "--series-color": s.color }}
+        />
+      ))}
+      {hover !== null && hover < rows.length && (
+        <>
+          <line
+            x1={hover * slot + slot / 2}
+            x2={hover * slot + slot / 2}
+            y1={y(0)}
+            y2={PAD_TOP}
+            className="stroke-foreground/30"
+          />
+          {series.map((s, k) => (
+            <circle
+              key={s.key}
+              cx={hover * slot + slot / 2}
+              cy={y(rows[hover][k])}
+              r={3}
+              className="fill-(--series-color) stroke-card"
+              style={{ "--series-color": s.color }}
+            />
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
 /** Stacked bars, one per bin; bins other than the active one dim. */
 function BarLayers({
   rows,
@@ -490,6 +558,7 @@ function ChartTooltip({
   values,
   formatValue,
   clickable,
+  detail,
 }: {
   x: number;
   chartWidth: number;
@@ -498,6 +567,7 @@ function ChartTooltip({
   values: Array<number | null>;
   formatValue: (n: number) => string;
   clickable: boolean;
+  detail?: string | undefined;
 }): React.JSX.Element {
   const [boxWidth, measureRef] = useElementWidth(TOOLTIP_MIN_WIDTH_PX);
   const right = x + TOOLTIP_OFFSET_PX;
@@ -534,14 +604,17 @@ function ChartTooltip({
               </span>
             </div>
           ))}
-        <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border pt-0.5 font-medium">
-          <span className="text-muted-foreground">Total</span>
-          <span className="tabular-nums">
-            {known.length === 0
-              ? "–"
-              : formatValue(known.reduce((a, b) => a + b, 0))}
-          </span>
-        </div>
+        {series.length > 1 && (
+          <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border pt-0.5 font-medium">
+            <span className="text-muted-foreground">Total</span>
+            <span className="tabular-nums">
+              {known.length === 0
+                ? "–"
+                : formatValue(known.reduce((a, b) => a + b, 0))}
+            </span>
+          </div>
+        )}
+        {detail && <div className="text-muted-foreground">{detail}</div>}
         {clickable && (
           <div className="text-muted-foreground">Click to see traces</div>
         )}
