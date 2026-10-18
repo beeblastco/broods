@@ -28,7 +28,7 @@ export async function buildRuntime(): Promise<string> {
     ],
   });
   if (!build.success) {
-    throw new Error(build.logs.map((log): string => String(log)).join("\n"));
+    throw new Error(build.logs.map((log): string => log.message).join("\n"));
   }
   const text = await build.outputs[0]!.text();
   await Bun.write(OUTPUT, text);

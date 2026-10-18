@@ -123,7 +123,9 @@ function withPositionals(script: string, args: string[]): string {
   return `set -- ${quoted.join(" ")}\n${script}`;
 }
 
-// Keeps the first `limit` bytes of a stream, whole characters only.
+// Keeps the first `limit` bytes of a stream, whole characters only: a
+// streaming decode holds back a character the cut split instead of replacing
+// it, so what is kept re-encodes within the limit.
 function capped(
   text: string,
   limit: number,
@@ -132,7 +134,7 @@ function capped(
   if (bytes.byteLength <= limit) return { text: text, truncated: false };
 
   return {
-    text: new TextDecoder().decode(bytes.subarray(0, limit)),
+    text: new TextDecoder().decode(bytes.subarray(0, limit), { stream: true }),
     truncated: true,
   };
 }
