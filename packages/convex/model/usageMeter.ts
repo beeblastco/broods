@@ -319,24 +319,7 @@ export async function budgetStatus(
   accountId: Id<"accounts">,
   now: number,
 ): Promise<BudgetStatus> {
-  const org = await accountOrg(ctx, accountId);
-  const plan = org?.plan ?? "free";
-  const month = meterMonth(now);
-  const pool = await readPool(ctx, accountId, org, month, true);
-  const shares = capShares(
-    toAmounts(pool.usage, pool.storageGb),
-    PLAN_LIMITS[plan].caps,
-  );
-
-  return {
-    enforced: isManagedService(),
-    plan: plan,
-    month: month,
-    usedPercent: closestShare(shares),
-    shares: shares,
-    runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
-    warned: pool.row?.warnedAt !== undefined,
-  };
+  return (await readBudget(ctx, accountId, now)).status;
 }
 
 /**
@@ -437,11 +420,9 @@ export async function claimBudgetWarning(
   accountId: Id<"accounts">,
   now: number,
 ): Promise<boolean> {
-  const status = await budgetStatus(ctx, accountId, now);
+  const { status, pool } = await readBudget(ctx, accountId, now);
   if (status.warned || status.usedPercent < BUDGET_WARNING_RATIO * 100)
     return false;
-  const org = await accountOrg(ctx, accountId);
-  const pool = await readPool(ctx, accountId, org, status.month, true);
   // Usage metered before the pool existed can cross 80% with no row yet.
   const rowId =
     pool.row?._id ??
@@ -709,6 +690,35 @@ async function addPoolUsage(
     ...(owned.storageGb === null ? {} : { storageGb: owned.storageGb }),
     updatedAt: now,
   });
+}
+
+// The status and the pool it was measured on, so a warning claim patches the row it judged.
+async function readBudget(
+  ctx: QueryCtx,
+  accountId: Id<"accounts">,
+  now: number,
+): Promise<{ status: BudgetStatus; pool: PoolRead }> {
+  const org = await accountOrg(ctx, accountId);
+  const plan = org?.plan ?? "free";
+  const month = meterMonth(now);
+  const pool = await readPool(ctx, accountId, org, month, true);
+  const shares = capShares(
+    toAmounts(pool.usage, pool.storageGb),
+    PLAN_LIMITS[plan].caps,
+  );
+
+  return {
+    status: {
+      enforced: isManagedService(),
+      plan: plan,
+      month: month,
+      usedPercent: closestShare(shares),
+      shares: shares,
+      runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
+      warned: pool.row?.warnedAt !== undefined,
+    },
+    pool: pool,
+  };
 }
 
 // `current` carries storage over from earlier months, as `latestStorageGb` does.
