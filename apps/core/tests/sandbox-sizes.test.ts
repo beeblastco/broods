@@ -69,6 +69,15 @@ describe("resolveSandboxSpecs", () => {
     ).toEqual(real);
   });
 
+  it("reports the one size a V8 Worker command runs in, whatever the config says", () => {
+    const fixed = { vcpu: 1, memoryMb: 128, storageGb: 0 };
+
+    expect(resolveSandboxSpecs({ provider: "worker" })).toEqual(fixed);
+    expect(resolveSandboxSpecs({ provider: "worker", size: "large" })).toEqual(
+      fixed,
+    );
+  });
+
   it("reports the Cloudflare instance type a size starts", () => {
     expect(resolveSandboxSpecs({ provider: "cloudflare" })).toEqual({
       vcpu: 0.5,
