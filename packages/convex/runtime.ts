@@ -636,9 +636,9 @@ export function handbackPatch(handback: Exclude<Handback, "pending">): {
 
 /**
  * Marks a subagent result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the admission of the
- * late resume carrying it (`accept`). Only when the row is `accountId`'s own
- * and not stored already.
+ * delivers it: the parent's append of the result row, or the late resume
+ * carrying it taking its owner (`accept` as owner, or the apply of a queued
+ * one). Only when the row is `accountId`'s own and not stored already.
  */
 export async function markAsyncAgentResultSeen(
   ctx: MutationCtx,
@@ -670,9 +670,9 @@ export async function asyncToolResultRow(
 
 /**
  * Marks an async tool result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the admission of the
- * continuation carrying it (`accept`). Only when the row is `accountId`'s own
- * and not stored already.
+ * delivers it: the parent's append of the result row, or the continuation
+ * carrying it taking its owner (`accept` as owner, or the apply of a queued
+ * one). Only when the row is `accountId`'s own and not stored already.
  */
 export async function markAsyncToolResultSeen(
   ctx: MutationCtx,

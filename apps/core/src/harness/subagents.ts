@@ -1673,10 +1673,13 @@ async function giveUpLostSubagentResult(
 /**
  * One finished row of `resumeLostSubagentResults`: it resumes the parent,
  * from `held` when an earlier pass already ran its finish hook. A row no
- * resume can ever deliver is given up. The row's `eventId` is
+ * resume can ever deliver is given up. A duplicate is never given up:
+ * admission marks the row stored once its conversation has the result, and
+ * a resume still queued marks it when applied, or is admitted again by a
+ * later pass once it expired. The row's `eventId` is
  * `scopedDirectEventId(account, child agent, taskId)`.
  * @returns the parent message to retry on the next pass, when the
- *   conversation had no room for it or the resume failed
+ *   conversation had no room for it, its resume is still queued or failed
  */
 async function resumeLostSubagentResult(
   row: AsyncAgentResultRecord,
@@ -1771,7 +1774,7 @@ async function resumeLostSubagentResult(
 
     return undefined;
   }
-  if (outcome === "capacity") return message;
+  if (outcome === "capacity" || outcome === "duplicate") return message;
   await giveUpLostSubagentResult(row.eventId, `resume ${outcome}`);
 
   return undefined;

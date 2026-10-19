@@ -2612,3 +2612,224 @@ describe("harness checkpoints", () => {
     }
   });
 });
+
+// One kind of result a late resume delivers, and how a test drives its row.
+interface LateResultKind {
+  name: string;
+  mode: "followup" | "steer";
+  // Creates a finished row its conversation does not store yet.
+  create: (
+    t: TestConvex<typeof schema>,
+    conversationKey: string,
+    id: string,
+  ) => Promise<void>;
+  fence: (id: string) => { resultEventId: string } | { toolResultId: string };
+  handback: (
+    t: TestConvex<typeof schema>,
+    id: string,
+  ) => Promise<string | undefined>;
+  listed: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
+  // The owner `busy` taking the queued resume, as its run does.
+  apply: (
+    t: TestConvex<typeof schema>,
+    conversationKey: string,
+    ownerGeneration: number,
+  ) => Promise<{ contributingEventIds: string[] } | null>;
+}
+
+const SWEEP_WINDOW = {
+  updatedAfter: "1970-01-01T00:00:00.000Z",
+  updatedBefore: "9999-01-01T00:00:00.000Z",
+  cursor: null,
+};
+
+const LATE_RESULT_KINDS: LateResultKind[] = [
+  {
+    name: "subagent result",
+    mode: "followup",
+    create: async (t, conversationKey, id): Promise<void> => {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: id,
+        conversationKey: `${conversationKey}:child`,
+        subagent: { parentConversationKey: conversationKey },
+      });
+      await t.mutation(internal.runtime.markAsyncAgentHandback, {
+        eventId: id,
+        handback: "detached",
+      });
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: id,
+        status: "completed",
+        response: "answer",
+      });
+    },
+    fence: (id) => ({ resultEventId: id }),
+    handback: async (t, id): Promise<string | undefined> =>
+      (await t.query(internal.runtime.getAsyncAgentResult, { eventId: id }))
+        ?.handback,
+    listed: async (t, id): Promise<boolean> =>
+      (
+        await t.query(internal.runtime.listUnobservedAsyncAgentResults, {
+          ...SWEEP_WINDOW,
+          handback: "detached",
+          status: "completed",
+        })
+      ).page.some((row): boolean => row.eventId === id),
+    apply: async (t, conversationKey, ownerGeneration) =>
+      await t.mutation(internal.runtimeIngress.takeNext, {
+        conversationKey: conversationKey,
+        ownerEventId: "busy",
+        ownerGeneration: ownerGeneration,
+        leaseTtlMs: 60_000,
+        settle: { status: "completed" },
+      }),
+  },
+  {
+    name: "async tool result",
+    mode: "steer",
+    create: async (t, conversationKey, id): Promise<void> => {
+      await t.mutation(internal.runtime.createAsyncToolResult, {
+        resultId: id,
+        parentEventId: `${conversationKey}:parent`,
+        conversationKey: conversationKey,
+        toolName: "lookup",
+        toolCallId: `call-${id}`,
+        input: {},
+      });
+      await t.mutation(internal.runtime.updateAsyncToolResult, {
+        resultId: id,
+        status: "completed",
+        response: "answer",
+        onlyWhenProcessing: true,
+      });
+    },
+    fence: (id) => ({ toolResultId: id }),
+    handback: async (t, id): Promise<string | undefined> =>
+      (await t.query(internal.runtime.getAsyncToolResult, { resultId: id }))
+        ?.handback,
+    listed: async (t, id): Promise<boolean> =>
+      (
+        await t.query(internal.runtime.listUnobservedAsyncToolResults, {
+          ...SWEEP_WINDOW,
+          handback: "pending",
+          status: "completed",
+        })
+      ).page.some((row): boolean => row.resultId === id),
+    apply: async (t, conversationKey, ownerGeneration) =>
+      await t.mutation(internal.runtimeIngress.applySteering, {
+        conversationKey: conversationKey,
+        ownerEventId: "busy",
+        ownerGeneration: ownerGeneration,
+        leaseTtlMs: 60_000,
+      }),
+  },
+];
+
+describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
+  // A conversation whose owner `busy` is running, its result row, and the
+  // resume admission that carries it.
+  async function busyConversation(): Promise<{
+    t: TestConvex<typeof schema>;
+    conversationKey: string;
+    ownerGeneration: number;
+    resume: (envelopeTtlMs?: number) => Promise<{ outcome: string }>;
+  }> {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const busy = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "busy",
+        mode: "followup",
+      }),
+    );
+    await kind.create(t, conversationKey, "late");
+
+    return {
+      t: t,
+      conversationKey: conversationKey,
+      ownerGeneration: busy.ownerGeneration!,
+      resume: async (envelopeTtlMs?: number): Promise<{ outcome: string }> =>
+        await t.mutation(internal.runtimeIngress.accept, {
+          ...admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: "resume",
+            mode: kind.mode,
+          }),
+          ...(envelopeTtlMs !== undefined
+            ? { envelopeTtlMs: envelopeTtlMs }
+            : {}),
+          ...kind.fence("late"),
+        }),
+    };
+  }
+
+  // The owner `busy` finishing with nothing queued, which releases the
+  // conversation.
+  async function finishBusy(
+    t: TestConvex<typeof schema>,
+    conversationKey: string,
+    ownerGeneration: number,
+  ): Promise<void> {
+    await t.mutation(internal.runtimeIngress.takeNext, {
+      conversationKey: conversationKey,
+      ownerEventId: "busy",
+      ownerGeneration: ownerGeneration,
+      leaseTtlMs: 60_000,
+      settle: { status: "completed" },
+    });
+  }
+
+  test("stores the result at once as owner", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+    await finishBusy(t, conversationKey, ownerGeneration);
+
+    expect(await resume()).toMatchObject({ outcome: "owner" });
+    expect(await kind.handback(t, "late")).toBe("stored");
+  });
+
+  test("stores a queued result only when its envelope is applied", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+    const before = await kind.handback(t, "late");
+
+    expect(await resume()).toMatchObject({ outcome: "queued" });
+    expect(await kind.handback(t, "late")).toBe(before);
+    expect(await kind.listed(t, "late")).toBe(true);
+    expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
+      { contributingEventIds: ["resume"] },
+    );
+    expect(await kind.handback(t, "late")).toBe("stored");
+  });
+
+  test("leaves a queued result that expired to the sweep, whose retry is admitted again", async (): Promise<void> => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const { t, conversationKey, ownerGeneration, resume } =
+        await busyConversation();
+      const before = await kind.handback(t, "late");
+      expect(await resume(1_000)).toMatchObject({ outcome: "queued" });
+
+      // The conversation stays busy past the queued envelope's TTL.
+      vi.setSystemTime(Date.now() + 1_001);
+      expect(
+        await t.mutation(internal.runtimeIngress.maintain, {}),
+      ).toMatchObject({ expired: 1 });
+      expect(await kind.handback(t, "late")).toBe(before);
+      expect(await kind.listed(t, "late")).toBe(true);
+
+      // The sweep's retry carries the same idempotency key, and delivers the
+      // result once the conversation is free.
+      await finishBusy(t, conversationKey, ownerGeneration);
+      expect(await resume()).toMatchObject({ outcome: "owner" });
+      expect(await kind.handback(t, "late")).toBe("stored");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

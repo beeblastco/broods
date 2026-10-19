@@ -1440,7 +1440,7 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("walks every page of lost results and retries a full conversation without rerunning its hook", async (): Promise<void> => {
+  it("walks every page of lost results and retries a full conversation or a still queued resume without rerunning its hook", async (): Promise<void> => {
     const rows = [lostRow("event_full"), lostRow("event_other")];
     const pages = spyOn(
       asyncAgentResults,
@@ -1486,8 +1486,10 @@ describe("SubagentCoordinator", () => {
       },
     });
     const info = spyOn(log, "logInfo");
-    // The first conversation's queue is full on the first pass only.
-    const full = [true];
+    // The first conversation's queue is full on the first pass, and on the
+    // second its resume is a duplicate of one still queued, which stores the
+    // row when applied or is admitted again once it expired.
+    const refusals: SubagentResumeOutcome[] = ["capacity", "duplicate"];
     const resumed: Array<{ eventId: string; message: string }> = [];
     const resumeParent = async (
       _parent: unknown,
@@ -1495,9 +1497,9 @@ describe("SubagentCoordinator", () => {
       message: UserModelMessage,
       resultEventId: string,
     ): Promise<SubagentResumeOutcome> => {
-      if (resultEventId === rows[0]!.eventId && full.shift()) {
-        return "capacity";
-      }
+      const refusal =
+        resultEventId === rows[0]!.eventId ? refusals.shift() : undefined;
+      if (refusal) return refusal;
       resumed.push({ eventId: resultEventId, message: messageText(message) });
       rows.splice(
         rows.findIndex((row): boolean => row.eventId === resultEventId),
@@ -1517,6 +1519,8 @@ describe("SubagentCoordinator", () => {
           message: expect.stringContaining("rewritten 2"),
         },
       ]);
+      await resumeLostSubagentResults(lostParent, resumeParent);
+      expect(resumed).toHaveLength(1);
       await resumeLostSubagentResults(lostParent, resumeParent);
 
       // The retry carries the first pass's rewrite; the hook ran once a row.

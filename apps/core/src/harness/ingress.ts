@@ -218,8 +218,9 @@ export interface IngressCandidate {
   // Set on a turn a channel delivered: pins this conversation's channel target
   // so a later cron or inter-session message can reach it.
   channelTarget?: ChannelTargetRefs;
-  // A late subagent result's row: admitted only while the parent has not seen
-  // that result, and marks it seen in the same transaction.
+  // A late subagent result's row: admitted only while the parent has not
+  // stored that result, and stores it once an owner takes it: on admission as
+  // owner, or when the queued envelope is applied.
   resultEventId?: string;
   // A settled async tool result's row, fenced the same way.
   toolResultId?: string;
