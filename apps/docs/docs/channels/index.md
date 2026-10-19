@@ -213,8 +213,6 @@ model: {
 },
 ```
 
-Google and Vertex still hear the recording directly and ignore it.
-
 A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, or no speech-to-text on the account.
 
 ## Shared behavior

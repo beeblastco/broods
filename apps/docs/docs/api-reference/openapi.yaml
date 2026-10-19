@@ -5607,8 +5607,7 @@ components:
             Provider that reads inbound audio, with its credentials from the
             matching `provider` entry. Defaults to `provider`. Set it when the
             agent's model has no speech-to-text, such as `anthropic`. Cannot be
-            overridden per run. Providers that take audio natively (Google,
-            Vertex) skip transcription and ignore it.
+            overridden per run.
         reasoning:
           type: string
           enum: [provider-default, none, minimal, low, medium, high, xhigh]

@@ -98,8 +98,7 @@ const RATE_LIMIT_WAIT_PATTERN =
 /**
  * How inbound audio is read, per provider: the factory that ships speech-to-text
  * and the model to ask it for when the account names none. Providers absent
- * here have none. `config.model.transcriptionProvider` picks the provider and
- * `config.model.transcriptionModelId` overrides the id.
+ * here have none, and `config.model.transcriptionModelId` overrides the id.
  *
  * Defaults pick the widest container support, not the cheapest model:
  * `whisper-1` reads the ogg/opus every voice-note channel sends and
@@ -252,22 +251,22 @@ export function resolveConfiguredModel(
 
 /**
  * The speech-to-text model to read inbound audio with, on
- * `transcriptionProvider` or else the agent's own provider. Undefined when that
- * provider ships none or its config cannot build one. Undefined
- * rather than a throw: a half-configured account should lose its transcript and
- * keep the message it arrived on.
+ * `transcriptionProvider` or else the agent's own provider, or why there is
+ * none. A reason rather than a throw: a half-configured account should lose its
+ * transcript and keep the message it arrived on.
  */
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
-): Exclude<TranscriptionModel, string> | undefined {
+): { model: Exclude<TranscriptionModel, string> } | { reason: string } {
   const providerName =
     agentConfig.model?.transcriptionProvider ?? agentConfig.model?.provider;
-  if (!providerName) {
-    return undefined;
-  }
-  const source = PROVIDER_TRANSCRIPTION[providerName];
-  if (!source) {
-    return undefined;
+  const source = providerName
+    ? PROVIDER_TRANSCRIPTION[providerName]
+    : undefined;
+  if (!providerName || !source) {
+    return {
+      reason: `${providerName ?? "this provider"} has no transcription model`,
+    };
   }
   try {
     const provider = source.factory(
@@ -276,11 +275,13 @@ export function resolveTranscriptionModel(
       ) as never,
     );
 
-    return provider.transcription(
-      agentConfig.model?.transcriptionModelId ?? source.modelId,
-    );
-  } catch {
-    return undefined;
+    return {
+      model: provider.transcription(
+        agentConfig.model?.transcriptionModelId ?? source.modelId,
+      ),
+    };
+  } catch (error) {
+    return { reason: error instanceof Error ? error.message : String(error) };
   }
 }
 

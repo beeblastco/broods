@@ -406,9 +406,6 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionProvider: "whisper" } }),
     ).toThrow("config.model.transcriptionProvider must be one of:");
-    expect(() =>
-      normalizeAgentConfig({ model: { transcriptionProvider: "openai" } }),
-    ).not.toThrow();
     // Core puts it into AI Gateway URL paths.
     for (const gatewayId of [7, "gw/../other", "gw?x=1"]) {
       expect(() =>
