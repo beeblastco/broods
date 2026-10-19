@@ -79,8 +79,8 @@ export interface RunFinalizerInputs {
 /** Settles one run exactly once, whichever of onEnd, a failure or `ensureFinalized` gets there first. */
 export interface RunFinalizer {
   /**
-   * Closes open spans and the root span, then writes task usage. Every call
-   * after the first is a no-op.
+   * Closes open spans and the root span, then writes task usage. A call after
+   * the first ignores its arguments and resolves when the first finishes.
    */
   finalize: (
     status: RunStatus,
@@ -97,144 +97,15 @@ export interface RunFinalizer {
  * trackers exist. Usage comes from the task totals and the sandbox CPU ledger.
  */
 export function createRunFinalizer(inputs: RunFinalizerInputs): RunFinalizer {
-  const { root, session } = inputs;
-  let finalized = false;
+  let settling: Promise<void> | undefined;
 
   return {
-    finalize: async (status, toolCallCount, durationMs, error) => {
-      if (finalized) return;
-      finalized = true;
-      inputs.release();
-      const taskTokens = usageTokenTotals(inputs.taskTotals.usage());
-      const stepCount = inputs.taskTotals.steps();
-      const { waitingOn, questions: openQuestions }: RunOpenWork =
-        status === "failed" ? { questions: [] } : await inputs.openWork();
-      const rootStatus = rootSpanStatus(status, waitingOn);
+    finalize: (status, toolCallCount, durationMs, error): Promise<void> => {
+      settling ??= settleRun(inputs, status, toolCallCount, durationMs, error);
 
-      const context = getObservabilityContext();
-      const sanitizedError = error
-        ? new Error(redactSensitiveText(error.message, context?.secretValues))
-        : undefined;
-
-      const endTimeMs = root.startTimeMs + durationMs;
-      inputs.spans.closeOrphans(
-        endTimeMs,
-        status,
-        sanitizedError?.message,
-        inputs.stepTiming.attemptAttributes,
-      );
-      inputs.stepTiming.clear();
-      // Task totals on the root span: token usage and sandbox CPU split per provider
-      // so the dashboard reads final usage straight off the trace stream.
-      const attributes: Record<string, string | number | boolean | undefined> =
-        {
-          ...inputs.rootAttributes(),
-          ...(waitingOn
-            ? { "task.state": rootStatus, "task.waiting_on": waitingOn }
-            : { "task.state": status }),
-          ...(openQuestions.length > 0
-            ? {
-                "task.questions": inputs.serialize(
-                  formatQuestionsText(openQuestions),
-                ),
-              }
-            : {}),
-          "agent.step_count": stepCount,
-          "agent.tool_call_count": toolCallCount,
-          "agent.model_provider": inputs.modelProvider,
-          "agent.model_id": inputs.modelId,
-          "usage.input_tokens": taskTokens.inputTokens,
-          "usage.output_tokens": taskTokens.outputTokens,
-          "usage.reasoning_tokens": taskTokens.reasoningTokens,
-          "usage.cached_input_tokens": taskTokens.cachedInputTokens,
-          "usage.total_tokens": taskTokens.totalTokens,
-          ...inputs.sandboxCpu.typeAttributes(),
-        };
-      const rootSpanRow: ObservabilitySpanRow = {
-        traceId: root.traceId,
-        spanId: root.spanId,
-        name: root.name,
-        kind: root.kind,
-        startTimeMs: root.startTimeMs,
-        endTimeMs: endTimeMs,
-        durationMs: durationMs,
-        status: rootStatus,
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: attributes,
-        ...(sanitizedError ? { error: sanitizedError.message } : {}),
-      };
-
-      // End the root OTel span (durable Tempo export).
-      try {
-        root.span.setAttributes(attributes);
-        if (status === "failed") {
-          if (sanitizedError) root.span.recordException(sanitizedError);
-          root.span.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: sanitizedError?.message,
-          });
-        } else {
-          root.span.setStatus({ code: SpanStatusCode.OK });
-        }
-        root.span.end(endTimeMs);
-      } catch {
-        // Best-effort: never fail the agent path.
-      }
-
-      // Live publish via NATS, tracked with the usage write so shutdown drains the
-      // terminal span. Otherwise a fresh dashboard load can keep a stale "running"
-      // copy of an already-finished task.
-      const rootPublished = inputs.publish(rootSpanRow);
-      try {
-        // Off the turn's tail: the stream closes, takeNext and the channel reply
-        // go out without waiting. Its own scope keeps this run's context, so a
-        // failed write still logs with the tenant scope. Shutdown drains it.
-        const usageRecorded = runWithObservabilityScope(
-          () =>
-            inputs.recordUsage({
-              accountId: session.accountId ?? "",
-              endpointId: session.endpointId,
-              agentId: session.agentId ?? "unknown",
-              principalChain: session.principal?.chain,
-              conversationKey: session.conversationKey,
-              // One row per model pass: a continuation pass shares the eventId.
-              taskId: `${session.eventId}#${root.traceId}`,
-              modelProvider: inputs.modelProvider,
-              modelId: inputs.modelId ?? "unknown",
-              finishedAt: endTimeMs,
-              durationMs: durationMs,
-              status: status,
-              inputTokens: taskTokens.inputTokens,
-              outputTokens: taskTokens.outputTokens,
-              reasoningTokens: taskTokens.reasoningTokens,
-              cachedInputTokens: taskTokens.cachedInputTokens,
-              cacheWriteTokens: inputs.taskTotals.cacheWriteTokens(),
-              totalTokens: taskTokens.totalTokens,
-              runtimeKind: "container",
-              runtimeWallMs: durationMs,
-              // The pod is shared by every run, so this is its resident size when the
-              // run ended, not memory the run owned.
-              runtimeMemoryMb: Math.round(
-                process.memoryUsage().rss / 1024 / 1024,
-              ),
-              sandboxUsage: inputs.sandboxCpu.usage(),
-              stepCount: stepCount,
-              toolCallCount: toolCallCount,
-              inputPreview: inputs.taskInput.slice(
-                0,
-                USAGE_INPUT_PREVIEW_CHARS,
-              ),
-            }),
-          context,
-        );
-        waitUntil(Promise.allSettled([usageRecorded, rootPublished]));
-      } finally {
-        inputs.restoreObservabilityContext();
-      }
+      return settling;
     },
-    finalized: () => finalized,
+    finalized: (): boolean => settling !== undefined,
   };
 }
 
@@ -249,4 +120,138 @@ function rootSpanStatus(
   return waitingOn === "question" || waitingOn === "approval"
     ? "needs_input"
     : "waiting";
+}
+
+/** The run's one finalization; `finalize` hands its promise to every caller. */
+async function settleRun(
+  inputs: RunFinalizerInputs,
+  status: RunStatus,
+  toolCallCount: number,
+  durationMs: number,
+  error: Error | undefined,
+): Promise<void> {
+  const { root, session } = inputs;
+  inputs.release();
+  const taskTokens = usageTokenTotals(inputs.taskTotals.usage());
+  const stepCount = inputs.taskTotals.steps();
+  const { waitingOn, questions: openQuestions }: RunOpenWork =
+    status === "failed" ? { questions: [] } : await inputs.openWork();
+  const rootStatus = rootSpanStatus(status, waitingOn);
+
+  const context = getObservabilityContext();
+  const sanitizedError = error
+    ? new Error(redactSensitiveText(error.message, context?.secretValues))
+    : undefined;
+
+  const endTimeMs = root.startTimeMs + durationMs;
+  inputs.spans.closeOrphans(
+    endTimeMs,
+    status,
+    sanitizedError?.message,
+    inputs.stepTiming.attemptAttributes,
+  );
+  inputs.stepTiming.clear();
+  // Task totals on the root span: token usage and sandbox CPU split per provider
+  // so the dashboard reads final usage straight off the trace stream.
+  const attributes: Record<string, string | number | boolean | undefined> = {
+    ...inputs.rootAttributes(),
+    ...(waitingOn
+      ? { "task.state": rootStatus, "task.waiting_on": waitingOn }
+      : { "task.state": status }),
+    ...(openQuestions.length > 0
+      ? {
+          "task.questions": inputs.serialize(
+            formatQuestionsText(openQuestions),
+          ),
+        }
+      : {}),
+    "agent.step_count": stepCount,
+    "agent.tool_call_count": toolCallCount,
+    "agent.model_provider": inputs.modelProvider,
+    "agent.model_id": inputs.modelId,
+    "usage.input_tokens": taskTokens.inputTokens,
+    "usage.output_tokens": taskTokens.outputTokens,
+    "usage.reasoning_tokens": taskTokens.reasoningTokens,
+    "usage.cached_input_tokens": taskTokens.cachedInputTokens,
+    "usage.total_tokens": taskTokens.totalTokens,
+    ...inputs.sandboxCpu.typeAttributes(),
+  };
+  const rootSpanRow: ObservabilitySpanRow = {
+    traceId: root.traceId,
+    spanId: root.spanId,
+    name: root.name,
+    kind: root.kind,
+    startTimeMs: root.startTimeMs,
+    endTimeMs: endTimeMs,
+    durationMs: durationMs,
+    status: rootStatus,
+    endpointId: session.endpointId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    attributes: attributes,
+    ...(sanitizedError ? { error: sanitizedError.message } : {}),
+  };
+
+  // End the root OTel span (durable Tempo export).
+  try {
+    root.span.setAttributes(attributes);
+    if (status === "failed") {
+      if (sanitizedError) root.span.recordException(sanitizedError);
+      root.span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: sanitizedError?.message,
+      });
+    } else {
+      root.span.setStatus({ code: SpanStatusCode.OK });
+    }
+    root.span.end(endTimeMs);
+  } catch {
+    // Best-effort: never fail the agent path.
+  }
+
+  // Live publish via NATS, tracked with the usage write so shutdown drains the
+  // terminal span. Otherwise a fresh dashboard load can keep a stale "running"
+  // copy of an already-finished task.
+  const rootPublished = inputs.publish(rootSpanRow);
+  try {
+    // Off the turn's tail: the stream closes, takeNext and the channel reply
+    // go out without waiting. Its own scope keeps this run's context, so a
+    // failed write still logs with the tenant scope. Shutdown drains it.
+    const usageRecorded = runWithObservabilityScope(
+      () =>
+        inputs.recordUsage({
+          accountId: session.accountId ?? "",
+          endpointId: session.endpointId,
+          agentId: session.agentId ?? "unknown",
+          principalChain: session.principal?.chain,
+          conversationKey: session.conversationKey,
+          // One row per model pass: a continuation pass shares the eventId.
+          taskId: `${session.eventId}#${root.traceId}`,
+          modelProvider: inputs.modelProvider,
+          modelId: inputs.modelId ?? "unknown",
+          finishedAt: endTimeMs,
+          durationMs: durationMs,
+          status: status,
+          inputTokens: taskTokens.inputTokens,
+          outputTokens: taskTokens.outputTokens,
+          reasoningTokens: taskTokens.reasoningTokens,
+          cachedInputTokens: taskTokens.cachedInputTokens,
+          cacheWriteTokens: inputs.taskTotals.cacheWriteTokens(),
+          totalTokens: taskTokens.totalTokens,
+          runtimeKind: "container",
+          runtimeWallMs: durationMs,
+          // The pod is shared by every run, so this is its resident size when the
+          // run ended, not memory the run owned.
+          runtimeMemoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+          sandboxUsage: inputs.sandboxCpu.usage(),
+          stepCount: stepCount,
+          toolCallCount: toolCallCount,
+          inputPreview: inputs.taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
+        }),
+      context,
+    );
+    waitUntil(Promise.allSettled([usageRecorded, rootPublished]));
+  } finally {
+    inputs.restoreObservabilityContext();
+  }
 }

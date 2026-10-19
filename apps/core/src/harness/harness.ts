@@ -1793,8 +1793,8 @@ export async function runAgentLoop(
       }
     }
     await finalizeHarnessStream();
-    if (finalizer.finalized()) return;
-    if (!finishObserved) {
+    // Already started: the call below only waits for that finalization.
+    if (!finalizer.finalized() && !finishObserved) {
       didFail = true;
       terminalError ??= new Error(
         "Model stream ended without a completion callback",

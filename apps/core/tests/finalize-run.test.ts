@@ -93,6 +93,30 @@ it("settles once even when finalize is called twice", async (): Promise<void> =>
   ]);
 });
 
+it("a second finalize waits for the first to finish instead of returning early", async (): Promise<void> => {
+  const recorded = emptyRecorded();
+  const { finalizer, inputs } = runFinalizer(recorded);
+  const openWork = Promise.withResolvers<RunOpenWork>();
+  inputs.openWork = (): Promise<RunOpenWork> => openWork.promise;
+  const settled: string[] = [];
+
+  const first = finalizer
+    .finalize("completed", 0, 100)
+    .then((): number => settled.push("first"));
+  const second = finalizer
+    .finalize("failed", 0, 200, new Error("late"))
+    .then((): number => settled.push("second"));
+  await Bun.sleep(0);
+
+  expect(finalizer.finalized()).toBe(true);
+  expect(settled).toEqual([]);
+  openWork.resolve({ questions: [] });
+  await Promise.all([first, second]);
+  expect(settled).toEqual(["first", "second"]);
+  expect(recorded.events).toEqual(["release", "publish", "usage", "restore"]);
+  expect(recorded.usage[0]?.status).toBe("completed");
+});
+
 it("records usage and the root span from the task totals and the sandbox CPU ledger", async (): Promise<void> => {
   const recorded = emptyRecorded();
   const { finalizer, inputs } = runFinalizer(recorded);
