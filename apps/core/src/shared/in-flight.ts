@@ -17,6 +17,11 @@ export async function drainInFlight(): Promise<void> {
   }
 }
 
+/** The post-response work still running; the test preload fails a test that leaves some behind. */
+export function inFlightForTests(): ReadonlySet<Promise<void>> {
+  return inFlight;
+}
+
 export function waitUntil(promise: Promise<unknown>): void {
   const tracked = Promise.resolve(promise)
     .then((): undefined => undefined)
