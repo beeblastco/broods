@@ -231,23 +231,23 @@ export const codingAgent = defineAgent({
 
 Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes/index.md).
 
-| Field                  | Default    | Description                                                                                                                                                |
-| ---------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `cloudflare`, `isolate`, `machine`, `custom`                                                              |
-| `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                                                  |
-| `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                                                       |
-| `timeout`              | 30         | Seconds per call, max 600, or 60 on `isolate`                                                                                                              |
-| `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                                               |
-| `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. With `snapshot`, the variant it was built from. Not with `fallbackProvider`                  |
-| `snapshot`             | provider   | Image or snapshot to boot from, in the provider's format. See [Images](../guides/sandboxes/index.md#images)                                                |
-| `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                                                         |
-| `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                                                |
-| `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                                                                                                  |
-| `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                                                                                          |
-| `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                                                                                       |
-| `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                                                                                            |
-| `outputLimitBytes`     | 65536      | Output kept per call                                                                                                                                       |
-| `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, `cloudflare` and `isolate`, only `workspaceRoot` and `reservationKey` |
+| Field                  | Default    | Description                                                                                                                                               |
+| ---------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `cloudflare`, `worker`, `machine`, `custom`                                                              |
+| `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                                                 |
+| `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                                                      |
+| `timeout`              | 30         | Seconds per call, max 600, or 60 on `worker`                                                                                                              |
+| `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                                              |
+| `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. With `snapshot`, the variant it was built from. Not with `fallbackProvider`                 |
+| `snapshot`             | provider   | Image or snapshot to boot from, in the provider's format. See [Images](../guides/sandboxes/index.md#images)                                               |
+| `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                                                        |
+| `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                                               |
+| `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                                                                                                 |
+| `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                                                                                         |
+| `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                                                                                      |
+| `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                                                                                           |
+| `outputLimitBytes`     | 65536      | Output kept per call                                                                                                                                      |
+| `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, `cloudflare` and `worker`, only `workspaceRoot` and `reservationKey` |
 
 `custom` runs `bash` on your own server through one HTTP contract, named by `options.endpoint`; what it accepts and refuses is on [Your own server](../guides/sandboxes/custom.md).
 

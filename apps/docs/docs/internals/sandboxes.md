@@ -20,7 +20,7 @@ flowchart TB
   REG -->|"SDK"| VER["vercel"]
   REG -->|"HTTPS, bearer"| CFW["cloudflare: bridge Worker<br/>apps/cloudflare-sandbox"]
   CFW --> DO["Sandbox Durable Object<br/>one per sandbox id"] --> CT["Container"]
-  REG -->|"HTTPS, bearer"| ISO["isolate: Worker<br/>apps/cloudflare-isolate"]
+  REG -->|"HTTPS, bearer"| WRK["worker: fast Cloudflare V8 Worker<br/>apps/cloudflare-worker"]
   ISO --> DW["Dynamic Worker per sandbox id<br/>just-bash"]
   ISO --> R2[("R2: stored disks")]
   REG ---|"machine frames"| GW["apps/gateway"]
@@ -82,7 +82,7 @@ flowchart TD
 | `e2b`        | `e2b-executor.ts`        | rejected                            | native pause on timeout            | no              | yes      | launch and callback, no logs, stop |
 | `vercel`     | `vercel-executor.ts`     | rejected                            | named sandbox                      | no              | yes      | yes, logs and stop                 |
 | `cloudflare` | `cloudflare-executor.ts` | rejected                            | same Container while warm, no disk | no              | no       | no                                 |
-| `isolate`    | `isolate-executor.ts`    | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
+| `worker`     | `isolate-executor.ts`    | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
 | `machine`    | `machine-executor.ts`    | rejected                            | no                                 | no              | no       | no                                 |
 | `custom`     | `http-executor.ts`       | rejected                            | no                                 | no              | no       | no                                 |
 
@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `isolate` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `isolateMs` and one `isolateRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -542,14 +542,14 @@ stateDiagram-v2
 - Exit 124 or 137 counts as a timeout only once the deadline passed; earlier it is the command's own exit or an OOM kill.
 - `deploy.yaml` does not deploy the bridge. A deployment that offers the provider runs `wrangler deploy` and sets `SANDBOX_API_KEY` on the Worker equal to core's `CLOUDFLARE_SANDBOX_API_KEY`, with `CLOUDFLARE_SANDBOX_URL` pointing at it.
 
-## Isolate
+## Worker
 
-Bash in a V8 isolate, no container and no Durable Object. `isolate-executor.ts` calls the Worker in `apps/cloudflare-isolate` (`src/index.ts`), which loads one Dynamic Worker per sandbox id running [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands (`cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `gzip`, and `curl` with internet). No processes, no `python`, no `git`, no `eval`: a command is either a built-in or `command not found`. The Worker stays dumb: ids, env, working directory and output limit all come from core.
+Bash in a V8 isolate, no container and no Durable Object. `isolate-executor.ts` calls the Worker in `apps/cloudflare-worker` (`src/index.ts`), which loads one Dynamic Worker per sandbox id running [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands (`cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `gzip`, and `curl` with internet). No processes, no `python`, no `git`, no `eval`: a command is either a built-in or `command not found`. The Worker stays dumb: ids, env, working directory and output limit all come from core.
 
 ```mermaid
 sequenceDiagram
   participant E as isolate-executor
-  participant W as isolate Worker
+  participant W as V8 Worker
   participant R2 as R2 sandboxes/:id
   participant I as isolate (just-bash)
 
@@ -577,8 +577,8 @@ sequenceDiagram
 - Billing follows: each command is metered as it ends (its time on the Worker plus one request), an ephemeral call keeps no instance row, and a reserved sandbox's row reads `suspended` while its disk is stored and bills nothing.
 - The isolate is keyed by sandbox id plus what is fixed at load: its network (`globalOutbound: null` without internet, so `curl` is not even registered) and its CPU limit, `limits.cpuMs` from the call's timeout. That limit is the real guard for a busy command, because inside an isolate the clock moves only while the shell waits; just-bash's own deadline (exit 124) catches a `sleep` or a slow `curl`.
 - The isolate runs with `nodejs_compat` for `node:zlib` (gzip and file sniffing, and the stored disk) and the `Buffer` global; nothing else from Node is in the build. `bun run build` in the workspace writes `.generated/runtime.txt` from `src/runtime.ts`, and the host ships it as a text module.
-- Limits are in `apps/cloudflare-isolate/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.
-- `deploy.yaml` does not deploy the Worker. A deployment that offers the provider runs `wrangler deploy` and sets `ISOLATE_API_KEY` on the Worker equal to core's `CLOUDFLARE_ISOLATE_API_KEY`, with `CLOUDFLARE_ISOLATE_URL` pointing at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
+- Limits are in `apps/cloudflare-worker/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.
+- `deploy.yaml` does not deploy the Worker. A deployment that offers the provider runs `wrangler deploy` and sets `WORKER_API_KEY` on the Worker equal to core's `CLOUDFLARE_WORKER_API_KEY`, with `CLOUDFLARE_WORKER_URL` pointing at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
 
 ## Machine
 

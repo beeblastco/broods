@@ -83,13 +83,13 @@ stateDiagram-v2
 | `daytona` | stopped via `autoStopInterval`, disk kept  | on the next call |                                                       |
 | `e2b`     | paused, files, installs and processes kept | on the next call |                                                       |
 | `vercel`  | stopped, filesystem kept                   | on the next call | the timeout counts from start, not from last activity |
-| `isolate` | nothing to stop; files kept in storage     | on the next call | no idle time: nothing runs between commands           |
+| `worker`  | nothing to stop; files kept in storage     | on the next call | no idle time: nothing runs between commands           |
 
 `idleTimeoutSeconds` defaults to 900 and can be at most 7 days. `maxLifetimeSeconds` is an optional ceiling on age since creation, at most 30 days. It is checked when a call acquires the machine, so it never interrupts a running command; the call that trips it boots a fresh machine. Vercel does not enforce `maxLifetimeSeconds`, and its idle timeout stops the sandbox that many seconds after each wake, even mid-activity.
 
 Idle scale-down never pauses a machine while a background job runs.
 
-On the managed service, sandbox time counts from each use until `idleTimeoutSeconds` scales the machine down, because the provider bills that idle stretch too. A suspended `lambda` MicroVM keeps counting a little for its stored snapshot until it resumes or is released. A `lambda` MicroVM that bursts above its 1 vCPU / 2 GB baseline also counts the extra vCPU and memory while it is used, the way AWS bills it. A shorter idle timeout uses less of the plan's monthly sandbox time. An `isolate` sandbox has no idle stretch: it counts only the milliseconds its commands ran, plus one request each. The dashboard shows it under Usage, Allowance, for the project you are in or for all of the org's projects.
+On the managed service, sandbox time counts from each use until `idleTimeoutSeconds` scales the machine down, because the provider bills that idle stretch too. A suspended `lambda` MicroVM keeps counting a little for its stored snapshot until it resumes or is released. A `lambda` MicroVM that bursts above its 1 vCPU / 2 GB baseline also counts the extra vCPU and memory while it is used, the way AWS bills it. A shorter idle timeout uses less of the plan's monthly sandbox time. An `worker` sandbox has no idle stretch: it counts only the milliseconds its commands ran, plus one request each. The dashboard shows it under Usage, Allowance, for the project you are in or for all of the org's projects.
 
 ## Setup commands
 
@@ -100,7 +100,7 @@ On the managed service, sandbox time counts from each use until `idleTimeoutSeco
 | `sandbox`, `daytona`, `lambda` | on every call                                |
 | `vercel`                       | only when a stopped sandbox resumes          |
 | `e2b`                          | not supported. Put setup in the E2B template |
-| `cloudflare`, `isolate`        | not supported. The Worker sets the machine   |
+| `cloudflare`, `worker`         | not supported. The Worker sets the machine   |
 
 Make `onResume` idempotent, since on most providers it runs every time.
 

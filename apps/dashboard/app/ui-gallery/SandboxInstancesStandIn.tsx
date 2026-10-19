@@ -59,10 +59,10 @@ const INSTANCES: Doc<"sandboxInstances">[] = [
     suspendedAt: NOW - 59 * MINUTE,
     lastUsedTraceId: "77be02d1a91f3c8e4b2d7e6f0c1a2b3c",
   }),
-  // An isolate has no machine size: the row shows `?` and says why.
+  // A V8 Worker has no machine size: the row shows `?` and says why.
   instance("s2b", {
     name: "jq-runner",
-    provider: "isolate",
+    provider: "worker",
     status: "suspended",
     specsVerified: undefined,
     agentId: "agent-support",

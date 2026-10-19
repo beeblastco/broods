@@ -1,8 +1,8 @@
 import { defineAgent, defineSandbox, env } from "broods";
 
-export const isolateSandbox = defineSandbox({
-  name: "isolate-sandbox",
-  provider: "isolate",
+export const workerSandbox = defineSandbox({
+  name: "worker-sandbox",
+  provider: "worker",
   persistent: true,
   network: { mode: "allow-all" },
   permissionMode: "bypass",
@@ -13,8 +13,8 @@ export const isolateSandbox = defineSandbox({
   },
 });
 
-export const isolateAgent = defineAgent({
-  name: "isolate-agent",
+export const workerAgent = defineAgent({
+  name: "worker-agent",
   provider: {
     custom: {
       apiKey: env("AI_API_KEY"),
@@ -29,6 +29,6 @@ export const isolateAgent = defineAgent({
     system:
       "You are a helpful assistant with a bash sandbox of built-in text tools (grep, sed, awk, jq, sort, curl) and no python or node. Use the tools available to you to answer the user's question.",
   },
-  sandboxes: [isolateSandbox],
+  sandboxes: [workerSandbox],
   publicAccess: true,
 });

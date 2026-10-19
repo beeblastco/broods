@@ -33,7 +33,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `e2b`        | E2B template                 | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
 | `vercel`     | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
 | `cloudflare` | Cloudflare Container         | no              | yes, while warm       | no                      | `allow-all` or no internet     |
-| `isolate`    | Cloudflare Workers isolate   | no              | yes, files in storage | no                      | `allow-all` or no internet     |
+| `worker`     | Fast Cloudflare V8 Worker    | no              | yes, files in storage | no                      | `allow-all` or no internet     |
 | `machine`    | Your own computer            | no              | no                    | no                      | `allow-all` only               |
 | `custom`     | Your own server over HTTP    | no              | no                    | no                      | `allow-all` only               |
 
@@ -65,27 +65,27 @@ flowchart TD
   C -.->|no workspace| NB
 ```
 
-`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `isolate`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md). `machine` and `custom` have their own pages, [Your computer](machine.md) and [Your own server](custom.md).
+`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `worker`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md). `machine` and `custom` have their own pages, [Your computer](machine.md) and [Your own server](custom.md).
 
 ## Configuration
 
-| Field                  | Default                | What it does                                                                                                                                       |
-| ---------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider`             | `lambda`               | Compute backend, from the table above                                                                                                              |
-| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`                                               |
-| `size`                 | provider default       | Sizes `sandbox` and `cloudflare`. Ignored on `lambda`, `isolate`, `daytona`, `e2b`, `vercel`. Rejected on `machine`, `custom`. See [Sizes](#sizes) |
-| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Web browsing](browsing.md#browser-images)               |
-| `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                                                    |
-| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                                                           |
-| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                                                          |
-| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary                                        |
-| `timeout`              | 30                     | Seconds per call. Maximum 600, or 60 on `isolate`                                                                                                  |
-| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                                                               |
-| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                                                        |
-| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, `cloudflare` and `isolate`, only `workspaceRoot` and `reservationKey`      |
-| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                                                            |
-| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                                                               |
-| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`, `cloudflare`, `isolate`                                                           |
+| Field                  | Default                | What it does                                                                                                                                      |
+| ---------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | `lambda`               | Compute backend, from the table above                                                                                                             |
+| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine` or `custom`                                              |
+| `size`                 | provider default       | Sizes `sandbox` and `cloudflare`. Ignored on `lambda`, `worker`, `daytona`, `e2b`, `vercel`. Rejected on `machine`, `custom`. See [Sizes](#sizes) |
+| `image`                | none                   | `lambda` only. `obscura` or `browser` boots a platform image with a headless browser, see [Web browsing](browsing.md#browser-images)              |
+| `snapshot`             | provider default       | Image or snapshot to boot from, in the provider's format, see [Images](#images)                                                                   |
+| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                                                          |
+| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                                                         |
+| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary                                       |
+| `timeout`              | 30                     | Seconds per call. Maximum 600, or 60 on `worker`                                                                                                  |
+| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                                                              |
+| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                                                       |
+| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, `cloudflare` and `worker`, only `workspaceRoot` and `reservationKey`      |
+| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                                                           |
+| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                                                              |
+| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`, `cloudflare`, `worker`                                                           |
 
 `envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, the background-job slots and the run identity `BROODS_RUN_TOKEN`, `BROODS_AGENT_ID`, `BROODS_ACCOUNT_ID`, `BROODS_BASE_URL`. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
 
@@ -126,7 +126,7 @@ network: {
 | `daytona`    | allowed     | denied     | CIDR allowlist only. Domain lists are ignored with a warning |
 | `vercel`     | allowed     | denied     | domain and CIDR allowlist                                    |
 | `cloudflare` | allowed     | denied     | rejected                                                     |
-| `isolate`    | allowed     | denied     | rejected                                                     |
+| `worker`     | allowed     | denied     | rejected                                                     |
 | `e2b`        | allowed     | rejected   | rejected                                                     |
 | `machine`    | allowed     | rejected   | rejected                                                     |
 | `custom`     | allowed     | rejected   | rejected                                                     |
@@ -153,7 +153,7 @@ A provider that cannot enforce a mode rejects the config instead of quietly gran
 | `daytona`    | Nothing, the snapshot and Daytona's defaults size it                                         | vCPU, memory and disk Daytona reports                                         |
 | `e2b`        | Nothing, the template sizes it                                                               | vCPU and memory E2B reports. Disk is `?`, E2B does not report it              |
 | `vercel`     | Nothing, Vercel sizes it                                                                     | vCPU and memory Vercel reports. Disk is `?`, Vercel does not report it        |
-| `isolate`    | Nothing, every isolate is the same                                                           | `?`: an isolate has no machine, each command gets 128 MB of memory            |
+| `worker`     | Nothing, every isolate is the same                                                           | `?`: an isolate has no machine, each command gets 128 MB of memory            |
 | `machine`    | Rejected                                                                                     | CPUs, memory and home disk of your computer, as `broods machine` reports them |
 | `custom`     | Rejected                                                                                     | No instance row: Broods cannot see your server's hardware                     |
 
@@ -173,7 +173,7 @@ Set `snapshot` to boot a prebuilt image instead of the provider default. Bake he
 | `e2b`        | an E2B template or snapshot                                           | the sandbox, as an E2B snapshot. E2B pauses it while it captures                                      |
 | `vercel`     | a Vercel image, such as `vercel/sandbox/python:3.14`, or a `snap_` id | the sandbox, as a Vercel snapshot that does not expire. Vercel stops it, and its next call resumes it |
 | `cloudflare` | rejected. The bridge Worker's image sets the machine                  | not available                                                                                         |
-| `isolate`    | rejected. A persistent sandbox's files are its whole state            | not available                                                                                         |
+| `worker`     | rejected. A persistent sandbox's files are its whole state            | not available                                                                                         |
 
 The Snapshot action runs on a running instance of a persistent sandbox and saves it under a name you pick. Any sandbox of the same provider on the same stage can then pin it, with the Snapshot select on its node or `snapshot` in code. On `lambda`, workspace files stay in the workspace, and deleted files are not carried over.
 

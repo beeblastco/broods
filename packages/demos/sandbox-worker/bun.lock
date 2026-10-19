@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@broods/demo-sandbox-isolate",
+      "name": "@broods/demo-sandbox-worker",
       "dependencies": {
         "broods": "file:../../broods",
       },
