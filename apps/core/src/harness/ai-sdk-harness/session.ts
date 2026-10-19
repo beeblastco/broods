@@ -200,8 +200,8 @@ export async function parkAiSdkHarnessSession(
 /**
  * Sets up a native harness turn: stores the pending input, applies steering,
  * loads the stored session, builds the agent on its machine and opens the
- * session. Called by the run loop in `harness.ts`, which owns finalization and
- * the occupancy release.
+ * session, renewing the conversation lease from before the open. Called by the
+ * run loop in `harness.ts`, which owns finalization and the occupancy release.
  */
 export async function prepareHarnessTurn(
   options: PrepareHarnessTurnOptions,
@@ -266,17 +266,38 @@ export async function prepareHarnessTurn(
       conversationKey: session.conversationKey,
     }),
   );
-  const nativeSession = await options.openSession({
-    abortSignal: options.abortController.signal,
-    agent: runtime.agent,
-    stored: stored,
-    type: harnessType,
-  });
+  // Opening a machine can outlast the lease, so renewal starts before it. A
+  // lease lost during the open waits until the open settles: cancelling it
+  // would leave a booting machine with no session to park or destroy.
+  let opened = false;
+  let lostDuringOpen: { reason: unknown } | undefined;
   const stopLeaseMonitor = startHarnessLeaseMonitor(
     session,
-    options.abortController,
+    options.abortController.signal,
     options.stopMessage,
+    (reason: unknown): void => {
+      if (opened) {
+        options.abortController.abort(reason);
+      } else {
+        lostDuringOpen = { reason: reason };
+      }
+    },
   );
+  const nativeSession = await options
+    .openSession({
+      abortSignal: options.abortController.signal,
+      agent: runtime.agent,
+      stored: stored,
+      type: harnessType,
+    })
+    .catch((error: unknown): never => {
+      stopLeaseMonitor();
+      throw error;
+    });
+  opened = true;
+  if (lostDuringOpen) {
+    options.abortController.abort(lostDuringOpen.reason);
+  }
   const dispose = async (): Promise<void> => {
     stopLeaseMonitor();
     await nativeSession.destroy().catch(() => {});
@@ -369,18 +390,30 @@ function requireHarnessSandbox(
 
 /**
  * Renews the conversation lease every second during a HarnessAgent turn and
- * aborts the run on a stop, a lost lease or repeated renewal failures.
- * Returns the function that stops the monitor.
+ * reports a stop, a lost lease or repeated renewal failures once through
+ * `onLost`. Returns the function that stops the monitor; a renewal still in
+ * flight then reports nothing.
  */
 function startHarnessLeaseMonitor(
   session: Session,
-  abortController: AbortController,
+  signal: AbortSignal,
   stopMessage: string,
+  onLost: (reason: unknown) => void,
 ): () => void {
   let checking = false;
   let consecutiveFailures = 0;
+  let done = false;
+  const stop = (): void => {
+    done = true;
+    clearInterval(timer);
+  };
+  const lose = (reason: unknown): void => {
+    if (done) return;
+    stop();
+    onLost(reason);
+  };
   const timer = setInterval(async () => {
-    if (checking || abortController.signal.aborted) {
+    if (checking || done || signal.aborted) {
       return;
     }
     checking = true;
@@ -388,16 +421,16 @@ function startHarnessLeaseMonitor(
       const renewal = await session.renewConversationLease();
       consecutiveFailures = 0;
       if (renewal === "stopped") {
-        abortController.abort(new Error(stopMessage));
+        lose(new Error(stopMessage));
       } else if (renewal === "stale") {
-        abortController.abort(
+        lose(
           new Error("Conversation ownership changed during HarnessAgent turn"),
         );
       }
     } catch (error) {
       consecutiveFailures += 1;
       if (consecutiveFailures >= HARNESS_LEASE_RENEWAL_FAILURE_LIMIT) {
-        abortController.abort(error);
+        lose(error);
       }
     } finally {
       checking = false;
@@ -405,5 +438,5 @@ function startHarnessLeaseMonitor(
   }, 1_000);
   timer.unref();
 
-  return () => clearInterval(timer);
+  return stop;
 }
