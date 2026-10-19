@@ -41,6 +41,7 @@ flowchart TB
   subgraph CF["Cloudflare"]
     McpWorker["cloudflare-mcp Worker<br/>dev stages only"]
     SbxWorker["cloudflare-sandbox<br/>bridge Worker"]
+    IsoWorker["cloudflare-worker<br/>Worker + R2"]
   end
 
   Users -->|HTTPS| Traefik
@@ -61,6 +62,7 @@ flowchart TB
   Core --> MicroVM
   Core --> McpWorker
   Core --> SbxWorker
+  Core --> IsoWorker
   Convex --> S3
   MicroVM -->|CloudWatch| LogFwd
   LogFwd -->|OTLP| Obs
@@ -197,6 +199,7 @@ flowchart LR
   Core -->|Matrix access token| MFwd[matrix-forwarder]
   Core -->|CLOUDFLARE_MCP_API_KEY| MCP[cloudflare-mcp]
   Core -->|CLOUDFLARE_SANDBOX_API_KEY| SBX[cloudflare-sandbox]
+  Core -->|CLOUDFLARE_WORKER_API_KEY| ISO[cloudflare-worker]
   Gateway -->|sealed terminal ticket| SBX
 ```
 

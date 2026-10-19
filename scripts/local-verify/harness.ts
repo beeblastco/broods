@@ -193,6 +193,52 @@ export async function probeHttp(url: string): Promise<number | null> {
   }
 }
 
+/**
+ * An agent on `sandboxId` writes a marker in one turn and reads it back in
+ * the next, so a persistent sandbox is shown to keep a file across calls.
+ * The read answers the marker reversed, which no prompt contains, so the
+ * model cannot pass it from the conversation without the file.
+ */
+export async function persistentSandboxKeepsFile(
+  context: VerifyContext,
+  input: { key: string; label: string; path: string; sandboxId: string },
+): Promise<void> {
+  const { agentId } = await context.account.createAgent({
+    name: input.key,
+    config: {
+      ...context.model,
+      agent: {
+        system:
+          "Use the bash tool to run exactly the command the user gives, then reply with exactly its output and nothing else.",
+      },
+      sandboxes: [input.sandboxId],
+    },
+  });
+  const turn = (text: string, step: string): Promise<AsyncStatus> =>
+    context.measure(step, (): Promise<AsyncStatus> =>
+      runToTerminal(context, {
+        agentId: agentId,
+        conversationKey: input.key,
+        eventId: `${input.key}-${step}`,
+        text: text,
+      }),
+    );
+  const marker = `${input.label}-${context.runId}`;
+  const reversed = marker.split("").reverse().join("");
+  const wrote = await turn(
+    `Run: echo ${marker} > ${input.path}`,
+    `${input.label} write`,
+  );
+  const read = await turn(`Run: rev ${input.path}`, `${input.label} read`);
+  assertStep(
+    `a persistent ${input.label} sandbox keeps a file between turns`,
+    wrote.status === "completed" &&
+      read.status === "completed" &&
+      JSON.stringify(read.response ?? "").includes(reversed),
+    `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
+  );
+}
+
 /** Starts a background run through the gateway and waits for its final status. */
 export async function runToTerminal(
   context: VerifyContext,

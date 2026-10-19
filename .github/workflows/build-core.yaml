@@ -9,6 +9,7 @@ on:
       - "apps/core/**"
       - "apps/cloudflare-sandbox/src/limits.ts"
       - "apps/cloudflare-sandbox/src/terminal-token.ts"
+      - "apps/cloudflare-worker/src/limits.ts"
       - "packages/ai-sdk-sandbox/**"
       - "packages/convex/**"
       - "package.json"

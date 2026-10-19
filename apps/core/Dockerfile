@@ -33,8 +33,10 @@ COPY packages/ai-sdk-sandbox ./packages/ai-sdk-sandbox
 COPY packages/convex ./packages/convex
 COPY apps/core ./apps/core
 # The cloudflare executor clamps its requests with the bridge's own limits, and
-# the accounts handler signs terminal tokens in the bridge's own format.
+# the accounts handler signs terminal tokens in the bridge's own format. The
+# worker executor clamps with its Worker's limits the same way.
 COPY apps/cloudflare-sandbox/src/limits.ts apps/cloudflare-sandbox/src/terminal-token.ts ./apps/cloudflare-sandbox/src/
+COPY apps/cloudflare-worker/src/limits.ts ./apps/cloudflare-worker/src/
 # Compile at the amd64 target: the k3s cluster nodes are amd64.
 RUN cd apps/core && bun run scripts/compaction-prompt.ts \
     && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server

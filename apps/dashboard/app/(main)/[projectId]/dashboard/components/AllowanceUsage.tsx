@@ -67,7 +67,7 @@ const ROWS: AllowanceRow[] = [
     unit: "hours",
     share: "sandboxHours",
     color: "var(--color-usage-agent-sandbox)",
-    help: "Hours your sandboxes spent running, idle time until they stop included, at the default 1 vCPU / 2 GB size. A bigger sandbox, a resume or a kept snapshot uses hours faster. Sandboxes on your own provider account are free.",
+    help: "Hours your sandboxes spent running, idle time until they stop included, at the default 1 vCPU / 2 GB size. A bigger sandbox, a resume or a kept snapshot uses hours faster. An isolate counts only the seconds its commands ran. Sandboxes on your own provider account are free.",
   },
   {
     key: "hostedMcpHours",
