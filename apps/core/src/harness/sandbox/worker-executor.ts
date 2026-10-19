@@ -19,6 +19,7 @@ import { recordUsage } from "../plan-limits.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
 import {
   callPlatformWorker,
+  PlatformWorkerError,
   platformWorkerConnection,
   releasePlatformSandbox,
   reservePlatformSandbox,
@@ -148,11 +149,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     persist: boolean,
   ): Promise<SandboxExecResponse> {
     const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
-    // Metered whatever the Worker answers: a command it refused after running
-    // (a 409, a late answer) still ran, and its own measure of the time is
-    // taken when it gave one.
     const startedAt = Date.now();
-    let durationMs: number | undefined;
     try {
       const response = await callPlatformWorker(
         workerConnection(),
@@ -179,11 +176,15 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
         timeoutMs + WORKER_OVERHEAD_MS,
       );
       const result = parseExecResponse(await response.text(), LABEL);
-      durationMs = result.duration_ms;
+      this.#meter(result.duration_ms, request.metadata);
 
       return result;
-    } finally {
-      this.#meter(durationMs ?? Date.now() - startedAt, request.metadata);
+    } catch (error) {
+      // An answer means the command ran, a refusal after the fact (a 409)
+      // included; a call that never reached the Worker ran nothing.
+      if (error instanceof PlatformWorkerError)
+        this.#meter(Date.now() - startedAt, request.metadata);
+      throw error;
     }
   }
 

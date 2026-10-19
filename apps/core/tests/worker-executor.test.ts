@@ -201,6 +201,16 @@ it("meters a command the Worker refused after running it, on its own clock", asy
   );
 });
 
+it("meters nothing for a call that never reached the Worker", async (): Promise<void> => {
+  mockFetch(async (): Promise<Response> => {
+    throw new TypeError("fetch failed");
+  });
+
+  await new WorkerSandboxExecutor(config).run(request).catch((): void => {});
+
+  expect(metered).toEqual([]);
+});
+
 it("clamps the timeout to the Worker's ceiling, the one the config plane enforces, and turns internet on from the network mode", async (): Promise<void> => {
   await new WorkerSandboxExecutor({
     ...config,
