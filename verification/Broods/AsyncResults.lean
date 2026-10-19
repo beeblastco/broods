@@ -39,11 +39,11 @@ inductive Finish where
   | completed | failed | awaitingApproval | awaitingInput
   deriving DecidableEq, Repr
 
-/-- How `runAgentLoopUntilSubagentsIdle` ends, or the no-input branch. A failed loop
-always reaches `onErrorText`, so it is `error`; `silent` returns with no callback;
-`replayed` asks questions, then replays an earlier pass's final text. A queued command
-(`commandOutcome`) runs instead of the loop and never throws: `commandReplied` when its
-reply went out, `commandFailed` when sending it failed. -/
+/-- How `runAgentLoopUntilSubagentsIdle` (`apps/core/src/harness/continuation.ts`) ends,
+or the no-input branch. A failed loop always reaches `onErrorText`, so it is `error`;
+`silent` returns with no callback; `replayed` asks questions, then replays an earlier
+pass's final text. A queued command (`commandOutcome`) runs instead of the loop and never
+throws: `commandReplied` when its reply went out, `commandFailed` when sending it failed. -/
 inductive Ending where
   | noInput | final | error | approval | questions | silent | replayed
   | commandReplied | commandFailed
