@@ -20,7 +20,8 @@ test("this project leads each resource, and its piece of the bar is its share of
   ).toBeVisible();
   await expect(sandbox).toContainText("28.9 h");
   await expect(sandbox).toContainText("92.7 h");
-  await expect(sandbox).toContainText("46%");
+  await expect(sandbox).toContainText("129.8 h");
+  await expect(sandbox).toContainText("65%");
 
   const track = (await sandbox.locator("div.bg-muted").boundingBox())!;
   const used = (await sandbox.locator("div.bg-muted > div").boundingBox())!;
@@ -28,10 +29,10 @@ test("this project leads each resource, and its piece of the bar is its share of
     .locator("div.bg-muted > div > div")
     .first()
     .boundingBox())!;
-  // The bar reaches the org's 46% of the limit; this project is 28.9 of
-  // its 92.7 hours.
-  expect(used.width / track.width).toBeCloseTo(0.464, 1);
-  expect(own.width / used.width).toBeCloseTo(28.9 / 92.7, 1);
+  // The bar reaches the pool's 65% of the limit; this project is 28.9 of
+  // the pool's 129.8 hours, the rest is the org and the owner's other org.
+  expect(used.width / track.width).toBeCloseTo(0.649, 1);
+  expect(own.width / used.width).toBeCloseTo(28.9 / 129.8, 1);
 });
 
 test("all projects lists every project, busiest first on the picked resource", async ({

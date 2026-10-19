@@ -530,6 +530,12 @@ describe("budget", () => {
       egressGb: 16.5,
       ingressGb: 2,
     };
+    const shares = {
+      sandboxHours: 0,
+      hostedMcpHours: 0,
+      storageGb: 30,
+      egressGb: 110,
+    };
     expect(usage).toEqual({
       enforced: true,
       plan: "free",
@@ -537,15 +543,13 @@ describe("budget", () => {
       months: ["2026-09"],
       usedPercent: 110,
       caps: PLAN_LIMITS.free.caps,
-      shares: {
-        sandboxHours: 0,
-        hostedMcpHours: 0,
-        storageGb: 30,
-        egressGb: 110,
-      },
+      shares: shares,
+      // The owner's one org is its own pool.
+      orgShares: shares,
       level: "exhausted",
       totals: amounts,
       days: [{ day: "2026-09-23", ...amounts }],
+      pool: { orgs: 1, shared: false, totals: amounts },
     });
   });
 
@@ -660,12 +664,13 @@ describe("budget", () => {
   });
 });
 
+// One owner per plan: owners pool their orgs' usage (`usagePool.test.ts`).
 async function seedAccount(t: T, plan: Plan = "free"): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",
       slug: "beeblast",
-      ownerAuthId: "auth_owner",
+      ownerAuthId: `auth_owner_${plan}`,
       plan: plan,
       createdAt: Date.now(),
     });

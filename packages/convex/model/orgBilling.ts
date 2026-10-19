@@ -7,11 +7,12 @@
  * owns: each distinct developer (a member who is not the owner) in any of
  * them takes one seat, however many of those orgs they are in. A Hobby
  * (free) owner has no developer seats and keeps one workspace; creating
- * more orgs needs Pro (`assertCanCreateOrg`). A Hobby user still joins any
- * org that invites them, on its owner's seat. The rules hold only on the
- * managed service (`isManagedService`). `orgs.plan` follows its owner's
- * subscription and is what core enforces, per org; `users.plan` is the
- * owner's own.
+ * more orgs needs Pro, up to `PLAN_LIMITS.pro.maxOwnedOrgs`
+ * (`assertCanCreateOrg`). A Hobby user still joins any org that invites
+ * them, on its owner's seat. The rules hold only on the managed service
+ * (`isManagedService`). `orgs.plan` follows its owner's subscription and
+ * names the caps core enforces against the owner's pool
+ * (`model/usageMeter.ts`); `users.plan` is the owner's own.
  */
 
 import type Stripe from "stripe";
@@ -20,7 +21,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
 import { userByAuthId } from "./ownership/org";
-import { isManagedService, type Plan } from "./planLimits";
+import { isManagedService, PLAN_LIMITS, type Plan } from "./planLimits";
 
 /** Developer seats Pro includes, for its one unit. */
 export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
@@ -182,11 +183,12 @@ export async function releaseSeat(
 }
 
 /**
- * Refuse a new org unless its owner is on Pro, and give the plan it starts
- * on: its owner's. Owning none, everyone gets one: the Hobby workspace made
- * for them. A Pro owner creates as many as they like. A subscription that
- * waits on a payment is not Pro until Stripe has it. A self-hosted install
- * bills no one: every org starts free and the rule does not apply.
+ * Refuse a new org past what its owner's plan allows, and give the plan it
+ * starts on: its owner's. Owning none, everyone gets one: the Hobby workspace
+ * made for them. A Pro owner creates up to `maxOwnedOrgs`, all drawing on
+ * their one pool of caps. A subscription that waits on a payment is not Pro
+ * until Stripe has it. A self-hosted install bills no one: every org starts
+ * free and the rule does not apply.
  */
 export async function assertCanCreateOrg(
   ctx: QueryCtx,
@@ -198,18 +200,19 @@ export async function assertCanCreateOrg(
     { userId: ownerAuthId },
   );
   const plan = planOf(subs);
-  if (plan === "pro") return plan;
   const owned = await ctx.db
     .query("orgs")
     .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", ownerAuthId))
-    .first();
-  if (!owned) return plan;
+    .collect();
+  if (owned.length < PLAN_LIMITS[plan].maxOwnedOrgs) return plan;
 
   throw new ClientError(
-    subs.some((sub) => !isEnded(sub.status))
-      ? "Payment for your Pro plan is due. Update the card in Billing first."
-      : "Creating another organization needs Pro. Upgrade to Pro first.",
-    "payment_required",
+    plan === "pro"
+      ? `You own ${owned.length} organizations, the most Pro allows.`
+      : subs.some((sub) => !isEnded(sub.status))
+        ? "Payment for your Pro plan is due. Update the card in Billing first."
+        : "Creating another organization needs Pro. Upgrade to Pro first.",
+    plan === "pro" ? "invalid_request" : "payment_required",
   );
 }
 
