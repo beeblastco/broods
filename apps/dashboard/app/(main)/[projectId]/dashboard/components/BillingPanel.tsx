@@ -487,8 +487,8 @@ function NoticeBar({
   );
 }
 
-// Only a state worth a word: a paid plan in good standing shows none, and
-// who pays is plain text in the summary.
+// Only a state worth a word: a paid plan in good standing and a free one show
+// none, and who pays is plain text in the summary.
 function PlanBadge({
   selfHosted,
   status,
@@ -503,7 +503,7 @@ function PlanBadge({
     return <Badge variant="destructive">Payment due</Badge>;
   }
 
-  return <Badge variant="secondary">Free</Badge>;
+  return null;
 }
 
 // Plan name, status, what it costs and when it renews or resets, and whose

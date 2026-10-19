@@ -127,6 +127,12 @@ test("an owner on Hobby sees their plan, no developer seats, and what Upgrade co
   await openBilling(page, readProjectId());
 
   await expect(page.getByRole("heading", { name: "Your plan" })).toBeVisible();
+  // The plan name alone: Hobby wears no badge, like a paid plan in good standing.
+  const plan = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Your plan" }),
+  });
+  await expect(plan.getByText("Hobby", { exact: true })).toBeVisible();
+  await expect(plan.getByText("Free", { exact: true })).toHaveCount(0);
   await expect(
     page.getByText(/^Resets .+ · just you · you can join other people's orgs$/),
   ).toBeVisible();
