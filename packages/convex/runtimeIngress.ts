@@ -20,6 +20,7 @@ import {
   conversationEventsValidator,
   insertConversationEvents,
   handbackPatch,
+  isResultStored,
   markAsyncAgentResultSeen,
   markAsyncToolResultSeen,
   writeAsyncAgentResult,
@@ -1152,7 +1153,13 @@ async function checkDuplicateAdmission(
   if (existing && (await expiredUndeliveredResume(ctx, existing))) {
     await ctx.db.delete(existing._id);
   } else if (existing) {
-    if (existing.payloadDigest !== args.payloadDigest) {
+    // The recovery sweep retries a resume under the same identity while the
+    // first still waits in the queue; its payload can drift (a hook rewrite, a
+    // model redeploy), and it is still the same result, not a conflict.
+    if (
+      existing.payloadDigest !== args.payloadDigest &&
+      !resumesSameResult(existing, args)
+    ) {
       return { outcome: "conflict" as const, eventId: existing.eventId };
     }
 
@@ -1212,7 +1219,7 @@ async function storedResultAdmission(
   result: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">,
   dedupeKeyFor: (status: "completed" | "failed") => string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
-  if (result.handback === "stored" || result.observed === true) {
+  if (isResultStored(result)) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
   for (const status of ["completed", "failed"] as const) {
@@ -1251,9 +1258,7 @@ async function expiredUndeliveredResume(
 
   return rows.some(
     (row): boolean =>
-      row?.accountId === envelope.accountId &&
-      row.handback !== "stored" &&
-      row.observed !== true,
+      row?.accountId === envelope.accountId && !isResultStored(row),
   );
 }
 
@@ -1588,6 +1593,26 @@ async function markDeliveredResultsStored(
     envelope.resultEventId,
   );
   await markAsyncToolResultSeen(ctx, envelope.accountId, envelope.toolResultId);
+}
+
+/**
+ * Whether `envelope` and the admission `args` resume the same late result;
+ * `checkDuplicateAdmission` answers such a retry as a duplicate even when its
+ * payload drifted.
+ */
+function resumesSameResult(
+  envelope: Pick<
+    Doc<"runtimeIngressEnvelopes">,
+    "resultEventId" | "toolResultId"
+  >,
+  args: { resultEventId?: string; toolResultId?: string },
+): boolean {
+  return (
+    (args.resultEventId !== undefined &&
+      envelope.resultEventId === args.resultEventId) ||
+    (args.toolResultId !== undefined &&
+      envelope.toolResultId === args.toolResultId)
+  );
 }
 
 /**

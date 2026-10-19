@@ -102,6 +102,12 @@ const STILL_RUNNING_NOTE =
 // recovery sweep takes it over, and the age past which nobody waits for it.
 const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
 const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Resume outcomes that leave a lost result's row, and the message its finish
+// hook shaped, to the next sweep pass: a queued resume stores the row only when
+// applied, a full conversation has no room, and a duplicate is a resume of it
+// still queued.
+const HELD_RESUME_OUTCOMES: ReadonlySet<SubagentResumeOutcome> =
+  new Set<SubagentResumeOutcome>(["queued", "capacity", "duplicate"]);
 // Rows the release before `handback` detached carry only `observed: false`.
 // The sweep lists them beside the hand-back windows for one release; drop
 // `undefined` from this list next release.
@@ -1523,10 +1529,11 @@ export async function resumeLostSubagentResults(
           return heldLostResults.get(row.eventId);
         });
         if (retry) held.set(row.eventId, retry);
-        // Counted once it is handled: each one is a result a parent run
-        // dropped without a trace. A row held for the next pass is not
-        // counted again each pass.
-        if (handback === "pending" && !retry) {
+        // Counted the first pass that takes it up: each one is a result a
+        // parent run dropped without a trace. A row held from an earlier pass
+        // is not counted again, and a queued resume, which the apply stores
+        // without the sweep, is still counted.
+        if (handback === "pending" && !heldLostResults.has(row.eventId)) {
           logInfo("Subagent result left pending past the parent's hold", {
             eventId: row.eventId,
             ageMs: now - Date.parse(row.updatedAt),
@@ -1771,11 +1778,11 @@ async function resumeLostSubagentResult(
       taskId: taskId,
       admission: outcome,
     });
-
-    return undefined;
   }
-  if (outcome === "capacity" || outcome === "duplicate") return message;
-  await giveUpLostSubagentResult(row.eventId, `resume ${outcome}`);
+  if (HELD_RESUME_OUTCOMES.has(outcome)) return message;
+  if (outcome !== "owner") {
+    await giveUpLostSubagentResult(row.eventId, `resume ${outcome}`);
+  }
 
   return undefined;
 }

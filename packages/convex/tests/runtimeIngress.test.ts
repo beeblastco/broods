@@ -2663,7 +2663,7 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         response: "answer",
       });
     },
-    fence: (id) => ({ resultEventId: id }),
+    fence: (id): { resultEventId: string } => ({ resultEventId: id }),
     handback: async (t, id): Promise<string | undefined> =>
       (await t.query(internal.runtime.getAsyncAgentResult, { eventId: id }))
         ?.handback,
@@ -2675,7 +2675,11 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
           status: "completed",
         })
       ).page.some((row): boolean => row.eventId === id),
-    apply: async (t, conversationKey, ownerGeneration) =>
+    apply: async (
+      t,
+      conversationKey,
+      ownerGeneration,
+    ): Promise<{ contributingEventIds: string[] } | null> =>
       await t.mutation(internal.runtimeIngress.takeNext, {
         conversationKey: conversationKey,
         ownerEventId: "busy",
@@ -2703,7 +2707,7 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         onlyWhenProcessing: true,
       });
     },
-    fence: (id) => ({ toolResultId: id }),
+    fence: (id): { toolResultId: string } => ({ toolResultId: id }),
     handback: async (t, id): Promise<string | undefined> =>
       (await t.query(internal.runtime.getAsyncToolResult, { resultId: id }))
         ?.handback,
@@ -2715,7 +2719,11 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
           status: "completed",
         })
       ).page.some((row): boolean => row.resultId === id),
-    apply: async (t, conversationKey, ownerGeneration) =>
+    apply: async (
+      t,
+      conversationKey,
+      ownerGeneration,
+    ): Promise<{ contributingEventIds: string[] } | null> =>
       await t.mutation(internal.runtimeIngress.applySteering, {
         conversationKey: conversationKey,
         ownerEventId: "busy",
@@ -2732,7 +2740,10 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     t: TestConvex<typeof schema>;
     conversationKey: string;
     ownerGeneration: number;
-    resume: (envelopeTtlMs?: number) => Promise<{ outcome: string }>;
+    resume: (options?: {
+      envelopeTtlMs?: number;
+      payloadDigest?: string;
+    }) => Promise<{ outcome: string }>;
   }> {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -2752,16 +2763,21 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       t: t,
       conversationKey: conversationKey,
       ownerGeneration: busy.ownerGeneration!,
-      resume: async (envelopeTtlMs?: number): Promise<{ outcome: string }> =>
+      resume: async (
+        options: { envelopeTtlMs?: number; payloadDigest?: string } = {},
+      ): Promise<{ outcome: string }> =>
         await t.mutation(internal.runtimeIngress.accept, {
           ...admission({
             accountId: accountId,
             conversationKey: conversationKey,
             eventId: "resume",
             mode: kind.mode,
+            ...(options.payloadDigest !== undefined
+              ? { payloadDigest: options.payloadDigest }
+              : {}),
           }),
-          ...(envelopeTtlMs !== undefined
-            ? { envelopeTtlMs: envelopeTtlMs }
+          ...(options.envelopeTtlMs !== undefined
+            ? { envelopeTtlMs: options.envelopeTtlMs }
             : {}),
           ...kind.fence("late"),
         }),
@@ -2807,13 +2823,30 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
+  test("answers a retry whose payload drifted as a duplicate while the first still waits", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+
+    expect(await resume()).toMatchObject({ outcome: "queued" });
+    // The sweep's retry carries a different hook rewrite or model config.
+    expect(await resume({ payloadDigest: "drifted" })).toMatchObject({
+      outcome: "duplicate",
+    });
+    expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
+      { contributingEventIds: ["resume"] },
+    );
+    expect(await kind.handback(t, "late")).toBe("stored");
+  });
+
   test("leaves a queued result that expired to the sweep, whose retry is admitted again", async (): Promise<void> => {
     vi.useFakeTimers({ now: Date.now() });
     try {
       const { t, conversationKey, ownerGeneration, resume } =
         await busyConversation();
       const before = await kind.handback(t, "late");
-      expect(await resume(1_000)).toMatchObject({ outcome: "queued" });
+      expect(await resume({ envelopeTtlMs: 1_000 })).toMatchObject({
+        outcome: "queued",
+      });
 
       // The conversation stays busy past the queued envelope's TTL.
       vi.setSystemTime(Date.now() + 1_001);

@@ -1545,6 +1545,76 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("holds a resume it queued, so the next pass reuses its message instead of rerunning the hook", async (): Promise<void> => {
+    // The row stays listed: a queued resume stores it only when applied.
+    const rows = [lostRow("event_queued")];
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        handback?: string;
+        status: string;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => ({
+        page: rows.filter(
+          (row): boolean =>
+            row.handback === options.handback && row.status === options.status,
+        ),
+        cursor: "end",
+        isDone: true,
+      }),
+    );
+    const observe = spyOn(
+      asyncAgentResults,
+      "markAsyncAgentHandback",
+    ).mockResolvedValue();
+    let hookRuns = 0;
+    const hooks = spyOn(
+      hookDispatcher,
+      "createAgentHookDispatcher",
+    ).mockResolvedValue({
+      hasHooksFor: (): boolean => true,
+      runMutation: async (): Promise<Record<string, unknown>> => {
+        hookRuns += 1;
+
+        return { visibleResult: `rewritten ${hookRuns}` };
+      },
+    });
+    const outcomes: SubagentResumeOutcome[] = ["queued", "duplicate"];
+    const messages: string[] = [];
+    const resumeParent = async (
+      _parent: unknown,
+      _taskId: string,
+      message: UserModelMessage,
+    ): Promise<SubagentResumeOutcome> => {
+      messages.push(messageText(message));
+
+      return outcomes.shift()!;
+    };
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(lostParent, resumeParent);
+      await resumeLostSubagentResults(lostParent, resumeParent);
+
+      expect(hookRuns).toBe(1);
+      expect(messages).toEqual([
+        expect.stringContaining("rewritten 1"),
+        expect.stringContaining("rewritten 1"),
+      ]);
+      expect(observe).not.toHaveBeenCalled();
+    } finally {
+      pages.mockRestore();
+      observe.mockRestore();
+      hooks.mockRestore();
+    }
+  });
+
   it("the sweep resumes a pending hand-back only past the parent's hold window", async (): Promise<void> => {
     const now = Date.now();
     const minutes = (count: number): string =>

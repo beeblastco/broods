@@ -557,8 +557,7 @@ export const markAsyncAgentHandback = internalMutation({
     const row = await asyncAgentResultRow(ctx, args.eventId);
     if (
       !row ||
-      row.handback === "stored" ||
-      row.observed === true ||
+      isResultStored(row) ||
       (args.handback === "stored" && row.status === "processing")
     ) {
       return null;
@@ -621,6 +620,18 @@ export async function asyncAgentResultRow(
     .query("runtimeAsyncAgentResults")
     .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
     .unique();
+}
+
+/**
+ * Whether a result row's conversation has it: `stored`, or `observed === true`
+ * on a row the release before `handback` wrote. Every stored check reads this,
+ * so dropping `observed` edits one place.
+ */
+export function isResultStored(row: {
+  handback?: Handback;
+  observed?: boolean;
+}): boolean {
+  return row.handback === "stored" || row.observed === true;
 }
 
 /**
@@ -706,7 +717,7 @@ export async function writeAsyncAgentResult(
   await requireActiveAccount(ctx, row.accountId);
   const finished =
     outcome.status === "completed" || outcome.status === "failed";
-  const stored = row.handback === "stored" || row.observed === true;
+  const stored = isResultStored(row);
   await ctx.db.patch(row._id, {
     status: outcome.status,
     response: outcome.response,
