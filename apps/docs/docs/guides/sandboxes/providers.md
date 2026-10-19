@@ -212,7 +212,7 @@ export const box = defineSandbox({
 - The shell itself stops a script at 100,000 commands, 100,000 loop iterations or 100 nested function calls, with an error naming the limit. A job that big belongs on `sandbox` or `lambda`.
 - `size` does nothing, like on `lambda`: every command gets the same 128 MB. `snapshot`, `lifecycle`, `onCreate`, `onResume` and workspaces are rejected. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
 - `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
-- Billing counts only the milliseconds commands ran plus one request each, inside Sandbox time; nothing idles.
+- Billing counts only the milliseconds each command took, waits included, plus one request each, inside Sandbox time; nothing idles. A `sleep` costs the same as a busy command, a fraction of a VM's idle time.
 - The provider needs the deployment's V8 Worker. Without it every run fails with an error saying the Worker is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#worker).
 
 ## Environment variables in every provider
