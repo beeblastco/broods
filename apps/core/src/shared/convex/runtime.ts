@@ -24,6 +24,8 @@ export const runtimeQueries = {
   listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
   listUnobservedAsyncAgentResults:
     internal.runtime.listUnobservedAsyncAgentResults,
+  listUnobservedAsyncToolResults:
+    internal.runtime.listUnobservedAsyncToolResults,
   getIngressStatus: internal.runtimeIngress.getStatus,
   getIngressStatusByEventId: internal.runtimeIngress.getStatusByEventId,
   isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,

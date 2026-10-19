@@ -264,8 +264,12 @@ export async function runParentContinuationLoop(options: {
 
     await options.consumeStream(stream);
     // The pass gave its slot to the next queued run; the next pass carries on
-    // from the stored tool results once a slot is free again.
+    // from the stored tool results once a slot is free again. Background tool
+    // results that finished during the pass are written first: a run can take
+    // several slots, and a result held in memory longer than one slot would
+    // also be resumed by the hand-back sweep.
     if (stream.yielded()) {
+      await options.asyncToolCoordinator.drainCompletionsToParent();
       turnContext = await resumeAfterYield(
         options.session,
         options.context,

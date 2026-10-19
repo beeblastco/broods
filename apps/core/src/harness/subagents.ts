@@ -98,7 +98,7 @@ const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 // What the parent model reads for a child it stopped waiting for.
 const STILL_RUNNING_NOTE =
   "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
-// How long the run that detached a child has to deliver its result before the
+// How long the run that detached a result has to deliver it before the
 // recovery sweep takes it over, and the age past which nobody waits for it.
 const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
 const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -118,7 +118,7 @@ const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
 // Past this age a finished child's result is nobody's: a child still
 // processing died with its pod, and a result still `pending` has no live
 // parent run left to store it. A live parent drains a result at its next step
-// boundary or in its last write, within one run budget (a worker slot's, or
+// boundary, when it yields its slot, or in its last write, within one run budget (a worker slot's, or
 // a child's when the parent is itself a subagent) plus wind-down, and a
 // parent that stopped waiting wrote `detached`, swept after the grace.
 const PENDING_HANDBACK_MAX_AGE_MS =
@@ -450,7 +450,8 @@ export class SubagentCoordinator {
    * Records that get_subagent_status showed the model this run's outcome, by
    * the result row's event id. It counts once `confirmDelivered` runs after
    * that tool result is saved, so a failed save still gets this turn's
-   * injection. The row's durable `stored` hand-back keeps a late resume away.
+   * injection, and the row is only then marked `stored`, so a pod that dies
+   * between the read and the save leaves the result to the recovery sweep.
    */
   markDelivered(eventId: string): void {
     this.readUnsaved.add(eventId);
@@ -458,11 +459,15 @@ export class SubagentCoordinator {
 
   /**
    * Called once the parent's step output is saved. Each result read by then
-   * never starts another pass: a queued injection is dropped now and one that
-   * is enqueued later is skipped.
+   * never starts another pass: a queued injection is dropped now, one that is
+   * enqueued later is skipped, and the row's hand-back is marked `stored`, so
+   * no late resume or sweep tells it again. A stored row stays stored and a
+   * failed mark only logs: the sweep then delivers the result once more.
    */
-  confirmDelivered(): void {
-    for (const eventId of this.readUnsaved) {
+  async confirmDelivered(): Promise<void> {
+    const read = [...this.readUnsaved];
+    this.readUnsaved.clear();
+    for (const eventId of read) {
       this.delivered.add(eventId);
       // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
@@ -474,7 +479,11 @@ export class SubagentCoordinator {
         this.completions.splice(index, 1);
       }
     }
-    this.readUnsaved.clear();
+    await Promise.all(
+      read.map((eventId): Promise<void> =>
+        markAsyncAgentHandback(eventId, "stored"),
+      ),
+    );
   }
 
   /**
@@ -1457,28 +1466,19 @@ export async function resumeLostSubagentResults(
   resumeParent: SubagentParentResumer,
 ): Promise<void> {
   const now = Date.now();
-  const updatedAfter = new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString();
-  const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();
-  const abandonedBefore = new Date(
-    now - PENDING_HANDBACK_MAX_AGE_MS,
-  ).toISOString();
+  const { updatedAfter, finishedBefore, abandonedBefore } =
+    lostResultWindows(now);
   const ranges: Array<
     [(typeof SWEPT_HANDBACKS)[number], AsyncAgentStatus, string]
   > = [];
   for (const handback of SWEPT_HANDBACKS) {
-    // A detached result is the sweep's once the run that detached it had its
-    // grace; a pending one only once no live parent run can still store it.
-    const finishedBefore =
-      handback === "pending" ? abandonedBefore : settledBefore;
+    const settledBefore = finishedBefore(handback);
     ranges.push(
-      [handback, "completed", finishedBefore],
-      [handback, "failed", finishedBefore],
+      [handback, "completed", settledBefore],
+      [handback, "failed", settledBefore],
+      // A child still running this long past its budget died with its pod.
+      [handback, "processing", abandonedBefore],
     );
-    // A child still running this long past its budget died with its pod. A
-    // pending row is never processing: the finish is what sets it.
-    if (handback !== "pending") {
-      ranges.push([handback, "processing", abandonedBefore]);
-    }
   }
   const held = new Map<string, UserModelMessage>();
   for (const [handback, status, updatedBefore] of ranges) {
@@ -1495,21 +1495,19 @@ export async function resumeLostSubagentResults(
       for (const row of result.page) {
         // A child listed still running died with its pod: its row is failed,
         // unless its outcome landed since, and a later pass tells the parent.
+        // Its parent run is gone too, so a pending row is detached in the
+        // same write: the sweep owns it, and delivers the failure after the
+        // grace, not another hold.
         if (row.status === "processing") {
           await recordAsyncAgentResult(
             row.eventId,
             { status: "failed", error: LOST_SUBAGENT_ERROR },
-            { onlyWhileProcessing: true },
+            {
+              onlyWhileProcessing: true,
+              ...(handback === "pending" ? { handback: "detached" } : {}),
+            },
           );
           continue;
-        }
-        // Counted: each one is a result a parent run dropped without a trace.
-        if (handback === "pending") {
-          logInfo("Subagent result left pending past the parent's hold", {
-            eventId: row.eventId,
-            ageMs: now - Date.parse(row.updatedAt),
-            outcome: row.status,
-          });
         }
         const retry = await resumeLostSubagentResult(
           row,
@@ -1525,12 +1523,49 @@ export async function resumeLostSubagentResults(
           return heldLostResults.get(row.eventId);
         });
         if (retry) held.set(row.eventId, retry);
+        // Counted once it is handled: each one is a result a parent run
+        // dropped without a trace. A row held for the next pass is not
+        // counted again each pass.
+        if (handback === "pending" && !retry) {
+          logInfo("Subagent result left pending past the parent's hold", {
+            eventId: row.eventId,
+            ageMs: now - Date.parse(row.updatedAt),
+            outcome: row.status,
+          });
+        }
       }
       cursor = result.cursor;
       isDone = result.isDone;
     }
   }
   heldLostResults = held;
+}
+
+/**
+ * The windows the recovery sweeps list lost results in, at `now`: rows written
+ * within a day, a detached one once the run that detached it had its grace, a
+ * pending one only once no live run can still store it, and a child still
+ * running that long past its budget, which died with its pod. The async tool
+ * sweep (`async-tools.ts`) runs on the same windows.
+ */
+export function lostResultWindows(now: number): {
+  updatedAfter: string;
+  // A row the release before `handback` detached (no hand-back) gets the
+  // detached window.
+  finishedBefore: (handback: "pending" | "detached" | undefined) => string;
+  abandonedBefore: string;
+} {
+  const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();
+  const abandonedBefore = new Date(
+    now - PENDING_HANDBACK_MAX_AGE_MS,
+  ).toISOString();
+
+  return {
+    updatedAfter: new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString(),
+    finishedBefore: (handback): string =>
+      handback === "pending" ? abandonedBefore : settledBefore,
+    abandonedBefore: abandonedBefore,
+  };
 }
 
 export async function pipeSubagentNatsStream(

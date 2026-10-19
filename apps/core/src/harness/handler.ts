@@ -113,6 +113,7 @@ import {
   takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
+  type IngressCandidate,
   type IngressConfigRef,
   type IngressDelivery,
   type IngressMode,
@@ -594,16 +595,25 @@ async function asyncToolRowSecretValues(
 }
 
 /**
- * After a detached tool row settles, resume the conversation with its result.
- * Derives the account/agent from the (scoped) parentEventId so it serves both
- * the account-authed and token-authed completion paths.
+ * After an async tool row settles, resume the conversation with its result.
+ * Derives the account/agent from the (scoped) parentEventId so it serves the
+ * account-authed and token-authed completion paths and the recovery sweep.
+ * Admitted once per result, under the row as `toolResultId`, so a result the
+ * conversation already stores is refused there.
  */
-async function continueAfterAsyncToolSettlement(
+export async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
-  // A result the model already pulled via async_status would be answered twice.
-  if (!scope || settled.status === "processing" || settled.observed === true) {
+  // A result the model already pulled via async_status, or one the
+  // conversation stores, would be answered twice. `observed` is the flag the
+  // release before `handback` wrote.
+  if (
+    !scope ||
+    settled.status === "processing" ||
+    settled.handback === "stored" ||
+    settled.observed === true
+  ) {
     return { kind: "skip" };
   }
   const publicEventId = `async-tools-${settled.resultId}`;
@@ -611,8 +621,9 @@ async function continueAfterAsyncToolSettlement(
 
   return resumeConversation({
     ...scope,
-    eventId: asyncToolContinuationEventId(settled.parentEventId),
+    eventId: asyncToolContinuationEventId(settled),
     publicEventId: publicEventId,
+    toolResultId: settled.resultId,
     conversationKey: settled.conversationKey,
     // An answered question streams under its own id, the one the answer
     // response names. Any other job keeps the parent's, so a reconnect that
@@ -718,6 +729,7 @@ async function resumeConversation(options: {
   message: UserModelMessage;
   requestedMode: IngressMode;
   resultEventId?: string;
+  toolResultId?: string;
   target?: ReentryTarget;
 }): Promise<ContinuationOutcome> {
   const target =
@@ -774,7 +786,12 @@ async function resumeConversation(options: {
     await admitInternalContinuation(
       continuationEvent,
       continuationDelivery(onSocket(continuationEvent, options.delivery)),
-      options.resultEventId,
+      {
+        ...(options.resultEventId
+          ? { resultEventId: options.resultEventId }
+          : {}),
+        ...(options.toolResultId ? { toolResultId: options.toolResultId } : {}),
+      },
     );
   if (!ownedContinuation) {
     return {
@@ -2643,13 +2660,15 @@ async function dispatchSessionMessage(
   };
 }
 
+// `fence` names the result row the continuation delivers, so admission
+// refuses it once the conversation has that result and stores it otherwise.
 async function admitInternalContinuation(
   event: DirectInboundEvent,
   delivery: IngressDelivery,
-  resultEventId?: string,
+  fence: Pick<IngressCandidate, "resultEventId" | "toolResultId"> = {},
 ): Promise<{ admission: IngressAdmission; owned: DirectInboundEvent | null }> {
   const admission = await acceptIngress({
-    ...(resultEventId ? { resultEventId: resultEventId } : {}),
+    ...fence,
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
@@ -2730,8 +2749,13 @@ async function invokeHarnessWorker(
   );
 }
 
-function asyncToolContinuationEventId(parentEventId: string): string {
-  return `${parentEventId}:async-tools`;
+// One continuation per result, under the event a person started: a run's
+// async tool results all share its event id, and a detached row's parent
+// event already names the row.
+function asyncToolContinuationEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
 }
 
 /**

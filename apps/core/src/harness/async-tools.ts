@@ -1,17 +1,26 @@
 /**
- * Async tool coordination.
- * Keep tool wrapping and parent-result injection outside individual tool files.
+ * Async tool coordination: the per-run coordinator that wraps `async: true`
+ * tools and feeds their results back, and the recovery sweep over results no
+ * live run delivered. Keep tool wrapping and parent-result injection outside
+ * individual tool files.
  */
 
+import { asyncToolResultDedupeKey } from "@broods/convex/model/subagentResults";
 import type { JSONValue, ToolSet, UserModelMessage } from "ai";
+import { toErrorMessage } from "../shared/errors.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
   createPendingAsyncToolResult,
+  listUnobservedAsyncToolResults,
+  markAsyncToolHandback,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
+  type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
+import type { ContinuationOutcome } from "./responses.ts";
 import type { Session } from "./session.ts";
+import { lostResultWindows } from "./subagents.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
 import {
   modelValueToUserParts,
@@ -20,6 +29,13 @@ import {
 
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+// The hand-back states the sweep lists, each with its own window.
+const SWEPT_HANDBACKS = ["detached", "pending"] as const;
+
+/** Resumes a conversation with a settled row; the handler's `continueAfterAsyncToolSettlement`. */
+export type AsyncToolSettlementResumer = (
+  settled: AsyncToolResultRecord,
+) => Promise<ContinuationOutcome>;
 
 // Per-call context handed to the run/dispatch helpers. toolCallId rides along for
 // logging only; it is intentionally absent from the stored metadata/completion.
@@ -136,9 +152,7 @@ export class AsyncToolCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(
-      completions.map(completionToParentMessage),
-    );
+    await this.persistToParent(completions);
 
     return completions.length;
   }
@@ -177,11 +191,35 @@ export class AsyncToolCoordinator {
     this.pending.clear();
     this.pendingMetadata.clear();
     const batch = [...completions, ...timeouts];
-    await this.parentSession.persistModelMessages(
-      batch.map(completionToParentMessage),
-    );
+    await this.persistToParent(batch);
 
     return batch.length;
+  }
+
+  /**
+   * The one write of finished results into the parent conversation, each
+   * under its hand-back key so the insert marks its row stored. When the write
+   * fails every row is detached, best effort, and the recovery sweep delivers
+   * it; a row whose detach fails too is still `pending`, and the sweep takes
+   * it once no live run can hold it.
+   */
+  private async persistToParent(batch: AsyncToolCompletion[]): Promise<void> {
+    try {
+      await this.parentSession.persistModelMessages(
+        batch.map(completionToParentMessage),
+        undefined,
+        batch.map(({ resultId, status }): string =>
+          asyncToolResultDedupeKey(resultId, status),
+        ),
+      );
+    } catch (error) {
+      await Promise.all(
+        batch.map(({ resultId }): Promise<void> =>
+          markAsyncToolHandback(resultId, "detached"),
+        ),
+      );
+      throw error;
+    }
   }
 
   /** Used by `dispatch`: swaps a tool's execute for one that records a pending row, starts the call, and returns a statusId. */
@@ -330,6 +368,98 @@ export class AsyncToolCoordinator {
     }
     this.waiters.clear();
   }
+}
+
+/**
+ * Resumes each conversation whose async tool result no live run delivered:
+ * the run that detached it died with its pod or its resume failed, or the
+ * result is still `pending` past any live run's hold, because the run that
+ * owed it died before its write and its detach. Each pass walks every page,
+ * so rows it must retry never crowd the rest out. The ingress recovery sweep
+ * calls it on its timer, after the subagent pass.
+ */
+export async function resumeLostAsyncToolResults(
+  resumeConversation: AsyncToolSettlementResumer,
+): Promise<void> {
+  const now = Date.now();
+  const { updatedAfter, finishedBefore } = lostResultWindows(now);
+  for (const handback of SWEPT_HANDBACKS) {
+    for (const status of ["completed", "failed"] as const) {
+      let cursor: string | null = null;
+      let isDone = false;
+      while (!isDone) {
+        const result = await listUnobservedAsyncToolResults({
+          handback: handback,
+          status: status,
+          updatedAfter: updatedAfter,
+          updatedBefore: finishedBefore(handback),
+          cursor: cursor,
+        });
+        for (const row of result.page) {
+          const handled = await resumeLostAsyncToolResult(
+            row,
+            resumeConversation,
+          );
+          // Counted once it is handled: each one is a result a run dropped
+          // without a trace. A row kept for the next pass is not counted
+          // again each pass.
+          if (handled && handback === "pending") {
+            logInfo("Async tool result left pending past the run's hold", {
+              resultId: row.resultId,
+              toolName: row.toolName,
+              ageMs: now - Date.parse(row.updatedAt),
+              outcome: row.status,
+            });
+          }
+        }
+        cursor = result.cursor;
+        isDone = result.isDone;
+      }
+    }
+  }
+}
+
+/**
+ * One row of `resumeLostAsyncToolResults`: its continuation is admitted under
+ * the row, so admission stores it, or refuses it as a duplicate once the
+ * conversation has it. A conversation with no room keeps the row for the next
+ * pass, and so does a resume that throws. A row no resume can ever deliver is
+ * marked stored and logged once.
+ * @returns whether the row is handled, rather than kept for the next pass
+ */
+async function resumeLostAsyncToolResult(
+  row: AsyncToolResultRecord,
+  resumeConversation: AsyncToolSettlementResumer,
+): Promise<boolean> {
+  let outcome: ContinuationOutcome;
+  try {
+    outcome = await resumeConversation(row);
+  } catch (error) {
+    logError("Failed to resume a conversation with a lost async tool result", {
+      resultId: row.resultId,
+      error: toErrorMessage(error),
+    });
+
+    return false;
+  }
+  const admission = outcome.kind === "ready" ? outcome.admission : "skip";
+  if (admission === "owner" || admission === "queued") {
+    logInfo("Resumed a conversation with a lost async tool result", {
+      parentEventId: row.parentEventId,
+      resultId: row.resultId,
+      admission: admission,
+    });
+
+    return true;
+  }
+  if (admission === "capacity") return false;
+  await markAsyncToolHandback(row.resultId, "stored");
+  logInfo("Gave up on a lost async tool result", {
+    resultId: row.resultId,
+    reason: `resume ${admission}`,
+  });
+
+  return true;
 }
 
 /** Formats an async tool result as the user message injected into the parent; used by the drains and by the handler's continuation run. */

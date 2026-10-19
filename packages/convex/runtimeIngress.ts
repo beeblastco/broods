@@ -16,10 +16,12 @@ import { isPlainObject } from "./model/objects";
 import {
   asyncAgentOutcomeValidator,
   asyncAgentResultRow,
+  asyncToolResultRow,
   conversationEventsValidator,
   insertConversationEvents,
   handbackPatch,
   markAsyncAgentResultSeen,
+  markAsyncToolResultSeen,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -30,7 +32,10 @@ import {
   runtimeHarnessSessionsFields,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
-import { subagentResultDedupeKey } from "./model/subagentResults";
+import {
+  asyncToolResultDedupeKey,
+  subagentResultDedupeKey,
+} from "./model/subagentResults";
 
 const CLEAR_BATCH_SIZE = 100;
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
@@ -194,6 +199,8 @@ export const accept = internalMutation({
     // The subagent result row a late-result continuation delivers. It is
     // admitted only while the parent has not seen that result, and marks it seen.
     resultEventId: v.optional(v.string()),
+    // The async tool result row a continuation delivers, fenced the same way.
+    toolResultId: v.optional(v.string()),
   },
   returns: admissionResultValidator,
   handler: async (
@@ -260,6 +267,7 @@ export const accept = internalMutation({
     }
 
     await markAsyncAgentResultSeen(ctx, args.accountId, args.resultEventId);
+    await markAsyncToolResultSeen(ctx, args.accountId, args.toolResultId);
     const sequence = coordinator.nextSequence;
     const baseEnvelope = buildAdmissionEnvelope(args, identity, sequence, now);
     if (busy) {
@@ -1112,8 +1120,8 @@ async function canonicalIdentity(options: {
  * admission (or conflicts on a different payload digest), and an eventId
  * reused under a different identity is always a conflict. Null means the
  * candidate is new. Rejected busy candidates create neither an envelope nor
- * an identity tombstone. Its one write marks a late subagent result seen when
- * the parent's conversation already stores it.
+ * an identity tombstone. Its one write marks a late subagent or async tool
+ * result stored when the conversation already stores it.
  */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,
@@ -1123,6 +1131,7 @@ async function checkDuplicateAdmission(
     eventId: string;
     payloadDigest: string;
     resultEventId?: string;
+    toolResultId?: string;
   },
   identity: string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
@@ -1153,29 +1162,54 @@ async function checkDuplicateAdmission(
   if (existingEvent) {
     return { outcome: "conflict" as const, eventId: existingEvent.eventId };
   }
-  // A get_subagent_status read and a late resume race to deliver one result;
-  // whichever marks it stored first wins, so the parent is told it once. Only
-  // the caller's own account's row counts. `observed` is the flag the release
-  // before `handback` wrote.
+  // A status tool read and a late resume race to deliver one result; whichever
+  // marks it stored first wins, so the conversation is told it once. Only the
+  // caller's own account's row counts.
   const result = await asyncAgentResultRow(ctx, args.resultEventId);
-  if (result?.accountId !== args.accountId) {
-    return null;
+  if (result?.accountId === args.accountId) {
+    return await storedResultAdmission(ctx, args, result, (status): string =>
+      subagentResultDedupeKey(result.eventId, status),
+    );
   }
+  const toolResult = await asyncToolResultRow(ctx, args.toolResultId);
+  if (toolResult?.accountId === args.accountId) {
+    return await storedResultAdmission(
+      ctx,
+      args,
+      toolResult,
+      (status): string => asyncToolResultDedupeKey(toolResult.resultId, status),
+    );
+  }
+
+  return null;
+}
+
+/**
+ * The duplicate `checkDuplicateAdmission` answers for a continuation whose
+ * result the conversation already has, or null when it does not. `observed`
+ * is the flag the release before `handback` wrote. A write that stored the
+ * result but lost its reply has it in the conversation already, under the key
+ * core wrote it with (`dedupeKeyFor`). Both finished keys are tried: the row
+ * can still read `processing` while the conversation holds the result its run
+ * saw. The conversation has it, so it is marked stored and the recovery sweep
+ * stops retrying it.
+ */
+async function storedResultAdmission(
+  ctx: MutationCtx,
+  args: { conversationKey: string; eventId: string },
+  result: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">,
+  dedupeKeyFor: (status: "completed" | "failed") => string,
+): Promise<Infer<typeof admissionResultValidator> | null> {
   if (result.handback === "stored" || result.observed === true) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
-  // A write that stored the result but lost its reply has it in the
-  // conversation already, under the key core wrote it with. Both finished
-  // keys are tried: the row can still read `processing` while the parent
-  // holds the result its run saw. The parent has it, so it is marked stored
-  // and the recovery sweep stops retrying it.
   for (const status of ["completed", "failed"] as const) {
     const stored = await ctx.db
       .query("runtimeConversationEvents")
       .withIndex("by_conversationKey_and_dedupeKey", (q) =>
         q
           .eq("conversationKey", args.conversationKey)
-          .eq("dedupeKey", subagentResultDedupeKey(result.eventId, status)),
+          .eq("dedupeKey", dedupeKeyFor(status)),
       )
       .first();
     if (stored) {

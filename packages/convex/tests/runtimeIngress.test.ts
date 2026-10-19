@@ -4,7 +4,10 @@ import { describe, expect, test, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import schema from "../schema";
-import { subagentResultDedupeKey } from "../model/subagentResults";
+import {
+  asyncToolResultDedupeKey,
+  subagentResultDedupeKey,
+} from "../model/subagentResults";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -1464,6 +1467,85 @@ describe("runtime ingress", () => {
     });
     // The admitted envelope carries it, so it is stored from here on.
     expect(await row("unsaved")).toMatchObject({ handback: "stored" });
+  });
+
+  test("admits a continuation of an async tool result once", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const resultId of ["resumed", "read-first", "written"]) {
+      await t.mutation(internal.runtime.createAsyncToolResult, {
+        resultId: resultId,
+        parentEventId: `acct:${accountId}:agent:test-agent:api:parent`,
+        conversationKey: conversationKey,
+        toolName: "lookup",
+        toolCallId: `call-${resultId}`,
+        input: {},
+      });
+      await t.mutation(internal.runtime.updateAsyncToolResult, {
+        resultId: resultId,
+        status: "completed",
+        response: "answer",
+        onlyWhenProcessing: true,
+      });
+    }
+    const resume = async (
+      eventId: string,
+      toolResultId: string,
+    ): Promise<{ outcome: string }> =>
+      await t.mutation(internal.runtimeIngress.accept, {
+        ...admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: eventId,
+          mode: "followup",
+        }),
+        toolResultId: toolResultId,
+      });
+    const row = async (resultId: string): Promise<unknown> =>
+      await t.query(internal.runtime.getAsyncToolResult, {
+        resultId: resultId,
+      });
+
+    // The continuation went first: admitted once, and nothing after it is.
+    expect(await resume("resume-first", "resumed")).toMatchObject({
+      outcome: "owner",
+    });
+    expect(await row("resumed")).toMatchObject({
+      handback: "stored",
+      observed: true,
+    });
+    expect(await resume("resume-again", "resumed")).toMatchObject({
+      outcome: "duplicate",
+    });
+
+    // async_status read it first: the continuation admits nothing.
+    await t.mutation(internal.runtime.observeAsyncToolResult, {
+      resultId: "read-first",
+      handback: "stored",
+    });
+    expect(await resume("resume-read", "read-first")).toMatchObject({
+      outcome: "duplicate",
+    });
+
+    // The run's write stored it and lost its reply: the row is marked stored
+    // and the continuation refused.
+    await t.run(async (ctx): Promise<void> => {
+      await ctx.db.insert("runtimeConversationEvents", {
+        accountId: accountId,
+        conversationKey: conversationKey,
+        cursor: "001",
+        dedupeKey: asyncToolResultDedupeKey("written", "completed"),
+        event: { role: "user", content: "async tool result" },
+      });
+    });
+    expect(await resume("resume-written", "written")).toMatchObject({
+      outcome: "duplicate",
+    });
+    expect(await row("written")).toMatchObject({
+      handback: "stored",
+      observed: true,
+    });
   });
 
   test("leaves another account's late result row alone", async (): Promise<void> => {

@@ -66,6 +66,13 @@ describe("rootEventId", () => {
       asked,
     );
   });
+
+  it("keeps a person's event id that starts with async-", () => {
+    const asked = "acct:a:agent:b:api:async-report-7";
+
+    expect(rootEventId(asked)).toBe(asked);
+    expect(rootEventId(`${asked}:async-tools:async_tool_1`)).toBe(asked);
+  });
 });
 
 describe("ask_questions tool", () => {

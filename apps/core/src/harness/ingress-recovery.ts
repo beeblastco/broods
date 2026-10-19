@@ -10,7 +10,9 @@
 
 import { logError, logInfo } from "../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../shared/runtime-keys.ts";
+import { resumeLostAsyncToolResults } from "./async-tools.ts";
 import {
+  continueAfterAsyncToolSettlement,
   dispatchAppliedIngress,
   loadReentryTarget,
   resumeAfterSubagentResult,
@@ -80,7 +82,8 @@ function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
  * queued conversations at a time, from where the last pass stopped. Each entry
  * is its own conversation, so a page dispatches together. A dispatch that
  * fails settles its envelope and drains on, like any other. Then resume the
- * parents of late subagent results no live run delivered.
+ * parents of late subagent results no live run delivered, and the
+ * conversations of async tool results no live run delivered.
  */
 async function sweepQueuedIngress(): Promise<void> {
   if (sweeping) return;
@@ -127,5 +130,12 @@ async function sweepQueuedIngress(): Promise<void> {
       error: err instanceof Error ? err.message : String(err),
     });
   });
+  await resumeLostAsyncToolResults(continueAfterAsyncToolSettlement).catch(
+    (err: unknown): void => {
+      logError("Lost async tool result recovery failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    },
+  );
   sweeping = false;
 }

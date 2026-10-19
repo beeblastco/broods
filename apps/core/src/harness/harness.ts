@@ -1079,7 +1079,9 @@ export async function runAgentLoop(
         );
       }
       persistedResponseCount = responseMessages.length;
-      options.subagentWatch?.confirmDelivered();
+      // Started after the save, not waited for: the next step does not read
+      // the mark, and a failed one only logs.
+      void options.subagentWatch?.confirmDelivered();
       let stepMessages = messages;
       if (steering) {
         const steeringEvents = steering.events as ConversationIngressEvent[];
@@ -1534,7 +1536,7 @@ export async function runAgentLoop(
             : unpersisted,
         );
         persistedResponseCount = responseMessages.length;
-        options.subagentWatch?.confirmDelivered();
+        await options.subagentWatch?.confirmDelivered();
 
         // A run that gave up its slot ends on tool results; its next pass
         // answers from them, so nothing is delivered or failed here. A step

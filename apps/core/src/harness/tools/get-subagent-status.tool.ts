@@ -64,12 +64,19 @@ export default function getSubagentStatusTool(
         }
         // The model now holds the outcome, so it is not injected a second time:
         // by this turn once the step saves, by a late resume or the recovery
-        // sweep from now on.
+        // sweep from now on. A pending row is this run's to store: the
+        // coordinator marks it once the step that carries this read is saved
+        // (`confirmDelivered`), so a pod that dies in between leaves it to the
+        // sweep. A detached row is the sweep's already, so the read marks it
+        // now, as does a read with no coordinator to confirm it later.
         if (record.status === "completed" || record.status === "failed") {
-          context.watch?.markDelivered(record.eventId);
-          if (isHandbackOwed(record)) {
+          if (
+            isHandbackOwed(record) &&
+            (!context.watch || record.handback !== "pending")
+          ) {
             await markAsyncAgentHandback(record.eventId, "stored");
           }
+          context.watch?.markDelivered(record.eventId);
         }
 
         return {
