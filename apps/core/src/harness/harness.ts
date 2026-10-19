@@ -36,7 +36,7 @@ import type {
   ObservabilitySpanRow,
   TaskWaitingOn,
 } from "../../../../packages/broods/src/observability-contracts.ts";
-import { extractText, type ChannelQuestion } from "../shared/channels.ts";
+import { extractText } from "../shared/channels.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import {
   AGENT_MAX_TURN_UNLIMITED,
@@ -45,7 +45,6 @@ import {
 import { principalChainLabel } from "../shared/domain/principal.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
 import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
-import { waitUntil } from "../shared/in-flight.ts";
 import {
   collectSecretValues,
   logError,
@@ -68,7 +67,6 @@ import {
   mintSpanId,
   mintTraceId,
   observabilityAttributes,
-  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
@@ -83,7 +81,6 @@ import {
 } from "./hook-dispatcher.ts";
 import {
   createConfiguredHarnessAgent,
-  harnessReservationKey,
   harnessSteersMidTurn,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
@@ -92,18 +89,16 @@ import {
 // whole, and this is run-loop plumbing they keep real.
 import {
   MID_TURN_STEERING_UNSUPPORTED,
-  requireHarnessSandbox,
-  startHarnessLeaseMonitor,
+  prepareHarnessTurn,
   steerHarnessTurn,
+  type HarnessTurn,
 } from "./ai-sdk-harness/session.ts";
 import {
   agentSandboxStatus,
   formatSandboxStatus,
   occupySandbox,
-  sandboxNeighbours,
-  type SandboxUsage,
 } from "./sandbox/live-status.ts";
-import { configString, configuredSandboxSpecs } from "./sandbox/utils.ts";
+import { configString } from "./sandbox/utils.ts";
 import { shouldAutoCompact } from "./compaction.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
@@ -122,6 +117,7 @@ import {
 } from "./provider.ts";
 import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
+import { createRunFinalizer } from "./run-finalizer.ts";
 import { createRunSpanTracker } from "./run-spans.ts";
 import {
   stripEnvelopeFieldsFromMessages,
@@ -129,12 +125,12 @@ import {
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
-import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
+import { rootEventId } from "./async-tool-result.ts";
 import { rehydrateStoredMedia } from "./channel-media.ts";
 import {
-  formatQuestionsText,
-  openQuestion,
+  openWorkAfterRun,
   type PendingQuestionSummary,
+  type RunOpenWork,
 } from "./questions.ts";
 import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
@@ -187,9 +183,6 @@ const MODEL_CALL_BOUNDARY_PART_TYPES: ReadonlySet<string> = new Set([
   "tool-error",
   "tool-output-denied",
 ]);
-// A machine only one conversation uses is released after a day idle instead of
-// the default week, so abandoned subagent tasks stop holding machines.
-const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
 /** Failure text of a stopped run; handler and subagents match on it to treat a stop as intended, not a failure. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 /** Failure text of a persistent subagent run its parent stopped with stop_subagent. */
@@ -202,8 +195,6 @@ const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
 // Tracing labels a run with its request. The whole text is already in
 // model.input, so this only has to fill one row.
 const MAX_TASK_INPUT_CHARS = 500;
-// The usage tab shows one line of it per task, and the row is kept 90 days.
-const USAGE_INPUT_PREVIEW_CHARS = 160;
 
 const SPAN_ENCODER = new TextEncoder();
 
@@ -697,6 +688,7 @@ export async function runAgentLoop(
     modelProvider: configuredModel.providerName,
     modelId: agentConfig.model?.modelId,
   };
+  const usesAiSdkHarness = agentConfig.harness !== undefined;
   // Once the model has answered with no tool call left, a long context folds
   // into a summary before the next queued message runs. A turn the provider
   // refused for context length folds too, so the next turn fits. A harness
@@ -706,7 +698,7 @@ export async function runAgentLoop(
     contextExceeded = false,
   ): Promise<void> => {
     if (
-      harnessRuntime ||
+      usesAiSdkHarness ||
       !shouldAutoCompact(agentConfig, lastInputTokens, contextExceeded)
     ) {
       return;
@@ -729,11 +721,6 @@ export async function runAgentLoop(
     }
   };
 
-  // Finalize-once guard: usage is written exactly once per task and the root OTel
-  // span is ended once. Finalization happens after terminal logs/replies so those
-  // records retain tenant/trace context. The usage write runs in the background
-  // and shutdown drains it before flushing the exporters.
-  let usageFinalized = false;
   let finishObserved = false;
   let persistedResponseCount = 0;
   const runAbort = new AbortController();
@@ -752,195 +739,49 @@ export async function runAgentLoop(
       signal: runAbort.signal,
     });
   }
-  /**
-   * What a run that ended cleanly still waits on, the person first: an approval
-   * or an open question needs them, while subagents, async tools and background
-   * jobs settle by themselves. Empty when it failed or nothing is left open.
-   * `questions` is what the person was asked, for the trace's wait row.
-   */
-  const openWorkAfterRun = async (
-    status: "completed" | "failed",
-  ): Promise<{ waitingOn?: TaskWaitingOn; questions: ChannelQuestion[] }> => {
-    if (status === "failed") return { questions: [] };
-    if (approvalSummaries.length > 0) {
-      return { waitingOn: "approval", questions: [] };
-    }
-    const rows = await Promise.all(
-      detachedResultIds.map((resultId) =>
-        getAsyncToolResult(resultId).catch(() => null),
-      ),
-    );
-    const open = rows.filter((row) => row?.status === "processing");
-    const questions = open.flatMap(
-      (row): ChannelQuestion[] =>
-        openQuestion(row, session.conversationKey)?.pending.questions ?? [],
-    );
-    // The rows, not questionSummaries: an answer can settle one before the run
-    // ends. A blocking question whose row could not be read still counts.
-    const unread = questionSummaries
-      .filter(
-        (summary) => rows[detachedResultIds.indexOf(summary.statusId)] === null,
-      )
-      .flatMap((summary) => summary.questions);
-    if (questions.length > 0 || unread.length > 0) {
-      return { waitingOn: "question", questions: [...questions, ...unread] };
-    }
-    const pending = options.pendingWork?.();
-    if (pending) return { waitingOn: pending, questions: [] };
-
-    return {
-      ...(open.length > 0 ? { waitingOn: "tool" } : {}),
-      questions: [],
-    };
-  };
-  /**
-   * Settles the run once: closes open spans and the root span, then writes task
-   * usage. Called from onEnd, the setup failure path and `ensureFinalized`.
-   */
-  const finalizeUsage = async (
-    status: "completed" | "failed",
-    usage: LanguageModelUsage | undefined,
-    stepCount: number,
-    toolCallCount: number,
-    durationMs: number,
-    error?: Error,
-  ): Promise<void> => {
-    if (usageFinalized) return;
-    usageFinalized = true;
-    options.abortSignal?.removeEventListener("abort", abortRun);
-    releaseSandboxOccupancy?.();
-    const taskTokens = usageTokenTotals(usage);
-    const { waitingOn, questions: openQuestions } =
-      await openWorkAfterRun(status);
-    const rootStatus = rootSpanStatus(status, waitingOn);
-
-    const context = getObservabilityContext();
-    const sanitizedError = error
-      ? new Error(redactSensitiveText(error.message, context?.secretValues))
-      : undefined;
-
-    const endTimeMs = runStartedAt + durationMs;
-    spans.closeOrphans(
-      endTimeMs,
-      status,
-      sanitizedError?.message,
-      stepTiming.attemptAttributes,
-    );
-    stepTiming.clear();
-    // Task totals on the root span: token usage and sandbox CPU split per provider
-    // so the dashboard reads final usage straight off the trace stream.
-    const sandboxCpuAttributes = sandboxCpu.typeAttributes();
-    const rootSpanRow: ObservabilitySpanRow = {
+  // Settles the run exactly once: usage is written once per task and the root
+  // OTel span is ended once. Finalization happens after terminal logs/replies so
+  // those records retain tenant/trace context. The usage write runs in the
+  // background and shutdown drains it before flushing the exporters.
+  const finalizer = createRunFinalizer({
+    session: session,
+    root: {
+      span: otelRootSpan,
       traceId: traceId,
       spanId: rootSpanId,
       name: rootSpanName,
       kind: rootSpanKind,
       startTimeMs: runStartedAt,
-      endTimeMs: endTimeMs,
-      durationMs: durationMs,
-      status: rootStatus,
-      endpointId: session.endpointId,
-      agentId: session.agentId,
-      conversationKey: session.conversationKey,
-      attributes: {
-        ...rootRunningAttributes,
-        ...systemTraceAttributes(turnContext.system, traceAttribute),
-        ...(waitingOn
-          ? { "task.state": rootStatus, "task.waiting_on": waitingOn }
-          : { "task.state": status }),
-        ...(openQuestions.length > 0
-          ? {
-              "task.questions": traceAttribute(
-                formatQuestionsText(openQuestions),
-              ),
-            }
-          : {}),
-        "agent.step_count": stepCount,
-        "agent.tool_call_count": toolCallCount,
-        "agent.model_provider": configuredModel.providerName,
-        "agent.model_id": agentConfig.model?.modelId,
-        "usage.input_tokens": taskTokens.inputTokens,
-        "usage.output_tokens": taskTokens.outputTokens,
-        "usage.reasoning_tokens": taskTokens.reasoningTokens,
-        "usage.cached_input_tokens": taskTokens.cachedInputTokens,
-        "usage.total_tokens": taskTokens.totalTokens,
-        ...sandboxCpuAttributes,
-      },
-      ...(sanitizedError ? { error: sanitizedError.message } : {}),
-    };
-
-    // End the root OTel span (durable Tempo export).
-    try {
-      otelRootSpan.setAttributes(
-        rootSpanRow.attributes as Record<
-          string,
-          string | number | boolean | undefined
-        >,
-      );
-      if (status === "failed") {
-        if (sanitizedError) otelRootSpan.recordException(sanitizedError);
-        otelRootSpan.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: sanitizedError?.message,
-        });
-      } else {
-        otelRootSpan.setStatus({ code: SpanStatusCode.OK });
-      }
-      otelRootSpan.end(endTimeMs);
-    } catch {
-      // Best-effort: never fail the agent path.
-    }
-
-    // Live publish via NATS, tracked with the usage write so shutdown drains the
-    // terminal span. Otherwise a fresh dashboard load can keep a stale "running"
-    // copy of an already-finished task.
-    const rootPublished = publishSpan(rootSpanRow);
-    try {
-      // Off the turn's tail: the stream closes, takeNext and the channel reply
-      // go out without waiting. Its own scope keeps this run's context, so a
-      // failed write still logs with the tenant scope. Shutdown drains it.
-      const usageRecorded = runWithObservabilityScope(
-        () =>
-          recordTaskUsage({
-            accountId: session.accountId ?? "",
-            endpointId: session.endpointId,
-            agentId: session.agentId ?? "unknown",
-            principalChain: session.principal?.chain,
-            conversationKey: session.conversationKey,
-            // One row per model pass: a continuation pass shares the eventId.
-            taskId: `${session.eventId}#${traceId}`,
-            modelProvider: configuredModel.providerName ?? "unknown",
-            modelId: agentConfig.model?.modelId ?? "unknown",
-            finishedAt: endTimeMs,
-            durationMs: durationMs,
-            status: status,
-            inputTokens: taskTokens.inputTokens,
-            outputTokens: taskTokens.outputTokens,
-            reasoningTokens: taskTokens.reasoningTokens,
-            cachedInputTokens: taskTokens.cachedInputTokens,
-            cacheWriteTokens: taskTotals.cacheWriteTokens(),
-            totalTokens: taskTokens.totalTokens,
-            runtimeKind: "container",
-            runtimeWallMs: durationMs,
-            // The pod is shared by every run, so this is its resident size when the
-            // run ended, not memory the run owned.
-            runtimeMemoryMb: Math.round(
-              process.memoryUsage().rss / 1024 / 1024,
-            ),
-            sandboxUsage: sandboxCpu.usage(),
-            stepCount: stepCount,
-            toolCallCount: toolCallCount,
-            inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
-          }),
-        context,
-      );
-      waitUntil(Promise.allSettled([usageRecorded, rootPublished]));
-    } finally {
-      // The container process is reused, so never retain one task's tenant,
-      // trace, or secret values past the run.
-      setObservabilityContext(parentObservabilityContext);
-    }
-  };
+    },
+    rootAttributes: (): Record<string, string | number | boolean> => ({
+      ...rootRunningAttributes,
+      ...systemTraceAttributes(turnContext.system, traceAttribute),
+    }),
+    modelProvider: configuredModel.providerName,
+    modelId: agentConfig.model?.modelId,
+    taskInput: taskInput,
+    serialize: traceAttribute,
+    spans: spans,
+    stepTiming: stepTiming,
+    taskTotals: taskTotals,
+    sandboxCpu: sandboxCpu,
+    openWork: (): Promise<RunOpenWork> =>
+      openWorkAfterRun({
+        conversationKey: session.conversationKey,
+        awaitingApproval: approvalSummaries.length > 0,
+        detachedResultIds: detachedResultIds,
+        questionSummaries: questionSummaries,
+        pendingWork: options.pendingWork,
+      }),
+    publish: publishSpan,
+    recordUsage: recordTaskUsage,
+    release: (): void => {
+      options.abortSignal?.removeEventListener("abort", abortRun);
+      releaseSandboxOccupancy?.();
+    },
+    restoreObservabilityContext: (): void =>
+      setObservabilityContext(parentObservabilityContext),
+  });
 
   await lifecycle.emit("agent.started", {
     modelProvider: configuredModel.providerName,
@@ -958,7 +799,6 @@ export async function runAgentLoop(
   }
 
   let activeHarnessSession: HarnessAgentSession | undefined;
-  let stopHarnessLeaseMonitor: (() => void) | undefined;
 
   logInfo(
     `Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`,
@@ -1711,10 +1551,8 @@ export async function runAgentLoop(
         }
         await reply?.onErrorText(errorText).catch(() => {});
       } finally {
-        await finalizeUsage(
+        await finalizer.finalize(
           didFail ? "failed" : "completed",
-          taskTotals.usage(),
-          taskTotals.steps(),
           toolCallCount,
           Date.now() - runStartedAt,
           terminalError,
@@ -1722,13 +1560,8 @@ export async function runAgentLoop(
       }
     },
   };
-  let harnessRuntime:
-    | ReturnType<typeof createConfiguredHarnessAgent>
-    | undefined;
+  let harnessTurn: HarnessTurn | undefined;
   let stream: ReturnType<typeof streamText>;
-  const usesAiSdkHarness = agentConfig.harness !== undefined;
-  let harnessReservation: string | undefined;
-  let harnessEnvironment: string | undefined;
   try {
     if (usesAiSdkHarness) {
       if (policyToolApproval) {
@@ -1736,100 +1569,41 @@ export async function runAgentLoop(
           "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
         );
       }
-      // No step boundary carries the turn's input on this path: store it now.
-      await session.flushPendingStoredEvents();
-      await applyHarnessSteeringBeforeTurn(session, turnContext, agentConfig);
-      const harnessType = agentConfig.harness!.type;
-      const stored = await session.loadHarnessSession();
-      const reservationKey = harnessReservationKey({
-        agentReservationKey: agentMachineKey,
-        conversationKey: session.conversationKey,
-        isolated: options.isolatedSandbox === true,
-        stored: stored,
-        type: harnessType,
-      });
-      harnessReservation = reservationKey;
-      const shared = reservationKey !== session.conversationKey;
-      const compute = requireHarnessSandbox(sandboxes[0]?.sandbox);
-      let usage: SandboxUsage | undefined;
-      harnessRuntime = createConfiguredHarnessAgent({
+      harnessTurn = await prepareHarnessTurn({
+        abortController: runAbort,
         agentConfig: agentConfig,
-        compute:
-          shared || !compute.controlPlane
-            ? compute
-            : {
-                ...compute,
-                controlPlane: {
-                  ...compute.controlPlane,
-                  releaseAfterIdleSeconds: ISOLATED_SANDBOX_RELEASE_SECONDS,
-                },
-              },
-        id: session.agentId,
-        instructions: turnContext.system
-          .map((message) => message.content)
-          .join("\n\n"),
+        agentReservationKey: agentMachineKey,
+        applySteering: (): Promise<void> =>
+          applyHarnessSteeringBeforeTurn(session, turnContext, agentConfig),
+        configuredApprovals: configuredApprovals,
+        createAgent: createConfiguredHarnessAgent,
+        isolated: options.isolatedSandbox === true,
         metadata: sandboxMetadata,
-        onUsage: (reported): void => {
-          usage = reported;
+        onOccupied: (release): void => {
+          releaseSandboxOccupancy = release;
         },
-        reservationKey: reservationKey,
-        shared: shared,
-        skills: await session.loadHarnessSkills(),
-        toolApproval:
-          configuredApprovals.size > 0
-            ? Object.fromEntries(
-                [...configuredApprovals.keys()].map((name) => [
-                  name,
-                  "user-approval" as const,
-                ]),
-              )
-            : undefined,
+        openSession: openAiSdkHarnessSession,
+        sandbox: sandboxes[0],
+        session: session,
+        stopMessage: stopMessage,
         tools: tools,
+        turnContext: turnContext,
       });
-      releaseSandboxOccupancy = occupySandbox(
-        harnessRuntime.reservationKey,
-        session.eventId,
-        { agentId: session.agentId, conversationKey: session.conversationKey },
-      );
-      activeHarnessSession = await openAiSdkHarnessSession({
-        abortSignal: runAbort.signal,
-        agent: harnessRuntime.agent,
-        stored: stored,
-        type: harnessType,
-      });
-      stopHarnessLeaseMonitor = startHarnessLeaseMonitor(
-        session,
-        runAbort,
-        stopMessage,
-      );
-      harnessEnvironment = session.environmentText(
-        formatSandboxStatus({
-          name: sandboxes[0]!.name,
-          provider: compute.provider,
-          specs: configuredSandboxSpecs(compute),
-          state: "running",
-          shared: shared,
-          usage: usage,
-          neighbours: sandboxNeighbours(
-            harnessRuntime.reservationKey,
-            session.eventId,
-          ),
-        }),
-      );
+      activeHarnessSession = harnessTurn.nativeSession;
       // The trace carries the environment the model actually received.
       rootRunningAttributes = {
         ...rootRunningAttributes,
-        "agent.environment": traceAttribute(harnessEnvironment),
+        "agent.environment": traceAttribute(harnessTurn.environment),
       };
       otelRootSpan.setAttributes(rootRunningAttributes);
     }
-    stream = harnessRuntime
-      ? await harnessRuntime.agent.stream({
+    stream = harnessTurn
+      ? await harnessTurn.runtime.agent.stream({
           messages: harnessPromptMessages(
             turnContext.messages,
-            harnessEnvironment ?? environment,
+            harnessTurn.environment,
           ),
-          session: activeHarnessSession!,
+          session: harnessTurn.nativeSession,
           abortSignal: runAbort.signal,
           // The same step and tool hooks as streamText, so a harness run
           // traces every step. onEnd stays out: finalizeHarnessStream calls it
@@ -1856,18 +1630,15 @@ export async function runAgentLoop(
         })
       : streamText(streamOptions);
   } catch (error) {
-    stopHarnessLeaseMonitor?.();
-    await activeHarnessSession?.destroy().catch(() => {});
+    await harnessTurn?.dispose();
     didFail = true;
     const message = errorMessage(error);
     failureText = message;
     terminalError = error instanceof Error ? error : new Error(message);
     await lifecycle.emit("agent.failed", { error: message });
     await reply?.onErrorText(message).catch(() => {});
-    await finalizeUsage(
+    await finalizer.finalize(
       "failed",
-      taskTotals.usage(),
-      taskTotals.steps(),
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
@@ -1891,7 +1662,7 @@ export async function runAgentLoop(
       return;
     }
     harnessStreamFinalized = true;
-    stopHarnessLeaseMonitor?.();
+    harnessTurn?.stopLeaseMonitor();
     const abortError = runAbort.signal.aborted
       ? runAbort.signal.reason
       : undefined;
@@ -1900,7 +1671,7 @@ export async function runAgentLoop(
       await parkAiSdkHarnessSession({
         broodsSession: session,
         nativeSession: activeHarnessSession,
-        reservationKey: harnessReservation ?? session.conversationKey,
+        reservationKey: harnessTurn?.reservationKey ?? session.conversationKey,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });
@@ -1941,7 +1712,7 @@ export async function runAgentLoop(
       terminalError ??= new Error("Caller stopped reading the stream");
       runAbort.abort(terminalError);
     }
-    if (!drained && finishObserved && !usageFinalized) {
+    if (!drained && finishObserved && !finalizer.finalized()) {
       // onEnd is still persisting and will finalize the run as completed. The
       // SDK closes the stream only after onEnd returns, so draining waits for it.
       try {
@@ -1951,7 +1722,8 @@ export async function runAgentLoop(
       }
     }
     await finalizeHarnessStream();
-    if (usageFinalized) return;
+    // onEnd sets finishObserved before it finalizes; when it did, the call
+    // below only waits for that finalization.
     if (!finishObserved) {
       didFail = true;
       terminalError ??= new Error(
@@ -1959,10 +1731,8 @@ export async function runAgentLoop(
       );
       failureText ??= terminalError.message;
     }
-    await finalizeUsage(
+    await finalizer.finalize(
       "failed",
-      taskTotals.usage(),
-      taskTotals.steps(),
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
@@ -1970,7 +1740,7 @@ export async function runAgentLoop(
   };
 
   /**
-   * Wrap consumeStream so finalizeUsage fires in a finally block even when
+   * Wrap consumeStream so finalization fires in a finally block even when
    * streamText throws hard (e.g. network failure before any chunk arrives) and
    * onEnd / onError never run.
    */
@@ -2427,19 +2197,6 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
 
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
-}
-
-/** The root's closing status: a clean run that left something open waits on it. */
-function rootSpanStatus(
-  status: "completed" | "failed",
-  waitingOn: TaskWaitingOn | undefined,
-): ObservabilitySpanRow["status"] {
-  if (status === "failed") return "error";
-  if (!waitingOn) return "ok";
-
-  return waitingOn === "question" || waitingOn === "approval"
-    ? "needs_input"
-    : "waiting";
 }
 
 /**

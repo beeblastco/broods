@@ -32,8 +32,6 @@ await mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
       },
     },
   }),
-  harnessReservationKey: (options: { conversationKey: string }): string =>
-    options.conversationKey,
   harnessSteersMidTurn: harnessSteersMidTurn,
   openAiSdkHarnessSession: async () => ({
     destroy: async (): Promise<void> => {},

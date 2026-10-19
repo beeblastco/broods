@@ -243,7 +243,11 @@ export interface StepTimingTracker {
     chunkType: TextStreamPart<ToolSet>["type"],
     nowMs: number,
   ) => void;
-  /** attemptRecordingMiddleware: one entry per doStream call of the active step. */
+  /**
+   * attemptRecordingMiddleware: one entry per doStream call of the active
+   * step. The SDK awaits onStepStart before every doStream, so there always is
+   * one; an attempt without one is dropped rather than filed on another step.
+   */
   recordAttempt: (attempt: ModelAttempt) => void;
   /**
    * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
@@ -339,7 +343,9 @@ export function createStepTimingTracker(
       }
     },
     recordAttempt: (attempt) => {
-      stepOf(activeStepNumber ?? 0).attempts.push(attempt);
+      if (activeStepNumber !== undefined) {
+        stepOf(activeStepNumber).attempts.push(attempt);
+      }
     },
     attemptAttributes: attemptAttributes,
     closeStep: (step, stepEndMs) => {
