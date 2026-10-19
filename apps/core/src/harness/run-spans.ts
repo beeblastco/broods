@@ -14,11 +14,7 @@ import {
   type Tracer,
 } from "@opentelemetry/api";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
-import {
-  mintSpanId,
-  observabilityAttributes,
-  type ObservabilityContext,
-} from "../shared/otel.ts";
+import { mintSpanId, observabilityAttributes } from "../shared/otel.ts";
 
 type SpanAttributes = Record<string, string | number | boolean>;
 /** What a close adds to a span; a conditional spread may type a key as undefined. */
@@ -29,6 +25,8 @@ export type TrackedSpan = {
   otelSpan: Span;
   otelContext: OtelContext;
   name: "model.step" | "tool.call";
+  /** What `open` kept it under; a late span has none. */
+  key?: TrackedSpanKey;
   traceId: string;
   spanId: string;
   parentSpanId?: string;
@@ -42,15 +40,7 @@ export type TrackedSpanKey = number | string;
 /** The trace one run's spans land on; nothing in it changes during the run. */
 export interface RunSpanIdentity {
   tracer: Tracer;
-  scope: Pick<
-    ObservabilityContext,
-    | "accountId"
-    | "project"
-    | "stage"
-    | "endpointId"
-    | "agentId"
-    | "conversationKey"
-  >;
+  scope: Parameters<typeof observabilityAttributes>[0];
   /** The root's ids and context: parents for every span, and the fallback when a noop tracer hands out zero ids. */
   traceId: string;
   rootSpanId: string;
@@ -70,33 +60,9 @@ export interface RunSpanIdentity {
  */
 export interface RunSpanTracker {
   /**
-   * Opens a span under `parent` (the root when undefined), publishes its
-   * running row and keeps it under `key` until `close` or `closeOrphans`.
-   */
-  open: (
-    name: TrackedSpan["name"],
-    key: TrackedSpanKey,
-    startMs: number,
-    parent: TrackedSpan | undefined,
-    attributes: SpanAttributes,
-  ) => TrackedSpan;
-  /**
-   * A span whose start hook never ran: opened under the root for `close` to
-   * end at once, so it is never kept and no running row goes out.
-   */
-  late: (
-    name: TrackedSpan["name"],
-    startMs: number,
-    attributes: SpanAttributes,
-  ) => TrackedSpan;
-  /** The open span kept under `key`, if any. */
-  get: (key: TrackedSpanKey) => TrackedSpan | undefined;
-  /** Passed to the tool registry as `onToolRetry`; tallies each wait on the call's open span. */
-  retry: (toolCallId: string, waitMs: number) => void;
-  /**
    * Ends the span and publishes its closed row with `attributes` laid over the
-   * ones it opened with. A failed tool.call records `error` as its exception;
-   * a tool.call also gets its duration and success stamped on the OTel span.
+   * ones it opened with. A failed span records `error` as its exception; a
+   * tool.call also gets its duration and success stamped on the OTel span.
    */
   close: (
     tracked: TrackedSpan,
@@ -116,6 +82,36 @@ export interface RunSpanTracker {
     error: string | undefined,
     stepAttributes: (stepNumber: number) => Record<string, string | number>,
   ) => void;
+  /** The open span kept under `key`, if any. */
+  get: (key: TrackedSpanKey) => TrackedSpan | undefined;
+  /**
+   * A span whose start hook never ran: opened under the root for `close` to
+   * end at once, so it is never kept and no running row goes out.
+   */
+  late: (
+    name: TrackedSpan["name"],
+    startMs: number,
+    attributes: SpanAttributes,
+  ) => TrackedSpan;
+  /**
+   * Opens a span under `parent` (the root when undefined), publishes its
+   * running row and keeps it under `key` until `close` or `closeOrphans`.
+   * A model.step is keyed by its step number, a tool.call by its call id.
+   */
+  open: ((
+    name: "model.step",
+    key: number,
+    startMs: number,
+    parent: TrackedSpan | undefined,
+    attributes: SpanAttributes,
+  ) => TrackedSpan) &
+    ((
+      name: "tool.call",
+      key: string,
+      startMs: number,
+      parent: TrackedSpan | undefined,
+      attributes: SpanAttributes,
+    ) => TrackedSpan);
   /**
    * Emits a closed phase span under the root for non-model work (cold start,
    * context prepare, compaction), so a slow turn can be attributed. Best-effort.
@@ -127,6 +123,8 @@ export interface RunSpanTracker {
     endMs: number,
     extraAttributes?: Record<string, number>,
   ) => void;
+  /** Passed to the tool registry as `onToolRetry`; tallies each wait on the call's open span. */
+  retry: (toolCallId: string, waitMs: number) => void;
 }
 
 /** Built once per run by runAgentLoop after it mints the root span; the stream callbacks and finalize drive it. */
@@ -135,8 +133,7 @@ export function createRunSpanTracker(
 ): RunSpanTracker {
   const scopeAttributes = observabilityAttributes(identity.scope);
   // Child OTel spans remain open until the corresponding AI SDK finish hook.
-  // Their real OTel IDs are reused in the live NATS trace rows. A step is
-  // keyed by its number and a tool call by its id, so one map holds both.
+  // Their real OTel IDs are reused in the live NATS trace rows.
   const kept = new Map<TrackedSpanKey, TrackedSpan>();
 
   /** The ids a span's rows carry: its OTel ones, or the root trace and a minted span id under a noop tracer. */
@@ -182,56 +179,7 @@ export function createRunSpanTracker(
   };
 
   return {
-    open: (name, key, startMs, parent, attributes) => {
-      const tracked = start(
-        name,
-        startMs,
-        parent?.otelContext ?? identity.rootOtelContext,
-        parent?.spanId ?? identity.rootSpanId,
-        attributes,
-      );
-      kept.set(key, tracked);
-      void identity.publish({
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: name,
-        kind: name,
-        startTimeMs: startMs,
-        endTimeMs: startMs,
-        durationMs: 0,
-        status: "running",
-        endpointId: identity.session.endpointId,
-        agentId: identity.session.agentId,
-        conversationKey: identity.session.conversationKey,
-        attributes: attributes,
-      });
-
-      return tracked;
-    },
-    late: (name, startMs, attributes) =>
-      start(
-        name,
-        startMs,
-        identity.rootOtelContext,
-        identity.rootSpanId,
-        attributes,
-      ),
-    get: (key) => kept.get(key),
-    retry: (toolCallId, waitMs) => {
-      const tracked = kept.get(toolCallId);
-      if (!tracked) return;
-      const retry = {
-        "tool.retry.count":
-          Number(tracked.attributes["tool.retry.count"] ?? 0) + 1,
-        "tool.retry.wait_ms":
-          Number(tracked.attributes["tool.retry.wait_ms"] ?? 0) + waitMs,
-      };
-      // A fresh object: the running row published at start may still hold the old one.
-      tracked.attributes = { ...tracked.attributes, ...retry };
-      tracked.otelSpan.setAttributes(retry);
-    },
-    close: (tracked, endMs, status, attributes, error) => {
+    close: (tracked, endMs, status, attributes, error): void => {
       const durationMs = endMs - tracked.startTimeMs;
       const closed = { ...tracked.attributes, ...attributes };
       tracked.otelSpan.setAttributes(
@@ -269,15 +217,13 @@ export function createRunSpanTracker(
         attributes: closed,
         ...(error ? { error: error } : {}),
       });
-      for (const [key, open] of kept) {
-        if (open === tracked) kept.delete(key);
-      }
+      if (tracked.key !== undefined) kept.delete(tracked.key);
     },
-    closeOrphans: (endMs, status, error, stepAttributes) => {
+    closeOrphans: (endMs, status, error, stepAttributes): void => {
       // Tool calls close before the steps that parent them.
       const orphans = [...kept.entries()].sort(
-        ([, a], [, b]) =>
-          Number(a.name === "model.step") - Number(b.name === "model.step"),
+        ([a], [b]) =>
+          Number(typeof a === "number") - Number(typeof b === "number"),
       );
       for (const [key, tracked] of orphans) {
         const extraAttributes =
@@ -306,15 +252,59 @@ export function createRunSpanTracker(
           attributes: {
             ...tracked.attributes,
             ...extraAttributes,
-            [tracked.name === "model.step" ? "step.state" : "tool.state"]:
-              status,
+            [typeof key === "number" ? "step.state" : "tool.state"]: status,
           },
           ...(error !== undefined ? { error: error } : {}),
         });
       }
       kept.clear();
     },
-    phase: (phaseName, label, startMs, endMs, extraAttributes = {}) => {
+    get: (key): TrackedSpan | undefined => kept.get(key),
+    late: (name, startMs, attributes): TrackedSpan =>
+      start(
+        name,
+        startMs,
+        identity.rootOtelContext,
+        identity.rootSpanId,
+        attributes,
+      ),
+    open: (
+      name: TrackedSpan["name"],
+      key: TrackedSpanKey,
+      startMs: number,
+      parent: TrackedSpan | undefined,
+      attributes: SpanAttributes,
+    ): TrackedSpan => {
+      const tracked = {
+        ...start(
+          name,
+          startMs,
+          parent?.otelContext ?? identity.rootOtelContext,
+          parent?.spanId ?? identity.rootSpanId,
+          attributes,
+        ),
+        key: key,
+      };
+      kept.set(key, tracked);
+      void identity.publish({
+        traceId: tracked.traceId,
+        spanId: tracked.spanId,
+        parentSpanId: tracked.parentSpanId,
+        name: name,
+        kind: name,
+        startTimeMs: startMs,
+        endTimeMs: startMs,
+        durationMs: 0,
+        status: "running",
+        endpointId: identity.session.endpointId,
+        agentId: identity.session.agentId,
+        conversationKey: identity.session.conversationKey,
+        attributes: attributes,
+      });
+
+      return tracked;
+    },
+    phase: (phaseName, label, startMs, endMs, extraAttributes = {}): void => {
       try {
         const durationMs = Math.max(0, endMs - startMs);
         const attributes = {
@@ -348,6 +338,19 @@ export function createRunSpanTracker(
       } catch {
         // Best-effort: a telemetry failure must not affect the run.
       }
+    },
+    retry: (toolCallId, waitMs): void => {
+      const tracked = kept.get(toolCallId);
+      if (!tracked) return;
+      const retry = {
+        "tool.retry.count":
+          Number(tracked.attributes["tool.retry.count"] ?? 0) + 1,
+        "tool.retry.wait_ms":
+          Number(tracked.attributes["tool.retry.wait_ms"] ?? 0) + waitMs,
+      };
+      // A fresh object: the running row published at start may still hold the old one.
+      tracked.attributes = { ...tracked.attributes, ...retry };
+      tracked.otelSpan.setAttributes(retry);
     },
   };
 }

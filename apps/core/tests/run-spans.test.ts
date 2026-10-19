@@ -40,7 +40,7 @@ beforeEach(() => {
   exporter.reset();
 });
 
-afterEach(() => trace.disable());
+afterEach((): void => trace.disable());
 
 /** A tracker on the global tracer whose rows land in `published`. */
 function tracker(
@@ -65,7 +65,7 @@ function tracker(
       agentId: "agent_1",
       conversationKey: "acct:acct_1:agent:agent_1:telegram:chat",
     },
-    publish: (row) => {
+    publish: (row): Promise<void> => {
       published.push({
         row: row,
         finishedSpans: exporter.getFinishedSpans().length,
@@ -197,6 +197,46 @@ it("closes orphans with the run's error and the step's extra attributes", () => 
       message: "model timed out",
     });
   }
+});
+
+it("closes a late tool span under the root with no running row and nothing kept", () => {
+  const published: PublishedRow[] = [];
+  const spans = tracker(published);
+
+  const tool = spans.late("tool.call", 1_000, {
+    "tool.name": "bash",
+    "tool.call_id": "call_late",
+  });
+  spans.close(tool, 1_200, "ok", { "tool.state": "completed" });
+
+  expect(tool.key).toBeUndefined();
+  expect(spans.get("call_late")).toBeUndefined();
+  expect(published.map((entry) => entry.row.status)).toEqual(["ok"]);
+  expect(published[0]?.row).toMatchObject({
+    parentSpanId: ROOT_SPAN_ID,
+    startTimeMs: 1_000,
+    durationMs: 200,
+    attributes: { "tool.call_id": "call_late", "tool.state": "completed" },
+  });
+});
+
+it("closes orphans of a completed run as ok rows and leaves their OTel status unset", () => {
+  const published: PublishedRow[] = [];
+  const spans = tracker(published);
+  spans.open("model.step", 1, 1_000, undefined, { "step.state": "running" });
+
+  spans.closeOrphans(2_000, "completed", undefined, () => ({}));
+
+  expect(published[1]?.row).toMatchObject({
+    status: "ok",
+    durationMs: 1_000,
+    attributes: { "step.state": "completed" },
+  });
+  expect(published[1]?.row).not.toHaveProperty("error");
+  expect(exporter.getFinishedSpans()[0]?.status).toEqual({
+    code: SpanStatusCode.UNSET,
+  });
+  expect(spans.get(1)).toBeUndefined();
 });
 
 it("mints ids under a noop tracer whose span ids are all zero", () => {
