@@ -116,13 +116,17 @@ describe("createStepTimingTracker", () => {
     });
   });
 
-  it("records an attempt before any step started under step 0", () => {
+  it("drops an attempt recorded with no active step instead of filing it on a closed step", () => {
     const tracker = createStepTimingTracker(serialize);
-    tracker.recordAttempt({ startedAt: 500 });
+    tracker.startStep(0, 1_000);
+    tracker.closeStep(0, 1_500);
+    tracker.endActiveStep(0);
+    tracker.recordAttempt({ startedAt: 1_600, error: "503 overloaded" });
+    tracker.startStep(1, 2_000);
+    tracker.recordAttempt({ startedAt: 2_000 });
 
-    expect(tracker.attemptAttributes(0)).toEqual({
-      "model.attempts": 1,
-    });
+    expect(tracker.attemptAttributes(0)).toEqual({});
+    expect(tracker.attemptAttributes(1)).toEqual({ "model.attempts": 1 });
   });
 
   it("closeStep clears that step's state and leaves other steps alone", () => {
