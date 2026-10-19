@@ -451,7 +451,8 @@ export class SubagentCoordinator {
    * Records that get_subagent_status showed the model this run's outcome, by
    * the result row's event id. It counts once `confirmDelivered` runs after
    * that tool result is saved, so a failed save still gets this turn's
-   * injection. The row's durable `stored` hand-back keeps a late resume away.
+   * injection, and the row is only then marked `stored`, so a pod that dies
+   * between the read and the save leaves the result to the recovery sweep.
    */
   markDelivered(eventId: string): void {
     this.readUnsaved.add(eventId);
@@ -459,11 +460,15 @@ export class SubagentCoordinator {
 
   /**
    * Called once the parent's step output is saved. Each result read by then
-   * never starts another pass: a queued injection is dropped now and one that
-   * is enqueued later is skipped.
+   * never starts another pass: a queued injection is dropped now, one that is
+   * enqueued later is skipped, and the row's hand-back is marked `stored`, so
+   * no late resume or sweep tells it again. A stored row stays stored and a
+   * failed mark only logs: the sweep then delivers the result once more.
    */
-  confirmDelivered(): void {
-    for (const eventId of this.readUnsaved) {
+  async confirmDelivered(): Promise<void> {
+    const read = [...this.readUnsaved];
+    this.readUnsaved.clear();
+    for (const eventId of read) {
       this.delivered.add(eventId);
       // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
@@ -475,7 +480,11 @@ export class SubagentCoordinator {
         this.completions.splice(index, 1);
       }
     }
-    this.readUnsaved.clear();
+    await Promise.all(
+      read.map((eventId): Promise<void> =>
+        markAsyncAgentHandback(eventId, "stored"),
+      ),
+    );
   }
 
   /**

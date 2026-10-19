@@ -791,7 +791,7 @@ describe("runAgentLoop", () => {
         subagentWatch: {
           waitForSettled: async () => {},
           markDelivered: () => {},
-          confirmDelivered: () => {},
+          confirmDelivered: async () => {},
           answerQuestion: () => false,
           takeParentMessages: async () => [question],
         },

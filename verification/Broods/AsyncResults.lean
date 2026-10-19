@@ -18,10 +18,10 @@ block then runs as `recover`.
 
 A subagent's row also carries `handback`: whether its parent has the result (`stored`),
 with `observed` kept in step for one release. The parent's `get_subagent_status` read
-(`markAsyncAgentHandback`), its own append of the result (`insertConversationEvents`)
-and a late result's resume (`runtimeIngress.accept` with `resultEventId`) all store it,
-and the resume is admitted only while it is not stored, so the parent is told a result
-once. `pending`, which the child's finish writes, admits like unset: only the sweep
+(`markAsyncAgentHandback`, once the step that carries it is saved), its own append of
+the result (`insertConversationEvents`) and a late result's resume
+(`runtimeIngress.accept` with `resultEventId`) all store it, and the resume is admitted
+only while it is not stored, so the parent is told a result once. `pending`, which the child's finish writes, admits like unset: only the sweep
 reads it, past the parent's hold. A tool row's `handback` moves the same way: its
 settle writes `pending`, the parent's append, `async_status` and the continuation's
 admission (`accept` with `toolResultId`) store it, and `observe` here stands for either
@@ -236,8 +236,9 @@ inductive ObserveCall where
   a pass's last write fails, for each result it did not save and each child still
   working; those then resume. -/
   | detach
-  /-- `markAsyncAgentHandback` with `stored`: `get_subagent_status`, a result the
-  parent is never told, or the parent's own append of the result
+  /-- `markAsyncAgentHandback` with `stored`: the save of the step that carries a
+  `get_subagent_status` read (`confirmDelivered`), or that read itself of a detached
+  row, a result the parent is never told, or the parent's own append of the result
   (`insertConversationEvents`). `finished` is whether the row has its outcome yet. -/
   | read (finished : Bool)
   /-- `runtimeIngress.accept` with `resultEventId`, the late resume; `room` is whether

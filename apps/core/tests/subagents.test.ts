@@ -489,7 +489,7 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_2", "second result"));
 
     coordinator.markDelivered(completion("subagent_1", "").eventId);
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
 
     expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
@@ -520,7 +520,7 @@ describe("SubagentCoordinator", () => {
     });
 
     coordinator.markDelivered(completion("subagent_1", "").eventId);
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
 
     expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     expect(messageText(persistModelMessages.mock.calls[0]?.[0]?.[0])).toContain(
@@ -573,7 +573,7 @@ describe("SubagentCoordinator", () => {
     internals.pending.set("subagent_1", new Promise<void>(() => {}));
 
     coordinator.markDelivered(read.eventId);
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
     await internals.completeTask(read);
     await internals.completeTask({
       ...completion("subagent_1", "follow-up result"),
@@ -1075,7 +1075,7 @@ describe("SubagentCoordinator", () => {
       conversationKey: "subagent-subagent_1",
     });
     coordinator.markDelivered("event_subagent_1");
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
 
     expect(await coordinator.waitForIdle()).toBe("timeout");
     expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(0);
@@ -1334,6 +1334,70 @@ describe("SubagentCoordinator", () => {
       });
 
       expect(told).toEqual([]);
+    } finally {
+      owned.mockRestore();
+      observe.mockRestore();
+    }
+  });
+
+  it("marks a pending result the model read stored once the step that carries the read is saved, not at the read", async (): Promise<void> => {
+    const parentEventId = "acct:account_1:agent:agent_parent:api:event_parent";
+    const parentKey = "acct:account_1:agent:agent_parent:api:chat";
+    const taskId = createSubagentTaskId(parentEventId);
+    const childEventId = scopedDirectEventId(
+      "account_1",
+      "agent_child",
+      taskId,
+    );
+    // A child of an earlier run that finished with nobody storing it.
+    const owned = spyOn(
+      subagentToolUtils,
+      "getOwnedSubagent",
+    ).mockResolvedValue({
+      accountId: "account_1",
+      eventId: childEventId,
+      conversationKey: scopedDirectConversationKey(
+        "account_1",
+        "agent_child",
+        "subagent-child",
+      ),
+      handback: "pending",
+      status: "completed",
+      response: "the answer",
+      createdAt: "2026-10-11T00:00:00.000Z",
+      updatedAt: "2026-10-11T00:00:00.000Z",
+      expiresAt: Date.now() + 60_000,
+    });
+    const observe = spyOn(
+      asyncAgentResults,
+      "markAsyncAgentHandback",
+    ).mockResolvedValue();
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const { default: getStatus } =
+      await import("../src/harness/tools/get-subagent-status.tool.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession({ conversationKey: parentKey }),
+      {},
+      Date.now() + 60_000,
+    );
+
+    try {
+      await getStatus({
+        accountId: "account_1",
+        eventId: parentEventId,
+        conversationKey: parentKey,
+        watch: coordinator,
+      }).get_subagent_status?.execute?.(
+        { taskId: taskId, agentId: "agent_child" },
+        { toolCallId: "call-1", messages: [], context: {} },
+      );
+      // The read alone stores nothing: a pod that dies before the step saves
+      // leaves the row to the sweep.
+      expect(observe).not.toHaveBeenCalled();
+
+      await coordinator.confirmDelivered();
+
+      expect(observe.mock.calls).toEqual([[childEventId, "stored"]]);
     } finally {
       owned.mockRestore();
       observe.mockRestore();

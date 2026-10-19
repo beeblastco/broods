@@ -76,7 +76,7 @@ export interface SubagentWatch {
   markDelivered(eventId: string): void;
   answerQuestion(taskId: string, answer: string): boolean;
   takeParentMessages(): Promise<UserModelMessage[]>;
-  confirmDelivered(): void;
+  confirmDelivered(): Promise<void>;
 }
 
 export interface SubagentToolInput {
