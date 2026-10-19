@@ -129,13 +129,29 @@ export interface RunSpanTracker {
   ) => void;
 }
 
+/** Built once per run by runAgentLoop after it mints the root span; the stream callbacks and finalize drive it. */
 export function createRunSpanTracker(
   identity: RunSpanIdentity,
 ): RunSpanTracker {
+  const scopeAttributes = observabilityAttributes(identity.scope);
   // Child OTel spans remain open until the corresponding AI SDK finish hook.
-  // Their real OTel IDs are reused in the live NATS trace rows.
-  const stepSpans = new Map<number, TrackedSpan>();
-  const toolSpans = new Map<string, TrackedSpan>();
+  // Their real OTel IDs are reused in the live NATS trace rows. A step is
+  // keyed by its number and a tool call by its id, so one map holds both.
+  const kept = new Map<TrackedSpanKey, TrackedSpan>();
+
+  /** The ids a span's rows carry: its OTel ones, or the root trace and a minted span id under a noop tracer. */
+  const rowIds = (span: Span): { traceId: string; spanId: string } => {
+    const spanContext = span.spanContext();
+
+    return {
+      traceId: /[^0]/.test(spanContext.traceId)
+        ? spanContext.traceId
+        : identity.traceId,
+      spanId: /[^0]/.test(spanContext.spanId)
+        ? spanContext.spanId
+        : mintSpanId(),
+    };
+  };
 
   /** Opens a model.step or tool.call OTel span and keeps the ids its live NATS row reuses. */
   const start = (
@@ -149,33 +165,21 @@ export function createRunSpanTracker(
       name,
       {
         startTime: startTimeMs,
-        attributes: {
-          ...observabilityAttributes(identity.scope),
-          ...attributes,
-        },
+        attributes: { ...scopeAttributes, ...attributes },
       },
       parentContext,
     );
-    const spanContext = otelSpan.spanContext();
 
     return {
       otelSpan: otelSpan,
       otelContext: otelTraceApi.setSpan(parentContext, otelSpan),
       name: name,
-      traceId: /[^0]/.test(spanContext.traceId)
-        ? spanContext.traceId
-        : identity.traceId,
-      spanId: /[^0]/.test(spanContext.spanId)
-        ? spanContext.spanId
-        : mintSpanId(),
+      ...rowIds(otelSpan),
       parentSpanId: parentSpanId,
       startTimeMs: startTimeMs,
       attributes: attributes,
     };
   };
-
-  const stateKey = (tracked: TrackedSpan): string =>
-    tracked.name === "model.step" ? "step.state" : "tool.state";
 
   return {
     open: (name, key, startMs, parent, attributes) => {
@@ -186,8 +190,7 @@ export function createRunSpanTracker(
         parent?.spanId ?? identity.rootSpanId,
         attributes,
       );
-      if (typeof key === "number") stepSpans.set(key, tracked);
-      else toolSpans.set(key, tracked);
+      kept.set(key, tracked);
       void identity.publish({
         traceId: tracked.traceId,
         spanId: tracked.spanId,
@@ -214,10 +217,9 @@ export function createRunSpanTracker(
         identity.rootSpanId,
         attributes,
       ),
-    get: (key) =>
-      typeof key === "number" ? stepSpans.get(key) : toolSpans.get(key),
+    get: (key) => kept.get(key),
     retry: (toolCallId, waitMs) => {
-      const tracked = toolSpans.get(toolCallId);
+      const tracked = kept.get(toolCallId);
       if (!tracked) return;
       const retry = {
         "tool.retry.count":
@@ -267,25 +269,19 @@ export function createRunSpanTracker(
         attributes: closed,
         ...(error ? { error: error } : {}),
       });
-      for (const [key, open] of stepSpans) {
-        if (open === tracked) stepSpans.delete(key);
-      }
-      for (const [key, open] of toolSpans) {
-        if (open === tracked) toolSpans.delete(key);
+      for (const [key, open] of kept) {
+        if (open === tracked) kept.delete(key);
       }
     },
     closeOrphans: (endMs, status, error, stepAttributes) => {
-      const orphanedSpans = [
-        ...[...toolSpans.values()].map((tracked) => ({
-          tracked: tracked,
-          extraAttributes: undefined,
-        })),
-        ...[...stepSpans.entries()].map(([stepNumber, tracked]) => ({
-          tracked: tracked,
-          extraAttributes: stepAttributes(stepNumber),
-        })),
-      ];
-      for (const { tracked, extraAttributes } of orphanedSpans) {
+      // Tool calls close before the steps that parent them.
+      const orphans = [...kept.entries()].sort(
+        ([, a], [, b]) =>
+          Number(a.name === "model.step") - Number(b.name === "model.step"),
+      );
+      for (const [key, tracked] of orphans) {
+        const extraAttributes =
+          typeof key === "number" ? stepAttributes(key) : undefined;
         if (status === "failed") {
           tracked.otelSpan.setStatus({
             code: SpanStatusCode.ERROR,
@@ -310,13 +306,13 @@ export function createRunSpanTracker(
           attributes: {
             ...tracked.attributes,
             ...extraAttributes,
-            [stateKey(tracked)]: status,
+            [tracked.name === "model.step" ? "step.state" : "tool.state"]:
+              status,
           },
           ...(error !== undefined ? { error: error } : {}),
         });
       }
-      toolSpans.clear();
-      stepSpans.clear();
+      kept.clear();
     },
     phase: (phaseName, label, startMs, endMs, extraAttributes = {}) => {
       try {
@@ -330,22 +326,13 @@ export function createRunSpanTracker(
           phaseName,
           {
             startTime: startMs,
-            attributes: {
-              ...observabilityAttributes(identity.scope),
-              ...attributes,
-            },
+            attributes: { ...scopeAttributes, ...attributes },
           },
           identity.rootOtelContext,
         );
-        const spanContext = phaseSpan.spanContext();
         phaseSpan.end(endMs);
         void identity.publish({
-          traceId: /[^0]/.test(spanContext.traceId)
-            ? spanContext.traceId
-            : identity.traceId,
-          spanId: /[^0]/.test(spanContext.spanId)
-            ? spanContext.spanId
-            : mintSpanId(),
+          ...rowIds(phaseSpan),
           parentSpanId: identity.rootSpanId,
           name: phaseName,
           kind: "phase",
