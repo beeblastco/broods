@@ -3,10 +3,13 @@
  * preconnect or socket that a test has not stubbed and that leaves loopback
  * fails like an unreachable host, so a missing stub can never reach a real
  * provider API. Sockets are covered because SDKs on node:http (Slack's axios
- * WebClient) never touch fetch.
+ * WebClient) never touch fetch. It also fails a test that leaves waitUntil
+ * work running, since that work outlives the test inside the shared process.
  */
 
+import { afterEach } from "bun:test";
 import net from "node:net";
+import { inFlightForTests } from "../../src/shared/in-flight.ts";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const realFetch = globalThis.fetch;
@@ -60,6 +63,27 @@ net.Socket.prototype.connect = function (
 
   return Reflect.apply(realConnect, this, args) as net.Socket;
 } as typeof realConnect;
+
+// Work a test hands to waitUntil and leaves running (a real Convex write
+// retrying for half a minute) stalls a later file's drain, so the test that
+// started it fails here instead. Each task fails one test, never a cascade.
+const reportedInFlight = new WeakSet<Promise<void>>();
+afterEach(async (): Promise<void> => {
+  await new Promise<void>((resolve): void => {
+    setImmediate(resolve);
+  });
+  const leaked = [...inFlightForTests()].filter(
+    (task): boolean => !reportedInFlight.has(task),
+  );
+  for (const task of leaked) {
+    reportedInFlight.add(task);
+  }
+  if (leaked.length > 0) {
+    throw new Error(
+      `This test left ${leaked.length} waitUntil task(s) running; stub what it calls so nothing outlives the test`,
+    );
+  }
+});
 
 // Throws for any host the guarded fetch, preconnect or socket may not open.
 function assertLoopback(host: string): void {
