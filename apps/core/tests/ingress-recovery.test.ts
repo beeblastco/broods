@@ -91,13 +91,16 @@ describe("queued ingress recovery", () => {
       asyncAgentResults,
       "listUnobservedAsyncAgentResults",
     ).mockResolvedValue({ page: [], cursor: "end", isDone: true });
+    // One list a window: detached and pre-handback rows in completed, failed
+    // and processing, pending rows in completed and failed.
+    const windows = 8;
     try {
       startIngressRecovery();
-      for (let i = 0; i < 100 && pages.mock.calls.length < 3; i += 1) {
+      for (let i = 0; i < 100 && pages.mock.calls.length < windows; i += 1) {
         await Bun.sleep(1);
       }
 
-      expect(pages).toHaveBeenCalledTimes(3);
+      expect(pages).toHaveBeenCalledTimes(windows);
     } finally {
       queued.mockRestore();
       pages.mockRestore();
@@ -140,7 +143,7 @@ describe("queued ingress recovery", () => {
           parentConversationKey: parentKey,
           parentDelivery: { kind: "async" },
         },
-        observed: false,
+        handback: "detached",
         status: name === "finished" ? "completed" : "processing",
         ...(name === "finished" ? { response: "the late answer" } : {}),
         createdAt: longAgo,
@@ -154,13 +157,18 @@ describe("queued ingress recovery", () => {
         "listUnobservedAsyncAgentResults",
       ).mockImplementation(
         async (options: {
+          handback?: string;
           status: string;
         }): Promise<{
           page: AsyncAgentResultRecord[];
           cursor: string;
           isDone: boolean;
         }> => ({
-          page: rows.filter((row): boolean => row.status === options.status),
+          page: rows.filter(
+            (row): boolean =>
+              row.handback === options.handback &&
+              row.status === options.status,
+          ),
           cursor: "end",
           isDone: true,
         }),

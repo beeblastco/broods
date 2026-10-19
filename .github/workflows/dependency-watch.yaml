@@ -1,6 +1,8 @@
 # Dependency watch.
 # Reports upstream releases into one rolling issue, for the dependencies whose
-# types the repo builds on: the AI SDK family plus esbuild.
+# types the repo builds on: the AI SDK family plus esbuild. Also watches the
+# audit gate's exceptions (scripts/audit-gate.ts) for a release that could
+# retire one, or a review date within 30 days.
 #
 # Why this is not Dependabot/Renovate:
 #   The AI SDK packages pin `ai` at an exact version inside their own manifests
@@ -106,7 +108,7 @@ jobs:
           fi
 
           body=$(printf '%s\n\n%s\n' "$REPORT" \
-            "Run \`bun scripts/dependency-watch.ts\` locally to reproduce. Upgrade the AI SDK family in one commit, then \`bun install\` and \`bun run check\`.")
+            "Run \`bun scripts/dependency-watch.ts\` locally to reproduce. For a stale package row: upgrade the AI SDK family in one commit, then \`bun install\` and \`bun run check\`. For an exception fix candidate row: add a root \`overrides\` entry in package.json, run \`bun install\`, remove the entry from \`scripts/audit-gate.ts\`, then run \`bun run deps:audit\`. For an exception expiry row: re-review reachability, then update \`expires\` in \`scripts/audit-gate.ts\` and the mirrored date in its test.")
 
           if [[ -n "$existing" ]]; then
             gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"

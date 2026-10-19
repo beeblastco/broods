@@ -14,7 +14,7 @@
  */
 
 import type { Infer } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import type { planValidator } from "../schema";
 
@@ -27,6 +27,18 @@ export const PLAN_LIMIT_EXCEEDED = "plan_limit_exceeded";
 /** Share of the closest cap that triggers the one warning a month. */
 export const BUDGET_WARNING_RATIO = 0.8;
 
+/** How far into its caps a pool is: "warning" from 80% of the closest one, "exhausted" once runs stop at 100%. */
+export type BudgetLevel = "ok" | "warning" | "exhausted";
+
+/** The level a share of a cap reads at, for admission, the warning and every bar that shows it. */
+export function budgetLevel(usedPercent: number): BudgetLevel {
+  return usedPercent >= 100
+    ? "exhausted"
+    : usedPercent >= BUDGET_WARNING_RATIO * 100
+      ? "warning"
+      : "ok";
+}
+
 /** Most EUR of real platform cost a free account can reach per month. */
 export const FREE_MONTHLY_BUDGET_EUR = 5;
 
@@ -34,12 +46,11 @@ export const FREE_MONTHLY_BUDGET_EUR = 5;
  * Most EUR of real platform cost a Pro account can reach per month. Pro sells at
  * €20 a month per owner, one unit of Stripe price `STRIPE_SEAT_PRICE_ID` (not
  * in code) with two developer seats included, and each extra seat is one more
- * unit. It covers every org the owner owns, and each of those orgs gets these
- * caps in full: they are per org, not pooled, however many orgs or seats the
- * owner pays for. Half of one unit: the rest covers VAT if the price includes
- * it (€20 is €16.53 net at 21%), Stripe's fee (about €0.55), the fixed Hetzner
- * core and gateway, and margin. An owner with several busy orgs can cost more
- * than they pay (internals/architecture.md).
+ * unit. It covers every org the owner owns, and those orgs share these caps as
+ * one pool (`usagePools`), however many orgs or seats the owner pays for. Half
+ * of one unit: the rest covers VAT if the price includes it (€20 is €16.53 net
+ * at 21%), Stripe's fee (about €0.55), the fixed Hetzner core and gateway, and
+ * margin (internals/architecture.md).
  */
 export const PRO_MONTHLY_BUDGET_EUR = 10;
 
@@ -76,6 +87,8 @@ export function capsReached(
 
 export interface PlanLimits {
   caps: ResourceCaps;
+  /** Orgs one owner may own, all drawing on the owner's one pool of caps. */
+  maxOwnedOrgs: number;
   /** Burst protection: runs admitted per account per minute. */
   runsPerMinute: number;
 }
@@ -86,6 +99,7 @@ export interface PlanLimits {
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   free: {
     caps: { sandboxHours: 9, hostedMcpHours: 16, storageGb: 10, egressGb: 15 },
+    maxOwnedOrgs: 1,
     runsPerMinute: 600,
   },
   pro: {
@@ -95,24 +109,25 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
       storageGb: 50,
       egressGb: 30,
     },
+    maxOwnedOrgs: 10,
     runsPerMinute: 5_000,
   },
 };
 
 /**
- * The plan an account runs on: its org's, which follows the subscription of
- * the org's owner (model/orgBilling.ts). An account with no org behind it
- * (admin-created standalone accounts) is free.
+ * The org an account runs under: its plan follows the subscription of the
+ * org's owner (model/orgBilling.ts), and the owner's pool is what the caps
+ * measure. Null for an account with no org behind it (admin-created standalone
+ * accounts), which is free and metered on its own.
  */
-export async function accountPlan(
+export async function accountOrg(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
-): Promise<Plan> {
+): Promise<Doc<"orgs"> | null> {
   const account = await ctx.db.get(accountId);
   const orgId = account ? ctx.db.normalizeId("orgs", account.orgId) : null;
-  const org = orgId ? await ctx.db.get(orgId) : null;
 
-  return org?.plan ?? "free";
+  return orgId ? await ctx.db.get(orgId) : null;
 }
 
 /** True when this deployment is the managed BeeBlast service, which enforces plans. */
