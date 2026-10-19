@@ -202,7 +202,7 @@ type SubagentParentLoader = (
 
 // Collaborators the handler owns. Every one has a working default, so tests and
 // non-handler callers override only what they exercise.
-interface SubagentCoordinatorDependencies {
+export interface SubagentCoordinatorDependencies {
   lifecycle?: AgentLifecycleEmitter;
   publisherFactory?: SubagentPublisherFactory;
   dispatchNextIngress?: SubagentIngressDispatcher;
