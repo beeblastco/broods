@@ -233,7 +233,7 @@ flowchart LR
 - The attachment store is a managed-bucket prefix no sandbox mounts, so the link survives the agent tidying its workspace. Nothing is inlined as base64. Deleting the account deletes the store.
 - Without a workspace, a later turn re-reads the provider's copy, so the provider decides how long media works (a Telegram file id lasts, a Discord link expires within a day).
 - Limits: 6 MB per picture, 25 MB otherwise, ten attachments per message (`src/shared/media-types.ts`, `channel-media.ts`). An unreadable attachment becomes a line of text.
-- Transcription fails fast at ingest, and the note says whether the provider was busy, refused the file, or has no speech-to-text. `config.model.transcriptionModelId` overrides the default.
+- Transcription fails fast at ingest, and the note says whether the provider was busy, refused the file, or has no speech-to-text. `config.model.transcriptionProvider` and `config.model.transcriptionModelId` override the defaults.
 
 ## Forwarders
 

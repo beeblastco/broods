@@ -5596,11 +5596,18 @@ components:
         transcriptionModelId:
           type: string
           description: >-
-            Speech-to-text model for inbound audio, on the same provider and
-            credentials as `modelId`. Defaults to the widest-container model the
-            provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
-            Groq, `voxtral-mini-latest` on Mistral). Providers with no
-            speech-to-text ignore it.
+            Speech-to-text model for inbound audio, on `transcriptionProvider`.
+            Defaults to the widest-container model that provider ships
+            (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on Groq,
+            `voxtral-mini-latest` on Mistral). Providers with no speech-to-text
+            ignore it.
+        transcriptionProvider:
+          type: string
+          description: >-
+            Provider that reads inbound audio, with its credentials from the
+            matching `provider` entry. Defaults to `provider`. Set it when the
+            agent's model has no speech-to-text, such as `anthropic`. Cannot be
+            overridden per run.
         reasoning:
           type: string
           enum: [provider-default, none, minimal, low, medium, high, xhigh]

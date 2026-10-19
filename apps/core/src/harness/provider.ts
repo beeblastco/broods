@@ -61,6 +61,7 @@ import type {
   AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
+import { toErrorMessage } from "../shared/errors.ts";
 import { logInfo } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
@@ -250,21 +251,23 @@ export function resolveConfiguredModel(
 }
 
 /**
- * The speech-to-text model to read inbound audio with, or undefined when this
- * account's provider ships none or its config cannot build one. Undefined
- * rather than a throw: a half-configured account should lose its transcript and
- * keep the message it arrived on.
+ * The speech-to-text model to read inbound audio with, on
+ * `transcriptionProvider` or else the agent's own provider, or why there is
+ * none. A reason rather than a throw: a half-configured account should lose its
+ * transcript and keep the message it arrived on.
  */
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
-): Exclude<TranscriptionModel, string> | undefined {
-  const providerName = agentConfig.model?.provider;
-  if (!providerName) {
-    return undefined;
-  }
-  const source = PROVIDER_TRANSCRIPTION[providerName];
-  if (!source) {
-    return undefined;
+): { model: Exclude<TranscriptionModel, string> } | { reason: string } {
+  const providerName =
+    agentConfig.model?.transcriptionProvider ?? agentConfig.model?.provider;
+  const source = providerName
+    ? PROVIDER_TRANSCRIPTION[providerName]
+    : undefined;
+  if (!providerName || !source) {
+    return {
+      reason: `${providerName ?? "this provider"} has no transcription model`,
+    };
   }
   try {
     const provider = source.factory(
@@ -273,11 +276,13 @@ export function resolveTranscriptionModel(
       ) as never,
     );
 
-    return provider.transcription(
-      agentConfig.model?.transcriptionModelId ?? source.modelId,
-    );
-  } catch {
-    return undefined;
+    return {
+      model: provider.transcription(
+        agentConfig.model?.transcriptionModelId ?? source.modelId,
+      ),
+    };
+  } catch (error) {
+    return { reason: toErrorMessage(error) };
   }
 }
 
@@ -288,6 +293,7 @@ export function modelSettingsFromModelConfig(
     provider: _provider,
     modelId: _modelId,
     transcriptionModelId: _transcriptionModelId,
+    transcriptionProvider: _transcriptionProvider,
     providerOptions: _providerOptions,
     output: _output,
     ...settings

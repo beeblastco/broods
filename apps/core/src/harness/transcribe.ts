@@ -53,16 +53,16 @@ export async function transcribeAudio(
   audio: Uint8Array,
   maxRetries: number,
 ): Promise<TranscriptOutcome> {
-  const model = resolveTranscriptionModel(agentConfig);
-  if (!model) {
+  const resolved = resolveTranscriptionModel(agentConfig);
+  if ("reason" in resolved) {
     return {
       status: "failed",
-      reason: `${agentConfig.model?.provider ?? "this provider"} has no transcription model`,
+      reason: resolved.reason,
       recovery: "unavailable",
     };
   }
 
-  return await transcribeWithModel(model, audio, maxRetries);
+  return await transcribeWithModel(resolved.model, audio, maxRetries);
 }
 
 /** The same, over a model already built. Exported to be driven with a stub. */

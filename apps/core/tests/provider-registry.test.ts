@@ -233,21 +233,41 @@ describe("transcription model resolution", () => {
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         provider: { anthropic: { apiKey: "sk-test" } },
       }),
-    ).toBeUndefined();
+    ).toEqual({ reason: "anthropic has no transcription model" });
   });
 
-  it("has none when the provider is configured without credentials", () => {
+  it("names the missing provider entry when the provider is configured without credentials", () => {
     expect(
       resolveTranscriptionModel({
         model: { provider: "openai", modelId: "gpt-5" },
       }),
-    ).toBeUndefined();
+    ).toEqual({ reason: "config.provider.openai is required" });
+  });
+
+  it("reads audio on transcriptionProvider when the agent's own provider has none", () => {
+    const resolved = resolveTranscriptionModel({
+      model: {
+        provider: "anthropic",
+        modelId: "claude-haiku-5-5",
+        transcriptionProvider: "openai",
+      },
+      provider: {
+        anthropic: { apiKey: "sk-ant-test" },
+        openai: { apiKey: "sk-test" },
+      },
+    });
+
+    if (!("model" in resolved)) {
+      throw new Error(resolved.reason);
+    }
+    expect(resolved.model.provider).toStartWith("openai");
+    expect(resolved.model.modelId).toBe("whisper-1");
   });
 });
 
-// The transcription id rides in config.model but is not a language-model
-// setting, so it must not reach the call options the agent's own model is run
-// with. An unknown key there is the provider's error, not ours.
+// The transcription id and provider ride in config.model but are not
+// language-model settings, so they must not reach the call options the agent's
+// own model is run with. An unknown key there is the provider's error, not ours.
 describe("modelSettingsFromModelConfig", () => {
   it("leaves the transcription model out of the language model's settings", () => {
     expect(
@@ -256,6 +276,7 @@ describe("modelSettingsFromModelConfig", () => {
           provider: "openai",
           modelId: "gpt-5",
           transcriptionModelId: "gpt-4o-mini-transcribe",
+          transcriptionProvider: "groq",
           temperature: 0.2,
         },
       }),

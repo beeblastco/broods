@@ -48,6 +48,7 @@ export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
   "modelId",
   "output",
   "apiKey",
+  "transcriptionProvider",
 ] as const;
 
 export interface AgentConfig {
@@ -197,10 +198,16 @@ export interface AgentModelConfig
   provider?: AccountModelProviderName;
   modelId?: string;
   /**
-   * Speech-to-text model for inbound audio, on the same provider and key as
-   * `modelId`. Defaults to the widest-container model the provider ships.
+   * Speech-to-text model for inbound audio, on `transcriptionProvider`.
+   * Defaults to the widest-container model that provider ships.
    */
   transcriptionModelId?: string;
+  /**
+   * Provider that reads inbound audio, with its key from `config.provider`.
+   * Defaults to `provider`. Set it when the agent's model has no speech-to-text,
+   * such as Anthropic. Google and Vertex hear audio natively and skip it.
+   */
+  transcriptionProvider?: AccountModelProviderName;
   providerOptions?: AgentModelProviderOptions;
   output?: AgentModelOutputConfig;
 }

@@ -171,6 +171,7 @@ export const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
   "transcriptionModelId",
+  "transcriptionProvider",
   "providerOptions",
   "output",
   "maxOutputTokens",
@@ -611,6 +612,10 @@ function normalizeModelConfig(value: unknown, label: string): void {
   assertOptionalString(
     config.transcriptionModelId,
     `${label}.transcriptionModelId`,
+  );
+  assertOptionalProviderName(
+    config.transcriptionProvider,
+    `${label}.transcriptionProvider`,
   );
   assertOptionalEnum(config.reasoning, `${label}.reasoning`, [
     "provider-default",

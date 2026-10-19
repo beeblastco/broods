@@ -58,7 +58,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `name`              | Unique per stage. Required                                                                               |
 | `description`       | Shown to parent agents choosing a subagent                                                               |
 | `provider`          | Credentials per model provider. See [providers](#model-providers)                                        |
-| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`   |
+| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, transcription settings   |
 | `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                            |
 | `harness`           | A `defineHarness()` value to replace the built-in loop                                                   |
 | `tools`             | Provider-executed tools, keyed by the provider's tool name                                               |
@@ -100,7 +100,8 @@ export const myAgent = defineAgent({
 | `reasoning`                                                                          | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                                   |
 | `providerOptions`                                                                    | Provider-specific options. They win over `reasoning` when both set thinking                                                               |
 | `output`                                                                             | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description`            |
-| `transcriptionModelId`                                                               | Speech-to-text model for inbound audio, on the same provider                                                                              |
+| `transcriptionModelId`                                                               | Speech-to-text model for inbound audio, on `transcriptionProvider`                                                                        |
+| `transcriptionProvider`                                                              | Provider that reads inbound audio, keyed in `provider`. Defaults to `model.provider`                                                      |
 
 The provider-specific thinking keys are OpenAI `providerOptions.openai.reasoningEffort`, Anthropic `providerOptions.anthropic.thinking`, Google `providerOptions.google.thinkingConfig`, MiniMax `providerOptions.anthropic.thinking`. When a model does not support a level, the run logs a `model.step.warnings` event.
 
