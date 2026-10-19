@@ -27,6 +27,7 @@ import {
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
+import posthog from "posthog-js";
 import { useState } from "react";
 
 type AgentProvider = AccountModelProviderName;
@@ -97,6 +98,12 @@ export function CreateAgentConfigDialog({
         position: initialCanvasPosition ?? undefined,
       });
 
+      posthog.capture("agent_config_created", {
+        provider: provider,
+        has_custom_base_url: provider === "custom",
+        has_description: Boolean(description.trim()),
+        has_system_prompt: Boolean(systemPrompt.trim()),
+      });
       handleClose();
     } finally {
       setIsCreating(false);

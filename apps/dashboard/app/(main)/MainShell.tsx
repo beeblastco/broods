@@ -20,6 +20,7 @@ import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
+import posthog from "posthog-js";
 import { notFound, useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
@@ -109,6 +110,20 @@ export function MainShell({
       profileSynced.current = false;
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
+
+  // The Convex user row exists only after authentication and its `_id` is the
+  // app's stable user primary key, including for self-hosted accounts. Runs on
+  // every row change so a renamed user or plan change reaches the person; the
+  // SDK sends no second $identify for an unchanged distinct id.
+  useEffect(() => {
+    if (!currentUser) return;
+
+    posthog.identify(currentUser._id, {
+      email: currentUser.email,
+      name: currentUser.name,
+      plan: currentUser.plan,
+    });
+  }, [currentUser]);
 
   // The reporter is the first child of both fragments, one tree position, so
   // it survives the auth flip instead of registering every observer twice.

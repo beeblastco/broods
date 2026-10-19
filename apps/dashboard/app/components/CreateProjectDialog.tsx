@@ -16,6 +16,7 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { useEffect, useState } from "react";
 
 /** Generate a random project name like "bold-panda-427". */
@@ -91,6 +92,7 @@ export function CreateProjectDialog({
         name: name.trim(),
         description: undefined,
       });
+      posthog.capture("project_created");
       handleOpenChange(false);
       markProjectCreated(id);
       router.push(`/${id}`);
