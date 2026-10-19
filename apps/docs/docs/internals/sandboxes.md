@@ -203,7 +203,7 @@ stateDiagram-v2
   claimed --> [*]: machine gone, next call claims a new one
 ```
 
-- TTL: 7 days after last use (`SANDBOX_RESERVATION_TTL_SECONDS` in `packages/convex/runtime.ts`), one day for a harness reservation on a conversation key (`ISOLATED_SANDBOX_RELEASE_SECONDS` in `src/harness/harness.ts`).
+- TTL: 7 days after last use (`SANDBOX_RESERVATION_TTL_SECONDS` in `packages/convex/runtime.ts`), one day for a harness reservation on a conversation key (`ISOLATED_SANDBOX_RELEASE_SECONDS` in `src/harness/ai-sdk-harness/session.ts`).
 - `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`) under a 5 minute lease, first after a random delay under 30 s. It pages expired reservations, plus mirror rows no reservation names, through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`. The orphan scan reads idle mirrors oldest first, page by page, until it has a page of orphans or reaches rows still in use, so mirrors whose deferred reservation keeps them reserved cannot hide the orphans behind them.
 - A release goes through the provider that reserved the machine, not the config's current one, so switching provider or turning `persistent` off strands nothing. It uses the reserving config's credentials when the instance row says `ownCredentials`, else the platform's.
 - A sandbox config that still holds an instance is kept when its CLI resource or canvas card goes, so an instance never names a missing config.

@@ -3,7 +3,10 @@ import {
   harnessReservationKey,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
+  prepareHarnessTurn,
+  type PrepareHarnessTurnOptions,
 } from "../src/harness/ai-sdk-harness/session.ts";
+import { sandboxNeighbours } from "../src/harness/sandbox/live-status.ts";
 import { SandboxGoneError } from "../src/harness/sandbox/utils.ts";
 
 const CHECKPOINT = {
@@ -125,6 +128,100 @@ describe("harnessReservationKey", () => {
       "conversation",
     );
   });
+});
+
+describe("prepareHarnessTurn", () => {
+  it("stores the input, applies steering, then loads the stored session", async () => {
+    const calls: string[] = [];
+    const turn = await prepareHarnessTurn(turnOptions({ calls: calls }));
+    await turn.dispose();
+
+    expect(calls).toEqual(["flush", "steering", "load", "createAgent"]);
+  });
+
+  it("stops the lease monitor and destroys the session exactly once", async () => {
+    const destroy = mock(async (): Promise<void> => {});
+    const clearTimer = spyOn(globalThis, "clearInterval");
+    try {
+      const turn = await prepareHarnessTurn(
+        turnOptions({
+          openSession: async () => ({ destroy: destroy }) as never,
+        }),
+      );
+      await turn.dispose();
+      await turn.dispose();
+
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(clearTimer).toHaveBeenCalledTimes(1);
+    } finally {
+      clearTimer.mockRestore();
+    }
+  });
+
+  it("leaves the occupancy release to the caller when the session fails to open", async () => {
+    let release: (() => void) | undefined;
+    const failed = prepareHarnessTurn(
+      turnOptions({
+        onOccupied: (handed): void => {
+          release = handed;
+        },
+        openSession: async (): Promise<never> => {
+          throw new Error("machine down");
+        },
+      }),
+    );
+
+    expect(failed).rejects.toThrow("machine down");
+    await failed.catch((): void => {});
+    expect(sandboxNeighbours("machine-key", "other-event")).toHaveLength(1);
+    release?.();
+    expect(sandboxNeighbours("machine-key", "other-event")).toEqual([]);
+  });
+
+  function turnOptions(
+    overrides: Partial<PrepareHarnessTurnOptions> & { calls?: string[] },
+  ): PrepareHarnessTurnOptions {
+    const { calls = [], ...options } = overrides;
+
+    return {
+      abortController: new AbortController(),
+      agentConfig: { harness: { type: "codex" } } as never,
+      agentReservationKey: undefined,
+      applySteering: async (): Promise<void> => {
+        calls.push("steering");
+      },
+      configuredApprovals: new Map(),
+      createAgent: () => {
+        calls.push("createAgent");
+
+        return { agent: {}, reservationKey: "machine-key" } as never;
+      },
+      isolated: false,
+      metadata: { traceId: "trace", taskId: "event" },
+      onOccupied: (release): void => release(),
+      openSession: async () => ({ destroy: async () => {} }) as never,
+      sandbox: { name: "default", sandbox: { provider: "lambda" } } as never,
+      session: {
+        agentId: "agent",
+        conversationKey: "conversation",
+        eventId: "event",
+        environmentText: () => "<environment>",
+        flushPendingStoredEvents: async (): Promise<void> => {
+          calls.push("flush");
+        },
+        loadHarnessSession: async (): Promise<null> => {
+          calls.push("load");
+
+          return null;
+        },
+        loadHarnessSkills: async () => [],
+      } as never,
+      stopMessage: "stopped",
+      tools: {},
+      turnContext: { system: [] } as never,
+      ...options,
+    };
+  }
 });
 
 describe("parkAiSdkHarnessSession", () => {
