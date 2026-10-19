@@ -16,10 +16,13 @@ two change together or not at all. A handler is a list of `Act`s; any await may 
 so a run is the program plus the index of the await that throws, if any, and the catch
 block then runs as `recover`.
 
-A subagent's row also carries `observed`: whether its parent has the result. The parent's
-`get_subagent_status` read (`observeAsyncAgentResult`) and a late result's resume
-(`runtimeIngress.accept` with `resultEventId`) both set it, and the resume is admitted
-only while it is unset, so the parent is told a result once.
+A subagent's row also carries `handback`: whether its parent has the result (`stored`),
+with `observed` kept in step for one release. The parent's `get_subagent_status` read
+(`markAsyncAgentHandback`), its own append of the result (`insertConversationEvents`)
+and a late result's resume (`runtimeIngress.accept` with `resultEventId`) all store it,
+and the resume is admitted only while it is not stored, so the parent is told a result
+once. `pending`, which the child's finish writes, admits like unset: only the sweep
+reads it, past the parent's hold.
 -/
 
 namespace Broods.AsyncResults
@@ -216,20 +219,22 @@ def ToolRow.changes (row : ToolRow) : List ToolCall → Nat
   | c :: cs =>
     (if (row.update c).status == row.status then 0 else 1) + (row.update c).changes cs
 
-/-- `runtimeAsyncAgentResults.observed` on a subagent's row: unset, `false` once the
-parent stopped waiting on the child, `true` once the parent has its result. -/
+/-- `runtimeAsyncAgentResults.handback` on a subagent's row (`observed` beside it):
+unset or `pending`, `detached` (`observed: false`) once the parent stopped waiting on
+the child, `stored` (`observed: true`) once the parent has its result. -/
 inductive Observed where
   | unset | waiting | seen
   deriving DecidableEq, Repr
 
-/-- The calls that touch `observed`, in any order a race gives them. -/
+/-- The calls that touch `handback`, in any order a race gives them. -/
 inductive ObserveCall where
-  /-- `observeAsyncAgentResult` with `false`, when the parent stops waiting, or when
+  /-- `markAsyncAgentHandback` with `detached`, when the parent stops waiting, or when
   a pass's last write fails, for each result it did not save and each child still
   working; those then resume. -/
   | detach
-  /-- `observeAsyncAgentResult` with `true`: `get_subagent_status`, or a result the
-  parent is never told. `finished` is whether the row has its outcome yet. -/
+  /-- `markAsyncAgentHandback` with `stored`: `get_subagent_status`, a result the
+  parent is never told, or the parent's own append of the result
+  (`insertConversationEvents`). `finished` is whether the row has its outcome yet. -/
   | read (finished : Bool)
   /-- `runtimeIngress.accept` with `resultEventId`, the late resume; `room` is whether
   the conversation's queue has room for it, and `stored` whether the conversation

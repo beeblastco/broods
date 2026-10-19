@@ -1268,6 +1268,7 @@ describe("runtime ingress", () => {
     await t.mutation(internal.runtime.createAsyncAgentResult, {
       eventId: "owner",
       conversationKey: conversationKey,
+      subagent: { parentConversationKey: conversationKeyFor(accountId) },
     });
     const settle = {
       conversationKey: conversationKey,
@@ -1300,12 +1301,17 @@ describe("runtime ingress", () => {
         runId: "run_owner",
       }),
     ).toMatchObject({ status: "completed" });
+    // A subagent's settled row is owed to its parent until the parent stores it.
     expect(
       await t.query(internal.runtime.getAsyncAgentResult, { eventId: "owner" }),
-    ).toMatchObject({ status: "completed", response: "answer" });
+    ).toMatchObject({
+      status: "completed",
+      response: "answer",
+      handback: "pending",
+    });
   });
 
-  test("admits a late subagent result only while its parent has not seen it", async (): Promise<void> => {
+  test("admits a late subagent result only while its parent has not stored it", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -1314,11 +1320,12 @@ describe("runtime ingress", () => {
       await t.mutation(internal.runtime.createAsyncAgentResult, {
         eventId: eventId,
         conversationKey: childKey,
+        subagent: { parentConversationKey: conversationKey },
       });
       // The parent stops waiting, then the child finishes.
-      await t.mutation(internal.runtime.observeAsyncAgentResult, {
+      await t.mutation(internal.runtime.markAsyncAgentHandback, {
         eventId: eventId,
-        observed: false,
+        handback: "detached",
       });
       await t.mutation(internal.runtime.updateAsyncAgentResult, {
         eventId: eventId,
@@ -1340,9 +1347,9 @@ describe("runtime ingress", () => {
     });
 
     // get_subagent_status read it first: the resume admits nothing.
-    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "read-first",
-      observed: true,
+      handback: "stored",
     });
     expect(
       await t.mutation(
@@ -1371,47 +1378,53 @@ describe("runtime ingress", () => {
         resume("resume-again", "resumed-first"),
       ),
     ).toMatchObject({ outcome: "duplicate" });
-    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+    // The admission stored it; a detach landing after never reopens it.
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "resumed-first",
-      observed: false,
+      handback: "detached",
     });
     expect(
       await t.query(internal.runtime.getAsyncAgentResult, {
         eventId: "resumed-first",
       }),
-    ).toMatchObject({ observed: true });
+    ).toMatchObject({ handback: "stored", observed: true });
   });
 
-  test("admits no late resume of a result its parent's conversation already stores", async (): Promise<void> => {
+  test("admits no late resume of a result its parent's conversation already stores, whatever status its row recorded", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
-    for (const eventId of ["stored", "unsaved"]) {
+    for (const eventId of ["stored", "lagging", "unsaved"]) {
       await t.mutation(internal.runtime.createAsyncAgentResult, {
         eventId: eventId,
         conversationKey: `acct:${accountId}:agent:child:api:subagent-${eventId}`,
+        subagent: { parentConversationKey: conversationKey },
       });
-      await t.mutation(internal.runtime.updateAsyncAgentResult, {
-        eventId: eventId,
-        status: "completed",
-        response: "answer",
-      });
+      if (eventId !== "lagging") {
+        await t.mutation(internal.runtime.updateAsyncAgentResult, {
+          eventId: eventId,
+          status: "completed",
+          response: "answer",
+        });
+      }
     }
-    // The parent's write stored one result, then lost its reply, so core
-    // marked it unseen for the recovery sweep.
-    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+    // The parent's write stored two results and lost its reply before the
+    // rows were marked: core detached one, and the other's row still reads
+    // processing because its settle has not landed.
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "stored",
-      observed: false,
+      handback: "detached",
     });
-    await t.mutation(internal.runtime.appendConversationEvent, {
-      conversationKey: conversationKey,
-      events: [
-        {
-          cursor: "001",
-          dedupeKey: subagentResultDedupeKey("stored", "completed"),
+    await t.run(async (ctx): Promise<void> => {
+      for (const eventId of ["stored", "lagging"]) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: `00${eventId.length}`,
+          dedupeKey: subagentResultDedupeKey(eventId, "completed"),
           event: { role: "user", content: "subagent result" },
-        },
-      ],
+        });
+      }
     });
     const resume = async (
       eventId: string,
@@ -1426,19 +1439,31 @@ describe("runtime ingress", () => {
         }),
         resultEventId: resultEventId,
       });
+    const row = async (eventId: string): Promise<unknown> =>
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: eventId,
+      });
 
     expect(await resume("resume-stored", "stored")).toMatchObject({
       outcome: "duplicate",
     });
-    // Seen now, so the recovery sweep stops retrying it.
-    expect(
-      await t.query(internal.runtime.getAsyncAgentResult, {
-        eventId: "stored",
-      }),
-    ).toMatchObject({ observed: true });
+    // Stored now, so the recovery sweep stops retrying it.
+    expect(await row("stored")).toMatchObject({
+      handback: "stored",
+      observed: true,
+    });
+    expect(await resume("resume-lagging", "lagging")).toMatchObject({
+      outcome: "duplicate",
+    });
+    expect(await row("lagging")).toMatchObject({
+      status: "processing",
+      handback: "stored",
+    });
     expect(await resume("resume-unsaved", "unsaved")).toMatchObject({
       outcome: "owner",
     });
+    // The admitted envelope carries it, so it is stored from here on.
+    expect(await row("unsaved")).toMatchObject({ handback: "stored" });
   });
 
   test("leaves another account's late result row alone", async (): Promise<void> => {
@@ -1448,10 +1473,11 @@ describe("runtime ingress", () => {
     await t.mutation(internal.runtime.createAsyncAgentResult, {
       eventId: "owner-result",
       conversationKey: `acct:${ownerId}:agent:child:api:subagent-child`,
+      subagent: { parentConversationKey: conversationKeyFor(ownerId) },
     });
-    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "owner-result",
-      observed: false,
+      handback: "detached",
     });
     await t.mutation(internal.runtime.updateAsyncAgentResult, {
       eventId: "owner-result",
@@ -1469,17 +1495,17 @@ describe("runtime ingress", () => {
         resultEventId: "owner-result",
       });
 
-    // Another account naming the row neither marks it seen...
+    // Another account naming the row neither marks it stored...
     expect(await accept("other-first")).toMatchObject({ outcome: "owner" });
     expect(
       await t.query(internal.runtime.getAsyncAgentResult, {
         eventId: "owner-result",
       }),
-    ).toMatchObject({ observed: false });
-    // ...nor is refused once its owner has seen it.
-    await t.mutation(internal.runtime.observeAsyncAgentResult, {
+    ).toMatchObject({ handback: "detached", observed: false });
+    // ...nor is refused once its owner has stored it.
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "owner-result",
-      observed: true,
+      handback: "stored",
     });
     expect(await accept("other-second")).toMatchObject({ outcome: "queued" });
   });

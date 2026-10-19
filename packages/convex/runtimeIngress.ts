@@ -18,6 +18,7 @@ import {
   asyncAgentResultRow,
   conversationEventsValidator,
   insertConversationEvents,
+  handbackPatch,
   markAsyncAgentResultSeen,
   writeAsyncAgentResult,
 } from "./runtime";
@@ -1153,33 +1154,35 @@ async function checkDuplicateAdmission(
     return { outcome: "conflict" as const, eventId: existingEvent.eventId };
   }
   // A get_subagent_status read and a late resume race to deliver one result;
-  // whichever marks it seen first wins, so the parent is told it once. Only
-  // the caller's own account's row counts.
+  // whichever marks it stored first wins, so the parent is told it once. Only
+  // the caller's own account's row counts. `observed` is the flag the release
+  // before `handback` wrote.
   const result = await asyncAgentResultRow(ctx, args.resultEventId);
   if (result?.accountId !== args.accountId) {
     return null;
   }
-  if (result.observed === true) {
+  if (result.handback === "stored" || result.observed === true) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
   // A write that stored the result but lost its reply has it in the
-  // conversation already, under the key core wrote it with. The parent has
-  // it, so it is marked seen and the recovery sweep stops retrying it.
-  const stored = await ctx.db
-    .query("runtimeConversationEvents")
-    .withIndex("by_conversationKey_and_dedupeKey", (q) =>
-      q
-        .eq("conversationKey", args.conversationKey)
-        .eq(
-          "dedupeKey",
-          subagentResultDedupeKey(result.eventId, result.status),
-        ),
-    )
-    .first();
-  if (stored) {
-    await ctx.db.patch(result._id, { observed: true });
+  // conversation already, under the key core wrote it with. Both finished
+  // keys are tried: the row can still read `processing` while the parent
+  // holds the result its run saw. The parent has it, so it is marked stored
+  // and the recovery sweep stops retrying it.
+  for (const status of ["completed", "failed"] as const) {
+    const stored = await ctx.db
+      .query("runtimeConversationEvents")
+      .withIndex("by_conversationKey_and_dedupeKey", (q) =>
+        q
+          .eq("conversationKey", args.conversationKey)
+          .eq("dedupeKey", subagentResultDedupeKey(result.eventId, status)),
+      )
+      .first();
+    if (stored) {
+      await ctx.db.patch(result._id, handbackPatch("stored"));
 
-    return { outcome: "duplicate" as const, eventId: args.eventId };
+      return { outcome: "duplicate" as const, eventId: args.eventId };
+    }
   }
 
   return null;

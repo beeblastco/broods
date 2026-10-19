@@ -1,16 +1,20 @@
 /**
- * The per-account usage meter, by month and by day: adding usage to it,
- * measuring it against the plan's per-resource caps, and turning a sandbox's
- * running and suspended time into usage. The
- * callers are the sandbox mirror (`sandbox/instances.ts`), core's usage writes
- * and the storage snapshot (`account/budget.ts`).
+ * The per-account usage meter, by month and by day, and the pool it also
+ * lands in: every account whose org one user owns shares that user's pool
+ * (`usagePools`), and the plan's per-resource caps are measured against the
+ * pool, so a Pro owner's orgs draw on one allowance. Also turns a sandbox's
+ * running and suspended time into usage. The callers are the sandbox mirror
+ * (`sandbox/instances.ts`), core's usage writes and the storage snapshot
+ * (`account/budget.ts`).
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
-  accountPlan,
+  accountOrg,
   BUDGET_WARNING_RATIO,
+  type BudgetLevel,
+  budgetLevel,
   isManagedService,
   PLAN_LIMITS,
   type Plan,
@@ -62,24 +66,41 @@ const BILLED_STATUSES: ReadonlySet<Doc<"sandboxInstances">["status"]> = new Set(
   ["running", "suspending", "terminating"],
 );
 
-/** One account's budget for the current month, as core and the dashboard read it. */
+/**
+ * One account's budget for the current month, as core reads it: the plan's
+ * caps against the pool of the user who owns the account's org.
+ */
 export interface BudgetStatus {
   /** False on a self-hosted install: nothing is limited. */
   enforced: boolean;
   plan: Plan;
   month: string;
-  /** The closest cap's share used, in percent. Runs stop at 100. */
+  /** The closest cap's share of the pool used, in percent. Runs stop at 100. */
   usedPercent: number;
-  /** Each capped resource's share of its cap, in percent. */
+  /** Each capped resource's share of its cap, in percent, over the pool. */
   shares: Record<keyof ResourceCaps, number>;
+  /** Per account, not pooled. */
   runsPerMinute: number;
-  /** The 80% warning already went out this month. */
+  /** The 80% warning already went out to the pool's owner this month. */
   warned: boolean;
+}
+
+/** The pool an org's caps are measured against, and who else draws on it. */
+export interface PoolUsage {
+  /** Orgs drawing on the pool. Absent for a member, who sees only `shared`. */
+  orgs?: number;
+  /** The owner's other organizations draw on this pool too. */
+  shared: boolean;
+  /** The pool's amounts this month, the ones `shares` are measured from. */
+  totals: UsageAmounts;
 }
 
 /**
  * What the dashboard shows of an account's month: amounts, caps and
  * percentages, never euros, so the budget behind each plan stays private.
+ * `usedPercent`, `shares` and `level` are the pool's, the numbers core
+ * enforces (`budgetStatus`): what the dashboard calls used is what stops
+ * runs. `totals`, `days`, `projects` and `orgShares` are this org's own.
  */
 export interface BudgetUsage {
   /** False on a self-hosted install: nothing is limited. */
@@ -88,19 +109,23 @@ export interface BudgetUsage {
   month: string;
   /** Months with a meter, newest first, always led by the current one. */
   months: string[];
-  /** The closest cap's share used. Null when nothing is enforced. */
+  /** The closest cap's share of the pool used. Null when nothing is enforced. */
   usedPercent: number | null;
   /** The plan's caps. Null when nothing is enforced. */
   caps: ResourceCaps | null;
-  /** Each capped resource's share of its cap, or of all usage cost when nothing is enforced. */
+  /** Each capped resource's share of its cap over the pool, or of all usage cost when nothing is enforced. */
   shares: Record<keyof ResourceCaps, number>;
+  /** This org's own part of `shares`: its amounts over the same caps or cost. */
+  orgShares: Record<keyof ResourceCaps, number>;
   /** "warning" from 80% of the closest cap, "exhausted" once runs stop at 100%. */
-  level: "ok" | "warning" | "exhausted";
+  level: BudgetLevel;
   totals: UsageAmounts;
   /** Days of the month with usage or a storage snapshot, oldest first. */
   days: Array<UsageAmounts & { day: string }>;
   /** Each of the org's projects' part of the month, when asked for. */
   projects?: ProjectUsage[];
+  /** The owner's pool the caps are measured against. Absent when nothing is enforced. */
+  pool?: PoolUsage;
 }
 
 /** One project's share of an account's month, in the allowance's units. */
@@ -135,7 +160,8 @@ export interface SandboxAccrual {
 
 /**
  * Add usage to the account's meter for the month and the day `now` falls in,
- * and to `projectId`'s day when the usage came from one project.
+ * to the pool of the user who owns the account's org, and to `projectId`'s
+ * day when the usage came from one project.
  */
 export async function addUsage(
   ctx: MutationCtx,
@@ -163,6 +189,7 @@ export async function addUsage(
       updatedAt: now,
     });
   }
+  await addPoolUsage(ctx, accountId, usage, month, now);
   const day = meterDay(now);
   const daily = await ctx.db
     .query("usageDays")
@@ -290,36 +317,21 @@ export async function projectUsage(
   });
 }
 
-/** The account's plan, meter cost and limits for the month `now` falls in. */
+/** The account's plan and limits, and its owner's pool against them, for the month `now` falls in. */
 export async function budgetStatus(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
   now: number,
 ): Promise<BudgetStatus> {
-  const plan = await accountPlan(ctx, accountId);
-  const month = meterMonth(now);
-  const meter = await readMeter(ctx, accountId, month);
-  const amounts = toAmounts(
-    pickUsage(meter),
-    await latestStorageGb(ctx, accountId, month, meter),
-  );
-  const shares = capShares(amounts, PLAN_LIMITS[plan].caps);
-
-  return {
-    enforced: isManagedService(),
-    plan: plan,
-    month: month,
-    usedPercent: closestShare(shares),
-    shares: shares,
-    runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
-    warned: meter?.warnedAt !== undefined,
-  };
+  return (await readBudget(ctx, accountId, now)).status;
 }
 
 /**
- * One month of the account's usage for the dashboard's allowance: amounts,
- * a daily series, the plan's caps and each resource's share of its cap. A requested month outside
- * the picker's list falls back to the current one.
+ * One month of the account's usage for the dashboard's allowance: amounts
+ * and a daily series of its own, the plan's caps, and on the managed service
+ * each resource's share of its cap over the owner's pool, next to this org's
+ * own part of it. A requested month outside the picker's list falls back to
+ * the current one.
  */
 export async function budgetUsage(
   ctx: QueryCtx,
@@ -327,7 +339,8 @@ export async function budgetUsage(
   now: number,
   requestedMonth?: string,
 ): Promise<BudgetUsage> {
-  const plan = await accountPlan(ctx, accountId);
+  const org = await accountOrg(ctx, accountId);
+  const plan = org?.plan ?? "free";
   const currentMonth = meterMonth(now);
   const meters = await ctx.db
     .query("usageMeters")
@@ -353,8 +366,24 @@ export async function budgetUsage(
   );
   const enforced = isManagedService();
   const caps = PLAN_LIMITS[plan].caps;
-  const shares = enforced ? capShares(totals, caps) : costShares(usage);
+  const orgShares = enforced ? capShares(totals, caps) : costShares(usage);
+  // An account no org owns is its own pool; its shares are already the pool's.
+  const pool =
+    enforced && org
+      ? await readPool(ctx, accountId, org, month, month === currentMonth)
+      : null;
+  const poolTotals = pool ? toAmounts(pool.usage, pool.storageGb) : null;
+  const shares = poolTotals ? capShares(poolTotals, caps) : orgShares;
   const usedPercent = closestShare(shares);
+  const owned =
+    org && pool
+      ? await ctx.db
+          .query("orgs")
+          .withIndex("by_ownerAuthId", (q) =>
+            q.eq("ownerAuthId", org.ownerAuthId),
+          )
+          .collect()
+      : [];
   const dayRows = await ctx.db
     .query("usageDays")
     .withIndex("by_accountId_and_day", (q) =>
@@ -377,20 +406,24 @@ export async function budgetUsage(
     usedPercent: enforced ? usedPercent : null,
     caps: enforced ? caps : null,
     shares: shares,
-    level: !enforced
-      ? "ok"
-      : usedPercent >= 100
-        ? "exhausted"
-        : usedPercent >= BUDGET_WARNING_RATIO * 100
-          ? "warning"
-          : "ok",
+    orgShares: orgShares,
+    level: enforced ? budgetLevel(usedPercent) : "ok",
     totals: totals,
     days: days,
+    ...(poolTotals
+      ? {
+          pool: {
+            orgs: owned.length,
+            shared: owned.length > 1,
+            totals: poolTotals,
+          },
+        }
+      : {}),
   };
 }
 
 /**
- * Mark this month's 80% warning as sent.
+ * Mark this month's 80% warning as sent to the pool's owner.
  * @returns true for the one caller that should send it
  */
 export async function claimBudgetWarning(
@@ -398,12 +431,15 @@ export async function claimBudgetWarning(
   accountId: Id<"accounts">,
   now: number,
 ): Promise<boolean> {
-  const status = await budgetStatus(ctx, accountId, now);
+  const { status, pool } = await readBudget(ctx, accountId, now);
   if (status.warned || status.usedPercent < BUDGET_WARNING_RATIO * 100)
     return false;
-  const meter = await readMeter(ctx, accountId, status.month);
-  if (!meter) return false;
-  await ctx.db.patch(meter._id, { warnedAt: now });
+  // Usage metered before the pool existed can cross 80% with no row yet.
+  const rowId =
+    pool.row?._id ??
+    (await addPoolUsage(ctx, accountId, {}, status.month, now));
+  if (!rowId) return false;
+  await ctx.db.patch(rowId, { warnedAt: now });
 
   return true;
 }
@@ -442,8 +478,8 @@ export function ephemeralSandboxMaxMs(
  * call ends, and never past `ephemeralSandboxMaxMs`, so a row whose removal
  * was lost stops billing there.
  * Nothing is billed when the platform does not pay: a sandbox on the account's
- * own provider credentials, or a machine (the user's own computer). An
- * isolate's row bills nothing either: nothing runs between its commands, and
+ * own provider credentials, or a machine (the user's own computer). A
+ * worker's row bills nothing either: nothing runs between its commands, and
  * each command is metered as it ends (`workerMs`, `workerRequests`).
  */
 export function sandboxAccrual(
@@ -596,7 +632,191 @@ function costShares(
   };
 }
 
-type MeterRow = Doc<"usageMeters"> | Doc<"usageDays"> | Doc<"usageProjectDays">;
+type MeterRow =
+  | Doc<"usageMeters">
+  | Doc<"usagePools">
+  | Doc<"usageDays">
+  | Doc<"usageProjectDays">;
+
+/**
+ * What a cap is measured against for one month: the owner's pool, or the
+ * account's own meter for an account no org owns. Until the pool has a row
+ * for the month, the usage is the sum of the owner's accounts' meters, so
+ * usage metered before the pool existed counts from the first read.
+ */
+interface PoolRead {
+  row: Doc<"usagePools"> | Doc<"usageMeters"> | null;
+  usage: UsageQuantities;
+  /** Null when no snapshot has measured any of the accounts yet. */
+  storageGb: number | null;
+}
+
+/**
+ * Add usage to the pool of the user who owns the account's org, and give its
+ * row's id. The month's first write creates the row from the sum of the
+ * owner's accounts' meters: this account's meter was patched earlier in the
+ * same mutation, so `usage` is in that sum and is not added again. A storage
+ * snapshot sets the pool's stored size to the same sum's. An account no org
+ * owns has no pool (null): its meter is read in its place.
+ */
+async function addPoolUsage(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  usage: Partial<UsageQuantities>,
+  month: string,
+  now: number,
+): Promise<Id<"usagePools"> | null> {
+  const org = await accountOrg(ctx, accountId);
+  if (!org) return null;
+  const pool = await readPoolRow(ctx, org.ownerAuthId, month);
+  if (pool) {
+    const storage =
+      usage.storageGbMonths === undefined
+        ? {}
+        : {
+            storageGb:
+              (await sumOwnedMeters(ctx, org.ownerAuthId, month)).storageGb ??
+              0,
+          };
+    await ctx.db.patch(pool._id, {
+      ...withUsage(pool, usage),
+      ...storage,
+      updatedAt: now,
+    });
+
+    return pool._id;
+  }
+  const owned = await sumOwnedMeters(ctx, org.ownerAuthId, month);
+
+  return await ctx.db.insert("usagePools", {
+    ownerAuthId: org.ownerAuthId,
+    month: month,
+    ...owned.usage,
+    ...(owned.storageGb === null ? {} : { storageGb: owned.storageGb }),
+    updatedAt: now,
+  });
+}
+
+// The status and the pool it was measured on, so a warning claim patches the row it judged.
+async function readBudget(
+  ctx: QueryCtx,
+  accountId: Id<"accounts">,
+  now: number,
+): Promise<{ status: BudgetStatus; pool: PoolRead }> {
+  const org = await accountOrg(ctx, accountId);
+  const plan = org?.plan ?? "free";
+  const month = meterMonth(now);
+  const pool = await readPool(ctx, accountId, org, month, true);
+  const shares = capShares(
+    toAmounts(pool.usage, pool.storageGb),
+    PLAN_LIMITS[plan].caps,
+  );
+
+  return {
+    status: {
+      enforced: isManagedService(),
+      plan: plan,
+      month: month,
+      usedPercent: closestShare(shares),
+      shares: shares,
+      runsPerMinute: PLAN_LIMITS[plan].runsPerMinute,
+      warned: pool.row?.warnedAt !== undefined,
+    },
+    pool: pool,
+  };
+}
+
+// `current` carries storage over from earlier months, as `latestStorageGb` does.
+async function readPool(
+  ctx: QueryCtx,
+  accountId: Id<"accounts">,
+  org: Doc<"orgs"> | null,
+  month: string,
+  current: boolean,
+): Promise<PoolRead> {
+  if (!org) {
+    const meter = await readMeter(ctx, accountId, month);
+
+    return {
+      row: meter,
+      usage: pickUsage(meter),
+      storageGb: current
+        ? await latestStorageGb(ctx, accountId, month, meter)
+        : (meter?.storageGb ?? null),
+    };
+  }
+  const pool = await readPoolRow(ctx, org.ownerAuthId, month);
+  if (!pool) {
+    return {
+      row: null,
+      ...(await sumOwnedMeters(ctx, org.ownerAuthId, month)),
+    };
+  }
+  if (!current || pool.storageGb !== undefined) {
+    return {
+      row: pool,
+      usage: pickUsage(pool),
+      storageGb: pool.storageGb ?? null,
+    };
+  }
+  const earlier = await ctx.db
+    .query("usagePools")
+    .withIndex("by_ownerAuthId_and_month", (q) =>
+      q.eq("ownerAuthId", org.ownerAuthId).lt("month", month),
+    )
+    .order("desc")
+    .first();
+
+  return {
+    row: pool,
+    usage: pickUsage(pool),
+    storageGb: earlier?.storageGb ?? null,
+  };
+}
+
+/**
+ * The owner's accounts' meters for `month` summed, with the GB they hold at
+ * their latest snapshots: what the pool's row starts from, and what is read
+ * until it exists. One account per owned org, at most `maxOwnedOrgs` of them.
+ */
+async function sumOwnedMeters(
+  ctx: QueryCtx,
+  ownerAuthId: string,
+  month: string,
+): Promise<Omit<PoolRead, "row">> {
+  const owned = await ctx.db
+    .query("orgs")
+    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", ownerAuthId))
+    .collect();
+  let usage = pickUsage(null);
+  let storageGb: number | null = null;
+  for (const org of owned) {
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+      .unique();
+    if (!account) continue;
+    const meter = await readMeter(ctx, account._id, month);
+    usage = withUsage(meter, usage);
+    const held = await latestStorageGb(ctx, account._id, month, meter);
+    if (held !== null) storageGb = (storageGb ?? 0) + held;
+  }
+
+  return { usage: usage, storageGb: storageGb };
+}
+
+async function readPoolRow(
+  ctx: QueryCtx,
+  ownerAuthId: string,
+  month: string,
+): Promise<Doc<"usagePools"> | null> {
+  return await ctx.db
+    .query("usagePools")
+    .withIndex("by_ownerAuthId_and_month", (q) =>
+      q.eq("ownerAuthId", ownerAuthId).eq("month", month),
+    )
+    .unique();
+}
 
 function pickUsage(row: MeterRow | null): UsageQuantities {
   if (!row) return { ...EMPTY_USAGE };
