@@ -2,9 +2,12 @@
  * ask_questions state shared by the tool, the answer intake and the handler.
  * The tool leaves an open async-tool row; a reply, a button click or the
  * direct API settles it; handler.ts resumes the conversation from there.
+ * Also reads what a finished run still waits on, questions first among the
+ * rows it left open, for its root span.
  */
 
 import type { JSONValue } from "ai";
+import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import type {
   ChannelIdentity,
   ChannelQuestion,
@@ -13,6 +16,7 @@ import type {
 import { runtime } from "../shared/convex/runtime.ts";
 import { logWarn } from "../shared/log.ts";
 import {
+  getAsyncToolResult,
   markAsyncToolResultFailed,
   settleAsyncToolResultFromCallback,
   type AsyncToolResultRecord,
@@ -56,6 +60,24 @@ export interface QuestionAnswerResult {
   answers: QuestionAnswers;
   answeredBy?: ChannelIdentity;
   note?: string;
+}
+
+/** What a finished run still waits on; `questions` is what the person was asked, for the trace's wait row. */
+export interface RunOpenWork {
+  waitingOn?: TaskWaitingOn;
+  questions: ChannelQuestion[];
+}
+
+/** What one run left open, as `openWorkAfterRun` reads it. */
+export interface RunOpenWorkSources {
+  conversationKey: string;
+  /** A tool approval is still waiting on the person. */
+  awaitingApproval: boolean;
+  /** The async-tool rows the run detached, blocking questions among them. */
+  detachedResultIds: string[];
+  questionSummaries: PendingQuestionSummary[];
+  /** In-process work the handler still waits on once the pass ends. */
+  pendingWork?: () => TaskWaitingOn | undefined;
 }
 
 /** The label a button click stands for; undefined when the click is stale. */
@@ -165,6 +187,48 @@ export function openQuestion(
   }
 
   return { record: record, pending: pending };
+}
+
+/**
+ * What a run that ended cleanly still waits on, the person first: an approval
+ * or an open question needs them, while subagents, async tools and background
+ * jobs settle by themselves. Empty when nothing is left open. Read once by the
+ * run finalizer for the root span's closing state, never for a failed run.
+ */
+export async function openWorkAfterRun(
+  run: RunOpenWorkSources,
+): Promise<RunOpenWork> {
+  if (run.awaitingApproval) {
+    return { waitingOn: "approval", questions: [] };
+  }
+  const rows = await Promise.all(
+    run.detachedResultIds.map((resultId) =>
+      getAsyncToolResult(resultId).catch(() => null),
+    ),
+  );
+  const open = rows.filter((row) => row?.status === "processing");
+  const questions = open.flatMap(
+    (row): ChannelQuestion[] =>
+      openQuestion(row, run.conversationKey)?.pending.questions ?? [],
+  );
+  // The rows, not questionSummaries: an answer can settle one before the run
+  // ends. A blocking question whose row could not be read still counts.
+  const unread = run.questionSummaries
+    .filter(
+      (summary) =>
+        rows[run.detachedResultIds.indexOf(summary.statusId)] === null,
+    )
+    .flatMap((summary) => summary.questions);
+  if (questions.length > 0 || unread.length > 0) {
+    return { waitingOn: "question", questions: [...questions, ...unread] };
+  }
+  const pending = run.pendingWork?.();
+  if (pending) return { waitingOn: pending, questions: [] };
+
+  return {
+    ...(open.length > 0 ? { waitingOn: "tool" } : {}),
+    questions: [],
+  };
 }
 
 /** Settles an open prompt with its answer. Null when it already settled. */

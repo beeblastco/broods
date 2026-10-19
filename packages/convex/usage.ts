@@ -128,7 +128,7 @@ export const recordTaskUsage = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    // The harness `usageFinalized` flag guards one run in memory; a mutation the
+    // The harness run finalizer settles one run once in memory; a mutation the
     // client retried after a lost reply would otherwise double-fold the rollups.
     const already = await ctx.db
       .query("taskUsage")
