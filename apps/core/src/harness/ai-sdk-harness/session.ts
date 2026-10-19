@@ -200,8 +200,8 @@ export async function parkAiSdkHarnessSession(
 /**
  * Sets up a native harness turn: stores the pending input, applies steering,
  * loads the stored session, builds the agent on its machine and opens the
- * session. Called by the run loop in `harness.ts`, which owns finalization and
- * the occupancy release.
+ * session, renewing the conversation lease from before the open. Called by the
+ * run loop in `harness.ts`, which owns finalization and the occupancy release.
  */
 export async function prepareHarnessTurn(
   options: PrepareHarnessTurnOptions,
@@ -266,17 +266,24 @@ export async function prepareHarnessTurn(
       conversationKey: session.conversationKey,
     }),
   );
-  const nativeSession = await options.openSession({
-    abortSignal: options.abortController.signal,
-    agent: runtime.agent,
-    stored: stored,
-    type: harnessType,
-  });
+  // Opening a machine can outlast the lease, so renewal starts before it.
   const stopLeaseMonitor = startHarnessLeaseMonitor(
     session,
     options.abortController,
     options.stopMessage,
   );
+  let nativeSession: HarnessAgentSession;
+  try {
+    nativeSession = await options.openSession({
+      abortSignal: options.abortController.signal,
+      agent: runtime.agent,
+      stored: stored,
+      type: harnessType,
+    });
+  } catch (error) {
+    stopLeaseMonitor();
+    throw error;
+  }
   const dispose = async (): Promise<void> => {
     stopLeaseMonitor();
     await nativeSession.destroy().catch(() => {});

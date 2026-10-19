@@ -1,5 +1,5 @@
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, jest, mock, spyOn } from "bun:test";
 import type { AiSdkHarnessRuntime } from "../src/harness/ai-sdk-harness/runtime.ts";
 import {
   harnessReservationKey,
@@ -163,6 +163,56 @@ describe("prepareHarnessTurn", () => {
     }
   });
 
+  it("renews the lease while the session is still opening", async () => {
+    const calls: string[] = [];
+    let callsAtOpen: string[] = [];
+    jest.useFakeTimers();
+    try {
+      const turn = await prepareHarnessTurn(
+        turnOptions({
+          calls: calls,
+          openSession: async (): Promise<HarnessAgentSession> => {
+            jest.advanceTimersByTime(1_500);
+            callsAtOpen = [...calls];
+
+            return { destroy: async (): Promise<void> => {} } as never;
+          },
+        }),
+      );
+      await turn.dispose();
+
+      expect(callsAtOpen).toContain("renew");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("stops the lease monitor when the session fails to open", async () => {
+    const setTimer = spyOn(globalThis, "setInterval");
+    const clearTimer = spyOn(globalThis, "clearInterval");
+    try {
+      const failed = prepareHarnessTurn(
+        turnOptions({
+          openSession: async (): Promise<never> => {
+            throw new Error("machine down");
+          },
+        }),
+      );
+      const reason = await failed.catch(
+        (error: Error): string => error.message,
+      );
+      const monitor = setTimer.mock.results.at(-1)?.value;
+
+      // The open's own error: nothing tried to destroy a session that never opened.
+      expect(reason).toBe("machine down");
+      expect(monitor).toBeDefined();
+      expect(clearTimer).toHaveBeenCalledWith(monitor);
+    } finally {
+      setTimer.mockRestore();
+      clearTimer.mockRestore();
+    }
+  });
+
   it("leaves the occupancy release to the caller when the session fails to open", async () => {
     let release: (() => void) | undefined;
     try {
@@ -225,6 +275,11 @@ describe("prepareHarnessTurn", () => {
           return null;
         },
         loadHarnessSkills: async (): Promise<never[]> => [],
+        renewConversationLease: async (): Promise<"renewed"> => {
+          calls.push("renew");
+
+          return "renewed";
+        },
       } as never,
       stopMessage: "stopped",
       tools: {},
