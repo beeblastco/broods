@@ -498,7 +498,6 @@ function PlanBadge({
 }): React.JSX.Element | null {
   if (selfHosted) return <Badge variant="secondary">Unlimited</Badge>;
   if (status === "trialing") return <Badge variant="info">Trial</Badge>;
-  if (status === "active") return null;
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return <Badge variant="destructive">Payment due</Badge>;
   }
