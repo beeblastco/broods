@@ -423,8 +423,10 @@ export async function resumeLostAsyncToolResults(
  * One row of `resumeLostAsyncToolResults`: its continuation is admitted under
  * the row, so admission stores it, or refuses it as a duplicate once the
  * conversation has it. A conversation with no room keeps the row for the next
- * pass, and so does a resume that throws. A row no resume can ever deliver is
- * marked stored and logged once.
+ * pass, and so do a resume that throws and a duplicate: admission already
+ * marked a stored result, and a continuation still queued marks it when
+ * applied, or is admitted again by a later pass once it expired. A row no
+ * resume can ever deliver is marked stored and logged once.
  * @returns whether the row is handled, rather than kept for the next pass
  */
 async function resumeLostAsyncToolResult(
@@ -452,7 +454,7 @@ async function resumeLostAsyncToolResult(
 
     return true;
   }
-  if (admission === "capacity") return false;
+  if (admission === "capacity" || admission === "duplicate") return false;
   await markAsyncToolHandback(row.resultId, "stored");
   logInfo("Gave up on a lost async tool result", {
     resultId: row.resultId,
