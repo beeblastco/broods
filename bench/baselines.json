@@ -124,12 +124,12 @@
       "maxRegressionPct": 50
     },
     "convex/api-authorize-allow": {
-      "nsPerOp": 72.5,
+      "nsPerOp": 77.6,
       "ceilingNs": 400,
       "gate": "blocking"
     },
     "convex/api-authorize-default-deny": {
-      "nsPerOp": 65.9,
+      "nsPerOp": 76,
       "ceilingNs": 400,
       "gate": "blocking"
     },

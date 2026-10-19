@@ -9,8 +9,10 @@ import {
   apiActionForRequest,
   authorize,
   type ApiPrincipal,
+  type ApiResource,
 } from "../../packages/convex/model/apiAuthorization.ts";
 import type {
+  ApiPolicyAction,
   PolicyDocument,
   PolicyRule,
 } from "../../packages/convex/model/policyRules.ts";
@@ -76,24 +78,42 @@ const POLICY: PolicyDocument = {
   rules: [...POLICY_RULES],
 };
 
+// The stage the role is pinned to. A resource off the pin is refused before any
+// rule is read, so both the role and every resource it is asked about carry it.
+const PIN = { projectId: "prj_acme", stageId: "stg_production" };
+
 const PRINCIPAL: ApiPrincipal = {
   kind: "role",
   accountId: "acc_5f21c9",
   roleId: "brole_8c1d4a9e",
   policy: POLICY,
-  projectId: "prj_acme",
-  stageId: "stg_production",
+  ...PIN,
+};
+
+const OWN_AGENT: ApiResource = { type: "agents", id: "agt_c93d5f77", ...PIN };
+const OWN_POLICY: ApiResource = {
+  type: "policies",
+  id: "pol_guardrails",
+  ...PIN,
 };
 
 export const configPlaneAuthzCases: readonly BenchCase[] = [
   {
     name: "convex/api-authorize-allow",
     iterations: 200_000,
+    setup: (): void => {
+      expectDecision(
+        apiActionForRequest("PATCH", "agents"),
+        OWN_AGENT,
+        "allowed by rule write-owned-agents",
+      );
+    },
     run: (): unknown => {
-      return authorize(PRINCIPAL, apiActionForRequest("PATCH", "agents"), {
-        type: "agents",
-        id: "agt_c93d5f77",
-      });
+      return authorize(
+        PRINCIPAL,
+        apiActionForRequest("PATCH", "agents"),
+        OWN_AGENT,
+      );
     },
   },
   {
@@ -101,11 +121,37 @@ export const configPlaneAuthzCases: readonly BenchCase[] = [
     iterations: 200_000,
     // No rule grants policies:write, so this walks every rule and falls through
     // to the default deny: the worst case, and the one an attacker drives.
+    setup: (): void => {
+      expectDecision(
+        apiActionForRequest("POST", "policies"),
+        OWN_POLICY,
+        "no rule allows policies:write",
+      );
+    },
     run: (): unknown => {
-      return authorize(PRINCIPAL, apiActionForRequest("POST", "policies"), {
-        type: "policies",
-        id: "pol_guardrails",
-      });
+      return authorize(
+        PRINCIPAL,
+        apiActionForRequest("POST", "policies"),
+        OWN_POLICY,
+      );
     },
   },
 ];
+
+/**
+ * Fails a case's setup when it no longer reaches the decision it exists to
+ * time, so a fixture that drifts off the measured path stops the run instead
+ * of reporting a faster number for different work.
+ */
+function expectDecision(
+  action: ApiPolicyAction,
+  resource: ApiResource,
+  reason: string,
+): void {
+  const decision = authorize(PRINCIPAL, action, resource);
+  if (decision.reason !== reason) {
+    throw new Error(
+      `authorize bench fixture: expected "${reason}", got "${decision.reason}"`,
+    );
+  }
+}
