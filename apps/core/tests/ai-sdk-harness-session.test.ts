@@ -187,33 +187,67 @@ describe("prepareHarnessTurn", () => {
     }
   });
 
-  it("stops the lease monitor when the session fails to open", async () => {
-    const setTimer = spyOn(globalThis, "setInterval");
-    const clearTimer = spyOn(globalThis, "clearInterval");
+  it("holds a stop reported during the open until the session exists", async () => {
+    const abortController = new AbortController();
+    let abortedDuringOpen = true;
+    jest.useFakeTimers();
     try {
-      const failed = prepareHarnessTurn(
+      const turn = await prepareHarnessTurn(
         turnOptions({
-          openSession: async (): Promise<never> => {
-            throw new Error("machine down");
+          abortController: abortController,
+          openSession: async (): Promise<HarnessAgentSession> => {
+            jest.advanceTimersByTime(1_500);
+            await Promise.resolve();
+            abortedDuringOpen = abortController.signal.aborted;
+
+            return { destroy: async (): Promise<void> => {} } as never;
           },
+          renew: async (): Promise<"stopped"> => "stopped",
         }),
       );
-      const reason = await failed.catch(
-        (error: Error): string => error.message,
-      );
-      const monitor = setTimer.mock.results.at(-1)?.value;
+      await turn.dispose();
 
-      // The open's own error: nothing tried to destroy a session that never opened.
-      expect(reason).toBe("machine down");
-      expect(monitor).toBeDefined();
-      expect(clearTimer).toHaveBeenCalledWith(monitor);
+      expect(abortedDuringOpen).toBe(false);
+      expect(abortController.signal.aborted).toBe(true);
+      expect(abortController.signal.reason).toHaveProperty(
+        "message",
+        "stopped",
+      );
     } finally {
-      setTimer.mockRestore();
-      clearTimer.mockRestore();
+      jest.useRealTimers();
     }
   });
 
-  it("leaves the occupancy release to the caller when the session fails to open", async () => {
+  it("ignores a renewal that settles after the monitor stopped", async () => {
+    const abortController = new AbortController();
+    let settle: (renewal: "stale") => void = (): void => {};
+    jest.useFakeTimers();
+    try {
+      const turn = await prepareHarnessTurn(
+        turnOptions({
+          abortController: abortController,
+          renew: (): Promise<"stale"> =>
+            new Promise((resolve): void => {
+              settle = resolve;
+            }),
+        }),
+      );
+      jest.advanceTimersByTime(1_500);
+      turn.stopLeaseMonitor();
+      settle("stale");
+      await Promise.resolve();
+      await Promise.resolve();
+      await turn.dispose();
+
+      expect(abortController.signal.aborted).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("stops the lease monitor and leaves the occupancy release to the caller when the session fails to open", async () => {
+    const setTimer = spyOn(globalThis, "setInterval");
+    const clearTimer = spyOn(globalThis, "clearInterval");
     let release: (() => void) | undefined;
     try {
       const failed = prepareHarnessTurn(
@@ -229,18 +263,30 @@ describe("prepareHarnessTurn", () => {
 
       expect(failed).rejects.toThrow("machine down");
       await failed.catch((): void => {});
+      const monitor = setTimer.mock.results.at(-1)?.value;
+      expect(monitor).toBeDefined();
+      expect(clearTimer).toHaveBeenCalledWith(monitor);
       expect(sandboxNeighbours("machine-key", "other-event")).toHaveLength(1);
       release?.();
       expect(sandboxNeighbours("machine-key", "other-event")).toEqual([]);
     } finally {
+      setTimer.mockRestore();
+      clearTimer.mockRestore();
       release?.();
     }
   });
 
   function turnOptions(
-    overrides: Partial<PrepareHarnessTurnOptions> & { calls?: string[] },
+    overrides: Partial<PrepareHarnessTurnOptions> & {
+      calls?: string[];
+      renew?: () => Promise<"renewed" | "stopped" | "stale">;
+    },
   ): PrepareHarnessTurnOptions {
-    const { calls = [], ...options } = overrides;
+    const {
+      calls = [],
+      renew = async (): Promise<"renewed"> => "renewed",
+      ...options
+    } = overrides;
 
     return {
       abortController: new AbortController(),
@@ -275,10 +321,12 @@ describe("prepareHarnessTurn", () => {
           return null;
         },
         loadHarnessSkills: async (): Promise<never[]> => [],
-        renewConversationLease: async (): Promise<"renewed"> => {
+        renewConversationLease: (): Promise<
+          "renewed" | "stopped" | "stale"
+        > => {
           calls.push("renew");
 
-          return "renewed";
+          return renew();
         },
       } as never,
       stopMessage: "stopped",
