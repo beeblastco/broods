@@ -188,18 +188,7 @@ With a workspace attached, each file is saved under `media/` in the default work
 
 ### Voice transcription
 
-Audio the model cannot hear is transcribed on the way in, with the account's own provider credentials. The providers below need no configuration.
-
-| Provider       | Default model                                     |
-| -------------- | ------------------------------------------------- |
-| OpenAI         | `whisper-1`                                       |
-| Groq           | `whisper-large-v3-turbo`                          |
-| Mistral        | `voxtral-mini-latest`                             |
-| Google, Vertex | none. The recording is sent to the model directly |
-
-Set `model.transcriptionModelId` to use another model on the transcribing provider. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
-
-An agent whose model has no speech-to-text, such as Anthropic, can read audio on a second provider. Add that provider's key to `provider` and name it in `model.transcriptionProvider`:
+Audio the model cannot hear is transcribed on the way in, with the account's own provider credentials. An agent whose model has no speech-to-text, such as Anthropic, can read audio on a second provider. Add that provider's key to `provider` and name it in `model.transcriptionProvider`:
 
 ```ts
 provider: {
@@ -212,6 +201,17 @@ model: {
   transcriptionProvider: "openai",
 },
 ```
+
+The providers below need no configuration.
+
+| Provider       | Default model                                     |
+| -------------- | ------------------------------------------------- |
+| OpenAI         | `whisper-1`                                       |
+| Groq           | `whisper-large-v3-turbo`                          |
+| Mistral        | `voxtral-mini-latest`                             |
+| Google, Vertex | none. The recording is sent to the model directly |
+
+Set `model.transcriptionModelId` to use another model on the transcribing provider. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
 
 A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, or no speech-to-text on the account.
 
