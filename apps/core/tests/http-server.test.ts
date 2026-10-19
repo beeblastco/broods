@@ -166,11 +166,12 @@ describe("waitUntil drain", () => {
     // Tracked work settles on microtasks alone, so one macrotask turn is enough
     // for the drain to resolve if it were not waiting on `release`.
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(drained).toBe(false);
-    expect(afterDone).toBe(false);
-
+    const early = { drained: drained, afterDone: afterDone };
+    // Released before asserting, so a failure here cannot leave the tracked
+    // promise in the shared set for later drains to wait on.
     release();
     await drain;
+    expect(early).toEqual({ drained: false, afterDone: false });
     expect(afterDone).toBe(true);
   });
 });
