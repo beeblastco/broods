@@ -30,8 +30,13 @@ export function emitPostHogDashboardLog(
   }
 }
 
+/** Best-effort: a failed export never fails the request that logged. */
 export async function flushPostHogDashboardLogs(): Promise<void> {
-  await posthogLoggerProvider?.forceFlush();
+  try {
+    await posthogLoggerProvider?.forceFlush();
+  } catch {
+    // Dropped on purpose, same as the OTLP beacon forward.
+  }
 }
 
 // A dedicated provider, never the global one: existing dashboard loggers are

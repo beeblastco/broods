@@ -323,18 +323,19 @@ function AddWebhookForm({
     if (!url.trim() || !secret.trim() || busy) return;
     setBusy(true);
     setError(null);
+    const eventFilter = events
+      .split(",")
+      .map((event) => event.trim())
+      .filter(Boolean);
     try {
       await addWebhook({
         agentConfigId: agentConfigId,
         url: url.trim(),
         secret: secret.trim(),
-        events: events
-          .split(",")
-          .map((event) => event.trim())
-          .filter(Boolean),
+        events: eventFilter,
       });
       posthog.capture("webhook_added", {
-        has_event_filter: Boolean(events.trim()),
+        has_event_filter: eventFilter.length > 0,
       });
       onDone();
     } catch (err) {
