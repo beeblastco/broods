@@ -14,9 +14,12 @@ import {
 } from "../../../../cloudflare-worker/src/limits.ts";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
+import { recordUsage } from "../plan-limits.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
 import {
   callPlatformWorker,
+  PlatformWorkerError,
   platformWorkerConnection,
   releasePlatformSandbox,
   reservePlatformSandbox,
@@ -146,29 +149,67 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     persist: boolean,
   ): Promise<SandboxExecResponse> {
     const timeoutMs = Math.min(request.timeoutSeconds * 1000, MAX_TIMEOUT_MS);
-    const response = await callPlatformWorker(
-      workerConnection(),
-      LABEL,
-      `/v1/sandboxes/${id}/exec`,
-      "POST",
-      {
-        script: request.code,
-        args: request.args ?? [],
-        cwd: requiredWorkspacePath(request, "/workspace"),
-        env: mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
-        timeoutMs: timeoutMs,
-        outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
-        enableInternet: this.#config.network?.mode === "allow-all",
-        persist: persist,
-      },
-      timeoutMs + WORKER_OVERHEAD_MS,
-    );
+    const startedAt = Date.now();
+    try {
+      const response = await callPlatformWorker(
+        workerConnection(),
+        LABEL,
+        `/v1/sandboxes/${id}/exec`,
+        "POST",
+        {
+          script: request.code,
+          args: request.args ?? [],
+          cwd: requiredWorkspacePath(request, "/workspace"),
+          env: mergeSandboxEnv(
+            this.#config.envVars,
+            request.envVars,
+            request.principal,
+          ),
+          timeoutMs: timeoutMs,
+          outputLimitBytes: Math.min(
+            request.outputLimitBytes,
+            MAX_OUTPUT_BYTES,
+          ),
+          enableInternet: this.#config.network?.mode === "allow-all",
+          persist: persist,
+        },
+        timeoutMs + WORKER_OVERHEAD_MS,
+      );
+      const result = parseExecResponse(await response.text(), LABEL);
+      this.#meter(result.duration_ms, request.metadata);
 
-    return parseExecResponse(await response.text(), LABEL);
+      return result;
+    } catch (error) {
+      // An answer means the command ran, a refusal after the fact (a 409)
+      // included; a call that never reached the Worker ran nothing.
+      if (error instanceof PlatformWorkerError)
+        this.#meter(Date.now() - startedAt, request.metadata);
+      throw error;
+    }
+  }
+
+  // Nothing runs between commands, so each one is metered as it ends: its
+  // time on the Worker, plus the request. The platform always pays for an
+  // isolate, so only a config with no account goes unmetered. The project is
+  // the config's, else the one the run's agent or workspace belongs to.
+  #meter(durationMs: number, metadata: SandboxRunMetadata | undefined): void {
+    const plane = this.#config.controlPlane;
+    if (!plane) return;
+    recordUsage(
+      plane.accountId,
+      { workerMs: durationMs, workerRequests: 1 },
+      {
+        ...(plane.projectId !== undefined
+          ? { projectId: plane.projectId }
+          : {}),
+        ...(metadata?.agentId !== undefined
+          ? { agentId: metadata.agentId }
+          : {}),
+        ...(metadata?.workspaceId !== undefined
+          ? { workspaceId: metadata.workspaceId }
+          : {}),
+      },
+    );
   }
 
   // Mirrors a reservation into Convex once a command answered, so a Worker

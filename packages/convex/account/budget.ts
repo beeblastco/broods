@@ -1,10 +1,10 @@
 /**
  * The monthly resource caps, as core and the dashboard reach them: core reads
  * the closest cap's share of the org owner's pool at admission, records the
- * usage only it sees (hosted-MCP invokes, media egress, attachment ingress)
- * and claims the 80% warning; the dashboard reads amounts, caps and
- * percentages.
- * Sandbox time is metered by the sandbox mirror itself; storage by the daily
+ * usage only it sees (hosted-MCP invokes, V8 Worker commands, media egress,
+ * attachment ingress) and claims the 80% warning; the dashboard reads
+ * amounts, caps and percentages. Other sandbox time is metered by the
+ * sandbox mirror itself; storage by the daily
  * snapshot in `aws/storageMeter.ts`. Math lives in `model/usageMeter.ts`.
  */
 
@@ -249,6 +249,8 @@ export const record = internalMutation({
     usage: v.object({
       hostedMcpGbSeconds: v.optional(usageQuantityFields.hostedMcpGbSeconds),
       hostedMcpRequests: v.optional(usageQuantityFields.hostedMcpRequests),
+      workerMs: v.optional(usageQuantityFields.workerMs),
+      workerRequests: v.optional(usageQuantityFields.workerRequests),
       storageGbMonths: v.optional(usageQuantityFields.storageGbMonths),
       egressGb: v.optional(usageQuantityFields.egressGb),
       ingressGb: v.optional(usageQuantityFields.ingressGb),

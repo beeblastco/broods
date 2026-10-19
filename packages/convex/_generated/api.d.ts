@@ -2096,6 +2096,8 @@ export declare const internal: {
             hostedMcpRequests?: number;
             ingressGb?: number;
             storageGbMonths?: number;
+            workerMs?: number;
+            workerRequests?: number;
           };
           writeId?: string;
         },
