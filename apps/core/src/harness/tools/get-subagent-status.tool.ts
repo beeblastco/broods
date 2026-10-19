@@ -6,7 +6,8 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
 import {
   getAsyncAgentResult,
-  observeAsyncAgentResult,
+  isHandbackOwed,
+  markAsyncAgentHandback,
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
 import {
@@ -62,11 +63,12 @@ export default function getSubagentStatusTool(
           record = (await getAsyncAgentResult(record.eventId)) ?? record;
         }
         // The model now holds the outcome, so it is not injected a second time:
-        // by this turn once the step saves, by a late resume from now on.
+        // by this turn once the step saves, by a late resume or the recovery
+        // sweep from now on.
         if (record.status === "completed" || record.status === "failed") {
           context.watch?.markDelivered(record.eventId);
-          if (record.observed === false) {
-            await observeAsyncAgentResult(record.eventId, true);
+          if (isHandbackOwed(record)) {
+            await markAsyncAgentHandback(record.eventId, "stored");
           }
         }
 

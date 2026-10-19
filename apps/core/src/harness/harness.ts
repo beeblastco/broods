@@ -122,6 +122,7 @@ import {
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
 } from "./provider.ts";
+import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import {
   stripEnvelopeFieldsFromMessages,
@@ -149,6 +150,7 @@ import {
 import {
   createSandboxCpuLedger,
   createStepTimingTracker,
+  createTaskTotals,
   extractCacheWriteTokens,
   usageTokenTotals,
 } from "./usage-metering.ts";
@@ -373,7 +375,7 @@ export async function runAgentLoop(
     (await createAgentHookDispatcher(session.accountId, agentConfig));
 
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
-  let taskCacheWriteTokens = 0;
+  const taskTotals = createTaskTotals();
   const sandboxCpu = createSandboxCpuLedger();
   // Child OTel spans remain open until the corresponding AI SDK finish hook.
   // Their real OTel IDs are reused in the live NATS trace rows.
@@ -841,8 +843,6 @@ export async function runAgentLoop(
   let finishObserved = false;
   let persistedResponseCount = 0;
   const runAbort = new AbortController();
-  let taskUsage: LanguageModelUsage | undefined;
-  let taskStepCount = 0;
   let terminalError: Error | undefined;
   const abortRun = (): void => {
     const reason: unknown = options.abortSignal?.reason;
@@ -1062,7 +1062,7 @@ export async function runAgentLoop(
             outputTokens: taskTokens.outputTokens,
             reasoningTokens: taskTokens.reasoningTokens,
             cachedInputTokens: taskTokens.cachedInputTokens,
-            cacheWriteTokens: taskCacheWriteTokens,
+            cacheWriteTokens: taskTotals.cacheWriteTokens(),
             totalTokens: taskTokens.totalTokens,
             runtimeKind: "container",
             runtimeWallMs: durationMs,
@@ -1151,26 +1151,13 @@ export async function runAgentLoop(
   });
 
   const maxTurn = agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS;
-  // Decided once per step boundary, in stopWhen: near the deadline the run
-  // yields its slot, or, when it may not (last slot, or at its step cap, where
-  // a next pass would start a fresh count), winds down in its next step.
-  let windingDown = false;
-  let yielded = false;
-  const stopForDeadline = (stepCount: number): boolean => {
-    if (
-      options.deadlineMs === undefined ||
-      Date.now() < options.deadlineMs - DEADLINE_WIND_DOWN_MS ||
-      questionSummaries.length > 0
-    ) {
-      return false;
-    }
-    yielded =
-      options.canYield === true &&
-      (maxTurn === AGENT_MAX_TURN_UNLIMITED || stepCount < maxTurn);
-    windingDown = !yielded;
-
-    return yielded;
-  };
+  const deadline = createDeadlinePolicy({
+    deadlineMs: options.deadlineMs,
+    canYield: options.canYield === true,
+    windDownMs: DEADLINE_WIND_DOWN_MS,
+    maxTurn: maxTurn,
+    now: Date.now,
+  });
   const aiRuntimeContext = {
     sessionId: aiSessionId(session.conversationKey),
     traceName: rootSpanName,
@@ -1216,7 +1203,8 @@ export async function runAgentLoop(
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
-      ({ steps }): boolean => stopForDeadline(steps.length),
+      ({ steps }): boolean =>
+        deadline.shouldStop(steps.length, questionSummaries.length),
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
@@ -1224,7 +1212,7 @@ export async function runAgentLoop(
       // steer is never claimed by a turn whose step failed to store or stopped.
       const { renewal, steering } = await session.stepBoundary(
         responseMessages.slice(persistedResponseCount),
-        { claimSteering: !windingDown },
+        { claimSteering: !deadline.isWindingDown() },
       );
       if (renewal === "stopped") {
         throw new Error(stopMessage);
@@ -1287,7 +1275,7 @@ export async function runAgentLoop(
       // (newly persisted rows, steering, skills a tool loaded), and the step and
       // root spans both trace off this.
       turnContext.system = refreshed.system;
-      if (windingDown) {
+      if (deadline.isWindingDown()) {
         logInfo("Run winding down before its deadline", {
           eventId: session.eventId,
           conversationKey: session.conversationKey,
@@ -1564,29 +1552,11 @@ export async function runAgentLoop(
       }
 
       const stepTokens = usageTokenTotals(usage);
-      taskCacheWriteTokens +=
-        stepTokens.cacheWriteTokens ||
-        extractCacheWriteTokens(configuredModel.providerName, providerMetadata);
-      // An aborted run never reaches onEnd, and a stopped one gets an empty
-      // total there, so finished steps are summed here.
-      const soFar = usageTokenTotals(taskUsage);
-      taskUsage = {
-        inputTokens: soFar.inputTokens + stepTokens.inputTokens,
-        inputTokenDetails: {
-          noCacheTokens: undefined,
-          cacheReadTokens:
-            soFar.cachedInputTokens + stepTokens.cachedInputTokens,
-          cacheWriteTokens:
-            soFar.cacheWriteTokens + stepTokens.cacheWriteTokens,
-        },
-        outputTokens: soFar.outputTokens + stepTokens.outputTokens,
-        outputTokenDetails: {
-          textTokens: undefined,
-          reasoningTokens: soFar.reasoningTokens + stepTokens.reasoningTokens,
-        },
-        totalTokens: soFar.totalTokens + stepTokens.totalTokens,
-      };
-      taskStepCount = stepNumber + 1;
+      taskTotals.addStep(
+        stepNumber,
+        stepTokens,
+        extractCacheWriteTokens(configuredModel.providerName, providerMetadata),
+      );
 
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
       // dropped setting) are silent in the stream; surface them in Loki.
@@ -1781,12 +1751,7 @@ export async function runAgentLoop(
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       finishObserved = true;
-      // The turn total wins (a harness counts calls no step reported), unless
-      // a stop thrown from prepareStep left it empty: then the step sum stands.
-      if (Object.values(usageTokenTotals(usage)).some((tokens) => tokens > 0)) {
-        taskUsage = usage;
-      }
-      taskStepCount = stepCount;
+      taskTotals.finish(usage, stepCount);
       const approvalRequests = extractApprovalRequests(steps);
       // `isAutomatic` records a decision the SDK already answered this run, so
       // only a request still waiting on a human may gate the turn.
@@ -1805,7 +1770,7 @@ export async function runAgentLoop(
         toolsUsed: tools.toolsUsed,
         toolUsage: tools.toolUsage,
         toolCalls: tools.toolCalls,
-        usage: taskUsage,
+        usage: taskTotals.usage(),
       };
 
       try {
@@ -1821,8 +1786,8 @@ export async function runAgentLoop(
         // A run that gave up its slot ends on tool results; its next pass
         // answers from them, so nothing is delivered or failed here. A step
         // waiting on an approval stops for that instead.
-        yielded &&= approvals.length === 0;
-        if (yielded) {
+        if (approvals.length > 0) deadline.withdrawYield();
+        if (deadline.hasYielded()) {
           logInfo(
             `Run yielded its worker slot after ${stepCount} step(s)`,
             finishLog,
@@ -1872,7 +1837,7 @@ export async function runAgentLoop(
               toolsUsed: tools.toolsUsed,
               toolUsage: tools.toolUsage,
               toolCalls: tools.toolCalls,
-              usage: taskUsage,
+              usage: taskTotals.usage(),
             },
           );
           await lifecycle.emit("agent.failed", {
@@ -1893,7 +1858,7 @@ export async function runAgentLoop(
         // parsing or reply delivery below fails, so record the metric line once
         // here; a later failure adds its own model.invocation.failed line.
         logInfo(
-          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(taskUsage)}, ${formatDuration(finishLog.durationMs)}`,
+          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(taskTotals.usage())}, ${formatDuration(finishLog.durationMs)}`,
           finishLog,
         );
 
@@ -1993,8 +1958,8 @@ export async function runAgentLoop(
       } finally {
         await finalizeUsage(
           didFail ? "failed" : "completed",
-          taskUsage,
-          taskStepCount,
+          taskTotals.usage(),
+          taskTotals.steps(),
           toolCallCount,
           Date.now() - runStartedAt,
           terminalError,
@@ -2146,8 +2111,8 @@ export async function runAgentLoop(
     await reply?.onErrorText(message).catch(() => {});
     await finalizeUsage(
       "failed",
-      taskUsage,
-      taskStepCount,
+      taskTotals.usage(),
+      taskTotals.steps(),
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
@@ -2241,8 +2206,8 @@ export async function runAgentLoop(
     }
     await finalizeUsage(
       "failed",
-      taskUsage,
-      taskStepCount,
+      taskTotals.usage(),
+      taskTotals.steps(),
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
@@ -2275,7 +2240,7 @@ export async function runAgentLoop(
     consumeStream: wrappedConsumeStream,
     ensureFinalized: ensureFinalized,
     didFail: (): boolean => didFail,
-    yielded: (): boolean => yielded && !didFail,
+    yielded: (): boolean => deadline.hasYielded() && !didFail,
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,

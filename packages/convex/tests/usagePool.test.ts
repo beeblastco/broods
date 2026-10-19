@@ -83,6 +83,8 @@ test("a Pro owner's orgs draw on one pool: usage on one stops the other, and the
     pool: { orgs: 2, shared: true },
   });
   expect(usage?.totals.egressGb).toBe(0);
+  // The pool's amounts come with it, so the dashboard never rebuilds them from a rounded share.
+  expect(usage?.pool?.totals.egressGb).toBe(PRO_EGRESS);
 });
 
 test("pools never mix: another payer's org and a member's own Hobby workspace stay at zero", async () => {

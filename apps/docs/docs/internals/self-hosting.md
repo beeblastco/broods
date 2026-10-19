@@ -30,6 +30,7 @@ flowchart TB
   subgraph cf["Cloudflare, optional"]
     McpW["cloudflare-mcp"]
     SbxW["cloudflare-sandbox"]
+    IsoW["cloudflare-worker"]
   end
 
   Users --> Traefik
@@ -68,6 +69,7 @@ flowchart TB
 | matrix-forwarder            | `apps/matrix-forwarder/Dockerfile`               | Optional, one replica, persistent volume. Matrix agents only |
 | cloudflare-mcp              | `apps/cloudflare-mcp`                            | Optional Worker. Hosted MCP off Lambda                       |
 | cloudflare-sandbox          | `apps/cloudflare-sandbox`                        | Optional Worker. The `cloudflare` sandbox provider           |
+| cloudflare-worker           | `apps/cloudflare-worker`                         | Optional Worker. The `worker` sandbox provider               |
 
 Images are published to `ghcr.io/beeblastco/broods-{core,gateway,dashboard,discord-forwarder,matrix-forwarder}`, or build them from the repo root with `docker build -f apps/core/Dockerfile .`.
 
@@ -203,6 +205,7 @@ Refuses to start without `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `TERMINAL
 | `MICROVM_IMAGE_IDENTIFIER`, `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_LOG_GROUP_NAME`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`                              | for `lambda` sandboxes | Without the connector, `deny-all` MicroVMs fail to launch            |
 | `WORKDIR_URL`, `WORKDIR_API_KEY`                                                                                                                        | for `sandbox`          | The workdir control plane                                            |
 | `CLOUDFLARE_SANDBOX_URL`, `CLOUDFLARE_SANDBOX_API_KEY`                                                                                                  | for `cloudflare`       | See [Cloudflare sandbox bridge](#cloudflare-sandbox-bridge-optional) |
+| `CLOUDFLARE_WORKER_URL`, `CLOUDFLARE_WORKER_API_KEY`                                                                                                    | for `worker`           | See [Cloudflare V8 Worker](#cloudflare-v8-worker-optional)           |
 | `CLOUDFLARE_MCP_URL`, `CLOUDFLARE_MCP_API_KEY`                                                                                                          | for Cloudflare MCP     | See [Cloudflare MCP runtime](#cloudflare-mcp-runtime-optional)       |
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | no                     | Fallbacks for sandbox configs that omit their own                    |
 | `ENABLE_WEBSOCKET`, `NATS_URL`, `NATS_TOKEN`                                                                                                            | for WebSocket          | `ENABLE_WEBSOCKET=true` needs `NATS_URL`                             |
@@ -324,6 +327,27 @@ bunx wrangler deploy
 ```
 
 Then set core's `CLOUDFLARE_SANDBOX_URL` to the Worker's `https://` URL and `CLOUDFLARE_SANDBOX_API_KEY` to the same secret. Plain `http://` is accepted only on loopback, for `wrangler dev`. This provider cannot mount workspaces.
+
+### Cloudflare V8 Worker (optional)
+
+Backs the [`worker` sandbox provider](../guides/sandboxes/providers.md#worker): bash in a V8 isolate, no container, no Docker, nothing running between commands. Core calls `apps/cloudflare-worker`, a Worker that loads one Dynamic Worker per sandbox id and keeps a reserved sandbox's files in R2. Details are in [sandboxes](sandboxes.md#worker).
+
+```mermaid
+flowchart LR
+  Core[core] -->|"Bearer CLOUDFLARE_WORKER_API_KEY<br/>/v1/sandboxes/:id, /exec"| W["cloudflare-worker Worker"]
+  W --> I["Dynamic Worker per sandbox id<br/>just-bash"]
+  W --> R2[("R2 bucket<br/>broods-worker-state")]
+```
+
+From `apps/cloudflare-worker` (the Workers Paid plan, for Dynamic Workers and R2; `bun run deploy` bundles the runtime first):
+
+```bash
+bunx wrangler r2 bucket create broods-worker-state
+bunx wrangler secret put WORKER_API_KEY
+bun run deploy
+```
+
+Then set core's `CLOUDFLARE_WORKER_URL` to the Worker's `https://` URL and `CLOUDFLARE_WORKER_API_KEY` to the same secret. Plain `http://` is accepted only on loopback, for `wrangler dev`. This provider cannot mount workspaces.
 
 ## 5. Create an account
 

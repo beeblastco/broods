@@ -40,7 +40,7 @@ export const runtimeMutations = {
   deferSandboxReservations: internal.runtime.deferSandboxReservations,
   deleteAccountRuntimeData: internal.runtime.deleteAccountRuntimeData,
   deleteSandboxReservation: internal.runtime.deleteSandboxReservation,
-  observeAsyncAgentResult: internal.runtime.observeAsyncAgentResult,
+  markAsyncAgentHandback: internal.runtime.markAsyncAgentHandback,
   observeAsyncToolResult: internal.runtime.observeAsyncToolResult,
   releaseClaim: internal.runtime.releaseClaim,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,

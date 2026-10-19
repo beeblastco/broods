@@ -2,12 +2,16 @@ import { expect, test } from "bun:test";
 import {
   type BudgetUsage,
   dailySeries,
+  OTHER_ORGS_COLOR,
   OTHER_USAGE_COLOR,
+  otherOrgsSlice,
+  poolNote,
   projectSlices,
   type UsageAmounts,
   usageSlices,
 } from "../app/lib/allowance";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { PLAN_LIMITS } from "@broods/convex/model/planLimits";
 
 const ZERO: UsageAmounts = {
   sandboxHours: 0,
@@ -17,9 +21,30 @@ const ZERO: UsageAmounts = {
   ingressGb: 0,
 };
 
+const NO_SHARES = {
+  sandboxHours: 0,
+  hostedMcpHours: 0,
+  storageGb: 0,
+  egressGb: 0,
+};
+
+// The owner's pool of two orgs on Pro, egress used up and 30% of storage held.
+const EXHAUSTED_POOL: Partial<BudgetUsage> = {
+  usedPercent: 100,
+  level: "exhausted",
+  caps: PLAN_LIMITS.pro.caps,
+  shares: { ...NO_SHARES, egressGb: 100, storageGb: 30 },
+  pool: {
+    orgs: 2,
+    shared: true,
+    totals: { ...ZERO, egressGb: 30, storageGb: 15 },
+  },
+};
+
 function budget(
   totals: Partial<UsageAmounts>,
   days: Array<Partial<UsageAmounts> & { day: string }> = [],
+  rest: Partial<BudgetUsage> = {},
 ): BudgetUsage {
   return {
     enforced: true,
@@ -28,16 +53,12 @@ function budget(
     months: ["2026-10"],
     usedPercent: 0,
     caps: null,
-    shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
-    orgShares: {
-      sandboxHours: 0,
-      hostedMcpHours: 0,
-      storageGb: 0,
-      egressGb: 0,
-    },
+    shares: NO_SHARES,
+    orgShares: NO_SHARES,
     level: "ok",
     totals: { ...ZERO, ...totals },
     days: days.map((day) => ({ ...ZERO, ...day })),
+    ...rest,
   };
 }
 
@@ -209,4 +230,62 @@ test("before the month's first snapshot both parts keep storage unknown", () => 
   expect(own.totals.storageGb).toBeNull();
   expect(others.totals.storageGb).toBeNull();
   expect(missing.totals.storageGb).toBeNull();
+});
+
+test("an exhausted pool with nothing used by this org draws the bar destructive and all other organizations", () => {
+  const usage = budget({ egressGb: 0, storageGb: 10 }, [], EXHAUSTED_POOL);
+
+  const others = otherOrgsSlice(usage);
+
+  expect(usage.level).toBe("exhausted");
+  expect(others).toMatchObject({
+    projectId: null,
+    name: "Other organizations",
+    color: OTHER_ORGS_COLOR,
+    days: [],
+  });
+  // The whole 30 GB egress cap is theirs; of 15 GB stored, 5 GB is.
+  expect(others?.totals).toEqual({ ...ZERO, egressGb: 30, storageGb: 5 });
+  expect(poolNote(usage)).toBe("Limits are shared across 2 organizations.");
+});
+
+test("this org's own part of the pool is taken off the other organizations' slice, never below zero", () => {
+  const full = otherOrgsSlice(budget({ egressGb: 30 }, [], EXHAUSTED_POOL));
+  const ahead = otherOrgsSlice(budget({ egressGb: 31 }, [], EXHAUSTED_POOL));
+
+  expect(full?.totals.egressGb).toBe(0);
+  expect(ahead?.totals.egressGb).toBe(0);
+});
+
+test("no other organizations when the pool is this org's alone or nothing is enforced, and storage stays unknown", () => {
+  expect(otherOrgsSlice(budget({}))).toBeNull();
+  expect(
+    otherOrgsSlice(
+      budget({}, [], {
+        ...EXHAUSTED_POOL,
+        pool: { orgs: 1, shared: false, totals: ZERO },
+      }),
+    ),
+  ).toBeNull();
+  // This org has no snapshot yet while the pool has one: the pool's storage
+  // stays what the All organizations column shows, and the other
+  // organizations' part of it stays unknown, so the bar draws as one piece.
+  const unmeasured = budget({ storageGb: null }, [], EXHAUSTED_POOL);
+  expect(unmeasured.pool?.totals.storageGb).toBe(15);
+  expect(otherOrgsSlice(unmeasured)?.totals.storageGb).toBeNull();
+});
+
+test("the note counts the owner's organizations, says only shared to a member, and is silent for one org", () => {
+  expect(poolNote(budget({}, [], EXHAUSTED_POOL))).toBe(
+    "Limits are shared across 2 organizations.",
+  );
+  expect(
+    poolNote(budget({}, [], { pool: { shared: true, totals: ZERO } })),
+  ).toBe("Limits are shared with the owner's other organizations.");
+  expect(
+    poolNote(
+      budget({}, [], { pool: { orgs: 1, shared: false, totals: ZERO } }),
+    ),
+  ).toBeNull();
+  expect(poolNote(budget({}))).toBeNull();
 });
