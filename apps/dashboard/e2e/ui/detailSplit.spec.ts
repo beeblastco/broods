@@ -1,4 +1,10 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type JSHandle,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import {
   DETAIL_DEFAULT_WIDTH,
   TABLE_MIN_WIDTH,
@@ -13,6 +19,8 @@ const PERF_STEPS = 60;
 
 /** Subpixel flex layout. */
 const TOLERANCE_PX = 1;
+
+type LongTask = Pick<PerformanceEntry, "startTime" | "duration">;
 
 test("the detail column opens beside the table, follows the handle, and keeps the table's floor", async ({
   page,
@@ -106,41 +114,34 @@ test.describe("drag performance", () => {
     const group = fixture.locator('[data-slot="resizable-panel-group"]');
     const detail = group.locator('[data-slot="resizable-panel"]').last();
     const handle = group.getByRole("separator");
-    await countLongTasks(page);
 
     const box = (await handle.boundingBox())!;
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
     await page.mouse.move(x, y);
+    // Hovering the handle sets a page-wide cursor rule and releasing it
+    // commits the layout, once each; a slow runner stretches either past
+    // 50ms. The press and the moves in between count; both are the drag.
+    const longTasks = await watchLongTasks(page);
     await page.mouse.down();
     await page.mouse.move(x - DRAG / 2, y, { steps: PERF_STEPS / 2 });
     // Halfway through the drag the panel has already moved: the resize is
     // live, not deferred to release.
     expectNear(await width(detail), DETAIL_DEFAULT_WIDTH + DRAG / 2);
     await page.mouse.move(x - DRAG, y, { steps: PERF_STEPS / 2 });
+    const lastMove = await page.evaluate(() => performance.now());
     await page.mouse.up();
-
-    expect(await longTasks(page)).toBe(0);
 
     // Nothing keeps repainting after release: two samples a beat apart agree.
     const settled = await width(detail);
     await page.waitForTimeout(150);
     expect(await width(detail)).toBe(settled);
+
+    // The wait above also lets a task that ended before release reach the observer.
+    const tasks = await longTasks.evaluate((read) => read());
+    expect(tasks.filter((task) => task.startTime < lastMove)).toEqual([]);
   });
 });
-
-/** Install a long-task tally on the page; read it back with `longTasks`. */
-async function countLongTasks(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    document.documentElement.dataset.longTasks = "0";
-    new PerformanceObserver((list) => {
-      const root = document.documentElement;
-      root.dataset.longTasks = String(
-        Number(root.dataset.longTasks) + list.getEntries().length,
-      );
-    }).observe({ type: "longtask" });
-  });
-}
 
 /** Press the handle and slide it `dx` pixels along the row. */
 async function dragHandle(
@@ -162,10 +163,31 @@ function expectNear(actual: number, expected: number): void {
   expect(Math.abs(actual - expected)).toBeLessThanOrEqual(TOLERANCE_PX);
 }
 
-async function longTasks(page: Page): Promise<number> {
-  return await page.evaluate(() =>
-    Number(document.documentElement.dataset.longTasks),
-  );
+/**
+ * Record every long task from now on, its start in the page's
+ * `performance.now()` time and its length. Read them back by calling the
+ * returned function, which first takes the records the observer has not
+ * delivered yet.
+ */
+async function watchLongTasks(page: Page): Promise<JSHandle<() => LongTask[]>> {
+  return await page.evaluateHandle(() => {
+    const tasks: LongTask[] = [];
+    const record = (entries: PerformanceEntryList): void => {
+      for (const entry of entries) {
+        tasks.push({ startTime: entry.startTime, duration: entry.duration });
+      }
+    };
+    const observer = new PerformanceObserver((list) => {
+      record(list.getEntries());
+    });
+    observer.observe({ type: "longtask" });
+
+    return (): LongTask[] => {
+      record(observer.takeRecords());
+
+      return tasks;
+    };
+  });
 }
 
 async function width(element: Locator): Promise<number> {
