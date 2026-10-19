@@ -118,7 +118,7 @@ const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
 // Past this age a finished child's result is nobody's: a child still
 // processing died with its pod, and a result still `pending` has no live
 // parent run left to store it. A live parent drains a result at its next step
-// boundary or in its last write, within one run budget (a worker slot's, or
+// boundary, when it yields its slot, or in its last write, within one run budget (a worker slot's, or
 // a child's when the parent is itself a subagent) plus wind-down, and a
 // parent that stopped waiting wrote `detached`, swept after the grace.
 const PENDING_HANDBACK_MAX_AGE_MS =

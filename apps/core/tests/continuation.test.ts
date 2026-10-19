@@ -1,11 +1,18 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { AsyncToolCoordinator } from "../src/harness/async-tools.ts";
 import {
   AGENT_PROCESSING_FAILED,
+  runAgentLoopUntilSubagentsIdle,
   turnSettlement,
   type ParentContinuationResult,
 } from "../src/harness/continuation.ts";
+import * as harness from "../src/harness/harness.ts";
 import type { ToolApprovalSummary } from "../src/harness/harness.ts";
+import * as hookDispatcher from "../src/harness/hook-dispatcher.ts";
+import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { PendingQuestionSummary } from "../src/harness/questions.ts";
+import { Session } from "../src/harness/session.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 
 const APPROVAL: ToolApprovalSummary = {
   approvalId: "approval_1",
@@ -73,5 +80,87 @@ describe("turnSettlement", () => {
     expect(turnSettlement(completedTurn({ finalResponse: undefined }))).toEqual(
       { status: "completed" },
     );
+  });
+});
+
+describe("runAgentLoopUntilSubagentsIdle", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("writes finished background tool results before it yields the slot", async () => {
+    const order: string[] = [];
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(runtime, "query").mockResolvedValue(null);
+    spyOn(Session.prototype, "createTurnContext").mockResolvedValue({
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    });
+    spyOn(
+      AsyncToolCoordinator.prototype,
+      "drainCompletionsToParent",
+    ).mockImplementation(async (): Promise<number> => {
+      order.push("drain tool results");
+
+      return 0;
+    });
+    spyOn(hookDispatcher, "createAgentHookDispatcher").mockResolvedValue({
+      hasHooksFor: (): boolean => false,
+      runMutation: async (): Promise<Record<string, unknown>> => ({}),
+    });
+    let passes = 0;
+    spyOn(harness, "runAgentLoop").mockImplementation((async () => {
+      passes += 1;
+      order.push(`pass ${passes}`);
+      const yielded = passes === 1;
+
+      return {
+        traceId: (): undefined => undefined,
+        consumeStream: async (): Promise<void> => {},
+        questionSummaries: (): PendingQuestionSummary[] => [],
+        didFail: (): boolean => false,
+        yielded: (): boolean => yielded,
+        failureText: (): null => null,
+      };
+    }) as never);
+    const session = new Session({
+      eventId: "event",
+      conversationKey: "conversation",
+      accountId: "acct",
+      agentId: "agent",
+      agentConfig: {},
+    });
+
+    await runAgentLoopUntilSubagentsIdle(
+      session,
+      await session.createTurnContext([]),
+      {},
+      {
+        requestId: "request",
+        deadlineMs: Date.now() + 60_000,
+        waitUntil: (): void => {},
+        yieldSlot: async (): Promise<void> => {
+          order.push("yield slot");
+        },
+      },
+      { onFinalText: async () => {}, onErrorText: async () => {} },
+      {
+        dispatchAppliedIngress: async () => {},
+        dispatchSessionMessage: async (): Promise<SessionMessageResult> => ({
+          conversationKey: "conversation",
+          status: "accepted",
+        }),
+        subagents: {},
+      },
+    );
+
+    expect(order.slice(0, 4)).toEqual([
+      "pass 1",
+      "drain tool results",
+      "yield slot",
+      "pass 2",
+    ]);
   });
 });
