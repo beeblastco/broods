@@ -199,6 +199,22 @@ Audio the model cannot hear is transcribed on the way in, with the account's own
 
 Set `model.transcriptionModelId` to use another model on the same provider. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
 
+An agent whose model has no speech-to-text, such as Anthropic, can read audio on a second provider. Add that provider's key to `provider` and name it in `model.transcriptionProvider`:
+
+```ts
+provider: {
+  anthropic: { apiKey: env("ANTHROPIC_API_KEY") },
+  openai: { apiKey: env("OPENAI_API_KEY") },
+},
+model: {
+  provider: "anthropic",
+  modelId: "claude-haiku-5-5",
+  transcriptionProvider: "openai",
+},
+```
+
+Google and Vertex still hear the recording directly and ignore it.
+
 A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, or no speech-to-text on the account.
 
 ## Shared behavior

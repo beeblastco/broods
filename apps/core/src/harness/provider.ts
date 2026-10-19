@@ -98,7 +98,8 @@ const RATE_LIMIT_WAIT_PATTERN =
 /**
  * How inbound audio is read, per provider: the factory that ships speech-to-text
  * and the model to ask it for when the account names none. Providers absent
- * here have none, and `config.model.transcriptionModelId` overrides the id.
+ * here have none. `config.model.transcriptionProvider` picks the provider and
+ * `config.model.transcriptionModelId` overrides the id.
  *
  * Defaults pick the widest container support, not the cheapest model:
  * `whisper-1` reads the ogg/opus every voice-note channel sends and
@@ -250,15 +251,17 @@ export function resolveConfiguredModel(
 }
 
 /**
- * The speech-to-text model to read inbound audio with, or undefined when this
- * account's provider ships none or its config cannot build one. Undefined
+ * The speech-to-text model to read inbound audio with, on
+ * `transcriptionProvider` or else the agent's own provider. Undefined when that
+ * provider ships none or its config cannot build one. Undefined
  * rather than a throw: a half-configured account should lose its transcript and
  * keep the message it arrived on.
  */
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
 ): Exclude<TranscriptionModel, string> | undefined {
-  const providerName = agentConfig.model?.provider;
+  const providerName =
+    agentConfig.model?.transcriptionProvider ?? agentConfig.model?.provider;
   if (!providerName) {
     return undefined;
   }
@@ -288,6 +291,7 @@ export function modelSettingsFromModelConfig(
     provider: _provider,
     modelId: _modelId,
     transcriptionModelId: _transcriptionModelId,
+    transcriptionProvider: _transcriptionProvider,
     providerOptions: _providerOptions,
     output: _output,
     ...settings

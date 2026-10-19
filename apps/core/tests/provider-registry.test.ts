@@ -243,6 +243,23 @@ describe("transcription model resolution", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("reads audio on transcriptionProvider when the agent's own provider has none", () => {
+    const model = resolveTranscriptionModel({
+      model: {
+        provider: "anthropic",
+        modelId: "claude-haiku-5-5",
+        transcriptionProvider: "openai",
+      },
+      provider: {
+        anthropic: { apiKey: "sk-ant-test" },
+        openai: { apiKey: "sk-test" },
+      },
+    });
+
+    expect(model?.provider).toStartWith("openai");
+    expect(model?.modelId).toBe("whisper-1");
+  });
 });
 
 // The transcription id rides in config.model but is not a language-model
@@ -256,6 +273,7 @@ describe("modelSettingsFromModelConfig", () => {
           provider: "openai",
           modelId: "gpt-5",
           transcriptionModelId: "gpt-4o-mini-transcribe",
+          transcriptionProvider: "groq",
           temperature: 0.2,
         },
       }),

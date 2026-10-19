@@ -3,8 +3,8 @@
  *
  * Audio is transcribed once at ingest and travels as text, which every model
  * reads and no provider refuses on media type. The model comes from the
- * account's own provider settings; `config.model.transcriptionModelId` picks a
- * different one.
+ * account's own provider settings; `config.model.transcriptionProvider` and
+ * `config.model.transcriptionModelId` pick a different one.
  */
 
 import { APICallError } from "@ai-sdk/provider";
@@ -57,7 +57,7 @@ export async function transcribeAudio(
   if (!model) {
     return {
       status: "failed",
-      reason: `${agentConfig.model?.provider ?? "this provider"} has no transcription model`,
+      reason: `${agentConfig.model?.transcriptionProvider ?? agentConfig.model?.provider ?? "this provider"} has no transcription model`,
       recovery: "unavailable",
     };
   }
