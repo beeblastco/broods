@@ -138,7 +138,7 @@ test.describe("drag performance", () => {
     expect(await width(detail)).toBe(settled);
 
     // The wait above also lets a task that ended before release reach the observer.
-    const tasks = await longTasks.jsonValue();
+    const tasks = await longTasks.evaluate((read) => read());
     expect(tasks.filter((task) => task.startTime < lastMove)).toEqual([]);
   });
 });
@@ -165,18 +165,28 @@ function expectNear(actual: number, expected: number): void {
 
 /**
  * Record every long task from now on, its start in the page's
- * `performance.now()` time and its length; read it back with `jsonValue()`.
+ * `performance.now()` time and its length. Read them back by calling the
+ * returned function, which first takes the records the observer has not
+ * delivered yet.
  */
-async function watchLongTasks(page: Page): Promise<JSHandle<LongTask[]>> {
+async function watchLongTasks(page: Page): Promise<JSHandle<() => LongTask[]>> {
   return await page.evaluateHandle(() => {
     const tasks: LongTask[] = [];
-    new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
+    const record = (entries: PerformanceEntryList): void => {
+      for (const entry of entries) {
         tasks.push({ startTime: entry.startTime, duration: entry.duration });
       }
-    }).observe({ type: "longtask" });
+    };
+    const observer = new PerformanceObserver((list) => {
+      record(list.getEntries());
+    });
+    observer.observe({ type: "longtask" });
 
-    return tasks;
+    return (): LongTask[] => {
+      record(observer.takeRecords());
+
+      return tasks;
+    };
   });
 }
 
