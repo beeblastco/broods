@@ -451,9 +451,10 @@ describe("resumeLostAsyncToolResults", () => {
     ...row,
   });
 
-  it("resumes each lost result once, keeps a full conversation's for the next pass, and gives up on one nothing can resume", async (): Promise<void> => {
+  it("resumes each lost result once, keeps a full conversation's and a still queued one's for the next pass, and gives up on one nothing can resume", async (): Promise<void> => {
     const rows = [
       lostRow("resumed", {}),
+      lostRow("queued", {}),
       lostRow("pending", { handback: "pending" }),
       lostRow("full", { status: "failed", error: "boom" }),
       lostRow("gone", { handback: "pending", status: "failed", error: "x" }),
@@ -505,6 +506,14 @@ describe("resumeLostAsyncToolResults", () => {
         invoked: false,
         publicEventId: "async-tools-async_tool_resumed",
       },
+      // Its continuation still waits in the queue, which stores it when
+      // applied, or admits the next pass's retry once it expired.
+      async_tool_queued: {
+        kind: "ready",
+        admission: "duplicate",
+        invoked: false,
+        publicEventId: "async-tools-async_tool_queued",
+      },
       async_tool_pending: {
         kind: "ready",
         admission: "owner",
@@ -546,12 +555,14 @@ describe("resumeLostAsyncToolResults", () => {
       expect(windows[2]!.updatedBefore < windows[0]!.updatedBefore).toBe(true);
       expect(resumed).toEqual([
         "async_tool_resumed",
+        "async_tool_queued",
         "async_tool_full",
         "async_tool_pending",
         "async_tool_gone",
       ]);
-      // Only the row nothing can resume is given up; a full conversation
-      // keeps its row for the next pass, and admission stored the others.
+      // Only the row nothing can resume is given up; a full conversation and
+      // a queued continuation keep their rows for the next pass, and the
+      // others are stored by their admission.
       expect(marked.mock.calls).toEqual([["async_tool_gone", "stored"]]);
       expect(
         info.mock.calls

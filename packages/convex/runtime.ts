@@ -557,8 +557,7 @@ export const markAsyncAgentHandback = internalMutation({
     const row = await asyncAgentResultRow(ctx, args.eventId);
     if (
       !row ||
-      row.handback === "stored" ||
-      row.observed === true ||
+      isResultStored(row) ||
       (args.handback === "stored" && row.status === "processing")
     ) {
       return null;
@@ -624,6 +623,18 @@ export async function asyncAgentResultRow(
 }
 
 /**
+ * Whether a result row's conversation has it: `stored`, or `observed === true`
+ * on a row the release before `handback` wrote. Every stored check reads this,
+ * so dropping `observed` edits one place.
+ */
+export function isResultStored(row: {
+  handback?: Handback;
+  observed?: boolean;
+}): boolean {
+  return row.handback === "stored" || row.observed === true;
+}
+
+/**
  * The patch for a hand-back move, with the `observed` flag the previous
  * release read kept in step: stored is seen, detached is not.
  */
@@ -636,9 +647,9 @@ export function handbackPatch(handback: Exclude<Handback, "pending">): {
 
 /**
  * Marks a subagent result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the admission of the
- * late resume carrying it (`accept`). Only when the row is `accountId`'s own
- * and not stored already.
+ * delivers it: the parent's append of the result row, or the late resume
+ * carrying it taking its owner (`accept` as owner, or the apply of a queued
+ * one). Only when the row is `accountId`'s own and not stored already.
  */
 export async function markAsyncAgentResultSeen(
   ctx: MutationCtx,
@@ -670,9 +681,9 @@ export async function asyncToolResultRow(
 
 /**
  * Marks an async tool result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the admission of the
- * continuation carrying it (`accept`). Only when the row is `accountId`'s own
- * and not stored already.
+ * delivers it: the parent's append of the result row, or the continuation
+ * carrying it taking its owner (`accept` as owner, or the apply of a queued
+ * one). Only when the row is `accountId`'s own and not stored already.
  */
 export async function markAsyncToolResultSeen(
   ctx: MutationCtx,
@@ -706,7 +717,7 @@ export async function writeAsyncAgentResult(
   await requireActiveAccount(ctx, row.accountId);
   const finished =
     outcome.status === "completed" || outcome.status === "failed";
-  const stored = row.handback === "stored" || row.observed === true;
+  const stored = isResultStored(row);
   await ctx.db.patch(row._id, {
     status: outcome.status,
     response: outcome.response,
