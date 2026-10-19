@@ -13,8 +13,6 @@ import {
   trace as otelTraceApi,
   SpanStatusCode,
   TraceFlags,
-  type Context as OtelContext,
-  type Span,
 } from "@opentelemetry/api";
 import {
   isStepCount,
@@ -124,6 +122,7 @@ import {
 } from "./provider.ts";
 import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
+import { createRunSpanTracker } from "./run-spans.ts";
 import {
   stripEnvelopeFieldsFromMessages,
   type ConversationIngressEvent,
@@ -207,18 +206,6 @@ const MAX_TASK_INPUT_CHARS = 500;
 const USAGE_INPUT_PREVIEW_CHARS = 160;
 
 const SPAN_ENCODER = new TextEncoder();
-
-/** An open model.step or tool.call span plus the ids its live NATS rows reuse. */
-type TrackedSpan = {
-  otelSpan: Span;
-  otelContext: OtelContext;
-  name: "model.step" | "tool.call";
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  startTimeMs: number;
-  attributes: Record<string, string | number | boolean>;
-};
 
 type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
 type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
@@ -377,24 +364,6 @@ export async function runAgentLoop(
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   const taskTotals = createTaskTotals();
   const sandboxCpu = createSandboxCpuLedger();
-  // Child OTel spans remain open until the corresponding AI SDK finish hook.
-  // Their real OTel IDs are reused in the live NATS trace rows.
-  const stepSpans = new Map<number, TrackedSpan>();
-  const toolSpans = new Map<string, TrackedSpan>();
-  /** Passed to the tool registry as `onToolRetry`; tallies each wait on the call's open span. */
-  const recordToolRetry = (toolCallId: string, waitMs: number): void => {
-    const tracked = toolSpans.get(toolCallId);
-    if (!tracked) return;
-    const retry = {
-      "tool.retry.count":
-        Number(tracked.attributes["tool.retry.count"] ?? 0) + 1,
-      "tool.retry.wait_ms":
-        Number(tracked.attributes["tool.retry.wait_ms"] ?? 0) + waitMs,
-    };
-    // A fresh object: the running row published at start may still hold the old one.
-    tracked.attributes = { ...tracked.attributes, ...retry };
-    tracked.otelSpan.setAttributes(retry);
-  };
 
   // Start the root span up front so one trace id is on every log line, NATS
   // span row and Tempo span. A noop tracer (OTel not initialised) has all-zero
@@ -434,6 +403,21 @@ export async function runAgentLoop(
     otelContextApi.active(),
     otelRootSpan,
   );
+  // The run's model.step, tool.call and phase spans under that root, each an
+  // OTel span and a live NATS row.
+  const spans = createRunSpanTracker({
+    tracer: tracer,
+    scope: observabilityScope,
+    traceId: traceId,
+    rootSpanId: rootSpanId,
+    rootOtelContext: rootOtelContext,
+    session: {
+      endpointId: session.endpointId,
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+    },
+    publish: publishSpan,
+  });
   // The invoking run's identity, mirrored onto any sandbox it reserves so the
   // dashboard activity links back to this trace and task. Shared by the tool
   // registry and the resident-harness reservation.
@@ -540,67 +524,12 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
-  /**
-   * Emits a closed phase span under the root for non-model work (cold start,
-   * context prepare, compaction), so a slow turn can be attributed. Best-effort.
-   */
-  const emitPhaseSpan = (
-    phaseName: string,
-    label: string,
-    startMs: number,
-    endMs: number,
-    extraAttributes: Record<string, number> = {},
-  ): void => {
-    try {
-      const durationMs = Math.max(0, endMs - startMs);
-      const attributes = {
-        "phase.name": label,
-        "phase.duration_ms": durationMs,
-        ...extraAttributes,
-      };
-      const phaseSpan = tracer.startSpan(
-        phaseName,
-        {
-          startTime: startMs,
-          attributes: {
-            ...observabilityAttributes(observabilityScope),
-            ...attributes,
-          },
-        },
-        rootOtelContext,
-      );
-      const spanContext = phaseSpan.spanContext();
-      phaseSpan.end(endMs);
-      void publishSpan({
-        traceId: /[^0]/.test(spanContext.traceId)
-          ? spanContext.traceId
-          : traceId,
-        spanId: /[^0]/.test(spanContext.spanId)
-          ? spanContext.spanId
-          : mintSpanId(),
-        parentSpanId: rootSpanId,
-        name: phaseName,
-        kind: "phase",
-        startTimeMs: startMs,
-        endTimeMs: endMs,
-        durationMs: durationMs,
-        status: "ok",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: attributes,
-      });
-    } catch {
-      // Best-effort: a telemetry failure must not affect the run.
-    }
-  };
-
   // Cold start is charged to the first run in this execution environment; later
   // (warm) runs consume nothing. Context prepare comes from the turn context
   // the handler assembled before this loop began.
   const coldStart = consumeColdStart(runStartedAt);
   if (coldStart) {
-    emitPhaseSpan(
+    spans.phase(
       "phase.cold_start",
       "Cold start",
       coldStart.startMs,
@@ -609,7 +538,7 @@ export async function runAgentLoop(
   }
   if (turnContext.timings) {
     const { phases, prepareEndedMs, prepareStartedMs } = turnContext.timings;
-    emitPhaseSpan(
+    spans.phase(
       "phase.context_prepare",
       "Context prepare",
       prepareStartedMs,
@@ -652,7 +581,7 @@ export async function runAgentLoop(
         dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: sandboxCpu.record,
-        onToolRetry: recordToolRetry,
+        onToolRetry: spans.retry,
         onBlockingQuestion: (question): void => {
           questionSummaries.push(question);
         },
@@ -756,41 +685,6 @@ export async function runAgentLoop(
   let lastStepText = "";
 
   const toolStepNumbers = new Map<string, number | undefined>();
-  /** Opens a model.step or tool.call OTel span and keeps the ids its live NATS row reuses. */
-  const startTrackedSpan = (
-    name: "model.step" | "tool.call",
-    startTimeMs: number,
-    parentContext: OtelContext,
-    parentSpanId: string,
-    attributes: Record<string, string | number | boolean>,
-  ): TrackedSpan => {
-    const otelSpan = tracer.startSpan(
-      name,
-      {
-        startTime: startTimeMs,
-        attributes: {
-          ...observabilityAttributes(observabilityScope),
-          ...attributes,
-        },
-      },
-      parentContext,
-    );
-    const spanContext = otelSpan.spanContext();
-
-    return {
-      otelSpan: otelSpan,
-      otelContext: otelTraceApi.setSpan(parentContext, otelSpan),
-      name: name,
-      traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
-      spanId: /[^0]/.test(spanContext.spanId)
-        ? spanContext.spanId
-        : mintSpanId(),
-      parentSpanId: parentSpanId,
-      startTimeMs: startTimeMs,
-      attributes: attributes,
-    };
-  };
-
   // Per-step timing (ttft, streaming windows, retries), read when each step's
   // span closes.
   const stepTiming = createStepTimingTracker(traceAttribute);
@@ -828,7 +722,7 @@ export async function runAgentLoop(
       });
     }
     if (compacted > 0) {
-      emitPhaseSpan("phase.compaction", "Compaction", startedMs, Date.now(), {
+      spans.phase("phase.compaction", "Compaction", startedMs, Date.now(), {
         "compaction.message_count": compacted,
         "compaction.input_tokens": lastInputTokens ?? 0,
       });
@@ -926,50 +820,12 @@ export async function runAgentLoop(
       : undefined;
 
     const endTimeMs = runStartedAt + durationMs;
-    const orphanedSpans = [
-      ...[...toolSpans.values()].map((tracked) => ({
-        tracked: tracked,
-        extraAttributes: undefined,
-      })),
-      // A step whose every attempt failed never reaches onStepEnd, so its
-      // attempt attributes are attached here instead.
-      ...[...stepSpans.entries()].map(([stepNumber, tracked]) => ({
-        tracked: tracked,
-        extraAttributes: stepTiming.attemptAttributes(stepNumber),
-      })),
-    ];
-    for (const { tracked, extraAttributes } of orphanedSpans) {
-      if (status === "failed") {
-        tracked.otelSpan.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: sanitizedError?.message,
-        });
-      }
-      if (extraAttributes) tracked.otelSpan.setAttributes(extraAttributes);
-      tracked.otelSpan.end(endTimeMs);
-      void publishSpan({
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: tracked.name,
-        kind: tracked.name,
-        startTimeMs: tracked.startTimeMs,
-        endTimeMs: endTimeMs,
-        durationMs: Math.max(0, endTimeMs - tracked.startTimeMs),
-        status: status === "completed" ? "ok" : "error",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: {
-          ...tracked.attributes,
-          ...extraAttributes,
-          [tracked.name === "model.step" ? "step.state" : "tool.state"]: status,
-        },
-        ...(sanitizedError ? { error: sanitizedError.message } : {}),
-      });
-    }
-    toolSpans.clear();
-    stepSpans.clear();
+    spans.closeOrphans(
+      endTimeMs,
+      status,
+      sanitizedError?.message,
+      stepTiming.attemptAttributes,
+    );
     stepTiming.clear();
     // Task totals on the root span: token usage and sandbox CPU split per provider
     // so the dashboard reads final usage straight off the trace stream.
@@ -1303,34 +1159,11 @@ export async function runAgentLoop(
       startApprovalStep();
       const now = Date.now();
       stepTiming.startStep(stepNumber, now);
-      const attributes = {
+      spans.open("model.step", stepNumber, now, undefined, {
         "agent.step_number": stepNumber,
         "step.state": "running",
         "model.input": traceAttribute(messagesWithoutMediaBytes(messages)),
         ...systemTraceAttributes(turnContext.system, traceAttribute),
-      };
-      const tracked = startTrackedSpan(
-        "model.step",
-        now,
-        rootOtelContext,
-        rootSpanId,
-        attributes,
-      );
-      stepSpans.set(stepNumber, tracked);
-      void publishSpan({
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: "model.step",
-        kind: "model.step",
-        startTimeMs: now,
-        endTimeMs: now,
-        durationMs: 0,
-        status: "running",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: attributes,
       });
     },
     onToolExecutionStart: async ({ toolCall }) => {
@@ -1345,8 +1178,8 @@ export async function runAgentLoop(
         stepTiming.startStep(stepNumber, now);
       }
       const parent =
-        stepNumber !== undefined ? stepSpans.get(stepNumber) : undefined;
-      const attributes = {
+        stepNumber !== undefined ? spans.get(stepNumber) : undefined;
+      spans.open("tool.call", toolCall.toolCallId, now, parent, {
         "tool.name": toolCall.toolName,
         "tool.call_id": toolCall.toolCallId,
         "tool.state": "running",
@@ -1354,31 +1187,8 @@ export async function runAgentLoop(
         ...(stepNumber !== undefined
           ? { "agent.step_number": stepNumber }
           : {}),
-      };
-      const tracked = startTrackedSpan(
-        "tool.call",
-        now,
-        parent?.otelContext ?? rootOtelContext,
-        parent?.spanId ?? rootSpanId,
-        attributes,
-      );
-      toolSpans.set(toolCall.toolCallId, tracked);
-      toolStepNumbers.set(toolCall.toolCallId, stepNumber);
-      void publishSpan({
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: "tool.call",
-        kind: "tool.call",
-        startTimeMs: now,
-        endTimeMs: now,
-        durationMs: 0,
-        status: "running",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: attributes,
       });
+      toolStepNumbers.set(toolCall.toolCallId, stepNumber);
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber: stepNumber,
       });
@@ -1397,7 +1207,7 @@ export async function runAgentLoop(
       // Normalize the SDK's duration once, here: it is used as a timestamp and
       // reported on every surface, so a NaN or negative one must not get through.
       const toolEndMs = Date.now();
-      const openSpan = toolSpans.get(toolCall.toolCallId);
+      const openSpan = spans.get(toolCall.toolCallId);
       const toolDurationMs = toolSpanDurationMs(
         openSpan?.startTimeMs ?? toolEndMs,
         toolEndMs,
@@ -1405,16 +1215,10 @@ export async function runAgentLoop(
       );
       const tracked =
         openSpan ??
-        startTrackedSpan(
-          "tool.call",
-          toolEndMs - toolDurationMs,
-          rootOtelContext,
-          rootSpanId,
-          {
-            "tool.name": toolCall.toolName,
-            "tool.call_id": toolCall.toolCallId,
-          },
-        );
+        spans.late("tool.call", toolEndMs - toolDurationMs, {
+          "tool.name": toolCall.toolName,
+          "tool.call_id": toolCall.toolCallId,
+        });
       const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
       const toolInput =
         tracked.attributes["tool.input"] ?? traceAttribute(toolCall.input);
@@ -1439,40 +1243,11 @@ export async function runAgentLoop(
       const outputAttributes = toolSucceeded
         ? { "tool.output": traceAttribute(outputWithoutMediaBytes(output)) }
         : {};
-      tracked.otelSpan.setAttributes({
-        "tool.duration_ms": toolDurationMs,
-        "tool.success": toolSucceeded,
-        "tool.state": toolSucceeded ? "completed" : "failed",
-        "tool.input": toolInput,
-        ...computeAttributes,
-        ...outputAttributes,
-      });
-      if (toolSucceeded) {
-        tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
-      } else {
-        const spanError = new Error(errorText);
-        tracked.otelSpan.recordException(spanError);
-        tracked.otelSpan.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: errorText,
-        });
-      }
-      tracked.otelSpan.end(toolSpanEndMs);
-      const toolSpanRow: ObservabilitySpanRow = {
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: "tool.call",
-        kind: "tool.call",
-        startTimeMs: tracked.startTimeMs,
-        endTimeMs: toolSpanEndMs,
-        durationMs: toolDurationMs,
-        status: toolSucceeded ? "ok" : "error",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: {
-          ...tracked.attributes,
+      spans.close(
+        tracked,
+        toolSpanEndMs,
+        toolSucceeded ? "ok" : "error",
+        {
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": toolInput,
           ...computeAttributes,
@@ -1481,10 +1256,8 @@ export async function runAgentLoop(
             ? { "agent.step_number": stepNumber }
             : {}),
         },
-        ...(errorText ? { error: errorText } : {}),
-      };
-      void publishSpan(toolSpanRow);
-      toolSpans.delete(toolCall.toolCallId);
+        errorText,
+      );
 
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber: stepNumber,
@@ -1631,14 +1404,13 @@ export async function runAgentLoop(
       // Publish the model.step span (tree: root -> model.step -> tool.call).
       // Tool spans reference this stepSpanId as their parent; without it they
       // would be orphaned in the trace view.
-      const tracked = stepSpans.get(stepNumber);
+      const tracked = spans.get(stepNumber);
       if (tracked) {
         const stepEndMs = Date.now();
         // Per-step timing and token usage on the span so the dashboard can
         // accumulate live usage straight off the trace stream (no separate
         // usage channel).
-        const attributes = {
-          ...tracked.attributes,
+        spans.close(tracked, stepEndMs, "ok", {
           "agent.step_number": stepNumber,
           "step.state": "completed",
           "model.finish_reason": finishReason,
@@ -1658,24 +1430,6 @@ export async function runAgentLoop(
               output: outputWithoutMediaBytes(result.output),
             })),
           ),
-        };
-        tracked.otelSpan.setAttributes(attributes);
-        tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
-        tracked.otelSpan.end(stepEndMs);
-        void publishSpan({
-          traceId: tracked.traceId,
-          spanId: tracked.spanId,
-          parentSpanId: tracked.parentSpanId,
-          name: "model.step",
-          kind: "model.step",
-          startTimeMs: tracked.startTimeMs,
-          endTimeMs: stepEndMs,
-          durationMs: stepEndMs - tracked.startTimeMs,
-          status: "ok",
-          endpointId: session.endpointId,
-          agentId: session.agentId,
-          conversationKey: session.conversationKey,
-          attributes: attributes,
         });
       }
       // Re-publish the running root span with the sandbox CPU accumulated so far so
@@ -1699,7 +1453,6 @@ export async function runAgentLoop(
           attributes: { ...rootRunningAttributes, ...liveRoleCpu },
         });
       }
-      stepSpans.delete(stepNumber);
       stepTiming.endActiveStep(stepNumber);
     },
     onError: async ({ error }) => {
