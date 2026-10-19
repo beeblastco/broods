@@ -1255,6 +1255,11 @@ export const runtimeIngressEnvelopesFields = {
   // is rebuilt from the ref at dispatch; it never sits here with its secrets.
   configRef: v.optional(ingressConfigRefValidator),
   ephemeralSystem: v.optional(v.array(v.any())),
+  // The subagent or async tool result row a late resume delivers. A queued
+  // resume marks it stored only when it is applied, so one that expires in
+  // the queue leaves it for the recovery sweep.
+  resultEventId: v.optional(v.string()),
+  toolResultId: v.optional(v.string()),
   appliedMode: v.optional(ingressModeValidator),
   appliedToEventId: v.optional(v.string()),
   applicationId: v.optional(v.string()),

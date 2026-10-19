@@ -20,6 +20,7 @@ import {
   conversationEventsValidator,
   insertConversationEvents,
   handbackPatch,
+  isResultStored,
   markAsyncAgentResultSeen,
   markAsyncToolResultSeen,
   writeAsyncAgentResult,
@@ -197,7 +198,8 @@ export const accept = internalMutation({
     maxQueuedCount: v.number(),
     maxQueuedBytes: v.number(),
     // The subagent result row a late-result continuation delivers. It is
-    // admitted only while the parent has not seen that result, and marks it seen.
+    // admitted only while the parent has not stored that result, and marks it
+    // stored once it runs: at once as owner, when applied if it queues.
     resultEventId: v.optional(v.string()),
     // The async tool result row a continuation delivers, fenced the same way.
     toolResultId: v.optional(v.string()),
@@ -266,8 +268,6 @@ export const accept = internalMutation({
       };
     }
 
-    await markAsyncAgentResultSeen(ctx, args.accountId, args.resultEventId);
-    await markAsyncToolResultSeen(ctx, args.accountId, args.toolResultId);
     const sequence = coordinator.nextSequence;
     const baseEnvelope = buildAdmissionEnvelope(args, identity, sequence, now);
     if (busy) {
@@ -295,6 +295,7 @@ export const accept = internalMutation({
     const ownerGeneration = coordinator.ownerGeneration + 1;
     const appliedMode =
       args.requestedMode === "steer" ? "followup" : args.requestedMode;
+    await markDeliveredResultsStored(ctx, baseEnvelope);
     await ctx.db.insert("runtimeIngressEnvelopes", {
       ...baseEnvelope,
       appliedMode: appliedMode,
@@ -1056,6 +1057,8 @@ function buildAdmissionEnvelope(
     ownerTaskId?: string;
     configRef?: Infer<typeof ingressConfigRefValidator>;
     ephemeralSystem?: unknown[];
+    resultEventId?: string;
+    toolResultId?: string;
     sizeBytes: number;
     envelopeTtlMs: number;
     statusTtlMs: number;
@@ -1083,6 +1086,12 @@ function buildAdmissionEnvelope(
     ...(args.configRef !== undefined ? { configRef: args.configRef } : {}),
     ...(args.ephemeralSystem !== undefined
       ? { ephemeralSystem: args.ephemeralSystem }
+      : {}),
+    ...(args.resultEventId !== undefined
+      ? { resultEventId: args.resultEventId }
+      : {}),
+    ...(args.toolResultId !== undefined
+      ? { toolResultId: args.toolResultId }
       : {}),
     sizeBytes: args.sizeBytes,
     createdAt: now,
@@ -1120,8 +1129,10 @@ async function canonicalIdentity(options: {
  * admission (or conflicts on a different payload digest), and an eventId
  * reused under a different identity is always a conflict. Null means the
  * candidate is new. Rejected busy candidates create neither an envelope nor
- * an identity tombstone. Its one write marks a late subagent or async tool
- * result stored when the conversation already stores it.
+ * an identity tombstone. It writes only to let a result through once: it
+ * marks a late subagent or async tool result stored when the conversation
+ * already stores it, and drops a resume that expired in the queue, so the
+ * recovery sweep's retry of it is admitted again.
  */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,
@@ -1139,8 +1150,16 @@ async function checkDuplicateAdmission(
     .query("runtimeIngressEnvelopes")
     .withIndex("by_identity", (q) => q.eq("identity", identity))
     .unique();
-  if (existing) {
-    if (existing.payloadDigest !== args.payloadDigest) {
+  if (existing && (await expiredUndeliveredResume(ctx, existing))) {
+    await ctx.db.delete(existing._id);
+  } else if (existing) {
+    // The recovery sweep retries a resume under the same identity while the
+    // first still waits in the queue; its payload can drift (a hook rewrite, a
+    // model redeploy), and it is still the same result, not a conflict.
+    if (
+      existing.payloadDigest !== args.payloadDigest &&
+      !resumesSameResult(existing, args)
+    ) {
       return { outcome: "conflict" as const, eventId: existing.eventId };
     }
 
@@ -1200,7 +1219,7 @@ async function storedResultAdmission(
   result: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">,
   dedupeKeyFor: (status: "completed" | "failed") => string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
-  if (result.handback === "stored" || result.observed === true) {
+  if (isResultStored(result)) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
   for (const status of ["completed", "failed"] as const) {
@@ -1220,6 +1239,27 @@ async function storedResultAdmission(
   }
 
   return null;
+}
+
+/**
+ * Whether `envelope` is a resume that expired in the queue before it was
+ * applied. Applying it marks its result stored, so a result row of its
+ * account still not stored is one the conversation never got.
+ */
+async function expiredUndeliveredResume(
+  ctx: QueryCtx,
+  envelope: Doc<"runtimeIngressEnvelopes">,
+): Promise<boolean> {
+  if (envelope.status !== "expired") return false;
+  const rows = [
+    await asyncAgentResultRow(ctx, envelope.resultEventId),
+    await asyncToolResultRow(ctx, envelope.toolResultId),
+  ];
+
+  return rows.some(
+    (row): boolean =>
+      row?.accountId === envelope.accountId && !isResultStored(row),
+  );
 }
 
 /**
@@ -1267,6 +1307,7 @@ async function claimSteering(
   const eventIds = selected.map((row) => row.eventId);
   const applicationId = `${args.ownerEventId}:steer:${args.ownerGeneration}:${selected[0]!.sequence}`;
   for (const row of selected) {
+    await markDeliveredResultsStored(ctx, row);
     await ctx.db.patch(row._id, {
       status: "processing",
       appliedMode: "steer",
@@ -1536,6 +1577,45 @@ function isLateControl(
 }
 
 /**
+ * Marks the result rows a resume envelope delivers stored, in the mutation
+ * that hands it to its owner: `accept` as owner, or the apply of a queued one.
+ */
+async function markDeliveredResultsStored(
+  ctx: MutationCtx,
+  envelope: Pick<
+    Doc<"runtimeIngressEnvelopes">,
+    "accountId" | "resultEventId" | "toolResultId"
+  >,
+): Promise<void> {
+  await markAsyncAgentResultSeen(
+    ctx,
+    envelope.accountId,
+    envelope.resultEventId,
+  );
+  await markAsyncToolResultSeen(ctx, envelope.accountId, envelope.toolResultId);
+}
+
+/**
+ * Whether `envelope` and the admission `args` resume the same late result;
+ * `checkDuplicateAdmission` answers such a retry as a duplicate even when its
+ * payload drifted.
+ */
+function resumesSameResult(
+  envelope: Pick<
+    Doc<"runtimeIngressEnvelopes">,
+    "resultEventId" | "toolResultId"
+  >,
+  args: { resultEventId?: string; toolResultId?: string },
+): boolean {
+  return (
+    (args.resultEventId !== undefined &&
+      envelope.resultEventId === args.resultEventId) ||
+    (args.toolResultId !== undefined &&
+      envelope.toolResultId === args.toolResultId)
+  );
+}
+
+/**
  * Coordinator stage of `accept`: loads or creates the conversation
  * coordinator, verifies its scope, pins the latest channel target, and
  * reconciles queue counters after expiring stale queued work and a stale
@@ -1632,6 +1712,7 @@ async function promoteQueuedGroup(
   const eventIds = selected.map((row) => row.eventId);
   const applicationId = `${appliedToEventId}:${appliedMode}:${options.ownerGeneration}:${first.sequence}`;
   for (const row of selected) {
+    await markDeliveredResultsStored(ctx, row);
     await ctx.db.patch(row._id, {
       status: "processing",
       appliedMode: appliedMode,
