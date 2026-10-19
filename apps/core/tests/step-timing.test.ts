@@ -116,12 +116,47 @@ describe("createStepTimingTracker", () => {
     });
   });
 
-  it("records an attempt before any step started under step 0", () => {
+  it("files an attempt recorded with no active step on the next step that starts", () => {
     const tracker = createStepTimingTracker(serialize);
-    tracker.recordAttempt({ startedAt: 500 });
+    tracker.startStep(0, 1_000);
+    tracker.closeStep(0, 1_500);
+    tracker.endActiveStep(0);
+    tracker.recordAttempt({ startedAt: 1_600, error: "503 overloaded" });
+    tracker.startStep(1, 2_000);
+    tracker.recordAttempt({ startedAt: 2_000 });
 
-    expect(tracker.attemptAttributes(0)).toEqual({
-      "model.attempts": 1,
+    expect(tracker.attemptAttributes(0)).toEqual({});
+    expect(tracker.closeStep(1, 2_500)).toEqual({
+      "model.attempts": 2,
+      "model.retry_wait_ms": 0,
+      "model.attempt_errors": serialize(["503 overloaded"]),
+    });
+  });
+
+  it("clear logs the error of an attempt no step took", () => {
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      lines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const tracker = createStepTimingTracker(serialize);
+      tracker.recordAttempt({ startedAt: 500, error: "503 overloaded" });
+      tracker.clear();
+      tracker.clear();
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      level: "WARN",
+      attempts: 1,
+      attemptErrors: serialize(["503 overloaded"]),
     });
   });
 

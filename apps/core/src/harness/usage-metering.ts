@@ -13,6 +13,7 @@ import {
   PROVIDER_CACHE_WRITE_FIELDS,
 } from "@broods/convex/model/modelPricing";
 import type { LanguageModelUsage, TextStreamPart, ToolSet } from "ai";
+import { logWarn } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import type { ModelAttempt } from "./provider.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
@@ -230,7 +231,10 @@ interface StepTiming {
  * closes. Timestamps are passed in; it holds nothing but the per-step records.
  */
 export interface StepTimingTracker {
-  /** onStepStart: starts the step's clock and attributes chunks and attempts to it. */
+  /**
+   * onStepStart: starts the step's clock and attributes chunks and attempts
+   * to it, taking any attempt recorded while no step was active.
+   */
   startStep: (step: number, nowMs: number) => void;
   /** The step chunks and attempts attribute to; undefined between steps. */
   activeStep: () => number | undefined;
@@ -243,7 +247,10 @@ export interface StepTimingTracker {
     chunkType: TextStreamPart<ToolSet>["type"],
     nowMs: number,
   ) => void;
-  /** attemptRecordingMiddleware: one entry per doStream call of the active step. */
+  /**
+   * attemptRecordingMiddleware: one entry per doStream call of the active
+   * step. With no active step it waits for the next step that starts.
+   */
   recordAttempt: (attempt: ModelAttempt) => void;
   /**
    * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
@@ -259,7 +266,7 @@ export interface StepTimingTracker {
     step: number,
     stepEndMs: number,
   ) => Record<string, string | number>;
-  /** Drops every step once the run is finalized. */
+  /** Drops every step once the run is finalized, logging any attempt no step took. */
   clear: () => void;
 }
 
@@ -269,6 +276,7 @@ export function createStepTimingTracker(
 ): StepTimingTracker {
   const steps = new Map<number, StepTiming>();
   let activeStepNumber: number | undefined;
+  let pendingAttempts: ModelAttempt[] = [];
 
   const stepOf = (step: number): StepTiming => {
     const existing = steps.get(step);
@@ -311,7 +319,10 @@ export function createStepTimingTracker(
 
   return {
     startStep: (step, nowMs) => {
-      stepOf(step).startedAt = nowMs;
+      const timing = stepOf(step);
+      timing.startedAt = nowMs;
+      timing.attempts.unshift(...pendingAttempts);
+      pendingAttempts = [];
       activeStepNumber = step;
     },
     activeStep: () => activeStepNumber,
@@ -339,7 +350,11 @@ export function createStepTimingTracker(
       }
     },
     recordAttempt: (attempt) => {
-      stepOf(activeStepNumber ?? 0).attempts.push(attempt);
+      if (activeStepNumber === undefined) {
+        pendingAttempts.push(attempt);
+        return;
+      }
+      stepOf(activeStepNumber).attempts.push(attempt);
     },
     attemptAttributes: attemptAttributes,
     closeStep: (step, stepEndMs) => {
@@ -384,6 +399,17 @@ export function createStepTimingTracker(
       };
     },
     clear: () => {
+      if (pendingAttempts.length > 0) {
+        logWarn("Model attempt outside any step dropped from the trace", {
+          attempts: pendingAttempts.length,
+          attemptErrors: serialize(
+            pendingAttempts.flatMap((attempt) =>
+              attempt.error ? [attempt.error] : [],
+            ),
+          ),
+        });
+      }
+      pendingAttempts = [];
       steps.clear();
       activeStepNumber = undefined;
     },
