@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useParams, useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { useCallback } from "react";
 
 export function UserMenu(): React.JSX.Element | null {
@@ -224,7 +225,10 @@ export function UserMenu(): React.JSX.Element | null {
             <DropdownMenuItem
               variant="destructive"
               className="cursor-pointer"
-              onClick={() => signOut()}
+              onClick={() => {
+                posthog.reset();
+                signOut();
+              }}
             >
               <LogOut />
               Sign out

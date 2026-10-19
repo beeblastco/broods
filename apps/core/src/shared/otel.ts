@@ -1,10 +1,11 @@
 /**
  * OTel trace/log exporters for the harness, plus the per-request
- * observability context store. A no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset;
- * never throws into the agent path.
+ * observability context store. A no-op when no exporter is configured; never
+ * throws into the agent path.
  */
 
 import { OpenTelemetry } from "@ai-sdk/otel";
+import { PostHogSpanProcessor } from "@posthog/ai/otel";
 import { trace, type Context, type Tracer } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
@@ -30,6 +31,8 @@ export interface ObservabilityContext {
   agentId: string;
   conversationKey: string;
   traceId: string;
+  /** Stable requester ID for AI Observability attribution when available. */
+  posthogDistinctId?: string;
   /** OTel context containing the active root task span for log correlation. */
   otelContext: Context;
   /** Plaintext values that must be removed from every emitted log string. */
@@ -91,7 +94,11 @@ export function mintTraceId(): string {
 
 let _tracer: Tracer | null = null;
 let _tracerProvider: BasicTracerProvider | null = null;
+let _posthogTracerProvider: BasicTracerProvider | null = null;
 let _loggerProvider: LoggerProvider | null = null;
+// Deliberately separate from the global logger provider: only log lines added
+// for PostHog below are exported to PostHog Logs.
+let _posthogLoggerProvider: LoggerProvider | null = null;
 let _initialized = false;
 
 // Best-effort; `body` must already be redacted by the caller.
@@ -132,8 +139,27 @@ export function emitOtelLog(
 export async function forceFlushOtel(): Promise<void> {
   await Promise.allSettled([
     _tracerProvider?.forceFlush() ?? Promise.resolve(),
+    _posthogTracerProvider?.forceFlush() ?? Promise.resolve(),
     _loggerProvider?.forceFlush() ?? Promise.resolve(),
+    _posthogLoggerProvider?.forceFlush() ?? Promise.resolve(),
   ]);
+}
+
+/** Emits only purpose-written operational lines owned by the PostHog integration. */
+export function emitPostHogLog(
+  body: string,
+  attributes: Record<string, string | number | boolean> = {},
+): void {
+  try {
+    _posthogLoggerProvider?.getLogger("broods-posthog").emit({
+      severityNumber: SeverityNumber.INFO,
+      severityText: "INFO",
+      body: body,
+      attributes: attributes,
+    });
+  } catch {
+    // Best-effort: logging must never affect the serving path.
+  }
 }
 
 // Returns a noop tracer if initOtel() has not run.
@@ -143,15 +169,17 @@ export function getTracer(): Tracer {
   return trace.getTracer("broods-harness");
 }
 
-// Idempotent; a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset. Reads the
-// endpoint and OTEL_EXPORTER_OTLP_HEADERS ("K=V,K2=V2", e.g. Authorization=Basic …).
+// Idempotent; adds PostHog AI Observability when configured, and keeps the
+// optional OTLP trace/log exporters. Reads OTEL_EXPORTER_OTLP_HEADERS
+// ("K=V,K2=V2", e.g. Authorization=Basic …) for the OTLP exporter.
 export function initOtel(): void {
   if (_initialized) return;
   _initialized = true;
 
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const rawHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
-  if (!endpoint) return;
+  const posthogProjectToken = process.env.POSTHOG_API_KEY;
+  const posthogHost = process.env.POSTHOG_HOST;
 
   try {
     const headers: Record<string, string> = {};
@@ -164,11 +192,6 @@ export function initOtel(): void {
       }
     }
 
-    const traceExporter = new OTLPTraceExporter({
-      url: `${endpoint}/v1/traces`,
-      headers: headers,
-      timeoutMillis: 5000,
-    });
     const resource = resourceFromAttributes({
       "service.name": process.env.SERVICE_NAME ?? "broods-core",
       "service.namespace": "beeblast",
@@ -178,35 +201,123 @@ export function initOtel(): void {
           }
         : {}),
     });
-    const tracerProvider = new BasicTracerProvider({
-      resource: resource,
-      spanProcessors: [new BatchSpanProcessor(traceExporter)],
-    });
-    trace.setGlobalTracerProvider(tracerProvider);
-    _tracerProvider = tracerProvider;
+    if (!endpoint && (!posthogProjectToken || !posthogHost)) return;
 
-    const logExporter = new OTLPLogExporter({
-      url: `${endpoint}/v1/logs`,
-      headers: headers,
-      timeoutMillis: 5000,
-    });
-    const loggerProvider = new LoggerProvider({
-      resource: resource,
-      processors: [new BatchLogRecordProcessor({ exporter: logExporter })],
-    });
-    logs.setGlobalLoggerProvider(loggerProvider);
-    _loggerProvider = loggerProvider;
+    if (endpoint) {
+      const tracerProvider = new BasicTracerProvider({
+        resource: resource,
+        spanProcessors: [
+          new BatchSpanProcessor(
+            new OTLPTraceExporter({
+              url: `${endpoint}/v1/traces`,
+              headers: headers,
+              timeoutMillis: 5000,
+            }),
+          ),
+        ],
+      });
+      trace.setGlobalTracerProvider(tracerProvider);
+      _tracerProvider = tracerProvider;
+      _tracer = trace.getTracer("broods-harness");
 
-    _tracer = trace.getTracer("broods-harness");
+      const logExporter = new OTLPLogExporter({
+        url: `${endpoint}/v1/logs`,
+        headers: headers,
+        timeoutMillis: 5000,
+      });
+      const loggerProvider = new LoggerProvider({
+        resource: resource,
+        processors: [new BatchLogRecordProcessor({ exporter: logExporter })],
+      });
+      logs.setGlobalLoggerProvider(loggerProvider);
+      _loggerProvider = loggerProvider;
+    }
 
-    // AI SDK v7 no longer emits OTel spans on its own: span collection moved to
-    // the @ai-sdk/otel integration. Register it against our tracer so SDK-native
-    // gen-ai spans (generateText/streamText/tool execution) export to Tempo
-    // alongside the harness's task/model.step/tool.call spans.
-    registerTelemetry(new OpenTelemetry({ tracer: _tracer }));
+    let aiTracer = _tracer;
+    if (posthogProjectToken && posthogHost) {
+      const aiSpanProcessors = [
+        new PostHogSpanProcessor({
+          projectToken: posthogProjectToken,
+          host: posthogHost,
+        }),
+        ...(endpoint
+          ? [
+              new BatchSpanProcessor(
+                new OTLPTraceExporter({
+                  url: `${endpoint}/v1/traces`,
+                  headers: headers,
+                  timeoutMillis: 5000,
+                }),
+              ),
+            ]
+          : []),
+      ];
+      _posthogTracerProvider = new BasicTracerProvider({
+        resource: resource,
+        spanProcessors: aiSpanProcessors,
+      });
+      aiTracer = _posthogTracerProvider.getTracer("broods-ai");
+
+      const posthogLogExporter = new OTLPLogExporter({
+        url: `${posthogHost.replace(/\/+$/, "")}/i/v1/logs`,
+        headers: { Authorization: `Bearer ${posthogProjectToken}` },
+        timeoutMillis: 5000,
+      });
+      _posthogLoggerProvider = new LoggerProvider({
+        resource: resource,
+        processors: [
+          new BatchLogRecordProcessor({ exporter: posthogLogExporter }),
+        ],
+      });
+      emitPostHogLog("PostHog log export initialized", {
+        integration: "posthog_logs",
+      });
+    }
+
+    if (!aiTracer) return;
+
+    // AI SDK v7 uses this integration to produce gen-ai spans. Runtime context
+    // adds the requester and conversation grouping that AI Observability needs.
+    registerTelemetry(
+      new OpenTelemetry({
+        tracer: aiTracer,
+        enrichSpan: ({ runtimeContext }) => {
+          const context = getObservabilityContext();
+
+          return {
+            environment:
+              typeof runtimeContext?.properties === "object" &&
+              runtimeContext.properties !== null &&
+              "environment" in runtimeContext.properties &&
+              typeof runtimeContext.properties.environment === "string"
+                ? runtimeContext.properties.environment
+                : undefined,
+            "posthog.distinct_id":
+              typeof runtimeContext?.distinctId === "string"
+                ? runtimeContext.distinctId
+                : context?.posthogDistinctId,
+            $ai_session_id:
+              typeof runtimeContext?.sessionId === "string"
+                ? runtimeContext.sessionId
+                : context
+                  ? aiSessionId(context.conversationKey)
+                  : undefined,
+            $ai_trace_name:
+              typeof runtimeContext?.traceName === "string"
+                ? runtimeContext.traceName
+                : undefined,
+          };
+        },
+      }),
+    );
   } catch {
     // Best-effort: a failed init leaves the global API noop.
   }
+}
+
+/** Converts an arbitrary conversation key into the allowed AI session-id alphabet. */
+export function aiSessionId(conversationKey: string): string {
+  return Buffer.from(conversationKey).toString("base64url");
 }
 
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */

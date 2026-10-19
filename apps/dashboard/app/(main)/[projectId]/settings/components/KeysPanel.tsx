@@ -59,6 +59,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
+import posthog from "posthog-js";
 import { useState } from "react";
 import { relativeTime } from "../../sandbox/components/sandboxFormat";
 
@@ -484,6 +485,9 @@ function NewKeyDialog({
         stageId: stage._id,
         name: name.trim(),
         description: description.trim() || undefined,
+      });
+      posthog.capture("api_key_created", {
+        has_description: Boolean(description.trim()),
       });
       onCreated(result.token, stage.name);
     });
