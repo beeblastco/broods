@@ -66,7 +66,7 @@ export interface OpenAiSdkHarnessSessionOptions {
 
 /** A native harness turn ready to stream, from `prepareHarnessTurn`. */
 export interface HarnessTurn {
-  /** Stops the lease monitor and destroys the native session, once; for a turn that fails before its stream. */
+  /** Stops the lease monitor and destroys the native session; for a turn that fails before its stream. */
   dispose: () => Promise<void>;
   /** The environment text the model reads with the turn. */
   environment: string;
@@ -207,10 +207,13 @@ export async function prepareHarnessTurn(
   options: PrepareHarnessTurnOptions,
 ): Promise<HarnessTurn> {
   const { agentConfig, session, turnContext } = options;
+  if (!agentConfig.harness) {
+    throw new Error("a native harness turn needs config.harness");
+  }
+  const harnessType = agentConfig.harness.type;
   // No step boundary carries the turn's input on this path: store it now.
   await session.flushPendingStoredEvents();
   await options.applySteering();
-  const harnessType = agentConfig.harness!.type;
   const stored = await session.loadHarnessSession();
   const reservationKey = harnessReservationKey({
     agentReservationKey: options.agentReservationKey,
@@ -274,10 +277,7 @@ export async function prepareHarnessTurn(
     options.abortController,
     options.stopMessage,
   );
-  let disposed = false;
   const dispose = async (): Promise<void> => {
-    if (disposed) return;
-    disposed = true;
     stopLeaseMonitor();
     await nativeSession.destroy().catch(() => {});
   };

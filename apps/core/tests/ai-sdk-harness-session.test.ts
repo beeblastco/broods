@@ -1,4 +1,6 @@
+import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import { describe, expect, it, mock, spyOn } from "bun:test";
+import type { AiSdkHarnessRuntime } from "../src/harness/ai-sdk-harness/runtime.ts";
 import {
   harnessReservationKey,
   openAiSdkHarnessSession,
@@ -139,43 +141,50 @@ describe("prepareHarnessTurn", () => {
     expect(calls).toEqual(["flush", "steering", "load", "createAgent"]);
   });
 
-  it("stops the lease monitor and destroys the session exactly once", async () => {
+  it("stops its own lease monitor and destroys the session", async () => {
     const destroy = mock(async (): Promise<void> => {});
+    const setTimer = spyOn(globalThis, "setInterval");
     const clearTimer = spyOn(globalThis, "clearInterval");
     try {
       const turn = await prepareHarnessTurn(
         turnOptions({
-          openSession: async () => ({ destroy: destroy }) as never,
+          openSession: async (): Promise<HarnessAgentSession> =>
+            ({ destroy: destroy }) as never,
         }),
       );
-      await turn.dispose();
+      const monitor = setTimer.mock.results.at(-1)?.value;
       await turn.dispose();
 
       expect(destroy).toHaveBeenCalledTimes(1);
-      expect(clearTimer).toHaveBeenCalledTimes(1);
+      expect(clearTimer).toHaveBeenCalledWith(monitor);
     } finally {
+      setTimer.mockRestore();
       clearTimer.mockRestore();
     }
   });
 
   it("leaves the occupancy release to the caller when the session fails to open", async () => {
     let release: (() => void) | undefined;
-    const failed = prepareHarnessTurn(
-      turnOptions({
-        onOccupied: (handed): void => {
-          release = handed;
-        },
-        openSession: async (): Promise<never> => {
-          throw new Error("machine down");
-        },
-      }),
-    );
+    try {
+      const failed = prepareHarnessTurn(
+        turnOptions({
+          onOccupied: (handed): void => {
+            release = handed;
+          },
+          openSession: async (): Promise<never> => {
+            throw new Error("machine down");
+          },
+        }),
+      );
 
-    expect(failed).rejects.toThrow("machine down");
-    await failed.catch((): void => {});
-    expect(sandboxNeighbours("machine-key", "other-event")).toHaveLength(1);
-    release?.();
-    expect(sandboxNeighbours("machine-key", "other-event")).toEqual([]);
+      expect(failed).rejects.toThrow("machine down");
+      await failed.catch((): void => {});
+      expect(sandboxNeighbours("machine-key", "other-event")).toHaveLength(1);
+      release?.();
+      expect(sandboxNeighbours("machine-key", "other-event")).toEqual([]);
+    } finally {
+      release?.();
+    }
   });
 
   function turnOptions(
@@ -191,7 +200,7 @@ describe("prepareHarnessTurn", () => {
         calls.push("steering");
       },
       configuredApprovals: new Map(),
-      createAgent: () => {
+      createAgent: (): AiSdkHarnessRuntime => {
         calls.push("createAgent");
 
         return { agent: {}, reservationKey: "machine-key" } as never;
@@ -199,13 +208,14 @@ describe("prepareHarnessTurn", () => {
       isolated: false,
       metadata: { traceId: "trace", taskId: "event" },
       onOccupied: (release): void => release(),
-      openSession: async () => ({ destroy: async () => {} }) as never,
+      openSession: async (): Promise<HarnessAgentSession> =>
+        ({ destroy: async (): Promise<void> => {} }) as never,
       sandbox: { name: "default", sandbox: { provider: "lambda" } } as never,
       session: {
         agentId: "agent",
         conversationKey: "conversation",
         eventId: "event",
-        environmentText: () => "<environment>",
+        environmentText: (): string => "<environment>",
         flushPendingStoredEvents: async (): Promise<void> => {
           calls.push("flush");
         },
@@ -214,7 +224,7 @@ describe("prepareHarnessTurn", () => {
 
           return null;
         },
-        loadHarnessSkills: async () => [],
+        loadHarnessSkills: async (): Promise<never[]> => [],
       } as never,
       stopMessage: "stopped",
       tools: {},
