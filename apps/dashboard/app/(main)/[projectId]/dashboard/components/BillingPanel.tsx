@@ -487,8 +487,8 @@ function NoticeBar({
   );
 }
 
-// Only a state worth a word: a paid plan in good standing shows none, and
-// who pays is plain text in the summary.
+// Only a state worth a word: a paid plan in good standing and a free one show
+// none, and who pays is plain text in the summary.
 function PlanBadge({
   selfHosted,
   status,
@@ -498,12 +498,11 @@ function PlanBadge({
 }): React.JSX.Element | null {
   if (selfHosted) return <Badge variant="secondary">Unlimited</Badge>;
   if (status === "trialing") return <Badge variant="info">Trial</Badge>;
-  if (status === "active") return null;
   if (status && PAYMENT_DUE_STATUSES.has(status)) {
     return <Badge variant="destructive">Payment due</Badge>;
   }
 
-  return <Badge variant="secondary">Free</Badge>;
+  return null;
 }
 
 // Plan name, status, what it costs and when it renews or resets, and whose

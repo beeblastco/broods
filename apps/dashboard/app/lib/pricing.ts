@@ -3,10 +3,6 @@ import {
   PRO_INCLUDED_DEVELOPER_SEATS,
   UNIT_PRICE_EUR,
 } from "@broods/convex/model/orgBilling";
-import type { VariantProps } from "class-variance-authority";
-
-import type { badgeVariants } from "@/app/components/ui/badge";
-
 /** Plan tier as stored on the user; the Convex schema validator owns the union. */
 export type PlanTier = Doc<"users">["plan"];
 
@@ -15,7 +11,6 @@ export interface PlanConfig {
   label: string;
   description: string;
   order: number;
-  badgeVariant: NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
 }
 
 /** Tier shown while the user row is still loading. */
@@ -27,14 +22,12 @@ export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
     label: "Hobby",
     description: "Free tier for personal projects",
     order: 0,
-    badgeVariant: "secondary",
   },
   pro: {
     key: "pro",
     label: "Pro",
     description: "For teams and advanced workloads",
     order: 1,
-    badgeVariant: "warning",
   },
 };
 
