@@ -87,6 +87,12 @@ the suite the same way. Only the ceilings catch that; keep them honest.
   ratio is a median and a mixed file bends it.
 - A `FASTER` result is a prompt to re-record, so the next regression is measured
   against the gain rather than the old number.
+- A case whose delta sits near its allowance on green runs, at a low spread, has
+  a stale baseline: features crept in under the allowance one PR at a time.
+  Find the PRs that added the cost first and name them in the re-baseline PR;
+  only cost that is wanted gets absorbed. Then re-baseline from recent runner
+  numbers (measured divided by the run's machine ratio, median over many runs),
+  not by widening its allowance.
 - `bundle-budgets.json` follows the same rules for payload sizes, with a 10%
   growth allowance and a 1.5x ceiling.
 
