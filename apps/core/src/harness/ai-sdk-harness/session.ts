@@ -8,22 +8,42 @@ import {
   type HarnessAgentResumeSessionState,
   type HarnessAgentSession,
 } from "@ai-sdk/harness/agent";
-import type { SandboxExecutorConfig } from "../sandbox/types.ts";
-import { isSandboxGoneError } from "../sandbox/utils.ts";
+import type { ToolSet } from "ai";
+import {
+  formatSandboxStatus,
+  occupySandbox,
+  sandboxNeighbours,
+  type SandboxUsage,
+} from "../sandbox/live-status.ts";
+import {
+  configuredSandboxSpecs,
+  isSandboxGoneError,
+} from "../sandbox/utils.ts";
 import type {
   ConversationIngressEvent,
   Session,
   StoredHarnessSession,
+  TurnContextSnapshot,
 } from "../session.ts";
 import { extractText } from "../../shared/channels.ts";
+import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { logInfo, logWarn } from "../../shared/log.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
+import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 import {
   harnessSessionParking,
   harnessSharesSandbox,
   type AiSdkHarnessType,
 } from "./adapters/index.ts";
+import type {
+  AiSdkHarnessRuntime,
+  createConfiguredHarnessAgent,
+} from "./runtime.ts";
 
 const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
+// A machine only one conversation uses is released after a day idle instead of
+// the default week, so abandoned subagent tasks stop holding machines.
+const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
 // Harness types whose runtime refused a mid-turn message in this process.
 export const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
 
@@ -42,6 +62,44 @@ export interface OpenAiSdkHarnessSessionOptions {
   agent: HarnessAgent;
   stored: StoredHarnessSession | null;
   type: AiSdkHarnessType;
+}
+
+/** A native harness turn ready to stream, from `prepareHarnessTurn`. */
+export interface HarnessTurn {
+  /** Stops the lease monitor and destroys the native session; for a turn that fails before its stream. */
+  dispose: () => Promise<void>;
+  /** The environment text the model reads with the turn. */
+  environment: string;
+  nativeSession: HarnessAgentSession;
+  /** Stored with the checkpoint so the next turn resumes on the same machine. */
+  reservationKey: string;
+  runtime: AiSdkHarnessRuntime;
+  stopLeaseMonitor: () => void;
+}
+
+export interface PrepareHarnessTurnOptions {
+  abortController: AbortController;
+  agentConfig: AgentConfig;
+  /** The agent-level key its first sandbox reserves on, when it reserves one. */
+  agentReservationKey: string | undefined;
+  /** Drains steering queued before the turn into `turnContext`. */
+  applySteering: () => Promise<void>;
+  /** Tool names the agent config sends to a person for approval. */
+  configuredApprovals: ReadonlyMap<string, true>;
+  /** The run loop passes the entrypoint's agent factory and session opener. */
+  createAgent: typeof createConfiguredHarnessAgent;
+  /** The task asked for a machine of its own. */
+  isolated: boolean;
+  metadata: SandboxRunMetadata;
+  /** Takes the machine occupancy release; the caller runs it when the run finalizes, also when setup throws. */
+  onOccupied: (release: () => void) => void;
+  openSession: typeof openAiSdkHarnessSession;
+  /** The agent's first sandbox, which the harness runs on. */
+  sandbox: ResolvedAgentSandbox | undefined;
+  session: Session;
+  stopMessage: string;
+  tools: ToolSet;
+  turnContext: TurnContextSnapshot;
 }
 
 export interface ParkAiSdkHarnessSessionOptions {
@@ -140,6 +198,118 @@ export async function parkAiSdkHarnessSession(
 }
 
 /**
+ * Sets up a native harness turn: stores the pending input, applies steering,
+ * loads the stored session, builds the agent on its machine and opens the
+ * session. Called by the run loop in `harness.ts`, which owns finalization and
+ * the occupancy release.
+ */
+export async function prepareHarnessTurn(
+  options: PrepareHarnessTurnOptions,
+): Promise<HarnessTurn> {
+  const { agentConfig, session, turnContext } = options;
+  if (!agentConfig.harness) {
+    throw new Error("a native harness turn needs config.harness");
+  }
+  const harnessType = agentConfig.harness.type;
+  // No step boundary carries the turn's input on this path: store it now.
+  await session.flushPendingStoredEvents();
+  await options.applySteering();
+  const stored = await session.loadHarnessSession();
+  const reservationKey = harnessReservationKey({
+    agentReservationKey: options.agentReservationKey,
+    conversationKey: session.conversationKey,
+    isolated: options.isolated,
+    stored: stored,
+    type: harnessType,
+  });
+  const shared = reservationKey !== session.conversationKey;
+  const sandbox = requireHarnessSandbox(options.sandbox);
+  const compute = sandbox.sandbox;
+  let usage: SandboxUsage | undefined;
+  const runtime = options.createAgent({
+    agentConfig: agentConfig,
+    compute:
+      shared || !compute.controlPlane
+        ? compute
+        : {
+            ...compute,
+            controlPlane: {
+              ...compute.controlPlane,
+              releaseAfterIdleSeconds: ISOLATED_SANDBOX_RELEASE_SECONDS,
+            },
+          },
+    id: session.agentId,
+    instructions: turnContext.system
+      .map((message) => message.content)
+      .join("\n\n"),
+    metadata: options.metadata,
+    onUsage: (reported): void => {
+      usage = reported;
+    },
+    reservationKey: reservationKey,
+    shared: shared,
+    skills: await session.loadHarnessSkills(),
+    toolApproval:
+      options.configuredApprovals.size > 0
+        ? Object.fromEntries(
+            [...options.configuredApprovals.keys()].map((name) => [
+              name,
+              "user-approval" as const,
+            ]),
+          )
+        : undefined,
+    tools: options.tools,
+  });
+  options.onOccupied(
+    occupySandbox(runtime.reservationKey, session.eventId, {
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+    }),
+  );
+  const nativeSession = await options.openSession({
+    abortSignal: options.abortController.signal,
+    agent: runtime.agent,
+    stored: stored,
+    type: harnessType,
+  });
+  const stopLeaseMonitor = startHarnessLeaseMonitor(
+    session,
+    options.abortController,
+    options.stopMessage,
+  );
+  const dispose = async (): Promise<void> => {
+    stopLeaseMonitor();
+    await nativeSession.destroy().catch(() => {});
+  };
+  let environment: string;
+  try {
+    environment = session.environmentText(
+      formatSandboxStatus({
+        name: sandbox.name,
+        provider: compute.provider,
+        specs: configuredSandboxSpecs(compute),
+        state: "running",
+        shared: shared,
+        usage: usage,
+        neighbours: sandboxNeighbours(runtime.reservationKey, session.eventId),
+      }),
+    );
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
+
+  return {
+    dispose: dispose,
+    environment: environment,
+    nativeSession: nativeSession,
+    reservationKey: reservationKey,
+    runtime: runtime,
+    stopLeaseMonitor: stopLeaseMonitor,
+  };
+}
+
+/**
  * Saves steering that arrived during a HarnessAgent turn, then hands it to the
  * running turn, which takes it at its next safe input boundary. Only for
  * adapters that accept mid-turn messages; the rest get it before their next
@@ -185,9 +355,9 @@ export async function steerHarnessTurn(
 }
 
 /** The agent's first sandbox, which a harness run needs to run on. */
-export function requireHarnessSandbox(
-  sandbox: SandboxExecutorConfig | undefined,
-): SandboxExecutorConfig {
+function requireHarnessSandbox(
+  sandbox: ResolvedAgentSandbox | undefined,
+): ResolvedAgentSandbox {
   if (!sandbox) {
     throw new Error(
       "config.harness needs a sandbox to run on; list one first in config.sandboxes",
@@ -202,7 +372,7 @@ export function requireHarnessSandbox(
  * aborts the run on a stop, a lost lease or repeated renewal failures.
  * Returns the function that stops the monitor.
  */
-export function startHarnessLeaseMonitor(
+function startHarnessLeaseMonitor(
   session: Session,
   abortController: AbortController,
   stopMessage: string,
