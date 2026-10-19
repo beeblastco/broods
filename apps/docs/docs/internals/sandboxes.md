@@ -562,7 +562,7 @@ sequenceDiagram
   I->>I: restore disk, mkdir cwd, run script
   I-->>W: result, disk after the command
   opt persist and the disk changed
-    W->>R2: put, or delete when empty
+    W->>R2: conditional put (an empty object when the disk emptied)
   end
   W-->>E: SandboxExecResponse, duration measured here
 ```
