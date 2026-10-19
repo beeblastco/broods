@@ -12,12 +12,17 @@ import {
   LambdaClient,
   type InvokeWithResponseStreamResponseEvent,
 } from "@aws-sdk/client-lambda";
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import {
-  resetStorageForTests,
-  setStorageForTests,
-} from "../src/shared/storage.ts";
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  spyOn,
+} from "bun:test";
+import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import { getStorage } from "../src/shared/storage.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
 import { listMcpTools, setMcpForTests } from "../src/harness/mcp/client.ts";
 import {
@@ -42,26 +47,21 @@ const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
 // Every invoke meters usage, so the meter is stubbed for the whole file: the
 // real Convex one retries for 36 s on the shared waitUntil set and stalls any
 // later test file's drain.
+const meter = spyOn(getStorage().budgets, "record");
 beforeEach(() => {
   process.env.MCP_BATCH_WINDOW_MS = "10";
   process.env.MCP_BATCH_MAX = "8";
   recorded.length = 0;
-  setStorageForTests({
-    budgets: {
-      record: async (
-        accountId: string,
-        usage: unknown,
-        source: unknown,
-      ): Promise<void> => {
-        recorded.push({ accountId: accountId, usage: usage, source: source });
-      },
-    },
-  } as never);
+  meter.mockImplementation(async (accountId, usage, source): Promise<void> => {
+    recorded.push({ accountId: accountId, usage: usage, source: source });
+  });
 });
 afterEach(() => {
   setHostedMcpSendBatchForTests(null);
-  resetStorageForTests();
   process.env = { ...savedEnv };
+});
+afterAll(() => {
+  meter.mockRestore();
 });
 
 describe("hosted MCP fetch adapter", () => {
