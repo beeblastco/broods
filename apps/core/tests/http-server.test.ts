@@ -159,16 +159,19 @@ describe("waitUntil drain", () => {
     );
     waitUntil(Promise.reject(new Error("boom")));
 
-    const drained = drainInFlight().then(() => "drained" as const);
-    const raced = await Promise.race([
-      drained,
-      Bun.sleep(50).then(() => "pending" as const),
-    ]);
-    expect(raced).toBe("pending");
-    expect(afterDone).toBe(false);
-
+    let drained = false;
+    const drain = drainInFlight().then((): void => {
+      drained = true;
+    });
+    // Tracked work settles on microtasks alone, so one macrotask turn is enough
+    // for the drain to resolve if it were not waiting on `release`.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const early = { drained: drained, afterDone: afterDone };
+    // Released before asserting, so a failure here cannot leave the tracked
+    // promise in the shared set for later drains to wait on.
     release();
-    await drained;
+    await drain;
+    expect(early).toEqual({ drained: false, afterDone: false });
     expect(afterDone).toBe(true);
   });
 });
