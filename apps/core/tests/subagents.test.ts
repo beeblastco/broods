@@ -1637,6 +1637,106 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("fails a pending child still running past the bound and detaches it, so the next pass delivers it after the grace", async (): Promise<void> => {
+    const now = Date.now();
+    const minutes = (count: number): string =>
+      new Date(now - count * 60 * 1000).toISOString();
+    // Both parents and their pod died before any detach: the young child may
+    // still be running on its budget, the old one cannot be.
+    const rows: AsyncAgentResultRecord[] = [
+      {
+        ...lostRow("event_young"),
+        handback: "pending",
+        status: "processing",
+        response: undefined,
+        updatedAt: minutes(5),
+      },
+      {
+        ...lostRow("event_dead"),
+        handback: "pending",
+        status: "processing",
+        response: undefined,
+        updatedAt: minutes(40),
+      },
+    ];
+    const windows: Array<{ handback?: string; status: string }> = [];
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        handback?: string;
+        status: string;
+        updatedBefore: string;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => {
+        windows.push({ handback: options.handback, status: options.status });
+
+        return {
+          page: rows.filter(
+            (row): boolean =>
+              row.handback === options.handback &&
+              row.status === options.status &&
+              row.updatedAt < options.updatedBefore,
+          ),
+          cursor: "end",
+          isDone: true,
+        };
+      },
+    );
+    const observe = spyOn(
+      asyncAgentResults,
+      "markAsyncAgentHandback",
+    ).mockResolvedValue();
+    const record = spyOn(
+      asyncAgentResults,
+      "recordAsyncAgentResult",
+    ).mockResolvedValue();
+    const resumed: string[] = [];
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(
+        lostParent,
+        async (
+          _parent: unknown,
+          _taskId: string,
+          _message: UserModelMessage,
+          resultEventId: string,
+        ): Promise<SubagentResumeOutcome> => {
+          resumed.push(resultEventId);
+
+          return "queued";
+        },
+      );
+
+      // The pending window covers processing rows like the others.
+      expect(windows).toContainEqual({
+        handback: "pending",
+        status: "processing",
+      });
+      expect(record.mock.calls).toEqual([
+        [
+          lostRow("event_dead").eventId,
+          { status: "failed", error: expect.stringContaining("restarted") },
+          { onlyWhileProcessing: true },
+        ],
+      ]);
+      expect(observe.mock.calls).toEqual([
+        [lostRow("event_dead").eventId, "detached"],
+      ]);
+      expect(resumed).toEqual([]);
+    } finally {
+      pages.mockRestore();
+      observe.mockRestore();
+      record.mockRestore();
+    }
+  });
+
   it("gives up once on lost results no resume can deliver, and fails only a still-running dead child", async (): Promise<void> => {
     const otherAccountTask = createSubagentTaskId(
       scopedDirectEventId("account_2", "agent_parent", "event_parent"),

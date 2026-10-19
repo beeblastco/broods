@@ -1483,12 +1483,9 @@ export async function resumeLostSubagentResults(
     ranges.push(
       [handback, "completed", finishedBefore],
       [handback, "failed", finishedBefore],
+      // A child still running this long past its budget died with its pod.
+      [handback, "processing", abandonedBefore],
     );
-    // A child still running this long past its budget died with its pod. A
-    // pending row is never processing: the finish is what sets it.
-    if (handback !== "pending") {
-      ranges.push([handback, "processing", abandonedBefore]);
-    }
   }
   const held = new Map<string, UserModelMessage>();
   for (const [handback, status, updatedBefore] of ranges) {
@@ -1505,12 +1502,17 @@ export async function resumeLostSubagentResults(
       for (const row of result.page) {
         // A child listed still running died with its pod: its row is failed,
         // unless its outcome landed since, and a later pass tells the parent.
+        // Its parent run is gone too, so a pending row is detached: the sweep
+        // owns it, and delivers the failure after the grace, not another hold.
         if (row.status === "processing") {
           await recordAsyncAgentResult(
             row.eventId,
             { status: "failed", error: LOST_SUBAGENT_ERROR },
             { onlyWhileProcessing: true },
           );
+          if (handback === "pending") {
+            await markAsyncAgentHandback(row.eventId, "detached");
+          }
           continue;
         }
         // Counted: each one is a result a parent run dropped without a trace.

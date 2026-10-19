@@ -483,6 +483,7 @@ describe("runtime persistence", () => {
     const disabledId = await createActiveAccount(t);
     const rows: Array<[string, Id<"accounts">]> = [
       ["running", accountId],
+      ["orphan", accountId],
       ["unseen", accountId],
       ["seen", accountId],
       ["in-turn", accountId],
@@ -561,7 +562,9 @@ describe("runtime persistence", () => {
     expect(await listed("detached", "processing", soon)).toEqual(["running"]);
     // A finished row no run detached is the parent's until it stores it.
     expect(await listed("pending", "completed", soon)).toEqual(["in-turn"]);
-    expect(await listed("pending", "processing", soon)).toEqual([]);
+    // A child still running whose parent never detached it: once past the
+    // bound, it died with its pod and so did the parent's run.
+    expect(await listed("pending", "processing", soon)).toEqual(["orphan"]);
     expect(await listed(undefined, "completed", soon)).toEqual(["legacy"]);
     // Nothing written inside the grace before `updatedBefore` yet.
     expect(await listed("detached", "completed", Date.now() - 30_000)).toEqual(
@@ -573,6 +576,12 @@ describe("runtime persistence", () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
+    const row = async (
+      eventId: string,
+    ): Promise<{ handback?: string; observed?: boolean } | null> =>
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: eventId,
+      });
     for (const eventId of ["child", "plain"]) {
       await t.mutation(internal.runtime.createAsyncAgentResult, {
         eventId: eventId,
@@ -581,18 +590,20 @@ describe("runtime persistence", () => {
           ? { subagent: { parentConversationKey: conversationKey } }
           : {}),
       });
+      // Owed from the start: a child whose parent dies before any detach is
+      // the sweep's, not unseen until it expires.
+      if (eventId === "child") {
+        expect(await row("child")).toMatchObject({
+          status: "processing",
+          handback: "pending",
+        });
+      }
       await t.mutation(internal.runtime.updateAsyncAgentResult, {
         eventId: eventId,
         status: "completed",
         response: "answer",
       });
     }
-    const row = async (
-      eventId: string,
-    ): Promise<{ handback?: string; observed?: boolean } | null> =>
-      await t.query(internal.runtime.getAsyncAgentResult, {
-        eventId: eventId,
-      });
 
     expect(await row("child")).toMatchObject({ handback: "pending" });
     expect(await row("child")).not.toHaveProperty("observed");
@@ -675,13 +686,18 @@ describe("runtime persistence", () => {
       conversationKey: `acct:${accountId}:agent:child:api:legacy`,
       subagent: { parentConversationKey: conversationKeyFor(accountId) },
     });
-    // The old release wrote only `observed: false` when the parent stopped waiting.
+    // The old release created the row with no hand-back and wrote only
+    // `observed: false` when the parent stopped waiting.
     await t.run(async (ctx): Promise<void> => {
       const row = await ctx.db
         .query("runtimeAsyncAgentResults")
         .withIndex("by_eventId", (q) => q.eq("eventId", "legacy"))
         .unique();
-      await ctx.db.patch(row!._id, { observed: false });
+      await ctx.db.replace(row!._id, {
+        ...row!,
+        handback: undefined,
+        observed: false,
+      });
     });
     await t.mutation(internal.runtime.updateAsyncAgentResult, {
       eventId: "legacy",

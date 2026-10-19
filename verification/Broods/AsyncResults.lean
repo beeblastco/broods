@@ -21,8 +21,9 @@ with `observed` kept in step for one release. The parent's `get_subagent_status`
 (`markAsyncAgentHandback`, once the step that carries it is saved), its own append of
 the result (`insertConversationEvents`) and a late result's resume
 (`runtimeIngress.accept` with `resultEventId`) all store it, and the resume is admitted
-only while it is not stored, so the parent is told a result once. `pending`, which the child's finish writes, admits like unset: only the sweep
-reads it, past the parent's hold. A tool row's `handback` moves the same way: its
+only while it is not stored, so the parent is told a result once. `pending`, which the
+row carries from its creation, admits like unset: only the sweep reads it, past the
+parent's hold. A tool row's `handback` moves the same way: its
 settle writes `pending`, the parent's append, `async_status` and the continuation's
 admission (`accept` with `toolResultId`) store it, and `observe` here stands for either
 move of `observeAsyncToolResult`, which never touches the status the proofs are about.
@@ -224,8 +225,9 @@ def ToolRow.changes (row : ToolRow) : List ToolCall → Nat
     (if (row.update c).status == row.status then 0 else 1) + (row.update c).changes cs
 
 /-- `runtimeAsyncAgentResults.handback` on a subagent's row (`observed` beside it):
-unset or `pending`, `detached` (`observed: false`) once the parent stopped waiting on
-the child, `stored` (`observed: true`) once the parent has its result. -/
+`pending` from the row's creation (unset on a row the release before wrote), `detached`
+(`observed: false`) once the parent stopped waiting on the child, `stored`
+(`observed: true`) once the parent has its result. -/
 inductive Observed where
   | unset | waiting | seen
   deriving DecidableEq, Repr

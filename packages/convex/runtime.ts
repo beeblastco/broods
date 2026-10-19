@@ -421,7 +421,10 @@ export const clearConversation = internalMutation({
 });
 
 /**
- * Creates an idempotent processing row for async agent polling.
+ * Creates an idempotent processing row for async agent polling. A subagent's
+ * row starts its hand-back `pending`: the parent owes the result its write
+ * from the start, so a child whose parent and pod die before any detach is
+ * the recovery sweep's once no live run can hold it, not unseen for 7 days.
  * @returns whether a new result row was created
  */
 export const createAsyncAgentResult = internalMutation({
@@ -444,6 +447,7 @@ export const createAsyncAgentResult = internalMutation({
     await ctx.db.insert("runtimeAsyncAgentResults", {
       accountId: accountId,
       ...args,
+      ...(args.subagent ? { handback: "pending" as const } : {}),
       status: "processing",
       createdAt: now,
       updatedAt: now,
@@ -679,11 +683,11 @@ export async function markAsyncToolResultSeen(
 
 /**
  * Patches the polling row for `eventId` with a run's outcome. A subagent's
- * row that finishes starts its hand-back `pending`: the parent owes it the
- * write until it stores it, unless the release before `handback` already
- * detached it (`observed: false`): that row is the sweep's at once. A
- * hand-back already `detached` or `stored` keeps that state; the outcome
- * never moves it back.
+ * row created before hand-backs started at creation has none yet: its finish
+ * starts it `pending`, the parent owing it the write until it stores it,
+ * unless the release before `handback` already detached it (`observed:
+ * false`): that row is the sweep's at once. A hand-back already set keeps its
+ * state; the outcome never moves it back.
  * @returns false when the row no longer exists
  */
 export async function writeAsyncAgentResult(
