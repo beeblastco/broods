@@ -38,12 +38,29 @@ interface SentBatch {
 }
 
 const savedEnv = { ...process.env };
+const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
+// Every invoke meters usage, so the meter is stubbed for the whole file: the
+// real Convex one retries for 36 s on the shared waitUntil set and stalls any
+// later test file's drain.
 beforeEach(() => {
   process.env.MCP_BATCH_WINDOW_MS = "10";
   process.env.MCP_BATCH_MAX = "8";
+  recorded.length = 0;
+  setStorageForTests({
+    budgets: {
+      record: async (
+        accountId: string,
+        usage: unknown,
+        source: unknown,
+      ): Promise<void> => {
+        recorded.push({ accountId: accountId, usage: usage, source: source });
+      },
+    },
+  } as never);
 });
 afterEach(() => {
   setHostedMcpSendBatchForTests(null);
+  resetStorageForTests();
   process.env = { ...savedEnv };
 });
 
@@ -175,29 +192,12 @@ describe("hosted MCP invoke", () => {
 });
 
 describe("hosted MCP metering", () => {
-  const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
-
   beforeEach(() => {
-    recorded.length = 0;
     delete process.env.AWS_PROFILE;
     process.env.AWS_REGION = "eu-west-1";
     process.env.AWS_ACCESS_KEY_ID = "test";
     process.env.AWS_SECRET_ACCESS_KEY = "test";
     process.env.TOOL_BUNDLES_BUCKET_NAME = "bundles";
-    setStorageForTests({
-      budgets: {
-        record: async (
-          accountId: string,
-          usage: unknown,
-          source: unknown,
-        ): Promise<void> => {
-          recorded.push({ accountId: accountId, usage: usage, source: source });
-        },
-      },
-    } as never);
-  });
-  afterEach(() => {
-    resetStorageForTests();
   });
 
   it("charges one request for an invoke Lambda accepted", async () => {
