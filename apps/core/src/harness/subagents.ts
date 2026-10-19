@@ -98,10 +98,11 @@ const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 // What the parent model reads for a child it stopped waiting for.
 const STILL_RUNNING_NOTE =
   "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
-// How long the run that detached a child has to deliver its result before the
+// How long the run that detached a result has to deliver it before the
 // recovery sweep takes it over, and the age past which nobody waits for it.
-const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
-const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// The async tool sweep (`async-tools.ts`) runs on the same windows.
+export const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
+export const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // Rows the release before `handback` detached carry only `observed: false`.
 // The sweep lists them beside the hand-back windows for one release; drop
 // `undefined` from this list next release.
@@ -121,7 +122,7 @@ const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
 // boundary or in its last write, within one run budget (a worker slot's, or
 // a child's when the parent is itself a subagent) plus wind-down, and a
 // parent that stopped waiting wrote `detached`, swept after the grace.
-const PENDING_HANDBACK_MAX_AGE_MS =
+export const PENDING_HANDBACK_MAX_AGE_MS =
   Math.max(SUBAGENT_BUDGET_MS, WORKER_TIMEOUT_BUDGET_MS) +
   DEADLINE_WIND_DOWN_MS +
   LATE_RESULT_GRACE_MS;

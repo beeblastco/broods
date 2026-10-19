@@ -19,7 +19,7 @@ import {
   getAsyncToolResult,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
-  markAsyncToolResultObserved,
+  markAsyncToolHandback,
 } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type {
@@ -100,11 +100,11 @@ The result is delivered back into the conversation automatically when it finishe
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // The model is consuming the terminal result here, so mark it observed
+        // The model is consuming the terminal result here, so mark it stored
         // (awaited, since the resume gate reads this row the moment the turn ends)
         // to stop the auto-delivery resume from injecting the same answer again.
         if (record.status === "completed") {
-          await markAsyncToolResultObserved(statusId);
+          await markAsyncToolHandback(statusId, "stored");
           // For a settled background job, `logs` returns just the captured output
           // (mirroring the live tail) instead of the whole settled record.
           const settledLogs =
@@ -119,7 +119,7 @@ The result is delivered back into the conversation automatically when it finishe
           };
         }
         if (record.status === "failed") {
-          await markAsyncToolResultObserved(statusId);
+          await markAsyncToolHandback(statusId, "stored");
 
           return {
             status: record.status,
@@ -263,7 +263,7 @@ async function settleTerminalJob(
     });
   }
   // Consumed through the poll, so the auto-delivery resume must not re-inject it.
-  await markAsyncToolResultObserved(resultId);
+  await markAsyncToolHandback(resultId, "stored");
 
   return {
     status: status.state,

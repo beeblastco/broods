@@ -1,5 +1,6 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
+import { asyncToolHandback } from "./async-tool-handback.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { authFailures } from "./auth-failures.ts";
 import { autoCompaction } from "./auto-compaction.ts";
@@ -59,6 +60,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentStop,
   subagentModel,
   subagentResume,
+  asyncToolHandback,
   autoCompaction,
   machineSandbox,
   bashTimeout,

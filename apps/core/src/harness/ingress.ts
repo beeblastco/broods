@@ -221,6 +221,8 @@ export interface IngressCandidate {
   // A late subagent result's row: admitted only while the parent has not seen
   // that result, and marks it seen in the same transaction.
   resultEventId?: string;
+  // A settled async tool result's row, fenced the same way.
+  toolResultId?: string;
 }
 
 export interface AppliedIngress {

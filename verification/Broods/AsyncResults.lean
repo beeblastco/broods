@@ -22,7 +22,10 @@ with `observed` kept in step for one release. The parent's `get_subagent_status`
 and a late result's resume (`runtimeIngress.accept` with `resultEventId`) all store it,
 and the resume is admitted only while it is not stored, so the parent is told a result
 once. `pending`, which the child's finish writes, admits like unset: only the sweep
-reads it, past the parent's hold.
+reads it, past the parent's hold. A tool row's `handback` moves the same way: its
+settle writes `pending`, the parent's append, `async_status` and the continuation's
+admission (`accept` with `toolResultId`) store it, and `observe` here stands for either
+move of `observeAsyncToolResult`, which never touches the status the proofs are about.
 -/
 
 namespace Broods.AsyncResults
@@ -93,7 +96,8 @@ inductive ToolCall where
   /-- `markAsyncToolResultCompleted` / `Failed` / `settleAsyncToolResultFromCallback`,
   all with `onlyWhenProcessing: true`. -/
   | settle (s : ToolStatus) (reserved : Bool)
-  /-- `observeAsyncToolResult`: marks a finished row observed, status untouched. -/
+  /-- `observeAsyncToolResult`: moves a finished row's `handback` (`stored` or
+  `detached`), status untouched. -/
   | observe
   /-- `bindAsyncToolResultSandbox`. -/
   | bind

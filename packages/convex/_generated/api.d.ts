@@ -5525,6 +5525,7 @@ export declare const internal: {
         delivery?: any;
         error?: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         input: any;
         observed?: boolean;
         parentEventId: string;
@@ -5750,6 +5751,7 @@ export declare const internal: {
         delivery?: any;
         error?: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         input: any;
         observed?: boolean;
         parentEventId: string;
@@ -5842,6 +5844,55 @@ export declare const internal: {
         }>;
       }
     >;
+    listUnobservedAsyncToolResults: FunctionReference<
+      "query",
+      "internal",
+      {
+        cursor: string | null;
+        handback: "pending" | "detached";
+        status: "processing" | "completed" | "failed";
+        updatedAfter: string;
+        updatedBefore: string;
+      },
+      {
+        cursor: string;
+        isDone: boolean;
+        page: Array<{
+          _creationTime: number;
+          _id: Id<"runtimeAsyncToolResults">;
+          accountId: Id<"accounts">;
+          conversationKey: string;
+          createdAt: string;
+          delivery?: any;
+          error?: string;
+          expiresAt: number;
+          handback?: "pending" | "detached" | "stored";
+          input: any;
+          observed?: boolean;
+          parentEventId: string;
+          response?: any;
+          resultId: string;
+          sandbox?: {
+            externalId: string;
+            provider:
+              | "sandbox"
+              | "lambda"
+              | "e2b"
+              | "daytona"
+              | "vercel"
+              | "cloudflare"
+              | "worker"
+              | "machine"
+              | "custom";
+            reservationKey: string;
+          };
+          status: "processing" | "completed" | "failed";
+          toolCallId: string;
+          toolName: string;
+          updatedAt: string;
+        }>;
+      }
+    >;
     markAsyncAgentHandback: FunctionReference<
       "mutation",
       "internal",
@@ -5851,7 +5902,7 @@ export declare const internal: {
     observeAsyncToolResult: FunctionReference<
       "mutation",
       "internal",
-      { resultId: string },
+      { handback: "detached" | "stored"; resultId: string },
       null
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
@@ -5920,6 +5971,7 @@ export declare const internal: {
         delivery?: any;
         error?: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         input: any;
         observed?: boolean;
         parentEventId: string;
@@ -5986,6 +6038,7 @@ export declare const internal: {
         runId: string;
         sizeBytes: number;
         statusTtlMs: number;
+        toolResultId?: string;
       },
       {
         eventId?: string;

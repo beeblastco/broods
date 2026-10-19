@@ -1370,7 +1370,11 @@ export const runtimeAsyncToolResultsFields = {
   error: v.optional(v.string()),
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
+  // True once the model read the result with async_status. Read beside
+  // `handback` for one release, for rows written before it.
   observed: v.optional(v.boolean()),
+  // Set once the row finishes; see `handbackValidator`.
+  handback: v.optional(handbackValidator),
   // Set once the launch reports which machine took the job. A settle after the
   // reservation stopped naming it fails the row instead.
   sandbox: v.optional(reservedSandboxValidator),
@@ -1898,6 +1902,11 @@ export default defineSchema({
       "conversationKey",
       "toolName",
       "status",
+    ])
+    .index("by_handback_and_status_and_updatedAt", [
+      "handback",
+      "status",
+      "updatedAt",
     ])
     .index("by_expiresAt", ["expiresAt"]),
   sandboxReservations: defineTable(sandboxReservationsFields)
