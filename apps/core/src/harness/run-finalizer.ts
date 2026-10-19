@@ -80,7 +80,8 @@ export interface RunFinalizerInputs {
 export interface RunFinalizer {
   /**
    * Closes open spans and the root span, then writes task usage. A call after
-   * the first ignores its arguments and resolves when the first finishes.
+   * the first ignores its arguments, waits for the first, and never rejects:
+   * only the first caller sees a failed finalization.
    */
   finalize: (
     status: RunStatus,
@@ -101,7 +102,15 @@ export function createRunFinalizer(inputs: RunFinalizerInputs): RunFinalizer {
 
   return {
     finalize: (status, toolCallCount, durationMs, error): Promise<void> => {
-      settling ??= settleRun(inputs, status, toolCallCount, durationMs, error);
+      if (settling) return settling.catch((): void => {});
+      // Marked started before the settle runs, as its synchronous part
+      // (release, span end, publish) must never see the run unsettled.
+      const first = Promise.withResolvers<void>();
+      settling = first.promise;
+      void settleRun(inputs, status, toolCallCount, durationMs, error).then(
+        first.resolve,
+        first.reject,
+      );
 
       return settling;
     },
