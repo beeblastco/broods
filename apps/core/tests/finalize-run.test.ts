@@ -18,15 +18,18 @@ import {
   setObservabilityContext,
 } from "../src/shared/otel.ts";
 import type { TaskUsageInput } from "../src/shared/storage.ts";
-import { createRunSpanTracker } from "../src/harness/run-spans.ts";
+import type { RunOpenWork } from "../src/harness/questions.ts";
 import {
   createRunFinalizer,
+  type RunFinalizer,
+  type RunFinalizerInputs,
+} from "../src/harness/run-finalizer.ts";
+import { createRunSpanTracker } from "../src/harness/run-spans.ts";
+import {
   createSandboxCpuLedger,
   createStepTimingTracker,
   createTaskTotals,
   usageTokenTotals,
-  type RunFinalizer,
-  type RunFinalizerInputs,
   type UsageTokenTotals,
 } from "../src/harness/usage-metering.ts";
 
@@ -45,9 +48,11 @@ interface Recorded {
   usageTraceIds: (string | undefined)[];
   /** OTel spans already finished when the root row was published. */
   finishedAtPublish: number[];
+  /** What the loop's root attributes read when the finalizer asks. */
+  rootAttributes: Record<string, string>;
 }
 
-beforeEach(() => {
+beforeEach((): void => {
   trace.disable();
   trace.setGlobalTracerProvider(
     new BasicTracerProvider({
@@ -63,7 +68,7 @@ afterEach((): void => {
   setObservabilityContext(null);
 });
 
-it("settles once even when finalize is called twice", async () => {
+it("settles once even when finalize is called twice", async (): Promise<void> => {
   const recorded = emptyRecorded();
   const { finalizer } = runFinalizer(recorded);
 
@@ -88,12 +93,14 @@ it("settles once even when finalize is called twice", async () => {
   ]);
 });
 
-it("records usage and the root span from the task totals and the sandbox CPU ledger", async () => {
+it("records usage and the root span from the task totals and the sandbox CPU ledger", async (): Promise<void> => {
   const recorded = emptyRecorded();
   const { finalizer, inputs } = runFinalizer(recorded);
   inputs.taskTotals.addStep(0, tokens(100, 20, 5, 3), 0);
   inputs.taskTotals.addStep(1, tokens(150, 30, 0, 0), 7);
   inputs.sandboxCpu.record({ type: "lambda", role: "agent", cpuUsec: 4_000 });
+  // The loop keeps changing the root's attributes after it builds the finalizer.
+  recorded.rootAttributes = { "task.tools": "bash,read" };
 
   await finalizer.finalize("completed", 3, 1_500);
 
@@ -129,7 +136,7 @@ it("records usage and the root span from the task totals and the sandbox CPU led
   expect(root?.status).toBe("ok");
   expect(root?.endTimeMs).toBe(STARTED_AT + 1_500);
   expect(root?.attributes).toMatchObject({
-    "task.input": "x".repeat(500),
+    "task.tools": "bash,read",
     "task.state": "completed",
     "agent.step_count": 2,
     "agent.tool_call_count": 3,
@@ -139,7 +146,7 @@ it("records usage and the root span from the task totals and the sandbox CPU led
   });
 });
 
-it("closes spans still open through the tracker with the run's redacted error", async () => {
+it("closes spans still open through the tracker with the run's redacted error", async (): Promise<void> => {
   const recorded = emptyRecorded();
   const { finalizer, spans } = runFinalizer(recorded);
   const step = spans.open("model.step", 0, STARTED_AT + 10, undefined, {});
@@ -157,7 +164,7 @@ it("closes spans still open through the tracker with the run's redacted error", 
   expect(root?.error).toBe("model refused");
 });
 
-it("ends the root span, publishes it and writes usage in the run's context, then restores the context last", async () => {
+it("ends the root span, publishes it and writes usage in the run's context, then restores the context last", async (): Promise<void> => {
   const recorded = emptyRecorded();
   const { finalizer } = runFinalizer(recorded);
   setObservabilityContext({
@@ -188,6 +195,7 @@ function emptyRecorded(): Recorded {
     usage: [],
     usageTraceIds: [],
     finishedAtPublish: [],
+    rootAttributes: {},
   };
 }
 
@@ -241,7 +249,7 @@ function runFinalizer(recorded: Recorded): {
       kind: "task",
       startTimeMs: STARTED_AT,
     },
-    rootAttributes: () => ({ "task.input": "x".repeat(500) }),
+    rootAttributes: (): Record<string, string> => recorded.rootAttributes,
     modelProvider: "anthropic",
     modelId: "claude-haiku-5-5",
     taskInput: "x".repeat(500),
@@ -250,19 +258,19 @@ function runFinalizer(recorded: Recorded): {
     stepTiming: createStepTimingTracker(serialize),
     taskTotals: createTaskTotals(),
     sandboxCpu: createSandboxCpuLedger(),
-    openWork: () => Promise.resolve({ questions: [] }),
+    openWork: (): Promise<RunOpenWork> => Promise.resolve({ questions: [] }),
     publish: publish,
-    recordUsage: (input) => {
+    recordUsage: (input): Promise<void> => {
       recorded.events.push("usage");
       recorded.usage.push(input);
       recorded.usageTraceIds.push(getObservabilityContext()?.traceId);
 
       return Promise.resolve();
     },
-    release: () => {
+    release: (): void => {
       recorded.events.push("release");
     },
-    restoreObservabilityContext: () => {
+    restoreObservabilityContext: (): void => {
       recorded.events.push("restore");
       setObservabilityContext(null);
     },

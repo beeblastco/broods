@@ -120,6 +120,7 @@ import {
 } from "./provider.ts";
 import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
+import { createRunFinalizer } from "./run-finalizer.ts";
 import { createRunSpanTracker } from "./run-spans.ts";
 import {
   stripEnvelopeFieldsFromMessages,
@@ -129,7 +130,11 @@ import {
 } from "./session.ts";
 import { rootEventId } from "./async-tool-result.ts";
 import { rehydrateStoredMedia } from "./channel-media.ts";
-import { openWorkAfterRun, type PendingQuestionSummary } from "./questions.ts";
+import {
+  openWorkAfterRun,
+  type PendingQuestionSummary,
+  type RunOpenWork,
+} from "./questions.ts";
 import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { createTools } from "./tools/index.ts";
@@ -141,7 +146,6 @@ import {
   type SubagentWatch,
 } from "./tools/utils.ts";
 import {
-  createRunFinalizer,
   createSandboxCpuLedger,
   createStepTimingTracker,
   createTaskTotals,
@@ -766,8 +770,8 @@ export async function runAgentLoop(
     stepTiming: stepTiming,
     taskTotals: taskTotals,
     sandboxCpu: sandboxCpu,
-    openWork: (status) =>
-      openWorkAfterRun(status, {
+    openWork: (): Promise<RunOpenWork> =>
+      openWorkAfterRun({
         conversationKey: session.conversationKey,
         awaitingApproval: approvalSummaries.length > 0,
         detachedResultIds: detachedResultIds,

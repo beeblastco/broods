@@ -192,14 +192,12 @@ export function openQuestion(
 /**
  * What a run that ended cleanly still waits on, the person first: an approval
  * or an open question needs them, while subagents, async tools and background
- * jobs settle by themselves. Empty when it failed or nothing is left open.
- * Read once by the run finalizer for the root span's closing state.
+ * jobs settle by themselves. Empty when nothing is left open. Read once by the
+ * run finalizer for the root span's closing state, never for a failed run.
  */
 export async function openWorkAfterRun(
-  status: "completed" | "failed",
   run: RunOpenWorkSources,
 ): Promise<RunOpenWork> {
-  if (status === "failed") return { questions: [] };
   if (run.awaitingApproval) {
     return { waitingOn: "approval", questions: [] };
   }
