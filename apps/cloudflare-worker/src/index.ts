@@ -20,6 +20,10 @@ const COMPATIBILITY_DATE = "2026-09-30";
 const SANDBOX_PATH = /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec)?$/;
 // Fetches one command may make once the sandbox has internet.
 const INTERNET_SUBREQUESTS = 50;
+// CPU the isolate spends on the disk around the command (gunzip before, pack
+// and gzip after), sized for a disk at the cap, so a short timeout on a big
+// disk does not kill the isolate before the command runs.
+const CODEC_CPU_MS = 5_000;
 // What an emptied disk is stored as, so the next write still has an etag to
 // condition on: R2 can delete unconditionally only.
 const EMPTY_DISK = new Uint8Array(0);
@@ -101,24 +105,24 @@ async function exec(
   request: WorkerExecRequest,
 ): Promise<Response> {
   const key = stateKey(id);
-  const before = request.persist ? await readState(env.STATE, key) : null;
-  const worker = env.LOADER.get(
-    `${id}:${request.enableInternet ? "internet" : "offline"}:${request.timeoutMs}`,
-    (): WorkerLoaderWorkerCode => ({
-      compatibilityDate: COMPATIBILITY_DATE,
-      compatibilityFlags: ["nodejs_compat"],
-      mainModule: "runtime.js",
-      modules: { "runtime.js": RUNTIME },
-      env: {},
-      ...(request.enableInternet ? {} : { globalOutbound: null }),
-      limits: {
-        cpuMs: request.timeoutMs,
-        subRequests: request.enableInternet ? INTERNET_SUBREQUESTS : 0,
-      },
-    }),
-  );
   const startedAt = Date.now();
   try {
+    const before = request.persist ? await readState(env.STATE, key) : null;
+    const worker = env.LOADER.get(
+      `${id}:${request.enableInternet ? "internet" : "offline"}:${request.timeoutMs}`,
+      (): WorkerLoaderWorkerCode => ({
+        compatibilityDate: COMPATIBILITY_DATE,
+        compatibilityFlags: ["nodejs_compat"],
+        mainModule: "runtime.js",
+        modules: { "runtime.js": RUNTIME },
+        env: {},
+        ...(request.enableInternet ? {} : { globalOutbound: null }),
+        limits: {
+          cpuMs: request.timeoutMs + CODEC_CPU_MS,
+          subRequests: request.enableInternet ? INTERNET_SUBREQUESTS : 0,
+        },
+      }),
+    );
     const answer = await worker
       .getEntrypoint<Runtime>("Runtime")
       .exec(request, before?.bytes ?? null);
