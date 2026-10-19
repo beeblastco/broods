@@ -4,17 +4,12 @@
  * attributes a retried stream start leaves on the span.
  */
 
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { createStepTimingTracker } from "../src/harness/usage-metering.ts";
-import * as log from "../src/shared/log.ts";
 
 const serialize = (value: unknown): string => JSON.stringify(value);
 
 describe("createStepTimingTracker", () => {
-  afterEach(() => {
-    mock.restore();
-  });
-
   it("splits a step into ttft, streaming and tool wait that sum to its duration", () => {
     const tracker = createStepTimingTracker(serialize);
     tracker.startStep(0, 1_000);
@@ -121,7 +116,7 @@ describe("createStepTimingTracker", () => {
     });
   });
 
-  it("files an attempt recorded with no active step on the next step that starts", () => {
+  it("drops an attempt recorded with no active step instead of filing it on a closed step", () => {
     const tracker = createStepTimingTracker(serialize);
     tracker.startStep(0, 1_000);
     tracker.closeStep(0, 1_500);
@@ -131,25 +126,7 @@ describe("createStepTimingTracker", () => {
     tracker.recordAttempt({ startedAt: 2_000 });
 
     expect(tracker.attemptAttributes(0)).toEqual({});
-    expect(tracker.closeStep(1, 2_500)).toEqual({
-      "model.attempts": 2,
-      "model.retry_wait_ms": 0,
-      "model.attempt_errors": serialize(["503 overloaded"]),
-    });
-  });
-
-  it("clear logs the error of an attempt no step took", () => {
-    const warn = spyOn(log, "logWarn").mockImplementation((): void => {});
-    const tracker = createStepTimingTracker(serialize);
-    tracker.recordAttempt({ startedAt: 500, error: "503 overloaded" });
-    tracker.clear();
-    tracker.clear();
-
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[1]).toEqual({
-      attempts: 1,
-      attemptErrors: serialize(["503 overloaded"]),
-    });
+    expect(tracker.attemptAttributes(1)).toEqual({ "model.attempts": 1 });
   });
 
   it("closeStep clears that step's state and leaves other steps alone", () => {
