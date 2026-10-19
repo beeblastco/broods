@@ -5,6 +5,7 @@ import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
+import { handbackValidator } from "./model/subagentResults";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:applySubscriptionInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -1325,7 +1326,10 @@ export const runtimeAsyncAgentResultsFields = {
   subagent: v.optional(subagentTaskValidator),
   // False once the parent stopped waiting on this subagent and has not seen its
   // result; true once it has, read with get_subagent_status or resumed with it.
+  // Read beside `handback` for one release, for rows written before it.
   observed: v.optional(v.boolean()),
+  // Set once a subagent's row finishes; see `handbackValidator`.
+  handback: v.optional(handbackValidator),
   status: v.union(
     v.literal("processing"),
     v.literal("awaiting_approval"),
@@ -1538,7 +1542,25 @@ export const usageMetersFields = {
   sandboxSnapshotGbMonths: v.optional(v.number()),
   /** GB stored at the month's latest snapshot, zero-byte ones included. */
   storageGb: v.optional(v.number()),
-  /** When the 80% warning went out; at most once per month. */
+  /** When the 80% warning went out, before `usagePools.warnedAt` took it over. */
+  warnedAt: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+/**
+ * The same usage summed over every account whose org one user owns, for one
+ * UTC calendar month: the pool the owner's plan caps are measured against
+ * (`model/usageMeter.ts`). Written together with each account's meter.
+ */
+export const usagePoolsFields = {
+  /** The paying user: `orgs.ownerAuthId` of every org drawing on the pool. */
+  ownerAuthId: v.string(),
+  /** "YYYY-MM", UTC. */
+  month: v.string(),
+  ...usageQuantityFields,
+  /** GB the owner's accounts hold at their latest snapshots, summed. */
+  storageGb: v.optional(v.number()),
+  /** When the 80% warning went out; at most once per owner per month. */
   warnedAt: v.optional(v.number()),
   updatedAt: v.number(),
 };
@@ -1851,6 +1873,11 @@ export default defineSchema({
       "observed",
       "status",
       "updatedAt",
+    ])
+    .index("by_handback_and_status_and_updatedAt", [
+      "handback",
+      "status",
+      "updatedAt",
     ]),
   runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
     .index("by_resultId", ["resultId"])
@@ -1898,6 +1925,10 @@ export default defineSchema({
     ]),
   usageMeters: defineTable(usageMetersFields).index("by_accountId_and_month", [
     "accountId",
+    "month",
+  ]),
+  usagePools: defineTable(usagePoolsFields).index("by_ownerAuthId_and_month", [
+    "ownerAuthId",
     "month",
   ]),
   usageDays: defineTable(usageDaysFields).index("by_accountId_and_day", [

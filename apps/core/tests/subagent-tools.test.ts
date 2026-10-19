@@ -162,7 +162,7 @@ it("marks a detached child's result seen at read, and a failed mark keeps the re
     accountId: ACCOUNT_ID,
     eventId: childEventId,
     conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "late"),
-    observed: false,
+    handback: "detached",
     status: "completed",
     response: "late answer",
     createdAt: "2026-08-13T00:00:00.000Z",
@@ -189,7 +189,7 @@ it("marks a detached child's result seen at read, and a failed mark keeps the re
     ).toEqual({ status: "completed", response: "late answer" });
     // A parent run stopped waiting on it, so the read fences its late resume.
     expect(mutate.mock.calls).toEqual([
-      ["observeAsyncAgentResult", { eventId: childEventId, observed: true }],
+      ["markAsyncAgentHandback", { eventId: childEventId, handback: "stored" }],
     ]);
   } finally {
     owned.mockRestore();

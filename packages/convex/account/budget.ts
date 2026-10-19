@@ -1,8 +1,9 @@
 /**
  * The monthly resource caps, as core and the dashboard reach them: core reads
- * the closest cap's share at admission, records the usage only it sees
- * (hosted-MCP invokes, media egress, attachment ingress) and claims the 80%
- * warning; the dashboard reads amounts, caps and percentages.
+ * the closest cap's share of the org owner's pool at admission, records the
+ * usage only it sees (hosted-MCP invokes, media egress, attachment ingress)
+ * and claims the 80% warning; the dashboard reads amounts, caps and
+ * percentages.
  * Sandbox time is metered by the sandbox mirror itself; storage by the daily
  * snapshot in `aws/storageMeter.ts`. Math lives in `model/usageMeter.ts`.
  */
@@ -28,7 +29,7 @@ import {
   type BudgetStatus,
   type BudgetUsage,
 } from "../model/usageMeter";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveCaller } from "../org/orgs";
 import { planValidator, usageQuantityFields } from "../schema";
 
 // Core's retries end within a minute; a day of ids is ample.
@@ -63,6 +64,12 @@ const usageAmountsFields = {
 
 const usageAmountsValidator = v.object(usageAmountsFields);
 
+const poolUsageValidator = v.object({
+  orgs: v.optional(v.number()),
+  shared: v.boolean(),
+  totals: usageAmountsValidator,
+});
+
 const budgetUsageValidator = v.object({
   enforced: v.boolean(),
   plan: planValidator,
@@ -71,6 +78,7 @@ const budgetUsageValidator = v.object({
   usedPercent: v.union(v.number(), v.null()),
   caps: v.union(resourceCapsValidator, v.null()),
   shares: resourceCapsValidator,
+  orgShares: resourceCapsValidator,
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
   totals: usageAmountsValidator,
   days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
@@ -84,6 +92,7 @@ const budgetUsageValidator = v.object({
       }),
     ),
   ),
+  pool: v.optional(poolUsageValidator),
 });
 
 // Where a usage write came from, as far as the writer knows.
@@ -123,9 +132,11 @@ export const get = internalQuery({
 /**
  * Dashboard allowance and billing plan: the active org's usage for `month`
  * ("YYYY-MM", one of the returned `months`; anything else reads the current
- * month) as amounts, days, caps and percentages, and with `withProjects` each
- * of the org's projects' part of that month. Euro figures never leave the
- * backend, so the plan budgets stay private.
+ * month) as amounts, days, caps and percentages (the pool's, as core enforces
+ * them, next to this org's own part), and with `withProjects` each of the
+ * org's projects' part of that month. Euro figures never leave the backend,
+ * so the plan budgets stay private; a member who does not own the org learns
+ * that the owner's other organizations share the pool, not how many.
  */
 export const getForActiveOrg = query({
   args: {
@@ -139,9 +150,11 @@ export const getForActiveOrg = query({
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
-    const account = await getActiveAccountForUser(ctx);
-    if (!account) return null;
+    const active = await getActiveCaller(ctx);
+    if (!active) return null;
+    const account = active.account;
     const usage = await budgetUsage(ctx, account._id, Date.now(), args.month);
+    if (usage.pool && active.role !== "owner") delete usage.pool.orgs;
 
     return args.withProjects === true
       ? { ...usage, projects: await projectUsage(ctx, account, usage) }

@@ -52,6 +52,9 @@ const NOISE = 1e-9;
 /** The color of the part no project used, and of "other projects". */
 export const OTHER_USAGE_COLOR = "var(--color-muted-foreground)";
 
+/** The color of the pool's part the owner's other organizations used. */
+export const OTHER_ORGS_COLOR = "var(--color-usage-other-orgs)";
+
 /**
  * The org's month split into `projects` (all of `budget.projects` unless
  * given), each with a color kept in the projects' own order, then "Other
@@ -132,6 +135,23 @@ export function projectSlices(
       days: others?.days ?? [],
     },
   ];
+}
+
+/**
+ * The pool's part the owner's other organizations used, drawn behind this
+ * org's slices on each bar: the pool's amounts less this org's own. No days,
+ * since the chart stays this org's. Null when the pool is this org's alone.
+ */
+export function otherOrgsSlice(budget: BudgetUsage): UsageSlice | null {
+  if (!budget.pool?.shared) return null;
+
+  return {
+    projectId: null,
+    name: "Other organizations",
+    color: OTHER_ORGS_COLOR,
+    totals: remainder(budget.pool.totals, [budget.totals]),
+    days: [],
+  };
 }
 
 /** No usage of anything. */
@@ -252,4 +272,18 @@ export function monthLabel(month: string): string {
     year: "numeric",
     timeZone: "UTC",
   });
+}
+
+/**
+ * The one line on whose limits these are: for the owner how many of their
+ * organizations share them, for a member only that the owner's others do.
+ * Null when the pool is this org's alone.
+ */
+export function poolNote(budget: BudgetUsage): string | null {
+  const pool = budget.pool;
+  if (!pool?.shared) return null;
+
+  return pool.orgs === undefined
+    ? "Limits are shared with the owner's other organizations."
+    : `Limits are shared across ${pool.orgs} organizations.`;
 }
