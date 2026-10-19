@@ -272,18 +272,17 @@ export async function prepareHarnessTurn(
     options.abortController,
     options.stopMessage,
   );
-  let nativeSession: HarnessAgentSession;
-  try {
-    nativeSession = await options.openSession({
+  const nativeSession = await options
+    .openSession({
       abortSignal: options.abortController.signal,
       agent: runtime.agent,
       stored: stored,
       type: harnessType,
+    })
+    .catch((error: unknown): never => {
+      stopLeaseMonitor();
+      throw error;
     });
-  } catch (error) {
-    stopLeaseMonitor();
-    throw error;
-  }
   const dispose = async (): Promise<void> => {
     stopLeaseMonitor();
     await nativeSession.destroy().catch(() => {});
