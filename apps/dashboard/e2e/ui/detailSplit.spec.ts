@@ -121,7 +121,7 @@ test.describe("drag performance", () => {
     await page.mouse.move(x, y);
     // Hovering the handle sets a page-wide cursor rule and releasing it
     // commits the layout, once each; a slow runner stretches either past
-    // 50ms. Only the moves in between count.
+    // 50ms. The press and the moves in between count; both are the drag.
     const longTasks = await watchLongTasks(page);
     await page.mouse.down();
     await page.mouse.move(x - DRAG / 2, y, { steps: PERF_STEPS / 2 });
