@@ -61,6 +61,7 @@ import type {
   AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
+import { toErrorMessage } from "../shared/errors.ts";
 import { logInfo } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
@@ -281,7 +282,7 @@ export function resolveTranscriptionModel(
       ),
     };
   } catch (error) {
-    return { reason: error instanceof Error ? error.message : String(error) };
+    return { reason: toErrorMessage(error) };
   }
 }
 

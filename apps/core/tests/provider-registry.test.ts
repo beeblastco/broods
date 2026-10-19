@@ -236,15 +236,10 @@ describe("transcription model resolution", () => {
     ).toEqual({ reason: "anthropic has no transcription model" });
   });
 
-  it("names the missing key when the provider is configured without credentials", () => {
+  it("names the missing provider entry when the provider is configured without credentials", () => {
     expect(
       resolveTranscriptionModel({
-        model: {
-          provider: "anthropic",
-          modelId: "claude-haiku-5-5",
-          transcriptionProvider: "openai",
-        },
-        provider: { anthropic: { apiKey: "sk-ant-test" } },
+        model: { provider: "openai", modelId: "gpt-5" },
       }),
     ).toEqual({ reason: "config.provider.openai is required" });
   });

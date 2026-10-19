@@ -205,7 +205,7 @@ export interface AgentModelConfig
   /**
    * Provider that reads inbound audio, with its key from `config.provider`.
    * Defaults to `provider`. Set it when the agent's model has no speech-to-text,
-   * such as Anthropic.
+   * such as Anthropic. Google and Vertex hear audio natively and skip it.
    */
   transcriptionProvider?: AccountModelProviderName;
   providerOptions?: AgentModelProviderOptions;
