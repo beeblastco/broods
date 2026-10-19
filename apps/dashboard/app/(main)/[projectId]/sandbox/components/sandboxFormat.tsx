@@ -48,6 +48,8 @@ const UNKNOWN_SIZE: Record<string, string> = {
   daytona:
     "Daytona sizes this sandbox itself and has not reported its size yet. It shows the next time this sandbox is used.",
   e2b: "The E2B template sizes this sandbox, and Broods reads that size only when the sandbox is created. This one predates that or the read failed, so it stays unknown until the sandbox is recreated.",
+  worker:
+    "A V8 Worker has no machine: each command runs in a V8 isolate with 128 MB of memory, and nothing runs between commands.",
   machine:
     "Your own computer: its broods CLI predates hardware reporting. Update broods and restart `broods machine` to see it.",
   sandbox:
