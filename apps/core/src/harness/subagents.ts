@@ -100,9 +100,8 @@ const STILL_RUNNING_NOTE =
   "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
 // How long the run that detached a result has to deliver it before the
 // recovery sweep takes it over, and the age past which nobody waits for it.
-// The async tool sweep (`async-tools.ts`) runs on the same windows.
-export const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
-export const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
+const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // Rows the release before `handback` detached carry only `observed: false`.
 // The sweep lists them beside the hand-back windows for one release; drop
 // `undefined` from this list next release.
@@ -122,7 +121,7 @@ const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
 // boundary or in its last write, within one run budget (a worker slot's, or
 // a child's when the parent is itself a subagent) plus wind-down, and a
 // parent that stopped waiting wrote `detached`, swept after the grace.
-export const PENDING_HANDBACK_MAX_AGE_MS =
+const PENDING_HANDBACK_MAX_AGE_MS =
   Math.max(SUBAGENT_BUDGET_MS, WORKER_TIMEOUT_BUDGET_MS) +
   DEADLINE_WIND_DOWN_MS +
   LATE_RESULT_GRACE_MS;
@@ -1467,22 +1466,16 @@ export async function resumeLostSubagentResults(
   resumeParent: SubagentParentResumer,
 ): Promise<void> {
   const now = Date.now();
-  const updatedAfter = new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString();
-  const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();
-  const abandonedBefore = new Date(
-    now - PENDING_HANDBACK_MAX_AGE_MS,
-  ).toISOString();
+  const { updatedAfter, finishedBefore, abandonedBefore } =
+    lostResultWindows(now);
   const ranges: Array<
     [(typeof SWEPT_HANDBACKS)[number], AsyncAgentStatus, string]
   > = [];
   for (const handback of SWEPT_HANDBACKS) {
-    // A detached result is the sweep's once the run that detached it had its
-    // grace; a pending one only once no live parent run can still store it.
-    const finishedBefore =
-      handback === "pending" ? abandonedBefore : settledBefore;
+    const settledBefore = finishedBefore(handback);
     ranges.push(
-      [handback, "completed", finishedBefore],
-      [handback, "failed", finishedBefore],
+      [handback, "completed", settledBefore],
+      [handback, "failed", settledBefore],
       // A child still running this long past its budget died with its pod.
       [handback, "processing", abandonedBefore],
     );
@@ -1502,26 +1495,19 @@ export async function resumeLostSubagentResults(
       for (const row of result.page) {
         // A child listed still running died with its pod: its row is failed,
         // unless its outcome landed since, and a later pass tells the parent.
-        // Its parent run is gone too, so a pending row is detached: the sweep
-        // owns it, and delivers the failure after the grace, not another hold.
+        // Its parent run is gone too, so a pending row is detached in the
+        // same write: the sweep owns it, and delivers the failure after the
+        // grace, not another hold.
         if (row.status === "processing") {
           await recordAsyncAgentResult(
             row.eventId,
             { status: "failed", error: LOST_SUBAGENT_ERROR },
-            { onlyWhileProcessing: true },
+            {
+              onlyWhileProcessing: true,
+              ...(handback === "pending" ? { handback: "detached" } : {}),
+            },
           );
-          if (handback === "pending") {
-            await markAsyncAgentHandback(row.eventId, "detached");
-          }
           continue;
-        }
-        // Counted: each one is a result a parent run dropped without a trace.
-        if (handback === "pending") {
-          logInfo("Subagent result left pending past the parent's hold", {
-            eventId: row.eventId,
-            ageMs: now - Date.parse(row.updatedAt),
-            outcome: row.status,
-          });
         }
         const retry = await resumeLostSubagentResult(
           row,
@@ -1537,12 +1523,49 @@ export async function resumeLostSubagentResults(
           return heldLostResults.get(row.eventId);
         });
         if (retry) held.set(row.eventId, retry);
+        // Counted once it is handled: each one is a result a parent run
+        // dropped without a trace. A row held for the next pass is not
+        // counted again each pass.
+        if (handback === "pending" && !retry) {
+          logInfo("Subagent result left pending past the parent's hold", {
+            eventId: row.eventId,
+            ageMs: now - Date.parse(row.updatedAt),
+            outcome: row.status,
+          });
+        }
       }
       cursor = result.cursor;
       isDone = result.isDone;
     }
   }
   heldLostResults = held;
+}
+
+/**
+ * The windows the recovery sweeps list lost results in, at `now`: rows written
+ * within a day, a detached one once the run that detached it had its grace, a
+ * pending one only once no live run can still store it, and a child still
+ * running that long past its budget, which died with its pod. The async tool
+ * sweep (`async-tools.ts`) runs on the same windows.
+ */
+export function lostResultWindows(now: number): {
+  updatedAfter: string;
+  // A row the release before `handback` detached (no hand-back) gets the
+  // detached window.
+  finishedBefore: (handback: "pending" | "detached" | undefined) => string;
+  abandonedBefore: string;
+} {
+  const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();
+  const abandonedBefore = new Date(
+    now - PENDING_HANDBACK_MAX_AGE_MS,
+  ).toISOString();
+
+  return {
+    updatedAfter: new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString(),
+    finishedBefore: (handback): string =>
+      handback === "pending" ? abandonedBefore : settledBefore,
+    abandonedBefore: abandonedBefore,
+  };
 }
 
 export async function pipeSubagentNatsStream(

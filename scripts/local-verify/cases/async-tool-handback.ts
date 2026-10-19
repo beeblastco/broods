@@ -8,6 +8,7 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
+const API_SCOPE_MARKER = ":api:";
 const CONTINUATION_TIMEOUT_MS = 120_000;
 const QUESTION_ID = "color";
 const ANSWER = "Blue";
@@ -30,7 +31,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     console.log(`  skip async tool hand-back (${MODEL_KEY_HINT})`);
     return;
   }
-  const key = `async-tool-${context.runId}`;
+  const key = `tool-handback-${context.runId}`;
   const { agentId } = await context.account.createAgent({
     name: key,
     config: {
@@ -93,10 +94,11 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     JSON.stringify(row),
   );
 
-  // The resumed turn runs under the question's root event, once per result.
-  const rootEventId = row.parentEventId.slice(
+  // The resumed turn runs under the event that asked, once per result: the
+  // question row's parent is the asking turn's scoped event id.
+  const scope = row.parentEventId.slice(
     0,
-    row.parentEventId.indexOf(":async-"),
+    row.parentEventId.indexOf(API_SCOPE_MARKER),
   );
   const resumed = await pollUntil(
     {
@@ -108,7 +110,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
       const continuation = convexResult(
         context,
         "runtime:getAsyncAgentResult",
-        { eventId: `${rootEventId}:async-tools:${statusId}` },
+        { eventId: `${row.parentEventId}:async-tools:${statusId}` },
         "read the resumed turn's row",
       ) as { status: string; response?: unknown } | null;
 
@@ -128,9 +130,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
   const history = convexResult(
     context,
     "runtime:listConversationEvents",
-    {
-      conversationKey: `${rootEventId.slice(0, rootEventId.lastIndexOf(":api:"))}:api:${key}`,
-    },
+    { conversationKey: `${scope}${API_SCOPE_MARKER}${key}` },
     "read the conversation",
   ) as { page: Array<{ event: unknown }> };
   const injected = history.page.filter((entry): boolean =>

@@ -20,11 +20,7 @@ import {
 import { toLifecycleValue } from "./lifecycle.ts";
 import type { ContinuationOutcome } from "./responses.ts";
 import type { Session } from "./session.ts";
-import {
-  LATE_RESULT_GRACE_MS,
-  LATE_RESULT_MAX_AGE_MS,
-  PENDING_HANDBACK_MAX_AGE_MS,
-} from "./subagents.ts";
+import { lostResultWindows } from "./subagents.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
 import {
   modelValueToUserParts,
@@ -386,16 +382,8 @@ export async function resumeLostAsyncToolResults(
   resumeConversation: AsyncToolSettlementResumer,
 ): Promise<void> {
   const now = Date.now();
-  const updatedAfter = new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString();
+  const { updatedAfter, finishedBefore } = lostResultWindows(now);
   for (const handback of SWEPT_HANDBACKS) {
-    // A detached result is the sweep's once the run that detached it had its
-    // grace; a pending one only once no live run can still store it.
-    const updatedBefore = new Date(
-      now -
-        (handback === "pending"
-          ? PENDING_HANDBACK_MAX_AGE_MS
-          : LATE_RESULT_GRACE_MS),
-    ).toISOString();
     for (const status of ["completed", "failed"] as const) {
       let cursor: string | null = null;
       let isDone = false;
@@ -404,12 +392,18 @@ export async function resumeLostAsyncToolResults(
           handback: handback,
           status: status,
           updatedAfter: updatedAfter,
-          updatedBefore: updatedBefore,
+          updatedBefore: finishedBefore(handback),
           cursor: cursor,
         });
         for (const row of result.page) {
-          // Counted: each one is a result a run dropped without a trace.
-          if (handback === "pending") {
+          const handled = await resumeLostAsyncToolResult(
+            row,
+            resumeConversation,
+          );
+          // Counted once it is handled: each one is a result a run dropped
+          // without a trace. A row kept for the next pass is not counted
+          // again each pass.
+          if (handled && handback === "pending") {
             logInfo("Async tool result left pending past the run's hold", {
               resultId: row.resultId,
               toolName: row.toolName,
@@ -417,7 +411,6 @@ export async function resumeLostAsyncToolResults(
               outcome: row.status,
             });
           }
-          await resumeLostAsyncToolResult(row, resumeConversation);
         }
         cursor = result.cursor;
         isDone = result.isDone;
@@ -432,11 +425,12 @@ export async function resumeLostAsyncToolResults(
  * conversation has it. A conversation with no room keeps the row for the next
  * pass, and so does a resume that throws. A row no resume can ever deliver is
  * marked stored and logged once.
+ * @returns whether the row is handled, rather than kept for the next pass
  */
 async function resumeLostAsyncToolResult(
   row: AsyncToolResultRecord,
   resumeConversation: AsyncToolSettlementResumer,
-): Promise<void> {
+): Promise<boolean> {
   let outcome: ContinuationOutcome;
   try {
     outcome = await resumeConversation(row);
@@ -446,7 +440,7 @@ async function resumeLostAsyncToolResult(
       error: toErrorMessage(error),
     });
 
-    return;
+    return false;
   }
   const admission = outcome.kind === "ready" ? outcome.admission : "skip";
   if (admission === "owner" || admission === "queued") {
@@ -456,14 +450,16 @@ async function resumeLostAsyncToolResult(
       admission: admission,
     });
 
-    return;
+    return true;
   }
-  if (admission === "capacity") return;
+  if (admission === "capacity") return false;
   await markAsyncToolHandback(row.resultId, "stored");
   logInfo("Gave up on a lost async tool result", {
     resultId: row.resultId,
     reason: `resume ${admission}`,
   });
+
+  return true;
 }
 
 /** Formats an async tool result as the user message injected into the parent; used by the drains and by the handler's continuation run. */

@@ -1719,16 +1719,16 @@ describe("SubagentCoordinator", () => {
         handback: "pending",
         status: "processing",
       });
+      // Failed and detached in one write, so a crash between the two never
+      // leaves a failed row waiting out another hold.
       expect(record.mock.calls).toEqual([
         [
           lostRow("event_dead").eventId,
           { status: "failed", error: expect.stringContaining("restarted") },
-          { onlyWhileProcessing: true },
+          { onlyWhileProcessing: true, handback: "detached" },
         ],
       ]);
-      expect(observe.mock.calls).toEqual([
-        [lostRow("event_dead").eventId, "detached"],
-      ]);
+      expect(observe).not.toHaveBeenCalled();
       expect(resumed).toEqual([]);
     } finally {
       pages.mockRestore();

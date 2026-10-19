@@ -572,6 +572,54 @@ describe("runtime persistence", () => {
     );
   });
 
+  test("the sweep fails a dead child and detaches it in one write, never a stored one", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const row = async (
+      eventId: string,
+    ): Promise<{ status: string; handback?: string } | null> =>
+      await t.query(internal.runtime.getAsyncAgentResult, {
+        eventId: eventId,
+      });
+    for (const eventId of ["dead", "told"]) {
+      await t.mutation(internal.runtime.createAsyncAgentResult, {
+        eventId: eventId,
+        conversationKey: `acct:${accountId}:agent:child:api:${eventId}`,
+        subagent: { parentConversationKey: conversationKey },
+      });
+    }
+    // A result the parent already read stays stored, whatever the sweep says.
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "told",
+      status: "completed",
+      response: "answer",
+    });
+    await t.mutation(internal.runtime.markAsyncAgentHandback, {
+      eventId: "told",
+      handback: "stored",
+    });
+    for (const eventId of ["dead", "told"]) {
+      await t.mutation(internal.runtime.updateAsyncAgentResult, {
+        eventId: eventId,
+        status: "failed",
+        error: "restarted",
+        handback: "detached",
+      });
+    }
+
+    expect(await row("dead")).toMatchObject({
+      status: "failed",
+      handback: "detached",
+      observed: false,
+    });
+    expect(await row("told")).toMatchObject({
+      status: "failed",
+      handback: "stored",
+      observed: true,
+    });
+  });
+
   test("a finished subagent result starts pending and the parent's append stores it", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

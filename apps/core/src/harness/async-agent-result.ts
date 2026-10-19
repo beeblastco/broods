@@ -122,7 +122,7 @@ export async function markAsyncAgentHandback(
 export async function recordAsyncAgentResult(
   eventId: string,
   outcome: AsyncAgentOutcome,
-  guard: { onlyWhileProcessing?: boolean } = {},
+  guard: { onlyWhileProcessing?: boolean; handback?: "detached" } = {},
 ): Promise<void> {
   await runtime.mutate("updateAsyncAgentResult", {
     eventId: eventId,

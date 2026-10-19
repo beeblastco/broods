@@ -18,6 +18,16 @@ export const handbackValidator = v.union(
   v.literal("stored"),
 );
 export type Handback = Infer<typeof handbackValidator>;
+/** The hand-backs the recovery sweep lists: a result no conversation stores yet. */
+export const sweptHandbackValidator = v.union(
+  v.literal("pending"),
+  v.literal("detached"),
+);
+/** The hand-backs a run or a read moves a finished result to. */
+export const handbackMoveValidator = v.union(
+  v.literal("detached"),
+  v.literal("stored"),
+);
 /** The status a hand-back key names: only a finished result is owed. */
 type HandbackStatus = "completed" | "failed";
 /** The result row a stored dedupe key names: a subagent's, or an async tool's. */

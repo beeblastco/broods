@@ -172,13 +172,18 @@ export async function markAsyncToolHandback(
     });
   }
 }
+// The segments the runtime appends to the event a person started: a question
+// or background job row, a subagent task, a continuation. A person's own event
+// id can start with `async-` too, so only these tags end the root.
+const CONTINUATION_TAG = /:async-(?:bg|question|subagent|tools)(?::|$)/;
+
 /**
  * The event a person started, for a run that continues it: everything before the
- * first `:async-` segment of a detached or continuation event id. Traces use it to
+ * first runtime tag of a detached or continuation event id. Traces use it to
  * group an answer's run with the run that asked.
  */
 export function rootEventId(eventId: string): string {
-  const index = eventId.indexOf(":async-");
+  const index = eventId.search(CONTINUATION_TAG);
 
   return index === -1 ? eventId : eventId.slice(0, index);
 }

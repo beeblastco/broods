@@ -100,9 +100,10 @@ The result is delivered back into the conversation automatically when it finishe
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // The model is consuming the terminal result here, so mark it stored
-        // (awaited, since the resume gate reads this row the moment the turn ends)
-        // to stop the auto-delivery resume from injecting the same answer again.
+        // The model is consuming the terminal result here, so mark it stored,
+        // awaited, since the resume gate reads this row the moment the turn
+        // ends. A failed mark only logs: the row keeps the result, and the
+        // sweep may then deliver it once more.
         if (record.status === "completed") {
           await markAsyncToolHandback(statusId, "stored");
           // For a settled background job, `logs` returns just the captured output

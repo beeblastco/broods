@@ -5940,6 +5940,7 @@ export declare const internal: {
         approvals?: Array<any>;
         error?: string;
         eventId: string;
+        handback?: "detached";
         onlyWhileProcessing?: boolean;
         questions?: Array<any>;
         response?: any;

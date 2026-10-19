@@ -26,7 +26,12 @@ import {
   requireActiveAccount,
   requireActiveKeyAccount,
 } from "./model/activeAccount";
-import { type Handback, parseHandbackDedupeKey } from "./model/subagentResults";
+import {
+  handbackMoveValidator,
+  parseHandbackDedupeKey,
+  sweptHandbackValidator,
+  type Handback,
+} from "./model/subagentResults";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 // Bytes and not rows bound a page: the per-query read limit counts bytes, and
@@ -36,12 +41,6 @@ const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
 // One recovery sweep's page of late subagent or async tool results.
 const UNOBSERVED_RESULT_PAGE_SIZE = 100;
-// The hand-back states the recovery sweep lists: a result no conversation
-// stores yet.
-const sweptHandbackValidator = v.union(
-  v.literal("pending"),
-  v.literal("detached"),
-);
 
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
@@ -522,15 +521,14 @@ export const listUnobservedAsyncAgentResults = internalQuery({
                 .lt("updatedAt", args.updatedBefore),
             )
     ).paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
-    const page: Doc<"runtimeAsyncAgentResults">[] = [];
-    for (const row of result.page) {
-      // The pre-handback list is for rows with no `handback`: a detached row
-      // also reads `observed: false` and has its own window.
-      if (handback === undefined && row.handback !== undefined) continue;
-      if ((await ctx.db.get(row.accountId))?.status === "active") {
-        page.push(row);
-      }
-    }
+    // The pre-handback list is for rows with no `handback`: a detached row
+    // also reads `observed: false` and has its own window.
+    const page = await activeAccountRows(
+      ctx,
+      result.page.filter(
+        (row): boolean => handback !== undefined || row.handback === undefined,
+      ),
+    );
 
     return {
       page: page,
@@ -552,7 +550,7 @@ export const listUnobservedAsyncAgentResults = internalQuery({
 export const markAsyncAgentHandback = internalMutation({
   args: {
     eventId: v.string(),
-    handback: v.union(v.literal("detached"), v.literal("stored")),
+    handback: handbackMoveValidator,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -585,16 +583,22 @@ export const updateAsyncAgentResult = internalMutation({
     eventId: v.string(),
     ...asyncAgentOutcomeValidator.fields,
     onlyWhileProcessing: v.optional(v.boolean()),
+    // `detached` hands the result to the recovery sweep in the same write,
+    // for a child the sweep fails because its parent run died with it.
+    handback: v.optional(v.literal("detached")),
   },
   returns: v.null(),
-  handler: async (ctx, { onlyWhileProcessing, ...args }): Promise<null> => {
+  handler: async (
+    ctx,
+    { onlyWhileProcessing, handback, ...args },
+  ): Promise<null> => {
     if (
       onlyWhileProcessing &&
       (await asyncAgentResultRow(ctx, args.eventId))?.status !== "processing"
     ) {
       return null;
     }
-    if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
+    if (!(await writeAsyncAgentResult(ctx, args.eventId, args, handback))) {
       throw new Error("Async agent result not found");
     }
 
@@ -687,28 +691,33 @@ export async function markAsyncToolResultSeen(
  * starts it `pending`, the parent owing it the write until it stores it,
  * unless the release before `handback` already detached it (`observed:
  * false`): that row is the sweep's at once. A hand-back already set keeps its
- * state; the outcome never moves it back.
+ * state; the outcome never moves it back, and `handback` moves a row that is
+ * not stored to `detached` in the same write.
  * @returns false when the row no longer exists
  */
 export async function writeAsyncAgentResult(
   ctx: MutationCtx,
   eventId: string,
   outcome: Infer<typeof asyncAgentOutcomeValidator>,
+  handback?: "detached",
 ): Promise<boolean> {
   const row = await asyncAgentResultRow(ctx, eventId);
   if (!row) return false;
   await requireActiveAccount(ctx, row.accountId);
   const finished =
     outcome.status === "completed" || outcome.status === "failed";
+  const stored = row.handback === "stored" || row.observed === true;
   await ctx.db.patch(row._id, {
     status: outcome.status,
     response: outcome.response,
     error: outcome.error,
     approvals: outcome.approvals,
     questions: outcome.questions,
-    ...(row.subagent && finished && row.handback === undefined
-      ? { handback: row.observed === false ? "detached" : "pending" }
-      : {}),
+    ...(handback === "detached" && !stored
+      ? handbackPatch("detached")
+      : row.subagent && finished && row.handback === undefined
+        ? { handback: row.observed === false ? "detached" : "pending" }
+        : {}),
     updatedAt: new Date().toISOString(),
     expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
   });
@@ -881,12 +890,9 @@ export const listUnobservedAsyncToolResults = internalQuery({
           .lt("updatedAt", args.updatedBefore),
       )
       .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
-    const page: Infer<typeof asyncToolDoc>[] = [];
-    for (const row of result.page) {
-      if ((await ctx.db.get(row.accountId))?.status === "active") {
-        page.push(hideCompletionTokenHash(row));
-      }
-    }
+    const page = (await activeAccountRows(ctx, result.page)).map(
+      hideCompletionTokenHash,
+    );
 
     return {
       page: page,
@@ -956,7 +962,7 @@ export const updateAsyncToolResult = internalMutation({
 export const observeAsyncToolResult = internalMutation({
   args: {
     resultId: v.string(),
-    handback: v.union(v.literal("detached"), v.literal("stored")),
+    handback: handbackMoveValidator,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -1770,4 +1776,22 @@ async function sandboxStillReserved(
     .unique();
 
   return row?.externalId === sandbox.externalId;
+}
+
+/**
+ * The rows of active accounts, in order: a row of an inactive account is left
+ * out of a recovery sweep's page, since no resume of it can be admitted.
+ */
+async function activeAccountRows<T extends { accountId: Id<"accounts"> }>(
+  ctx: QueryCtx,
+  rows: T[],
+): Promise<T[]> {
+  const page: T[] = [];
+  for (const row of rows) {
+    if ((await ctx.db.get(row.accountId))?.status === "active") {
+      page.push(row);
+    }
+  }
+
+  return page;
 }
