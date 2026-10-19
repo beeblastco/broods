@@ -1722,7 +1722,8 @@ export async function runAgentLoop(
       }
     }
     await finalizeHarnessStream();
-    if (finalizer.finalized()) return;
+    // onEnd sets finishObserved before it finalizes; when it did, the call
+    // below only waits for that finalization.
     if (!finishObserved) {
       didFail = true;
       terminalError ??= new Error(

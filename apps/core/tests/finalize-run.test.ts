@@ -93,6 +93,58 @@ it("settles once even when finalize is called twice", async (): Promise<void> =>
   ]);
 });
 
+it("a second finalize waits for the first to finish instead of returning early", async (): Promise<void> => {
+  const recorded = emptyRecorded();
+  const { finalizer, inputs } = runFinalizer(recorded);
+  const openWork = Promise.withResolvers<RunOpenWork>();
+  inputs.openWork = (): Promise<RunOpenWork> => openWork.promise;
+  const settled: string[] = [];
+
+  const first = finalizer
+    .finalize("completed", 0, 100)
+    .then((): number => settled.push("first"));
+  const second = finalizer
+    .finalize("failed", 0, 200, new Error("late"))
+    .then((): number => settled.push("second"));
+  await Bun.sleep(0);
+
+  expect(finalizer.finalized()).toBe(true);
+  expect(settled).toEqual([]);
+  openWork.resolve({ questions: [] });
+  await Promise.all([first, second]);
+  expect(settled).toEqual(["first", "second"]);
+  expect(recorded.events).toEqual(["release", "publish", "usage", "restore"]);
+  expect(recorded.usage[0]?.status).toBe("completed");
+});
+
+it("only the first finalize sees a failed finalization", async (): Promise<void> => {
+  const { finalizer, inputs } = runFinalizer(emptyRecorded());
+  inputs.openWork = (): Promise<RunOpenWork> =>
+    Promise.reject(new Error("open work unreadable"));
+
+  const first = finalizer.finalize("completed", 0, 100);
+  const second = finalizer.finalize("failed", 0, 200);
+  const failure = await first.catch((error: unknown): unknown => error);
+
+  expect(failure).toEqual(new Error("open work unreadable"));
+  expect(await second).toBeUndefined();
+});
+
+it("counts as finalized before its synchronous part runs", async (): Promise<void> => {
+  const recorded = emptyRecorded();
+  const { finalizer, inputs } = runFinalizer(recorded);
+  const release = inputs.release;
+  let finalizedDuringRelease = false;
+  inputs.release = (): void => {
+    finalizedDuringRelease = finalizer.finalized();
+    release();
+  };
+
+  await finalizer.finalize("failed", 0, 100, new Error("boom"));
+
+  expect(finalizedDuringRelease).toBe(true);
+});
+
 it("records usage and the root span from the task totals and the sandbox CPU ledger", async (): Promise<void> => {
   const recorded = emptyRecorded();
   const { finalizer, inputs } = runFinalizer(recorded);
