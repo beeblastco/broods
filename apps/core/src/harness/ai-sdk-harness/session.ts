@@ -15,7 +15,6 @@ import {
   sandboxNeighbours,
   type SandboxUsage,
 } from "../sandbox/live-status.ts";
-import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import {
   configuredSandboxSpecs,
   isSandboxGoneError,
@@ -221,7 +220,8 @@ export async function prepareHarnessTurn(
     type: harnessType,
   });
   const shared = reservationKey !== session.conversationKey;
-  const compute = requireHarnessSandbox(options.sandbox?.sandbox);
+  const sandbox = requireHarnessSandbox(options.sandbox);
+  const compute = sandbox.sandbox;
   let usage: SandboxUsage | undefined;
   const runtime = options.createAgent({
     agentConfig: agentConfig,
@@ -285,7 +285,7 @@ export async function prepareHarnessTurn(
   try {
     environment = session.environmentText(
       formatSandboxStatus({
-        name: options.sandbox!.name,
+        name: sandbox.name,
         provider: compute.provider,
         specs: configuredSandboxSpecs(compute),
         state: "running",
@@ -356,8 +356,8 @@ export async function steerHarnessTurn(
 
 /** The agent's first sandbox, which a harness run needs to run on. */
 function requireHarnessSandbox(
-  sandbox: SandboxExecutorConfig | undefined,
-): SandboxExecutorConfig {
+  sandbox: ResolvedAgentSandbox | undefined,
+): ResolvedAgentSandbox {
   if (!sandbox) {
     throw new Error(
       "config.harness needs a sandbox to run on; list one first in config.sandboxes",
