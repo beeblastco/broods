@@ -276,7 +276,7 @@ export function createStepTimingTracker(
 ): StepTimingTracker {
   const steps = new Map<number, StepTiming>();
   let activeStepNumber: number | undefined;
-  let pendingAttempts: ModelAttempt[] = [];
+  const pendingAttempts: ModelAttempt[] = [];
 
   const stepOf = (step: number): StepTiming => {
     const existing = steps.get(step);
@@ -321,8 +321,7 @@ export function createStepTimingTracker(
     startStep: (step, nowMs) => {
       const timing = stepOf(step);
       timing.startedAt = nowMs;
-      timing.attempts.unshift(...pendingAttempts);
-      pendingAttempts = [];
+      timing.attempts.unshift(...pendingAttempts.splice(0));
       activeStepNumber = step;
     },
     activeStep: () => activeStepNumber,
@@ -409,7 +408,7 @@ export function createStepTimingTracker(
           ),
         });
       }
-      pendingAttempts = [];
+      pendingAttempts.length = 0;
       steps.clear();
       activeStepNumber = undefined;
     },

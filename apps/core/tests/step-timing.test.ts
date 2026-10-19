@@ -4,12 +4,17 @@
  * attributes a retried stream start leaves on the span.
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { createStepTimingTracker } from "../src/harness/usage-metering.ts";
+import * as log from "../src/shared/log.ts";
 
 const serialize = (value: unknown): string => JSON.stringify(value);
 
 describe("createStepTimingTracker", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
   it("splits a step into ttft, streaming and tool wait that sum to its duration", () => {
     const tracker = createStepTimingTracker(serialize);
     tracker.startStep(0, 1_000);
@@ -134,27 +139,14 @@ describe("createStepTimingTracker", () => {
   });
 
   it("clear logs the error of an attempt no step took", () => {
-    const lines: string[] = [];
-    const originalWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-      lines.push(
-        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
-      );
+    const warn = spyOn(log, "logWarn").mockImplementation((): void => {});
+    const tracker = createStepTimingTracker(serialize);
+    tracker.recordAttempt({ startedAt: 500, error: "503 overloaded" });
+    tracker.clear();
+    tracker.clear();
 
-      return true;
-    }) as typeof process.stdout.write;
-    try {
-      const tracker = createStepTimingTracker(serialize);
-      tracker.recordAttempt({ startedAt: 500, error: "503 overloaded" });
-      tracker.clear();
-      tracker.clear();
-    } finally {
-      process.stdout.write = originalWrite;
-    }
-
-    expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)).toMatchObject({
-      level: "WARN",
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toEqual({
       attempts: 1,
       attemptErrors: serialize(["503 overloaded"]),
     });
