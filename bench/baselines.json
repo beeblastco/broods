@@ -39,7 +39,7 @@
       "gate": "blocking"
     },
     "core/config-normalize": {
-      "nsPerOp": 1526,
+      "nsPerOp": 1509,
       "ceilingNs": 4500,
       "gate": "blocking"
     },
@@ -106,13 +106,13 @@
       "maxRegressionPct": 50
     },
     "core/agent-run-first-token": {
-      "nsPerOp": 2435644,
+      "nsPerOp": 2416034,
       "ceilingNs": 20000000,
       "gate": "blocking",
       "maxRegressionPct": 50
     },
     "core/agent-run-text-turn": {
-      "nsPerOp": 1960396,
+      "nsPerOp": 1942014,
       "ceilingNs": 20000000,
       "gate": "blocking",
       "maxRegressionPct": 50

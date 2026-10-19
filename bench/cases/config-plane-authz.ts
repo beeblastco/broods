@@ -12,7 +12,6 @@ import {
   type ApiResource,
 } from "../../packages/convex/model/apiAuthorization.ts";
 import type {
-  ApiPolicyAction,
   PolicyDocument,
   PolicyRule,
 } from "../../packages/convex/model/policyRules.ts";
@@ -79,7 +78,8 @@ const POLICY: PolicyDocument = {
 };
 
 // The stage the role is pinned to. A resource off the pin is refused before any
-// rule is read, so both the role and every resource it is asked about carry it.
+// rule is read, so both the role and every resource it is asked about carry it;
+// config-plane-authz.test.ts fails if a case stops reaching its decision.
 const PIN = { projectId: "prj_acme", stageId: "stg_production" };
 
 const PRINCIPAL: ApiPrincipal = {
@@ -101,13 +101,6 @@ export const configPlaneAuthzCases: readonly BenchCase[] = [
   {
     name: "convex/api-authorize-allow",
     iterations: 200_000,
-    setup: (): void => {
-      expectDecision(
-        apiActionForRequest("PATCH", "agents"),
-        OWN_AGENT,
-        "allowed by rule write-owned-agents",
-      );
-    },
     run: (): unknown => {
       return authorize(
         PRINCIPAL,
@@ -121,13 +114,6 @@ export const configPlaneAuthzCases: readonly BenchCase[] = [
     iterations: 200_000,
     // No rule grants policies:write, so this walks every rule and falls through
     // to the default deny: the worst case, and the one an attacker drives.
-    setup: (): void => {
-      expectDecision(
-        apiActionForRequest("POST", "policies"),
-        OWN_POLICY,
-        "no rule allows policies:write",
-      );
-    },
     run: (): unknown => {
       return authorize(
         PRINCIPAL,
@@ -137,21 +123,3 @@ export const configPlaneAuthzCases: readonly BenchCase[] = [
     },
   },
 ];
-
-/**
- * Fails a case's setup when it no longer reaches the decision it exists to
- * time, so a fixture that drifts off the measured path stops the run instead
- * of reporting a faster number for different work.
- */
-function expectDecision(
-  action: ApiPolicyAction,
-  resource: ApiResource,
-  reason: string,
-): void {
-  const decision = authorize(PRINCIPAL, action, resource);
-  if (decision.reason !== reason) {
-    throw new Error(
-      `authorize bench fixture: expected "${reason}", got "${decision.reason}"`,
-    );
-  }
-}
