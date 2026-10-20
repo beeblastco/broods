@@ -1184,10 +1184,7 @@ export default $config({
             stage,
             region,
             "worker",
-            [
-              "apps/cloudflare-sandbox/src/bearer.ts",
-              "apps/core/src/shared/domain/sandbox-config.ts",
-            ],
+            ["apps/cloudflare-sandbox/src/bearer.ts"],
             {},
           ),
         }
