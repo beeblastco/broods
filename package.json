@@ -54,8 +54,9 @@
       "undici": "7.30.0"
     },
     "katex": "^0.18.2",
+    "launch-editor": "^2.14.2",
     "pi-mcp-adapter": {
-      "@modelcontextprotocol/client": "2.2.0"
+      "@modelcontextprotocol/client": "2.3.1"
     },
     "postcss": "^8.5.26",
     "serialize-javascript": "7.1.2",
