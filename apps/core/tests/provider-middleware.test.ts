@@ -3,7 +3,8 @@
  * quirks: mergeSystemMessagesMiddleware folds multiple system messages into
  * one (extras return an empty stream), and normalizeStreamDeltasMiddleware
  * rewrites cumulative-snapshot deltas to increments and back-fills missing
- * reasoning-token usage. retryWithoutStoredItemsMiddleware covers the OpenAI
+ * reasoning-token usage, and toolImagesAsUserMessageMiddleware moves tool
+ * result images to where chat endpoints read them. retryWithoutStoredItemsMiddleware covers the OpenAI
  * Responses path, where a replayed item reference can go stale.
  */
 
@@ -13,6 +14,8 @@ import {
   type LanguageModelV4CallOptions,
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { wrapLanguageModel } from "ai";
 import { describe, expect, it } from "bun:test";
 import {
   attemptRecordingMiddleware,
@@ -20,6 +23,7 @@ import {
   mergeSystemMessagesMiddleware,
   normalizeStreamDeltasMiddleware,
   retryWithoutStoredItemsMiddleware,
+  toolImagesAsUserMessageMiddleware,
   type ModelAttempt,
 } from "../src/harness/provider.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
@@ -422,5 +426,115 @@ describe("dropUnsupportedMediaMiddleware", () => {
         { role: "user", content: [{ type: "text", text: "hi" }] },
       ]),
     ).rejects.toThrow("file part media type audio/ogg");
+  });
+});
+
+describe("toolImagesAsUserMessageMiddleware", () => {
+  const screenshot = {
+    type: "file" as const,
+    mediaType: "image/jpeg",
+    data: { type: "data" as const, data: "aGVsbG8=" },
+  };
+  const toolPrompt: LanguageModelV4Message[] = [
+    { role: "user", content: [{ type: "text", text: "read the button" }] },
+    {
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "c1", toolName: "shot", input: "{}" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "shot",
+          output: {
+            type: "content",
+            value: [{ type: "text", text: "captured" }, screenshot],
+          },
+        },
+      ],
+    },
+  ];
+
+  it("moves a tool result's image into a user message after it", async () => {
+    const result = await toolImagesAsUserMessageMiddleware.transformParams!({
+      params: { prompt: toolPrompt } as never,
+      type: "stream",
+      model: {} as never,
+    });
+
+    expect(result.prompt.slice(2)).toEqual([
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "shot",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "captured" },
+                { type: "text", text: "[image 1 is in the next message]" },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images from the tool results above:" },
+          screenshot,
+        ],
+      },
+    ]);
+  });
+
+  // The converter is what used to stringify the image, so the request it
+  // builds is the proof the model is handed a picture.
+  it("reaches a chat-completions request as image_url", async () => {
+    let body: { messages: { role: string; content: unknown }[] } | undefined;
+    const provider = createOpenAICompatible({
+      name: "custom",
+      baseURL: "https://models.example.test/v1",
+      fetch: Object.assign(
+        async (
+          _url: Parameters<typeof fetch>[0],
+          init?: RequestInit,
+        ): Promise<Response> => {
+          body = JSON.parse(String(init?.body));
+
+          return Response.json({
+            choices: [
+              {
+                message: { role: "assistant", content: "7392" },
+                finish_reason: "stop",
+              },
+            ],
+          });
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    const model = wrapLanguageModel({
+      model: provider("cx/gpt-6.1-sol"),
+      middleware: [toolImagesAsUserMessageMiddleware],
+    });
+    await model.doGenerate({ prompt: toolPrompt });
+
+    expect(body?.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Images from the tool results above:" },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/jpeg;base64,aGVsbG8=" },
+        },
+      ],
+    });
   });
 });

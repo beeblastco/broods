@@ -32,6 +32,7 @@ import {
   type LanguageModelV4FilePart,
   type LanguageModelV4Message,
   type LanguageModelV4StreamPart,
+  type LanguageModelV4ToolResultPart,
   type SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import { createTogetherAI } from "@ai-sdk/togetherai";
@@ -515,6 +516,49 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
   },
 };
 
+// Chat-completions endpoints read a tool message as text: the compatible
+// converter JSON-stringifies a tool result's content parts, so a screenshot an
+// MCP tool returned reaches the model as base64 it never sees as a picture. Each
+// image moves into one user message right after its tool message, the one place
+// those endpoints read an `image_url`, and the result keeps a line pointing at it.
+export const toolImagesAsUserMessageMiddleware: LanguageModelMiddleware = {
+  transformParams: async ({ params }) => ({
+    ...params,
+    prompt: params.prompt.flatMap((message): LanguageModelV4Message[] => {
+      if (message.role !== "tool") return [message];
+      const images: LanguageModelV4FilePart[] = [];
+      const content = message.content.map((part) => {
+        if (part.type !== "tool-result" || part.output.type !== "content") {
+          return part;
+        }
+        const value = part.output.value.map((item) => {
+          if (!isMovableImage(item)) return item;
+          images.push(item);
+
+          return {
+            type: "text" as const,
+            text: `[image ${images.length} is in the next message]`,
+          };
+        });
+
+        return { ...part, output: { ...part.output, value: value } };
+      });
+      if (images.length === 0) return [message];
+
+      return [
+        { ...message, content: content },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Images from the tool results above:" },
+            ...images,
+          ],
+        },
+      ];
+    }),
+  }),
+};
+
 export type ModelAttempt = { startedAt: number; error?: string };
 
 // One entry per doStream call. The SDK's retry loop re-invokes doStream, so
@@ -660,6 +704,21 @@ function isDroppableMedia(
   return part.type === "file" && !part.mediaType.startsWith("image/");
 }
 
+// An image a user message can carry: bytes or a URL. A provider reference or
+// inline text stays in the tool result it came in.
+function isMovableImage(
+  item: Extract<
+    LanguageModelV4ToolResultPart["output"],
+    { type: "content" }
+  >["value"][number],
+): item is LanguageModelV4FilePart {
+  return (
+    item.type === "file" &&
+    item.mediaType.startsWith("image") &&
+    (item.data.type === "data" || item.data.type === "url")
+  );
+}
+
 function withoutStaleStoredItems(
   error: unknown,
   params: LanguageModelV4CallOptions,
@@ -731,6 +790,7 @@ function resolveOpenAICompatibleModel(
       middleware: [
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
+        toolImagesAsUserMessageMiddleware,
         dropUnsupportedMediaMiddleware,
       ],
     }),
