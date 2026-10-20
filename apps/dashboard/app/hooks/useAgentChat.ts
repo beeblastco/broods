@@ -566,13 +566,9 @@ async function startWebSocketSseStream(options: {
     start: function (controller) {
       streamController = controller;
     },
+    // A browser WebSocket ignores close() once it is closing or closed.
     cancel: function () {
-      if (
-        socket.readyState === WebSocket.OPEN ||
-        socket.readyState === WebSocket.CONNECTING
-      ) {
-        socket.close(1000, "cancelled");
-      }
+      socket.close(1000, "cancelled");
     },
   });
 
@@ -586,12 +582,7 @@ async function startWebSocketSseStream(options: {
         streamController = null;
       }
 
-      if (
-        socket.readyState === WebSocket.OPEN ||
-        socket.readyState === WebSocket.CONNECTING
-      ) {
-        socket.close(1000, "error");
-      }
+      socket.close(1000, "error");
     };
 
     const finishStream = (): void => {
@@ -599,21 +590,14 @@ async function startWebSocketSseStream(options: {
         streamController.close();
         streamController = null;
       }
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.close(1000, "done");
-      }
+      socket.close(1000, "done");
     };
 
     const onAbort = (): void => {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "cancel" }));
       }
-      if (
-        socket.readyState === WebSocket.OPEN ||
-        socket.readyState === WebSocket.CONNECTING
-      ) {
-        socket.close(1000, "aborted");
-      }
+      socket.close(1000, "aborted");
       if (streamController) {
         streamController.error(new DOMException("Aborted", "AbortError"));
         streamController = null;
