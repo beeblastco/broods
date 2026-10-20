@@ -59,8 +59,9 @@ export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 // Cloudflare refuses a Container inactivity timeout over six hours.
 export const CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60;
-// A V8 Worker's CPU limit is its call's timeout, so one command may run this
-// long at most: `MAX_TIMEOUT_MS` in `apps/cloudflare-worker/src/limits.ts`.
+// A V8 Worker's CPU limit is its call's timeout plus a few seconds to load and
+// store its files, so one command may run this long at most: `MAX_TIMEOUT_MS`
+// in `apps/cloudflare-worker/src/limits.ts`.
 export const WORKER_MAX_TIMEOUT_SECONDS = 60;
 // The only options core reads for a platform-run provider (lambda, cloudflare,
 // worker): the executor's workspaceRoot and the reservation pin every provider
