@@ -112,28 +112,66 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
   throw new Error(`${name} must be a boolean-like value`);
 }
 
-function ecrRepositoryExists(name: string, region: string): boolean {
-  try {
-    const result = Bun.spawnSync({
-      cmd: [
-        "aws",
-        "ecr",
-        "describe-repositories",
-        "--repository-names",
-        name,
-        "--region",
-        region,
-        "--output",
-        "json",
-      ],
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+/**
+ * Ships apps/cloudflare-<service> with its `deploy` script as the Worker
+ * `resourceName(service)`. wrangler deploys it because the Cloudflare
+ * provider cannot declare a Worker Loader binding. It reruns when a file in
+ * its folder or in `sources`, the lockfile, or a var changes. There
+ * is no delete: the Worker keeps the key infra put on it, and a removed
+ * stage's Worker is deleted by hand.
+ */
+async function deployCloudflareWorker(
+  command: typeof import("@pulumi/command"),
+  stage: string,
+  region: string,
+  service: string,
+  sources: string[],
+  vars: Record<string, $util.Input<string>>,
+): Promise<string> {
+  const name = resourceName(service, stage, region);
+  const app = `apps/cloudflare-${service}`;
+  new command.local.Command(`CloudflareWorker-${service}`, {
+    dir: `${$cli.paths.root}/../cloudflare-${service}`,
+    create: "bun run deploy",
+    environment: {
+      WORKER_NAME: name,
+      // Read by nothing: a new value is what reruns the deploy.
+      SOURCES_HASH: await sourceFilesHash([app, ...sources, "bun.lock"]),
+      ...vars,
+    },
+  });
 
-    return result.success;
-  } catch {
-    return false;
-  }
+  return name;
+}
+
+// A hash of the files under `paths` (relative to the repo root) as they are on
+// disk, untracked ones included and ignored ones left out, so it changes
+// whenever what wrangler ships changes. git only reads: nothing is staged.
+// SST runs this file in Node and allows no top-level imports, hence the lazy ones.
+async function sourceFilesHash(paths: string[]): Promise<string> {
+  const { execFileSync } = await import("node:child_process");
+  const { createHash } = await import("node:crypto");
+  const git = (args: string[]): string =>
+    execFileSync("git", ["-C", `${$cli.paths.root}/../..`, ...args], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  const list = (flags: string[]): string[] =>
+    git(["ls-files", "-z", ...flags, "--", ...paths])
+      .split("\0")
+      .filter(Boolean);
+  const deleted = new Set(list(["--deleted"]));
+  const files = list([
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--deduplicate",
+  ]).filter((file) => !deleted.has(file));
+
+  return createHash("sha256")
+    .update(files.join("\0"))
+    .update(git(["hash-object", "--", ...files]))
+    .digest("hex");
 }
 
 interface PermissionStatement {
@@ -789,12 +827,6 @@ export default $config({
     // The sandbox image ECR repo, one per deploy region. The lambda-sanbdox CI pushes its
     // arm64 image here; nothing in this app pulls from it.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
-    const sandboxImageRepoExists = ecrRepositoryExists(
-      sandboxImageRepoName,
-      region,
-    );
-    const sandboxImageRepoShouldImport =
-      SANDBOX_IMAGE_READY || sandboxImageRepoExists;
     const sandboxEcr = new aws.ecr.Repository(
       "SandboxImage",
       {
@@ -807,11 +839,8 @@ export default $config({
         retainOnDelete: isProduction,
         // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
         // CI pushes `latest-arm64` to this exact name). When SANDBOX_IMAGE_READY is true,
-        // the deploy workflow has already made the regional repo, so import it
-        // even if the local describe probe cannot run from inside SST config evaluation.
-        ...(sandboxImageRepoShouldImport
-          ? { import: sandboxImageRepoName }
-          : {}),
+        // the deploy workflow has already made the regional repo, so import it.
+        ...(SANDBOX_IMAGE_READY ? { import: sandboxImageRepoName } : {}),
       },
     );
 
@@ -1129,13 +1158,37 @@ export default $config({
       ),
     });
 
+    // The Cloudflare Workers, named per stage, when the deploy has a
+    // Cloudflare token (they are optional). The infra repo puts each one's
+    // key on it and points core at its workers.dev URL.
+    const cloudflareWorkers = process.env.CLOUDFLARE_API_TOKEN
+      ? {
+          // Hosted MCP servers that can run on Dynamic Workers; its bucket
+          // only caches bundles from this stage's S3 bucket.
+          mcp: await deployCloudflareWorker(command, stage, region, "mcp", [], {
+            BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
+          }),
+          // The `worker` sandbox provider: bash in a V8 isolate.
+          worker: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "worker",
+            [
+              "apps/cloudflare-sandbox/src/bearer.ts",
+              "apps/core/src/shared/domain/sandbox-config.ts",
+            ],
+            {},
+          ),
+        }
+      : undefined;
+
     return {
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
       toolRunnerFunctionName: mcpRunnerFn.name,
-      // deploy.yaml deploys the Cloudflare MCP runtime Worker under this name.
-      cloudflareMcpWorkerName: resourceName("mcp", stage, region),
+      cloudflareWorkers: cloudflareWorkers,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,

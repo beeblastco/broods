@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // The dashboard's PostHog id counts one person once on every device without
-// telling PostHog who they are: stable per user, keyed by the stage secret.
+// telling PostHog who they are: stable per user, keyed by its own secret.
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
@@ -20,19 +20,19 @@ afterEach(() => {
 
 describe("user.analyticsId", () => {
   test("is stable for a user and needs the secret to reproduce", async () => {
-    vi.stubEnv("STAGE_TICKET_SECRET", "stage-secret");
+    vi.stubEnv("ANALYTICS_ID_SECRET", "analytics-secret");
     const t = convexTest(schema, modules);
     const id = await t.query(api.user.analyticsId, {});
 
     expect(await t.query(api.user.analyticsId, {})).toBe(id);
     expect(id).toMatch(/^[0-9a-f]{64}$/);
     expect(id).not.toBe(await sha256Hex("auth_user"));
-    vi.stubEnv("STAGE_TICKET_SECRET", "another-secret");
+    vi.stubEnv("ANALYTICS_ID_SECRET", "another-secret");
     expect(await t.query(api.user.analyticsId, {})).not.toBe(id);
   });
 
   test("is null without the secret, so tracking stays anonymous", async () => {
-    vi.stubEnv("STAGE_TICKET_SECRET", "");
+    vi.stubEnv("ANALYTICS_ID_SECRET", "");
     const t = convexTest(schema, modules);
 
     expect(await t.query(api.user.analyticsId, {})).toBeNull();

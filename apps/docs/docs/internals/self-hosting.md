@@ -124,18 +124,18 @@ bun run deploy                             # build, then sst deploy
 
 Stack outputs:
 
-| Output                                                        | Feeds                                                                          |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `filesystemBucketName`                                        | core and Convex `FILESYSTEM_BUCKET_NAME`                                       |
-| `skillsBucketName`                                            | core and Convex `SKILLS_BUCKET_NAME`                                           |
-| `toolBundlesBucketName`                                       | core and Convex `TOOL_BUNDLES_BUCKET_NAME`                                     |
-| `toolRunnerFunctionName`                                      | core `TOOL_RUNNER_FUNCTION_NAME`                                               |
-| `microvmExecutionRoleArn`, `microvmEgressNetworkConnectorArn` | core `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`      |
-| `microvmArtifactsBucketName`, `microvmBuildRoleArn`           | Convex `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`               |
-| `coreRuntimeUserName`                                         | `aws iam create-access-key --user-name <name>`, the key for core               |
-| `convexAwsRoleArn`                                            | Convex `CONVEX_AWS_ROLE_ARN`                                                   |
-| `convexBootstrapUserName`                                     | mint the key for Convex `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`          |
-| `cloudflareMcpWorkerName`                                     | the Worker name, if you run [cloudflare-mcp](#cloudflare-mcp-runtime-optional) |
+| Output                                                        | Feeds                                                                                                                                                    |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filesystemBucketName`                                        | core and Convex `FILESYSTEM_BUCKET_NAME`                                                                                                                 |
+| `skillsBucketName`                                            | core and Convex `SKILLS_BUCKET_NAME`                                                                                                                     |
+| `toolBundlesBucketName`                                       | core and Convex `TOOL_BUNDLES_BUCKET_NAME`                                                                                                               |
+| `toolRunnerFunctionName`                                      | core `TOOL_RUNNER_FUNCTION_NAME`                                                                                                                         |
+| `microvmExecutionRoleArn`, `microvmEgressNetworkConnectorArn` | core `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`                                                                                |
+| `microvmArtifactsBucketName`, `microvmBuildRoleArn`           | Convex `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                                                                                         |
+| `coreRuntimeUserName`                                         | `aws iam create-access-key --user-name <name>`, the key for core                                                                                         |
+| `convexAwsRoleArn`                                            | Convex `CONVEX_AWS_ROLE_ARN`                                                                                                                             |
+| `convexBootstrapUserName`                                     | mint the key for Convex `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`                                                                                    |
+| `cloudflareWorkers`                                           | the [cloudflare-mcp](#cloudflare-mcp-runtime-optional) and [V8 Worker](#cloudflare-v8-worker-optional) names, when the deploy had `CLOUDFLARE_API_TOKEN` |
 
 Fixed names, not outputs: `SANDBOX_MOUNT_ROLE_ARN` is the role `<stage>-<project>-sandbox-s3mount-<account>-<region>` (no `<stage>-` on production), and `MICROVM_LOG_GROUP_NAME` is `/broods/<stage>/microvms`. Production stages retain and protect their buckets. Add every long-lived stage to `.github/workflows/drift-cleanup.yaml`, see [CI/CD](ci-cd.md#drift-cleanup).
 
@@ -149,6 +149,7 @@ From `packages/convex`, set each with `bunx convex env set NAME value`:
 | `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same as core                                                                               |
 | `SERVICE_AUTH_SECRET`                                                      | yes       | Same as core                                                                               |
 | `STAGE_TICKET_SECRET`                                                      | yes       | Same as core                                                                               |
+| `ANALYTICS_ID_SECRET`                                                      | no        | Same as core. Keys the dashboard's PostHog user id; unset leaves it anonymous per browser  |
 | `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host |
 | `AWS_REGION`                                                               | yes       | The data plane region                                                                      |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                               |
@@ -191,30 +192,32 @@ Every image listens on port 3000 and answers `GET /healthz`.
 
 Refuses to start without `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `TERMINAL_TICKET_SECRET` and `MEDIA_TICKET_SECRET`. Keep it cluster-internal and at one replica.
 
-| Variable                                                                                                                                                | Required               | Notes                                                                |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------- |
-| `CONVEX_URL`, `CONVEX_DEPLOY_KEY`                                                                                                                       | yes                    | Deploy key or self-hosted admin key                                  |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                                                                                                      | yes                    | Same as Convex. See [service secrets](operations.md#service-secrets) |
-| `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`                                                                                                            | yes                    | Same as Convex                                                       |
-| `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`                                                                                                         | yes                    | Comma-separated lists                                                |
-| `ADMIN_ACCOUNT_SECRET`                                                                                                                                  | no                     | Enables `POST /v1/accounts`                                          |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`                                                                                              | yes                    | The core runtime user's key                                          |
-| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `TOOL_RUNNER_FUNCTION_NAME`                                                 | yes                    | Stack outputs                                                        |
-| `PUBLIC_BASE_URL`                                                                                                                                       | yes                    | The public host. Sandbox job callbacks and status URLs use it        |
-| `SANDBOX_MOUNT_ROLE_ARN`                                                                                                                                | for mounts             | Role assumed for prefix-scoped workspace mount credentials           |
-| `MICROVM_IMAGE_IDENTIFIER`, `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_LOG_GROUP_NAME`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`                              | for `lambda` sandboxes | Without the connector, `deny-all` MicroVMs fail to launch            |
-| `WORKDIR_URL`, `WORKDIR_API_KEY`                                                                                                                        | for `sandbox`          | The workdir control plane                                            |
-| `CLOUDFLARE_SANDBOX_URL`, `CLOUDFLARE_SANDBOX_API_KEY`                                                                                                  | for `cloudflare`       | See [Cloudflare sandbox bridge](#cloudflare-sandbox-bridge-optional) |
-| `CLOUDFLARE_WORKER_URL`, `CLOUDFLARE_WORKER_API_KEY`                                                                                                    | for `worker`           | See [Cloudflare V8 Worker](#cloudflare-v8-worker-optional)           |
-| `CLOUDFLARE_MCP_URL`, `CLOUDFLARE_MCP_API_KEY`                                                                                                          | for Cloudflare MCP     | See [Cloudflare MCP runtime](#cloudflare-mcp-runtime-optional)       |
-| `DAYTONA_API_KEY`, `DAYTONA_API_URL`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | no                     | Fallbacks for sandbox configs that omit their own                    |
-| `ENABLE_WEBSOCKET`, `NATS_URL`, `NATS_TOKEN`                                                                                                            | for WebSocket          | `ENABLE_WEBSOCKET=true` needs `NATS_URL`                             |
-| `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                                                                         | for policies           | Default `http://127.0.0.1:8181`                                      |
-| `MATRIX_FORWARDER_URL`                                                                                                                                  | for Matrix             | In-cluster URL of the matrix-forwarder                               |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `SERVICE_NAME`, `DEPLOYMENT_ENVIRONMENT`                                                   | no                     | No endpoint means no export                                          |
-| `POSTHOG_API_KEY`, `POSTHOG_HOST`                                                                                                                       | no                     | Anonymous PostHog AI traces + Logs. Unset either means no export     |
-| `ENABLE_DIRECT_API`                                                                                                                                     | no                     | Default `true`. `false` turns `POST /v1/runs` off                    |
-| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                                                                                                       | no                     | Same as on Convex                                                    |
+| Variable                                                                                                                                                | Required               | Notes                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `CONVEX_URL`, `CONVEX_DEPLOY_KEY`                                                                                                                       | yes                    | Deploy key or self-hosted admin key                                                |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                                                                                                      | yes                    | Same as Convex. See [service secrets](operations.md#service-secrets)               |
+| `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`                                                                                                            | yes                    | Same as Convex                                                                     |
+| `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`                                                                                                         | yes                    | Comma-separated lists                                                              |
+| `ADMIN_ACCOUNT_SECRET`                                                                                                                                  | no                     | Enables `POST /v1/accounts`                                                        |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`                                                                                              | yes                    | The core runtime user's key                                                        |
+| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `TOOL_RUNNER_FUNCTION_NAME`                                                 | yes                    | Stack outputs                                                                      |
+| `PUBLIC_BASE_URL`                                                                                                                                       | yes                    | The public host. Sandbox job callbacks and status URLs use it                      |
+| `BROODS_DASHBOARD_URL`                                                                                                                                  | no                     | The dashboard a run's trace link opens. Defaults to `https://dashboard.broods.app` |
+| `SANDBOX_MOUNT_ROLE_ARN`                                                                                                                                | for mounts             | Role assumed for prefix-scoped workspace mount credentials                         |
+| `MICROVM_IMAGE_IDENTIFIER`, `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_LOG_GROUP_NAME`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`                              | for `lambda` sandboxes | Without the connector, `deny-all` MicroVMs fail to launch                          |
+| `WORKDIR_URL`, `WORKDIR_API_KEY`                                                                                                                        | for `sandbox`          | The workdir control plane                                                          |
+| `CLOUDFLARE_SANDBOX_URL`, `CLOUDFLARE_SANDBOX_API_KEY`                                                                                                  | for `cloudflare`       | See [Cloudflare sandbox bridge](#cloudflare-sandbox-bridge-optional)               |
+| `CLOUDFLARE_WORKER_URL`, `CLOUDFLARE_WORKER_API_KEY`                                                                                                    | for `worker`           | See [Cloudflare V8 Worker](#cloudflare-v8-worker-optional)                         |
+| `CLOUDFLARE_MCP_URL`, `CLOUDFLARE_MCP_API_KEY`                                                                                                          | for Cloudflare MCP     | See [Cloudflare MCP runtime](#cloudflare-mcp-runtime-optional)                     |
+| `DAYTONA_API_KEY`, `DAYTONA_API_URL`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | no                     | Fallbacks for sandbox configs that omit their own                                  |
+| `ENABLE_WEBSOCKET`, `NATS_URL`, `NATS_TOKEN`                                                                                                            | for WebSocket          | `ENABLE_WEBSOCKET=true` needs `NATS_URL`                                           |
+| `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                                                                         | for policies           | Default `http://127.0.0.1:8181`                                                    |
+| `MATRIX_FORWARDER_URL`                                                                                                                                  | for Matrix             | In-cluster URL of the matrix-forwarder                                             |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `SERVICE_NAME`, `DEPLOYMENT_ENVIRONMENT`                                                   | no                     | No endpoint means no export                                                        |
+| `POSTHOG_API_KEY`, `POSTHOG_HOST`                                                                                                                       | no                     | Anonymous PostHog AI traces + Logs. Unset either means no export                   |
+| `ANALYTICS_ID_SECRET`                                                                                                                                   | no                     | Same as Convex. Keys AI session ids; unset means none                              |
+| `ENABLE_DIRECT_API`                                                                                                                                     | no                     | Default `true`. `false` turns `POST /v1/runs` off                                  |
+| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                                                                                                       | no                     | Same as on Convex                                                                  |
 
 Tuning knobs, with defaults: `REQUEST_TIMEOUT_BUDGET_MS` 600000, `WORKER_TIMEOUT_BUDGET_MS` 600000, `MAX_INPROCESS_WORKERS` 8, `MODEL_FIRST_CHUNK_TIMEOUT_MS` 300000, `MODEL_CHUNK_TIMEOUT_MS` 300000, `SHUTDOWN_DEADLINE_MS` 25000, `MCP_BATCH_WINDOW_MS`, `MCP_BATCH_MAX`, `ISOLATE_POOL`, `ISOLATE_WORKER_POOL_SIZE` 4, `ISOLATE_MEMORY_LIMIT_MB`, `ISOLATE_RUNNER_TIMEOUT_SECONDS`, `SANDBOX_SWEEP_INTERVAL_SECONDS` 3600, and the `WORKSPACE_SANDBOX_*` limits in `apps/core/src/shared/sandbox.ts`. What they do is in [operations](operations.md#core-runtime-limits).
 
@@ -295,13 +298,12 @@ flowchart LR
   W -->|"422 or 504,<br/>x-broods-nothing-ran"| L
 ```
 
-Only a response tagged `x-broods-nothing-ran` reruns on Lambda; any other error fails the call. From `apps/cloudflare-mcp`:
+Only a response tagged `x-broods-nothing-ran` reruns on Lambda; any other error fails the call.
+
+Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (Workers Paid plan) when you run `bun run deploy`. It creates the `broods-mcp-bundles` R2 bucket with a 30-day expiry and ships the Worker as the `cloudflareWorkers.mcp` output, pointed at your bundle bucket. Then give it a key, from `apps/cloudflare-mcp`:
 
 ```bash
-bunx wrangler r2 bucket create broods-mcp-bundles
-bunx wrangler r2 bucket lifecycle set broods-mcp-bundles --file r2-lifecycle.json --force   # 30-day expiry
-bunx wrangler secret put MCP_API_KEY
-bunx wrangler deploy --var "BUNDLE_ORIGIN:https://<toolBundlesBucketName>.s3.<region>.amazonaws.com"
+bunx wrangler secret put MCP_API_KEY --name <cloudflareWorkers.mcp>
 ```
 
 Then set core's `CLOUDFLARE_MCP_URL` to `https://<worker-host>/mcp` and `CLOUDFLARE_MCP_API_KEY` to the same secret. Until both are set, every server runs on Lambda.
@@ -338,12 +340,10 @@ flowchart LR
   W --> R2[("R2 bucket<br/>broods-worker-state")]
 ```
 
-From `apps/cloudflare-worker` (the Workers Paid plan, for Dynamic Workers and R2; `bun run deploy` bundles the runtime first):
+Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (Workers Paid plan, for Dynamic Workers and R2) when you run `bun run deploy`. It creates the `broods-worker-state` R2 bucket and ships the Worker as the `cloudflareWorkers.worker` output. Then give it a key, from `apps/cloudflare-worker`:
 
 ```bash
-bunx wrangler r2 bucket create broods-worker-state
-bunx wrangler secret put WORKER_API_KEY
-bun run deploy
+bunx wrangler secret put WORKER_API_KEY --name <cloudflareWorkers.worker>
 ```
 
 Then set core's `CLOUDFLARE_WORKER_URL` to the Worker's `https://` URL and `CLOUDFLARE_WORKER_API_KEY` to the same secret. Plain `http://` is accepted only on loopback, for `wrangler dev`. This provider cannot mount workspaces.

@@ -12,8 +12,10 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { AnonymousSpanProcessor } from "../src/shared/otel.ts";
-import { analyticsSessionTag } from "../src/shared/run-token.ts";
+import {
+  AnonymousSpanProcessor,
+  analyticsSessionTag,
+} from "../src/shared/otel.ts";
 
 describe("PostHog anonymity", () => {
   it("keeps only listed attributes and drops error text, keeping codes and types", () => {
@@ -54,21 +56,23 @@ describe("PostHog anonymity", () => {
     expect(JSON.stringify(sent)).not.toContain("home address");
   });
 
-  it("tags the conversation key with the stage secret, not a plain hash", () => {
+  it("tags the conversation key with the analytics secret, not a plain hash", () => {
     const key = "acct:a1:agent:g1:whatsapp:+31612345678";
-    const previous = process.env.STAGE_TICKET_SECRET;
-    process.env.STAGE_TICKET_SECRET = "test-stage-secret";
+    const previous = process.env.ANALYTICS_ID_SECRET;
+    process.env.ANALYTICS_ID_SECRET = "analytics-secret";
     try {
       const tag = analyticsSessionTag(key);
 
       expect(analyticsSessionTag(key)).toBe(tag);
       expect(tag).toMatch(/^[0-9a-f]{64}$/);
       expect(tag).not.toBe(createHash("sha256").update(key).digest("hex"));
-      process.env.STAGE_TICKET_SECRET = "another-stage-secret";
+      process.env.ANALYTICS_ID_SECRET = "another-secret";
       expect(analyticsSessionTag(key)).not.toBe(tag);
+      delete process.env.ANALYTICS_ID_SECRET;
+      expect(analyticsSessionTag(key)).toBeUndefined();
     } finally {
-      if (previous === undefined) delete process.env.STAGE_TICKET_SECRET;
-      else process.env.STAGE_TICKET_SECRET = previous;
+      if (previous === undefined) delete process.env.ANALYTICS_ID_SECRET;
+      else process.env.ANALYTICS_ID_SECRET = previous;
     }
   });
 });

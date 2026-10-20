@@ -578,7 +578,7 @@ sequenceDiagram
 - The isolate is keyed by sandbox id plus what is fixed at load: its network (`globalOutbound: null` without internet, so `curl` is not even registered) and its CPU limit, `limits.cpuMs` from the call's timeout. That limit is the real guard for a busy command, because inside an isolate the clock moves only while the shell waits; just-bash's own deadline (exit 124) catches a `sleep` or a slow `curl`.
 - The isolate runs with `nodejs_compat` for `node:zlib` (gzip and file sniffing, and the stored disk) and the `Buffer` global; nothing else from Node is in the build. `bun run build` in the workspace writes `.generated/runtime.txt` from `src/runtime.ts`, and the host ships it as a text module.
 - Limits are in `apps/cloudflare-worker/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.
-- `deploy.yaml` does not deploy the Worker. A deployment that offers the provider runs `wrangler deploy` and sets `WORKER_API_KEY` on the Worker equal to core's `CLOUDFLARE_WORKER_API_KEY`, with `CLOUDFLARE_WORKER_URL` pointing at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
+- `sst deploy` ships the Worker per stage with wrangler, as `cloudflareWorkers.worker`, when the deploy has `CLOUDFLARE_API_TOKEN`. The infra repo generates `WORKER_API_KEY`, puts it on the Worker and in core's `CLOUDFLARE_WORKER_API_KEY`, and points `CLOUDFLARE_WORKER_URL` at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
 
 ## Machine
 
