@@ -124,18 +124,18 @@ bun run deploy                             # build, then sst deploy
 
 Stack outputs:
 
-| Output                                                        | Feeds                                                                          |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `filesystemBucketName`                                        | core and Convex `FILESYSTEM_BUCKET_NAME`                                       |
-| `skillsBucketName`                                            | core and Convex `SKILLS_BUCKET_NAME`                                           |
-| `toolBundlesBucketName`                                       | core and Convex `TOOL_BUNDLES_BUCKET_NAME`                                     |
-| `toolRunnerFunctionName`                                      | core `TOOL_RUNNER_FUNCTION_NAME`                                               |
-| `microvmExecutionRoleArn`, `microvmEgressNetworkConnectorArn` | core `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`      |
-| `microvmArtifactsBucketName`, `microvmBuildRoleArn`           | Convex `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`               |
-| `coreRuntimeUserName`                                         | `aws iam create-access-key --user-name <name>`, the key for core               |
-| `convexAwsRoleArn`                                            | Convex `CONVEX_AWS_ROLE_ARN`                                                   |
-| `convexBootstrapUserName`                                     | mint the key for Convex `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`          |
-| `cloudflareMcpWorkerName`                                     | the Worker name, if you run [cloudflare-mcp](#cloudflare-mcp-runtime-optional) |
+| Output                                                        | Feeds                                                                                                                                                    |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filesystemBucketName`                                        | core and Convex `FILESYSTEM_BUCKET_NAME`                                                                                                                 |
+| `skillsBucketName`                                            | core and Convex `SKILLS_BUCKET_NAME`                                                                                                                     |
+| `toolBundlesBucketName`                                       | core and Convex `TOOL_BUNDLES_BUCKET_NAME`                                                                                                               |
+| `toolRunnerFunctionName`                                      | core `TOOL_RUNNER_FUNCTION_NAME`                                                                                                                         |
+| `microvmExecutionRoleArn`, `microvmEgressNetworkConnectorArn` | core `MICROVM_EXECUTION_ROLE_ARN`, `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`                                                                                |
+| `microvmArtifactsBucketName`, `microvmBuildRoleArn`           | Convex `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                                                                                         |
+| `coreRuntimeUserName`                                         | `aws iam create-access-key --user-name <name>`, the key for core                                                                                         |
+| `convexAwsRoleArn`                                            | Convex `CONVEX_AWS_ROLE_ARN`                                                                                                                             |
+| `convexBootstrapUserName`                                     | mint the key for Convex `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`                                                                                    |
+| `cloudflareWorkers`                                           | the [cloudflare-mcp](#cloudflare-mcp-runtime-optional) and [V8 Worker](#cloudflare-v8-worker-optional) names, when the deploy had `CLOUDFLARE_API_TOKEN` |
 
 Fixed names, not outputs: `SANDBOX_MOUNT_ROLE_ARN` is the role `<stage>-<project>-sandbox-s3mount-<account>-<region>` (no `<stage>-` on production), and `MICROVM_LOG_GROUP_NAME` is `/broods/<stage>/microvms`. Production stages retain and protect their buckets. Add every long-lived stage to `.github/workflows/drift-cleanup.yaml`, see [CI/CD](ci-cd.md#drift-cleanup).
 
@@ -298,13 +298,12 @@ flowchart LR
   W -->|"422 or 504,<br/>x-broods-nothing-ran"| L
 ```
 
-Only a response tagged `x-broods-nothing-ran` reruns on Lambda; any other error fails the call. From `apps/cloudflare-mcp`:
+Only a response tagged `x-broods-nothing-ran` reruns on Lambda; any other error fails the call.
+
+Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (Workers Paid plan) when you run `bun run deploy`. It creates the `broods-mcp-bundles` R2 bucket with a 30-day expiry and ships the Worker as the `cloudflareWorkers.mcp` output, pointed at your bundle bucket. Then give it a key, from `apps/cloudflare-mcp`:
 
 ```bash
-bunx wrangler r2 bucket create broods-mcp-bundles
-bunx wrangler r2 bucket lifecycle set broods-mcp-bundles --file r2-lifecycle.json --force   # 30-day expiry
-bunx wrangler secret put MCP_API_KEY
-bunx wrangler deploy --var "BUNDLE_ORIGIN:https://<toolBundlesBucketName>.s3.<region>.amazonaws.com"
+bunx wrangler secret put MCP_API_KEY --name <cloudflareWorkers.mcp>
 ```
 
 Then set core's `CLOUDFLARE_MCP_URL` to `https://<worker-host>/mcp` and `CLOUDFLARE_MCP_API_KEY` to the same secret. Until both are set, every server runs on Lambda.
@@ -341,12 +340,10 @@ flowchart LR
   W --> R2[("R2 bucket<br/>broods-worker-state")]
 ```
 
-From `apps/cloudflare-worker` (the Workers Paid plan, for Dynamic Workers and R2; `bun run deploy` bundles the runtime first):
+Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (Workers Paid plan, for Dynamic Workers and R2) when you run `bun run deploy`. It creates the `broods-worker-state` R2 bucket and ships the Worker as the `cloudflareWorkers.worker` output. Then give it a key, from `apps/cloudflare-worker`:
 
 ```bash
-bunx wrangler r2 bucket create broods-worker-state
-bunx wrangler secret put WORKER_API_KEY
-bun run deploy
+bunx wrangler secret put WORKER_API_KEY --name <cloudflareWorkers.worker>
 ```
 
 Then set core's `CLOUDFLARE_WORKER_URL` to the Worker's `https://` URL and `CLOUDFLARE_WORKER_API_KEY` to the same secret. Plain `http://` is accepted only on loopback, for `wrangler dev`. This provider cannot mount workspaces.
