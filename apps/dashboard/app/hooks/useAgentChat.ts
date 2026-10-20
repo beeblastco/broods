@@ -590,7 +590,7 @@ async function startWebSocketSseStream(options: {
         socket.readyState === WebSocket.OPEN ||
         socket.readyState === WebSocket.CONNECTING
       ) {
-        socket.close(1011, error.message);
+        socket.close(1000, "error");
       }
     };
 
