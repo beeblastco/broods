@@ -35,7 +35,11 @@ class FakeWebSocket implements WebSocketLike {
     this.sent.push(data);
   }
 
+  // Rejects the codes a browser rejects, so the SDK never closes with them.
   close(code = 1000, reason = "closed"): void {
+    if (code !== 1000 && (code < 3000 || code > 4999)) {
+      throw new DOMException(`${code} is neither.`, "InvalidAccessError");
+    }
     this.readyState = 3;
     this.onclose?.({ code: code, reason: reason });
   }
