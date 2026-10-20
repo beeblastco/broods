@@ -594,22 +594,26 @@ async function resolveBearerAuth(
 
 /**
  * Resolve a scoped account key to role auth on its active account. Its
- * lastUsedAt is stamped off the request when due, so a failed stamp never
- * refuses a valid key.
+ * lastUsedAt is stamped off the request when due; a stamp that fails to
+ * schedule is logged, never a refusal.
  */
 async function resolveScopedKeyAuth(
   ctx: ActionCtx,
   keyHash: string,
 ): Promise<ConfigAuth | null> {
+  const now = Date.now();
   const key = await ctx.runQuery(internal.account.apiKeys.resolve, {
     keyHash: keyHash,
+    now: now,
   });
   if (!key) return null;
   if (key.stampDue) {
-    await ctx.scheduler.runAfter(0, internal.account.apiKeys.touchLastUsed, {
-      keyId: key.keyId,
-      usedAt: Date.now(),
-    });
+    await ctx.scheduler
+      .runAfter(0, internal.account.apiKeys.touchLastUsed, {
+        keyId: key.keyId,
+        usedAt: now,
+      })
+      .catch((err: unknown) => console.warn("lastUsedAt stamp failed", err));
   }
 
   return {

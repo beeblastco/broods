@@ -194,7 +194,11 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const provision = useAction(api.org.lifecycle.provision);
   const [selectedId, setSelectedId] = useQueryState("sel", parseAsName);
   const [creating, setCreating] = useState(false);
-  const [revealed, setRevealed] = useState<string | null>(null);
+  // A secret to show once; `scoped` names it a key rather than the account key.
+  const [revealed, setRevealed] = useState<{
+    secret: string;
+    scoped: boolean;
+  } | null>(null);
   const { pending, error, run } = useSubmit();
   const list = useListState({
     rows: listed?.keys ?? NO_ROWS,
@@ -233,7 +237,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
                 onClick={() =>
                   run(async () => {
                     const result = await provision({ orgId: org._id });
-                    setRevealed(result.secret);
+                    setRevealed({ secret: result.secret, scoped: false });
                   })
                 }
               >
@@ -245,9 +249,13 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
         {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
         {revealed && (
           <RevealSecretDialog
-            title="Save your new account key"
-            label="account key"
-            secret={revealed}
+            title={
+              revealed.scoped
+                ? "Save your new key"
+                : "Save your new account key"
+            }
+            label={revealed.scoped ? "key" : "account key"}
+            secret={revealed.secret}
             onClose={() => setRevealed(null)}
           />
         )}
@@ -306,7 +314,9 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
               orgKey={selected}
               canWrite={canWrite}
               onClose={() => setSelectedId(null)}
-              onRotated={setRevealed}
+              onRotated={(secret) =>
+                setRevealed({ secret: secret, scoped: false })
+              }
             />
           ))
         }
@@ -357,7 +367,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
                     ? relativeTime(key.lastUsedAt, now)
                     : isScoped(key)
                       ? "never"
-                      : "—"}
+                      : ""}
                 </DataTableCell>
                 <DataTableCell>
                   <ExpiryLabel expiresAt={key.expiresAt} now={now} />
@@ -381,15 +391,17 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
           onCreated={(keyId, token) => {
             setCreating(false);
             void setSelectedId(keyId);
-            setRevealed(token);
+            setRevealed({ secret: token, scoped: true });
           }}
         />
       )}
       {revealed && (
         <RevealSecretDialog
-          title="Save your new account key"
-          label="account key"
-          secret={revealed}
+          title={
+            revealed.scoped ? "Save your new key" : "Save your new account key"
+          }
+          label={revealed.scoped ? "key" : "account key"}
+          secret={revealed.secret}
           onClose={() => setRevealed(null)}
         />
       )}
@@ -407,12 +419,13 @@ function AccessCell({
   orgKey: ScopedKey;
   onRestrict: () => void;
 }): React.JSX.Element {
-  const { save, saved, error } = useKeySave(orgId, orgKey._id);
+  const { save, saved, pending, error } = useKeySave(orgId, orgKey._id);
 
   return (
     <span className="flex items-center gap-1.5" title={error ?? undefined}>
       <InlineMenu
         label="Access"
+        disabled={pending}
         value={presetOf(orgKey)}
         items={presetItems(true)}
         className="-ml-2"
@@ -587,10 +600,12 @@ function ExpiryLabel({
 function ExpiryMenu({
   expiresAt,
   now,
+  disabled,
   onPick,
 }: {
   expiresAt: number | undefined;
   now: number;
+  disabled: boolean;
   onPick: (expiresAt: number | null) => void;
 }): React.JSX.Element {
   const items: MenuItem<string>[] = [
@@ -611,6 +626,7 @@ function ExpiryMenu({
       value={expiresAt === undefined ? "never" : "current"}
       items={items}
       className="-ml-2"
+      disabled={disabled}
       onPick={(value) =>
         onPick(value === "never" ? null : now + Number(value) * DAY_MS)
       }
@@ -628,6 +644,7 @@ function InlineMenu<V extends string>({
   value,
   items,
   muted = false,
+  disabled = false,
   className,
   onPick,
 }: {
@@ -635,6 +652,8 @@ function InlineMenu<V extends string>({
   value: V;
   items: MenuItem<V>[];
   muted?: boolean;
+  /** While an earlier pick is still saving, so picks never overlap. */
+  disabled?: boolean;
   className?: string;
   onPick: (value: V) => void;
 }): React.JSX.Element {
@@ -648,7 +667,11 @@ function InlineMenu<V extends string>({
             variant="ghost"
             size="xs"
             tone={muted ? "muted" : undefined}
-            className={cn("cursor-pointer", className)}
+            className={cn(
+              disabled ? "cursor-not-allowed" : "cursor-pointer",
+              className,
+            )}
+            disabled={disabled}
             aria-label={label}
             onClick={stop}
           />
@@ -865,7 +888,7 @@ function ScopedKeyPanel({
 }): React.JSX.Element {
   const remove = useMutation(api.accountApiKeys.remove);
   const [editing, setEditing] = useState(false);
-  const { save, saved, error } = useKeySave(orgId, orgKey._id);
+  const { save, saved, pending, error } = useKeySave(orgId, orgKey._id);
   const levels = levelsOf(orgKey.actions);
   const withSaved = (
     field: string,
@@ -896,6 +919,7 @@ function ScopedKeyPanel({
             "scope",
             <InlineMenu
               label="Scope"
+              disabled={pending}
               value={orgKey.stageId ?? "org"}
               items={scopeItems(stages)}
               className="-ml-2"
@@ -924,6 +948,7 @@ function ScopedKeyPanel({
             "expires",
             <ExpiryMenu
               expiresAt={orgKey.expiresAt}
+              disabled={pending}
               now={now}
               onPick={(expiresAt) => save("expires", { expiresAt: expiresAt })}
             />,
@@ -975,6 +1000,7 @@ function ScopedKeyPanel({
           {canWrite ? (
             <InlineMenu
               label="Access"
+              disabled={pending}
               value={presetOf(orgKey)}
               items={presetItems(false)}
               onPick={(preset) =>
@@ -1011,6 +1037,7 @@ function ScopedKeyPanel({
                 {canWrite ? (
                   <InlineMenu
                     label={`${AREA_LABELS[area]} access`}
+                    disabled={pending}
                     value={levels[area]}
                     items={LEVEL_ITEMS}
                     muted={levels[area] === "none"}
@@ -1140,7 +1167,7 @@ function scopeLabel(key: OrgKey, stages: StageOption[]): string {
   if (!key.stageId) return "Organization";
   const stage = stages.find((entry) => entry.stageId === key.stageId);
 
-  return stage ? stageLabel(stage) : "—";
+  return stage ? stageLabel(stage) : "Unknown stage";
 }
 
 function searchText(key: OrgKey): string {
@@ -1153,7 +1180,9 @@ function stageLabel(stage: StageOption): string {
 
 /**
  * One inline save of a scoped key at a time, and which control saved last,
- * so its "Saved" note shows beside that control for a moment.
+ * so its "Saved" note shows beside that control for a moment. A save builds
+ * on the key as last rendered, so `pending` locks the controls until the
+ * query reflects it; a pick made meanwhile is dropped.
  */
 function useKeySave(
   orgId: Id<"orgs">,
@@ -1161,10 +1190,11 @@ function useKeySave(
 ): {
   save: (field: string, patch: KeyPatch) => void;
   saved: string | null;
+  pending: boolean;
   error: string | null;
 } {
   const update = useMutation(api.accountApiKeys.update);
-  const { error, run } = useSubmit();
+  const { pending, error, run } = useSubmit();
   const [saved, setSaved] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1176,6 +1206,7 @@ function useKeySave(
 
   return {
     save: (field, patch) => {
+      if (pending) return;
       setSaved(null);
       void run(async () => {
         await update({ orgId: orgId, keyId: keyId, ...patch });
@@ -1183,6 +1214,7 @@ function useKeySave(
       });
     },
     saved: saved,
+    pending: pending,
     error: error,
   };
 }

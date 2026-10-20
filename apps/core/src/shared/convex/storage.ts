@@ -849,6 +849,7 @@ const accountApiKeys: Storage["accountApiKeys"] = {
   resolveByKeyHash: async function (keyHash) {
     const key = await adminQuery(internal.account.apiKeys.resolve, {
       keyHash: keyHash,
+      now: Date.now(),
     });
     const account = accountFromConvex(key?.account ?? null);
 

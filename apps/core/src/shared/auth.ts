@@ -36,7 +36,7 @@ import { getStorage } from "./storage.ts";
 
 const KEY_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
-// Last lastUsedAt write per runtime key hash. Core runs single replica, so
+// Last lastUsedAt write per runtime or scoped key hash. Core runs single replica, so
 // this in-process map is the whole throttle.
 const keyLastUsedWrites = new Map<string, number>();
 
@@ -59,8 +59,9 @@ export type AuthContext =
       user?: UserToken;
     }
   | {
-      // Short-lived assume-role session minted by the config plane. What it
-      // may do is decided per request by `authorize()` over `role.policy`.
+      // An assume-role session minted by the config plane, or a scoped
+      // account key (bask_, possibly long-lived). What it may do is decided
+      // per request by `authorize()` over `role.policy`.
       kind: "role";
       account: AccountRecord;
       role: RolePrincipal;
@@ -216,15 +217,17 @@ async function resolveAccountSecretAuth(
 
 /**
  * Resolve a scoped account key to role auth on its active account, stamping
- * its lastUsedAt off the request when the lookup says it is due.
+ * its lastUsedAt off the request when the lookup says it is due, once per
+ * burst of concurrent requests.
  */
 async function resolveScopedKeyAuth(
   keyHash: string,
 ): Promise<AuthContext | null> {
   const key = await getStorage().accountApiKeys.resolveByKeyHash(keyHash);
   if (!key) return null;
-  if (key.stampDue) {
-    waitUntil(getStorage().accountApiKeys.touchLastUsed(key.keyId, Date.now()));
+  const now = Date.now();
+  if (key.stampDue && claimLastUsedWrite(keyLastUsedWrites, keyHash, now)) {
+    waitUntil(getStorage().accountApiKeys.touchLastUsed(key.keyId, now));
   }
 
   return { kind: "role", account: key.account, role: key.principal };

@@ -2140,7 +2140,7 @@ export declare const internal: {
       resolve: FunctionReference<
         "query",
         "internal",
-        { keyHash: string },
+        { keyHash: string; now: number },
         {
           account: {
             _creationTime: number;
