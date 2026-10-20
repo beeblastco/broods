@@ -478,14 +478,8 @@ function KeyDialog({
   const { pending, error, run } = useSubmit();
   const actions = actionsOf(levels);
   const canSubmit = name.trim().length > 0 && actions.length > 0 && !pending;
-  const stage = stages.find((entry) => entry.stageId === stageId);
-  const scopeItems = [
-    { label: "Whole organization", value: "org" },
-    ...stages.map((entry) => ({
-      label: `${entry.projectName} / ${entry.stageName}`,
-      value: entry.stageId,
-    })),
-  ];
+  const pin = keyPin(stageId, stages, editing);
+  const scopeItems = scopeChoices(stages, editing);
 
   function setAll(level: Level): void {
     setLevels(
@@ -502,8 +496,8 @@ function KeyDialog({
       name: name.trim(),
       description: description.trim() || undefined,
       actions: actions,
-      projectId: stage?.projectId,
-      stageId: stage?.stageId,
+      projectId: pin?.projectId,
+      stageId: pin?.stageId,
     };
     await run(async () => {
       if (editing?._id) {
@@ -734,6 +728,23 @@ function actionsOf(levels: Record<Resource, Level>): ApiPolicyAction[] {
   });
 }
 
+/**
+ * The pin a save sends for the picked scope. A key pinned to a stage since
+ * deleted keeps that pin, so the save is refused instead of quietly widening
+ * the key to the whole organization.
+ */
+function keyPin(
+  stageId: string,
+  stages: StageOption[],
+  editing: OrgKey | null,
+): { projectId?: Id<"projects">; stageId?: Id<"stages"> } | undefined {
+  if (stageId === "org") return undefined;
+
+  return (
+    stages.find((entry) => entry.stageId === stageId) ?? editing ?? undefined
+  );
+}
+
 /** Each resource's grid level from the actions a key holds. */
 function levelsOf(actions: ApiPolicyAction[]): Record<Resource, Level> {
   const held = new Set(actions);
@@ -748,6 +759,26 @@ function levelsOf(actions: ApiPolicyAction[]): Record<Resource, Level> {
           : "none",
     ]),
   ) as Record<Resource, Level>;
+}
+
+/** The scope picker's options; an edited key's deleted stage stays listed as such. */
+function scopeChoices(
+  stages: StageOption[],
+  editing: OrgKey | null,
+): { label: string; value: string }[] {
+  const choices = [
+    { label: "Whole organization", value: "org" },
+    ...stages.map((entry) => ({
+      label: `${entry.projectName} / ${entry.stageName}`,
+      value: entry.stageId,
+    })),
+  ];
+  const lost = editing?.stageId;
+  if (lost && !stages.some((entry) => entry.stageId === lost)) {
+    choices.push({ label: "Deleted stage", value: lost });
+  }
+
+  return choices;
 }
 
 function scopeLabel(key: OrgKey, stages: StageOption[]): string {
