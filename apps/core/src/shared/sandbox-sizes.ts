@@ -81,14 +81,6 @@ export const SANDBOX_SIZES: Record<SandboxSize, Required<SandboxSpecs>> = {
   large: { vcpu: 4, memoryMb: 8192, storageGb: 32 },
 };
 
-export const SANDBOX_SIZE_NAMES: readonly SandboxSize[] = [
-  "tiny",
-  "xsmall",
-  "small",
-  "medium",
-  "large",
-];
-
 /**
  * Cloudflare's named instance type nearest each size, with its documented specs
  * (developers.cloudflare.com/containers/platform/limits). A custom type needs a

@@ -17,8 +17,6 @@ export type {
   PermissionMode as SandboxPermissionMode,
   RuntimeName as SandboxRuntimeName,
   SandboxConfig,
-  SandboxLifecycleConfig,
-  SandboxNetworkConfig,
   SandboxProvider,
 } from "@broods/convex/model/sandboxRules";
 

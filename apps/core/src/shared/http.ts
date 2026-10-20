@@ -138,20 +138,6 @@ export function jsonResponse(
   });
 }
 
-export function textResponse(
-  status: number,
-  body: string,
-  headers: Record<string, string> = {},
-): Response {
-  return new Response(body, {
-    status: status,
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      ...headers,
-    },
-  });
-}
-
 export function normalizePath(path: string): string {
   return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }

@@ -1,6 +1,6 @@
 /**
  * The bearer check every platform Worker core talks to runs first. The bridge
- * and the isolate Worker import this file, so the compare is written once.
+ * and the V8 Worker import this file, so the compare is written once.
  */
 
 const encoder = new TextEncoder();

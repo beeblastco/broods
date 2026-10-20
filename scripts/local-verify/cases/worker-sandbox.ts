@@ -55,7 +55,7 @@ export async function workerSandbox(context: VerifyContext): Promise<void> {
 
   if (!process.env.CLOUDFLARE_WORKER_URL || !context.hasModelKey) {
     console.log(
-      `  skip agent on an isolate (set CLOUDFLARE_WORKER_URL and ${MODEL_KEY_HINT})`,
+      `  skip agent on a V8 Worker (set CLOUDFLARE_WORKER_URL and ${MODEL_KEY_HINT})`,
     );
     return;
   }

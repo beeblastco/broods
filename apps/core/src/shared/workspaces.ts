@@ -16,11 +16,7 @@ import {
   PLATFORM_WORKER_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
 } from "@broods/convex/model/sandboxRules";
-import type {
-  ChannelPartition,
-  AgentConfig,
-  AgentWorkspaceRef,
-} from "./domain/agent-config.ts";
+import type { ChannelPartition, AgentConfig } from "./domain/agent-config.ts";
 import type {
   SandboxConfig,
   SandboxConfigRecord,
@@ -370,12 +366,6 @@ export async function resolveAgentRuntime(
   };
 }
 
-export function resolveWorkspaceRefs(
-  agentConfig: AgentConfig,
-): AgentWorkspaceRef[] {
-  return agentConfig.workspaces ?? [];
-}
-
 /**
  * True when the account's own provider account pays for this sandbox, so the
  * platform must not meter it or hold it to the plan's budget. Mirrors where
@@ -416,19 +406,6 @@ export function workspaceNamespace(
   const scope = accountId ? `${accountId}:${workspaceId}` : workspaceId;
 
   return normalizeFilesystemNamespace(scope);
-}
-
-/**
- * Namespaces for an account's workspace records, used by cleanup to purge the
- * S3 data for shared workspaces. Pass the account's workspace ids.
- */
-export function workspaceNamespacesForAccount(
-  accountId: string,
-  workspaceIds: string[],
-): string[] {
-  return workspaceIds.map((workspaceId) =>
-    workspaceNamespace(accountId, workspaceId),
-  );
 }
 
 // The file tools need the workspace's S3 mount. A stateless provider has none (a

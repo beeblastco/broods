@@ -1,6 +1,6 @@
 /**
  * What the executors behind a platform Cloudflare Worker share: the bridge
- * for `cloudflare` and the isolate Worker for `worker`. Both reach their
+ * for `cloudflare` and the V8 Worker for `worker`. Both reach their
  * Worker over bearer-authenticated HTTPS from core's env, and both reserve a
  * persistent sandbox as a claim on an id, since the Worker-side resource
  * exists as soon as it is named. Provider-specific calls stay in each executor.

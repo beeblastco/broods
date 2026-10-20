@@ -98,7 +98,7 @@ export const USAGE_CATEGORY: Record<keyof UsageQuantities, UsageCategory> = {
   sandboxSnapshotGbMonths: "sandboxes",
   hostedMcpGbSeconds: "hostedMcp",
   hostedMcpRequests: "hostedMcp",
-  // Sandbox time too: an isolate is a sandbox that only runs while a command does.
+  // Sandbox time too: a V8 Worker is a sandbox that only runs while a command does.
   workerMs: "sandboxes",
   workerRequests: "sandboxes",
   storageGbMonths: "storage",
