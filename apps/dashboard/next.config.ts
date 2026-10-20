@@ -12,9 +12,15 @@ const httpBackendSources = [
 
   return protocol === "http:" ? [`http://${host}`, `ws://${host}`] : [];
 });
+// posthog-js loads its lazy scripts from its host, which may be a reverse proxy.
+const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+const posthogScriptSource =
+  posthogHost && URL.canParse(posthogHost)
+    ? ` ${new URL(posthogHost).origin}`
+    : "";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' https://*.posthog.com${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://*.posthog.com${posthogScriptSource}${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' blob: data: https:",
   "font-src 'self' data:",
