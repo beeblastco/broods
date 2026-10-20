@@ -203,7 +203,8 @@ function convex(args: readonly string[]): void {
     process.exit(1);
   }
   const result = tryConvexCli(state, args);
-  process.stdout.write(result.output);
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
   process.exit(result.ok ? 0 : 1);
 }
 
@@ -378,8 +379,8 @@ async function up(
 
 /**
  * Perf report: needs core started by `up --perf`. Exits 1 when a scenario
- * makes more Convex calls than perf-baseline.json allows; `--record` rewrites
- * that file from this run instead.
+ * loses a usage record or makes more Convex calls than perf-baseline.json
+ * allows; `--record` rewrites that file from this run instead.
  */
 async function perf(record: boolean): Promise<void> {
   const state = loadState(currentInstanceId());
@@ -728,14 +729,19 @@ function runConvexCli(
 function tryConvexCli(
   state: InstanceState,
   args: readonly string[],
-): { ok: boolean; output: string } {
+): { ok: boolean; output: string; stdout: string; stderr: string } {
   const result = spawnSync("bunx", ["convex", ...args], {
     cwd: join(repoRoot, "packages", "convex"),
     encoding: "utf8",
     env: convexCliEnv(state),
   });
 
-  return { ok: result.status === 0, output: result.stdout + result.stderr };
+  return {
+    ok: result.status === 0,
+    output: result.stdout + result.stderr,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 function convexCliEnv(state: InstanceState): NodeJS.ProcessEnv {

@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import type { Doc } from "../../../packages/convex/_generated/dataModel.ts";
 import {
   SELF_HOST_ADMIN,
   SELF_HOST_ISSUER,
@@ -40,9 +43,32 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
   };
 
   asAdmin("user:ensureSynced", {});
+  // Node warns about these conflicting color flags on stderr. The CLI must
+  // leave stdout parseable for callers such as the dashboard browser fixtures.
+  const cli = spawnSync(
+    "bun",
+    [
+      join(import.meta.dir, "..", "..", "local-stack.ts"),
+      "convex",
+      "run",
+      "--identity",
+      identity,
+      "org/orgs:getActive",
+      "{}",
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, FORCE_COLOR: "1", NO_COLOR: "1" },
+    },
+  );
+  const previous: Doc<"orgs"> | null = JSON.parse(cli.stdout);
+  assertStep(
+    "the local Convex CLI keeps JSON on stdout and diagnostics on stderr",
+    cli.status === 0 && cli.stderr.includes("NO_COLOR"),
+    cli.stderr.slice(-300),
+  );
   // An org of the case's own, made active for its steps, so the totals it
   // reads move only by what it writes.
-  const previous = asAdmin("org/orgs:getActive", {}) as { _id: string } | null;
   const orgId = String(
     asAdmin("org/orgs:create", { name: `usage-${context.runId}` }),
   );
