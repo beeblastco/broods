@@ -9,8 +9,9 @@ interface CapturedException {
 
 // Browser analytics and error tracking: behaviour only, never what users type
 // or see, so no element text or attributes, no replays, no ad ids from URLs,
-// and exceptions keep their type and stack but not their message. A no-op when
-// the key or host is unset, same contract as the OTLP exporters.
+// no GeoIP location, and exceptions keep their type and stack but not their
+// message. A no-op when the key or host is unset, same contract as the OTLP
+// exporters.
 const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
 
@@ -28,6 +29,7 @@ if (posthogKey && posthogHost) {
       capture_console_errors: false,
     },
   });
+  posthog.register({ $geoip_disable: true });
 }
 
 // Replaces each exception message with its type, so error tracking still
