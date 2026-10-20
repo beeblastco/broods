@@ -259,7 +259,8 @@ Stateless; scale it with replicas.
 | `NEXT_PUBLIC_CONVEX_URL`      | build time | Your Convex URL                                                                 |
 | `NEXT_PUBLIC_BROODS_BASE_URL` | build time | The public host                                                                 |
 | `NEXT_PUBLIC_POSTHOG_KEY`     | build time | PostHog project key. Unset means no analytics, errors or logs                   |
-| `NEXT_PUBLIC_POSTHOG_HOST`    | build time | PostHog ingest host, e.g. `https://eu.i.posthog.com`                            |
+| `NEXT_PUBLIC_POSTHOG_HOST`    | build time | PostHog ingest host or your reverse proxy, e.g. `https://eu.i.posthog.com`      |
+| `NEXT_PUBLIC_POSTHOG_UI_HOST` | build time | Behind a proxy, the PostHog app it fronts, e.g. `https://eu.posthog.com`        |
 | `ADMIN_ACCOUNT_SECRET`        | runtime    | The admin sign-in key. At least 32 characters or the dashboard refuses to start |
 | `BROODS_SESSION_SIGNING_KEY`  | runtime    | Private ES256 JWK that signs the session                                        |
 | `CONVEX_SITE_URL`             | runtime    | A self-hosted Convex has no derivable `.convex.site` host                       |

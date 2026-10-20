@@ -1,20 +1,27 @@
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV === "development";
-// `https:` and `wss:` cover hosted backends; a plain-http Convex or gateway
-// (the local stack, a self-hosted LAN) is allowed by its exact origin.
+// `https:` and `wss:` cover hosted backends; a plain-http Convex, gateway or
+// PostHog (the local stack, a self-hosted LAN) is allowed by its exact origin.
 const httpBackendSources = [
   process.env.NEXT_PUBLIC_CONVEX_URL,
   process.env.NEXT_PUBLIC_BROODS_BASE_URL,
+  process.env.NEXT_PUBLIC_POSTHOG_HOST,
 ].flatMap((url): string[] => {
   if (!url) return [];
   const { host, protocol } = new URL(url);
 
   return protocol === "http:" ? [`http://${host}`, `ws://${host}`] : [];
 });
+// posthog-js loads its lazy scripts from its host, which may be a reverse proxy.
+const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+const posthogScriptSource =
+  posthogHost && URL.canParse(posthogHost)
+    ? ` ${new URL(posthogHost).origin}`
+    : "";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' https://*.posthog.com${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://*.posthog.com${posthogScriptSource}${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' blob: data: https:",
   "font-src 'self' data:",
