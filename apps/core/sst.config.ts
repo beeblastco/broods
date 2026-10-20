@@ -1170,7 +1170,7 @@ export default $config({
           }),
           // The `cloudflare` sandbox provider's bridge: wrangler builds its
           // Container image, so the deploy needs Docker.
-          sandbox: deployCloudflareWorker(
+          sandbox: await deployCloudflareWorker(
             command,
             stage,
             region,
