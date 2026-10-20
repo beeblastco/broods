@@ -2364,9 +2364,7 @@ function dashboardTraceUrl(
     return null;
   }
   const dashboardUrl = (
-    process.env.BROODS_DASHBOARD_URL ??
-    process.env.DASHBOARD_URL ??
-    DEFAULT_DASHBOARD_URL
+    process.env.BROODS_DASHBOARD_URL ?? DEFAULT_DASHBOARD_URL
   ).replace(/\/+$/, "");
   const params = new URLSearchParams({
     project: event.projectSlug,

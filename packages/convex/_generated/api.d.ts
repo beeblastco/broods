@@ -6851,45 +6851,6 @@ export declare const internal: {
       >;
     };
   };
-  seatMigration: {
-    resyncAllSeats: FunctionReference<
-      "action",
-      "internal",
-      { dryRun: boolean },
-      {
-        done: Array<{
-          authId: string;
-          newQuantity: number;
-          oldQuantity: number;
-          stripeSubscriptionId: string;
-        }>;
-        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
-        failed: Array<{ authId: string; error: string }>;
-      }
-    >;
-    resyncPageInternal: FunctionReference<
-      "query",
-      "internal",
-      { cursor: string | null },
-      {
-        continueCursor: string;
-        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
-        isDone: boolean;
-        resyncs: Array<{
-          authId: string;
-          newQuantity: number;
-          oldQuantity: number;
-          stripeSubscriptionId: string;
-        }>;
-      }
-    >;
-    syncPlanInternal: FunctionReference<
-      "mutation",
-      "internal",
-      { authId: string },
-      null
-    >;
-  };
   stripe: {
     applySubscriptionInternal: FunctionReference<
       "mutation",
