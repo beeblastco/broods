@@ -25,7 +25,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { registerTelemetry } from "ai";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
+import { analyticsSessionTag } from "./run-token.ts";
 
 export interface ObservabilityContext {
   accountId: string;
@@ -280,8 +280,8 @@ export function initOtel(): void {
 
     if (!aiTracer) return;
 
-    // AI SDK v7 uses this integration to produce gen-ai spans. Runtime context
-    // adds the conversation grouping AI Observability needs, never the requester.
+    // AI SDK v7 uses this integration to produce gen-ai spans. The session is
+    // a keyed tag of the run's conversation, never the key or the requester.
     registerTelemetry(
       new OpenTelemetry({
         tracer: aiTracer,
@@ -296,12 +296,9 @@ export function initOtel(): void {
               typeof runtimeContext.properties.environment === "string"
                 ? runtimeContext.properties.environment
                 : undefined,
-            $ai_session_id:
-              typeof runtimeContext?.sessionId === "string"
-                ? runtimeContext.sessionId
-                : context
-                  ? aiSessionId(context.conversationKey)
-                  : undefined,
+            $ai_session_id: context
+              ? analyticsSessionTag(context.conversationKey)
+              : undefined,
             $ai_trace_name:
               typeof runtimeContext?.traceName === "string"
                 ? runtimeContext.traceName
@@ -313,11 +310,6 @@ export function initOtel(): void {
   } catch {
     // Best-effort: a failed init leaves the global API noop.
   }
-}
-
-/** One-way hash of a conversation key, so AI Observability groups turns without learning who talked. */
-export function aiSessionId(conversationKey: string): string {
-  return createHash("sha256").update(conversationKey).digest("hex");
 }
 
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */

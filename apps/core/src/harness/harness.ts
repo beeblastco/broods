@@ -61,7 +61,6 @@ import {
 import type { ProviderOptions, ToolResultOutput } from "@ai-sdk/provider-utils";
 import { isPlainObject } from "../shared/object.ts";
 import {
-  aiSessionId,
   getObservabilityContext,
   getTracer,
   mintSpanId,
@@ -851,7 +850,6 @@ export async function runAgentLoop(
     now: Date.now,
   });
   const aiRuntimeContext = {
-    sessionId: aiSessionId(session.conversationKey),
     traceName: rootSpanName,
     properties: process.env.DEPLOYMENT_ENVIRONMENT
       ? { environment: process.env.DEPLOYMENT_ENVIRONMENT }
@@ -881,7 +879,6 @@ export async function runAgentLoop(
     telemetry: {
       functionId: "harness.agent",
       includeRuntimeContext: {
-        sessionId: true,
         traceName: true,
         properties: true,
       },

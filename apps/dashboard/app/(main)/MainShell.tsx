@@ -73,9 +73,11 @@ export function MainShell({
   }, []);
 
   // An expired session signs in again and lands back where it was; the
-  // sign-in route validates `returnTo`.
+  // sign-in route validates `returnTo`. PostHog forgets the user first, so a
+  // different account signing in here is not counted as the previous one.
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
+      posthog.reset();
       const returnTo = window.location.pathname + window.location.search;
       router.replace(`/auth/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
     }

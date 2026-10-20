@@ -1,6 +1,6 @@
 /**
  * PostHog gets AI Observability spans with no user content: error text is
- * stripped before export and sessions are one-way hashes of the conversation key.
+ * stripped before export and sessions are keyed tags of the conversation key.
  */
 
 import { SpanStatusCode } from "@opentelemetry/api";
@@ -10,7 +10,9 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "bun:test";
-import { AnonymousSpanProcessor, aiSessionId } from "../src/shared/otel.ts";
+import { createHash } from "node:crypto";
+import { AnonymousSpanProcessor } from "../src/shared/otel.ts";
+import { analyticsSessionTag } from "../src/shared/run-token.ts";
 
 describe("PostHog anonymity", () => {
   it("strips error messages and stacks but keeps the code and error type", () => {
@@ -46,11 +48,20 @@ describe("PostHog anonymity", () => {
     expect(JSON.stringify(sent)).not.toContain("academic performance");
   });
 
-  it("hashes the conversation key into a stable session id", () => {
+  it("tags the conversation key with the stage secret, not a plain hash", () => {
     const key = "acct:a1:agent:g1:whatsapp:+31612345678";
+    const previous = process.env.STAGE_TICKET_SECRET;
+    process.env.STAGE_TICKET_SECRET = "test-stage-secret";
+    try {
+      const tag = analyticsSessionTag(key);
 
-    expect(aiSessionId(key)).toBe(aiSessionId(key));
-    expect(aiSessionId(key)).toMatch(/^[0-9a-f]{64}$/);
-    expect(aiSessionId(key)).not.toBe(aiSessionId(`${key}x`));
+      expect(analyticsSessionTag(key)).toBe(tag);
+      expect(tag).toMatch(/^[0-9a-f]{64}$/);
+      expect(tag).not.toBe(createHash("sha256").update(key).digest("hex"));
+      process.env.STAGE_TICKET_SECRET = "another-stage-secret";
+      expect(analyticsSessionTag(key)).not.toBe(tag);
+    } finally {
+      process.env.STAGE_TICKET_SECRET = previous;
+    }
   });
 });
