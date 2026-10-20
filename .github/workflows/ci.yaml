@@ -149,8 +149,9 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      - name: Test the gate
-        run: bun test scripts/audit-gate.test.ts
+      # Every test under scripts/: the gate and the dependency watch.
+      - name: Test the scripts
+        run: bun test ./scripts/
 
       - name: Check dependency advisories
         run: bun run deps:audit

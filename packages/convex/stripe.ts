@@ -68,8 +68,7 @@ export const createCheckoutSession = action({
       authId: authUser.id,
     });
     // Stops a second click or tab. It reads webhook-synced rows, so a checkout
-    // paid seconds ago can still slip through; the seat resync reports such a
-    // duplicate (seatMigration.ts).
+    // paid seconds ago can still slip through.
     if (billing.subscription) {
       throw new ClientError(
         "Already subscribed; use Manage Billing to change plan",
