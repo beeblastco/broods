@@ -46,7 +46,7 @@ Convex goes first so no service runs ahead of the schema it calls. npm goes last
 | `check-broods-sdk.yaml`        | PRs and `dev` pushes touching the SDK, demos, root package files or npm workflows | Typecheck, test, build and dry-run pack of the SDK                                                                                                                                                                                                                       |
 | `codeql.yml`                   | pushes and PRs to `dev` and `main`; Tuesdays 17:35 UTC                            | CodeQL analysis                                                                                                                                                                                                                                                          |
 | `deploy-convex.yaml`           | `dev` or `main` pushes touching `packages/convex`; manual                         | `convex deploy`. `main` refuses a non-`prod:` key, or a self-hosted URL other than `https://convex-api.broods.app`                                                                                                                                                       |
-| `deploy.yaml`                  | `dev` or `main` pushes, except docs, dashboard and markdown only; manual          | SST deploy of the AWS data plane, then the Cloudflare MCP Worker. See [deploy pipeline](#deploy-pipeline)                                                                                                                                                                |
+| `deploy.yaml`                  | `dev` or `main` pushes, except docs, dashboard and markdown only; manual          | SST deploy of the AWS data plane and the Cloudflare Workers. See [deploy pipeline](#deploy-pipeline)                                                                                                                                                                     |
 | `build-core.yaml`              | `dev` or `main` pushes touching core, Convex or root package files; manual        | Build `broods-core`, roll it after `deploy-convex` and `deploy`                                                                                                                                                                                                          |
 | `build-gateway.yaml`           | `dev` or `main` pushes touching the gateway or files it imports; manual           | Check, test, build `broods-gateway`, roll it after core's rollout                                                                                                                                                                                                        |
 | `build-dashboard.yaml`         | `dev` or `main` pushes touching dashboard, SDK or Convex; manual                  | Build `broods-dashboard` with `NEXT_PUBLIC_*` args, roll it after `deploy-convex`                                                                                                                                                                                        |
@@ -120,9 +120,9 @@ flowchart TD
   S -->|yes| S1["sst deploy without sandbox,<br/>crane copy latest-arm64"]
   S1 --> D
   S -->|no| D["sst deploy, 3 tries, 15 s apart"]
-  D --> W{"no Cloudflare<br/>credentials?"}
-  W -->|yes| Done[Next target]
-  W -->|no| M["wrangler deploy cloudflare-mcp<br/>named cloudflareMcpWorkerName"]
+  D --> W{"Cloudflare token set?"}
+  W -->|no| Done[Next target]
+  W -->|yes| M["inside sst deploy: wrangler ships<br/>each Cloudflare Worker whose files changed"]
   M --> Done
 ```
 
@@ -135,7 +135,7 @@ flowchart TD
 
 - Production stages deploy only from `main`. `production_targets()` in `deploy.yaml` lists `eu-west-1` alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM pieces in `ap-southeast-1`.
 - The deploy job shares the `sst-<stage>` concurrency group with drift cleanup, so the two never touch a stage at once.
-- The [Cloudflare MCP runtime](../guides/tools.md#where-a-hosted-server-runs) step creates the `broods-mcp-bundles` R2 bucket if missing, sets its 30-day expiry and sets `BUNDLE_ORIGIN` to the stage's tool-bundles bucket. It ships code only; the infra repo writes the shared key to the Worker's `MCP_API_KEY` and core's `CLOUDFLARE_MCP_API_KEY`. It runs for production stages too. A failure only warns and leaves the last deployed Worker serving, so infra sets a stage's `CLOUDFLARE_MCP_URL` only after its first Worker deploy succeeded.
+- With a Cloudflare token, `sst deploy` itself ships the [Cloudflare MCP runtime](../guides/tools.md#where-a-hosted-server-runs) and the [V8 Worker](sandboxes.md#worker), each named per stage, by running its workspace's `deploy` script (`deployCloudflareWorker` in `sst.config.ts`). A Worker redeploys only when its tracked files or `bun.lock` change. The MCP script creates the `broods-mcp-bundles` R2 bucket if missing, sets its 30-day expiry and sets `BUNDLE_ORIGIN` to the stage's tool-bundles bucket; the V8 Worker's creates `broods-worker-state`. They ship code only: the infra repo generates each key and writes it to the Worker and to core. A failed Worker deploy fails the stage deploy like any other resource.
 
 ## Secrets and variables
 
@@ -150,7 +150,7 @@ Environment-scoped values resolve from `development` or `production` by branch.
 | `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY`                                              | secret, per env           | `deploy-convex`, instead of a deploy key                                                                          |
 | `OTEL_EXPORTER_OTLP_HEADERS`                                                                          | secret                    | `deploy`, `drift-cleanup`. Unset skips the sandbox log forwarder                                                  |
 | `SANDBOX_IMAGE_READY_DEV`, `SANDBOX_IMAGE_READY_PRODUCTION[_<REGION>]`, `SANDBOX_IMAGE_SOURCE_REGION` | variable                  | `deploy`; the readiness flags also `drift-cleanup`. `SANDBOX_IMAGE_READY` is the legacy fallback for the dev flag |
-| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`                                                       | secret, variable, per env | `deploy`. Unset skips the Cloudflare MCP Worker                                                                   |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`                                                       | secret, variable, per env | `deploy`, drift reconcile. Unset skips the Cloudflare Workers                                                     |
 | `INFRA_DISPATCH_TOKEN`                                                                                | secret                    | every build workflow. Fine-grained PAT on `beeblastco/infra`, Actions read and write                              |
 | `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, `NEXT_PUBLIC_BROODS_BASE_URL`            | variable, per env         | `build-dashboard`; the Convex URL also `ci`                                                                       |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`                                        | secret                    | `ci` signed-in dashboard tests                                                                                    |

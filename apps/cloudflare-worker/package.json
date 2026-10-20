@@ -9,7 +9,7 @@
     "check": "bun run build && tsc --noEmit && tsc --noEmit -p tests",
     "test": "bun test",
     "dev": "bun run build && wrangler dev",
-    "deploy": "bun run build && wrangler deploy"
+    "deploy": "bun run build && (wrangler r2 bucket info broods-worker-state >/dev/null 2>&1 || wrangler r2 bucket create broods-worker-state) && wrangler deploy --name \"$WORKER_NAME\""
   },
   "dependencies": {
     "just-bash": "^3.6.0",

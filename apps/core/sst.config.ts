@@ -136,6 +136,62 @@ function ecrRepositoryExists(name: string, region: string): boolean {
   }
 }
 
+/**
+ * Ships apps/cloudflare-<service> with its `deploy` script as the Worker
+ * `resourceName(service)`. wrangler deploys it because the Cloudflare
+ * provider cannot declare a Worker Loader binding. It reruns when a tracked
+ * file in its folder or in `sources`, the lockfile, or a var changes. There
+ * is no delete: the Worker keeps the key infra put on it, and a removed
+ * stage's Worker is deleted by hand.
+ */
+function deployCloudflareWorker(
+  command: typeof import("@pulumi/command"),
+  stage: string,
+  region: string,
+  service: string,
+  sources: string[],
+  vars: Record<string, $util.Input<string>>,
+): string {
+  const name = resourceName(service, stage, region);
+  const app = `apps/cloudflare-${service}`;
+  new command.local.Command(`CloudflareWorker-${service}`, {
+    dir: `${$cli.paths.root}/../cloudflare-${service}`,
+    create: "bun run deploy",
+    environment: {
+      WORKER_NAME: name,
+      // Read by nothing: a new value is what reruns the deploy.
+      SOURCES_HASH: trackedFilesHash([app, ...sources, "bun.lock"]),
+      ...vars,
+    },
+  });
+
+  return name;
+}
+
+// A hash of the git index entries for `paths`, relative to the repo root.
+function trackedFilesHash(paths: string[]): string {
+  const listing = Bun.spawnSync({
+    cmd: [
+      "git",
+      "-C",
+      `${$cli.paths.root}/../..`,
+      "ls-files",
+      "-s",
+      "--",
+      ...paths,
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!listing.success) {
+    throw new Error(`git ls-files failed: ${listing.stderr.toString()}`);
+  }
+
+  return new Bun.CryptoHasher("sha256")
+    .update(listing.stdout.toString())
+    .digest("hex");
+}
+
 interface PermissionStatement {
   effect?: "Allow" | "Deny";
   actions: string[];
@@ -1129,13 +1185,37 @@ export default $config({
       ),
     });
 
+    // The Cloudflare Workers, named per stage, when the deploy has a
+    // Cloudflare token (they are optional). The infra repo puts each one's
+    // key on it and points core at its workers.dev URL.
+    const cloudflareWorkers = process.env.CLOUDFLARE_API_TOKEN
+      ? {
+          // Hosted MCP servers that can run on Dynamic Workers; its bucket
+          // only caches bundles from this stage's S3 bucket.
+          mcp: deployCloudflareWorker(command, stage, region, "mcp", [], {
+            BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
+          }),
+          // The `worker` sandbox provider: bash in a V8 isolate.
+          worker: deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "worker",
+            [
+              "apps/cloudflare-sandbox/src/bearer.ts",
+              "apps/core/src/shared/domain/sandbox-config.ts",
+            ],
+            {},
+          ),
+        }
+      : undefined;
+
     return {
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
       toolRunnerFunctionName: mcpRunnerFn.name,
-      // deploy.yaml deploys the Cloudflare MCP runtime Worker under this name.
-      cloudflareMcpWorkerName: resourceName("mcp", stage, region),
+      cloudflareWorkers: cloudflareWorkers,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,

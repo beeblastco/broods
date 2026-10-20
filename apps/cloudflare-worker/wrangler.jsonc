@@ -3,8 +3,8 @@
   "name": "broods-worker",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-30",
-  // Set with `wrangler secret put WORKER_API_KEY`; core sends it as CLOUDFLARE_WORKER_API_KEY.
-  "secrets": { "required": ["WORKER_API_KEY"] },
+  // `sst deploy` names it per stage. The infra repo puts WORKER_API_KEY on it,
+  // which core sends as CLOUDFLARE_WORKER_API_KEY; until then it refuses every call.
   "worker_loaders": [{ "binding": "LOADER" }],
   // A reserved sandbox's files between calls, one object per sandbox id.
   "r2_buckets": [{ "binding": "STATE", "bucket_name": "broods-worker-state" }],
