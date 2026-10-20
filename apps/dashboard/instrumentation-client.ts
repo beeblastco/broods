@@ -1,11 +1,7 @@
 import posthog, { type CaptureResult } from "posthog-js";
 
-// Browser analytics and error tracking: anonymous behaviour only. A person
-// profile exists only for a signed-in user, under a keyed id that says nothing
-// about them; nothing users type or see (element text and attributes,
-// replays), no ad ids from URLs, no GeoIP location, and exceptions keep their
-// type and stack but not their message. A no-op when the key or host is
-// unset, same contract as the OTLP exporters.
+// Browser analytics and error tracking: anonymous behaviour only, never what
+// users type or see. A no-op when the key or host is unset.
 const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
 

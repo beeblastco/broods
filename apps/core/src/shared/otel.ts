@@ -27,31 +27,45 @@ import { registerTelemetry } from "ai";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { analyticsSessionTag } from "./run-token.ts";
 
-// AI SDK span attributes that carry what users or agents wrote. Dropped before
-// PostHog even when a call site forgets `recordInputs`/`recordOutputs: false`.
-const USER_CONTENT_ATTRIBUTES = new Set([
-  "ai.decision.answers",
-  "ai.decision.questions",
-  "ai.documents",
-  "ai.embedding",
-  "ai.embeddings",
-  "ai.prompt",
-  "ai.prompt.messages",
-  "ai.prompt.tools",
-  "ai.request.text",
-  "ai.response.files",
-  "ai.response.object",
-  "ai.response.reasoning",
-  "ai.response.text",
-  "ai.value",
-  "ai.values",
-  "gen_ai.input.messages",
-  "gen_ai.output.messages",
-  "gen_ai.system_instructions",
-  "gen_ai.tool.call.arguments",
-  "gen_ai.tool.call.result",
-  "gen_ai.tool.definitions",
+// The only span attributes PostHog gets: what ran, on which model, how long and
+// how many tokens, never what anyone wrote. A key an SDK bump adds is dropped
+// until it is listed here. The call sites' `recordInputs: false` still guards
+// the OTLP exporter; this is PostHog's backstop.
+const POSTHOG_SPAN_ATTRIBUTES = new Set([
+  "$ai_session_id",
+  "$ai_trace_name",
+  "ai.model.id",
+  "ai.model.provider",
+  "ai.operationId",
+  "ai.response.finishReason",
+  "ai.response.id",
+  "ai.response.model",
+  "ai.response.msToFinish",
+  "ai.response.msToFirstChunk",
+  "ai.telemetry.functionId",
+  "ai.toolCall.id",
+  "ai.toolCall.name",
+  "environment",
+  "gen_ai.agent.name",
+  "gen_ai.client.operation.duration",
+  "gen_ai.client.operation.time_per_output_chunk",
+  "gen_ai.client.operation.time_to_first_chunk",
+  "gen_ai.execute_tool.duration",
+  "gen_ai.operation.name",
+  "gen_ai.provider.name",
+  "gen_ai.request.max_tokens",
+  "gen_ai.request.model",
+  "gen_ai.response.finish_reasons",
+  "gen_ai.response.id",
+  "gen_ai.response.model",
+  "gen_ai.system",
+  "gen_ai.tool.call.id",
+  "gen_ai.tool.name",
+  "gen_ai.tool.type",
+  "http.response.status_code",
+  "operation.name",
 ]);
+const POSTHOG_USAGE_PREFIXES = ["ai.usage.", "gen_ai.usage."];
 
 export interface ObservabilityContext {
   accountId: string;
@@ -360,7 +374,7 @@ export function observabilityAttributes(
   };
 }
 
-/** Wraps the PostHog processor so no user content leaves: content attributes and error text are dropped; codes and error types stay. */
+/** Wraps the PostHog processor so no user content leaves: only listed attributes pass, and error text is dropped; codes and error types stay. */
 export class AnonymousSpanProcessor implements SpanProcessor {
   constructor(private readonly inner: SpanProcessor) {}
 
@@ -381,7 +395,9 @@ export class AnonymousSpanProcessor implements SpanProcessor {
       status: { code: span.status.code },
       attributes: Object.fromEntries(
         Object.entries(span.attributes).filter(
-          ([key]) => !USER_CONTENT_ATTRIBUTES.has(key),
+          ([key]) =>
+            POSTHOG_SPAN_ATTRIBUTES.has(key) ||
+            POSTHOG_USAGE_PREFIXES.some((prefix) => key.startsWith(prefix)),
         ),
       ),
       links: span.links,

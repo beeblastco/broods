@@ -10,10 +10,11 @@ import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { hexFromBytes } from "./model/accountSecrets";
 import { SELF_HOST_ADMIN, SELF_HOST_ISSUER } from "./model/selfHostAuth";
+import { ticketKey } from "./model/stageSessionTicket";
 import { usersFields } from "./schema";
 
-// Keeps the analytics id apart from everything else STAGE_TICKET_SECRET signs.
-const ANALYTICS_ID_PURPOSE = "broods-analytics-user";
+// Keeps the analytics id's key apart from everything else STAGE_TICKET_SECRET signs.
+const ANALYTICS_ID_KEY_CONTEXT = "broods-analytics-user:";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const userDoc = v.object({
@@ -81,19 +82,10 @@ export const analyticsId = query({
     const user = await authKit.getAuthUser(ctx);
     const secret = process.env.STAGE_TICKET_SECRET;
     if (!user || !secret) return null;
-    const encoder = new TextEncoder();
-    const algorithm = { name: "HMAC", hash: "SHA-256" };
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      algorithm,
-      false,
-      ["sign"],
-    );
     const mac = await crypto.subtle.sign(
-      algorithm,
-      key,
-      encoder.encode(`${ANALYTICS_ID_PURPOSE}:${user.id}`),
+      "HMAC",
+      await ticketKey(ANALYTICS_ID_KEY_CONTEXT, secret),
+      new TextEncoder().encode(user.id),
     );
 
     return hexFromBytes(new Uint8Array(mac));

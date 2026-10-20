@@ -1,13 +1,14 @@
 /**
- * PostHog gets AI Observability spans with no user content: error text is
- * stripped before export and sessions are keyed tags of the conversation key.
+ * PostHog gets AI Observability spans with no user content: only listed
+ * attributes pass, error text is stripped and sessions are keyed tags of the
+ * conversation key.
  */
 
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   BasicTracerProvider,
-  type ReadableSpan,
-  type SpanProcessor,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
@@ -15,23 +16,18 @@ import { AnonymousSpanProcessor } from "../src/shared/otel.ts";
 import { analyticsSessionTag } from "../src/shared/run-token.ts";
 
 describe("PostHog anonymity", () => {
-  it("strips content attributes, error messages and stacks but keeps codes and types", () => {
-    const exported: ReadableSpan[] = [];
-    const capture: SpanProcessor = {
-      forceFlush: (): Promise<void> => Promise.resolve(),
-      onEnd: (span: ReadableSpan): void => {
-        exported.push(span);
-      },
-      onStart: (): void => {},
-      shutdown: (): Promise<void> => Promise.resolve(),
-    };
+  it("keeps only listed attributes and drops error text, keeping codes and types", () => {
+    const exporter = new InMemorySpanExporter();
     const provider = new BasicTracerProvider({
-      spanProcessors: [new AnonymousSpanProcessor(capture)],
+      spanProcessors: [
+        new AnonymousSpanProcessor(new SimpleSpanProcessor(exporter)),
+      ],
     });
     const span = provider.getTracer("test").startSpan("execute_tool fill");
     span.setAttributes({
       "gen_ai.tool.name": "fill",
-      "gen_ai.tool.call.arguments": '{"answer":"my home address"}',
+      "ai.usage.inputTokens": 12,
+      "ai.toolCall.args": '{"answer":"my home address"}',
       "gen_ai.input.messages": "my home address",
     });
     span.recordException({
@@ -45,12 +41,15 @@ describe("PostHog anonymity", () => {
     });
     span.end();
 
-    const [sent] = exported;
+    const [sent] = exporter.getFinishedSpans();
+    expect(sent?.attributes).toEqual({
+      "gen_ai.tool.name": "fill",
+      "ai.usage.inputTokens": 12,
+    });
     expect(sent?.status).toEqual({ code: SpanStatusCode.ERROR });
     expect(sent?.events).toHaveLength(1);
     expect(sent?.events[0]?.attributes).toEqual({ "exception.type": "Error" });
     expect(sent?.spanContext().spanId).toBe(span.spanContext().spanId);
-    expect(sent?.attributes).toEqual({ "gen_ai.tool.name": "fill" });
     expect(JSON.stringify(sent)).not.toContain("academic performance");
     expect(JSON.stringify(sent)).not.toContain("home address");
   });
