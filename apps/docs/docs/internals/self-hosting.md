@@ -149,6 +149,7 @@ From `packages/convex`, set each with `bunx convex env set NAME value`:
 | `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same as core                                                                               |
 | `SERVICE_AUTH_SECRET`                                                      | yes       | Same as core                                                                               |
 | `STAGE_TICKET_SECRET`                                                      | yes       | Same as core                                                                               |
+| `ANALYTICS_ID_SECRET`                                                      | no        | Same as core. Keys the dashboard's PostHog user id; unset leaves it anonymous per browser  |
 | `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host |
 | `AWS_REGION`                                                               | yes       | The data plane region                                                                      |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                               |
@@ -213,6 +214,7 @@ Refuses to start without `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `TERMINAL
 | `MATRIX_FORWARDER_URL`                                                                                                                                  | for Matrix             | In-cluster URL of the matrix-forwarder                               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `SERVICE_NAME`, `DEPLOYMENT_ENVIRONMENT`                                                   | no                     | No endpoint means no export                                          |
 | `POSTHOG_API_KEY`, `POSTHOG_HOST`                                                                                                                       | no                     | Anonymous PostHog AI traces + Logs. Unset either means no export     |
+| `ANALYTICS_ID_SECRET`                                                                                                                                   | no                     | Same as Convex. Keys AI session ids; unset means none                |
 | `ENABLE_DIRECT_API`                                                                                                                                     | no                     | Default `true`. `false` turns `POST /v1/runs` off                    |
 | `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                                                                                                       | no                     | Same as on Convex                                                    |
 

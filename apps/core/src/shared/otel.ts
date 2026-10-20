@@ -31,7 +31,8 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { registerTelemetry } from "ai";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { analyticsSessionTag } from "./run-token.ts";
+import { createHmac } from "node:crypto";
+import { optionalEnv } from "./env.ts";
 
 // The only span attributes PostHog gets: what ran, on which model, how long and
 // how many tokens, never what anyone wrote. A key an SDK bump adds is dropped
@@ -356,6 +357,21 @@ export function initOtel(): void {
   } catch {
     // Best-effort: a failed init leaves the global API noop.
   }
+}
+
+/**
+ * The AI Observability session id for a conversation key: groups its turns,
+ * and cannot be matched to a guessed key such as a phone number without
+ * ANALYTICS_ID_SECRET. Undefined when that secret is unset.
+ */
+export function analyticsSessionTag(
+  conversationKey: string,
+): string | undefined {
+  const secret = optionalEnv("ANALYTICS_ID_SECRET");
+
+  return secret
+    ? createHmac("sha256", secret).update(conversationKey).digest("hex")
+    : undefined;
 }
 
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */
