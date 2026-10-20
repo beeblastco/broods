@@ -594,8 +594,9 @@ async function resolveBearerAuth(
 }
 
 /**
- * Resolve a scoped account key to role auth on its active account, stamping
- * its lastUsedAt at most once per `LAST_USED_WRITE_INTERVAL_MS`.
+ * Resolve a scoped account key to role auth on its active account. Its
+ * lastUsedAt is stamped at most once per `LAST_USED_WRITE_INTERVAL_MS`, off
+ * the request, so a failed stamp never refuses a valid key.
  */
 async function resolveScopedKeyAuth(
   ctx: ActionCtx,
@@ -612,7 +613,7 @@ async function resolveScopedKeyAuth(
   if (!account || account.status !== "active") return null;
   const now = Date.now();
   if (now - (key.lastUsedAt ?? 0) >= LAST_USED_WRITE_INTERVAL_MS) {
-    await ctx.runMutation(internal.account.apiKeys.touchLastUsed, {
+    await ctx.scheduler.runAfter(0, internal.account.apiKeys.touchLastUsed, {
       keyId: key.keyId,
       usedAt: now,
     });

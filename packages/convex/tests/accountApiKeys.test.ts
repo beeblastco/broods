@@ -114,6 +114,7 @@ describe("scoped account keys on config-plane routes", () => {
   });
 
   test("a request stamps lastUsedAt and an edit narrows the key at once", async () => {
+    vi.useFakeTimers();
     const t = keyTest();
     const seeded = await seed(t);
     const { _id, token } = await createKey(t, seeded, [
@@ -121,6 +122,9 @@ describe("scoped account keys on config-plane routes", () => {
       "crons:read",
     ]);
     expect((await get(t, token, "/v1/crons")).status).toBe(200);
+    // The stamp is scheduled off the request.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
     const used = await t.run(async (ctx) => await ctx.db.get(_id));
     expect(used?.lastUsedAt).toBeGreaterThan(0);
 
