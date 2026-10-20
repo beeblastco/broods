@@ -128,12 +128,20 @@ export const update = mutation({
   handler: async (ctx, args): Promise<Id<"accountApiKeys">> => {
     const writer = await requireKeyWriter(ctx, args.orgId);
     const key = await ownedKey(ctx, writer, args.keyId);
-    const scope = await resolveRoleScope(
-      ctx,
-      writer.account._id,
-      args.projectId,
-      args.stageId,
-    );
+    // An unchanged pin is kept as stored, so a key pinned to a stage since
+    // deleted can still be renamed; it reaches nothing either way.
+    const scope =
+      key.projectId !== undefined &&
+      key.stageId !== undefined &&
+      args.projectId === key.projectId &&
+      args.stageId === key.stageId
+        ? { projectId: key.projectId, stageId: key.stageId }
+        : await resolveRoleScope(
+            ctx,
+            writer.account._id,
+            args.projectId,
+            args.stageId,
+          );
     const name = requiredName(args.name);
     await ctx.db.patch(key._id, {
       name: name,

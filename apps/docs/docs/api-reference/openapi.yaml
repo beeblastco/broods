@@ -3759,6 +3759,11 @@ components:
         `POST /v1/account/assume-role`) works on the config-plane routes,
         limited to its role's policy; it gets 401 on `/v1/runs` and every run
         URL, and role management under `/v1/roles*` refuses it.
+        A scoped account key (also `bask_...`, made on the dashboard's
+        Organization › API access) works like a role session: limited to its
+        permissions, project/stage scope and expiry, 401 on `/v1/runs` and
+        every run URL, and it cannot assume roles, manage roles or rotate the
+        account key.
         A runtime key (`bsk_...`) works only on `/v1/runs`,
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
