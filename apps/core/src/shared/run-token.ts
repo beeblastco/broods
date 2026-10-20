@@ -4,8 +4,8 @@
  * Signed with a key HKDF-derived from STAGE_TICKET_SECRET under its own info
  * string, so a run token can never open a stage ticket or the reverse. Core
  * is the only minter and verifier; the config plane refuses the prefix.
- * The same secret also tags the subagent conversation keys core mints, under
- * another info string.
+ * The same secret also tags the subagent conversation keys core mints and the
+ * AI Observability session ids, each under its own info string.
  */
 
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
@@ -31,6 +31,7 @@ export interface RunTokenSubject {
 
 type RunTokenClaims = RunTokenSubject & { exp: number };
 
+const ANALYTICS_SESSION_HKDF_INFO = "broods-analytics-session";
 const SUBAGENT_KEY_HKDF_INFO = "broods-subagent-key";
 const SUBAGENT_KEY_TAG_HEX = 32;
 
@@ -92,6 +93,17 @@ function derivedKey(info: string): Buffer {
 
 function sign(payload: string): Buffer {
   return createHmac("sha256", derivedKey(HKDF_INFO)).update(payload).digest();
+}
+
+/**
+ * The AI Observability session id for a conversation key: groups its turns,
+ * and without the secret cannot be matched to a guessed key such as a phone
+ * number.
+ */
+export function analyticsSessionTag(conversationKey: string): string {
+  return createHmac("sha256", derivedKey(ANALYTICS_SESSION_HKDF_INFO))
+    .update(conversationKey)
+    .digest("hex");
 }
 
 /**

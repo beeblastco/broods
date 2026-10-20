@@ -1647,6 +1647,7 @@ export declare const api: {
     >;
   };
   user: {
+    analyticsId: FunctionReference<"query", "public", {}, null | string>;
     ensureSynced: FunctionReference<"action", "public", {}, null>;
     getCurrent: FunctionReference<
       "query",
