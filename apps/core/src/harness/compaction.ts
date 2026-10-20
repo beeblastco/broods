@@ -7,7 +7,6 @@
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../shared/.generated/compaction-prompt.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import { aiSessionId } from "../shared/otel.ts";
 import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
 import { logInfo } from "../shared/log.ts";
 import {
@@ -91,7 +90,6 @@ export async function summarizeConversation(
       model: configuredModel.model,
       instructions: DEFAULT_COMPACTION_PROMPT,
       runtimeContext: {
-        sessionId: aiSessionId(input.conversationKey),
         traceName: "harness.compaction",
         properties: process.env.DEPLOYMENT_ENVIRONMENT
           ? { environment: process.env.DEPLOYMENT_ENVIRONMENT }
@@ -100,7 +98,6 @@ export async function summarizeConversation(
       telemetry: {
         functionId: "harness.compaction",
         includeRuntimeContext: {
-          sessionId: true,
           traceName: true,
           properties: true,
         },

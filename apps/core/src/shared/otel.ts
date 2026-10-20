@@ -6,7 +6,12 @@
 
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { PostHogSpanProcessor } from "@posthog/ai/otel";
-import { trace, type Context, type Tracer } from "@opentelemetry/api";
+import {
+  trace,
+  type Context,
+  type SpanContext,
+  type Tracer,
+} from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
@@ -19,9 +24,54 @@ import {
   BasicTracerProvider,
   BatchSpanProcessor,
   RandomIdGenerator,
+  type ReadableSpan,
+  type Span,
+  type SpanProcessor,
+  type TimedEvent,
 } from "@opentelemetry/sdk-trace-base";
 import { registerTelemetry } from "ai";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { analyticsSessionTag } from "./run-token.ts";
+
+// The only span attributes PostHog gets: what ran, on which model, how long and
+// how many tokens, never what anyone wrote. A key an SDK bump adds is dropped
+// until it is listed here. The call sites' `recordInputs: false` still guards
+// the OTLP exporter; this is PostHog's backstop.
+const POSTHOG_SPAN_ATTRIBUTES = new Set([
+  "$ai_session_id",
+  "$ai_trace_name",
+  "ai.model.id",
+  "ai.model.provider",
+  "ai.operationId",
+  "ai.response.finishReason",
+  "ai.response.id",
+  "ai.response.model",
+  "ai.response.msToFinish",
+  "ai.response.msToFirstChunk",
+  "ai.telemetry.functionId",
+  "ai.toolCall.id",
+  "ai.toolCall.name",
+  "environment",
+  "gen_ai.agent.name",
+  "gen_ai.client.operation.duration",
+  "gen_ai.client.operation.time_per_output_chunk",
+  "gen_ai.client.operation.time_to_first_chunk",
+  "gen_ai.execute_tool.duration",
+  "gen_ai.operation.name",
+  "gen_ai.provider.name",
+  "gen_ai.request.max_tokens",
+  "gen_ai.request.model",
+  "gen_ai.response.finish_reasons",
+  "gen_ai.response.id",
+  "gen_ai.response.model",
+  "gen_ai.system",
+  "gen_ai.tool.call.id",
+  "gen_ai.tool.name",
+  "gen_ai.tool.type",
+  "http.response.status_code",
+  "operation.name",
+]);
+const POSTHOG_USAGE_PREFIXES = ["ai.usage.", "gen_ai.usage."];
 
 export interface ObservabilityContext {
   accountId: string;
@@ -31,8 +81,6 @@ export interface ObservabilityContext {
   agentId: string;
   conversationKey: string;
   traceId: string;
-  /** Stable requester ID for AI Observability attribution when available. */
-  posthogDistinctId?: string;
   /** OTel context containing the active root task span for log correlation. */
   otelContext: Context;
   /** Plaintext values that must be removed from every emitted log string. */
@@ -236,10 +284,12 @@ export function initOtel(): void {
     let aiTracer = _tracer;
     if (posthogProjectToken && posthogHost) {
       const aiSpanProcessors = [
-        new PostHogSpanProcessor({
-          projectToken: posthogProjectToken,
-          host: posthogHost,
-        }),
+        new AnonymousSpanProcessor(
+          new PostHogSpanProcessor({
+            projectToken: posthogProjectToken,
+            host: posthogHost,
+          }),
+        ),
         ...(endpoint
           ? [
               new BatchSpanProcessor(
@@ -276,8 +326,8 @@ export function initOtel(): void {
 
     if (!aiTracer) return;
 
-    // AI SDK v7 uses this integration to produce gen-ai spans. Runtime context
-    // adds the requester and conversation grouping that AI Observability needs.
+    // AI SDK v7 uses this integration to produce gen-ai spans. The session is
+    // a keyed tag of the run's conversation, never the key or the requester.
     registerTelemetry(
       new OpenTelemetry({
         tracer: aiTracer,
@@ -292,16 +342,9 @@ export function initOtel(): void {
               typeof runtimeContext.properties.environment === "string"
                 ? runtimeContext.properties.environment
                 : undefined,
-            "posthog.distinct_id":
-              typeof runtimeContext?.distinctId === "string"
-                ? runtimeContext.distinctId
-                : context?.posthogDistinctId,
-            $ai_session_id:
-              typeof runtimeContext?.sessionId === "string"
-                ? runtimeContext.sessionId
-                : context
-                  ? aiSessionId(context.conversationKey)
-                  : undefined,
+            $ai_session_id: context
+              ? analyticsSessionTag(context.conversationKey)
+              : undefined,
             $ai_trace_name:
               typeof runtimeContext?.traceName === "string"
                 ? runtimeContext.traceName
@@ -313,11 +356,6 @@ export function initOtel(): void {
   } catch {
     // Best-effort: a failed init leaves the global API noop.
   }
-}
-
-/** Converts an arbitrary conversation key into the allowed AI session-id alphabet. */
-export function aiSessionId(conversationKey: string): string {
-  return Buffer.from(conversationKey).toString("base64url");
 }
 
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */
@@ -340,4 +378,62 @@ export function observabilityAttributes(
     agent_id: ctx.agentId,
     conversation_key: ctx.conversationKey,
   };
+}
+
+/** Wraps the PostHog processor so no user content leaves: only listed attributes pass, and error text is dropped; codes and error types stay. */
+export class AnonymousSpanProcessor implements SpanProcessor {
+  constructor(private readonly inner: SpanProcessor) {}
+
+  forceFlush(): Promise<void> {
+    return this.inner.forceFlush();
+  }
+
+  onEnd(span: ReadableSpan): void {
+    // Captured once so the copy does not keep the original span alive.
+    const spanContext = span.spanContext();
+    this.inner.onEnd({
+      name: span.name,
+      kind: span.kind,
+      spanContext: (): SpanContext => spanContext,
+      parentSpanContext: span.parentSpanContext,
+      startTime: span.startTime,
+      endTime: span.endTime,
+      status: { code: span.status.code },
+      attributes: Object.fromEntries(
+        Object.entries(span.attributes).filter(
+          ([key]): boolean =>
+            POSTHOG_SPAN_ATTRIBUTES.has(key) ||
+            POSTHOG_USAGE_PREFIXES.some((prefix): boolean =>
+              key.startsWith(prefix),
+            ),
+        ),
+      ),
+      links: span.links,
+      events: span.events.map((event): TimedEvent => {
+        if (event.name !== "exception") return event;
+        const type = event.attributes?.["exception.type"];
+
+        return {
+          name: event.name,
+          time: event.time,
+          attributes: type === undefined ? {} : { "exception.type": type },
+        };
+      }),
+      duration: span.duration,
+      ended: span.ended,
+      resource: span.resource,
+      instrumentationScope: span.instrumentationScope,
+      droppedAttributesCount: span.droppedAttributesCount,
+      droppedEventsCount: span.droppedEventsCount,
+      droppedLinksCount: span.droppedLinksCount,
+    });
+  }
+
+  onStart(span: Span, parentContext: Context): void {
+    this.inner.onStart(span, parentContext);
+  }
+
+  shutdown(): Promise<void> {
+    return this.inner.shutdown();
+  }
 }
