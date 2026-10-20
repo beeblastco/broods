@@ -1,11 +1,12 @@
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV === "development";
-// `https:` and `wss:` cover hosted backends; a plain-http Convex or gateway
-// (the local stack, a self-hosted LAN) is allowed by its exact origin.
+// `https:` and `wss:` cover hosted backends; a plain-http Convex, gateway or
+// PostHog (the local stack, a self-hosted LAN) is allowed by its exact origin.
 const httpBackendSources = [
   process.env.NEXT_PUBLIC_CONVEX_URL,
   process.env.NEXT_PUBLIC_BROODS_BASE_URL,
+  process.env.NEXT_PUBLIC_POSTHOG_HOST,
 ].flatMap((url): string[] => {
   if (!url) return [];
   const { host, protocol } = new URL(url);
