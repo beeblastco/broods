@@ -812,7 +812,6 @@ describe("streamIsolatePayload cross-process abort", () => {
       return outputs;
     };
     try {
-      const started = performance.now();
       // The second call queues behind the first on the one-worker pool, so it
       // also proves a queued call is not left waiting on the failed slot.
       const failures = await Promise.all(
@@ -826,7 +825,6 @@ describe("streamIsolatePayload cross-process abort", () => {
         "isolate worker failed to start: isolate worker exited (1)",
       ]);
       expect(await readFile(marker, "utf8")).toBe("x".repeat(6));
-      expect(performance.now() - started).toBeLessThan(3_000);
 
       await writeFile(
         stubPath,

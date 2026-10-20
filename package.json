@@ -25,7 +25,7 @@
     "deps:audit": "bun scripts/audit-gate.ts",
     "deps:check": "bun scripts/dependency-watch.ts",
     "scripts:check": "tsc -p scripts/tsconfig.json",
-    "test": "bun run --filter @broods/core test && bun run --filter @broods/convex test && bun run --filter broods test",
+    "test": "bun test scripts/ bench/ && bun run --sequential --no-exit-on-error --filter '*' test",
     "deploy": "bun run --filter @broods/core deploy",
     "local:up": "bun scripts/local-stack.ts up",
     "local:down": "bun scripts/local-stack.ts down",

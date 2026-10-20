@@ -4,17 +4,14 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun)](https://bun.sh/)
 [![SST](https://img.shields.io/badge/infra-SST%20v4-e27152)](https://sst.dev/)
 
-A serverless, multi-account AI agent harness built on Bun and AWS data-plane services. Configure agents, connect them to Telegram, Discord, Slack, Matrix, GitHub, and more, and run them with your own model keys.
+Broods runs agents in a Bun container behind a gateway, with Convex for configuration and persistence. Connect agents to Telegram, Discord, Slack, Matrix, GitHub, and other channels, and run them with your own model keys.
 
 This is the source-available engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
 
 > [!WARNING]
 > **Pre-release.**
 >
-> Broods has not cut a 1.0 release. The HTTP API, the CLI flags and the SDK all
-> still change between versions, and an upgrade can break your code without a
-> major version bump. Pin an exact version and read the release notes before
-> upgrading.
+> Broods has not cut a 1.0 release. The HTTP API, CLI flags and SDK can change without a major version bump. Pin an exact version and read the release notes before upgrading.
 
 ---
 
@@ -103,16 +100,14 @@ bun run docs
 
 ## Contributing
 
-Contributions are welcome. Open an issue first to align on the approach, then send a PR.
-CI and the container images pin Bun to the version in `.bun-version`. `bun upgrade`
-installs the latest stable release, which is usually that version but may run ahead
-of it. If `bun --revision` shows a canary build, use `bun upgrade --stable`. Plain
-`bun upgrade` keeps a canary install on the canary channel.
+Open an issue to agree on the approach before sending a PR.
+
+CI and the container images pin Bun to the version in `.bun-version`. Use that version locally. `bun upgrade` installs the latest release on your current channel and may run ahead of the pin. To leave the canary channel, use `bun upgrade --stable`.
 
 ```bash
 bun install      # install all workspaces
 bun run check    # lint, format check, and typecheck every workspace
-bun run test     # core unit tests
+bun run test     # every workspace's unit tests, scripts and benchmark gates
 bun run build    # build the core Bun container binary
 ```
 

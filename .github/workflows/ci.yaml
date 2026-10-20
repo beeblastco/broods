@@ -303,29 +303,8 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
-      # Types and lint for every workspace run once, in validate's `bun run
-      # check`, and the convex tests in its `bun run test`.
-      - name: Test gateway
-        run: bun run --filter @broods/gateway test
-
-      - name: Test edge routes
-        run: bun run --filter @broods/edge test
-
-      - name: Test discord forwarder
-        run: bun run --filter @broods/discord-forwarder test
-
-      - name: Test matrix forwarder
-        run: bun run --filter @broods/matrix-forwarder test
-
-      - name: Test Cloudflare MCP runtime
-        run: bun run --filter @broods/cloudflare-mcp test
-
-      - name: Test the Cloudflare V8 Worker sandbox
-        run: bun run --filter @broods/cloudflare-worker test
-
-      - name: Test dashboard
-        run: bun run --filter @broods/dashboard test
-
+      # validate runs every workspace's types, lint and unit tests. This job
+      # builds the dashboard and runs its browser suites.
       - name: Require the dashboard probe account
         # Pull requests from this repo only: a fork gets no secrets, and a
         # Dependabot pull request gets only Dependabot's own. A silent
