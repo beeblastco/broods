@@ -1,10 +1,10 @@
 import posthog, { type CaptureResult } from "posthog-js";
 
-// Browser analytics and error tracking: behaviour only, never what users type
-// or see, so no element text or attributes, no replays, no ad ids from URLs,
-// no GeoIP location, and exceptions keep their type and stack but not their
-// message. A no-op when the key or host is unset, same contract as the OTLP
-// exporters.
+// Browser analytics and error tracking: anonymous behaviour only. No person
+// profiles or identity, nothing users type or see (element text and
+// attributes, replays), no ad ids from URLs, no GeoIP location, and
+// exceptions keep their type and stack but not their message. A no-op when
+// the key or host is unset, same contract as the OTLP exporters.
 const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
 
@@ -23,6 +23,7 @@ if (posthogKey && posthogHost) {
     mask_all_element_attributes: true,
     mask_all_text: true,
     mask_personal_data_properties: true,
+    person_profiles: "never",
     capture_exceptions: {
       capture_unhandled_errors: true,
       capture_unhandled_rejections: true,

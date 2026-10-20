@@ -73,8 +73,8 @@ export function MainShell({
   }, []);
 
   // An expired session signs in again and lands back where it was; the
-  // sign-in route validates `returnTo`. PostHog forgets the user first, so a
-  // different account signing in here is not counted as the previous one.
+  // sign-in route validates `returnTo`. PostHog starts a fresh anonymous id
+  // first, so a different account signing in here is not counted as this one.
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       posthog.reset();
@@ -113,14 +113,13 @@ export function MainShell({
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
 
-  // The Convex user row exists only after authentication and its opaque `_id`
-  // is the app's stable user primary key. Only that id and the plan go to
-  // PostHog, never email or name. Runs on every row change so a plan change
-  // reaches the person; the SDK sends no second $identify for an unchanged id.
+  // PostHog tracks behaviour anonymously and never learns who the user is, so
+  // the plan rides every event as a property to segment by. Runs on every row
+  // change so a plan change shows up at once.
   useEffect(() => {
     if (!currentUser) return;
 
-    posthog.identify(currentUser._id, { plan: currentUser.plan });
+    posthog.register({ plan: currentUser.plan });
   }, [currentUser]);
 
   // The reporter is the first child of both fragments, one tree position, so
