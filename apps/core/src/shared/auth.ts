@@ -36,7 +36,7 @@ import { getStorage } from "./storage.ts";
 
 const KEY_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
-// Last lastUsedAt write per runtime or scoped key hash. Core runs single replica, so
+// Last lastUsedAt write per runtime key hash. Core runs single replica, so
 // this in-process map is the whole throttle.
 const keyLastUsedWrites = new Map<string, number>();
 
@@ -206,8 +206,8 @@ async function resolveAccountSecretAuth(
   const account = await getStorage().accounts.getBySecretHash(keyHash);
   if (!account) return await resolveScopedKeyAuth(keyHash);
   if (
-    !account ||
-    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
+    account.status !== "active" &&
+    options.allowDisabledAccountSecret !== true
   )
     return null;
 
@@ -216,21 +216,18 @@ async function resolveAccountSecretAuth(
 
 /**
  * Resolve a scoped account key to role auth on its active account, stamping
- * its lastUsedAt (throttled like a runtime key's).
+ * its lastUsedAt off the request when the lookup says it is due.
  */
 async function resolveScopedKeyAuth(
   keyHash: string,
 ): Promise<AuthContext | null> {
   const key = await getStorage().accountApiKeys.resolveByKeyHash(keyHash);
   if (!key) return null;
-  const account = await getStorage().accounts.getById(key.principal.accountId);
-  if (!account || account.status !== "active") return null;
-  const now = Date.now();
-  if (claimLastUsedWrite(keyLastUsedWrites, keyHash, now)) {
-    waitUntil(getStorage().accountApiKeys.touchLastUsed(key.keyId, now));
+  if (key.stampDue) {
+    waitUntil(getStorage().accountApiKeys.touchLastUsed(key.keyId, Date.now()));
   }
 
-  return { kind: "role", account: account, role: key.principal };
+  return { kind: "role", account: key.account, role: key.principal };
 }
 
 /** Resolve a brt_ token to the agent it was minted for. */

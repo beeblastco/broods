@@ -321,11 +321,15 @@ interface RoleSessionStore {
 
 /** Scoped account keys: a bask_ that is not the account key acts as a role. Made in the dashboard. */
 interface AccountApiKeyStore {
-  /** The role principal a live key acts as; null when unknown or expired. */
+  /**
+   * A live key on an active account and the role principal it acts as;
+   * null when unknown, expired or disabled. `stampDue` asks for a lastUsedAt write.
+   */
   resolveByKeyHash(keyHash: string): Promise<{
     keyId: string;
-    lastUsedAt?: number;
+    account: AccountRecord;
     principal: RolePrincipal;
+    stampDue: boolean;
   } | null>;
   touchLastUsed(keyId: string, usedAt: number): Promise<void>;
 }

@@ -9,7 +9,6 @@ import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { LAST_USED_WRITE_INTERVAL_MS } from "../../account/apiKeys";
 import { cipherFromKeys } from "../../model/accountKeys";
 import {
   ACCOUNT_KEY_PREFIX,
@@ -595,8 +594,8 @@ async function resolveBearerAuth(
 
 /**
  * Resolve a scoped account key to role auth on its active account. Its
- * lastUsedAt is stamped at most once per `LAST_USED_WRITE_INTERVAL_MS`, off
- * the request, so a failed stamp never refuses a valid key.
+ * lastUsedAt is stamped off the request when due, so a failed stamp never
+ * refuses a valid key.
  */
 async function resolveScopedKeyAuth(
   ctx: ActionCtx,
@@ -606,22 +605,16 @@ async function resolveScopedKeyAuth(
     keyHash: keyHash,
   });
   if (!key) return null;
-  const account: Doc<"accounts"> | null = await getAccountById(
-    ctx,
-    key.principal.accountId,
-  );
-  if (!account || account.status !== "active") return null;
-  const now = Date.now();
-  if (now - (key.lastUsedAt ?? 0) >= LAST_USED_WRITE_INTERVAL_MS) {
+  if (key.stampDue) {
     await ctx.scheduler.runAfter(0, internal.account.apiKeys.touchLastUsed, {
       keyId: key.keyId,
-      usedAt: now,
+      usedAt: Date.now(),
     });
   }
 
   return {
     kind: "role",
-    account: account,
+    account: key.account,
     role: key.principal,
     keyId: key.keyId,
   };

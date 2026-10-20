@@ -353,7 +353,7 @@ export declare const api: {
       "mutation",
       "public",
       {
-        actions: Array<
+        actions?: Array<
           | "account:read"
           | "account:write"
           | "agents:read"
@@ -380,11 +380,11 @@ export declare const api: {
           | "workspaces:write"
         >;
         description?: string;
+        expiresAt?: number | null;
         keyId: Id<"accountApiKeys">;
-        name: string;
+        name?: string;
         orgId: Id<"orgs">;
-        projectId?: Id<"projects">;
-        stageId?: Id<"stages">;
+        scope?: { projectId?: Id<"projects">; stageId?: Id<"stages"> };
       },
       Id<"accountApiKeys">
     >;
@@ -2142,8 +2142,23 @@ export declare const internal: {
         "internal",
         { keyHash: string },
         {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
           keyId: Id<"accountApiKeys">;
-          lastUsedAt?: number;
           principal: {
             accountId: Id<"accounts">;
             policy: {
@@ -2186,6 +2201,7 @@ export declare const internal: {
             roleId: string;
             stageId?: Id<"stages">;
           };
+          stampDue: boolean;
         } | null
       >;
       touchLastUsed: FunctionReference<

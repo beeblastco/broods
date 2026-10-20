@@ -63,9 +63,8 @@ export const create = mutation({
     args,
   ): Promise<{ _id: Id<"accountApiKeys">; token: string; keyHint: string }> => {
     const writer = await requireKeyWriter(ctx, args.orgId);
-    if (args.expiresAt !== undefined && args.expiresAt <= Date.now()) {
-      throw new ClientError("Expiry must be in the future");
-    }
+    const now = Date.now();
+    requireFutureExpiry(args.expiresAt, now);
     const scope = await resolveRoleScope(
       ctx,
       writer.account._id,
@@ -74,7 +73,6 @@ export const create = mutation({
     );
     const token = randomToken(ACCOUNT_KEY_PREFIX);
     const hint = keyHint(ACCOUNT_KEY_PREFIX, token);
-    const now = Date.now();
     const name = requiredName(args.name);
     const _id = await ctx.db.insert("accountApiKeys", {
       accountId: writer.account._id,
@@ -113,47 +111,60 @@ export const remove = mutation({
   },
 });
 
-/** Name, description, permissions and scope. The secret and expiry stay. */
+/**
+ * Change one or more of a key's fields in place, as the dashboard edits them
+ * inline. An omitted field is kept; `scope: {}` unpins the key and
+ * `expiresAt: null` makes it never expire. The secret never changes.
+ */
 export const update = mutation({
   args: {
     orgId: v.id("orgs"),
     keyId: v.id("accountApiKeys"),
-    name: v.string(),
+    name: v.optional(v.string()),
     description: v.optional(v.string()),
-    actions: keyActionsValidator,
-    projectId: v.optional(v.id("projects")),
-    stageId: v.optional(v.id("stages")),
+    actions: v.optional(keyActionsValidator),
+    scope: v.optional(
+      v.object({
+        projectId: v.optional(v.id("projects")),
+        stageId: v.optional(v.id("stages")),
+      }),
+    ),
+    expiresAt: v.optional(v.union(v.number(), v.null())),
   },
   returns: v.id("accountApiKeys"),
   handler: async (ctx, args): Promise<Id<"accountApiKeys">> => {
     const writer = await requireKeyWriter(ctx, args.orgId);
     const key = await ownedKey(ctx, writer, args.keyId);
-    // An unchanged pin is kept as stored, so a key pinned to a stage since
-    // deleted can still be renamed; it reaches nothing either way.
-    const scope =
-      key.projectId !== undefined &&
-      key.stageId !== undefined &&
-      args.projectId === key.projectId &&
-      args.stageId === key.stageId
-        ? { projectId: key.projectId, stageId: key.stageId }
-        : await resolveRoleScope(
-            ctx,
-            writer.account._id,
-            args.projectId,
-            args.stageId,
-          );
-    const name = requiredName(args.name);
-    await ctx.db.patch(key._id, {
+    const now = Date.now();
+    requireFutureExpiry(args.expiresAt ?? undefined, now);
+    const scope = args.scope
+      ? await resolveRoleScope(
+          ctx,
+          writer.account._id,
+          args.scope.projectId,
+          args.scope.stageId,
+        )
+      : undefined;
+    const name = args.name === undefined ? key.name : requiredName(args.name);
+    const patch: Partial<Doc<"accountApiKeys">> = {
       name: name,
-      description: args.description?.trim() || undefined,
-      policy: keyPolicy(args.actions),
-      projectId: scope?.projectId,
-      stageId: scope?.stageId,
-      updatedAt: Date.now(),
-    });
+      ...(args.description !== undefined
+        ? { description: args.description.trim() || undefined }
+        : {}),
+      ...(args.actions ? { policy: keyPolicy(args.actions) } : {}),
+      ...(args.scope
+        ? { projectId: scope?.projectId, stageId: scope?.stageId }
+        : {}),
+      ...(args.expiresAt !== undefined
+        ? { expiresAt: args.expiresAt ?? undefined }
+        : {}),
+      updatedAt: now,
+    };
+    await ctx.db.patch(key._id, patch);
     await recordKeyAudit(ctx, writer, "account-key-updated", key._id, name, {
       actions: args.actions,
-      ...scope,
+      scope: args.scope,
+      expiresAt: args.expiresAt,
     });
 
     return key._id;
@@ -215,6 +226,13 @@ function requiredName(name: string): string {
   if (!trimmed) throw new ClientError("Name the key");
 
   return trimmed;
+}
+
+/** Refuse an expiry already past; unset is "never". */
+function requireFutureExpiry(expiresAt: number | undefined, now: number): void {
+  if (expiresAt !== undefined && expiresAt <= now) {
+    throw new ClientError("Expiry must be in the future");
+  }
 }
 
 /** The caller, holding `keys:write` on the org, and the org's provisioned account. */

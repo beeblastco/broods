@@ -13,13 +13,11 @@ import { OrgPoliciesPanel } from "./components/OrgPoliciesPanel";
 import { PermissionsPanel } from "./components/PermissionsPanel";
 import { RolesPanel } from "./components/RolesPanel";
 
-// The key list takes the full width but keeps the card frame and margins.
-const WIDE_TABS = new Set<string>(["api-access"]);
-
-// The member and access lists are laid out like Monitoring: the toolbar, the
+// The key, member and access lists are laid out like Monitoring: the toolbar, the
 // table and the detail panel fill the page edge to edge, nothing scrolls but
 // the table.
 const FLUSH_TABS = new Set<string>([
+  "api-access",
   "members",
   "roles",
   "policies",
@@ -81,11 +79,7 @@ export default function OrgSettingsPage(): React.JSX.Element {
       <div
         className={cn(
           "mx-auto w-full",
-          flush
-            ? "flex min-h-0 flex-1 flex-col"
-            : WIDE_TABS.has(tab.id)
-              ? "flex min-h-0 flex-1 flex-col px-6 pt-6 pb-12"
-              : "max-w-2xl px-6 pt-6 pb-12",
+          flush ? "flex min-h-0 flex-1 flex-col" : "max-w-2xl px-6 pt-6 pb-12",
         )}
       >
         {renderPanel()}

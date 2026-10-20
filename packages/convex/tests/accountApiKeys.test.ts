@@ -13,6 +13,7 @@ import { sha256Hex } from "../model/accountSecrets";
 import type { ApiErrorBody } from "../model/apiError";
 import type { ApiPolicyAction } from "../model/policyRules";
 import schema from "../schema";
+import { deleteStageContents } from "../stage";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -96,7 +97,7 @@ describe("scoped account keys on config-plane routes", () => {
     expect(body.error.message).toContain("pinned");
   });
 
-  test("an expired or revoked key stops authenticating", async () => {
+  test("an expired or revoked key, or one on a disabled account, stops authenticating", async () => {
     const t = keyTest();
     const seeded = await seed(t);
     const expiring = await createKey(t, seeded, ["agents:read"]);
@@ -111,6 +112,12 @@ describe("scoped account keys on config-plane routes", () => {
       keyId: revoked._id,
     });
     expect((await get(t, revoked.token, "/v1/agents")).status).toBe(401);
+
+    const live = await createKey(t, seeded, ["agents:read"]);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(seeded.accountId, { status: "disabled" });
+    });
+    expect((await get(t, live.token, "/v1/agents")).status).toBe(401);
   });
 
   test("a request stamps lastUsedAt and an edit narrows the key at once", async () => {
@@ -131,10 +138,60 @@ describe("scoped account keys on config-plane routes", () => {
     await t.mutation(api.accountApiKeys.update, {
       orgId: seeded.orgId,
       keyId: _id,
-      name: "Reader",
       actions: ["agents:read"],
     });
     expect((await get(t, token, "/v1/crons")).status).toBe(403);
+  });
+});
+
+describe("editing scoped account keys inline", () => {
+  test("an edit changes only the fields it names", async () => {
+    const t = keyTest();
+    const seeded = await seed(t);
+    const { _id } = await createKey(t, seeded, ["agents:read"], {
+      projectId: seeded.projectId,
+      stageId: seeded.stageId,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    await t.mutation(api.accountApiKeys.update, {
+      orgId: seeded.orgId,
+      keyId: _id,
+      scope: {},
+      expiresAt: null,
+    });
+    const edited = await t.run(async (ctx) => await ctx.db.get(_id));
+    expect(edited).toMatchObject({ name: "Grafana" });
+    expect(edited?.stageId).toBeUndefined();
+    expect(edited?.expiresAt).toBeUndefined();
+    expect(edited?.policy.rules[0].actions).toEqual(["agents:read"]);
+
+    await expect(
+      t.mutation(api.accountApiKeys.update, {
+        orgId: seeded.orgId,
+        keyId: _id,
+        expiresAt: Date.now() - 1,
+      }),
+    ).rejects.toThrow("Expiry must be in the future");
+  });
+
+  test("deleting a stage deletes the keys pinned to it", async () => {
+    const t = keyTest();
+    const seeded = await seed(t);
+    await createKey(t, seeded, ["agents:read"], {
+      projectId: seeded.projectId,
+      stageId: seeded.stageId,
+    });
+    const orgWide = await createKey(t, seeded, ["agents:read"]);
+
+    await t.run(async (ctx) => {
+      const stage = await ctx.db.get(seeded.stageId);
+      if (stage) await deleteStageContents(ctx, stage);
+    });
+    const left = await t.run(
+      async (ctx) => await ctx.db.query("accountApiKeys").collect(),
+    );
+    expect(left.map((key) => key._id)).toEqual([orgWide._id]);
   });
 });
 

@@ -847,9 +847,12 @@ const roleSessions: Storage["roleSessions"] = {
 
 const accountApiKeys: Storage["accountApiKeys"] = {
   resolveByKeyHash: async function (keyHash) {
-    return await adminQuery(internal.account.apiKeys.resolve, {
+    const key = await adminQuery(internal.account.apiKeys.resolve, {
       keyHash: keyHash,
     });
+    const account = accountFromConvex(key?.account ?? null);
+
+    return key && account ? { ...key, account: account } : null;
   },
   touchLastUsed: async function (keyId, usedAt) {
     await adminMutation(internal.account.apiKeys.touchLastUsed, {

@@ -5,39 +5,47 @@
  * session. The dashboard makes, edits and revokes them in `accountApiKeys.ts`.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
+import { accountDoc } from "../model/accountDoc";
 import { rolePrincipalValidator } from "./roles";
 
 /** How stale `lastUsedAt` may get before a request stamps it again, as core throttles runtime keys. */
-export const LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+const LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+
+const resolvedKeyValidator = v.object({
+  keyId: v.id("accountApiKeys"),
+  account: accountDoc,
+  principal: rolePrincipalValidator,
+  stampDue: v.boolean(),
+});
+
+type ResolvedKey = Infer<typeof resolvedKeyValidator>;
 
 /**
- * The principal a live key acts as, with its id for the audit actor. Null
- * for an unknown or expired key; the caller loads the account and checks its
- * status.
+ * A live key on an active account: the principal it acts as, its account,
+ * and whether this request should stamp `lastUsedAt`. Null for an unknown
+ * or expired key, or a disabled account. One lookup, so both resolvers
+ * (config plane and core) answer a scoped key in one round trip.
  */
 export const resolve = internalQuery({
   args: { keyHash: v.string() },
-  returns: v.union(
-    v.object({
-      keyId: v.id("accountApiKeys"),
-      lastUsedAt: v.optional(v.number()),
-      principal: rolePrincipalValidator,
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, args) => {
+  returns: v.union(resolvedKeyValidator, v.null()),
+  handler: async (ctx, args): Promise<ResolvedKey | null> => {
+    const now = Date.now();
     const key = await ctx.db
       .query("accountApiKeys")
       .withIndex("by_keyHash", (q) => q.eq("keyHash", args.keyHash))
       .unique();
-    if (!key || (key.expiresAt !== undefined && key.expiresAt <= Date.now()))
+    if (!key || (key.expiresAt !== undefined && key.expiresAt <= now)) {
       return null;
+    }
+    const account = await ctx.db.get(key.accountId);
+    if (!account || account.status !== "active") return null;
 
     return {
       keyId: key._id,
-      lastUsedAt: key.lastUsedAt,
+      account: account,
       principal: {
         accountId: key.accountId,
         roleId: key._id,
@@ -45,6 +53,7 @@ export const resolve = internalQuery({
         ...(key.projectId !== undefined ? { projectId: key.projectId } : {}),
         ...(key.stageId !== undefined ? { stageId: key.stageId } : {}),
       },
+      stampDue: now - (key.lastUsedAt ?? 0) >= LAST_USED_WRITE_INTERVAL_MS,
     };
   },
 });
@@ -53,7 +62,7 @@ export const resolve = internalQuery({
 export const touchLastUsed = internalMutation({
   args: { keyId: v.id("accountApiKeys"), usedAt: v.number() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const key = await ctx.db.get(args.keyId);
     if (key && (key.lastUsedAt ?? 0) < args.usedAt) {
       await ctx.db.patch(key._id, { lastUsedAt: args.usedAt });

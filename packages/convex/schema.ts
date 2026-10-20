@@ -1728,7 +1728,8 @@ export default defineSchema({
     .index("by_projectId_and_stageId", ["projectId", "stageId"]),
   accountApiKeys: defineTable(accountApiKeysFields)
     .index("by_keyHash", ["keyHash"])
-    .index("by_accountId", ["accountId"]),
+    .index("by_accountId", ["accountId"])
+    .index("by_stageId", ["stageId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
     .index("by_codeHash", ["codeHash"])
     .index("by_accountId", ["accountId"])

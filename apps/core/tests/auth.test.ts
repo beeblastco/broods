@@ -110,7 +110,12 @@ beforeEach(() => {
     accountApiKeys: {
       resolveByKeyHash: async (keyHash: string) =>
         keyHash === hashAccountSecret(SCOPED_KEY)
-          ? { keyId: "key_1", principal: ROLE_PRINCIPAL }
+          ? {
+              keyId: "key_1",
+              account: ACCOUNT,
+              principal: ROLE_PRINCIPAL,
+              stampDue: true,
+            }
           : null,
       touchLastUsed: async () => {},
     },
@@ -241,11 +246,6 @@ describe("resolveBearerAuth", () => {
       role: { roleId: "brole_1" },
     });
     expect(touch).toHaveBeenCalledWith("key_1", expect.any(Number));
-
-    accountsById.acct_1 = { ...ACCOUNT, status: "disabled" };
-    expect(
-      await resolveBearerAuth({ authorization: `Bearer ${SCOPED_KEY}` }),
-    ).toBeNull();
   });
 
   it("rejects unknown or foreign bsts_ tokens without falling through", async () => {

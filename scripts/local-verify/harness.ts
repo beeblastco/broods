@@ -4,6 +4,10 @@ import type { BroodsAccountClient } from "../../packages/broods/src/account.ts";
 import { runMachineDaemon } from "../../packages/broods/src/cli/machine.ts";
 import type { BroodsClient } from "../../packages/broods/src/client.ts";
 import type { AsyncStatus } from "../../packages/broods/src/types.ts";
+import {
+  SELF_HOST_ADMIN,
+  SELF_HOST_ISSUER,
+} from "../../packages/convex/model/selfHostAuth.ts";
 
 const ANTHROPIC_SMOKE_MODEL = "claude-haiku-5-5";
 const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
@@ -14,6 +18,14 @@ const RUN_POLL_TIMEOUT_MS = 120_000;
 export const OK_AGENT = { system: "Reply with the single word OK." } as const;
 
 export const MODEL_KEY_HINT = "set ANTHROPIC_API_KEY for the full run";
+
+/** `convex run --identity` for the self-host admin, to call a dashboard function as a signed-in member. */
+export const SELF_HOST_IDENTITY = JSON.stringify({
+  subject: SELF_HOST_ADMIN.subject,
+  issuer: SELF_HOST_ISSUER,
+  tokenIdentifier: `${SELF_HOST_ISSUER}|${SELF_HOST_ADMIN.subject}`,
+  email: SELF_HOST_ADMIN.email,
+});
 
 export interface SmokeModel {
   model: { modelId: string; provider: "anthropic"; reasoning: "medium" };
@@ -279,14 +291,23 @@ export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
   };
 }
 
-/** Runs an internal Convex function with the stack's admin key and parses its result. */
+/**
+ * Runs a Convex function with the stack's admin key and parses its result.
+ * With `identity` (`SELF_HOST_IDENTITY`) a public function runs as that member.
+ */
 export function convexResult(
   context: VerifyContext,
   fn: string,
   args: Record<string, unknown>,
   step: string,
+  identity?: string,
 ): unknown {
-  const cli = context.convex(["run", fn, JSON.stringify(args)]);
+  const cli = context.convex([
+    "run",
+    ...(identity ? ["--identity", identity] : []),
+    fn,
+    JSON.stringify(args),
+  ]);
   assertStep(step, cli.ok, cli.output.slice(-300));
 
   // `convex run` prints the result as JSON after any log lines, and nothing

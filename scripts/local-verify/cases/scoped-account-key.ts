@@ -1,34 +1,25 @@
 import {
-  SELF_HOST_ADMIN,
-  SELF_HOST_ISSUER,
-} from "../../../packages/convex/model/selfHostAuth.ts";
-import { assertStep, type VerifyContext } from "../harness.ts";
+  assertStep,
+  convexResult,
+  SELF_HOST_IDENTITY,
+  type VerifyContext,
+} from "../harness.ts";
 
 /**
  * A scoped account key made the way Organization › API access makes it,
  * then used through the edge: the config plane and core both judge it as a
- * role over its own grid, and revoking it refuses it on both at once.
+ * role over its own areas, an inline access change applies at once, and
+ * revoking it refuses it on both.
  */
 export async function scopedAccountKey(context: VerifyContext): Promise<void> {
-  const identity = JSON.stringify({
-    subject: SELF_HOST_ADMIN.subject,
-    issuer: SELF_HOST_ISSUER,
-    tokenIdentifier: `${SELF_HOST_ISSUER}|${SELF_HOST_ADMIN.subject}`,
-    email: SELF_HOST_ADMIN.email,
-  });
-  const asAdmin = (fn: string, args: Record<string, unknown>): unknown => {
-    const cli = context.convex([
-      "run",
-      "--identity",
-      identity,
+  const asAdmin = (fn: string, args: Record<string, unknown>): unknown =>
+    convexResult(
+      context,
       fn,
-      JSON.stringify(args),
-    ]);
-    assertStep(`${fn} answers the admin`, cli.ok, cli.output.slice(-300));
-    const start = cli.output.search(/^[[{"\dn]/m);
-
-    return start < 0 ? null : JSON.parse(cli.output.slice(start));
-  };
+      args,
+      `${fn} answers the admin`,
+      SELF_HOST_IDENTITY,
+    );
   const status = async (
     method: string,
     path: string,
@@ -56,7 +47,7 @@ export async function scopedAccountKey(context: VerifyContext): Promise<void> {
     context.convex([
       "run",
       "--identity",
-      identity,
+      SELF_HOST_IDENTITY,
       "org/lifecycle:provision",
       JSON.stringify({ orgId: orgId }),
     ]);
@@ -94,6 +85,19 @@ export async function scopedAccountKey(context: VerifyContext): Promise<void> {
         `status ${lifecycle}`,
       );
     });
+
+    // The dashboard saves one inline change at a time; it applies at once.
+    asAdmin("accountApiKeys:update", {
+      orgId: orgId,
+      keyId: created._id,
+      actions: ["agents:read", "crons:read"],
+    });
+    const widened = await status("GET", "/v1/crons", created.token);
+    assertStep(
+      "an inline access change applies to the next request",
+      widened === 200,
+      `status ${widened}`,
+    );
 
     asAdmin("accountApiKeys:remove", { orgId: orgId, keyId: created._id });
     const revokedConfig = await status("GET", "/v1/agents", created.token);
