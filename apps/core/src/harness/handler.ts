@@ -41,7 +41,7 @@ import {
   directPrincipalChain,
   runPrincipal,
 } from "../shared/domain/principal.ts";
-import { booleanEnv } from "../shared/env.ts";
+import { booleanEnv, optionalEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import {
   errorResponse,
@@ -2364,7 +2364,7 @@ function dashboardTraceUrl(
     return null;
   }
   const dashboardUrl = (
-    process.env.BROODS_DASHBOARD_URL ?? DEFAULT_DASHBOARD_URL
+    optionalEnv("BROODS_DASHBOARD_URL") ?? DEFAULT_DASHBOARD_URL
   ).replace(/\/+$/, "");
   const params = new URLSearchParams({
     project: event.projectSlug,
