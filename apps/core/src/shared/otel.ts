@@ -19,9 +19,13 @@ import {
   BasicTracerProvider,
   BatchSpanProcessor,
   RandomIdGenerator,
+  type ReadableSpan,
+  type Span,
+  type SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { registerTelemetry } from "ai";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 
 export interface ObservabilityContext {
   accountId: string;
@@ -31,8 +35,6 @@ export interface ObservabilityContext {
   agentId: string;
   conversationKey: string;
   traceId: string;
-  /** Stable requester ID for AI Observability attribution when available. */
-  posthogDistinctId?: string;
   /** OTel context containing the active root task span for log correlation. */
   otelContext: Context;
   /** Plaintext values that must be removed from every emitted log string. */
@@ -236,10 +238,12 @@ export function initOtel(): void {
     let aiTracer = _tracer;
     if (posthogProjectToken && posthogHost) {
       const aiSpanProcessors = [
-        new PostHogSpanProcessor({
-          projectToken: posthogProjectToken,
-          host: posthogHost,
-        }),
+        new AnonymousSpanProcessor(
+          new PostHogSpanProcessor({
+            projectToken: posthogProjectToken,
+            host: posthogHost,
+          }),
+        ),
         ...(endpoint
           ? [
               new BatchSpanProcessor(
@@ -277,7 +281,7 @@ export function initOtel(): void {
     if (!aiTracer) return;
 
     // AI SDK v7 uses this integration to produce gen-ai spans. Runtime context
-    // adds the requester and conversation grouping that AI Observability needs.
+    // adds the conversation grouping AI Observability needs, never the requester.
     registerTelemetry(
       new OpenTelemetry({
         tracer: aiTracer,
@@ -292,10 +296,6 @@ export function initOtel(): void {
               typeof runtimeContext.properties.environment === "string"
                 ? runtimeContext.properties.environment
                 : undefined,
-            "posthog.distinct_id":
-              typeof runtimeContext?.distinctId === "string"
-                ? runtimeContext.distinctId
-                : context?.posthogDistinctId,
             $ai_session_id:
               typeof runtimeContext?.sessionId === "string"
                 ? runtimeContext.sessionId
@@ -315,9 +315,9 @@ export function initOtel(): void {
   }
 }
 
-/** Converts an arbitrary conversation key into the allowed AI session-id alphabet. */
+/** One-way hash of a conversation key, so AI Observability groups turns without learning who talked. */
 export function aiSessionId(conversationKey: string): string {
-  return Buffer.from(conversationKey).toString("base64url");
+  return createHash("sha256").update(conversationKey).digest("hex");
 }
 
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */
@@ -340,4 +340,53 @@ export function observabilityAttributes(
     agent_id: ctx.agentId,
     conversation_key: ctx.conversationKey,
   };
+}
+
+/** Wraps the PostHog processor so error text, which can quote user content, never leaves; codes and error types stay. */
+export class AnonymousSpanProcessor implements SpanProcessor {
+  constructor(private readonly inner: SpanProcessor) {}
+
+  forceFlush(): Promise<void> {
+    return this.inner.forceFlush();
+  }
+
+  onEnd(span: ReadableSpan): void {
+    this.inner.onEnd({
+      name: span.name,
+      kind: span.kind,
+      spanContext: () => span.spanContext(),
+      parentSpanContext: span.parentSpanContext,
+      startTime: span.startTime,
+      endTime: span.endTime,
+      status: { code: span.status.code },
+      attributes: span.attributes,
+      links: span.links,
+      events: span.events.map((event) =>
+        event.name === "exception"
+          ? {
+              name: event.name,
+              time: event.time,
+              attributes: {
+                "exception.type": event.attributes?.["exception.type"],
+              },
+            }
+          : event,
+      ),
+      duration: span.duration,
+      ended: span.ended,
+      resource: span.resource,
+      instrumentationScope: span.instrumentationScope,
+      droppedAttributesCount: span.droppedAttributesCount,
+      droppedEventsCount: span.droppedEventsCount,
+      droppedLinksCount: span.droppedLinksCount,
+    });
+  }
+
+  onStart(span: Span, parentContext: Context): void {
+    this.inner.onStart(span, parentContext);
+  }
+
+  shutdown(): Promise<void> {
+    return this.inner.shutdown();
+  }
 }

@@ -111,18 +111,14 @@ export function MainShell({
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
 
-  // The Convex user row exists only after authentication and its `_id` is the
-  // app's stable user primary key, including for self-hosted accounts. Runs on
-  // every row change so a renamed user or plan change reaches the person; the
-  // SDK sends no second $identify for an unchanged distinct id.
+  // The Convex user row exists only after authentication and its opaque `_id`
+  // is the app's stable user primary key. Only that id and the plan go to
+  // PostHog, never email or name. Runs on every row change so a plan change
+  // reaches the person; the SDK sends no second $identify for an unchanged id.
   useEffect(() => {
     if (!currentUser) return;
 
-    posthog.identify(currentUser._id, {
-      email: currentUser.email,
-      name: currentUser.name,
-      plan: currentUser.plan,
-    });
+    posthog.identify(currentUser._id, { plan: currentUser.plan });
   }, [currentUser]);
 
   // The reporter is the first child of both fragments, one tree position, so
