@@ -172,6 +172,7 @@ type OrgAccount = NonNullable<
 type OrgKeys = NonNullable<FunctionReturnType<typeof api.apiKeys.listForOrg>>;
 type OrgKey = OrgKeys["keys"][number];
 type Preset = "full" | "read" | "restricted";
+type Revealed = { secret: string; scoped: boolean };
 type ScopedKey = OrgKey & {
   _id: Id<"accountApiKeys">;
   actions: ApiPolicyAction[];
@@ -191,15 +192,11 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const now = useNow();
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const listed = useQuery(api.apiKeys.listForOrg, {});
-  const provision = useAction(api.org.lifecycle.provision);
   const [selectedId, setSelectedId] = useQueryState("sel", parseAsName);
   const [creating, setCreating] = useState(false);
-  // A secret to show once; `scoped` names it a key rather than the account key.
-  const [revealed, setRevealed] = useState<{
-    secret: string;
-    scoped: boolean;
-  } | null>(null);
-  const { pending, error, run } = useSubmit();
+  // A secret to show once. It lives here, so provisioning's reveal outlasts
+  // the empty state it was minted from.
+  const [revealed, setRevealed] = useState<Revealed | null>(null);
   const list = useListState({
     rows: listed?.keys ?? NO_ROWS,
     fields: QUERY_FIELDS,
@@ -224,42 +221,13 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   }
   if (!account) {
     return (
-      <div className="px-6 pt-6">
-        <EmptyState
-          title="This organization has no API account yet."
-          detail="Provisioning creates the backend tenant and issues a one-time account key."
-          action={
-            canWrite && (
-              <Button
-                size="sm"
-                className="cursor-pointer"
-                disabled={pending}
-                onClick={() =>
-                  run(async () => {
-                    const result = await provision({ orgId: org._id });
-                    setRevealed({ secret: result.secret, scoped: false });
-                  })
-                }
-              >
-                {pending ? "Provisioning…" : "Provision account"}
-              </Button>
-            )
-          }
-        />
-        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-        {revealed && (
-          <RevealSecretDialog
-            title={
-              revealed.scoped
-                ? "Save your new key"
-                : "Save your new account key"
-            }
-            label={revealed.scoped ? "key" : "account key"}
-            secret={revealed.secret}
-            onClose={() => setRevealed(null)}
-          />
-        )}
-      </div>
+      <ProvisionAccount
+        orgId={org._id}
+        canWrite={canWrite}
+        onProvisioned={(secret) =>
+          setRevealed({ secret: secret, scoped: false })
+        }
+      />
     );
   }
   const { stages } = listed;
@@ -396,14 +364,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
         />
       )}
       {revealed && (
-        <RevealSecretDialog
-          title={
-            revealed.scoped ? "Save your new key" : "Save your new account key"
-          }
-          label={revealed.scoped ? "key" : "account key"}
-          secret={revealed.secret}
-          onClose={() => setRevealed(null)}
-        />
+        <RevealKey revealed={revealed} onClose={() => setRevealed(null)} />
       )}
     </div>
   );
@@ -853,6 +814,67 @@ function KeyDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The empty state before the org has an API account, with Provision. */
+function ProvisionAccount({
+  orgId,
+  canWrite,
+  onProvisioned,
+}: {
+  orgId: Id<"orgs">;
+  canWrite: boolean;
+  onProvisioned: (secret: string) => void;
+}): React.JSX.Element {
+  const provision = useAction(api.org.lifecycle.provision);
+  const { pending, error, run } = useSubmit();
+
+  return (
+    <div className="px-6 pt-6">
+      <EmptyState
+        title="This organization has no API account yet."
+        detail="Provisioning creates the backend tenant and issues a one-time account key."
+        action={
+          canWrite && (
+            <Button
+              size="sm"
+              className="cursor-pointer"
+              disabled={pending}
+              onClick={() =>
+                run(async () => {
+                  const result = await provision({ orgId: orgId });
+                  onProvisioned(result.secret);
+                })
+              }
+            >
+              {pending ? "Provisioning…" : "Provision account"}
+            </Button>
+          )
+        }
+      />
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/** A secret shown once: the account key, or a scoped key named as just a key. */
+function RevealKey({
+  revealed,
+  onClose,
+}: {
+  revealed: Revealed;
+  onClose: () => void;
+}): React.JSX.Element {
+  return (
+    <RevealSecretDialog
+      title={
+        revealed.scoped ? "Save your new key" : "Save your new account key"
+      }
+      label={revealed.scoped ? "key" : "account key"}
+      secret={revealed.secret}
+      onClose={onClose}
+    />
   );
 }
 
