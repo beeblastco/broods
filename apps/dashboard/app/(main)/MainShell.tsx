@@ -59,6 +59,7 @@ export function MainShell({
   const syncProfile = useMutation(api.user.syncProfile);
   const signedIn = useSignedIn();
   const currentUser = useQuery(api.user.getCurrent, signedIn ? {} : "skip");
+  const analyticsId = useQuery(api.user.analyticsId, signedIn ? {} : "skip");
   const profileSynced = useRef(false);
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
   const [syncRetry, setSyncRetry] = useState(0);
@@ -113,14 +114,14 @@ export function MainShell({
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
 
-  // PostHog tracks behaviour anonymously and never learns who the user is, so
-  // the plan rides every event as a property to segment by. Runs on every row
-  // change so a plan change shows up at once.
+  // PostHog tracks behaviour anonymously and never learns who the user is: it
+  // gets a keyed id that counts one person once across devices, and the plan
+  // rides every event as a property to segment by. The SDK sends no second
+  // $identify for an unchanged id.
   useEffect(() => {
-    if (!currentUser) return;
-
-    posthog.register({ plan: currentUser.plan });
-  }, [currentUser]);
+    if (currentUser) posthog.register({ plan: currentUser.plan });
+    if (analyticsId) posthog.identify(analyticsId);
+  }, [currentUser, analyticsId]);
 
   // The reporter is the first child of both fragments, one tree position, so
   // it survives the auth flip instead of registering every observer twice.
