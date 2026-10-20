@@ -38,7 +38,10 @@ class FakeWebSocket implements WebSocketLike {
   // Rejects the codes a browser rejects, so the SDK never closes with them.
   close(code = 1000, reason = "closed"): void {
     if (code !== 1000 && (code < 3000 || code > 4999)) {
-      throw new DOMException(`${code} is neither.`, "InvalidAccessError");
+      throw new DOMException(
+        `close code ${code} must be 1000 or 3000-4999`,
+        "InvalidAccessError",
+      );
     }
     this.readyState = 3;
     this.onclose?.({ code: code, reason: reason });
@@ -235,6 +238,30 @@ test("websocket client sends answers in place of events", async () => {
     answers: answers,
     sessionId: "session_1",
   });
+});
+
+test("websocket client closes with a browser-valid code on a server error", async () => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: Error[] = [];
+
+  client.subscribe(
+    { endpointId: "agent_1", sessionId: "session_1", input: "hi" },
+    {
+      onError: (error: Error): void => {
+        errors.push(error);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances[0]!;
+  socket.emit({ type: "error", error: "boom" });
+  expect(errors).toHaveLength(1);
+  expect(socket.readyState).toBe(3);
 });
 
 test("websocket client unwraps output envelopes for handlers and stream consumers", async () => {
