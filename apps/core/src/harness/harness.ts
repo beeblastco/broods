@@ -61,7 +61,6 @@ import {
 import type { ProviderOptions, ToolResultOutput } from "@ai-sdk/provider-utils";
 import { isPlainObject } from "../shared/object.ts";
 import {
-  aiSessionId,
   getObservabilityContext,
   getTracer,
   mintSpanId,
@@ -421,14 +420,10 @@ export async function runAgentLoop(
   // Registers this run on the machine it works on so a neighbour's environment
   // counts it; released when usage finalizes.
   let releaseSandboxOccupancy: (() => void) | undefined;
-  const requester = session.principal?.chain?.find(
-    (link) => link.kind === "user",
-  );
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
     traceId: traceId,
-    ...(requester?.kind === "user" ? { posthogDistinctId: requester.id } : {}),
     otelContext: rootOtelContext,
     secretValues: collectSecretValues([
       agentConfig,
@@ -855,9 +850,7 @@ export async function runAgentLoop(
     now: Date.now,
   });
   const aiRuntimeContext = {
-    sessionId: aiSessionId(session.conversationKey),
     traceName: rootSpanName,
-    ...(requester?.kind === "user" ? { distinctId: requester.id } : {}),
     properties: process.env.DEPLOYMENT_ENVIRONMENT
       ? { environment: process.env.DEPLOYMENT_ENVIRONMENT }
       : {},
@@ -886,8 +879,6 @@ export async function runAgentLoop(
     telemetry: {
       functionId: "harness.agent",
       includeRuntimeContext: {
-        distinctId: true,
-        sessionId: true,
         traceName: true,
         properties: true,
       },
