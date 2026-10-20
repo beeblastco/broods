@@ -139,8 +139,8 @@ function ecrRepositoryExists(name: string, region: string): boolean {
 /**
  * Ships apps/cloudflare-<service> with its `deploy` script as the Worker
  * `resourceName(service)`. wrangler deploys it because the Cloudflare
- * provider cannot declare a Worker Loader binding. It reruns when a tracked
- * file in its folder or in `sources`, the lockfile, or a var changes. There
+ * provider cannot declare a Worker Loader binding. It reruns when a file in
+ * its folder or in `sources`, the lockfile, or a var changes. There
  * is no delete: the Worker keeps the key infra put on it, and a removed
  * stage's Worker is deleted by hand.
  */
@@ -160,7 +160,7 @@ function deployCloudflareWorker(
     environment: {
       WORKER_NAME: name,
       // Read by nothing: a new value is what reruns the deploy.
-      SOURCES_HASH: trackedFilesHash([app, ...sources, "bun.lock"]),
+      SOURCES_HASH: sourceFilesHash([app, ...sources, "bun.lock"]),
       ...vars,
     },
   });
@@ -168,27 +168,37 @@ function deployCloudflareWorker(
   return name;
 }
 
-// A hash of the git index entries for `paths`, relative to the repo root.
-function trackedFilesHash(paths: string[]): string {
-  const listing = Bun.spawnSync({
-    cmd: [
-      "git",
-      "-C",
-      `${$cli.paths.root}/../..`,
-      "ls-files",
-      "-s",
-      "--",
-      ...paths,
-    ],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (!listing.success) {
-    throw new Error(`git ls-files failed: ${listing.stderr.toString()}`);
-  }
+// A hash of the files under `paths` (relative to the repo root) as they are on
+// disk, untracked ones included and ignored ones left out, so it changes
+// whenever what wrangler ships changes. git only reads: nothing is staged.
+function sourceFilesHash(paths: string[]): string {
+  const git = (args: string[]): string => {
+    const result = Bun.spawnSync({
+      cmd: ["git", "-C", `${$cli.paths.root}/../..`, ...args],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (!result.success) {
+      throw new Error(`git ${args[0]} failed: ${result.stderr.toString()}`);
+    }
+
+    return result.stdout.toString();
+  };
+  const list = (flags: string[]): string[] =>
+    git(["ls-files", "-z", ...flags, "--", ...paths])
+      .split("\0")
+      .filter(Boolean);
+  const deleted = new Set(list(["--deleted"]));
+  const files = list([
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--deduplicate",
+  ]).filter((file) => !deleted.has(file));
 
   return new Bun.CryptoHasher("sha256")
-    .update(listing.stdout.toString())
+    .update(files.join("\0"))
+    .update(git(["hash-object", "--", ...files]))
     .digest("hex");
 }
 
