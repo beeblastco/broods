@@ -9,11 +9,8 @@
 
 export {
   fromNestedAgentConfig,
-  substituteEnvPlaceholders,
   toNestedAgentConfig,
   type FlatAgentConfig,
-  type FlatPatch,
-  type NestedAgentConfig,
 } from "@broods/convex/model/agentConfigCodec";
 
 import { toNestedAgentConfig } from "@broods/convex/model/agentConfigCodec";

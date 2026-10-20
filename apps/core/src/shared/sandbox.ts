@@ -12,8 +12,6 @@ const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 // on the next call (Fargate-style). These bound the account-configurable
 // `lifecycle` block.
 export const DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60;
-export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
-export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 // Idle backstop for the providers that take a native expiry (daytona, lambda) when the
 // config sets no maxLifetimeSeconds. Keep equal to SANDBOX_RESERVATION_TTL_SECONDS in
 // `packages/convex/runtime.ts`, which the sandbox sweeper enforces for every provider.

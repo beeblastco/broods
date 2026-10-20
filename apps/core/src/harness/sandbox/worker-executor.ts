@@ -1,5 +1,5 @@
 /**
- * Isolate sandbox executor: bash in a V8 isolate on Cloudflare Workers, no
+ * Worker sandbox executor: bash in a V8 isolate on Cloudflare Workers, no
  * container. Commands go over authenticated HTTP to the Worker in
  * `apps/cloudflare-worker`, which runs each in a Dynamic Worker per sandbox
  * id and keeps a reserved sandbox's files in R2 between calls. Nothing runs

@@ -92,39 +92,6 @@ export interface NormalizedCronUpdate {
   status?: CronStatus;
 }
 
-export function applyCronPatch(
-  record: CronRecord,
-  input: UpdateCronInput,
-): CronRecord {
-  const patch = normalizeUpdateCronInput(input);
-
-  return {
-    ...record,
-    ...(patch.name !== undefined ? { name: patch.name } : {}),
-    ...(patch.description === null
-      ? { description: undefined }
-      : patch.description !== undefined
-        ? { description: patch.description }
-        : {}),
-    ...(patch.agentId !== undefined ? { agentId: patch.agentId } : {}),
-    ...(patch.events !== undefined ? { events: patch.events } : {}),
-    ...(patch.conversationKey === null
-      ? { conversationKey: undefined }
-      : patch.conversationKey !== undefined
-        ? { conversationKey: patch.conversationKey }
-        : {}),
-    ...(patch.scheduleExpression !== undefined
-      ? { scheduleExpression: patch.scheduleExpression }
-      : {}),
-    ...(patch.timezone === null
-      ? { timezone: undefined }
-      : patch.timezone !== undefined
-        ? { timezone: patch.timezone }
-        : {}),
-    ...(patch.status !== undefined ? { status: patch.status } : {}),
-  };
-}
-
 /**
  * Validates an update patch with the config plane's normalizer, then re-types
  * the events list to the ModelMessage[] core stores. The rule checks the

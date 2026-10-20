@@ -19,23 +19,9 @@ export interface AccountRecord {
   updatedAt: string;
 }
 
-export interface PublicAccountRecord {
-  accountId: string;
-  username: string;
-  description?: string;
-  status: AccountStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface CreateAccountInput {
   username: string;
   description?: string;
-}
-
-export interface UpdateAccountInput {
-  username?: string;
-  description?: string | null;
 }
 
 export function createAccountId(): string {
@@ -63,46 +49,6 @@ export function normalizeCreateAccountInput(
   return {
     username: username,
     ...(description ? { description: description } : {}),
-  };
-}
-
-export function normalizeUpdateAccountInput(
-  value: unknown,
-): UpdateAccountInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
-  if ("config" in value)
-    throw new Error(
-      "Agent config must be updated through /v1/agents/{agentId}",
-    );
-  const v = value as Record<string, unknown>;
-  const normalized: UpdateAccountInput = {
-    ...(v.username !== undefined
-      ? { username: requireString(v.username, "username") }
-      : {}),
-    ...(v.description !== undefined
-      ? {
-          description:
-            v.description === null
-              ? null
-              : optionalString(v.description, "description"),
-        }
-      : {}),
-  };
-  if (Object.keys(normalized).length === 0) {
-    throw new Error("Request body must include username or description");
-  }
-
-  return normalized;
-}
-
-export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
-  return {
-    accountId: account.accountId,
-    username: account.username,
-    ...(account.description ? { description: account.description } : {}),
-    status: account.status,
-    createdAt: account.createdAt,
-    updatedAt: account.updatedAt,
   };
 }
 
