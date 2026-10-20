@@ -12,11 +12,9 @@ const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
 const AWS_PROFILE = process.env.CI
   ? undefined
   : (process.env.AWS_PROFILE ?? "default");
-// Whether to import (vs first-create) the region-scoped sandbox ECR repo. The 4 image-based
-// sandbox Lambdas this used to gate are gone. The "lambda" provider is now an AWS Lambda
-// MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
-// The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
-// there); its teardown belongs to the Phase 4 infra cleanup. See apps/docs/docs/internals/sandboxes.md.
+// Whether to import (vs first-create) the region-scoped sandbox ECR repo. The "lambda"
+// provider is an AWS Lambda MicroVM whose image is built from an S3 zip, not pulled from
+// ECR; the repo stays only because the lambda-sanbdox container image still publishes there.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 // Convex credentials are required for every stage and back all persistence.
 // Runtime credentials live on the container (infra repo), not here.
@@ -788,13 +786,8 @@ export default $config({
       }),
     });
 
-    // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
-    // the repo lifecycle stays in sync with the functions that consume it, with no cross-repo
-    // coordination. Lambda pulls only from PRIVATE ECR in its own region (public.ecr.aws is
-    // rejected), so the repo is region-scoped: each deploy region gets its own. The arm64
-    // image is pushed by the lambda-just-bash-rust CI; for a brand-new region that push must
-    // land before the sandbox functions can be created (the first deploy creates the empty
-    // repo, then re-deploy once the image exists). See apps/docs/docs/internals/sandboxes.md.
+    // The sandbox image ECR repo, one per deploy region. The lambda-sanbdox CI pushes its
+    // arm64 image here; nothing in this app pulls from it.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
     const sandboxImageRepoExists = ecrRepositoryExists(
       sandboxImageRepoName,

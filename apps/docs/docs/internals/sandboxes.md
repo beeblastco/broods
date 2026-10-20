@@ -82,7 +82,7 @@ flowchart TD
 | `e2b`        | `e2b-executor.ts`        | rejected                            | native pause on timeout            | no              | yes      | launch and callback, no logs, stop |
 | `vercel`     | `vercel-executor.ts`     | rejected                            | named sandbox                      | no              | yes      | yes, logs and stop                 |
 | `cloudflare` | `cloudflare-executor.ts` | rejected                            | same Container while warm, no disk | no              | no       | no                                 |
-| `worker`     | `isolate-executor.ts`    | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
+| `worker`     | `worker-executor.ts`     | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
 | `machine`    | `machine-executor.ts`    | rejected                            | no                                 | no              | no       | no                                 |
 | `custom`     | `http-executor.ts`       | rejected                            | no                                 | no              | no       | no                                 |
 
@@ -548,7 +548,7 @@ Bash in a V8 isolate, no container and no Durable Object. `isolate-executor.ts` 
 
 ```mermaid
 sequenceDiagram
-  participant E as isolate-executor
+  participant E as worker-executor
   participant W as V8 Worker
   participant R2 as R2 sandboxes/:id
   participant I as isolate (just-bash)

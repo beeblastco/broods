@@ -60,11 +60,3 @@ export function formatDuration(ms: number): string {
 
   return `${Math.round(ms)}ms`;
 }
-
-/** A `datetime-local` input value as epoch ms, null when empty or unparseable. */
-export function toEpochMs(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
-
-  return Number.isFinite(ms) ? ms : null;
-}

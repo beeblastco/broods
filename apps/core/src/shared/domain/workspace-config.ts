@@ -14,11 +14,7 @@ import type {
 } from "@broods/convex/model/workspaceRules";
 
 export type { WorkspaceIsolation } from "@broods/convex/model/workspaceIsolation";
-export type {
-  WorkspaceConfig,
-  WorkspaceStorageAuth,
-  WorkspaceStorageProvider,
-} from "@broods/convex/model/workspaceRules";
+export type { WorkspaceConfig } from "@broods/convex/model/workspaceRules";
 
 /**
  * Workspace storage as core carries it. An R2 or assumeRole bucket also
@@ -34,17 +30,6 @@ export type WorkspaceStorageConfig = StoredWorkspaceStorageConfig & {
 export type WorkspaceRuntimeConfig = Omit<WorkspaceConfig, "storage"> & {
   storage: WorkspaceStorageConfig;
 };
-
-// The workspace harness is a set of named features, each with its own options
-// and each defaulting to on. There is deliberately no top-level enabled flag:
-// new capabilities get their own key here for independent control.
-//   - workspace: the injected <workspace> prompt (file-tool + TASKS guidance).
-//   - memory: structured memory, the memory_save tool, memory/MEMORY.md index
-//     loading, and the <memory> prompt.
-export interface WorkspaceHarnessConfig {
-  workspace?: { enabled?: boolean };
-  memory?: { enabled?: boolean };
-}
 
 export interface WorkspaceConfigRecord {
   accountId: string;

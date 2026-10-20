@@ -35,7 +35,6 @@ import {
   type ConsumerMessages,
   type JetStreamManager,
   type NatsConnection,
-  type Subscription,
 } from "nats.ws";
 
 export type { NatsConnection };
@@ -312,26 +311,6 @@ export async function flushObservabilityNats(): Promise<void> {
 }
 
 /**
- * Live read path: a core subscription to a conversation's response subject.
- * Decode `msg.data` as a {@link NatsStreamEvent}. There is no replay, so use
- * {@link readConversationStream} to catch up after a disconnect.
- */
-export function subscribeConversationLive(options: {
-  connection: NatsConnection;
-  accountId: string;
-  agentId: string;
-  conversationKey: string;
-}): Subscription {
-  return options.connection.subscribe(
-    streamResponseSubject(
-      options.accountId,
-      options.agentId,
-      options.conversationKey,
-    ),
-  );
-}
-
-/**
  * Replay read path: a JetStream consumer over a conversation's stored stream.
  * `startSequence` resumes from a known `JsMsg.seq`; `startTime` resumes from an
  * ISO timestamp (for switching over from a core subscription, which doesn't see
@@ -359,37 +338,6 @@ export async function readConversationStream(options: {
   });
 
   return consumer.consume();
-}
-
-/**
- * How many messages are currently buffered for a conversation. 0 means no replay
- * output is retained for the subject, so a reconnecting client must use the
- * durable terminal status/result instead of assuming token replay exists.
- */
-export async function conversationBufferedCount(options: {
-  connection: NatsConnection;
-  accountId: string;
-  agentId: string;
-  conversationKey: string;
-}): Promise<number> {
-  try {
-    const jsm = await jetstreamManagerFor(options.connection);
-    const subject = streamResponseSubject(
-      options.accountId,
-      options.agentId,
-      options.conversationKey,
-    );
-    const info = await jsm.streams.info(RESPONSE_STREAM_NAME, {
-      subjects_filter: subject,
-    });
-
-    return (
-      (info.state.subjects as Record<string, number> | undefined)?.[subject] ??
-      0
-    );
-  } catch {
-    return 0;
-  }
 }
 
 // Bounds future-cursor rejection: a client can never hold a cursor beyond the

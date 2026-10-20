@@ -365,8 +365,6 @@ export interface AgentChannelsConfig {
   [key: string]: unknown;
 }
 
-export type ChannelPartitionBy = "shared" | "conversation";
-
 /**
  * How an attached partitioned workspace splits its folders for runs arriving
  * through this door. `shared` mounts the workspace root; `conversation` mounts
