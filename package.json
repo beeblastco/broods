@@ -46,6 +46,7 @@
     "typescript": "^7.0.2"
   },
   "overrides": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
     "follow-redirects": "^1.16.1",
