@@ -4,6 +4,8 @@ import posthog, { type CaptureResult, type Properties } from "posthog-js";
 // users type or see. A no-op when the key or host is unset.
 const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+// Behind a reverse proxy posthog-js cannot derive the app's URL from the host.
+const posthogUiHost = process.env.NEXT_PUBLIC_POSTHOG_UI_HOST;
 
 // URL properties keep only these opaque params; search boxes write what users
 // type into the URL (`?q=`), so every other param is dropped.
@@ -31,6 +33,7 @@ if (posthogKey && posthogHost) {
     mask_all_text: true,
     mask_personal_data_properties: true,
     person_profiles: "identified_only",
+    ui_host: posthogUiHost,
     capture_exceptions: {
       capture_unhandled_errors: true,
       capture_unhandled_rejections: true,
