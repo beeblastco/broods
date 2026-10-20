@@ -15,7 +15,7 @@ import { AnonymousSpanProcessor } from "../src/shared/otel.ts";
 import { analyticsSessionTag } from "../src/shared/run-token.ts";
 
 describe("PostHog anonymity", () => {
-  it("strips error messages and stacks but keeps the code and error type", () => {
+  it("strips content attributes, error messages and stacks but keeps codes and types", () => {
     const exported: ReadableSpan[] = [];
     const capture: SpanProcessor = {
       forceFlush: (): Promise<void> => Promise.resolve(),
@@ -29,6 +29,11 @@ describe("PostHog anonymity", () => {
       spanProcessors: [new AnonymousSpanProcessor(capture)],
     });
     const span = provider.getTracer("test").startSpan("execute_tool fill");
+    span.setAttributes({
+      "gen_ai.tool.name": "fill",
+      "gen_ai.tool.call.arguments": '{"answer":"my home address"}',
+      "gen_ai.input.messages": "my home address",
+    });
     span.recordException({
       name: "Error",
       message: "What is your current academic performance rating?",
@@ -45,7 +50,9 @@ describe("PostHog anonymity", () => {
     expect(sent?.events).toHaveLength(1);
     expect(sent?.events[0]?.attributes).toEqual({ "exception.type": "Error" });
     expect(sent?.spanContext().spanId).toBe(span.spanContext().spanId);
+    expect(sent?.attributes).toEqual({ "gen_ai.tool.name": "fill" });
     expect(JSON.stringify(sent)).not.toContain("academic performance");
+    expect(JSON.stringify(sent)).not.toContain("home address");
   });
 
   it("tags the conversation key with the stage secret, not a plain hash", () => {
@@ -61,7 +68,8 @@ describe("PostHog anonymity", () => {
       process.env.STAGE_TICKET_SECRET = "another-stage-secret";
       expect(analyticsSessionTag(key)).not.toBe(tag);
     } finally {
-      process.env.STAGE_TICKET_SECRET = previous;
+      if (previous === undefined) delete process.env.STAGE_TICKET_SECRET;
+      else process.env.STAGE_TICKET_SECRET = previous;
     }
   });
 });

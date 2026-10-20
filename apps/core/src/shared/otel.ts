@@ -27,6 +27,32 @@ import { registerTelemetry } from "ai";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { analyticsSessionTag } from "./run-token.ts";
 
+// AI SDK span attributes that carry what users or agents wrote. Dropped before
+// PostHog even when a call site forgets `recordInputs`/`recordOutputs: false`.
+const USER_CONTENT_ATTRIBUTES = new Set([
+  "ai.decision.answers",
+  "ai.decision.questions",
+  "ai.documents",
+  "ai.embedding",
+  "ai.embeddings",
+  "ai.prompt",
+  "ai.prompt.messages",
+  "ai.prompt.tools",
+  "ai.request.text",
+  "ai.response.files",
+  "ai.response.object",
+  "ai.response.reasoning",
+  "ai.response.text",
+  "ai.value",
+  "ai.values",
+  "gen_ai.input.messages",
+  "gen_ai.output.messages",
+  "gen_ai.system_instructions",
+  "gen_ai.tool.call.arguments",
+  "gen_ai.tool.call.result",
+  "gen_ai.tool.definitions",
+]);
+
 export interface ObservabilityContext {
   accountId: string;
   project: string;
@@ -334,7 +360,7 @@ export function observabilityAttributes(
   };
 }
 
-/** Wraps the PostHog processor so error text, which can quote user content, never leaves; codes and error types stay. */
+/** Wraps the PostHog processor so no user content leaves: content attributes and error text are dropped; codes and error types stay. */
 export class AnonymousSpanProcessor implements SpanProcessor {
   constructor(private readonly inner: SpanProcessor) {}
 
@@ -343,27 +369,32 @@ export class AnonymousSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
+    // Captured once so the copy does not keep the original span alive.
+    const spanContext = span.spanContext();
     this.inner.onEnd({
       name: span.name,
       kind: span.kind,
-      spanContext: () => span.spanContext(),
+      spanContext: () => spanContext,
       parentSpanContext: span.parentSpanContext,
       startTime: span.startTime,
       endTime: span.endTime,
       status: { code: span.status.code },
-      attributes: span.attributes,
-      links: span.links,
-      events: span.events.map((event) =>
-        event.name === "exception"
-          ? {
-              name: event.name,
-              time: event.time,
-              attributes: {
-                "exception.type": event.attributes?.["exception.type"],
-              },
-            }
-          : event,
+      attributes: Object.fromEntries(
+        Object.entries(span.attributes).filter(
+          ([key]) => !USER_CONTENT_ATTRIBUTES.has(key),
+        ),
       ),
+      links: span.links,
+      events: span.events.map((event) => {
+        if (event.name !== "exception") return event;
+        const type = event.attributes?.["exception.type"];
+
+        return {
+          name: event.name,
+          time: event.time,
+          attributes: type === undefined ? {} : { "exception.type": type },
+        };
+      }),
       duration: span.duration,
       ended: span.ended,
       resource: span.resource,
