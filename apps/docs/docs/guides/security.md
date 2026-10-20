@@ -26,14 +26,15 @@ The CLI only works for owners and admins.
 
 ## Credentials
 
-Three keys are yours to hold. Use the narrowest one that works.
+These keys are yours to hold. Use the narrowest one that works.
 
-| Key            | Prefix  | Scope                 | What it can do                                                           | Never                                       |
-| -------------- | ------- | --------------------- | ------------------------------------------------------------------------ | ------------------------------------------- |
-| Account key    | `bask_` | The whole account     | Everything: create and change agents, crons, files and roles, run agents | Put it in a frontend or hand it to an agent |
-| Project key    | `bpdk_` | One project and stage | Deploy, set and list environment variables, rotate the signing secret    | Expect it to read a variable's value        |
-| Runtime key    | `bsk_`  | One project and stage | Run agents with `publicAccess: true`                                     | Expect it to read logs or change config     |
-| Signing secret | `bsig_` | One project and stage | Sign user tokens on your server                                          | Put it in a frontend                        |
+| Key            | Prefix  | Scope                                 | What it can do                                                           | Never                                                                  |
+| -------------- | ------- | ------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Account key    | `bask_` | The whole account                     | Everything: create and change agents, crons, files and roles, run agents | Put it in a frontend or hand it to an agent                            |
+| Scoped key     | `bask_` | The account, or one project and stage | Read or write what its permissions allow, until it expires               | Expect it to manage keys or roles, assume a role, or sync with the CLI |
+| Project key    | `bpdk_` | One project and stage                 | Deploy, set and list environment variables, rotate the signing secret    | Expect it to read a variable's value                                   |
+| Runtime key    | `bsk_`  | One project and stage                 | Run agents with `publicAccess: true`                                     | Expect it to read logs or change config                                |
+| Signing secret | `bsig_` | One project and stage                 | Sign user tokens on your server                                          | Put it in a frontend                                                   |
 
 `BROODS_ACCOUNT_SECRET` holds the account key, `BROODS_TOKEN` a project key, `BROODS_API_KEY` the runtime key, and `BROODS_USER_TOKEN_SECRET` the signing secret.
 
@@ -107,6 +108,8 @@ With a valid token, every conversation key and event id of that request lives un
 - Keys starting with `bsu:` are reserved for user namespaces.
 
 The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access; that takes `keys:write` for the organization, which admins hold and a role can be granted. The account key is the whole account API, so give organization-wide `keys:write` as you would admin. Rotation breaks everything holding the old one.
+
+A scoped key is made on the same page with **New key**. Pick none, read or write for each API resource, a scope (the whole organization, or one project and stage) and an expiry (30 days, 90 days, 1 year or never). It is shown once and carries the `bask_` prefix, but it acts like a [role session](#roles) that never needs re-assuming: its permissions are the role's policy and its scope is the role's pin. Edit changes its permissions on the next request it makes, and Revoke stops it at once. The audit log names each scoped key as `accountApiKey`, and the list shows when it was last used.
 
 A project key is an API key created for one stage under Project settings, Keys, and shown once. That page asks `keys:write` per stage, so a grant on one stage rotates or revokes only that stage's keys; `keys:write` also sees the keys it may change. See [Deploying from CI](deploying.md#deploying-from-ci).
 

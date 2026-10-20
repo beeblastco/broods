@@ -110,16 +110,17 @@ Reads redact secret-like field names (`token`, `secret`, `privateKey`, `apiKey`,
 
 ## Credentials
 
-| Prefix   | Credential           | Scope                                                                         |
-| -------- | -------------------- | ----------------------------------------------------------------------------- |
-| `bask_`  | Account key          | Whole tenant                                                                  |
-| `bcli_`  | CLI login token      | An org owner or admin, re-checked against membership on every request         |
-| `bsk_`   | Runtime key          | One account, project, stage and endpoint. Encrypted, recoverable by its owner |
-| `bpdk_`  | Project key          | One project and stage                                                         |
-| `brole_` | Role                 | Never used directly. Exchanged for a session                                  |
-| `bsts_`  | Role session         | The role's policy. Default 1 hour, max 12. Only the hash is stored            |
-| `bdts_`  | Stage session ticket | 15 minutes, signed by Convex with `STAGE_TICKET_SECRET`                       |
-| `brt_`   | Run token            | Reads its own agent's runs. Signed by core, never stored                      |
+| Prefix   | Credential           | Scope                                                                             |
+| -------- | -------------------- | --------------------------------------------------------------------------------- |
+| `bask_`  | Account key          | Whole tenant                                                                      |
+| `bask_`  | Scoped account key   | Its own policy and optional stage pin, until `expiresAt`. Only the hash is stored |
+| `bcli_`  | CLI login token      | An org owner or admin, re-checked against membership on every request             |
+| `bsk_`   | Runtime key          | One account, project, stage and endpoint. Encrypted, recoverable by its owner     |
+| `bpdk_`  | Project key          | One project and stage                                                             |
+| `brole_` | Role                 | Never used directly. Exchanged for a session                                      |
+| `bsts_`  | Role session         | The role's policy. Default 1 hour, max 12. Only the hash is stored                |
+| `bdts_`  | Stage session ticket | 15 minutes, signed by Convex with `STAGE_TICKET_SECRET`                           |
+| `brt_`   | Run token            | Reads its own agent's runs. Signed by core, never stored                          |
 
 Every credential starts with `b`, and the `broods-credential` rule in `.gitleaks.toml` matches each full shape (`brole_` ids are not secrets). Core resolves a bearer in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`):
 
@@ -142,7 +143,9 @@ flowchart TD
   Bsk -->|yes| Key{"sha256 in agentDeployments?"}
   Key -->|yes| Deploy["runtime key<br/>kind: deployment"]
   Bsk -->|no| Deny["null, 401"]
-  Acct -->|no| Deny
+  Acct -->|no| Scoped{"keyHash in accountApiKeys,<br/>not expired?"}
+  Scoped -->|yes| ScopedCtx["the key's policy and pin<br/>kind: role"]
+  Scoped -->|no| Deny
   Key -->|no| Deny
 ```
 
@@ -154,6 +157,7 @@ Every branch that names an account requires it `active`, except the account key 
 | Stage ticket `bdts_` | Every agent of its stage. `continue: true` re-enters channel sessions too.                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Project key `bpdk_`  | Syncs its own stage. Cannot replace a skill or hook another stage manages. Sets and lists env vars but never reads a value. Rotates its stage's user token signing secret.                                                                                                                                                                                                                                                                                                                            |
 | Role session `bsts_` | Cannot mint sessions, rotate the account key or touch `/v1/roles`. A pinned session's resource must resolve to its stage first (`authorize()` in `packages/convex/model/apiAuthorization.ts`). A disabled role kills every live session.                                                                                                                                                                                                                                                              |
+| Scoped key `bask_`   | Every role session limit, on the key's own policy and pin. The config plane and core resolve it only after the account key misses, so the CLI plane, `assume-role`, connections and skill downloads, which look up the account key alone, answer `401`. Revoking deletes the row. The audit actor is `accountApiKey` with the key's id.                                                                                                                                                               |
 | Login `bcli_`        | `broods login` binds the one-time code with S256 PKCE. `broods env get` reveals are recorded in `environmentVariableReveals`.                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### End-user tokens

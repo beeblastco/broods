@@ -40,7 +40,7 @@ const roleDoc = v.object({
 
 const roleFields = v.object(accountRolesFields);
 
-const rolePrincipalValidator = v.object({
+export const rolePrincipalValidator = v.object({
   accountId: v.id("accounts"),
   roleId: v.string(),
   policy: policyDocumentValidator,
@@ -305,7 +305,8 @@ async function getOwnedRole(
   return role && role.accountId === accountId ? role : null;
 }
 
-async function resolveRoleScope(
+/** A role's or scoped key's project/stage pin, checked to be this account's; null for none. */
+export async function resolveRoleScope(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   projectId: string | undefined,

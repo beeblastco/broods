@@ -226,6 +226,33 @@ export const deployKeysFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * A scoped account key (`bask_…`) beside the org's account key: same prefix,
+ * but it acts as a role over `policy`, optionally pinned to one project and
+ * stage, until `expiresAt`. Made on Organization › API access; revoking
+ * deletes the row. Only the SHA-256 hash is stored.
+ */
+export const accountApiKeysFields = {
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+  name: v.string(),
+  description: v.optional(v.string()),
+  /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
+  keyHash: v.string(),
+  /** Masked display label (prefix + last four), safe to list without revealing the secret. */
+  keyHint: v.string(),
+  /** PolicyDocument (version 1) over the API action namespace, as `accountRoles` stores it. */
+  policy: policyDocumentValidator,
+  /** The key stops authenticating at this time; unset never expires. */
+  expiresAt: v.optional(v.number()),
+  lastUsedAt: v.optional(v.number()),
+  /** The member who made it. */
+  createdBy: v.optional(v.id("users")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+};
+
 /** One-time WorkOS-backed login code minted by the dashboard for CLI login. */
 export const cliAuthCodesFields = {
   codeHash: v.string(),
@@ -947,6 +974,7 @@ export const environmentVariableRevealsFields = {
 export const auditActorKindValidator = v.union(
   v.literal("dashboardUser"),
   v.literal("apiAccountSecret"),
+  v.literal("accountApiKey"),
   v.literal("admin"),
   v.literal("service"),
   v.literal("cli"),
@@ -957,6 +985,7 @@ export const auditActorKindValidator = v.union(
 
 export const auditResourceKindValidator = v.union(
   v.literal("account"),
+  v.literal("accountApiKey"),
   v.literal("agent"),
   v.literal("skill"),
   v.literal("hook"),
@@ -1697,6 +1726,9 @@ export default defineSchema({
   deployKeys: defineTable(deployKeysFields)
     .index("by_keyHash", ["keyHash"])
     .index("by_projectId_and_stageId", ["projectId", "stageId"]),
+  accountApiKeys: defineTable(accountApiKeysFields)
+    .index("by_keyHash", ["keyHash"])
+    .index("by_accountId", ["accountId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
     .index("by_codeHash", ["codeHash"])
     .index("by_accountId", ["accountId"])
