@@ -19,10 +19,15 @@ const posthogScriptSource =
   posthogHost && URL.canParse(posthogHost)
     ? ` ${new URL(posthogHost).origin}`
     : "";
+// The stage's edge copy of /_next/static (CloudFront, pulling from this app),
+// so a first load fetches its chunks nearby instead of over one connection to
+// the cluster. Unset, the app serves them itself.
+const assetOrigin = process.env.DASHBOARD_ASSET_ORIGIN || undefined;
+const assetSource = assetOrigin ? ` ${new URL(assetOrigin).origin}` : "";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' https://*.posthog.com${posthogScriptSource}${isDev ? " 'unsafe-eval'" : ""}`,
-  "style-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline' https://*.posthog.com${posthogScriptSource}${assetSource}${isDev ? " 'unsafe-eval'" : ""}`,
+  `style-src 'self' 'unsafe-inline'${assetSource}`,
   "img-src 'self' blob: data: https:",
   "font-src 'self' data:",
   ["connect-src 'self' https: wss:", ...httpBackendSources].join(" "),
@@ -37,6 +42,10 @@ const contentSecurityPolicy = [
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  assetPrefix: assetOrigin,
+  // CORS-loaded chunks report their real errors to error tracking instead of
+  // a bare "Script error." when they come from the asset origin.
+  crossOrigin: "anonymous",
   // esbuild ships platform binaries; bundling it into the /api/mcp/bundle
   // route crashes Turbopack. Load it from node_modules at runtime instead.
   serverExternalPackages: ["esbuild"],
