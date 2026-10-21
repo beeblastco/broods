@@ -347,7 +347,11 @@ export const acquireClear = internalMutation({
         now: now,
       }));
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) return null;
+    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) {
+      await patchQueueCounters(ctx, coordinator, queue, now);
+
+      return null;
+    }
     const generation = coordinator.ownerGeneration + 1;
     await ctx.db.patch(coordinator._id, {
       ownerGeneration: generation,
