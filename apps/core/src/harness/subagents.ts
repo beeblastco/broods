@@ -486,7 +486,7 @@ export class SubagentCoordinator {
       }
     }
     await Promise.all(
-      read.map((eventId): Promise<void> =>
+      read.map((eventId): Promise<boolean> =>
         markAsyncAgentHandback(eventId, "stored"),
       ),
     );
@@ -698,7 +698,7 @@ export class SubagentCoordinator {
     await Promise.all(
       detaching
         .filter(({ eventId }): boolean => !this.handled.has(eventId))
-        .map(({ eventId }): Promise<void> =>
+        .map(({ eventId }): Promise<boolean> =>
           markAsyncAgentHandback(eventId, "detached"),
         ),
     );

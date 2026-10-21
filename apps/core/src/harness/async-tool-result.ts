@@ -155,13 +155,15 @@ export function listOwedAsyncToolResults(options: {
  * gives up delivering it, `stored` when the model reads it with async_status.
  * A stored row stays stored. The row already holds the result, so a failed
  * write is only logged: a pending row reaches the recovery sweep later.
+ * @returns true when a continuation of the result waits in the conversation's
+ * queue: the row stays unstored and the caller must not hand the result over
  */
 export async function markAsyncToolHandback(
   resultId: string,
   handback: HandbackMove,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await runtime.mutate("markAsyncToolHandback", {
+    return await runtime.mutate("markAsyncToolHandback", {
       resultId: resultId,
       handback: handback,
     });
@@ -171,6 +173,8 @@ export async function markAsyncToolHandback(
       handback: handback,
       error: toErrorMessage(error),
     });
+
+    return false;
   }
 }
 // The segments the runtime appends to the event a person started: a question

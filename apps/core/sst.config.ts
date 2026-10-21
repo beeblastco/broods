@@ -1168,16 +1168,23 @@ export default $config({
           mcp: await deployCloudflareWorker(command, stage, region, "mcp", [], {
             BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
           }),
+          // The `cloudflare` sandbox provider's bridge: wrangler builds its
+          // Container image, so the deploy needs Docker.
+          sandbox: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "sandbox",
+            [],
+            {},
+          ),
           // The `worker` sandbox provider: bash in a V8 isolate.
           worker: await deployCloudflareWorker(
             command,
             stage,
             region,
             "worker",
-            [
-              "apps/cloudflare-sandbox/src/bearer.ts",
-              "apps/core/src/shared/domain/sandbox-config.ts",
-            ],
+            ["apps/cloudflare-sandbox/src/bearer.ts"],
             {},
           ),
         }
