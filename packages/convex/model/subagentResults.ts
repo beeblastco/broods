@@ -1,4 +1,4 @@
-import { v, type Infer } from "convex/values";
+import { v, type Infer, type VLiteral } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 
 const DEDUPE_KEY_PREFIX = "subagent:";
@@ -24,7 +24,9 @@ export type Handback = Infer<typeof handbackValidator>;
  */
 export const SWEPT_HANDBACKS = ["detached", "pending"] as const;
 export const sweptHandbackValidator = v.union(
-  ...SWEPT_HANDBACKS.map((handback) => v.literal(handback)),
+  ...SWEPT_HANDBACKS.map((handback): VLiteral<SweptHandback> =>
+    v.literal(handback),
+  ),
 );
 export type SweptHandback = (typeof SWEPT_HANDBACKS)[number];
 /** The hand-backs a run or a read moves a finished result to. */

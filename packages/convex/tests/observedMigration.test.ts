@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -55,12 +56,18 @@ test("strips observed from every row of both result tables, page by page", async
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   vi.useRealTimers();
 
-  const rows = await t.run(async (ctx) => [
-    ...(await ctx.db.query("runtimeAsyncAgentResults").collect()),
-    ...(await ctx.db.query("runtimeAsyncToolResults").collect()),
-  ]);
+  const rows = await t.run(
+    async (
+      ctx,
+    ): Promise<
+      Array<Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">>
+    > => [
+      ...(await ctx.db.query("runtimeAsyncAgentResults").collect()),
+      ...(await ctx.db.query("runtimeAsyncToolResults").collect()),
+    ],
+  );
   expect(rows).toHaveLength(2 * ROWS_PER_TABLE);
-  expect(rows.filter((row) => row.observed !== undefined)).toEqual([]);
+  expect(rows.filter((row): boolean => row.observed !== undefined)).toEqual([]);
   // Only the flag goes.
   expect(rows[0]).toMatchObject({ handback: "stored", status: "completed" });
 });
