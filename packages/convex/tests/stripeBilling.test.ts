@@ -484,7 +484,6 @@ describe("owner billing", () => {
       params: {
         line_items: [{ price: "price_pro", quantity: 1 }],
         allow_promotion_codes: true,
-        payment_method_collection: "if_required",
       },
     });
   });
@@ -993,11 +992,12 @@ describe("seat pool", () => {
       new Stripe.errors.StripeCardError({
         message: "Your card was declined.",
         type: "card_error",
+        statusCode: 402,
       }),
     );
 
     await expect(t.action(api.stripe.addSeat, {})).rejects.toThrow(
-      "The seat was not added: Your card was declined.",
+      "The seat was not added: Your card was declined. Add a card in Manage billing, then try again.",
     );
     await expect(
       t.mutation(api.org.members.add, {
@@ -1005,6 +1005,23 @@ describe("seat pool", () => {
         email: "new@example.com",
       }),
     ).rejects.toThrow("Every developer seat");
+  });
+
+  test("with no card on file the seat is not added, and the owner is told to add one", async () => {
+    const t = billingTest();
+    await seedIncludedSeatsTaken(t);
+    stripeCalls.subscriptions.mockRejectedValue(
+      new Stripe.errors.StripeInvalidRequestError({
+        message:
+          "This customer has no attached payment source or default payment method.",
+        type: "invalid_request_error",
+        statusCode: 402,
+      }),
+    );
+
+    await expect(t.action(api.stripe.addSeat, {})).rejects.toThrow(
+      "Add a card in Manage billing, then try again.",
+    );
   });
 
   test("a Hobby owner cannot add seats", async () => {
@@ -1082,37 +1099,6 @@ describe("seat pool", () => {
       stripeSubscriptionId: SUBSCRIPTION_ID,
     });
     expect(sub?.status).toBe("canceled");
-  });
-
-  test("a subscription bought as seat units alone gets its Pro line and drops to the new count on its next sync", async () => {
-    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    const t = billingTest();
-    await seedPayer(t);
-    await addMember(t, "auth_kept", "kept@example.com");
-    const membershipId = await addMember(
-      t,
-      "auth_member",
-      "member@example.com",
-    );
-    // Three members at the old one seat unit each, with no Pro line.
-    await sendEvent(t, "customer.subscription.created", {
-      ...subscription("active"),
-      items: { data: [seatItem(3)] },
-    });
-    stripeCalls.subscriptions.mockImplementation(updateLive);
-
-    vi.useFakeTimers();
-    await t.mutation(api.org.members.remove, { membershipId: membershipId });
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
-      items: [
-        { price: "price_pro", quantity: 1 },
-        { id: ITEM_ID, deleted: true },
-      ],
-      proration_behavior: "create_prorations",
-      payment_behavior: "error_if_incomplete",
-    });
   });
 
   test("a developer whose account is deleted gives their seat back, even while payment is due", async () => {

@@ -77,6 +77,7 @@ export const createCheckoutSession = action({
       );
     }
 
+    const extraSeats = proQuantity(billing.developers) - 1;
     const session = await stripeClient.createCheckoutSession(ctx, {
       // The component requires one price; `line_items` below replaces its line.
       priceId: priceId("STRIPE_PRO_PRICE_ID"),
@@ -88,13 +89,15 @@ export const createCheckoutSession = action({
       // and whose orgs it covers.
       subscriptionMetadata: { userId: authUser.id },
       // Pro, then any extra seats on their own line. A promotion code made in
-      // Stripe can discount it, down to free; a free checkout asks for no card.
+      // Stripe can discount it; Checkout still takes a card for later seats.
       params: {
-        line_items: itemsFor([], proQuantity(billing.developers)).map(
-          ({ price, quantity }) => ({ price: price, quantity: quantity }),
-        ),
+        line_items: [
+          { price: priceId("STRIPE_PRO_PRICE_ID"), quantity: 1 },
+          ...(extraSeats > 0
+            ? [{ price: priceId("STRIPE_SEAT_PRICE_ID"), quantity: extraSeats }]
+            : []),
+        ],
         allow_promotion_codes: true,
-        payment_method_collection: "if_required",
       },
     });
 
@@ -140,9 +143,12 @@ export const addSeat = action({
 
       return { seats: seatsForQuantity(quantity) };
     } catch (error) {
-      if (!(error instanceof Stripe.errors.StripeCardError)) throw error;
+      // Stripe answers 402 when the seat's payment fails: a declined card or
+      // none on file.
+      if (!(error instanceof Stripe.errors.StripeError)) throw error;
+      if (error.statusCode !== 402) throw error;
       throw new ClientError(
-        `The seat was not added: ${error.message}`,
+        `The seat was not added: ${error.message} Add a card in Manage billing, then try again.`,
         "payment_required",
       );
     }
@@ -505,8 +511,7 @@ async function applyLive(
  * Set a subscription's units from what Stripe holds now, as one Pro line and
  * the rest on the seat line, and store the result: the read when nothing
  * changes, else the update under a ticket claimed once Stripe answered it, so
- * a webhook read that started before cannot land over the new units. A
- * subscription bought as seat units alone gets its Pro line on its next change.
+ * a webhook read that started before cannot land over the new units.
  * @returns the units the owner now pays for
  */
 async function changeSeats(
@@ -596,32 +601,17 @@ async function filedCustomer(
   });
 }
 
-/**
- * The changes that make a subscription's `lines` bill `units`: a Pro line
- * when it has none, the rest on the seat line. Checkout passes no lines; a
- * subscription bought as seats alone gets its Pro line here.
- */
+/** The seat line change that makes a subscription's `lines` bill `units`: Pro is one, the rest are seats. */
 function itemsFor(
   lines: Stripe.SubscriptionItem[],
   units: number,
 ): Stripe.SubscriptionUpdateParams.Item[] {
-  const pro = priceId("STRIPE_PRO_PRICE_ID");
   const seat = priceId("STRIPE_SEAT_PRICE_ID");
   const seats = lines.find((line) => line.price.id === seat);
   const extra = units - 1;
-  const seatLine =
-    extra > 0
-      ? [{ id: seats?.id, price: seat, quantity: extra }]
-      : seats
-        ? [{ id: seats.id, deleted: true }]
-        : [];
+  if (extra > 0) return [{ id: seats?.id, price: seat, quantity: extra }];
 
-  return [
-    ...(lines.some((line) => line.price.id === pro)
-      ? []
-      : [{ price: pro, quantity: 1 }]),
-    ...seatLine,
-  ];
+  return seats ? [{ id: seats.id, deleted: true }] : [];
 }
 
 /** The Stripe price an env var names: Pro, or one extra seat. */
