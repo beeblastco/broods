@@ -1316,15 +1316,21 @@ describe("connected MCP servers", () => {
     });
   });
 
-  it("hands a link to an image to the model as that image, not as text", async () => {
+  it("reads a linked image only from a public address", async () => {
     setMcpForTests({
       callTool: async function () {
         return {
           content: [
             {
               type: "resource_link" as const,
-              uri: "https://cdn.example.com/shot.png",
-              name: "shot.png",
+              uri: "http://169.254.169.254/latest/shot.png",
+              name: "metadata.png",
+              mimeType: "image/png",
+            },
+            {
+              type: "resource_link" as const,
+              uri: "http://127.0.0.1:3210/shot.png",
+              name: "loopback.png",
               mimeType: "image/png",
             },
             {
@@ -1344,14 +1350,18 @@ describe("connected MCP servers", () => {
       {},
     );
 
-    // A file:// link names a file only the server can read, so it stays text.
+    // Core reads the picture itself, so a link to a private address, or to a
+    // file only the server can read, stays a line of text.
     expect(result).toEqual({
       type: "content",
       value: [
         {
-          type: "file-url",
-          url: "https://cdn.example.com/shot.png",
-          mediaType: "image/png",
+          type: "text",
+          text: "[resource link: http://169.254.169.254/latest/shot.png]",
+        },
+        {
+          type: "text",
+          text: "[resource link: http://127.0.0.1:3210/shot.png]",
         },
         { type: "text", text: "[resource link: file:///tmp/shot.png]" },
       ],

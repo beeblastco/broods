@@ -5,7 +5,12 @@
 
 import type { JSONValue } from "@ai-sdk/provider";
 import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
-import type { JSONSchema7, UserContent, UserModelMessage } from "ai";
+import type {
+  JSONSchema7,
+  ToolModelMessage,
+  UserContent,
+  UserModelMessage,
+} from "ai";
 import {
   applyRunOverrides,
   type AgentConfig,
@@ -221,6 +226,15 @@ export function subagentConfig(
 
 export function subagentNotFound(taskId: string): string {
   return `Error: no subagent task found for ${taskId}`;
+}
+
+/** Every content item of a tool message's results, in order. */
+export function toolContentItems(message: ToolModelMessage): ToolContentPart[] {
+  return message.content.flatMap((part): ToolContentPart[] =>
+    part.type === "tool-result" && part.output.type === "content"
+      ? part.output.value
+      : [],
+  );
 }
 
 /** Throw native errors from execute so the AI SDK selects its error result path. */

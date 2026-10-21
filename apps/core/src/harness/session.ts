@@ -2054,9 +2054,9 @@ function splitIngressEvents(events: ConversationIngressEvent[]): {
 
 /**
  * A tool result as a stored row can hold it. Media follows the rule in
- * `sanitizeUserMessage`: bytes not sealed are dropped, a URL stays. Whatever is still over
- * `limit` is stored as truncated text, so one oversized result can not fail the
- * write and end the run.
+ * `sanitizeUserMessage`: unsealed bytes are dropped, a URL stays. Whatever is
+ * still over `limit` is stored as truncated text, so one oversized result can
+ * not fail the write and end the run.
  */
 function storableToolResultOutput(
   output: ToolResultPart["output"],

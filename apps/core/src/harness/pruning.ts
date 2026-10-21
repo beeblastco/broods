@@ -6,7 +6,7 @@
 import { pruneMessages, type ImagePart, type ModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { STORED_ITEM_PROVIDERS } from "./provider.ts";
-import type { ToolContentPart } from "./tools/utils.ts";
+import { toolContentItems, type ToolContentPart } from "./tools/utils.ts";
 
 export function pruneSessionMessages(
   messages: ModelMessage[],
@@ -115,11 +115,7 @@ function withToolImagesKept(
     if (message.role !== "tool" || index >= prunedBefore) {
       return [message];
     }
-    const images = message.content.flatMap((part): ImagePart[] =>
-      part.type === "tool-result" && part.output.type === "content"
-        ? part.output.value.flatMap(toolImage)
-        : [],
-    );
+    const images = toolContentItems(message).flatMap(toolImage);
 
     return images.length === 0
       ? [message]

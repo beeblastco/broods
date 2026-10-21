@@ -65,7 +65,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
-import type { ToolContentPart } from "./tools/utils.ts";
+import { toolContentItems, type ToolContentPart } from "./tools/utils.ts";
 
 /** Where an inbound attachment lands, relative to the workspace root. */
 const MEDIA_DIRECTORY = "media";
@@ -89,6 +89,14 @@ const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 // link stays a link and the provider fetches it, as it did before replay read.
 // One file inlines only up to the picture cap, so a big PDF stays a link too.
 const MAX_REPLAY_BYTES_PER_TURN = 20 * 1024 * 1024;
+
+// Stored pictures one turn replays, the newest. Each rides every model request,
+// and Anthropic refuses more than 100 images in one, or any side over 2000 px
+// once there are more than 20. Older ones become OMITTED_MEDIA_NOTE.
+const MAX_REPLAYED_MEDIA = 20;
+
+// What the model reads where a stored picture is not shown this turn.
+const OMITTED_MEDIA_NOTE = "[an earlier image is not shown here]";
 
 // A bound on one message, not on the conversation. Every attachment past it is
 // still named for the agent; only the bytes are left with the provider.
@@ -364,7 +372,9 @@ export async function rehydrateStoredMedia(
   };
 
   return await Promise.all(
-    messages.map((message) => rehydrateMessage(message, agentConfig, replay)),
+    withOldMediaOmitted(messages).map((message) =>
+      rehydrateMessage(message, agentConfig, replay),
+    ),
   );
 }
 
@@ -554,6 +564,36 @@ function isStoredMediaPart(part: UserContentPart): boolean {
   return mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null;
 }
 
+/** The byte cap for one attachment: smaller for pictures, which go inline. */
+function limitForMediaType(mediaType: string | undefined): number {
+  return mediaType?.startsWith("image/")
+    ? MAX_IMAGE_BYTES
+    : MAX_ATTACHMENT_BYTES;
+}
+
+/** A tool message with `map` applied to every content item of its results. */
+async function mapToolItems(
+  message: ToolModelMessage,
+  map: (item: ToolContentPart) => Promise<ToolContentPart>,
+): Promise<ToolModelMessage> {
+  const content = await Promise.all(
+    message.content.map(
+      async (part): Promise<ToolModelMessage["content"][number]> =>
+        part.type === "tool-result" && part.output.type === "content"
+          ? {
+              ...part,
+              output: {
+                ...part.output,
+                value: await Promise.all(part.output.value.map(map)),
+              },
+            }
+          : part,
+    ),
+  );
+
+  return { ...message, content: content };
+}
+
 /**
  * The bytes a part carries itself. Null for anything that already points
  * elsewhere: a URL, a sealed link, a channel reference, a provider reference.
@@ -584,36 +624,6 @@ function mediaBytes(
   return null;
 }
 
-/** A tool message with `map` applied to every content item of its results. */
-async function mapToolItems(
-  message: ToolModelMessage,
-  map: (item: ToolContentPart) => Promise<ToolContentPart>,
-): Promise<ToolModelMessage> {
-  const content = await Promise.all(
-    message.content.map(
-      async (part): Promise<ToolModelMessage["content"][number]> =>
-        part.type === "tool-result" && part.output.type === "content"
-          ? {
-              ...part,
-              output: {
-                ...part.output,
-                value: await Promise.all(part.output.value.map(map)),
-              },
-            }
-          : part,
-    ),
-  );
-
-  return { ...message, content: content };
-}
-
-/** The byte cap for one attachment: smaller for pictures, which go inline. */
-function limitForMediaType(mediaType: string | undefined): number {
-  return mediaType?.startsWith("image/")
-    ? MAX_IMAGE_BYTES
-    : MAX_ATTACHMENT_BYTES;
-}
-
 /**
  * A name to store the file under. Telegram photos and voice notes both arrive
  * nameless, and a file with no name lands extensionless, so every client, and
@@ -630,6 +640,17 @@ function mediaFileName(
   const extension = mediaTypeToExtension(mediaType);
 
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
+}
+
+/** The sealed links a message carries, one entry per part (null for none). */
+function mediaLinks(message: ModelMessage): (string | null)[] {
+  if (message.role === "user" && typeof message.content !== "string") {
+    return message.content.map(sealedMediaLink);
+  }
+
+  return message.role === "tool"
+    ? toolContentItems(message).map(sealedToolLink)
+    : [];
 }
 
 /**
@@ -929,16 +950,21 @@ async function resolveMediaReference(
 
 /**
  * A tool message with its sealed links read back into bytes, or into a line
- * saying the file is gone.
+ * when they cannot be. A link is never left for the provider: Bedrock refuses
+ * a URL in a tool result before the request is sent.
  */
 async function rehydrateToolMessage(
   message: ToolModelMessage,
   replay: SealedReplay,
 ): Promise<ToolModelMessage> {
   return mapToolItems(message, async (item): Promise<ToolContentPart> => {
-    const sealed = await readSealedMedia(sealedToolLink(item), replay);
-    if (!sealed || item.type !== "file-url") {
+    const link = sealedToolLink(item);
+    if (item.type !== "file-url" || !link) {
       return item;
+    }
+    const sealed = await readSealedMedia(link, replay);
+    if (!sealed) {
+      return { type: "text", text: OMITTED_MEDIA_NOTE };
     }
 
     return "gone" in sealed
@@ -955,7 +981,8 @@ async function rehydrateToolMessage(
  * Stores bytes in the attachment store under their hash, so a screenshot sent
  * twice is kept once, and returns the sealed link with the type the bytes name.
  * Undefined for a part that carries no bytes, with no public base URL, or when
- * the write fails: the caller keeps the part as it was.
+ * the bytes are over the attachment cap or cannot be stored: the caller keeps
+ * the part as it was.
  */
 async function sealBytes(
   value: ImagePart["image"] | FilePart["data"],
@@ -973,17 +1000,21 @@ async function sealBytes(
     accountId: accountId,
     path: `${MEDIA_DIRECTORY}/${hash}${extension ? `.${extension}` : ""}`,
   };
-  const link = sealedLinkFor(ticket);
-  if (!link) {
-    return undefined;
-  }
   try {
+    assertWithinLimit(bytes.byteLength, mediaType);
+    const link = sealedLinkFor(ticket);
+    if (!link) {
+      return undefined;
+    }
     await writeS3Object(
       requireEnv("FILESYSTEM_BUCKET_NAME"),
       attachmentStoreKey(ticket),
       bytes,
       { contentType: mediaType },
     );
+    cacheMedia(link, bytes);
+
+    return { link: link, mediaType: mediaType };
   } catch (err) {
     logWarn("Conversation media could not be stored", {
       accountId: accountId,
@@ -993,9 +1024,6 @@ async function sealBytes(
 
     return undefined;
   }
-  cacheMedia(link, bytes);
-
-  return { link: link, mediaType: mediaType };
 }
 
 /** The public link that opens a ticket; undefined with no public base URL. */
@@ -1022,15 +1050,6 @@ function sealedMediaLink(part: UserContentPart): string | null {
   return typeof value === "string" && value.includes(MEDIA_PATH_PREFIX)
     ? value
     : null;
-}
-
-/** Every content item of a tool message's results, in order. */
-function toolContentItems(message: ToolModelMessage): ToolContentPart[] {
-  return message.content.flatMap((part): ToolContentPart[] =>
-    part.type === "tool-result" && part.output.type === "content"
-      ? part.output.value
-      : [],
-  );
 }
 
 /** The sealed media URL a tool result's content item points at, or null. */
@@ -1072,11 +1091,13 @@ async function sealMessageMedia(
     return message;
   }
 
+  // Only a tool's pictures: another file it returns is dropped from the row.
   return mapToolItems(message, async (item): Promise<ToolContentPart> => {
     const sealed =
-      item.type === "image-data" ||
-      item.type === "file-data" ||
-      item.type === "file"
+      (item.type === "image-data" ||
+        item.type === "file-data" ||
+        item.type === "file") &&
+      item.mediaType.startsWith("image")
         ? await sealBytes(item.data, item.mediaType, accountId)
         : undefined;
 
@@ -1208,6 +1229,59 @@ function whereItLanded(
   }
 
   return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
+}
+
+/**
+ * The messages with every sealed link before the newest MAX_REPLAYED_MEDIA as a
+ * line of text, so a long conversation replays its recent pictures, not all.
+ */
+function withOldMediaOmitted(messages: ModelMessage[]): ModelMessage[] {
+  let toOmit =
+    messages.flatMap(mediaLinks).filter((link) => link !== null).length -
+    MAX_REPLAYED_MEDIA;
+  if (toOmit <= 0) {
+    return messages;
+  }
+  const omits = (link: string | null): boolean => {
+    if (link === null || toOmit <= 0) {
+      return false;
+    }
+    toOmit -= 1;
+
+    return true;
+  };
+  const note = { type: "text" as const, text: OMITTED_MEDIA_NOTE };
+
+  return messages.map((message): ModelMessage => {
+    if (message.role === "user" && typeof message.content !== "string") {
+      return {
+        ...message,
+        content: message.content.map((part): UserContentPart =>
+          omits(sealedMediaLink(part)) ? note : part,
+        ),
+      };
+    }
+    if (message.role !== "tool") {
+      return message;
+    }
+
+    return {
+      ...message,
+      content: message.content.map((part) =>
+        part.type === "tool-result" && part.output.type === "content"
+          ? {
+              ...part,
+              output: {
+                ...part.output,
+                value: part.output.value.map((item): ToolContentPart =>
+                  omits(sealedToolLink(item)) ? note : item,
+                ),
+              },
+            }
+          : part,
+      ),
+    };
+  });
 }
 
 /**

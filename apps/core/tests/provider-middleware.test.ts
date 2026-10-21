@@ -504,10 +504,13 @@ describe("tool result images on a custom endpoint", () => {
     image_url: { url: "data:image/jpeg;base64,aGVsbG8=" },
   };
 
-  // Each request the converter builds, answered by `statuses` in turn. The
-  // model class, not the factory: harness.test.ts mocks `createOpenAICompatible`
-  // for the files after it.
-  async function requests(statuses: number[]): Promise<ChatRequest[]> {
+  // Each request the converter builds over `calls` calls to a fresh endpoint,
+  // answered by `statuses` in turn. The model class, not the factory:
+  // harness.test.ts mocks `createOpenAICompatible` for the files after it.
+  async function requests(
+    statuses: number[],
+    calls = 1,
+  ): Promise<ChatRequest[]> {
     const bodies: ChatRequest[] = [];
     const chat = new OpenAICompatibleChatLanguageModel("cx/gpt-6.1-sol", {
       provider: "custom.chat",
@@ -543,10 +546,12 @@ describe("tool result images on a custom endpoint", () => {
       model: chat,
       middleware: [
         dropRefusedImagesMiddleware,
-        moveRefusedToolImagesMiddleware,
+        moveRefusedToolImagesMiddleware(crypto.randomUUID()),
       ],
     });
-    await model.doGenerate({ prompt: toolPrompt });
+    for (let call = 0; call < calls; call++) {
+      await model.doGenerate({ prompt: toolPrompt });
+    }
 
     return bodies;
   }
@@ -582,6 +587,19 @@ describe("tool result images on a custom endpoint", () => {
         ],
       },
     ]);
+  });
+
+  it("sends later calls to an endpoint that refused straight to a user message", async () => {
+    const bodies = await requests([400, 200, 200], 2);
+
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]?.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Images from the tool results above:" },
+        imageUrl,
+      ],
+    });
   });
 
   it("drops the image when a text-only model refuses it anywhere", async () => {

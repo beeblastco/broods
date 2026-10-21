@@ -1069,6 +1069,40 @@ describe("sealConversationMedia", () => {
     ]);
   });
 
+  it("replays only the newest pictures of a long conversation", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+    const long = Array.from(
+      { length: 11 },
+      (): ModelMessage[] => sealed,
+    ).flat();
+
+    const replay = JSON.stringify(
+      await rehydrateStoredMedia(long, modelConfig("custom"), ACCOUNT),
+    );
+
+    // 22 pictures: the two oldest become a line, the newest 20 are bytes.
+    expect(replay.split("[an earlier image is not shown here]")).toHaveLength(
+      3,
+    );
+    expect(replay).not.toContain("/v1/media/");
+  });
+
+  // Bedrock refuses a URL inside a tool result before sending the request.
+  it("never leaves a tool result's link for the provider", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+
+    const replay = await rehydrateStoredMedia(
+      sealed.slice(1),
+      modelConfig("custom"),
+      "acct_2",
+    );
+
+    expect(JSON.stringify(replay)).not.toContain("/v1/media/");
+    expect(JSON.stringify(replay)).toContain(
+      "[an earlier image is not shown here]",
+    );
+  });
+
   it("leaves a picture it could not store as it was", async (): Promise<void> => {
     writeS3ObjectMock.mockImplementationOnce(async (): Promise<never> => {
       throw new Error("bucket down");

@@ -51,6 +51,7 @@ import {
 } from "ai";
 import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
 import { createWorkersAI } from "workers-ai-provider";
+import { isContextLengthError } from "../shared/errors.ts";
 import { publicHostFetch } from "../shared/http.ts";
 import {
   PROVIDER_ENDPOINT_SETTING,
@@ -122,6 +123,10 @@ const PROVIDER_TRANSCRIPTION: Partial<
 // encrypted for a different model.
 const STALE_STORED_ITEM_PATTERN =
   /without its required (?:'reasoning' item|following item)|Item with id .{0,80}not found|encrypted[_ ]content/i;
+
+// Custom endpoints that refused a tool result's image, by base URL and model id.
+// Their later calls move tool images up front instead of paying a 400 a step.
+const toolImageRefusals = new Set<string>();
 
 // What every AI SDK provider factory has in common: settings in, callable
 // provider out. The settings each one accepts are read off it, never restated.
@@ -558,13 +563,6 @@ export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
 export const dropRefusedImagesMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutRefusedImages);
 
-// A custom endpoint gets a tool result's image inside the tool message, where
-// vLLM-style servers read it. OpenAI's own chat API answers that with a 400 and
-// reads an `image_url` only from a user message, so retry once with each image
-// moved into one user message right after its tool message.
-export const moveRefusedToolImagesMiddleware: LanguageModelMiddleware =
-  retryingMiddleware(withToolImagesMoved);
-
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or
 // the agent's model changes and the old reasoning can no longer be decrypted.
@@ -572,6 +570,33 @@ export const moveRefusedToolImagesMiddleware: LanguageModelMiddleware =
 // its history and nothing else, instead of failing in the user's chat.
 export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutStaleStoredItems);
+
+/**
+ * A custom endpoint gets a tool result's image inside the tool message, where
+ * vLLM-style servers read it. OpenAI's own chat API answers that with a 400, so
+ * the call is retried with each image in a user message after its tool message,
+ * and `endpoint` sends them there from then on.
+ */
+export function moveRefusedToolImagesMiddleware(
+  endpoint: string,
+): LanguageModelMiddleware {
+  const retrying = retryingMiddleware((error, params) => {
+    const moved = withToolImagesMoved(error, params);
+    if (moved) {
+      toolImageRefusals.add(endpoint);
+    }
+
+    return moved;
+  });
+
+  return {
+    ...retrying,
+    transformParams: async ({ params }) =>
+      toolImageRefusals.has(endpoint)
+        ? { ...params, prompt: toolImagesAsUserMessages(params.prompt) }
+        : params,
+  };
+}
 
 /**
  * Strips the id an assistant part is replayed by, leaving the part to be sent
@@ -654,13 +679,13 @@ function withoutUnsupportedMedia(
 }
 
 // The same call with every picture, a tool result's too, replaced by a line
-// naming it, or undefined when the endpoint did not answer 400 or there was no
-// picture to drop.
+// naming it, or undefined when the endpoint did not refuse the request or there
+// was no picture to drop.
 function withoutRefusedImages(
   error: unknown,
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions | undefined {
-  if (!APICallError.isInstance(error) || error.statusCode !== 400) {
+  if (!isRefusedRequest(error)) {
     return undefined;
   }
   const moved = { ...params, prompt: toolImagesAsUserMessages(params.prompt) };
@@ -676,12 +701,13 @@ function withoutRefusedImages(
 }
 
 // The same call with tool result images moved into user messages, or undefined
-// when the endpoint did not answer 400 or no tool result carries an image.
+// when the endpoint did not refuse the request or no tool result carries an
+// image.
 function withToolImagesMoved(
   error: unknown,
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions | undefined {
-  if (!APICallError.isInstance(error) || error.statusCode !== 400) {
+  if (!isRefusedRequest(error)) {
     return undefined;
   }
   const prompt = toolImagesAsUserMessages(params.prompt);
@@ -730,6 +756,16 @@ function isMovableImage(
     item.type === "file" &&
     item.mediaType.startsWith("image/") &&
     (item.data.type === "data" || item.data.type === "url")
+  );
+}
+
+// A 400 a picture may have caused. A context overflow is a 400 too, and must
+// reach compaction rather than pass once its images are dropped.
+function isRefusedRequest(error: unknown): error is APICallError {
+  return (
+    APICallError.isInstance(error) &&
+    error.statusCode === 400 &&
+    !isContextLengthError(error.message)
   );
 }
 
@@ -852,10 +888,11 @@ function resolveOpenAICompatibleModel(
   // the compatible provider parses into reasoning parts (#115).
   // A tool result keeps its images, as the tool returned them, unless the
   // endpoint refuses them there (`moveRefusedToolImagesMiddleware`).
+  const baseURL = customProviderBaseURL(providerConfig) ?? "";
   const provider = createOpenAICompatible({
     supportsMultiPartToolContent: true,
     ...openAIConfig,
-    baseURL: customProviderBaseURL(providerConfig) ?? "",
+    baseURL: baseURL,
     name:
       typeof providerConfig.name === "string"
         ? providerConfig.name
@@ -874,7 +911,7 @@ function resolveOpenAICompatibleModel(
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
         dropRefusedImagesMiddleware,
-        moveRefusedToolImagesMiddleware,
+        moveRefusedToolImagesMiddleware(`${baseURL} ${modelId}`),
         dropUnsupportedMediaMiddleware,
       ],
     }),
