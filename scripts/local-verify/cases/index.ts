@@ -27,6 +27,7 @@ import { queuedFollowup } from "./queued-followup.ts";
 import { r2Workspace } from "./r2-workspace.ts";
 import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
+import { scopedAccountKey } from "./scoped-account-key.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { skillLimit } from "./skill-limit.ts";
 import { snapshotStage } from "./snapshot-stage.ts";
@@ -78,6 +79,7 @@ export const verifyCases: readonly VerifyCase[] = [
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,
+  scopedAccountKey,
   manifestSync,
   productionRegion,
   projectUsage,

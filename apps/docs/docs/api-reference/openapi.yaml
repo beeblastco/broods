@@ -19,7 +19,7 @@ info:
 
     **End-user tokens.** The runtime key (`bsk_...`) is embeddable, so on its own it cannot say which of your users is calling, and any visitor who guesses another user's `conversationKey` could read and steer that conversation. Your backend signs a short-lived user token (`buat_...`) with the stage's signing secret (`bsig_...`, shown once: `broods dev` and `broods deploy` write it through `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret`, and the dashboard's Runtime key tab rotates it too) and your frontend sends it beside the runtime key in the `X-Broods-User-Token` header, or as a `broods.user.<token>` subprotocol entry on an agent socket. The SDK's `signUserToken` signs one. A request with a valid token runs every conversation key and event id it names under that user's namespace (`bsu:<userId>:<key>`, answered back in `conversationKey` and `eventId`), so one user can never name another's conversation; runs, steering, approvals, `continue` and run reads all go through the same check. A forged or expired token is a 401 like a bad key. An agent with the user-token requirement on (every agent created since this shipped; an existing agent once its owner turns it on) refuses the runtime key without a token with 403 `user_token_required`. Account keys and stage session tickets are not affected.
 
-    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
+    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy. A scoped account key (a `bask_...` made on the dashboard's Organization › API access) authenticates the same way, limited to its own permissions, project/stage scope and expiry; like a session it cannot assume roles, manage roles or rotate the account key.
   version: 0.1.0
 
 servers:
@@ -3759,6 +3759,11 @@ components:
         `POST /v1/account/assume-role`) works on the config-plane routes,
         limited to its role's policy; it gets 401 on `/v1/runs` and every run
         URL, and role management under `/v1/roles*` refuses it.
+        A scoped account key (also `bask_...`, made on the dashboard's
+        Organization › API access) works like a role session: limited to its
+        permissions, project/stage scope and expiry, 401 on `/v1/runs` and
+        every run URL, and it cannot assume roles, manage roles or rotate the
+        account key.
         A runtime key (`bsk_...`) works only on `/v1/runs`,
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
@@ -5244,6 +5249,7 @@ components:
                 [
                   dashboardUser,
                   apiAccountSecret,
+                  accountApiKey,
                   admin,
                   service,
                   cli,
