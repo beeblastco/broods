@@ -2,13 +2,14 @@ import { expect, test } from "bun:test";
 import {
   bucketStartsAcrossRange,
   formatAxisNumber,
+  knownRuns,
   niceTicks,
   perTaskAverages,
   resampleRows,
   tokenParts,
 } from "../app/lib/usageChart";
 
-test("per-task averages divide each bin by its own tasks, 0 when it had none", () => {
+test("per-task averages divide each bin by its own tasks, null when it had none", () => {
   const bins = [
     { invocations: 4, modelCalls: 14, totalTokens: 40_000 },
     { invocations: 0, modelCalls: 0, totalTokens: 0 },
@@ -16,10 +17,25 @@ test("per-task averages divide each bin by its own tasks, 0 when it had none", (
   ];
 
   expect(perTaskAverages(bins, [0.4, 0, 0.01])).toEqual({
-    cost: [0.1, 0, 0.01],
-    calls: [3.5, 0, 2],
-    tokens: [10_000, 0, 500],
+    cost: [0.1, null, 0.01],
+    calls: [3.5, null, 2],
+    tokens: [10_000, null, 500],
   });
+});
+
+test("known runs split a line at every unknown bin", () => {
+  expect(knownRuns([1, 2, null, null, 5, null, 7, 8])).toEqual([
+    [
+      [0, 1],
+      [1, 2],
+    ],
+    [[4, 5]],
+    [
+      [6, 7],
+      [7, 8],
+    ],
+  ]);
+  expect(knownRuns([null, null])).toEqual([]);
 });
 
 test("token parts stack to input + output without double counting", () => {
