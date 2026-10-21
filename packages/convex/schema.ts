@@ -1358,8 +1358,8 @@ export const runtimeAsyncAgentResultsFields = {
   eventId: v.string(),
   conversationKey: v.string(),
   subagent: v.optional(subagentTaskValidator),
-  // Neither read nor written. Rows that still carry it expire within 7 days
-  // (`pruneExpired`); the release after drops it.
+  // Neither read nor written. A row that still carries it is pruned 7 days
+  // after its last write (`pruneExpired`); the release after drops it.
   observed: v.optional(v.boolean()),
   // Set when a subagent's row is created; see `handbackValidator`.
   handback: v.optional(handbackValidator),
@@ -1403,8 +1403,8 @@ export const runtimeAsyncToolResultsFields = {
   error: v.optional(v.string()),
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
-  // Neither read nor written. Rows that still carry it expire within 7 days
-  // (`pruneExpired`); the release after drops it.
+  // Neither read nor written. A row that still carries it is pruned 7 days
+  // after its last write (`pruneExpired`); the release after drops it.
   observed: v.optional(v.boolean()),
   // Set once the row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),

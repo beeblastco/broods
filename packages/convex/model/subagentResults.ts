@@ -23,12 +23,12 @@ export type Handback = Infer<typeof handbackValidator>;
  * conversation stores yet. Core's subagent and async tool sweeps walk this list.
  */
 export const SWEPT_HANDBACKS = ["detached", "pending"] as const;
+export type SweptHandback = (typeof SWEPT_HANDBACKS)[number];
 export const sweptHandbackValidator = v.union(
   ...SWEPT_HANDBACKS.map((handback): VLiteral<SweptHandback> =>
     v.literal(handback),
   ),
 );
-export type SweptHandback = (typeof SWEPT_HANDBACKS)[number];
 /** The hand-backs a run or a read moves a finished result to. */
 export const handbackMoveValidator = v.union(
   v.literal("detached"),
