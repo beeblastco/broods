@@ -118,7 +118,8 @@ it("a second finalize waits for the first to finish instead of returning early",
 });
 
 it("only the first finalize sees a failed finalization", async (): Promise<void> => {
-  const { finalizer, inputs } = runFinalizer(emptyRecorded());
+  const recorded = emptyRecorded();
+  const { finalizer, inputs } = runFinalizer(recorded);
   inputs.openWork = (): Promise<RunOpenWork> =>
     Promise.reject(new Error("open work unreadable"));
 
@@ -128,6 +129,7 @@ it("only the first finalize sees a failed finalization", async (): Promise<void>
 
   expect(failure).toEqual(new Error("open work unreadable"));
   expect(await second).toBeUndefined();
+  expect(recorded.events).toEqual(["release", "restore"]);
 });
 
 it("counts as finalized before its synchronous part runs", async (): Promise<void> => {
