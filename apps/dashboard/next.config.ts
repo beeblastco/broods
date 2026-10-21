@@ -42,9 +42,11 @@ const contentSecurityPolicy = [
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
-  // No crossOrigin: CloudFront's SimpleCORS drops Access-Control-Allow-Origin
-  // on requests carrying Chrome's Priority header, which blocked every CSS chunk.
   assetPrefix: assetOrigin,
+  // CORS mode, so an error thrown in a CDN chunk reaches error tracking with
+  // its type and stack instead of a bare "Script error.". The CDN must send
+  // Access-Control-Allow-Origin on every chunk, or the page loads unstyled.
+  crossOrigin: "anonymous",
   // esbuild ships platform binaries; bundling it into the /api/mcp/bundle
   // route crashes Turbopack. Load it from node_modules at runtime instead.
   serverExternalPackages: ["esbuild"],
