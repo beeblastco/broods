@@ -267,7 +267,7 @@ function PlanCard({
   actions: React.ReactNode;
 }): React.JSX.Element | null {
   if (budget === undefined || status === undefined) {
-    return <Skeleton className="h-88 rounded-lg" />;
+    return <Skeleton className="h-164 rounded-lg sm:h-88" />;
   }
   if (budget?.enforced === false) return null;
 
@@ -283,8 +283,9 @@ function PlanCard({
 }
 
 /**
- * Every plan's limits side by side, `current` marked with its status. Each
- * limit a better plan raises at least 1.5 times says by how many times.
+ * Every plan's limits side by side, `current` marked with its status. On a
+ * phone the plans stack instead, each with its own limits, so no plan sits
+ * off screen.
  */
 function PlanTable({
   current,
@@ -294,56 +295,52 @@ function PlanTable({
   status: string | null;
 }): React.JSX.Element {
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Limit</TableHead>
-          {PLANS.map((plan) => (
-            <TableHead key={plan} className="text-right">
-              <span className="inline-flex items-center gap-2">
-                {PLAN_CONFIGS[plan].label}
-                <span className="font-normal text-muted-foreground">
-                  {PLAN_CONFIGS[plan].price}
-                </span>
-                {plan === current && <PlanBadge status={status} />}
-              </span>
-            </TableHead>
-          ))}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {LIMIT_ROWS.map((row) => (
-          <TableRow key={row.key}>
-            <TableCell>
-              <ResourceLabel row={row} />
-            </TableCell>
-            {PLANS.map((plan) => {
-              const limit = row.limit(plan);
-              const base = row.limit(current);
-              const gain = base > 0 ? limit / base : 0;
-
-              return (
-                <TableCell key={plan} className="text-right">
-                  <span
-                    className={cn(
-                      "tabular-nums",
-                      plan !== current && "text-muted-foreground",
-                    )}
-                  >
-                    {row.format?.(limit) ?? limit.toLocaleString()}
-                  </span>
-                  {gain >= 1.5 && (
-                    <span className="ml-1.5 text-2xs text-success">
-                      {Math.round(gain)}×
-                    </span>
-                  )}
-                </TableCell>
-              );
-            })}
+    <>
+      <Table className="hidden sm:table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Limit</TableHead>
+            {PLANS.map((plan) => (
+              <TableHead key={plan} className="text-right">
+                <PlanName plan={plan} current={current} status={status} />
+              </TableHead>
+            ))}
           </TableRow>
+        </TableHeader>
+        <TableBody>
+          {LIMIT_ROWS.map((row) => (
+            <TableRow key={row.key}>
+              <TableCell>
+                <ResourceLabel row={row} />
+              </TableCell>
+              {PLANS.map((plan) => (
+                <TableCell key={plan} className="text-right">
+                  <LimitValue row={row} plan={plan} current={current} />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <div className="grid divide-y divide-border text-sm sm:hidden">
+        {PLANS.map((plan) => (
+          <div key={plan}>
+            <div className="px-2 py-2.5 font-medium">
+              <PlanName plan={plan} current={current} status={status} />
+            </div>
+            {LIMIT_ROWS.map((row) => (
+              <div
+                key={row.key}
+                className="flex items-center justify-between gap-4 border-t border-border px-2 py-2"
+              >
+                <ResourceLabel row={row} />
+                <LimitValue row={row} plan={plan} current={current} />
+              </div>
+            ))}
+          </div>
         ))}
-      </TableBody>
-    </Table>
+      </div>
+    </>
   );
 }
 
@@ -610,6 +607,30 @@ function ClosestCap({
   );
 }
 
+// One plan's value for a limit, muted unless it is the current plan's.
+function LimitValue({
+  row,
+  plan,
+  current,
+}: {
+  row: LimitRow;
+  plan: PlanTier;
+  current: PlanTier;
+}): React.JSX.Element {
+  const limit = row.limit(plan);
+
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        plan !== current && "text-muted-foreground",
+      )}
+    >
+      {row.format?.(limit) ?? limit.toLocaleString()}
+    </span>
+  );
+}
+
 function NoticeBar({
   notice,
   actionable,
@@ -643,6 +664,27 @@ function NoticeBar({
         </Button>
       )}
     </div>
+  );
+}
+
+// A plan's name and price, with its mark when it is the current one.
+function PlanName({
+  plan,
+  current,
+  status,
+}: {
+  plan: PlanTier;
+  current: PlanTier;
+  status: string | null;
+}): React.JSX.Element {
+  return (
+    <span className="inline-flex items-center gap-2">
+      {PLAN_CONFIGS[plan].label}
+      <span className="font-normal text-muted-foreground">
+        {PLAN_CONFIGS[plan].price}
+      </span>
+      {plan === current && <PlanBadge status={status} />}
+    </span>
   );
 }
 
