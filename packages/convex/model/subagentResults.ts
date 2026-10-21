@@ -18,16 +18,21 @@ export const handbackValidator = v.union(
   v.literal("stored"),
 );
 export type Handback = Infer<typeof handbackValidator>;
-/** The hand-backs the recovery sweep lists: a result no conversation stores yet. */
+/**
+ * The hand-backs the recovery sweeps list, each in its own window: a result no
+ * conversation stores yet. Core's subagent and async tool sweeps walk this list.
+ */
+export const SWEPT_HANDBACKS = ["detached", "pending"] as const;
 export const sweptHandbackValidator = v.union(
-  v.literal("pending"),
-  v.literal("detached"),
+  ...SWEPT_HANDBACKS.map((handback) => v.literal(handback)),
 );
+export type SweptHandback = (typeof SWEPT_HANDBACKS)[number];
 /** The hand-backs a run or a read moves a finished result to. */
 export const handbackMoveValidator = v.union(
   v.literal("detached"),
   v.literal("stored"),
 );
+export type HandbackMove = Infer<typeof handbackMoveValidator>;
 /** The status a hand-back key names: only a finished result is owed. */
 type HandbackStatus = "completed" | "failed";
 /** The result row a stored dedupe key names: a subagent's, or an async tool's. */

@@ -605,8 +605,8 @@ export async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
-  // A result the model already pulled via async_status, or one the
-  // conversation stores, would be answered twice.
+  // A result the conversation stores (async_status read it, or the parent's
+  // append wrote it) would be answered twice.
   if (
     !scope ||
     settled.status === "processing" ||

@@ -286,40 +286,40 @@ describe("runtime persistence", () => {
     ).toEqual({ deleted: 1, hasMore: false });
   });
 
-  test("observing an async tool row marks a finished row and leaves a running one", async (): Promise<void> => {
+  test("marking an async tool row stored moves a finished row and leaves a running one", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     await t.mutation(internal.runtime.createAsyncToolResult, {
-      resultId: "result-observed",
+      resultId: "result-handback",
       parentEventId: `acct:${accountId}:parent`,
       conversationKey: conversationKeyFor(accountId),
       toolName: "bash",
       toolCallId: "call-1",
       input: {},
     });
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
-      resultId: "result-observed",
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
+      resultId: "result-handback",
       handback: "stored",
     });
     const running = await t.query(internal.runtime.getAsyncToolResult, {
-      resultId: "result-observed",
+      resultId: "result-handback",
     });
     expect(running).toMatchObject({ status: "processing" });
     expect(running).not.toHaveProperty("handback");
 
     await t.mutation(internal.runtime.updateAsyncToolResult, {
-      resultId: "result-observed",
+      resultId: "result-handback",
       status: "completed",
       response: { ok: true },
       onlyWhenProcessing: true,
     });
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
-      resultId: "result-observed",
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
+      resultId: "result-handback",
       handback: "stored",
     });
     expect(
       await t.query(internal.runtime.getAsyncToolResult, {
-        resultId: "result-observed",
+        resultId: "result-handback",
       }),
     ).toMatchObject({
       status: "completed",
@@ -327,13 +327,13 @@ describe("runtime persistence", () => {
       handback: "stored",
     });
     // Stored is final: a later detach does not reopen it.
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
-      resultId: "result-observed",
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
+      resultId: "result-handback",
       handback: "detached",
     });
     expect(
       await t.query(internal.runtime.getAsyncToolResult, {
-        resultId: "result-observed",
+        resultId: "result-handback",
       }),
     ).toMatchObject({ handback: "stored" });
   });
@@ -384,7 +384,7 @@ describe("runtime persistence", () => {
       handback: "stored",
     });
     // The failed write of the other one detaches it, and the sweep owns it.
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
       resultId: "tool-detached",
       handback: "detached",
     });
@@ -423,12 +423,12 @@ describe("runtime persistence", () => {
       });
     }
     for (const resultId of ["detached", "disabled"]) {
-      await t.mutation(internal.runtime.observeAsyncToolResult, {
+      await t.mutation(internal.runtime.markAsyncToolHandback, {
         resultId: resultId,
         handback: "detached",
       });
     }
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
       resultId: "stored",
       handback: "stored",
     });
@@ -445,16 +445,13 @@ describe("runtime persistence", () => {
       status: "completed" | "failed" | "processing",
       updatedBefore: number,
     ): Promise<string[]> => {
-      const result = await t.query(
-        internal.runtime.listUnobservedAsyncToolResults,
-        {
-          handback: handback,
-          status: status,
-          updatedAfter: new Date(Date.now() - 60_000).toISOString(),
-          updatedBefore: new Date(updatedBefore).toISOString(),
-          cursor: null,
-        },
-      );
+      const result = await t.query(internal.runtime.listOwedAsyncToolResults, {
+        handback: handback,
+        status: status,
+        updatedAfter: new Date(Date.now() - 60_000).toISOString(),
+        updatedBefore: new Date(updatedBefore).toISOString(),
+        cursor: null,
+      });
       expect(result.isDone).toBe(true);
 
       return result.page.map((row) => row.resultId);
@@ -479,8 +476,8 @@ describe("runtime persistence", () => {
     const rows: Array<[string, Id<"accounts">]> = [
       ["running", accountId],
       ["orphan", accountId],
-      ["unseen", accountId],
-      ["seen", accountId],
+      ["detached", accountId],
+      ["stored", accountId],
       ["in-turn", accountId],
       ["disabled", disabledId],
     ];
@@ -491,13 +488,13 @@ describe("runtime persistence", () => {
         subagent: { parentConversationKey: conversationKeyFor(owner) },
       });
     }
-    for (const eventId of ["running", "unseen", "seen", "disabled"]) {
+    for (const eventId of ["running", "detached", "stored", "disabled"]) {
       await t.mutation(internal.runtime.markAsyncAgentHandback, {
         eventId: eventId,
         handback: "detached",
       });
     }
-    for (const eventId of ["unseen", "seen", "in-turn", "disabled"]) {
+    for (const eventId of ["detached", "stored", "in-turn", "disabled"]) {
       await t.mutation(internal.runtime.updateAsyncAgentResult, {
         eventId: eventId,
         status: "completed",
@@ -505,7 +502,7 @@ describe("runtime persistence", () => {
       });
     }
     // Only a finished row can be stored.
-    for (const eventId of ["running", "seen"]) {
+    for (const eventId of ["running", "stored"]) {
       await t.mutation(internal.runtime.markAsyncAgentHandback, {
         eventId: eventId,
         handback: "stored",
@@ -524,23 +521,20 @@ describe("runtime persistence", () => {
       status: "completed" | "processing",
       updatedBefore: number,
     ): Promise<string[]> => {
-      const result = await t.query(
-        internal.runtime.listUnobservedAsyncAgentResults,
-        {
-          handback: handback,
-          status: status,
-          updatedAfter: new Date(Date.now() - 60_000).toISOString(),
-          updatedBefore: new Date(updatedBefore).toISOString(),
-          cursor: null,
-        },
-      );
+      const result = await t.query(internal.runtime.listOwedAsyncAgentResults, {
+        handback: handback,
+        status: status,
+        updatedAfter: new Date(Date.now() - 60_000).toISOString(),
+        updatedBefore: new Date(updatedBefore).toISOString(),
+        cursor: null,
+      });
       expect(result.isDone).toBe(true);
 
       return result.page.map((row) => row.eventId);
     };
     const soon = Date.now() + 60_000;
 
-    expect(await listed("detached", "completed", soon)).toEqual(["unseen"]);
+    expect(await listed("detached", "completed", soon)).toEqual(["detached"]);
     expect(await listed("detached", "processing", soon)).toEqual(["running"]);
     // A finished row no run detached is the parent's until it stores it.
     expect(await listed("pending", "completed", soon)).toEqual(["in-turn"]);
@@ -804,7 +798,7 @@ describe("runtime persistence", () => {
     );
     expect(persisted?.completionTokenHash).toBeDefined();
     expect(persisted?.completionTokenHash).not.toBe("secret");
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
       resultId: "result-1",
       handback: "stored",
     });

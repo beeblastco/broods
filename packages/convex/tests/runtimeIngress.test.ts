@@ -1518,7 +1518,7 @@ describe("runtime ingress", () => {
     });
 
     // async_status read it first: the continuation admits nothing.
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
       resultId: "read-first",
       handback: "stored",
     });
@@ -2666,7 +2666,7 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         ?.handback,
     listed: async (t, id): Promise<boolean> =>
       (
-        await t.query(internal.runtime.listUnobservedAsyncAgentResults, {
+        await t.query(internal.runtime.listOwedAsyncAgentResults, {
           ...SWEEP_WINDOW,
           handback: "detached",
           status: "completed",
@@ -2710,7 +2710,7 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         ?.handback,
     listed: async (t, id): Promise<boolean> =>
       (
-        await t.query(internal.runtime.listUnobservedAsyncToolResults, {
+        await t.query(internal.runtime.listOwedAsyncToolResults, {
           ...SWEEP_WINDOW,
           handback: "pending",
           status: "completed",

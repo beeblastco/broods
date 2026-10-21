@@ -39,7 +39,7 @@ const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
 // One recovery sweep's page of late subagent or async tool results.
-const UNOBSERVED_RESULT_PAGE_SIZE = 100;
+const OWED_RESULT_PAGE_SIZE = 100;
 
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
@@ -225,9 +225,17 @@ export async function insertConversationEvents(
         ? undefined
         : parseHandbackDedupeKey(entry.dedupeKey);
     if (handback?.kind === "subagent") {
-      await markAsyncAgentResultSeen(ctx, accountId, handback.eventId);
+      await markResultStored(
+        ctx,
+        accountId,
+        await asyncAgentResultRow(ctx, handback.eventId),
+      );
     } else if (handback?.kind === "async-tool") {
-      await markAsyncToolResultSeen(ctx, accountId, handback.resultId);
+      await markResultStored(
+        ctx,
+        accountId,
+        await asyncToolResultRow(ctx, handback.resultId),
+      );
     }
   }
 }
@@ -475,7 +483,7 @@ export const getAsyncAgentResult = internalQuery({
  * out: no resume of it can be admitted.
  * @returns the page and the cursor for the next one
  */
-export const listUnobservedAsyncAgentResults = internalQuery({
+export const listOwedAsyncAgentResults = internalQuery({
   args: {
     handback: sweptHandbackValidator,
     status: runtimeAsyncAgentResultsFields.status,
@@ -505,7 +513,7 @@ export const listUnobservedAsyncAgentResults = internalQuery({
           .gt("updatedAt", args.updatedAfter)
           .lt("updatedAt", args.updatedBefore),
       )
-      .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
+      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
     const page = await activeAccountRows(ctx, result.page);
 
     return {
@@ -599,17 +607,16 @@ export async function asyncAgentResultRow(
 }
 
 /**
- * Marks a subagent result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the late resume
- * carrying it taking its owner (`accept` as owner, or the apply of a queued
- * one). Only when the row is `accountId`'s own and not stored already.
+ * Marks a subagent or async tool result's hand-back stored inside the
+ * transaction that delivers it: the parent's append of the result row, or the
+ * resume carrying it taking its owner (`accept` as owner, or the apply of a
+ * queued one). Only when the row is `accountId`'s own and not stored already.
  */
-export async function markAsyncAgentResultSeen(
+export async function markResultStored(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
-  eventId: string | undefined,
+  row: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults"> | null,
 ): Promise<void> {
-  const row = await asyncAgentResultRow(ctx, eventId);
   if (row?.accountId === accountId && row.handback !== "stored") {
     await ctx.db.patch(row._id, { handback: "stored" });
   }
@@ -629,23 +636,6 @@ export async function asyncToolResultRow(
     .query("runtimeAsyncToolResults")
     .withIndex("by_resultId", (q) => q.eq("resultId", resultId))
     .unique();
-}
-
-/**
- * Marks an async tool result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the continuation
- * carrying it taking its owner (`accept` as owner, or the apply of a queued
- * one). Only when the row is `accountId`'s own and not stored already.
- */
-export async function markAsyncToolResultSeen(
-  ctx: MutationCtx,
-  accountId: Id<"accounts">,
-  resultId: string | undefined,
-): Promise<void> {
-  const row = await asyncToolResultRow(ctx, resultId);
-  if (row?.accountId === accountId && row.handback !== "stored") {
-    await ctx.db.patch(row._id, { handback: "stored" });
-  }
 }
 
 /**
@@ -813,7 +803,7 @@ export const listPendingAsyncToolResults = internalQuery({
  * left out: no resume of it can be admitted.
  * @returns the page and the cursor for the next one
  */
-export const listUnobservedAsyncToolResults = internalQuery({
+export const listOwedAsyncToolResults = internalQuery({
   args: {
     handback: sweptHandbackValidator,
     status: runtimeAsyncToolResultsFields.status,
@@ -843,7 +833,7 @@ export const listUnobservedAsyncToolResults = internalQuery({
           .gt("updatedAt", args.updatedAfter)
           .lt("updatedAt", args.updatedBefore),
       )
-      .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
+      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
     const page = (await activeAccountRows(ctx, result.page)).map(
       hideCompletionTokenHash,
     );
@@ -912,7 +902,7 @@ export const updateAsyncToolResult = internalMutation({
  * `stored` inside their own transactions instead.
  * @returns null after the row is marked or skipped
  */
-export const observeAsyncToolResult = internalMutation({
+export const markAsyncToolHandback = internalMutation({
   args: {
     resultId: v.string(),
     handback: handbackMoveValidator,

@@ -1444,7 +1444,7 @@ describe("SubagentCoordinator", () => {
     const rows = [lostRow("event_full"), lostRow("event_other")];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
         handback?: string;
@@ -1550,7 +1550,7 @@ describe("SubagentCoordinator", () => {
     const rows = [lostRow("event_queued")];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
         handback?: string;
@@ -1628,7 +1628,7 @@ describe("SubagentCoordinator", () => {
     const windows: Array<{ handback?: string; updatedBefore: string }> = [];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
         handback?: string;
@@ -1736,7 +1736,7 @@ describe("SubagentCoordinator", () => {
     const windows: Array<{ handback?: string; status: string }> = [];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
         handback?: string;
@@ -1830,7 +1830,7 @@ describe("SubagentCoordinator", () => {
     ];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
         handback?: string;

@@ -5,13 +5,16 @@
  * individual tool files.
  */
 
-import { asyncToolResultDedupeKey } from "@broods/convex/model/subagentResults";
+import {
+  asyncToolResultDedupeKey,
+  SWEPT_HANDBACKS,
+} from "@broods/convex/model/subagentResults";
 import type { JSONValue, ToolSet, UserModelMessage } from "ai";
 import { toErrorMessage } from "../shared/errors.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
   createPendingAsyncToolResult,
-  listUnobservedAsyncToolResults,
+  listOwedAsyncToolResults,
   markAsyncToolHandback,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
@@ -20,7 +23,7 @@ import {
 import { toLifecycleValue } from "./lifecycle.ts";
 import type { ContinuationOutcome } from "./responses.ts";
 import type { Session } from "./session.ts";
-import { lostResultWindows, SWEPT_HANDBACKS } from "./subagents.ts";
+import { lostResultWindows } from "./subagents.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
 import {
   modelValueToUserParts,
@@ -386,7 +389,7 @@ export async function resumeLostAsyncToolResults(
       let cursor: string | null = null;
       let isDone = false;
       while (!isDone) {
-        const result = await listUnobservedAsyncToolResults({
+        const result = await listOwedAsyncToolResults({
           handback: handback,
           status: status,
           updatedAfter: updatedAfter,

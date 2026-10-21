@@ -19,8 +19,7 @@ import {
   asyncToolResultRow,
   conversationEventsValidator,
   insertConversationEvents,
-  markAsyncAgentResultSeen,
-  markAsyncToolResultSeen,
+  markResultStored,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -1584,12 +1583,16 @@ async function markDeliveredResultsStored(
     "accountId" | "resultEventId" | "toolResultId"
   >,
 ): Promise<void> {
-  await markAsyncAgentResultSeen(
+  await markResultStored(
     ctx,
     envelope.accountId,
-    envelope.resultEventId,
+    await asyncAgentResultRow(ctx, envelope.resultEventId),
   );
-  await markAsyncToolResultSeen(ctx, envelope.accountId, envelope.toolResultId);
+  await markResultStored(
+    ctx,
+    envelope.accountId,
+    await asyncToolResultRow(ctx, envelope.toolResultId),
+  );
 }
 
 /**

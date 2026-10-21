@@ -92,7 +92,7 @@ describe("queued ingress recovery", () => {
     const listed: string[] = [];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (): Promise<{
         page: AsyncAgentResultRecord[];
@@ -106,7 +106,7 @@ describe("queued ingress recovery", () => {
     );
     const toolPages = spyOn(
       asyncToolResults,
-      "listUnobservedAsyncToolResults",
+      "listOwedAsyncToolResults",
     ).mockImplementation(
       async (): Promise<{
         page: AsyncToolResultRecord[];
@@ -169,14 +169,12 @@ describe("queued ingress recovery", () => {
         recovered: [],
         continueAfter: null,
       }),
-      spyOn(
-        asyncAgentResults,
-        "listUnobservedAsyncAgentResults",
-      ).mockResolvedValue({ page: [], cursor: "end", isDone: true }),
-      spyOn(
-        asyncToolResults,
-        "listUnobservedAsyncToolResults",
-      ).mockImplementation(
+      spyOn(asyncAgentResults, "listOwedAsyncAgentResults").mockResolvedValue({
+        page: [],
+        cursor: "end",
+        isDone: true,
+      }),
+      spyOn(asyncToolResults, "listOwedAsyncToolResults").mockImplementation(
         async (options: {
           handback: string;
           status: string;
@@ -261,10 +259,7 @@ describe("queued ingress recovery", () => {
       }),
     );
     const spies = [
-      spyOn(
-        asyncAgentResults,
-        "listUnobservedAsyncAgentResults",
-      ).mockImplementation(
+      spyOn(asyncAgentResults, "listOwedAsyncAgentResults").mockImplementation(
         async (options: {
           handback?: string;
           status: string;

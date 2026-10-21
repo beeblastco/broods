@@ -422,7 +422,7 @@ describe("AsyncToolCoordinator", () => {
       "convex down",
     );
     // The row holds the result; detached hands it to the recovery sweep.
-    expect(mutationMock).toHaveBeenCalledWith("observeAsyncToolResult", {
+    expect(mutationMock).toHaveBeenCalledWith("markAsyncToolHandback", {
       resultId: resultId,
       handback: "detached",
     });
@@ -466,7 +466,7 @@ describe("resumeLostAsyncToolResults", () => {
     }> = [];
     const pages = spyOn(
       asyncToolResults,
-      "listUnobservedAsyncToolResults",
+      "listOwedAsyncToolResults",
     ).mockImplementation(
       async (options: {
         handback: string;

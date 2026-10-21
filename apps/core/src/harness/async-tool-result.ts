@@ -1,6 +1,10 @@
 /** Async tool result, callback, delivery, and hand-back state in Convex. */
 
-import type { Handback } from "@broods/convex/model/subagentResults";
+import type {
+  Handback,
+  HandbackMove,
+  SweptHandback,
+} from "@broods/convex/model/subagentResults";
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
@@ -133,8 +137,8 @@ export async function markAsyncToolResultFailed(options: {
  * One page of async tool results in `status` whose hand-back is `handback`,
  * written in the window, from `cursor`. The recovery sweep walks every page.
  */
-export function listUnobservedAsyncToolResults(options: {
-  handback: Exclude<Handback, "stored">;
+export function listOwedAsyncToolResults(options: {
+  handback: SweptHandback;
   status: AsyncToolStatus;
   updatedAfter: string;
   updatedBefore: string;
@@ -144,7 +148,7 @@ export function listUnobservedAsyncToolResults(options: {
   cursor: string;
   isDone: boolean;
 }> {
-  return runtime.query("listUnobservedAsyncToolResults", options);
+  return runtime.query("listOwedAsyncToolResults", options);
 }
 /**
  * Moves a finished result's hand-back: `detached` when the run that started it
@@ -154,10 +158,10 @@ export function listUnobservedAsyncToolResults(options: {
  */
 export async function markAsyncToolHandback(
   resultId: string,
-  handback: Exclude<Handback, "pending">,
+  handback: HandbackMove,
 ): Promise<void> {
   try {
-    await runtime.mutate("observeAsyncToolResult", {
+    await runtime.mutate("markAsyncToolHandback", {
       resultId: resultId,
       handback: handback,
     });

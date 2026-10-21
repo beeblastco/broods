@@ -1,6 +1,10 @@
 /** Async agent status persistence backed by Convex transactions. */
 
-import type { Handback } from "@broods/convex/model/subagentResults";
+import type {
+  Handback,
+  HandbackMove,
+  SweptHandback,
+} from "@broods/convex/model/subagentResults";
 import type { JSONValue } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import { toErrorMessage } from "../shared/errors.ts";
@@ -64,8 +68,8 @@ export function getAsyncAgentResult(
  * One page of subagent results in `status` whose hand-back is `handback`,
  * written in the window, from `cursor`. The recovery sweep walks every page.
  */
-export function listUnobservedAsyncAgentResults(options: {
-  handback: Exclude<Handback, "stored">;
+export function listOwedAsyncAgentResults(options: {
+  handback: SweptHandback;
   status: AsyncAgentStatus;
   updatedAfter: string;
   updatedBefore: string;
@@ -75,7 +79,7 @@ export function listUnobservedAsyncAgentResults(options: {
   cursor: string;
   isDone: boolean;
 }> {
-  return runtime.query("listUnobservedAsyncAgentResults", options);
+  return runtime.query("listOwedAsyncAgentResults", options);
 }
 /**
  * Moves a subagent result's hand-back: `detached` when this run gives up
@@ -85,7 +89,7 @@ export function listUnobservedAsyncAgentResults(options: {
  */
 export async function markAsyncAgentHandback(
   eventId: string,
-  handback: Exclude<Handback, "pending">,
+  handback: HandbackMove,
 ): Promise<void> {
   try {
     await runtime.mutate("markAsyncAgentHandback", {
