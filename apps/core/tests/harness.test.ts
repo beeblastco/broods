@@ -3526,6 +3526,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     mcp: null as never,
     connections: null as never,
     roleSessions: null as never,
+    accountApiKeys: null as never,
     taskUsage: {
       record: async function (input) {
         writes.push(input);

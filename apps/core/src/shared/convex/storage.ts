@@ -845,9 +845,28 @@ const roleSessions: Storage["roleSessions"] = {
   },
 };
 
+const accountApiKeys: Storage["accountApiKeys"] = {
+  resolveByKeyHash: async function (keyHash) {
+    const key = await adminQuery(internal.account.apiKeys.resolve, {
+      keyHash: keyHash,
+      now: Date.now(),
+    });
+    const account = accountFromConvex(key?.account ?? null);
+
+    return key && account ? { ...key, account: account } : null;
+  },
+  touchLastUsed: async function (keyId, usedAt) {
+    await adminMutation(internal.account.apiKeys.touchLastUsed, {
+      keyId: keyId,
+      usedAt: usedAt,
+    });
+  },
+};
+
 export const convexStorage: Storage = {
   auditLedger: auditLedger,
   accounts: accounts,
+  accountApiKeys: accountApiKeys,
   agents: agents,
   budgets: budgets,
   agentDeployments: agentDeployments,

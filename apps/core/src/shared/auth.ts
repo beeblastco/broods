@@ -3,8 +3,8 @@
  * server-side actions), assume-role session (bsts_), stage session ticket
  * (bdts_), run token (brt_, minted by core for one agent run), runtime key
  * (bsk_, whose lastUsedAt is written here, throttled), and account-key hash
- * lookup (bask_). Each prefix goes straight to its one lookup; any other
- * token is refused without one.
+ * lookup (bask_: the account key, else a scoped key acting as a role). Each
+ * prefix goes straight to its lookup; any other token is refused without one.
  * Persistence is reached via `getStorage()` so the auth path is identical
  * through the Convex-backed store.
  */
@@ -36,7 +36,7 @@ import { getStorage } from "./storage.ts";
 
 const KEY_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
-// Last lastUsedAt write per runtime key hash. Core runs single replica, so
+// Last lastUsedAt write per runtime or scoped key hash. Core runs single replica, so
 // this in-process map is the whole throttle.
 const keyLastUsedWrites = new Map<string, number>();
 
@@ -59,8 +59,9 @@ export type AuthContext =
       user?: UserToken;
     }
   | {
-      // Short-lived assume-role session minted by the config plane. What it
-      // may do is decided per request by `authorize()` over `role.policy`.
+      // An assume-role session minted by the config plane, or a scoped
+      // account key (bask_, possibly long-lived). What it may do is decided
+      // per request by `authorize()` over `role.policy`.
       kind: "role";
       account: AccountRecord;
       role: RolePrincipal;
@@ -194,21 +195,42 @@ export function timingSafeStringEqual(
   return timingSafeEqual(actualDigest, expectedDigest);
 }
 
-/** Resolve an account key to its account; a disabled one only when the caller allows it. */
+/**
+ * Resolve an account key to its account; a disabled one only when the caller
+ * allows it. Any other bask_ is tried as a scoped key.
+ */
 async function resolveAccountSecretAuth(
   token: string,
   options: { allowDisabledAccountSecret?: boolean },
 ): Promise<AuthContext | null> {
-  const account = await getStorage().accounts.getBySecretHash(
-    hashAccountSecret(token),
-  );
+  const keyHash = hashAccountSecret(token);
+  const account = await getStorage().accounts.getBySecretHash(keyHash);
+  if (!account) return await resolveScopedKeyAuth(keyHash);
   if (
-    !account ||
-    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
+    account.status !== "active" &&
+    options.allowDisabledAccountSecret !== true
   )
     return null;
 
   return { kind: "account", account: account };
+}
+
+/**
+ * Resolve a scoped account key to role auth on its active account, stamping
+ * its lastUsedAt off the request when the lookup says it is due, once per
+ * burst of concurrent requests.
+ */
+async function resolveScopedKeyAuth(
+  keyHash: string,
+): Promise<AuthContext | null> {
+  const key = await getStorage().accountApiKeys.resolveByKeyHash(keyHash);
+  if (!key) return null;
+  const now = Date.now();
+  if (key.stampDue && claimLastUsedWrite(keyLastUsedWrites, keyHash, now)) {
+    waitUntil(getStorage().accountApiKeys.touchLastUsed(key.keyId, now));
+  }
+
+  return { kind: "role", account: key.account, role: key.principal };
 }
 
 /** Resolve a brt_ token to the agent it was minted for. */

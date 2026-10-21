@@ -303,6 +303,92 @@ export declare const api: {
       >;
     };
   };
+  accountApiKeys: {
+    create: FunctionReference<
+      "mutation",
+      "public",
+      {
+        actions: Array<
+          | "account:read"
+          | "account:write"
+          | "agents:read"
+          | "agents:write"
+          | "audit:read"
+          | "audit:write"
+          | "channels:read"
+          | "channels:write"
+          | "crons:read"
+          | "crons:write"
+          | "env:read"
+          | "env:write"
+          | "hooks:read"
+          | "hooks:write"
+          | "mcp:read"
+          | "mcp:write"
+          | "policies:read"
+          | "policies:write"
+          | "sandboxes:read"
+          | "sandboxes:write"
+          | "skills:read"
+          | "skills:write"
+          | "workspaces:read"
+          | "workspaces:write"
+        >;
+        description?: string;
+        expiresAt?: number;
+        name: string;
+        orgId: Id<"orgs">;
+        projectId?: Id<"projects">;
+        stageId?: Id<"stages">;
+      },
+      { _id: Id<"accountApiKeys">; keyHint: string; token: string }
+    >;
+    remove: FunctionReference<
+      "mutation",
+      "public",
+      { keyId: Id<"accountApiKeys">; orgId: Id<"orgs"> },
+      Id<"accountApiKeys">
+    >;
+    update: FunctionReference<
+      "mutation",
+      "public",
+      {
+        actions?: Array<
+          | "account:read"
+          | "account:write"
+          | "agents:read"
+          | "agents:write"
+          | "audit:read"
+          | "audit:write"
+          | "channels:read"
+          | "channels:write"
+          | "crons:read"
+          | "crons:write"
+          | "env:read"
+          | "env:write"
+          | "hooks:read"
+          | "hooks:write"
+          | "mcp:read"
+          | "mcp:write"
+          | "policies:read"
+          | "policies:write"
+          | "sandboxes:read"
+          | "sandboxes:write"
+          | "skills:read"
+          | "skills:write"
+          | "workspaces:read"
+          | "workspaces:write"
+        >;
+        description?: string;
+        expiresAt?: number | null;
+        keyId: Id<"accountApiKeys">;
+        name?: string;
+        orgId: Id<"orgs">;
+        scope?: { projectId?: Id<"projects">; stageId?: Id<"stages"> };
+      },
+      Id<"accountApiKeys">
+    >;
+  };
   agent: {
     agents: {
       listForProject: FunctionReference<
@@ -736,13 +822,52 @@ export declare const api: {
       "query",
       "public",
       {},
-      Array<{
-        createdAt: number;
-        createdBy?: { avatarUrl?: string; name: string };
-        description: string;
-        keyHint?: string;
-        name: string;
-      }> | null
+      {
+        keys: Array<{
+          _id?: Id<"accountApiKeys">;
+          actions?: Array<
+            | "account:read"
+            | "account:write"
+            | "agents:read"
+            | "agents:write"
+            | "audit:read"
+            | "audit:write"
+            | "channels:read"
+            | "channels:write"
+            | "crons:read"
+            | "crons:write"
+            | "env:read"
+            | "env:write"
+            | "hooks:read"
+            | "hooks:write"
+            | "mcp:read"
+            | "mcp:write"
+            | "policies:read"
+            | "policies:write"
+            | "sandboxes:read"
+            | "sandboxes:write"
+            | "skills:read"
+            | "skills:write"
+            | "workspaces:read"
+            | "workspaces:write"
+          >;
+          createdAt: number;
+          createdBy?: { avatarUrl?: string; name: string };
+          description?: string;
+          expiresAt?: number;
+          keyHint?: string;
+          lastUsedAt?: number;
+          name: string;
+          projectId?: Id<"projects">;
+          stageId?: Id<"stages">;
+        }>;
+        stages: Array<{
+          projectId: Id<"projects">;
+          projectName: string;
+          stageId: Id<"stages">;
+          stageName: string;
+        }>;
+      } | null
     >;
     listForProject: FunctionReference<
       "query",
@@ -2009,6 +2134,81 @@ export declare const internal: {
           updatedAt: number;
           username: string;
         } | null
+      >;
+    };
+    apiKeys: {
+      resolve: FunctionReference<
+        "query",
+        "internal",
+        { keyHash: string; now: number },
+        {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
+          keyId: Id<"accountApiKeys">;
+          principal: {
+            accountId: Id<"accounts">;
+            policy: {
+              mode?: "enforce" | "audit";
+              rules: Array<{
+                actions: Array<string>;
+                conditions?: Array<{
+                  attribute: string;
+                  operator:
+                    | "equals"
+                    | "notEquals"
+                    | "in"
+                    | "notIn"
+                    | "prefix"
+                    | "contains";
+                  value:
+                    | string
+                    | number
+                    | boolean
+                    | Array<string>
+                    | Array<number>
+                    | Array<boolean>;
+                }>;
+                effect: "allow" | "deny";
+                id: string;
+                resources?: {
+                  filePaths?: Array<string>;
+                  mcpIds?: Array<string>;
+                  resourceIds?: Array<string>;
+                  skillPaths?: Array<string>;
+                  subagentIds?: Array<string>;
+                  toolNames?: Array<string>;
+                  workspaceIds?: Array<string>;
+                  workspaceNames?: Array<string>;
+                };
+              }>;
+              version: 1;
+            };
+            projectId?: Id<"projects">;
+            roleId: string;
+            stageId?: Id<"stages">;
+          };
+          stampDue: boolean;
+        } | null
+      >;
+      touchLastUsed: FunctionReference<
+        "mutation",
+        "internal",
+        { keyId: Id<"accountApiKeys">; usedAt: number },
+        null
       >;
     };
     budget: {
@@ -3991,6 +4191,7 @@ export declare const internal: {
             kind:
               | "dashboardUser"
               | "apiAccountSecret"
+              | "accountApiKey"
               | "admin"
               | "service"
               | "cli"
@@ -4008,6 +4209,7 @@ export declare const internal: {
             id?: string;
             kind:
               | "account"
+              | "accountApiKey"
               | "agent"
               | "skill"
               | "hook"
@@ -4059,6 +4261,7 @@ export declare const internal: {
             kind:
               | "dashboardUser"
               | "apiAccountSecret"
+              | "accountApiKey"
               | "admin"
               | "service"
               | "cli"
@@ -4073,6 +4276,7 @@ export declare const internal: {
             id?: string;
             kind:
               | "account"
+              | "accountApiKey"
               | "agent"
               | "skill"
               | "hook"
