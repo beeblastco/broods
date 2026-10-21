@@ -115,18 +115,19 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
 /**
  * Ships apps/cloudflare-<service> with its `deploy` script as the Worker
  * `resourceName(service)`. wrangler deploys it because the Cloudflare
- * provider cannot declare a Worker Loader binding. It reruns when a file in
- * its folder or in `sources`, the lockfile, or a var changes. There
- * is no delete: the Worker keeps the key infra put on it, and a removed
- * stage's Worker is deleted by hand.
+ * provider can declare neither a Worker Loader binding nor a Container image.
+ * It reruns when a file in its folder or in `sources`, the lockfile, or a var
+ * changes. There is no delete: the Worker keeps the key infra put on it, and a
+ * removed stage's Worker (and the bridge's Container application) is deleted
+ * by hand.
  */
 async function deployCloudflareWorker(
   command: typeof import("@pulumi/command"),
   stage: string,
   region: string,
   service: string,
-  sources: string[],
-  vars: Record<string, $util.Input<string>>,
+  sources: string[] = [],
+  vars: Record<string, $util.Input<string>> = {},
 ): Promise<string> {
   const name = resourceName(service, stage, region);
   const app = `apps/cloudflare-${service}`;
@@ -1168,15 +1169,12 @@ export default $config({
           mcp: await deployCloudflareWorker(command, stage, region, "mcp", [], {
             BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
           }),
-          // The `cloudflare` sandbox provider's bridge: wrangler builds its
-          // Container image, so the deploy needs Docker.
+          // The `cloudflare` sandbox provider's bridge; needs Docker.
           sandbox: await deployCloudflareWorker(
             command,
             stage,
             region,
             "sandbox",
-            [],
-            {},
           ),
           // The `worker` sandbox provider: bash in a V8 isolate.
           worker: await deployCloudflareWorker(
@@ -1185,7 +1183,6 @@ export default $config({
             region,
             "worker",
             ["apps/cloudflare-sandbox/src/bearer.ts"],
-            {},
           ),
         }
       : undefined;
