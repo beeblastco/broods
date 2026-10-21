@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { ObservabilitySpanRow } from "../app/hooks/useObservabilityStream";
 import {
+  axisTicks,
   failureCause,
   foldSteps,
   groupSpans,
   matchesTaskQuery,
+  runIssues,
+  spanIssue,
   TASK_QUERY_FIELDS,
   taskChannel,
   type TaskQuery,
@@ -34,7 +37,6 @@ describe("groupSpans", () => {
     expect(rest).toHaveLength(0);
     expect(group.root.spanId).toBe("asked");
     expect(group.status).toBe("ok");
-    expect(group.issueCount).toBe(1);
     const nested = group.childrenByParent.get("asked") ?? [];
     expect(nested.map((span) => span.spanId)).toEqual([
       "asked-bash",
@@ -334,6 +336,128 @@ describe("task list line", () => {
     expect(causeOf("boom")).toBe("boom");
     expect(failureCause(groupSpans([root("ok", 0, 1, "ok", {})])[0])).toBe(
       null,
+    );
+  });
+});
+
+describe("waterfall issues", () => {
+  test("reads a failure and a retried model call off their spans", () => {
+    const failed = { ...child("run", "bash", 2_000, "error"), error: "boom" };
+    const retried = {
+      ...step("run", 0, 1_000, 5_000),
+      attributes: {
+        "model.attempts": 3,
+        "model.retry_wait_ms": 1_500,
+        "model.attempt_errors": '["429 rate limited"]',
+      },
+    };
+
+    expect(spanIssue(failed)).toEqual({
+      atMs: 2_100,
+      level: "error",
+      label: "Failed",
+      text: "boom",
+    });
+    expect(spanIssue(retried)).toEqual({
+      atMs: 2_500,
+      level: "warn",
+      label: "Retried 2×",
+      text: "429 rate limited",
+    });
+    expect(spanIssue(step("run", 1, 0, 1))).toBe(null);
+  });
+
+  test("counts a rate limited tool's retries", () => {
+    const tool = {
+      ...child("run", "search", 1_000, "ok"),
+      attributes: { "tool.retry.count": 2, "tool.retry.wait_ms": 400 },
+    };
+
+    expect(spanIssue(tool)).toMatchObject({
+      atMs: 1_000,
+      level: "warn",
+      label: "Retried 2×",
+    });
+  });
+
+  test("lists a run's issues in time order and what sits under each span", () => {
+    const task = root("run", 0, 10_000, "ok", {});
+    const first = step("run", 0, 1_000, 4_000);
+    const late = { ...toolOf(first, "bash"), status: "error" as const };
+    const early = {
+      ...child("run", "search", 500, "ok"),
+      attributes: { "tool.retry.count": 1, "tool.retry.wait_ms": 100 },
+    };
+
+    const [group] = groupSpans([task, first, late, early]);
+    const issues = runIssues(group);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-search",
+      "run-step-0-bash",
+    ]);
+    // The failed tool sits under its step, which a click must open.
+    expect(issues.all.map(({ path }) => path)).toEqual([
+      [],
+      [{ key: "trace-run:run-step-0", startsOpen: true }],
+    ]);
+    expect(issues.below.get("run")).toHaveLength(2);
+    expect(issues.below.get("run-step-0")).toHaveLength(1);
+    expect(issues.below.get("run-step-0-bash")).toEqual([]);
+  });
+
+  test("a first pass that failed is not an issue once a continued pass went through", () => {
+    const failed = {
+      ...root("first", 0, 1_000, "error", { "task.id": TASK_ID }),
+      error: "rate limited",
+    };
+    const continued = root("again", 5_000, 6_000, "ok", {
+      "task.id": `${TASK_ID}:continue`,
+      "task.root_id": TASK_ID,
+    });
+
+    const [recovered] = groupSpans([failed, continued]);
+    const [stillFailed] = groupSpans([failed]);
+
+    expect(runIssues(recovered).all).toEqual([]);
+    expect(runIssues(stillFailed).own.get("first")?.label).toBe("Failed");
+  });
+
+  test("a run that failed mid tool call is one failure, at the tool", () => {
+    // Core closes the open step and tool with the run's error when it fails.
+    const failed = (span: ObservabilitySpanRow): ObservabilitySpanRow => ({
+      ...span,
+      status: "error",
+      error: "invalid x-api-key",
+    });
+    const task = failed(root("run", 0, 5_000, "error", {}));
+    const open = failed(step("run", 0, 1_000, 5_000));
+    const tool = failed(toolOf(open, "bash"));
+
+    const issues = runIssues(groupSpans([task, open, tool])[0]);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+    ]);
+    expect(issues.own.has("run")).toBe(false);
+    expect(issues.below.get("run")).toHaveLength(1);
+
+    // A tool that failed on its own, earlier, leaves the run's later failure standing.
+    const earlier = { ...tool, error: "file not found" };
+    const both = runIssues(groupSpans([task, open, earlier])[0]);
+    expect(both.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+      "run-step-0",
+    ]);
+  });
+
+  test("steps the time axis so it shows at most four ticks", () => {
+    expect(axisTicks(12_000)).toEqual([0, 5_000, 10_000]);
+    expect(axisTicks(82_000)).toEqual([0, 30_000, 60_000]);
+    expect(axisTicks(400)).toEqual([0, 200, 400]);
+    // A run that waited three days on a person steps in whole hours.
+    expect(axisTicks(72 * 3_600_000)).toEqual(
+      [0, 24, 48, 72].map((hours) => hours * 3_600_000),
     );
   });
 });

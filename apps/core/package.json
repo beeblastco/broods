@@ -10,8 +10,8 @@
     "serve": "bun run scripts/compaction-prompt.ts && bun run src/server.ts",
     "build": "bun run scripts/build.ts",
     "check": "bun run scripts/compaction-prompt.ts && bunx tsc --noEmit",
-    "test": "bun test --max-concurrency=1",
-    "test:coverage": "bun test --coverage --max-concurrency=1",
+    "test": "bun run scripts/compaction-prompt.ts && bun test --max-concurrency=1",
+    "test:coverage": "bun run scripts/compaction-prompt.ts && bun test --coverage --max-concurrency=1",
     "daytona:s3-snapshot": "bun run scripts/daytona-s3-snapshot.ts",
     "deploy": "bun run build && sst deploy",
     "remove": "sst remove"

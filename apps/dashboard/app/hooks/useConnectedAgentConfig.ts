@@ -30,24 +30,18 @@ export interface ConnectedAgentConfig {
 }
 
 /**
- * Returns the connected agent's config plus an `updateBranch` helper that
- * writes a slice (top-level branch like "workspace" or nested path like
- * ["workspace", "sandbox"]) back through the agentConfig codec.
- *
- * @param nodeId source canvas node id
- * @param via intermediate node types allowed when walking to the agent
- * @returns connected agent config + update helpers, or `null` when nothing wired
+ * Reads the agent reachable from this node and writes config branches through
+ * the codec. `via` limits which intermediate node types the search follows.
  */
 export function useConnectedAgentConfig(
   nodeId: string | undefined,
   via?: ReadonlyArray<string>,
 ): ConnectedAgentConfig {
-  const viaKey = via?.join("|");
   const agentConfigId = useStore(
     useCallback(
       (state: unknown) =>
         findReachableAgentConfigId(state as ReactFlowState, nodeId, via),
-      [nodeId, viaKey],
+      [nodeId, via],
     ),
   ) as Id<"agentConfigs"> | undefined;
 

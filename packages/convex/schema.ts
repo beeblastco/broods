@@ -1358,7 +1358,7 @@ export const runtimeAsyncAgentResultsFields = {
   eventId: v.string(),
   conversationKey: v.string(),
   subagent: v.optional(subagentTaskValidator),
-  // Set once a subagent's row finishes; see `handbackValidator`.
+  // Set when a subagent's row is created; see `handbackValidator`.
   handback: v.optional(handbackValidator),
   status: v.union(
     v.literal("processing"),
