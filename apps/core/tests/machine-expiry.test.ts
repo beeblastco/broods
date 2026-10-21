@@ -64,10 +64,12 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
   const token = await ticket(expiresAt);
   const server = core();
   const received: MachineExecFrame[] = [];
+  const held = Promise.withResolvers<void>();
   // Answers the first exec, holds the second open across the expiry.
   const daemon = await connectDaemon(server, token, (frame, socket): void => {
     received.push(frame);
     if (received.length === 1) socket.send(JSON.stringify(result(frame.id)));
+    else held.resolve();
   });
   const closed = closeOf(daemon);
   const executor = new MachineSandboxExecutor(machineExecutorConfig());
@@ -86,7 +88,9 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
       (error: Error): string => error.message,
     );
   // The held exec must reach the daemon before the clock moves past the ticket.
-  while (received.length < 2) await new Promise(setImmediate);
+  // Awaited, not polled: the frame crosses a real socket, which only the event
+  // loop delivers, and an await leaves the test timeout free to fire.
+  await held.promise;
   jest.advanceTimersByTime(expiresAt - 1 - Date.now());
   expect(isMachineConnected(machineExecutorConfig())).toBe(true);
   jest.advanceTimersByTime(1);

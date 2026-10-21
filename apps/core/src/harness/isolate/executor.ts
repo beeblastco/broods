@@ -462,10 +462,14 @@ function workerIdleTtlMs(): number {
   return positiveIntegerEnv("ISOLATE_WORKER_IDLE_SECONDS", 120) * 1000;
 }
 
+// Never past the run timeout, which also keeps a huge override in setTimeout's range.
 function workerReadyTimeoutMs(): number {
-  return positiveIntegerEnv(
-    "ISOLATE_WORKER_READY_TIMEOUT_MS",
-    WORKER_READY_TIMEOUT_MS,
+  return Math.min(
+    positiveIntegerEnv(
+      "ISOLATE_WORKER_READY_TIMEOUT_MS",
+      WORKER_READY_TIMEOUT_MS,
+    ),
+    runnerTimeoutMs(),
   );
 }
 

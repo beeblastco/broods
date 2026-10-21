@@ -42,7 +42,10 @@ interface Script {
   events?: number;
   /** Starts a fresh account on the same store once the first stops, this much later. */
   restartAfterMs?: number;
-  /** How long a webhook POST may hang before it fails; the real 10 s when unset. */
+  /**
+   * How long the first account's webhook POST may hang before it fails; the
+   * real 10 s when unset, and always after a restart.
+   */
   webhookTimeoutMs?: number;
 }
 
@@ -194,7 +197,8 @@ const targets: ForwardTarget[] = Object.keys(script.answers).map(
   }),
 );
 
-let account = startAccount();
+// Only the first account's POST is scripted to hang, so only it gets the short timeout.
+let account = startAccount(script.webhookTimeoutMs);
 try {
   await settle();
   if (script.restartAfterMs !== undefined) {
@@ -244,13 +248,16 @@ async function settle(): Promise<void> {
   await (stopping ?? account.stop());
 }
 
-function startAccount(): InstanceType<typeof MatrixAccount> {
+/** Starts an account; `webhookTimeoutMs` unset keeps the real 10 s. */
+function startAccount(
+  webhookTimeoutMs?: number,
+): InstanceType<typeof MatrixAccount> {
   const started = new MatrixAccount({
     accessToken: ACCESS_TOKEN,
     apiUrl: `http://localhost:${server.port}`,
     storeDir: storeDir,
     targets: (): ForwardTarget[] => targets,
-    webhookTimeoutMs: script.webhookTimeoutMs,
+    webhookTimeoutMs: webhookTimeoutMs,
   });
   started.start();
 

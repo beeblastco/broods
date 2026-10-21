@@ -11,6 +11,7 @@ import {
 import * as planLimits from "../src/harness/plan-limits.ts";
 import * as sandboxSnapshots from "../src/shared/convex/sandbox-snapshots.ts";
 import * as s3 from "../src/shared/s3.ts";
+import { settleOnFakeClock } from "./helpers/fake-clock.ts";
 import { requestBodyText, requestUrl } from "./helpers/http.ts";
 import type { SandboxExecRequest } from "../src/shared/domain/sandbox-config.ts";
 import type {
@@ -562,29 +563,6 @@ function microvmNamespace(): string {
   return `fs-${String(microvmNamespaceSeq).padStart(40, "a")}`;
 }
 
-// Settles a call whose retry waits run on a fake clock: lets the stubbed I/O
-// answer, then moves the clock 50ms, until the call settles. Needs
-// `jest.useFakeTimers()` before the call starts. It yields on microtasks only:
-// every stub here answers in process, and in bun 1.4.2 a second fake-clock
-// test can leave a queued setImmediate that never runs.
-async function settleOnFakeClock<T>(call: Promise<T>): Promise<T> {
-  let settled = false;
-  call.then(
-    (): void => {
-      settled = true;
-    },
-    (): void => {
-      settled = true;
-    },
-  );
-  while (!settled) {
-    for (let hop = 0; hop < 100; hop += 1) await Promise.resolve();
-    jest.advanceTimersByTime(50);
-  }
-
-  return call;
-}
-
 describe("createSandboxExecutor", () => {
   it("requires an explicit provider and never silently defaults", () => {
     const {
@@ -707,7 +685,8 @@ describe("createSandboxExecutor", () => {
     const result = await settleOnFakeClock(
       executor.run({
         code: "echo persisted",
-        namespace: NS,
+        // Its own namespace: what it caches is stamped with the fake clock.
+        namespace: microvmNamespace(),
         workspaceRoot: "/mnt/workspaces",
         timeoutSeconds: 30,
         outputLimitBytes: 4096,

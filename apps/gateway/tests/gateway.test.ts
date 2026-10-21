@@ -862,7 +862,12 @@ test("backs off status polls while an attached run stays quiet", async () => {
     const gaps = polledAt
       .slice(1)
       .map((at, index) => at - (polledAt[index] ?? at));
-    expect(gaps).toEqual([500, 1000]);
+    // A gap may run one 5 ms clock step over: the poll lands on the step after its timer.
+    expect(gaps).toHaveLength(2);
+    for (const [index, expected] of [500, 1000].entries()) {
+      expect(gaps[index]).toBeGreaterThanOrEqual(expected);
+      expect(gaps[index]).toBeLessThanOrEqual(expected + 5);
+    }
   } finally {
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;

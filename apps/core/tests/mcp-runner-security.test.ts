@@ -56,15 +56,17 @@ function finalBody(stdout: string | undefined): unknown {
   return JSON.parse(finals[0]!.result!.body);
 }
 
-// Signal 0 delivers nothing: it only asks whether the process still exists.
+// Signal 0 only asks whether the pid exists. A killed process its parent has not
+// reaped yet still does, as a zombie (stat `Z`), so that counts as gone too.
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-
-    return true;
   } catch {
     return false;
   }
+  const stat = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)]).stdout;
+
+  return !stat.toString().trim().startsWith("Z");
 }
 
 // A bundle the runner will accept: sha256 must match what the child recomputes.

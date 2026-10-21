@@ -128,10 +128,11 @@ test("gives up on a key still failing after three attempts", async () => {
   fill(2);
   fake.failures.set(`${PREFIX}00000`, ["SlowDown", "SlowDown", "SlowDown"]);
 
-  const refused = expect(deleteS3Prefix(BUCKET, PREFIX)).rejects.toThrow(
-    `${PREFIX}00000: SlowDown`,
-  );
-  await vi.runAllTimersAsync();
-  await refused;
+  await Promise.all([
+    expect(deleteS3Prefix(BUCKET, PREFIX)).rejects.toThrow(
+      `${PREFIX}00000: SlowDown`,
+    ),
+    vi.runAllTimersAsync(),
+  ]);
   expect(fake.calls).toEqual(["list", "delete:2", "delete:1", "delete:1"]);
 });
