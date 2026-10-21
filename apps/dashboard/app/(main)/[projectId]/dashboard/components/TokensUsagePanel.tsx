@@ -510,7 +510,7 @@ function Sparkline({
       viewBox="0 0 100 28"
       preserveAspectRatio="none"
       aria-hidden="true"
-      className="block h-7 w-full"
+      className="block h-7 w-full overflow-visible"
       style={{ "--series-color": color }}
     >
       {selected !== null && (
