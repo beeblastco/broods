@@ -406,6 +406,23 @@ describe("waterfall issues", () => {
     expect(issues.below.get("run-step-0-bash")).toEqual([]);
   });
 
+  test("a first pass that failed is not an issue once a continued pass went through", () => {
+    const failed = {
+      ...root("first", 0, 1_000, "error", { "task.id": TASK_ID }),
+      error: "rate limited",
+    };
+    const continued = root("again", 5_000, 6_000, "ok", {
+      "task.id": `${TASK_ID}:continue`,
+      "task.root_id": TASK_ID,
+    });
+
+    const [recovered] = groupSpans([failed, continued]);
+    const [stillFailed] = groupSpans([failed]);
+
+    expect(runIssues(recovered).all).toEqual([]);
+    expect(runIssues(stillFailed).own.get("first")?.label).toBe("Failed");
+  });
+
   test("steps the time axis so it shows at most five ticks", () => {
     expect(axisTicks(12_000)).toEqual([0, 5_000, 10_000]);
     expect(axisTicks(82_000)).toEqual([0, 30_000, 60_000]);

@@ -65,8 +65,10 @@ import {
 } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -368,6 +370,13 @@ const LIVE_TICK_MS = 1000;
 // Room past the now line on a live run, so the newest bars are not pinned to the edge.
 const LIVE_HEADROOM = 1.1;
 
+// The selected run's time scale, from TimelineClock to the parts that move on its tick.
+const TimelineScaleContext = createContext<TimelineScale>({
+  nowMs: null,
+  spanMs: 1,
+  startMs: 0,
+});
+
 // Time axis steps, smallest first; the axis takes the first that fits AXIS_MAX_TICKS.
 const AXIS_STEPS_MS = [
   100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000,
@@ -433,8 +442,9 @@ export interface SpanGroup {
   // The run's status: its latest pass decides, and a finished request with a
   // subagent still running is waiting on it.
   status: SpanStatus;
-  // Whether the latest pass is still live, so a stale "running" reads as ended.
-  live: boolean;
+  // The latest pass. It is live while isTaskRunning holds, judged when read
+  // so a pass past its limit ends without waiting for the stream.
+  latest: ObservabilitySpanRow;
   childrenByParent: Map<string, ObservabilitySpanRow[]>;
   // Root first, then every child, for search and selection.
   spans: ObservabilitySpanRow[];
@@ -501,8 +511,8 @@ interface RowOnPath {
   startsOpen: boolean;
 }
 
-// The run's issues in time order, each with the rows above it, and per span
-// id (a fold's too) the issues under it.
+// The run's issues in time order, each with the rows above it; per span id
+// (a fold's too) the issues under it; and per span id its own.
 export interface RunIssues {
   all: Array<{
     issue: SpanIssue;
@@ -510,6 +520,7 @@ export interface RunIssues {
     span: ObservabilitySpanRow;
   }>;
   below: Map<string, SpanIssue[]>;
+  own: Map<string, SpanIssue>;
 }
 
 // The time scale every bar, axis tick and line of the selected run reads.
@@ -525,7 +536,7 @@ interface WaterfallView {
   focusTraceId: string | null;
   group: SpanGroup;
   issues: RunIssues;
-  scale: TimelineScale;
+  live: boolean;
   onFocusTrace: (traceId: string) => void;
   onSelect: (key: string) => void;
   selectedKey: string | null;
@@ -1276,6 +1287,7 @@ export function axisTicks(spanMs: number): number[] {
 export function runIssues(group: SpanGroup): RunIssues {
   const all: RunIssues["all"] = [];
   const below = new Map<string, SpanIssue[]>();
+  const own = new Map<string, SpanIssue>();
   const walk = (span: ObservabilitySpanRow, path: RowOnPath[]): SpanIssue[] => {
     const isTaskRow = span === group.root;
     const children = rowChildren(span, isTaskRow, group);
@@ -1301,8 +1313,12 @@ export function runIssues(group: SpanGroup): RunIssues {
       },
     );
     below.set(span.spanId, under);
-    const issue = spanIssue(span);
+    // The task row stands for the whole request, so a first pass that failed
+    // and was continued is not an issue of a request that went through.
+    const issue =
+      isTaskRow && group.status !== "error" ? null : spanIssue(span);
     if (!issue) return under;
+    own.set(span.spanId, issue);
     all.push({ issue: issue, path: path, span: span });
 
     return [issue, ...under];
@@ -1310,7 +1326,7 @@ export function runIssues(group: SpanGroup): RunIssues {
   walk(group.root, []);
   all.sort((left, right) => left.issue.atMs - right.issue.atMs);
 
-  return { all: all, below: below };
+  return { all: all, below: below, own: own };
 }
 
 /**
@@ -1483,7 +1499,7 @@ function flipped(current: Set<string>, key: string): Set<string> {
 
 /** A task's dot: a stale "running" reads as ended. */
 function groupTone(group: SpanGroup): StatusTone {
-  return group.status === "running" && !group.live
+  return group.status === "running" && !isTaskRunning(group.latest)
     ? "ended"
     : STATUS_TONE[group.status];
 }
@@ -1875,7 +1891,7 @@ function taskGroup(
   return {
     root: root,
     status: last.status,
-    live: live,
+    latest: last,
     childrenByParent: childrenByParent,
     spans: [root, ...members],
     windowStart: windowStart,
@@ -2123,7 +2139,10 @@ function ErrorRow({
       >
         <span
           aria-hidden="true"
-          className="absolute inset-y-0 left-0 w-0.5 bg-destructive"
+          className={cn(
+            "absolute inset-y-0 left-0 w-0.5",
+            STATUS_TONE_BG.error,
+          )}
         />
         <span className="line-clamp-2 wrap-anywhere">{text}</span>
       </td>
@@ -2186,6 +2205,29 @@ function NoteRow({
   );
 }
 
+/** A row's duration cell; a span that runs to now counts up on the clock's tick. */
+function RowDuration({
+  durationMs,
+  runsToNow,
+  startMs,
+}: {
+  durationMs: number;
+  runsToNow: boolean;
+  startMs: number;
+}): React.JSX.Element {
+  const { nowMs } = useContext(TimelineScaleContext);
+  const shownMs =
+    runsToNow && nowMs !== null
+      ? Math.max(durationMs, nowMs - startMs)
+      : durationMs;
+
+  return (
+    <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
+      {shownMs > 0 ? formatDuration(shownMs) : "—"}
+    </td>
+  );
+}
+
 /**
  * A task row reads the whole request's status as a dot and a word; any other
  * row shows a dot only when its span is not ok.
@@ -2202,7 +2244,7 @@ function RowStatus({
   taskRunning: boolean;
 }): React.JSX.Element | null {
   if (!group) {
-    if (issue && (issue.level === "error" || span.status === "ok")) {
+    if (issue) {
       return (
         <span
           className={cn(
@@ -2519,7 +2561,7 @@ function SpanRow({
   onFocusTrace,
   issue,
   below,
-  scale,
+  live,
 }: {
   span: ObservabilitySpanRow;
   depth: number;
@@ -2535,20 +2577,13 @@ function SpanRow({
   onFocusTrace: (traceId: string) => void;
   issue: SpanIssue | null;
   below: SpanIssue[];
-  scale: TimelineScale;
+  live: boolean;
 }): React.JSX.Element {
   const isTaskRow = depth === 0;
-  // A live span's duration runs to now. The task row reads the whole request,
-  // which is live while any of its passes is, so it runs to now too.
-  const runningMs =
-    scale.nowMs !== null &&
-    (isTaskRow || (span.status === "running" && taskRunning))
-      ? scale.nowMs - span.startTimeMs
-      : 0;
-  const durationMs = Math.max(
-    isTaskRow ? group.taskDurationMs : span.durationMs,
-    runningMs,
-  );
+  // A running span runs to now. The task row reads the whole request, which
+  // is live while its latest pass is, so it runs to now too.
+  const runsToNow = isTaskRow ? live : span.status === "running" && taskRunning;
+  const durationMs = isTaskRow ? group.taskDurationMs : span.durationMs;
   const belowErrors = below.filter((item) => item.level === "error").length;
 
   return (
@@ -2561,7 +2596,7 @@ function SpanRow({
         !isRootSpanKind(span.kind) && "text-foreground/80",
         highlighted && "bg-info/10 ring-1 ring-inset ring-info/40",
         // A span that arrives while the run is live fades in once.
-        scale.nowMs !== null && "starting:opacity-0",
+        live && "starting:opacity-0",
       )}
     >
       <td
@@ -2617,9 +2652,11 @@ function SpanRow({
           taskRunning={taskRunning}
         />
       </td>
-      <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
-        {durationMs > 0 ? formatDuration(durationMs) : "—"}
-      </td>
+      <RowDuration
+        durationMs={durationMs}
+        runsToNow={runsToNow}
+        startMs={span.startTimeMs}
+      />
       <td className="px-3 py-1.5">
         <TimelineBar
           span={
@@ -2631,7 +2668,7 @@ function SpanRow({
                 }
               : span
           }
-          scale={scale}
+          runsToNow={runsToNow}
           taskRunning={taskRunning}
           failed={issue?.level === "error"}
           marks={hasChildren && !isOpen ? below : []}
@@ -2791,8 +2828,7 @@ const TaskListRow = memo(function TaskListRow({
  * The selected run on the right: its request, or its chain for a subagent,
  * its conversation and trace, the copy actions for the user's own coding
  * agent, Continue when a request failed, the count of what went wrong, then
- * its waterfall scaled to that run alone. A live run's clock ticks every
- * second so its bars grow toward the now line.
+ * its waterfall scaled to that run alone.
  */
 function TaskWaterfall({
   attempt,
@@ -2809,33 +2845,14 @@ function TaskWaterfall({
   onPickRun: (root: ObservabilitySpanRow) => void;
   projectSlug: string | undefined;
   stageSlug: string | undefined;
-  view: Omit<WaterfallView, "issues" | "scale">;
+  view: Omit<WaterfallView, "issues" | "live">;
 }): React.JSX.Element {
   const { group } = panelView;
   const { root } = group;
   const runs = group.spans.filter((span) => isRootSpanKind(span.kind));
-  // groupSpans judged the latest pass when the stream last moved; one that
-  // ran past its limit since has ended, so the clock stops with it. A
-  // subagent's root is not a pass.
-  const live =
-    group.live &&
-    isTaskRunning(runs.findLast((span) => span.kind !== "subtask") ?? root);
-  const now = useNow(live ? LIVE_TICK_MS : null);
+  const live = isTaskRunning(group.latest);
   const issues = useMemo(() => runIssues(group), [group]);
-  // The clock can trail the stream by a tick, so now is never earlier than
-  // the newest span. Keyed per run, a switch to a live run starts it fresh.
-  const nowMs = Math.max(group.windowStart + group.windowSpan, now);
-  const view: WaterfallView = {
-    ...panelView,
-    issues: issues,
-    scale: live
-      ? {
-          startMs: group.windowStart,
-          spanMs: (nowMs - group.windowStart) * LIVE_HEADROOM,
-          nowMs: nowMs,
-        }
-      : { startMs: group.windowStart, spanMs: group.windowSpan, nowMs: null },
-  };
+  const view: WaterfallView = { ...panelView, issues: issues, live: live };
   const failures = issues.all.filter(({ issue }) => issue.level === "error");
   const retries = issues.all.filter(({ issue }) => issue.level === "warn");
   // Opens an issue's span in the side panel, opens the rows folded above it,
@@ -2954,37 +2971,35 @@ function TaskWaterfall({
           />
         )}
       </div>
-      <div className="relative min-w-xl">
-        <table className="w-full table-fixed text-xs">
-          <colgroup>
-            <col className="w-22" />
-            <col />
-            <col className="w-20" />
-            <col className="w-19" />
-            <col
-              className="w-(--timeline-width)"
-              style={{ "--timeline-width": `${TIMELINE_COLUMN_PCT}%` }}
-            />
-          </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
-            <tr className="text-left text-muted-foreground">
-              <th className="px-3 py-2 font-medium">Started</th>
-              <th className="px-3 py-2 font-medium">Span</th>
-              <th className="px-3 py-2 font-medium">Status</th>
-              <th className="px-3 py-2 text-right font-medium">Duration</th>
-              <th className="px-3 py-2">
-                <TimelineAxis
-                  issues={issues.all}
-                  onPick={showSpan}
-                  scale={view.scale}
-                />
-              </th>
-            </tr>
-          </thead>
-          <tbody>{renderSpanRows(root, 0, group.live, view)}</tbody>
-        </table>
-        <TimelineLines issues={issues.all} scale={view.scale} />
-      </div>
+      <TimelineClock group={group} live={live}>
+        <div className="relative min-w-xl">
+          <table className="w-full table-fixed text-xs">
+            <colgroup>
+              <col className="w-22" />
+              <col />
+              <col className="w-20" />
+              <col className="w-19" />
+              <col
+                className="w-(--timeline-width)"
+                style={{ "--timeline-width": `${TIMELINE_COLUMN_PCT}%` }}
+              />
+            </colgroup>
+            <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
+              <tr className="text-left text-muted-foreground">
+                <th className="px-3 py-2 font-medium">Started</th>
+                <th className="px-3 py-2 font-medium">Span</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 text-right font-medium">Duration</th>
+                <th className="px-3 py-2">
+                  <TimelineAxis issues={issues.all} onPick={showSpan} />
+                </th>
+              </tr>
+            </thead>
+            <tbody>{renderSpanRows(root, 0, live, view)}</tbody>
+          </table>
+          <TimelineLines issues={issues.all} />
+        </div>
+      </TimelineClock>
     </>
   );
 }
@@ -2997,24 +3012,25 @@ function TaskWaterfall({
  */
 function TimelineBar({
   span,
-  scale,
+  runsToNow,
   taskRunning,
   failed,
   marks,
 }: {
   span: ObservabilitySpanRow;
-  scale: TimelineScale;
+  runsToNow: boolean;
   taskRunning: boolean;
   failed: boolean;
   marks: SpanIssue[];
 }): React.JSX.Element {
+  const scale = useContext(TimelineScaleContext);
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
   const barColor = failed
     ? "bg-destructive/70"
     : ((span.name === WAIT_SPAN_NAME ? WAIT_BAR[span.status] : undefined) ??
       kindBar(span.kind));
-  const end = live
+  const end = runsToNow
     ? (scale.nowMs ?? scale.startMs + scale.spanMs)
     : Math.max(span.endTimeMs, span.startTimeMs);
   const shownMs = Math.max(1, end - span.startTimeMs);
@@ -3028,15 +3044,13 @@ function TimelineBar({
   );
 
   // A retried model call waits before its first token, so the retry wait
-  // leads the bar and the rest of the time to first token follows it. A span
-  // with no length has nothing to split.
-  const lengthMs = end - span.startTimeMs;
+  // leads the bar and the rest of the time to first token follows it.
   const retryMs = numericAttribute(span, "model.retry_wait_ms") ?? 0;
   const ttftMs = numericAttribute(span, "model.ttft_ms");
-  const retryFrac = lengthMs > 0 ? Math.min(1, retryMs / lengthMs) : 0;
+  const retryFrac = Math.min(1, retryMs / shownMs);
   const ttftFrac =
-    lengthMs > 0 && ttftMs !== undefined
-      ? Math.min(1 - retryFrac, Math.max(0, ttftMs - retryMs) / lengthMs)
+    ttftMs !== undefined
+      ? Math.min(1 - retryFrac, Math.max(0, ttftMs - retryMs) / shownMs)
       : 0;
   const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${
     retryMs > 0 ? ` · retry wait ${formatDuration(retryMs)}` : ""
@@ -3099,30 +3113,29 @@ function TimelineBar({
 function TimelineAxis({
   issues,
   onPick,
-  scale,
 }: {
   issues: RunIssues["all"];
   onPick: (entry: RunIssues["all"][number]) => void;
-  scale: TimelineScale;
 }): React.JSX.Element {
+  const scale = useContext(TimelineScaleContext);
+
   return (
     <div className="relative h-4 w-full font-normal">
       <span className="sr-only">Timeline</span>
       {axisTicks(scale.spanMs)
-        .filter(
-          (offset) =>
-            timelinePct(scale.startMs + offset, scale) <= AXIS_LAST_TICK_PCT,
-        )
-        .map((offset) => (
+        .map((offset) => ({
+          offset: offset,
+          pct: timelinePct(scale.startMs + offset, scale),
+        }))
+        .filter(({ pct }) => pct <= AXIS_LAST_TICK_PCT)
+        .map(({ offset, pct }) => (
           <span
             key={offset}
             className={cn(
               "absolute top-0 left-(--tick-left) font-mono tabular-nums transition-timeline",
               offset > 0 && "-translate-x-1/2",
             )}
-            style={{
-              "--tick-left": `${timelinePct(scale.startMs + offset, scale)}%`,
-            }}
+            style={{ "--tick-left": `${pct}%` }}
           >
             {axisLabel(offset)}
           </span>
@@ -3157,16 +3170,45 @@ function TimelineAxis({
 }
 
 /**
+ * Holds the selected run's time scale for the bars, durations, axis and lines
+ * inside it. While the run is live it ticks once a second, so bars grow
+ * toward the now line and only those parts re-render, not the rows.
+ */
+function TimelineClock({
+  children,
+  group,
+  live,
+}: {
+  children: ReactNode;
+  group: SpanGroup;
+  live: boolean;
+}): React.JSX.Element {
+  const now = useNow(live ? LIVE_TICK_MS : null);
+  // The clock can trail the stream by a tick, so now is never earlier than
+  // the newest span. Keyed per run, a switch to a live run starts it fresh.
+  const nowMs = Math.max(group.windowStart + group.windowSpan, now);
+  const scale: TimelineScale = live
+    ? {
+        startMs: group.windowStart,
+        spanMs: (nowMs - group.windowStart) * LIVE_HEADROOM,
+        nowMs: nowMs,
+      }
+    : { startMs: group.windowStart, spanMs: group.windowSpan, nowMs: null };
+
+  return <TimelineScaleContext value={scale}>{children}</TimelineScaleContext>;
+}
+
+/**
  * The now line and a faint line at each issue, drawn once over the timeline
  * column of every row. `--timeline-left` is where that column's bars start.
  */
 function TimelineLines({
   issues,
-  scale,
 }: {
   issues: RunIssues["all"];
-  scale: TimelineScale;
 }): React.JSX.Element {
+  const scale = useContext(TimelineScaleContext);
+
   return (
     <div
       aria-hidden="true"
@@ -3240,7 +3282,7 @@ function renderFoldRows(
       onFocusTrace={view.onFocusTrace}
       issue={null}
       below={view.issues.below.get(fold.span.spanId) ?? []}
-      scale={view.scale}
+      live={view.live}
     />,
   ];
   if (!isOpen) return rows;
@@ -3277,10 +3319,7 @@ function renderSpanRows(
   const isRoot = isRootSpanKind(span.kind);
   // A root is judged on its own freshness; a child on its enclosing root's liveness.
   const rootLive = isRoot ? isTaskRunning(span) : enclosingRootLive;
-  // The task row stands for the whole request, so a first pass that failed
-  // and was continued does not paint it failed.
-  const issue =
-    isTaskRow && view.group.status !== "error" ? null : spanIssue(span);
+  const issue = view.issues.own.get(span.spanId) ?? null;
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}
@@ -3297,7 +3336,7 @@ function renderSpanRows(
       onFocusTrace={view.onFocusTrace}
       issue={issue}
       below={view.issues.below.get(span.spanId) ?? []}
-      scale={view.scale}
+      live={view.live}
     />,
   ];
   if (issue?.level === "error" && issue.text) {

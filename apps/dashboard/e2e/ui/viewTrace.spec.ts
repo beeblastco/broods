@@ -11,13 +11,16 @@ const TASKS = 60;
 /** The task View trace opens: the last row on Tracing's first page. */
 const TARGET_TASK = 50;
 
-test("View trace opens Tracing on the task without sliding the page", async ({
-  page,
-}) => {
+test.beforeEach(async ({ page }) => {
   await answerObservabilitySocket(page, {
     logs: logEntries(),
     traces: spanRows(),
   });
+});
+
+test("View trace opens Tracing on the task without sliding the page", async ({
+  page,
+}) => {
   await page.goto("/ui-gallery?tab=monitoring");
 
   // The newest log belongs to the target task, so opening it needs no scroll.
@@ -44,10 +47,6 @@ test("View trace opens Tracing on the task without sliding the page", async ({
 test("a Tracing link opens its search, range and task, and ignores a bad param", async ({
   page,
 }) => {
-  await answerObservabilitySocket(page, {
-    logs: logEntries(),
-    traces: spanRows(),
-  });
   // The fixture's tasks are weeks old, so only the 30 day range lists them.
   await page.goto(
     `/ui-gallery?tab=tracing&q=task&range=30d&trace=${traceId(5)}&from=abc`,
@@ -72,10 +71,6 @@ test("a Tracing link opens its search, range and task, and ignores a bad param",
 test("a log line the search hides drops its strip marker and panel", async ({
   page,
 }) => {
-  await answerObservabilitySocket(page, {
-    logs: logEntries(),
-    traces: spanRows(),
-  });
   await page.goto("/ui-gallery?tab=monitoring");
   const marker = page.locator("span.w-px.bg-destructive");
 
