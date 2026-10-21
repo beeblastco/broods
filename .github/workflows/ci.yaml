@@ -396,11 +396,10 @@ jobs:
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
           cp -r public .next/standalone/apps/dashboard/public
           # @rollout tests need Convex functions this build calls that the dev
-          # backend only has after the merge. The render-time and layout specs
-          # time a shared dev backend and CSS transitions on a shared runner,
-          # so they flaked here more than they caught. e2e-dashboard.yaml runs
-          # all of them after the rollout.
-          bunx playwright test --project=app --project=perf --grep-invert "@rollout|pages\.spec|navigationClock\.spec|layout\.spec"
+          # backend only has after the merge; @post-rollout tests time the
+          # shared dev backend or a CSS transition and flaked here.
+          # e2e-dashboard.yaml runs both after the rollout.
+          bunx playwright test --project=app --project=perf --grep-invert "@rollout|@post-rollout"
 
       - name: Upload traces of a failed signed-in run
         if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
