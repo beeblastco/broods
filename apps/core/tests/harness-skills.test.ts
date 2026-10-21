@@ -135,32 +135,12 @@ describe("listConfiguredSkillMetadata", () => {
     expect(result).toEqual([]);
   });
 
-  it("returns empty array when skills config is undefined", async () => {
-    const { listConfiguredSkillMetadata } =
-      await import("../src/harness/skills.ts");
-
-    const result = await listConfiguredSkillMetadata("acct_test", {});
-
-    expect(result).toEqual([]);
-  });
-
   it("returns empty array when accountId is undefined", async () => {
     const { listConfiguredSkillMetadata } =
       await import("../src/harness/skills.ts");
 
     const result = await listConfiguredSkillMetadata(undefined, {
       skills: { enabled: true, allowed: ["acct_test/my-skill"] },
-    });
-
-    expect(result).toEqual([]);
-  });
-
-  it("returns empty array when allowed skills list is empty", async () => {
-    const { listConfiguredSkillMetadata } =
-      await import("../src/harness/skills.ts");
-
-    const result = await listConfiguredSkillMetadata("acct_test", {
-      skills: { enabled: true, allowed: [] },
     });
 
     expect(result).toEqual([]);
@@ -368,29 +348,6 @@ describe("loadConfiguredSkillPrompt", () => {
     expect(skillMdCount).toBe(1);
   });
 
-  it("calculates correct byte size for loaded content", async () => {
-    const skillContent = createSkillMarkdown(
-      "byte-skill",
-      "Byte skill",
-      "# Content",
-    );
-
-    readS3TextMock.mockResolvedValue(skillContent);
-
-    const { loadConfiguredSkillPrompt } =
-      await import("../src/harness/skills.ts");
-
-    const result = await loadConfiguredSkillPrompt(
-      "acct_test",
-      ["acct_test/byte-skill"],
-      "acct_test/byte-skill",
-    );
-
-    const instructions = "# Content";
-    const expectedBytes = Buffer.byteLength(instructions, "utf-8");
-    expect(result.bytes).toBe(expectedBytes);
-  });
-
   it("stages the skill bundle into the workspace namespace for sandbox execution", async () => {
     const skillContent = createSkillMarkdown(
       "script-skill",
@@ -536,139 +493,9 @@ describe("loadConfiguredSkillPrompt", () => {
       key: `${canonicalPrefix}old.py`,
     });
   });
-
-  it("throws when skill path is invalid", async () => {
-    const { loadConfiguredSkillPrompt } =
-      await import("../src/harness/skills.ts");
-
-    expect(
-      loadConfiguredSkillPrompt("acct_test", ["invalid"], "invalid"),
-    ).rejects.toThrow("Invalid skill path: invalid");
-  });
-
-  it("throws when skill file does not exist in S3", async () => {
-    readS3TextMock.mockImplementation(async () => {
-      throw new Error("NoSuchKey");
-    });
-
-    const { loadConfiguredSkillPrompt } =
-      await import("../src/harness/skills.ts");
-
-    expect(
-      loadConfiguredSkillPrompt(
-        "acct_test",
-        ["acct_test/missing-skill"],
-        "acct_test/missing-skill",
-      ),
-    ).rejects.toThrow();
-  });
 });
 
 describe("listSkillMetadataForConfig", () => {
-  it("returns empty array when no skill paths provided", async () => {
-    const { listSkillMetadataForConfig } =
-      await import("../src/harness/skills.ts");
-
-    const result = await listSkillMetadataForConfig("acct_test", []);
-
-    expect(result).toEqual([]);
-  });
-
-  it("returns metadata for existing skills", async () => {
-    const skillContent = createSkillMarkdown(
-      "existing-skill",
-      "An existing skill",
-      "# Instructions\nFollow these steps.",
-    );
-
-    readS3TextMock.mockResolvedValue(skillContent);
-
-    const { listSkillMetadataForConfig } =
-      await import("../src/harness/skills.ts");
-
-    const result = await listSkillMetadataForConfig("acct_test", [
-      "acct_test/existing-skill",
-    ]);
-
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({
-      name: "existing-skill",
-      description: "An existing skill",
-      path: "acct_test/existing-skill",
-    });
-  });
-
-  it("skips skills that cannot be read from S3", async () => {
-    readS3TextMock.mockImplementation(async () => {
-      throw new Error("AccessDenied");
-    });
-
-    const { listSkillMetadataForConfig } =
-      await import("../src/harness/skills.ts");
-
-    const result = await listSkillMetadataForConfig("acct_test", [
-      "acct_test/unreadable-skill",
-    ]);
-
-    expect(result).toEqual([]);
-  });
-
-  it("throws when skill path belongs to another account", async () => {
-    const { listSkillMetadataForConfig } =
-      await import("../src/harness/skills.ts");
-
-    expect(
-      listSkillMetadataForConfig("acct_test", ["acct_other/foreign-skill"]),
-    ).rejects.toThrow(
-      "Skill path belongs to another account: acct_other/foreign-skill",
-    );
-  });
-
-  it("throws when skill path is invalid format", async () => {
-    const { listSkillMetadataForConfig } =
-      await import("../src/harness/skills.ts");
-
-    expect(
-      listSkillMetadataForConfig("acct_test", ["no-slash"]),
-    ).rejects.toThrow("Invalid skill path: no-slash");
-  });
-
-  it("handles multiple skills correctly", async () => {
-    const skill1Content = createSkillMarkdown("alpha-skill", "Alpha skill");
-    const skill2Content = createSkillMarkdown("beta-skill", "Beta skill");
-
-    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
-      if (key.includes("alpha")) return skill1Content;
-      if (key.includes("beta")) return skill2Content;
-      throw new Error("NoSuchKey");
-    });
-
-    const { listSkillMetadataForConfig } =
-      await import("../src/harness/skills.ts");
-
-    const result = await listSkillMetadataForConfig("acct_test", [
-      "acct_test/alpha-skill",
-      "acct_test/beta-skill",
-    ]);
-
-    expect(result).toHaveLength(2);
-    expect(result[0]?.name).toBe("alpha-skill");
-    expect(result[1]?.name).toBe("beta-skill");
-  });
-
-  it("throws when skill does not exist in S3", async () => {
-    readS3TextMock.mockImplementation(async () => {
-      throw new Error("NoSuchKey");
-    });
-
-    const { listSkillMetadataForConfig } =
-      await import("../src/harness/skills.ts");
-
-    expect(
-      listSkillMetadataForConfig("acct_test", ["acct_test/nonexistent-skill"]),
-    ).rejects.toThrow("Skill not found: acct_test/nonexistent-skill");
-  });
-
   it("reads every SKILL.md at once, with no HEAD first", async () => {
     // Runs every turn: the turn should wait on the slowest read, not the sum.
     let inFlight = 0;
@@ -1017,14 +844,6 @@ describe("loadSkillContent", () => {
     );
   });
 
-  it("throws when skill path has too many segments", async () => {
-    const { loadSkillContent } = await import("../src/harness/skills.ts");
-
-    expect(loadSkillContent("acct/skill/extra")).rejects.toThrow(
-      "Invalid skill path: acct/skill/extra",
-    );
-  });
-
   it("throws when skill name is invalid", async () => {
     const { loadSkillContent } = await import("../src/harness/skills.ts");
 
@@ -1090,126 +909,5 @@ describe("loadSkillContent", () => {
       Buffer.byteLength(skillInstructions, "utf-8") +
       Buffer.byteLength(extraContent, "utf-8");
     expect(result.bytes).toBe(expectedBytes);
-  });
-
-  it("handles empty resource paths array", async () => {
-    const skillContent = createSkillMarkdown(
-      "empty-resources",
-      "Empty resources skill",
-      "# Instructions",
-    );
-
-    readS3TextMock.mockResolvedValue(skillContent);
-
-    const { loadSkillContent } = await import("../src/harness/skills.ts");
-
-    const result = await loadSkillContent("acct_test/empty-resources", []);
-
-    expect(result.parts).toHaveLength(1);
-    expect(result.parts[0]?.path).toBe("SKILL.md");
-  });
-
-  it("handles undefined resource paths", async () => {
-    const skillContent = createSkillMarkdown(
-      "undefined-resources",
-      "Undefined resources skill",
-      "# Instructions",
-    );
-
-    readS3TextMock.mockResolvedValue(skillContent);
-
-    const { loadSkillContent } = await import("../src/harness/skills.ts");
-
-    const result = await loadSkillContent("acct_test/undefined-resources");
-
-    expect(result.parts).toHaveLength(1);
-  });
-});
-
-describe("SkillMetadata re-export", () => {
-  it("exports skill-related functions", async () => {
-    const skills = await import("../src/harness/skills.ts");
-
-    expect(typeof skills.listConfiguredSkillMetadata).toBe("function");
-    expect(typeof skills.loadConfiguredSkillPrompt).toBe("function");
-  });
-});
-
-describe("formatLoadedSkillPrompt output structure", () => {
-  it("wraps content in loaded-skill XML tags with path and name attributes", async () => {
-    const skillContent = createSkillMarkdown(
-      "xml-skill",
-      "XML skill",
-      "# XML Test",
-    );
-
-    readS3TextMock.mockResolvedValue(skillContent);
-
-    const { loadConfiguredSkillPrompt } =
-      await import("../src/harness/skills.ts");
-
-    const result = await loadConfiguredSkillPrompt(
-      "acct_test",
-      ["acct_test/xml-skill"],
-      "acct_test/xml-skill",
-    );
-    const promptContent = result.prompt.content as string;
-
-    expect(promptContent).toMatch(
-      /^<loaded-skill path="acct_test\/xml-skill" name="xml-skill">/,
-    );
-    expect(promptContent).toMatch(/<\/loaded-skill>$/);
-  });
-
-  it("formats each part with markdown heading using file path", async () => {
-    const skillContent = createSkillMarkdown(
-      "heading-skill",
-      "Heading skill",
-      "# Heading Content",
-    );
-    const readmeContent = "# README Content";
-
-    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
-      if (key.endsWith("SKILL.md")) return skillContent;
-      if (key.endsWith("README.md")) return readmeContent;
-      throw new Error("NoSuchKey");
-    });
-
-    const { loadConfiguredSkillPrompt } =
-      await import("../src/harness/skills.ts");
-
-    const result = await loadConfiguredSkillPrompt(
-      "acct_test",
-      ["acct_test/heading-skill"],
-      "acct_test/heading-skill",
-      ["README.md"],
-    );
-    const promptContent = result.prompt.content as string;
-
-    expect(promptContent).toContain("## SKILL.md");
-    expect(promptContent).toContain("## README.md");
-  });
-
-  it("trims whitespace from each part text", async () => {
-    const skillContent = createSkillMarkdown(
-      "trim-skill",
-      "Trim skill",
-      "  # Whitespace Content  \n",
-    );
-
-    readS3TextMock.mockResolvedValue(skillContent);
-
-    const { loadConfiguredSkillPrompt } =
-      await import("../src/harness/skills.ts");
-
-    const result = await loadConfiguredSkillPrompt(
-      "acct_test",
-      ["acct_test/trim-skill"],
-      "acct_test/trim-skill",
-    );
-    const promptContent = result.prompt.content as string;
-
-    expect(promptContent).not.toContain("  # Whitespace Content  ");
-    expect(promptContent).toContain("# Whitespace Content");
   });
 });

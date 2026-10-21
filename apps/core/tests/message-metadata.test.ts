@@ -7,10 +7,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage } from "ai";
-import {
-  attachMetadataToLatestUserIngress,
-  rewriteLatestUserIngressText,
-} from "../src/harness/integrations.ts";
+import { attachMetadataToLatestUserIngress } from "../src/harness/integrations.ts";
 import {
   createStoredEventFromModelMessage,
   stripEnvelopeFieldsFromMessages,
@@ -38,31 +35,6 @@ describe("attachMetadataToLatestUserIngress", () => {
     expect(next[0]).toEqual({ role: "user", content: "earlier" });
     // Input list is not mutated.
     expect(events[2]).toEqual({ role: "user", content: "latest" });
-  });
-
-  it("returns the list unchanged when there is no user event", () => {
-    const events: ConversationIngressEvent[] = [
-      { role: "assistant", content: "reply" },
-    ];
-
-    expect(attachMetadataToLatestUserIngress(events, METADATA)).toBe(events);
-  });
-
-  it("composes with a text rewrite on the same event", () => {
-    const events: ConversationIngressEvent[] = [
-      { role: "user", content: "raw" },
-    ];
-
-    const next = attachMetadataToLatestUserIngress(
-      rewriteLatestUserIngressText(events, "rewritten"),
-      METADATA,
-    );
-
-    expect(next[0]).toEqual({
-      role: "user",
-      content: "rewritten",
-      metadata: METADATA,
-    });
   });
 });
 

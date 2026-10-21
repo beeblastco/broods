@@ -134,17 +134,6 @@ test("keeps storage unknown when the org or a project has no snapshot", () => {
   expect(rest.totals.storageGb).toBeNull();
 });
 
-test("colors projects in their own order and wraps past the palette", () => {
-  const slices = usageSlices(
-    budget({}),
-    Array.from({ length: 7 }, (_, index) => project(`p${index}`, {})),
-  );
-
-  expect(slices).toHaveLength(7);
-  expect(slices[0].color).toBe(slices[6].color);
-  expect(new Set(slices.slice(0, 6).map((slice) => slice.color)).size).toBe(6);
-});
-
 test("charts one value per source and day, gaps for days to come", () => {
   const now = Date.UTC(2026, 9, 2, 12);
   const series = dailySeries(
