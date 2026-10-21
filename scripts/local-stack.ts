@@ -205,7 +205,7 @@ function convex(args: readonly string[]): void {
   const result = tryConvexCli(state, args);
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
-  process.exit(result.ok ? 0 : 1);
+  process.exitCode = result.ok ? 0 : 1;
 }
 
 // `--key` prints only the admin secret, the dashboard's sign-in key, for a
