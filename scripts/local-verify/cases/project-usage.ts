@@ -43,30 +43,7 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
   };
 
   asAdmin("user:ensureSynced", {});
-  // Node warns about these conflicting color flags on stderr. The CLI must
-  // leave stdout parseable for callers such as the dashboard browser fixtures.
-  const cli = spawnSync(
-    "bun",
-    [
-      join(import.meta.dir, "..", "..", "local-stack.ts"),
-      "convex",
-      "run",
-      "--identity",
-      identity,
-      "org/orgs:getActive",
-      "{}",
-    ],
-    {
-      encoding: "utf8",
-      env: { ...process.env, FORCE_COLOR: "1", NO_COLOR: "1" },
-    },
-  );
-  const previous: Doc<"orgs"> | null = JSON.parse(cli.stdout);
-  assertStep(
-    "the local Convex CLI keeps JSON on stdout and diagnostics on stderr",
-    cli.status === 0 && cli.stderr.includes("NO_COLOR"),
-    cli.stderr.slice(-300),
-  );
+  const previous = asAdmin("org/orgs:getActive", {}) as Doc<"orgs"> | null;
   // An org of the case's own, made active for its steps, so the totals it
   // reads move only by what it writes.
   const orgId = String(
@@ -74,6 +51,43 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
   );
   try {
     asAdmin("org/orgs:setActive", { orgId: orgId });
+    // Node warns about these conflicting color flags on stderr. Query the
+    // case's org because Convex prints no output for a null result.
+    const cli = spawnSync(
+      "bun",
+      [
+        join(import.meta.dir, "..", "..", "local-stack.ts"),
+        "convex",
+        "run",
+        "--identity",
+        identity,
+        "org/orgs:getActive",
+        "{}",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, FORCE_COLOR: "1", NO_COLOR: "1" },
+      },
+    );
+    assertStep(
+      "the local Convex CLI keeps JSON on stdout and diagnostics on stderr",
+      cli.status === 0 &&
+        cli.stdout.length > 0 &&
+        cli.stderr.includes("NO_COLOR"),
+      JSON.stringify({
+        error: cli.error?.message,
+        signal: cli.signal,
+        status: cli.status,
+        stderr: cli.stderr.slice(-1000),
+        stdout: cli.stdout.slice(-300),
+      }),
+    );
+    const cliOrg: Doc<"orgs"> = JSON.parse(cli.stdout);
+    assertStep(
+      "the local Convex CLI returns the selected org",
+      cliOrg._id === orgId,
+      cli.stdout,
+    );
     // It prints an audit log line after its result, so the account is read back.
     context.convex([
       "run",
