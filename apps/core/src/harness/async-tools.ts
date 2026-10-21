@@ -214,7 +214,7 @@ export class AsyncToolCoordinator {
       );
     } catch (error) {
       await Promise.all(
-        batch.map(({ resultId }): Promise<void> =>
+        batch.map(({ resultId }): Promise<boolean> =>
           markAsyncToolHandback(resultId, "detached"),
         ),
       );

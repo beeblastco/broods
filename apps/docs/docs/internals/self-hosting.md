@@ -323,7 +323,7 @@ flowchart LR
   DO --> C["Container<br/>from Dockerfile"]
 ```
 
-Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (Workers Paid plan, for Containers) and have Docker running when you run `bun run deploy`: wrangler builds the `Dockerfile` image and ships the Worker as the `cloudflareWorkers.sandbox` output. Then give it a key, from `apps/cloudflare-sandbox`:
+Set `CLOUDFLARE_API_TOKEN` (a user API token with Containers Edit: the Containers API refuses account API tokens) and `CLOUDFLARE_ACCOUNT_ID` (Workers Paid plan, for Containers) and have Docker running when you run `bun run deploy`: wrangler builds the `Dockerfile` image and ships the Worker as the `cloudflareWorkers.sandbox` output. Then give it a key, from `apps/cloudflare-sandbox`:
 
 ```bash
 bunx wrangler secret put SANDBOX_API_KEY --name <cloudflareWorkers.sandbox>

@@ -64,6 +64,45 @@ test("the detail column opens beside the table, follows the handle, and keeps th
   expectNear(await width(table), frame);
 });
 
+test("the handle owns the resize cursor, the group holds it through a drag, and no rule restyles the page", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="detail-split"]');
+  await fixture.getByRole("button", { name: "Open details" }).click();
+  const group = fixture.locator('[data-slot="resizable-panel-group"]');
+  const handle = group.getByRole("separator");
+  const box = (await handle.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+
+  // A few pixels off the 1px line still shows the cursor, where a press drags.
+  const offLine = await page.evaluate(
+    ([px, py]) => getComputedStyle(document.elementFromPoint(px, py)!).cursor,
+    [x + 4, y],
+  );
+  expect(offLine).toBe("col-resize");
+  await page.mouse.move(x, y);
+  // The library's `*` rule would reach the group and the body.
+  await expect(group).toHaveCSS("cursor", "auto");
+  const body = page.locator("body");
+  await expect(body).toHaveCSS("cursor", "auto");
+
+  // Off the handle mid-drag, the group shows the resize cursor, even over a
+  // child with its own, and the page outside it stays untouched.
+  const close = group.getByRole("button", { name: "Close details" });
+  await expect(close).toHaveCSS("cursor", "pointer");
+  await page.mouse.down();
+  await page.mouse.move(x - DRAG, y + DRAG, { steps: 5 });
+  await expect(group).toHaveCSS("cursor", "col-resize");
+  await expect(close).toHaveCSS("cursor", "col-resize");
+  await expect(body).toHaveCSS("cursor", "auto");
+
+  await page.mouse.up();
+  await expect(group).toHaveCSS("cursor", "auto");
+  await expect(close).toHaveCSS("cursor", "pointer");
+});
+
 test("on a phone the open detail takes the table's place, and closing it brings the table back", async ({
   page,
 }) => {
@@ -119,9 +158,9 @@ test.describe("drag performance", () => {
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
     await page.mouse.move(x, y);
-    // Hovering the handle sets a page-wide cursor rule and releasing it
-    // commits the layout, once each; a slow runner stretches either past
-    // 50ms. The press and the moves in between count; both are the drag.
+    // Releasing the handle commits the layout once; a slow runner stretches
+    // that past 50ms. The press and the moves in between count; both are the
+    // drag.
     const longTasks = await watchLongTasks(page);
     await page.mouse.down();
     await page.mouse.move(x - DRAG / 2, y, { steps: PERF_STEPS / 2 });

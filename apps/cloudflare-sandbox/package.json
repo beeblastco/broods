@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "check": "tsc --noEmit",
-    "deploy": "wrangler deploy --name \"$WORKER_NAME\""
+    "deploy": "bun -e 'const c = (await import(\"./wrangler.jsonc\")).default; await Bun.write(\"wrangler.deploy.json\", JSON.stringify({ ...c, name: process.env.WORKER_NAME }))' && wrangler deploy --config wrangler.deploy.json"
   },
   "dependencies": {
     "zod": "^4.4.3"
