@@ -314,6 +314,9 @@ export function modelSettingsFromModelConfig(
  * on the ends of the system prompt and the history), OpenAI (and ChatGPT,
  * where a cached prefix spends less of the plan) a promptCacheKey
  * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
+ * A custom endpoint serving a GPT model, like a proxy's `cx/gpt-6-luna`, gets
+ * that key as `prompt_cache_key` in the request body; without it a long run
+ * lands on a server holding only the shared system prompt every few steps.
  * A call without a conversation, like compaction, gets neither: a one-shot
  * request pays the cache write and never reads it back. Explicit account
  * config wins over both defaults.
@@ -340,6 +343,9 @@ export function providerOptionsFromModelConfig(
       },
     };
   }
+  if (providerName === "custom") {
+    return customProviderOptions(agentConfig, conversationKey);
+  }
   if (!STORED_ITEM_PROVIDERS.has(providerName) && providerName !== "chatgpt") {
     return configured;
   }
@@ -353,10 +359,7 @@ export function providerOptionsFromModelConfig(
     ...configured,
     openai: {
       ...openaiOptions,
-      promptCacheKey: createHash("sha256")
-        .update(conversationKey)
-        .digest("hex")
-        .slice(0, 32),
+      promptCacheKey: promptCacheKey(conversationKey),
     },
   };
 }
@@ -943,10 +946,7 @@ function resolveOpenAICompatibleModel(
     supportsMultiPartToolContent: true,
     ...openAIConfig,
     baseURL: baseURL,
-    name:
-      typeof providerConfig.name === "string"
-        ? providerConfig.name
-        : providerName,
+    name: customProviderName(providerConfig),
     includeUsage: true,
   });
 
@@ -1119,6 +1119,32 @@ function requireProviderSettings(
   return providerConfig;
 }
 
+// A custom endpoint's options with its prompt cache key in the request body:
+// the compatible provider copies the options under its name there. Only GPT
+// ids get the field, since a strict endpoint refuses one it does not know.
+function customProviderOptions(
+  agentConfig: AgentConfig,
+  conversationKey: string,
+): AgentModelProviderOptions | undefined {
+  const configured = agentConfig.model?.providerOptions;
+  const name = customProviderName(agentConfig.provider?.custom);
+  const servedModelId = agentConfig.model?.modelId?.split("/").at(-1);
+  if (
+    !GPT_VERSION_PATTERN.test(servedModelId ?? "") ||
+    configured?.[name]?.prompt_cache_key !== undefined
+  ) {
+    return configured;
+  }
+
+  return {
+    ...configured,
+    [name]: {
+      ...configured?.[name],
+      prompt_cache_key: promptCacheKey(conversationKey),
+    },
+  };
+}
+
 function customProviderBaseURL(
   providerConfig: AgentProviderSettings,
 ): string | undefined {
@@ -1132,6 +1158,23 @@ function customProviderBaseURL(
   const trimmed = raw.trim();
 
   return trimmed || undefined;
+}
+
+// The name a custom endpoint's compatible provider reads its options under.
+function customProviderName(
+  providerConfig: AgentProviderSettings | undefined,
+): string {
+  return typeof providerConfig?.name === "string"
+    ? providerConfig.name
+    : "custom";
+}
+
+// One conversation's prompt cache key, the same on every call it makes.
+function promptCacheKey(conversationKey: string): string {
+  return createHash("sha256")
+    .update(conversationKey)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 function createModelOutput(

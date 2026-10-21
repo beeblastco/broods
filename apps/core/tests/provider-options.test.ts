@@ -3,6 +3,7 @@
  * conversation run, and the calls that must not get them.
  */
 
+import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 import { describe, expect, test } from "bun:test";
 import {
   cacheBreakpointFromProviderOptions,
@@ -61,6 +62,71 @@ describe("providerOptionsFromModelConfig", () => {
     const options = providerOptionsFromModelConfig(config, CONVERSATION_KEY);
     expect(options?.anthropic).toBeUndefined();
     expect(options?.openai?.promptCacheKey).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("a custom endpoint serving GPT gets prompt_cache_key under its name", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cx/gpt-6-luna" },
+      provider: {
+        custom: { apiKey: "k", base_url: "https://proxy.test/v1", name: "cx" },
+      },
+    };
+
+    const options = providerOptionsFromModelConfig(config, CONVERSATION_KEY);
+    expect(options?.["cx"]?.["prompt_cache_key"]).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("a custom endpoint serving anything else gets no cache key", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cc/claude-sonnet-5" },
+    };
+
+    expect(
+      providerOptionsFromModelConfig(config, CONVERSATION_KEY),
+    ).toBeUndefined();
+  });
+
+  test("the custom cache key reaches the request body", async () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "gpt-6-luna" },
+    };
+    const bodies: Array<Record<string, unknown>> = [];
+    const chat = new OpenAICompatibleChatLanguageModel("gpt-6-luna", {
+      provider: "custom.chat",
+      url: ({ path }): string => `https://models.example.test/v1${path}`,
+      fetch: Object.assign(
+        async (
+          _url: Parameters<typeof fetch>[0],
+          init?: RequestInit,
+        ): Promise<Response> => {
+          if (typeof init?.body === "string")
+            bodies.push(JSON.parse(init.body));
+
+          return Response.json({
+            choices: [
+              {
+                message: { role: "assistant", content: "ok" },
+                finish_reason: "stop",
+              },
+            ],
+          });
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    const providerOptions = providerOptionsFromModelConfig(
+      config,
+      CONVERSATION_KEY,
+    );
+
+    await chat.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      ...(providerOptions ? { providerOptions: providerOptions } : {}),
+    });
+
+    expect(bodies[0]?.["prompt_cache_key"]).toBe(
+      providerOptions?.["custom"]?.["prompt_cache_key"],
+    );
   });
 
   test("leaves other providers untouched", () => {
