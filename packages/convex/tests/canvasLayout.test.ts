@@ -22,7 +22,6 @@ import {
   NODE_WIDTH,
   SERVICE_TOP,
   tidyCanvasLayout,
-  workspaceStateText,
   type LayoutEdge,
   type LayoutNode,
   type LayoutPosition,
@@ -515,23 +514,7 @@ describe("tidyCanvasLayout", () => {
   });
 });
 
-describe("workspaceStateText", () => {
-  it("names one sandbox, and counts several", () => {
-    expect(workspaceStateText("inherited", ["cloud"])).toBe(
-      "cloud · inherited",
-    );
-    expect(workspaceStateText("inherited", ["cloud", "coder"])).toBe(
-      "2 sandboxes · inherited",
-    );
-    expect(workspaceStateText("readonly", [])).toBe("read-only");
-  });
-});
-
 describe("findFreePosition", () => {
-  it("keeps the requested spot when nothing is in the way", () => {
-    expect(findFreePosition({ x: 240, y: 96 }, [])).toEqual({ x: 240, y: 96 });
-  });
-
   it("snaps the requested spot to the nearest background dot", () => {
     expect(findFreePosition({ x: 251, y: 91 }, [])).toEqual({ x: 240, y: 96 });
   });

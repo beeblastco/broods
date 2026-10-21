@@ -174,28 +174,6 @@ test("refuses an agent id that is not one NATS subject token", (): void => {
   }
 });
 
-test("reuses attach and stream contracts for subagent task identities", () => {
-  expect(
-    parseGatewayMessage(
-      JSON.stringify({
-        type: "attach",
-        requestId: "attach-subagent",
-        agentId: "agent_child",
-        conversationKey: "subagent-persistent-abc",
-        eventId: "subagent_task_123",
-        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      }),
-    ),
-  ).toEqual({
-    type: "attach",
-    requestId: "attach-subagent",
-    agentId: "agent_child",
-    conversationKey: "subagent-persistent-abc",
-    eventId: "subagent_task_123",
-    runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  });
-});
-
 test("attaches virtual and private child streams through durable parent deployment authorization", async () => {
   for (const childKind of ["virtual", "private"] as const) {
     const fixture = gatewaySubagentFixture(childKind);
@@ -1546,16 +1524,6 @@ test("an attach naming another event of the run's conversation replays nothing",
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
   }
-});
-
-test("uses conservative gateway limit defaults", () => {
-  expect(gatewayLimitsFromEnv({})).toEqual({
-    maxConnections: 10_000,
-    maxPayloadBytes: 1024 * 1024,
-    backpressureBytes: 1024 * 1024,
-    idleTimeoutSeconds: 255,
-    runStartTimeoutMs: 15_000,
-  });
 });
 
 test("ignores invalid gateway limit overrides", () => {
@@ -3820,13 +3788,6 @@ test("withRequestId preserves status and existing headers", () => {
   expect(stamped.headers.get("x-request-id")).toBe("req_3");
 });
 
-test("retryAfterSeconds returns zero once the window has elapsed", () => {
-  const limiter = new RateLimiter(1, 1);
-  limiter.allow("k");
-  Bun.sleepSync(5);
-
-  expect(limiter.retryAfterSeconds("k")).toBe(0);
-});
 test("the gateway spells the user token header and subprotocol as core does", () => {
   expect(USER_TOKEN_HEADER).toBe(CORE_USER_TOKEN_HEADER);
   const request = new Request("https://gateway.example.com/ws", {

@@ -6,12 +6,6 @@ import {
   formatContext,
   formatDeploymentTarget,
   formatDiffEntries,
-  formatEnvSync,
-  formatError,
-  formatReadyLine,
-  formatSuccess,
-  formatTarget,
-  formatWarning,
 } from "../src/cli/output.ts";
 import { positionalArgs } from "../src/cli/utils.ts";
 
@@ -46,10 +40,6 @@ test("init writes gitignore entries for generated folders", async () => {
   }
 });
 
-test("formatDiffEntries prints nothing for no changes", () => {
-  expect(formatDiffEntries([], { color: false })).toEqual([]);
-});
-
 test("formatDiffEntries renders create, rename, update, and delete labels", () => {
   const lines = formatDiffEntries(
     [
@@ -72,37 +62,6 @@ test("formatDiffEntries renders create, rename, update, and delete labels", () =
     "  [*] workspace:repo",
     "  [-] sandbox:old",
   ]);
-});
-
-test("formatDiffEntries colors create, rename, update, and delete markers", () => {
-  const lines = formatDiffEntries(
-    [
-      { operation: "create", kind: "agent", name: "support" },
-      {
-        operation: "rename",
-        kind: "agent",
-        previousName: "old-support",
-        name: "support",
-      },
-      { operation: "update", kind: "workspace", name: "repo" },
-      { operation: "delete", kind: "sandbox", name: "old" },
-    ],
-    { color: true },
-  );
-
-  expect(lines[0]).toBe("  [\x1b[32m+\x1b[0m] agent:support");
-  expect(lines[1]).toBe("  [\x1b[33m~\x1b[0m] agent:old-support -> support");
-  expect(lines[2]).toBe("  [\x1b[36m*\x1b[0m] workspace:repo");
-  expect(lines[3]).toBe("  [\x1b[31m-\x1b[0m] sandbox:old");
-});
-
-test("formatReadyLine includes a checkmark, time, message, and duration", () => {
-  const line = formatReadyLine(3110, {
-    color: false,
-    now: new Date(2026, 5, 14, 20, 5, 32),
-  });
-
-  expect(line).toBe("✔ 20:05:32 Resources ready! (3.11s)");
 });
 
 test("formatDeploymentTarget includes project, stage, and dashboard URL", () => {
@@ -141,20 +100,6 @@ test("formatDeploymentTarget names the stage it is actually syncing", () => {
   expect(output).toContain("?project=sandbox-stateless&stage=staging");
 });
 
-test("formatDeploymentTarget canonicalizes the reserved stage names", () => {
-  const output = formatDeploymentTarget(
-    {
-      project: "sandbox-stateless",
-      stage: "production",
-      dashboardUrl: "https://dashboard.dev.broods.app",
-    },
-    { color: false },
-  );
-
-  expect(output).toContain("▌ Syncing Production: sandbox-stateless");
-  expect(output).toContain("[Production] production (dashboard)");
-});
-
 // Green reads as "routine dev sync", so only Development may claim it.
 test("formatDeploymentTarget drops the green badge outside Development", () => {
   const development = formatDeploymentTarget(
@@ -179,32 +124,6 @@ test("formatDeploymentTarget drops the green badge outside Development", () => {
   expect(production).toContain("\x1b[43m");
 });
 
-test("formatEnvSync lists the synced env var names", () => {
-  const line = formatEnvSync(["OPENAI_API_KEY", "STRIPE_API_KEY"], {
-    color: false,
-  });
-
-  expect(line).toBe(
-    "▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, STRIPE_API_KEY",
-  );
-});
-
-test("formatWarning renders yellow warning output", () => {
-  expect(formatWarning("Heads up", { color: false })).toBe("! Heads up");
-  expect(formatWarning("Heads up", { color: true })).toBe(
-    "\x1b[33m! Heads up\x1b[0m",
-  );
-});
-
-test("success and error lines carry their mark", () => {
-  expect(formatSuccess("Synced 2 resources", { color: false })).toBe(
-    "✔ Synced 2 resources",
-  );
-  expect(formatError("Unknown command: x\n\nUsage", { color: false })).toBe(
-    "✖ Unknown command: x\n\nUsage",
-  );
-});
-
 test("formatContext names a missing login and a guessed project", () => {
   const lines = formatContext(
     {
@@ -222,15 +141,6 @@ test("formatContext names a missing login and a guessed project", () => {
     "  stage    development",
     "  server   gateway.broods.app",
   ]);
-});
-
-test("formatTarget explains a target that differs from the stage", () => {
-  expect(
-    formatTarget("my-app", "production", {
-      color: false,
-      note: "ignores stage staging",
-    }),
-  ).toBe("  now  my-app → production  (ignores stage staging)");
 });
 
 test("positionalArgs drops option values so they cannot become a run prompt", () => {

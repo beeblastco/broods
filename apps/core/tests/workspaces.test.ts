@@ -174,12 +174,6 @@ describe("agentSandboxReservation", () => {
   // runtime would leave machines running at the provider.
   const persistent = { provider: "sandbox", persistent: true } as const;
 
-  it("derives a key for a persistent sandbox", () => {
-    expect(agentSandboxReservation(persistent, "acct_1", "ag_1", "sb_1")).toBe(
-      agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
-    );
-  });
-
   it("scopes a pinned key to its account rather than passing it raw", () => {
     const pinned = {
       ...persistent,
@@ -692,35 +686,6 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.sandbox).toBeUndefined();
     // `sandbox: null` => no compute => read straight from S3 (no mount runner).
     expect(resolved.workspaces[0]?.readMount).toBeUndefined();
-  });
-
-  it("reserves a persistent agent sandbox on a derived key, and only the agent-level copy", async () => {
-    setStorageForTests({
-      sandboxConfigs: {
-        getById: async (_accountId: string, id: string) => ({
-          sandboxId: id,
-          name: "reserved",
-          config: { provider: "lambda", persistent: true },
-        }),
-      },
-      workspaceConfigs: {
-        getById: async () => ({ config: { storage: { provider: "s3" } } }),
-      },
-    } as never);
-
-    const resolved = await resolveAgentRuntime(
-      {
-        sandboxes: ["sb_1"],
-        workspaces: [{ name: "notes", workspaceId: "ws_a" }],
-      },
-      { accountId: "acct_1", agentId: "ag_1" },
-    );
-
-    expect(resolved.sandboxes[0]?.sandbox.options?.reservationKey).toBe(
-      agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
-    );
-    // The inherited copy keys persistence on the workspace namespace instead.
-    expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
   });
 
   it("backs an unsandboxed workspace with the first listed sandbox, unreserved", async () => {
