@@ -41,7 +41,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useParams, useRouter } from "next/navigation";
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
 import { useCallback } from "react";
 
 export function UserMenu(): React.JSX.Element | null {
@@ -226,7 +226,9 @@ export function UserMenu(): React.JSX.Element | null {
               variant="destructive"
               className="cursor-pointer"
               onClick={() => {
-                posthog.reset();
+                void analytics.then((posthog): void => {
+                  posthog.reset();
+                });
                 signOut();
               }}
             >

@@ -19,7 +19,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, Trash2 } from "lucide-react";
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
 import { useState } from "react";
 
 interface Props {
@@ -79,7 +79,9 @@ export function WebhooksPanel({
         index: index,
         enabled: enabled,
       });
-      posthog.capture("webhook_enabled_changed", { enabled: enabled });
+      void analytics.then((posthog): void => {
+        posthog.capture("webhook_enabled_changed", { enabled: enabled });
+      });
     } catch (error) {
       setToggleError(toErrorMessage(error));
     }
@@ -334,8 +336,10 @@ function AddWebhookForm({
         secret: secret.trim(),
         events: eventFilter,
       });
-      posthog.capture("webhook_added", {
-        has_event_filter: eventFilter.length > 0,
+      void analytics.then((posthog): void => {
+        posthog.capture("webhook_added", {
+          has_event_filter: eventFilter.length > 0,
+        });
       });
       onDone();
     } catch (err) {
