@@ -6,7 +6,10 @@
  * and downloads change the list here and are written to `[data-files-log]`
  * for a spec.
  */
-import type { FileContent } from "@/app/components/side-panel/FilePreview";
+import {
+  isImageFile,
+  type FileContent,
+} from "@/app/components/side-panel/FilePreview";
 import {
   renamedPath,
   withoutPath,
@@ -14,7 +17,7 @@ import {
   WorkspaceFilesView,
   type FileRecord,
 } from "@/app/components/side-panel/WorkspaceFilesTab";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 const FILES: FileRecord[] = [
   { path: "docs", name: "docs", isFolder: true },
@@ -61,11 +64,13 @@ export function WorkspaceFilesStandIn({
     (entry: string): void => setLog((prev) => [...prev, entry]),
     [],
   );
+  // Keyed by path, so a rename moves the text with its file.
+  const contents = useRef(new Map(Object.entries(CONTENTS)));
   const loadFile = useCallback(
     async (file: FileRecord): Promise<FileContent> =>
-      file.path === "logo.svg"
+      isImageFile(file.name)
         ? { kind: "image", url: LOGO_URL }
-        : { kind: "text", text: CONTENTS[file.path] ?? "" },
+        : { kind: "text", text: contents.current.get(file.path) ?? "" },
     [],
   );
   const fileUrl = useCallback(
@@ -115,6 +120,15 @@ export function WorkspaceFilesStandIn({
               return false;
             }
             setFiles((prev) => withRenamedPath(prev, node.path, newPath));
+            for (const [path, text] of Array.from(contents.current)) {
+              if (path !== node.path && !path.startsWith(`${node.path}/`))
+                continue;
+              contents.current.delete(path);
+              contents.current.set(
+                `${newPath}${path.slice(node.path.length)}`,
+                text,
+              );
+            }
             record(`rename ${node.path} ${newPath}`);
 
             return true;

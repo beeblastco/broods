@@ -127,6 +127,33 @@ test("a pinned tab follows its file through a rename", async ({ page }) => {
 
   await expect(tab(writer, "todo.txt")).toHaveAttribute("data-pinned", "true");
   await expect(tab(writer, "notes.txt")).toHaveCount(0);
+  await expect(panel(writer)).toContainText("refund policy");
+});
+
+test("a folder rename keeps the files open under it", async ({ page }) => {
+  const writer = await openExplorer(page, "files-writer");
+  await row(writer, "docs").click();
+  await row(writer, "guide.md").click();
+  await page.keyboard.press("Enter");
+
+  await row(writer, "docs").click();
+  await page.keyboard.press("F2");
+  await writer.getByRole("textbox", { name: "Rename docs" }).fill("handbook");
+  await page.keyboard.press("Enter");
+
+  await expect(tab(writer, "guide.md")).toHaveAttribute("data-pinned", "true");
+  await expect(panel(writer)).toHaveAccessibleName("handbook/guide.md");
+});
+
+test("closing a pinned tab closes it even while its file is selected", async ({
+  page,
+}) => {
+  const writer = await openExplorer(page, "files-writer");
+  await row(writer, "notes.txt").click();
+  await page.keyboard.press("Enter");
+
+  await writer.getByRole("button", { name: "Close notes.txt" }).click();
+  await expect(writer.getByRole("tablist")).toHaveCount(0);
 });
 
 test("a member can preview files", async ({ page }) => {

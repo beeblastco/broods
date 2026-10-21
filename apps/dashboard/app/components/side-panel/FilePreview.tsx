@@ -137,15 +137,18 @@ export function usePreviewTabs(
       setActive(path);
     },
     close: (path) => {
-      if (pinned.includes(path)) {
-        setPinned((prev) => prev.filter((p) => p !== path));
-      } else {
-        setDismissed(path);
-      }
+      setPinned((prev) => prev.filter((p) => p !== path));
+      // A still-selected file would otherwise reopen as the transient tab.
+      setDismissed(path);
     },
     rename: (path, newPath) => {
-      setPinned((prev) => prev.map((p) => (p === path ? newPath : p)));
-      if (active === path) setActive(newPath);
+      // A folder rename moves every open file under it as well.
+      const move = (p: string): string =>
+        p === path || p.startsWith(`${path}/`)
+          ? `${newPath}${p.slice(path.length)}`
+          : p;
+      setPinned((prev) => prev.map(move));
+      setActive((prev) => (prev === null ? prev : move(prev)));
     },
   };
 }
