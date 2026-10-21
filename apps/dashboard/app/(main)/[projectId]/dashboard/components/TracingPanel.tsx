@@ -2815,8 +2815,11 @@ function TaskWaterfall({
   const { root } = group;
   const runs = group.spans.filter((span) => isRootSpanKind(span.kind));
   // groupSpans judged the latest pass when the stream last moved; one that
-  // ran past its limit since has ended, so the clock stops with it.
-  const live = group.live && isTaskRunning(runs.at(-1) ?? root);
+  // ran past its limit since has ended, so the clock stops with it. A
+  // subagent's root is not a pass.
+  const live =
+    group.live &&
+    isTaskRunning(runs.findLast((span) => span.kind !== "subtask") ?? root);
   const now = useNow(live ? LIVE_TICK_MS : null);
   const issues = useMemo(() => runIssues(group), [group]);
   // The clock can trail the stream by a tick, so now is never earlier than
