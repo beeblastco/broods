@@ -6102,13 +6102,13 @@ export declare const internal: {
       "mutation",
       "internal",
       { eventId: string; handback: "detached" | "stored" },
-      null
+      boolean
     >;
     observeAsyncToolResult: FunctionReference<
       "mutation",
       "internal",
       { handback: "detached" | "stored"; resultId: string },
-      null
+      boolean
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
     releaseClaim: FunctionReference<

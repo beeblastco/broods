@@ -27,10 +27,12 @@ interface GetSubagentStatusContext extends SubagentToolContext {
   watch?: SubagentWatch;
 }
 
+// `delivery: "automatic"` stands in for the result when a resume of it already
+// waits in the queue and tells the conversation next.
 type SubagentStatusOutput = Pick<
   AsyncAgentResultRecord,
   "status" | "response" | "error"
->;
+> & { delivery?: "automatic" };
 
 export default function getSubagentStatusTool(
   context: GetSubagentStatusContext,
@@ -68,13 +70,16 @@ export default function getSubagentStatusTool(
         // coordinator marks it once the step that carries this read is saved
         // (`confirmDelivered`), so a pod that dies in between leaves it to the
         // sweep. A detached row is the sweep's already, so the read marks it
-        // now, as does a read with no coordinator to confirm it later.
+        // now, as does a read with no coordinator to confirm it later. A
+        // resume of it already queued keeps it: that resume tells it next, so
+        // this read hands nothing over.
         if (record.status === "completed" || record.status === "failed") {
           if (
             isHandbackOwed(record) &&
-            (!context.watch || record.handback !== "pending")
+            (!context.watch || record.handback !== "pending") &&
+            (await markAsyncAgentHandback(record.eventId, "stored"))
           ) {
-            await markAsyncAgentHandback(record.eventId, "stored");
+            return { status: record.status, delivery: "automatic" };
           }
           context.watch?.markDelivered(record.eventId);
         }

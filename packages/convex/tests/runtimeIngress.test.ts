@@ -2207,6 +2207,51 @@ describe("runtime ingress", () => {
     ).toBe(2);
   });
 
+  test("a clear refused by a live owner still writes down the queued work it expired", async (): Promise<void> => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const conversationKey = conversationKeyFor(accountId);
+      for (const role of ["owner", "queued"]) {
+        await t.mutation(internal.runtimeIngress.accept, {
+          ...admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: `clear-${role}`,
+            mode: "followup",
+          }),
+          envelopeTtlMs: 1_000,
+        });
+      }
+      // The queued envelope expires while the owner's lease still runs.
+      vi.setSystemTime(Date.now() + 1_001);
+
+      expect(
+        await t.mutation(internal.runtimeIngress.acquireClear, {
+          accountId: accountId,
+          agentId: "test-agent",
+          conversationKey: conversationKey,
+          ownerEventId: "clear",
+          leaseTtlMs: 60_000,
+        }),
+      ).toBeNull();
+      expect(
+        await t.run(
+          async (ctx) =>
+            await ctx.db
+              .query("runtimeConversationCoordinators")
+              .withIndex("by_conversationKey", (q) =>
+                q.eq("conversationKey", conversationKey),
+              )
+              .unique(),
+        ),
+      ).toMatchObject({ queuedCount: 0, queuedBytes: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("recovery promotes queued work the counter lost and reconciles the counter", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -2630,7 +2675,8 @@ interface LateResultKind {
   ) => Promise<string | undefined>;
   listed: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
   // The parent's status tool read of the row, which stores it.
-  read: (t: TestConvex<typeof schema>, id: string) => Promise<void>;
+  // True when a queued resume keeps the result from it.
+  read: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
   // The owner `busy` taking the queued resume, as its run does.
   apply: (
     t: TestConvex<typeof schema>,
@@ -2677,12 +2723,11 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
           status: "completed",
         })
       ).page.some((row): boolean => row.eventId === id),
-    read: async (t, id): Promise<void> => {
+    read: async (t, id): Promise<boolean> =>
       await t.mutation(internal.runtime.markAsyncAgentHandback, {
         eventId: id,
         handback: "stored",
-      });
-    },
+      }),
     apply: async (
       t,
       conversationKey,
@@ -2727,12 +2772,11 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
           status: "completed",
         })
       ).page.some((row): boolean => row.resultId === id),
-    read: async (t, id): Promise<void> => {
+    read: async (t, id): Promise<boolean> =>
       await t.mutation(internal.runtime.observeAsyncToolResult, {
         resultId: id,
         handback: "stored",
-      });
-    },
+      }),
     apply: async (
       t,
       conversationKey,
@@ -2752,7 +2796,6 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
   // resume admission that carries it.
   async function busyConversation(): Promise<{
     t: TestConvex<typeof schema>;
-    accountId: Id<"accounts">;
     conversationKey: string;
     ownerGeneration: number;
     resume: (options?: {
@@ -2776,7 +2819,6 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
 
     return {
       t: t,
-      accountId: accountId,
       conversationKey: conversationKey,
       ownerGeneration: busy.ownerGeneration!,
       resume: async (
@@ -2839,57 +2881,19 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
-  test("completes a queued resume whose result a status read took, and applies the work behind it", async (): Promise<void> => {
-    const { t, accountId, conversationKey, ownerGeneration, resume } =
+  test("leaves a queued result to its resume when a status read finds it, so a turn that never saves the read loses nothing", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();
+    const before = await kind.handback(t, "late");
     expect(await resume()).toMatchObject({ outcome: "queued" });
-    await t.mutation(
-      internal.runtimeIngress.accept,
-      admission({
-        accountId: accountId,
-        conversationKey: conversationKey,
-        eventId: "after",
-        mode: kind.mode,
-      }),
-    );
 
-    await kind.read(t, "late");
+    // The read hands nothing over, and its turn then ends without saving.
+    expect(await kind.read(t, "late")).toBe(true);
+    expect(await kind.handback(t, "late")).toBe(before);
     expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
-      { contributingEventIds: ["after"], events: [{ content: "after" }] },
+      { contributingEventIds: ["resume"] },
     );
-    expect(
-      await t.query(internal.runtimeIngress.getStatus, {
-        accountId: accountId,
-        runId: "run_resume",
-      }),
-    ).toMatchObject({ status: "completed" });
-  });
-
-  test("writes the queue counters down when a clear refused by the owner completes the resume", async (): Promise<void> => {
-    const { t, accountId, conversationKey, resume } = await busyConversation();
-    expect(await resume()).toMatchObject({ outcome: "queued" });
-    await kind.read(t, "late");
-
-    expect(
-      await t.mutation(internal.runtimeIngress.acquireClear, {
-        accountId: accountId,
-        agentId: "test-agent",
-        conversationKey: conversationKey,
-        ownerEventId: "clear",
-        leaseTtlMs: 60_000,
-      }),
-    ).toBeNull();
-    expect(
-      await t.run(
-        async (ctx) =>
-          await ctx.db
-            .query("runtimeConversationCoordinators")
-            .withIndex("by_conversationKey", (q) =>
-              q.eq("conversationKey", conversationKey),
-            )
-            .unique(),
-      ),
-    ).toMatchObject({ queuedCount: 0, queuedBytes: 0 });
+    expect(await kind.handback(t, "late")).toBe("stored");
   });
 
   test("answers a retry whose payload drifted as a duplicate while the first still waits", async (): Promise<void> => {

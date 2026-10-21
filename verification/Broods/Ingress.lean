@@ -49,9 +49,8 @@ inductive Step where
   | stepBoundary (ownerEventId generation : Nat) (claim : Bool)
   /-- `settleAppliedEnvelopes`, reached through `settle` and `takeNext`. -/
   | settle (ownerEventId generation : Nat) (outcome : Outcome)
-  /-- `sweepQueuedEnvelopes`. `delivered` is whether the envelope is a resume whose
-  result the conversation already stores, which the sweep completes unapplied. -/
-  | sweepQueued (delivered : Bool)
+  /-- `expireQueuedEnvelopes`. -/
+  | expireQueued
   /-- `expireStaleOwner`. -/
   | expireStaleOwner
   /-- The `maintain` cron. -/
@@ -115,10 +114,8 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
         stoppedByUser := e.stoppedByUser ||
           (o == .failed && c.stopRequestedGeneration == some g && !c.stopRequestedByParent) }
     else e
-  | .sweepQueued delivered, e =>
-    if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired }
-    else if e.status == .queued && delivered then { e with status := .completed }
-    else e
+  | .expireQueued, e =>
+    if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired } else e
   | .expireStaleOwner, e =>
     if c.ownerEventId == some e.eventId && !c.live now && !e.status.terminal then
       { e with status := .expired }
@@ -140,7 +137,6 @@ inductive Allowed : Status → Status → Prop where
   | stay (s : Status) : Allowed s s
   | start : Allowed .queued .processing
   | expireQueued : Allowed .queued .expired
-  | delivered : Allowed .queued .completed
   | expireRunning : Allowed .processing .expired
   | finish (o : Outcome) : Allowed .processing o.status
 
