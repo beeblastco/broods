@@ -111,23 +111,37 @@ function withToolImagesKept(
   messages: ModelMessage[],
   prunedBefore: number,
 ): ModelMessage[] {
-  return messages.flatMap((message, index): ModelMessage[] => {
+  const carriesImages = messages.some(
+    (message, index): boolean =>
+      index < prunedBefore &&
+      message.role === "tool" &&
+      message.content.some(
+        (part): boolean =>
+          part.type === "tool-result" &&
+          part.output.type === "content" &&
+          part.output.value.some((item): boolean => toolImage(item).length > 0),
+      ),
+  );
+  if (!carriesImages) {
+    return messages;
+  }
+  const kept: ModelMessage[] = [];
+  messages.forEach((message, index): void => {
+    kept.push(message);
     if (message.role !== "tool" || index >= prunedBefore) {
-      return [message];
+      return;
     }
     const images = toolContentItems(message).flatMap(toolImage);
-
-    return images.length === 0
-      ? [message]
-      : [
-          message,
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Images a tool returned earlier:" },
-              ...images,
-            ],
-          },
-        ];
+    if (images.length > 0) {
+      kept.push({
+        role: "user",
+        content: [
+          { type: "text", text: "Images a tool returned earlier:" },
+          ...images,
+        ],
+      });
+    }
   });
+
+  return kept;
 }
