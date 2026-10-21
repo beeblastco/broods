@@ -2,11 +2,13 @@
 // wrong entry ships dozens of wrong tools. These tests drive the server
 // through a real MCP client over an in-memory transport: the tool list is the
 // drift check, and the guards must reject before any network call happens.
+// The server is served exactly as `broods mcp` serves it, 2026-07-28 only.
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { MCP_PROTOCOL_VERSION } from "../../../apps/core/src/shared/mcp-protocol.ts";
 import type { BroodsMcpServerOptions } from "../src/mcp.ts";
-import { createBroodsMcpServer } from "../src/mcp.ts";
+import { createBroodsMcpServer, serveBroodsMcp } from "../src/mcp.ts";
 import { BroodsSyncClient } from "../src/sync.ts";
 
 const CREDENTIAL_ENV_KEYS = [
@@ -88,6 +90,12 @@ const GUARD_CASES = [
   },
 ] as const;
 
+test("a client on a 2025-era revision is refused with -32022", async () => {
+  process.env.BROODS_ACCOUNT_SECRET = "bask_test";
+
+  expect(connect({}, false)).rejects.toMatchObject({ code: -32022 });
+});
+
 for (const { tool, args, refusal } of GUARD_CASES) {
   test(`${tool} refuses without its guard satisfied`, async () => {
     const client = await connectWithSecret({});
@@ -98,15 +106,27 @@ for (const { tool, args, refusal } of GUARD_CASES) {
   });
 }
 
-/** Serve a fresh server over a linked in-memory pair and hand back the connected client. */
-async function connect(options: BroodsMcpServerOptions): Promise<Client> {
+/**
+ * Serve a fresh server over a linked in-memory pair, as `broods mcp` serves
+ * it, and hand back the connected client. `pinned: false` is a client still on
+ * a 2025-era revision.
+ */
+async function connect(
+  options: BroodsMcpServerOptions,
+  pinned = true,
+): Promise<Client> {
   const server = createBroodsMcpServer(options);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "mcp-test", version: "1" });
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  serveBroodsMcp(server, serverTransport);
+  const client = new Client(
+    { name: "mcp-test", version: "1" },
+    pinned
+      ? { versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } } }
+      : {},
+  );
   openClient = client;
+  await client.connect(clientTransport);
 
   return client;
 }

@@ -59,9 +59,9 @@ import {
   mcpAccessToken,
   type ResolvedMcpOauth,
 } from "./oauth.ts";
+import { MCP_PROTOCOL_VERSION } from "../../shared/mcp-protocol.ts";
 import { sandboxMcpRequest, type SandboxMcpTarget } from "./sandbox.ts";
 
-const MCP_PROTOCOL_VERSION = "2026-07-28";
 export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
 export const MCP_PRINCIPAL_HEADER = "X-Broods-Principal";
 // Core alone names the caller. Header names are case-insensitive on the wire,
@@ -465,7 +465,9 @@ async function connectClient(
         fetch: hosted ? hostedMcpFetch(connection, onCpuUsec) : publicHostFetch,
       },
     );
+    // The list pins the cached `prior` path too, which ignores the pin.
     const client = new Client(CLIENT_INFO, {
+      supportedProtocolVersions: [MCP_PROTOCOL_VERSION],
       versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
     });
     await client.connect(

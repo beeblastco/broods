@@ -134,11 +134,10 @@ test("an owner on Hobby sees their plan next to what Pro raises, and no develope
   await expect(plan.getByRole("columnheader", { name: /^Pro/ })).toContainText(
     "€20/month",
   );
-  // Hobby's limit, then Pro's with how many times it raises Hobby's.
   await expect(limitCells(page, "Sandbox time")).toHaveText([
     /^Sandbox time/,
     "9 h",
-    "18 h2×",
+    "18 h",
   ]);
   await expect(limitCells(page, "Developer seats")).toHaveText([
     /^Developer seats/,
@@ -151,6 +150,10 @@ test("an owner on Hobby sees their plan next to what Pro raises, and no develope
   await expect(
     page.getByRole("button", { name: "Upgrade to Pro", exact: true }),
   ).toBeEnabled();
+  // On a phone the plans stack, so Pro's limits stay on screen.
+  await page.setViewportSize({ width: 390, height: 900 });
+  const pro = plan.getByRole("heading", { name: /^Pro/ }).locator("..");
+  await expect(pro.getByText("18 h", { exact: true })).toBeInViewport();
   // Hobby has no seats, which the plan table already says.
   await expect(
     page.getByRole("heading", { name: "Developer seats" }),
