@@ -6,7 +6,8 @@ import type { Doc } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
-// More rows than one batch, so the strip schedules itself again.
+// More rows than one batch, so the strip schedules itself again; both flag
+// values, so the index range starts at `false`.
 const ROWS_PER_TABLE = 60;
 
 test("strips observed from every row of both result tables, batch by batch", async (): Promise<void> => {
@@ -43,7 +44,7 @@ test("strips observed from every row of both result tables, batch by batch", asy
         toolName: "bash",
         toolCallId: `call-${i}`,
         input: {},
-        observed: true,
+        observed: i % 2 === 0,
         status: "completed",
         createdAt: stamp,
         updatedAt: stamp,

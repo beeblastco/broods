@@ -13,9 +13,9 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 
-// Rows carry whole results, up to 1 MiB each: a small batch per table stays
-// under one mutation's read limit.
-const BATCH_SIZE = 4;
+// Rows carry whole results, up to 1 MiB each, and a patch rewrites the whole
+// row: one per table keeps a mutation under 2 MiB read and 2 MiB written.
+const BATCH_SIZE = 1;
 const TABLES = ["runtimeAsyncAgentResults", "runtimeAsyncToolResults"] as const;
 
 /**
