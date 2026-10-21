@@ -59,13 +59,14 @@ export async function forwardRoomEvent(
   event: MatrixForwardedEvent,
   accessToken: string,
   targets: readonly ForwardTarget[],
+  timeoutMs: number = FETCH_TIMEOUT_MS,
 ): Promise<string[]> {
   return fanOut(
     targets,
     JSON.stringify(event),
     {
       header: MATRIX_ACCESS_TOKEN_HEADER,
-      timeoutMs: FETCH_TIMEOUT_MS,
+      timeoutMs: timeoutMs,
       token: accessToken,
     },
     { eventId: event.event.event_id },

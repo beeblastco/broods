@@ -56,6 +56,19 @@ function finalBody(stdout: string | undefined): unknown {
   return JSON.parse(finals[0]!.result!.body);
 }
 
+// Signal 0 only asks whether the pid exists. A killed process its parent has not
+// reaped yet still does, as a zombie (stat `Z`), so that counts as gone too.
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  const stat = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)]).stdout;
+
+  return !stat.toString().trim().startsWith("Z");
+}
+
 // A bundle the runner will accept: sha256 must match what the child recomputes.
 async function invokeHandler(
   bundle: string,
@@ -209,15 +222,25 @@ describe("mcp-runner containment", () => {
         `export default () => {`,
         `  const code = "setTimeout(() => require('fs').writeFileSync(" +`,
         `    ${JSON.stringify(JSON.stringify(marker))} + ", 'survived'), 1500)";`,
-        `  spawn(process.execPath, ["-e", code], { stdio: "ignore" });`,
-        `  return new Response(JSON.stringify({ spawned: true }));`,
+        `  const survivor = spawn(process.execPath, ["-e", code], { stdio: "ignore" });`,
+        `  return new Response(JSON.stringify({ spawned: true, pid: survivor.pid }));`,
         `};`,
       ].join("\n");
 
       const result = await invokeHandler(bundle);
-      expect(finalBody(result.stdout)).toEqual({ spawned: true });
+      const body = finalBody(result.stdout) as {
+        spawned: boolean;
+        pid: number;
+      };
+      expect(body).toEqual({ spawned: true, pid: expect.any(Number) });
 
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // Gone well before its 1.5 s timer, so it never writes the marker.
+      const deadline = performance.now() + 1_000;
+      while (isAlive(body.pid)) {
+        if (performance.now() > deadline)
+          throw new Error("survivor still running");
+        await Bun.sleep(10);
+      }
       expect(existsSync(marker)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
