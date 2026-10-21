@@ -373,15 +373,13 @@ export async function rehydrateStoredMedia(
     remainingBytes: MAX_REPLAY_BYTES_PER_TURN,
   };
 
-  // Newest first: a cached link is charged before its read starts, so when the
-  // budget runs out it is the oldest pictures that stay behind, not the latest.
-  const replayed = await Promise.all(
-    (await withOldMediaOmitted(messages))
-      .toReversed()
-      .map((message): Promise<ModelMessage> =>
-        rehydrateMessage(message, agentConfig, replay),
-      ),
-  );
+  // One message at a time, newest first: each read is charged before an older
+  // one starts, so when the budget runs out the oldest pictures stay behind.
+  // A cached link waits on nothing, so only a cold cache pays the sequence.
+  const replayed: ModelMessage[] = [];
+  for (const message of (await withOldMediaOmitted(messages)).toReversed()) {
+    replayed.push(await rehydrateMessage(message, agentConfig, replay));
+  }
 
   return replayed.toReversed();
 }
