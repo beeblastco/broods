@@ -580,9 +580,16 @@ export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
 export function moveRefusedToolImagesMiddleware(
   endpoint: string,
 ): LanguageModelMiddleware {
-  const retrying = retryingMiddleware(withToolImagesMoved, (): void => {
-    toolImageRefusals.add(endpoint);
-  });
+  // Remembered once the move is accepted, or refused the same way: a model
+  // that takes no images at all then pays its drop retry, not a move as well.
+  const retrying = retryingMiddleware(
+    withToolImagesMoved,
+    (retryError): void => {
+      if (retryError === undefined || isRefusedRequest(retryError)) {
+        toolImageRefusals.add(endpoint);
+      }
+    },
+  );
 
   return {
     ...retrying,
@@ -621,15 +628,15 @@ export function withoutStoredItemId<
 /**
  * A middleware that runs the call again when `recover` recognises the failure
  * and can say what to send instead. `recover` returning undefined rethrows, so
- * a failure it does not know about is never paid for twice. `recovered` runs
- * once the retry is accepted.
+ * a failure it does not know about is never paid for twice. `retried` hears
+ * how the retry went: undefined once accepted, else its error.
  */
 function retryingMiddleware(
   recover: (
     error: unknown,
     params: LanguageModelV4CallOptions,
   ) => LanguageModelV4CallOptions | undefined,
-  recovered?: () => void,
+  retried?: (retryError: unknown) => void,
 ): LanguageModelMiddleware {
   return {
     wrapGenerate: async ({ doGenerate, model, params }) => {
@@ -640,10 +647,15 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
-        const result = await model.doGenerate(retry);
-        recovered?.();
+        try {
+          const result = await model.doGenerate(retry);
+          retried?.(undefined);
 
-        return result;
+          return result;
+        } catch (retryError) {
+          retried?.(retryError);
+          throw retryError;
+        }
       }
     },
     wrapStream: async ({ doStream, model, params }) => {
@@ -654,10 +666,15 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
-        const result = await model.doStream(retry);
-        recovered?.();
+        try {
+          const result = await model.doStream(retry);
+          retried?.(undefined);
 
-        return result;
+          return result;
+        } catch (retryError) {
+          retried?.(retryError);
+          throw retryError;
+        }
       }
     },
   };

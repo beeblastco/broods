@@ -599,14 +599,14 @@ describe("tool result images on a custom endpoint", () => {
     });
   });
 
-  it("does not remember an endpoint whose retry failed too", async () => {
-    const bodies = await requests([400, 400, 200, 200], 2);
+  it("skips the tool message for a model that refuses images anywhere", async () => {
+    const bodies = await requests([400, 400, 200, 400, 200], 2);
 
-    // Call 1: refused, moved and refused again, then dropped. Call 2 starts over
-    // with the image in the tool message.
-    expect(bodies).toHaveLength(4);
-    expect(JSON.stringify(bodies[3]?.messages.at(-1))).toContain("image_url");
-    expect(bodies[3]?.messages.at(-1)?.role).toBe("tool");
+    // Call 1: refused, moved and refused again, then dropped. Call 2 sends the
+    // image in a user message first, so only its drop retry is paid.
+    expect(bodies).toHaveLength(5);
+    expect(bodies[3]?.messages.at(-1)?.role).toBe("user");
+    expect(JSON.stringify(bodies[4])).not.toContain("image_url");
   });
 
   it("drops the image when a text-only model refuses it anywhere", async () => {
