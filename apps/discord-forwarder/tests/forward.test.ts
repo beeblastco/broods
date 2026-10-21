@@ -134,21 +134,17 @@ describe("forwarding a gateway message", () => {
         delays.push(Number(ms));
       },
     );
-    let calls = 0;
-    globalThis.fetch = (async (): Promise<Response> => {
-      calls += 1;
-
-      return calls === 1
-        ? new Response("", { headers: { "retry-after": "2" }, status: 429 })
-        : new Response("", { status: 200 });
-    }) as unknown as typeof fetch;
+    const seen = scriptFetch([
+      new Response("", { headers: { "retry-after": "2" }, status: 429 }),
+      200,
+    ]);
     try {
       await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
     } finally {
       sleep.mockRestore();
     }
 
-    expect(calls).toBe(2);
+    expect(seen.calls).toBe(2);
     expect(delays).toEqual([2_000]);
   });
 
@@ -206,8 +202,8 @@ describe("forwarding a gateway message", () => {
   });
 });
 
-/** Answers each POST with the next status, or throws for "reset". */
-function scriptFetch(statuses: readonly (number | "reset")[]): {
+/** Answers each POST with the next status or response, or throws for "reset". */
+function scriptFetch(statuses: readonly (number | "reset" | Response)[]): {
   calls: number;
 } {
   const seen = { calls: 0 };
@@ -215,6 +211,7 @@ function scriptFetch(statuses: readonly (number | "reset")[]): {
     const status = statuses[seen.calls] ?? 200;
     seen.calls += 1;
     if (status === "reset") throw new Error("connection reset");
+    if (status instanceof Response) return status;
 
     return new Response("", { status: status });
   }) as unknown as typeof fetch;

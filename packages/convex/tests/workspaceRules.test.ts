@@ -7,6 +7,8 @@
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { internal } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
+import { toPublicWorkspaceConfigResponse } from "../model/responses";
 import { normalizeSandboxConfig } from "../model/sandboxRules";
 import { listWorkspaceFiles } from "../model/workspaceFs";
 import {
@@ -307,6 +309,26 @@ describe("workspace config", () => {
     expect(
       normalizeUpdateWorkspaceConfigInput(existing, { name: "renamed" }),
     ).toEqual({ name: "renamed", config: existing });
+  });
+
+  it("projects the config unredacted with ISO timestamps (no secrets)", () => {
+    const doc = {
+      _id: "ws_1",
+      _creationTime: 0,
+      accountId: "acct_1",
+      name: "notes",
+      config: { storage: { provider: "s3" } },
+      createdAt: Date.parse("2026-01-01T00:00:00.000Z"),
+      updatedAt: Date.parse("2026-01-01T00:00:00.000Z"),
+    } as unknown as Doc<"workspaceConfigs">;
+    expect(toPublicWorkspaceConfigResponse(doc)).toEqual({
+      accountId: "acct_1",
+      workspaceId: "ws_1",
+      name: "notes",
+      config: { storage: { provider: "s3" } },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
   });
 });
 
