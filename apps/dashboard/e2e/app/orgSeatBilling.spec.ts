@@ -152,9 +152,8 @@ test("an owner on Hobby sees their plan next to what Pro raises, and no develope
   ).toBeEnabled();
   // On a phone the plans stack, so Pro's limits stay on screen.
   await page.setViewportSize({ width: 390, height: 900 });
-  await expect(
-    plan.getByText("18 h", { exact: true }).filter({ visible: true }),
-  ).toBeInViewport();
+  const pro = plan.getByRole("heading", { name: /^Pro/ }).locator("..");
+  await expect(pro.getByText("18 h", { exact: true })).toBeInViewport();
   // Hobby has no seats, which the plan table already says.
   await expect(
     page.getByRole("heading", { name: "Developer seats" }),
