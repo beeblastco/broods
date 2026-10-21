@@ -106,6 +106,13 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     );
     await context.close();
 
+    // A chunk that failed or errored must not pass as a lighter page.
+    expect(
+      firstLoad
+        .filter((_, index) => !responses[index]?.ok())
+        .map((request) => request.url()),
+      `every ${probe.name} chunk loads`,
+    ).toEqual([]);
     expect(
       responses
         .filter(
@@ -142,21 +149,27 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     return;
   }
 
-  const budget: Record<string, FirstLoad> = JSON.parse(
+  const budget: Partial<Record<string, FirstLoad>> = JSON.parse(
     readFileSync(BUDGET_FILE, "utf8"),
   );
   for (const [name, load] of Object.entries(measured)) {
+    const allowed = budget[name];
+    if (!allowed) {
+      throw new Error(
+        `${name}: no first-load budget; record one with E2E_RECORD_FIRST_LOAD=1`,
+      );
+    }
     expect(
       load.jsRequests,
       `${name}: JS requests before the load event`,
-    ).toBeLessThanOrEqual(budget[name].jsRequests);
+    ).toBeLessThanOrEqual(allowed.jsRequests);
     expect(
       load.jsBytes,
       `${name}: JS bytes before the load event`,
-    ).toBeLessThanOrEqual(budget[name].jsBytes);
-    if (load.jsRequests < budget[name].jsRequests) {
+    ).toBeLessThanOrEqual(allowed.jsBytes);
+    if (load.jsRequests < allowed.jsRequests) {
       console.log(
-        `${name}: fewer JS requests than the budget (${budget[name].jsRequests}); record with E2E_RECORD_FIRST_LOAD=1 to lock the gain in`,
+        `${name}: fewer JS requests than the budget (${allowed.jsRequests}); record with E2E_RECORD_FIRST_LOAD=1 to lock the gain in`,
       );
     }
   }
