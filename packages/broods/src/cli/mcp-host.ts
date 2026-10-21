@@ -1,8 +1,8 @@
 /**
  * `broods machine --mcp <file>`: the daemon as MCP host. The file has the
- * `.mcp.json` shape Claude Code, Cursor and Codex read, so a server already
- * set up for them works here unchanged. Each server is a stdio child the SDK
- * client spawns on first use and keeps. Core only ever learns names, tool
+ * `.mcp.json` shape Claude Code, Cursor and Codex read. Each server is a
+ * stdio child the SDK client spawns on first use and keeps, and it must speak
+ * MCP 2026-07-28: there is no 2025-era fallback. Core only ever learns names, tool
  * listings and results: the file and its command lines stay on this computer.
  */
 
@@ -15,9 +15,13 @@ import {
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
+import { MCP_PROTOCOL_VERSION } from "../../../../apps/core/src/shared/mcp-protocol.ts";
 import { agentEnv } from "../runtime-config.ts";
 
 const CLIENT_INFO = { name: "broods-machine", version: "1.0.0" };
+// A server that never answers `server/discover` is refused after this, not
+// after the SDK's 60 second request timeout.
+const DISCOVER_TIMEOUT_MS = 10_000;
 
 const serverSpec = z.object({
   command: z.string().min(1),
@@ -102,7 +106,12 @@ export class McpHost {
         this.#log(`mcp ${server}: exited`);
         if (this.#clients.get(server) === pending) this.#clients.delete(server);
       };
-      const client = new Client(CLIENT_INFO);
+      const client = new Client(CLIENT_INFO, {
+        versionNegotiation: {
+          mode: { pin: MCP_PROTOCOL_VERSION },
+          probe: { timeoutMs: DISCOVER_TIMEOUT_MS },
+        },
+      });
       await client.connect(transport);
 
       return client;

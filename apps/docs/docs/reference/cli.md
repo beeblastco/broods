@@ -406,7 +406,7 @@ broods machine --doctor [--request]
 
 ## mcp
 
-Serves the account config plane to a coding agent over MCP on stdio. Start it from an MCP client, not a terminal.
+Serves the account config plane to a coding agent over MCP on stdio. Start it from an MCP client, not a terminal. It speaks MCP 2026-07-28 only, so the client must too: a 2025-era `initialize` gets error -32022.
 
 ```bash
 claude mcp add broods -- broods mcp
