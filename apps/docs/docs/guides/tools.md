@@ -36,7 +36,7 @@ A tool that your code would execute, such as the Tavily AI SDK package, cannot g
 
 ## MCP servers
 
-Broods connects to any MCP server that speaks MCP 2026-07-28 over the stateless Streamable HTTP transport; a server on a 2025-era revision is refused. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at: a PNG, JPEG, GIF or WebP no wider or taller than 8000 pixels, up to 8 images and 6 MB per result. A resource link to such an image on a public http(s) address is fetched and shown the same way. Any other image, and other non-text blocks, are named in the text. The model keeps seeing the conversation's most recent images, up to 20, on later turns.
+Broods connects to any MCP server that speaks MCP 2026-07-28 over the stateless Streamable HTTP transport; a server on a 2025-era revision is refused. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at: a PNG, JPEG, GIF or WebP no wider or taller than 8000 pixels, up to 8 images and 6 MB per result. A resource link to such an image on a public http(s) address is fetched and shown the same way. Any other image, and other non-text blocks, are named in the text. The model keeps seeing the conversation's most recent images on later turns: up to 20, and older ones ten at a time become a line of text.
 
 ### Connect a server
 
