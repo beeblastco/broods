@@ -17,14 +17,13 @@ export async function signTerminalToken(
   return `${PREFIX}.${expiresAt}.${await mac(apiKey, sandboxId, expiresAt)}`;
 }
 
-/** True when `token` was signed with `apiKey` for `sandboxId` and has not expired. A bridge with no key yet verifies nothing. */
+/** True when `token` was signed with `apiKey` for `sandboxId` and has not expired. */
 export async function verifyTerminalToken(
   apiKey: string,
   token: string,
   sandboxId: string,
   now: number,
 ): Promise<boolean> {
-  if (!apiKey) return false;
   const [prefix, expiry, signature, ...rest] = token.split(".");
   if (prefix !== PREFIX || !expiry || !signature || rest.length > 0)
     return false;
