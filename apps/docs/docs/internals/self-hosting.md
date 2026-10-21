@@ -261,7 +261,7 @@ Stateless; scale it with replicas.
 | `NEXT_PUBLIC_POSTHOG_KEY`     | build time | PostHog project key. Unset means no analytics, errors or logs                   |
 | `NEXT_PUBLIC_POSTHOG_HOST`    | build time | PostHog ingest host or your reverse proxy, e.g. `https://eu.i.posthog.com`      |
 | `NEXT_PUBLIC_POSTHOG_UI_HOST` | build time | Behind a proxy, the PostHog app it fronts, e.g. `https://eu.posthog.com`        |
-| `DASHBOARD_ASSET_ORIGIN`      | build time | A CDN that pulls `/_next/static` from the dashboard. Unset serves them itself   |
+| `DASHBOARD_ASSET_ORIGIN`      | build time | CDN origin pulling `/_next/static` from here, with CORS. Unset serves them here |
 | `ADMIN_ACCOUNT_SECRET`        | runtime    | The admin sign-in key. At least 32 characters or the dashboard refuses to start |
 | `BROODS_SESSION_SIGNING_KEY`  | runtime    | Private ES256 JWK that signs the session                                        |
 | `CONVEX_SITE_URL`             | runtime    | A self-hosted Convex has no derivable `.convex.site` host                       |
