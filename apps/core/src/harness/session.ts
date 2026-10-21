@@ -754,7 +754,15 @@ export class Session {
     const prepareStartedMs = Date.now();
     const input = splitIngressEvents(ingress);
     const ephemeralSystem = [...input.ephemeralSystem, ...extraEphemeralSystem];
-    const appended = this.storedEvents(input.persisted);
+    // Minted per message so each user message keys its full content by cursor.
+    const appended: AppendedConversationEvent[] = [];
+    const turnContent = new Map<string, UserContent>();
+    for (const message of input.persisted) {
+      const [row] = this.storedEvents([message]);
+      if (!row) continue;
+      appended.push(row);
+      if (message.role === "user") turnContent.set(row.cursor, message.content);
+    }
     // The turn's own rows merge into the history read by cursor either way. A
     // fenced turn writes them with its first step boundary, one mutation
     // fewer; an unfenced one appends them now.
@@ -773,7 +781,7 @@ export class Session {
     // Every load behind the turn starts at once; buildSystemPromptParts below
     // reads the memoized results.
     const [history] = await Promise.all([
-      this.loadTurnHistory(phases, unwritten),
+      this.loadTurnHistory(phases, unwritten, turnContent),
       fenced ? undefined : this.appendStoredEvents(appended),
       timePhase(phases, "runtimeMs", () => this.ensureResolvedRuntime()),
       timePhase(phases, "memoryMs", () => this.loadMemoryFiles()),
@@ -1325,9 +1333,12 @@ export class Session {
   // Media the rows only point at is read back here, before anything else looks
   // at the history: compaction, the system prompt and the model all see the
   // same messages, and none of them should have to know how it got there.
+  // `turnContent` is this turn's own user input by cursor, put back over its
+  // rows so media its rows could not hold still reaches this turn.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
-    appended: { cursor: string; event: StoredConversationEvent }[] = [],
+    appended: { cursor: string; event: StoredConversationEvent }[],
+    turnContent: ReadonlyMap<string, UserContent>,
   ): Promise<TurnHistory> {
     const entries = await timePhase(phases, "historyMs", () =>
       this.loadConversationEntries(),
@@ -1348,10 +1359,23 @@ export class Session {
       );
     }
     phases.historyRows = entries.length;
+    const turnEntries = entries.map((entry): StoredConversationEntry => {
+      const content = turnContent.get(entry.createdAt);
+
+      return content !== undefined && entry.event.message.role === "user"
+        ? {
+            ...entry,
+            event: {
+              ...entry.event,
+              message: { ...entry.event.message, content: content },
+            },
+          }
+        : entry;
+    });
     const messages = await timePhase(phases, "mediaMs", () =>
       rehydrateStoredMedia(
         projectEntriesToMessages(
-          projectActiveConversationEntries(entries),
+          projectActiveConversationEntries(turnEntries),
           modelIdentityFromModelConfig(this.agentConfig),
         ),
         this.agentConfig,

@@ -9,6 +9,7 @@ import {
   setSystemTime,
 } from "bun:test";
 import * as actualAi from "ai";
+import type { UserContent } from "ai";
 import type {
   Session,
   StoredConversationEventPage,
@@ -1184,6 +1185,45 @@ describe("context prepare", () => {
       ]);
     } finally {
       runtime.query = originalQuery;
+      runtime.mutate = originalMutate;
+    }
+  });
+
+  // The row cannot hold a base64 picture, but the turn it arrived in must show
+  // it: the context is rebuilt from rows, so the bytes are put back by cursor.
+  it("shows the turn's own base64 image while its row drops it", async (): Promise<void> => {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate.bind(runtime);
+    const page = userRows(1);
+    const history = await stubHistory(page);
+    runtime.mutate = (async (
+      _name: string,
+      args: { events: [] },
+    ): Promise<null> => {
+      page.push(...args.events);
+
+      return null;
+    }) as typeof runtime.mutate;
+    const content: UserContent = [
+      { type: "text", text: "what does the button say?" },
+      { type: "image", image: "aGVsbG8=", mediaType: "image/jpeg" },
+    ];
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext(
+        [],
+        [{ role: "user", content: content }],
+      );
+
+      expect(page.slice(1).map((row) => row.event.message.content)).toEqual([
+        [{ type: "text", text: "what does the button say?" }],
+      ]);
+      expect(turnContext.messages.map((message) => message.content)).toEqual([
+        "message 0",
+        content,
+      ]);
+    } finally {
+      history.restore();
       runtime.mutate = originalMutate;
     }
   });
