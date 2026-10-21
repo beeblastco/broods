@@ -5426,9 +5426,6 @@ export declare const internal: {
       }
     >;
   };
-  observedMigration: {
-    stripObserved: FunctionReference<"mutation", "internal", {}, number>;
-  };
   org: {
     orgs: {
       adoptExternalAccount: FunctionReference<

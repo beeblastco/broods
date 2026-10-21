@@ -1358,10 +1358,10 @@ export const runtimeAsyncAgentResultsFields = {
   eventId: v.string(),
   conversationKey: v.string(),
   subagent: v.optional(subagentTaskValidator),
-  // Neither read nor written. `observedMigration:stripObserved` unsets it on
-  // every row; the release after drops it with its `by_observed` index.
+  // Neither read nor written. Rows that still carry it expire within 7 days
+  // (`pruneExpired`); the release after drops it.
   observed: v.optional(v.boolean()),
-  // Set once a subagent's row finishes; see `handbackValidator`.
+  // Set when a subagent's row is created; see `handbackValidator`.
   handback: v.optional(handbackValidator),
   status: v.union(
     v.literal("processing"),
@@ -1403,8 +1403,8 @@ export const runtimeAsyncToolResultsFields = {
   error: v.optional(v.string()),
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
-  // Neither read nor written. `observedMigration:stripObserved` unsets it on
-  // every row; the release after drops it with its `by_observed` index.
+  // Neither read nor written. Rows that still carry it expire within 7 days
+  // (`pruneExpired`); the release after drops it.
   observed: v.optional(v.boolean()),
   // Set once the row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),
@@ -1926,8 +1926,7 @@ export default defineSchema({
       "handback",
       "status",
       "updatedAt",
-    ])
-    .index("by_observed", ["observed"]),
+    ]),
   runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
     .index("by_resultId", ["resultId"])
     .index("by_accountId", ["accountId"])
@@ -1941,8 +1940,7 @@ export default defineSchema({
       "status",
       "updatedAt",
     ])
-    .index("by_expiresAt", ["expiresAt"])
-    .index("by_observed", ["observed"]),
+    .index("by_expiresAt", ["expiresAt"]),
   sandboxReservations: defineTable(sandboxReservationsFields)
     .index("by_provider_and_reservationKey", ["provider", "reservationKey"])
     .index("by_accountId", ["accountId"])

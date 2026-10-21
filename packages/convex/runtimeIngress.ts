@@ -1232,7 +1232,7 @@ async function storedResultAdmission(
       )
       .first();
     if (stored) {
-      await ctx.db.patch(result._id, { handback: "stored" });
+      await markResultStored(ctx, result.accountId, result);
 
       return { outcome: "duplicate" as const, eventId: args.eventId };
     }
