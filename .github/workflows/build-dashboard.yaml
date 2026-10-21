@@ -85,6 +85,7 @@ jobs:
             NEXT_PUBLIC_POSTHOG_KEY=${{ vars.NEXT_PUBLIC_POSTHOG_KEY }}
             NEXT_PUBLIC_POSTHOG_HOST=${{ vars.NEXT_PUBLIC_POSTHOG_HOST }}
             NEXT_PUBLIC_POSTHOG_UI_HOST=${{ vars.NEXT_PUBLIC_POSTHOG_UI_HOST }}
+            DASHBOARD_ASSET_ORIGIN=${{ vars.DASHBOARD_ASSET_ORIGIN }}
           cache-from: type=gha,scope=broods-dashboard
           cache-to: type=gha,mode=max,scope=broods-dashboard
 
