@@ -377,12 +377,13 @@ const TimelineScaleContext = createContext<TimelineScale>({
   startMs: 0,
 });
 
-// Time axis steps, smallest first; the axis takes the first that fits AXIS_MAX_TICKS.
+// Time axis steps, smallest first; the axis takes the first that spans the run
+// in AXIS_MAX_STEPS or fewer, so at most four labels share a narrow column.
 const AXIS_STEPS_MS = [
   100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000,
   300_000, 600_000, 900_000, 1_800_000, 3_600_000, 7_200_000,
 ];
-const AXIS_MAX_TICKS = 5;
+const AXIS_MAX_STEPS = 3;
 
 // A tick this close to the axis end would overflow the column, so it is left out.
 const AXIS_LAST_TICK_PCT = 94;
@@ -1270,8 +1271,8 @@ export function taskChannel(root: ObservabilitySpanRow): string {
  */
 export function axisTicks(spanMs: number): number[] {
   const step =
-    AXIS_STEPS_MS.find((candidate) => spanMs / candidate <= AXIS_MAX_TICKS) ??
-    Math.ceil(spanMs / AXIS_MAX_TICKS / 3_600_000) * 3_600_000;
+    AXIS_STEPS_MS.find((candidate) => spanMs / candidate <= AXIS_MAX_STEPS) ??
+    Math.ceil(spanMs / AXIS_MAX_STEPS / 3_600_000) * 3_600_000;
 
   return Array.from(
     { length: Math.floor(spanMs / step) + 1 },
@@ -1313,10 +1314,15 @@ export function runIssues(group: SpanGroup): RunIssues {
       },
     );
     below.set(span.spanId, under);
-    // The task row stands for the whole request, so a first pass that failed
-    // and was continued is not an issue of a request that went through.
+    // A failure counts once, where it happened: core closes the open step and
+    // tool with the run's error, so a span that failed with a failure under it
+    // passed that one up. The task row stands for the whole request, so a
+    // first pass that failed and was continued is not its issue either.
+    const found = spanIssue(span);
+    const passedUp =
+      found?.level === "error" && under.some((item) => item.level === "error");
     const issue =
-      isTaskRow && group.status !== "error" ? null : spanIssue(span);
+      passedUp || (isTaskRow && group.status !== "error") ? null : found;
     if (!issue) return under;
     own.set(span.spanId, issue);
     all.push({ issue: issue, path: path, span: span });

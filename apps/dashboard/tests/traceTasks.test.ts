@@ -423,13 +423,33 @@ describe("waterfall issues", () => {
     expect(runIssues(stillFailed).own.get("first")?.label).toBe("Failed");
   });
 
-  test("steps the time axis so it shows at most five ticks", () => {
+  test("a run that failed mid tool call is one failure, at the tool", () => {
+    // Core closes the open step and tool with the run's error when it fails.
+    const failed = (span: ObservabilitySpanRow): ObservabilitySpanRow => ({
+      ...span,
+      status: "error",
+      error: "invalid x-api-key",
+    });
+    const task = failed(root("run", 0, 5_000, "error", {}));
+    const open = failed(step("run", 0, 1_000, 5_000));
+    const tool = failed(toolOf(open, "bash"));
+
+    const issues = runIssues(groupSpans([task, open, tool])[0]);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+    ]);
+    expect(issues.own.has("run")).toBe(false);
+    expect(issues.below.get("run")).toHaveLength(1);
+  });
+
+  test("steps the time axis so it shows at most four ticks", () => {
     expect(axisTicks(12_000)).toEqual([0, 5_000, 10_000]);
     expect(axisTicks(82_000)).toEqual([0, 30_000, 60_000]);
-    expect(axisTicks(400)).toEqual([0, 100, 200, 300, 400]);
+    expect(axisTicks(400)).toEqual([0, 200, 400]);
     // A run that waited three days on a person steps in whole hours.
     expect(axisTicks(72 * 3_600_000)).toEqual(
-      [0, 15, 30, 45, 60].map((hours) => hours * 3_600_000),
+      [0, 24, 48, 72].map((hours) => hours * 3_600_000),
     );
   });
 });
