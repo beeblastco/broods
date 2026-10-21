@@ -77,9 +77,9 @@ export const createCheckoutSession = action({
       );
     }
 
-    const extraSeats = proQuantity(billing.developers) - 1;
     const session = await stripeClient.createCheckoutSession(ctx, {
-      priceId: proPriceId(),
+      // The component requires one price; `line_items` below replaces its line.
+      priceId: priceId("STRIPE_PRO_PRICE_ID"),
       customerId: await customerFor(ctx, authUser),
       mode: "subscription",
       successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
@@ -90,12 +90,9 @@ export const createCheckoutSession = action({
       // Pro, then any extra seats on their own line. A promotion code made in
       // Stripe can discount it, down to free; a free checkout asks for no card.
       params: {
-        line_items: [
-          { price: proPriceId(), quantity: 1 },
-          ...(extraSeats > 0
-            ? [{ price: seatPriceId(), quantity: extraSeats }]
-            : []),
-        ],
+        line_items: itemsFor([], proQuantity(billing.developers)).map(
+          ({ price, quantity }) => ({ price: price, quantity: quantity }),
+        ),
         allow_promotion_codes: true,
         payment_method_collection: "if_required",
       },
@@ -534,7 +531,7 @@ async function changeSeats(
   }
 
   const updated = await stripe.subscriptions.update(subscriptionId, {
-    items: itemsFor(live, quantity),
+    items: itemsFor(live.items.data, quantity),
     proration_behavior: proration,
     // A seat that needs a payment is added only once that payment succeeds.
     payment_behavior: "error_if_incomplete",
@@ -551,7 +548,8 @@ async function changeSeats(
 /**
  * The caller's Stripe customer: the one filed under them while Stripe still
  * has it, else a new one. A customer deleted in Stripe, or made under another
- * secret key, is unfiled first, since the component never drops it.
+ * secret key, is unfiled first: the component keeps its row, and
+ * `createOrUpdateCustomer` can only rename the row's userId, not clear it.
  */
 async function customerFor(
   ctx: ActionCtx,
@@ -559,12 +557,8 @@ async function customerFor(
 ): Promise<string> {
   const stripe = stripeApi();
   let gone: string | null = null;
-  for (;;) {
-    const filed = await ctx.runQuery(
-      components.stripe.public.getCustomerByUserId,
-      { userId: authUser.id },
-    );
-    if (!filed) break;
+  let filed = await filedCustomer(ctx, authUser.id);
+  while (filed) {
     if (await stripeHasCustomer(stripe, filed.stripeCustomerId)) {
       return filed.stripeCustomerId;
     }
@@ -573,6 +567,7 @@ async function customerFor(
       stripeCustomerId: gone,
       metadata: { userId: `unfiled:${authUser.id}` },
     });
+    filed = await filedCustomer(ctx, authUser.id);
   }
   const { customerId } = await stripeClient.createCustomer(ctx, {
     email: authUser.email ?? undefined,
@@ -584,42 +579,49 @@ async function customerFor(
   return customerId;
 }
 
-/** The items that bill `units`: one Pro line, the rest on the seat line, reusing the subscription's own lines. */
+/** The customer the component files under a user, if any. */
+async function filedCustomer(
+  ctx: ActionCtx,
+  userId: string,
+): Promise<{ stripeCustomerId: string } | null> {
+  return await ctx.runQuery(components.stripe.public.getCustomerByUserId, {
+    userId: userId,
+  });
+}
+
+/**
+ * The changes that make a subscription's `lines` bill `units`: a Pro line
+ * when it has none, the rest on the seat line. Checkout passes no lines; a
+ * subscription bought as seats alone gets its Pro line here.
+ */
 function itemsFor(
-  live: Stripe.Subscription,
+  lines: Stripe.SubscriptionItem[],
   units: number,
 ): Stripe.SubscriptionUpdateParams.Item[] {
-  const pro = live.items.data.find((item) => item.price.id === proPriceId());
-  const seats = live.items.data.find((item) => item !== pro);
+  const pro = priceId("STRIPE_PRO_PRICE_ID");
+  const seat = priceId("STRIPE_SEAT_PRICE_ID");
+  const seats = lines.find((line) => line.price.id === seat);
   const extra = units - 1;
-  const proLine = pro ? [] : [{ price: proPriceId(), quantity: 1 }];
-  if (seats) {
-    return [
-      ...proLine,
-      extra > 0
-        ? { id: seats.id, price: seatPriceId(), quantity: extra }
-        : { id: seats.id, deleted: true },
-    ];
-  }
+  const seatLine =
+    extra > 0
+      ? [{ id: seats?.id, price: seat, quantity: extra }]
+      : seats
+        ? [{ id: seats.id, deleted: true }]
+        : [];
 
   return [
-    ...proLine,
-    ...(extra > 0 ? [{ price: seatPriceId(), quantity: extra }] : []),
+    ...(lines.some((line) => line.price.id === pro)
+      ? []
+      : [{ price: pro, quantity: 1 }]),
+    ...seatLine,
   ];
 }
 
-function proPriceId(): string {
-  const priceId = process.env.STRIPE_PRO_PRICE_ID;
-  if (!priceId) throw new Error("STRIPE_PRO_PRICE_ID is not configured");
+function priceId(name: "STRIPE_PRO_PRICE_ID" | "STRIPE_SEAT_PRICE_ID"): string {
+  const id = process.env[name];
+  if (!id) throw new Error(`${name} is not configured`);
 
-  return priceId;
-}
-
-function seatPriceId(): string {
-  const priceId = process.env.STRIPE_SEAT_PRICE_ID;
-  if (!priceId) throw new Error("STRIPE_SEAT_PRICE_ID is not configured");
-
-  return priceId;
+  return id;
 }
 
 /** Whether Stripe still has a customer under this deployment's secret key. */

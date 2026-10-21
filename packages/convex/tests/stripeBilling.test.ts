@@ -453,7 +453,6 @@ describe("owner billing", () => {
   );
 
   test("checkout bills the owner one Pro unit, filed under them, while the included seats cover every developer", async () => {
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
     await addMember(t, "auth_member", "member@example.com");
@@ -491,7 +490,6 @@ describe("owner billing", () => {
   });
 
   test("upgrading an owner who kept 4 developers across 2 orgs bills Pro plus 2 extra seats", async () => {
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
     const second = await seedOrg(t, "Second");
@@ -526,7 +524,6 @@ describe("owner billing", () => {
   });
 
   test("checkout replaces a filed customer Stripe no longer has", async () => {
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
     await sendEvent(t, "customer.created", {
@@ -673,7 +670,6 @@ describe("owner billing", () => {
 
   test("deleting an org keeps the owner on Pro and gives back the seats only it used", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t, 2);
     const second = await seedOrg(t, "Second");
@@ -759,7 +755,6 @@ describe("seat pool", () => {
 
   test("Pro invites 2 developers, then the next one needs a seat", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
     for (const name of ["second", "third", "fourth"]) {
@@ -888,7 +883,6 @@ describe("seat pool", () => {
 
   test("Add seat charges the prorated seat at once, then the invite lands", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t);
     await seedUser(t, "auth_new", "new@example.com");
@@ -910,7 +904,6 @@ describe("seat pool", () => {
   });
 
   test("Add seat pays for developers kept from Hobby too", async () => {
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
     for (const name of ["a", "b", "c", "d"]) {
@@ -926,7 +919,6 @@ describe("seat pool", () => {
   });
 
   test("Add seat with a seat already free charges nothing, so a second tab or a retry never pays twice", async () => {
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t);
     stripeCalls.subscriptions.mockImplementation(updateLive);
@@ -940,7 +932,6 @@ describe("seat pool", () => {
 
   test("a webhook read that started before Add seat cannot land over the new seat", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t);
     await seedUser(t, "auth_new", "new@example.com");
@@ -969,7 +960,6 @@ describe("seat pool", () => {
 
   test("a declined card adds no seat and the invite stays refused", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t);
     await seedUser(t, "auth_new", "new@example.com");
@@ -1003,7 +993,6 @@ describe("seat pool", () => {
 
   test("removing a developer past the included seats gives their extra seat back with a proration credit", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t, 2);
     const membershipId = await addMember(
@@ -1030,7 +1019,6 @@ describe("seat pool", () => {
 
   test("a developer who leaves one org but stays in another keeps their seat", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t, 2);
     const second = await seedOrg(t, "Second");
@@ -1053,7 +1041,6 @@ describe("seat pool", () => {
   });
 
   test("a seat sync that lands after Stripe ended the subscription changes nothing", async () => {
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t, 2);
     // A deleted owner's cancel reached Stripe; its webhook has not landed yet.
@@ -1073,7 +1060,6 @@ describe("seat pool", () => {
 
   test("a subscription bought as seat units alone gets its Pro line and drops to the new count on its next sync", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedPayer(t);
     await addMember(t, "auth_kept", "kept@example.com");
@@ -1105,7 +1091,6 @@ describe("seat pool", () => {
 
   test("a developer whose account is deleted gives their seat back, even while payment is due", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
     await seedIncludedSeatsTaken(t, 2, "past_due");
     await addMember(t, "auth_member", "member@example.com");
@@ -1319,6 +1304,7 @@ beforeEach(() => {
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_billing");
   vi.stubEnv("STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET);
   vi.stubEnv("STRIPE_PRO_PRICE_ID", "price_pro");
+  vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
   // Stripe has every customer the component filed, unless a test says not.
   stripeCalls.retrieveCustomer.mockImplementation(
     async (id: string): Promise<Record<string, unknown>> => ({
@@ -1500,7 +1486,7 @@ async function updateLive(
   params: Stripe.SubscriptionUpdateParams,
 ): Promise<Record<string, unknown>> {
   const seats = (params.items ?? [])
-    .filter((item) => !item.deleted && item.price === "price_seat")
+    .filter((item) => item.price === "price_seat")
     .reduce((units, item) => units + (item.quantity ?? 1), 0);
   const next = subscription("active", id, 1 + seats);
   stripeCalls.live.set(id, next);
