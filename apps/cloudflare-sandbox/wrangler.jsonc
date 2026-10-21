@@ -1,12 +1,11 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "broods-cloudflare-sandbox",
+  // `sst deploy` names it per stage in a copy of this file (see AGENTS.md).
+  "name": "broods-sandbox",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-30",
-  // `sst deploy` names it per stage through a copy of this file (see `deploy`), since
-  // wrangler names the Container application after `name`, not `--name`
-  // (workers-sdk#15827). The infra repo puts SANDBOX_API_KEY on it,
-  // which core sends as CLOUDFLARE_SANDBOX_API_KEY; until then it refuses every call.
+  // The infra repo puts SANDBOX_API_KEY on it, which core sends as
+  // CLOUDFLARE_SANDBOX_API_KEY; until then it refuses every call.
   "containers": [
     {
       "class_name": "Sandbox",

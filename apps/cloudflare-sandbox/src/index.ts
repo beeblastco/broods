@@ -316,7 +316,7 @@ async function terminalAuthorized(
   sandboxId: string,
 ): Promise<boolean> {
   const header = request.headers.get("Authorization") ?? "";
-  if (!apiKey || !header.startsWith("Bearer ")) return false;
+  if (!header.startsWith("Bearer ")) return false;
 
   return await verifyTerminalToken(
     apiKey,
