@@ -2523,9 +2523,11 @@ function SpanRow({
   scale: TimelineScale;
 }): React.JSX.Element {
   const isTaskRow = depth === 0;
-  // A live span's duration runs to now; a task row reads the whole request.
+  // A live span's duration runs to now. The task row reads the whole request,
+  // which is live while any of its passes is, so it runs to now too.
   const runningMs =
-    scale.nowMs !== null && span.status === "running" && taskRunning
+    scale.nowMs !== null &&
+    (isTaskRow || (span.status === "running" && taskRunning))
       ? scale.nowMs - span.startTimeMs
       : 0;
   const durationMs = Math.max(
@@ -2797,15 +2799,17 @@ function TaskWaterfall({
   const { group } = panelView;
   const now = useNow(group.live ? LIVE_TICK_MS : null);
   const issues = useMemo(() => runIssues(group), [group]);
-  const endMs = group.windowStart + group.windowSpan;
+  // The clock can trail the stream by a tick (or more, the first tick after a
+  // switch to a live run), so now is never earlier than the newest span.
+  const nowMs = Math.max(group.windowStart + group.windowSpan, now);
   const view: WaterfallView = {
     ...panelView,
     issues: issues,
     scale: group.live
       ? {
           startMs: group.windowStart,
-          spanMs: (Math.max(endMs, now) - group.windowStart) * LIVE_HEADROOM,
-          nowMs: now,
+          spanMs: (nowMs - group.windowStart) * LIVE_HEADROOM,
+          nowMs: nowMs,
         }
       : { startMs: group.windowStart, spanMs: group.windowSpan, nowMs: null },
   };
