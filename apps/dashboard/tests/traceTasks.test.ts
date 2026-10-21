@@ -441,6 +441,14 @@ describe("waterfall issues", () => {
     ]);
     expect(issues.own.has("run")).toBe(false);
     expect(issues.below.get("run")).toHaveLength(1);
+
+    // A tool that failed on its own, earlier, leaves the run's later failure standing.
+    const earlier = { ...tool, error: "file not found" };
+    const both = runIssues(groupSpans([task, open, earlier])[0]);
+    expect(both.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+      "run-step-0",
+    ]);
   });
 
   test("steps the time axis so it shows at most four ticks", () => {

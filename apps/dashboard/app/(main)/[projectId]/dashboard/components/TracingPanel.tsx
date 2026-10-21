@@ -1320,7 +1320,8 @@ export function runIssues(group: SpanGroup): RunIssues {
     // first pass that failed and was continued is not its issue either.
     const found = spanIssue(span);
     const passedUp =
-      found?.level === "error" && under.some((item) => item.level === "error");
+      found?.level === "error" &&
+      under.some((item) => item.level === "error" && item.text === found.text);
     const issue =
       passedUp || (isTaskRow && group.status !== "error") ? null : found;
     if (!issue) return under;
