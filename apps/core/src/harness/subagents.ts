@@ -4,7 +4,11 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
-import { subagentResultDedupeKey } from "@broods/convex/model/subagentResults";
+import {
+  subagentResultDedupeKey,
+  SWEPT_HANDBACKS,
+  type SweptHandback,
+} from "@broods/convex/model/subagentResults";
 import type {
   JSONValue,
   ModelMessage,
@@ -39,7 +43,7 @@ import { WORKER_TIMEOUT_BUDGET_MS } from "../shared/env.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
-  listUnobservedAsyncAgentResults,
+  listOwedAsyncAgentResults,
   markAsyncAgentHandback,
   recordAsyncAgentResult,
   type AsyncAgentOutcome,
@@ -108,10 +112,6 @@ const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // still queued.
 const HELD_RESUME_OUTCOMES: ReadonlySet<SubagentResumeOutcome> =
   new Set<SubagentResumeOutcome>(["queued", "capacity", "duplicate"]);
-// Rows the release before `handback` detached carry only `observed: false`.
-// The sweep lists them beside the hand-back windows for one release; drop
-// `undefined` from this list next release.
-const SWEPT_HANDBACKS = ["detached", "pending", undefined] as const;
 const LOST_SUBAGENT_ERROR =
   "Subagent stopped without a result: the runtime restarted while it was running.";
 // The parent message of each lost result a sweep pass could not resume yet, so
@@ -1474,9 +1474,7 @@ export async function resumeLostSubagentResults(
   const now = Date.now();
   const { updatedAfter, finishedBefore, abandonedBefore } =
     lostResultWindows(now);
-  const ranges: Array<
-    [(typeof SWEPT_HANDBACKS)[number], AsyncAgentStatus, string]
-  > = [];
+  const ranges: Array<[SweptHandback, AsyncAgentStatus, string]> = [];
   for (const handback of SWEPT_HANDBACKS) {
     const settledBefore = finishedBefore(handback);
     ranges.push(
@@ -1491,8 +1489,8 @@ export async function resumeLostSubagentResults(
     let cursor: string | null = null;
     let isDone = false;
     while (!isDone) {
-      const result = await listUnobservedAsyncAgentResults({
-        ...(handback === undefined ? {} : { handback: handback }),
+      const result = await listOwedAsyncAgentResults({
+        handback: handback,
         status: status,
         updatedAfter: updatedAfter,
         updatedBefore: updatedBefore,
@@ -1557,9 +1555,7 @@ export async function resumeLostSubagentResults(
  */
 export function lostResultWindows(now: number): {
   updatedAfter: string;
-  // A row the release before `handback` detached (no hand-back) gets the
-  // detached window.
-  finishedBefore: (handback: "pending" | "detached" | undefined) => string;
+  finishedBefore: (handback: SweptHandback) => string;
   abandonedBefore: string;
 } {
   const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();

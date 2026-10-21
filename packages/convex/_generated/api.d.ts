@@ -5955,51 +5955,12 @@ export declare const internal: {
         }>;
       }
     >;
-    listPendingAsyncToolResults: FunctionReference<
-      "query",
-      "internal",
-      { conversationKey: string; toolName: string },
-      Array<{
-        _creationTime: number;
-        _id: Id<"runtimeAsyncToolResults">;
-        accountId: Id<"accounts">;
-        conversationKey: string;
-        createdAt: string;
-        delivery?: any;
-        error?: string;
-        expiresAt: number;
-        handback?: "pending" | "detached" | "stored";
-        input: any;
-        observed?: boolean;
-        parentEventId: string;
-        response?: any;
-        resultId: string;
-        sandbox?: {
-          externalId: string;
-          provider:
-            | "sandbox"
-            | "lambda"
-            | "e2b"
-            | "daytona"
-            | "vercel"
-            | "cloudflare"
-            | "worker"
-            | "machine"
-            | "custom";
-          reservationKey: string;
-        };
-        status: "processing" | "completed" | "failed";
-        toolCallId: string;
-        toolName: string;
-        updatedAt: string;
-      }>
-    >;
-    listUnobservedAsyncAgentResults: FunctionReference<
+    listOwedAsyncAgentResults: FunctionReference<
       "query",
       "internal",
       {
         cursor: string | null;
-        handback?: "pending" | "detached";
+        handback: "detached" | "pending";
         status:
           | "processing"
           | "awaiting_approval"
@@ -6061,12 +6022,12 @@ export declare const internal: {
         }>;
       }
     >;
-    listUnobservedAsyncToolResults: FunctionReference<
+    listOwedAsyncToolResults: FunctionReference<
       "query",
       "internal",
       {
         cursor: string | null;
-        handback: "pending" | "detached";
+        handback: "detached" | "pending";
         status: "processing" | "completed" | "failed";
         updatedAfter: string;
         updatedBefore: string;
@@ -6110,13 +6071,52 @@ export declare const internal: {
         }>;
       }
     >;
+    listPendingAsyncToolResults: FunctionReference<
+      "query",
+      "internal",
+      { conversationKey: string; toolName: string },
+      Array<{
+        _creationTime: number;
+        _id: Id<"runtimeAsyncToolResults">;
+        accountId: Id<"accounts">;
+        conversationKey: string;
+        createdAt: string;
+        delivery?: any;
+        error?: string;
+        expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
+        input: any;
+        observed?: boolean;
+        parentEventId: string;
+        response?: any;
+        resultId: string;
+        sandbox?: {
+          externalId: string;
+          provider:
+            | "sandbox"
+            | "lambda"
+            | "e2b"
+            | "daytona"
+            | "vercel"
+            | "cloudflare"
+            | "worker"
+            | "machine"
+            | "custom";
+          reservationKey: string;
+        };
+        status: "processing" | "completed" | "failed";
+        toolCallId: string;
+        toolName: string;
+        updatedAt: string;
+      }>
+    >;
     markAsyncAgentHandback: FunctionReference<
       "mutation",
       "internal",
       { eventId: string; handback: "detached" | "stored" },
       boolean
     >;
-    observeAsyncToolResult: FunctionReference<
+    markAsyncToolHandback: FunctionReference<
       "mutation",
       "internal",
       { handback: "detached" | "stored"; resultId: string },

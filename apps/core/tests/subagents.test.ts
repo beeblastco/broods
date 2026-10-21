@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as ai from "ai";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import * as asyncAgentResults from "../src/harness/async-agent-result.ts";
+import type { SweptHandback } from "@broods/convex/model/subagentResults";
 import type { AsyncAgentResultRecord } from "../src/harness/async-agent-result.ts";
 import * as hookDispatcher from "../src/harness/hook-dispatcher.ts";
 import type { ReentryTarget } from "../src/harness/integrations.ts";
@@ -1271,7 +1272,7 @@ describe("SubagentCoordinator", () => {
       updatedAt: "2026-10-11T00:00:00.000Z",
       expiresAt: Date.now() + 60_000,
     });
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockImplementation(
@@ -1338,7 +1339,7 @@ describe("SubagentCoordinator", () => {
       expect(told).toEqual([]);
     } finally {
       owned.mockRestore();
-      observe.mockRestore();
+      markHandback.mockRestore();
     }
   });
 
@@ -1370,7 +1371,7 @@ describe("SubagentCoordinator", () => {
       updatedAt: "2026-10-11T00:00:00.000Z",
       expiresAt: Date.now() + 60_000,
     });
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockResolvedValue(false);
@@ -1395,19 +1396,19 @@ describe("SubagentCoordinator", () => {
       );
       // The read alone stores nothing: a pod that dies before the step saves
       // leaves the row to the sweep.
-      expect(observe).not.toHaveBeenCalled();
+      expect(markHandback).not.toHaveBeenCalled();
 
       await coordinator.confirmDelivered();
 
-      expect(observe.mock.calls).toEqual([[childEventId, "stored"]]);
+      expect(markHandback.mock.calls).toEqual([[childEventId, "stored"]]);
     } finally {
       owned.mockRestore();
-      observe.mockRestore();
+      markHandback.mockRestore();
     }
   });
 
   it("keeps a result the parent already has seen when its child detaches on a follow-up", async (): Promise<void> => {
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockResolvedValue(false);
@@ -1436,9 +1437,9 @@ describe("SubagentCoordinator", () => {
       await coordinator.drainCompletionsAndDetachToParent();
 
       // Only the child the parent has nothing from is left to the sweep.
-      expect(observe.mock.calls).toEqual([["event_2", "detached"]]);
+      expect(markHandback.mock.calls).toEqual([["event_2", "detached"]]);
     } finally {
-      observe.mockRestore();
+      markHandback.mockRestore();
     }
   });
 
@@ -1446,10 +1447,10 @@ describe("SubagentCoordinator", () => {
     const rows = [lostRow("event_full"), lostRow("event_other")];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
-        handback?: string;
+        handback: SweptHandback;
         status: string;
         cursor: string | null;
       }): Promise<{
@@ -1471,7 +1472,7 @@ describe("SubagentCoordinator", () => {
         };
       },
     );
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockResolvedValue(false);
@@ -1531,7 +1532,7 @@ describe("SubagentCoordinator", () => {
         eventId: lostRow("event_full").eventId,
         message: expect.stringContaining("rewritten 1"),
       });
-      expect(observe).not.toHaveBeenCalled();
+      expect(markHandback).not.toHaveBeenCalled();
       // A resume is logged only once a conversation admitted it.
       expect(
         info.mock.calls.filter(
@@ -1541,7 +1542,7 @@ describe("SubagentCoordinator", () => {
       ).toHaveLength(2);
     } finally {
       pages.mockRestore();
-      observe.mockRestore();
+      markHandback.mockRestore();
       hooks.mockRestore();
       info.mockRestore();
     }
@@ -1552,10 +1553,10 @@ describe("SubagentCoordinator", () => {
     const rows = [lostRow("event_queued")];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
-        handback?: string;
+        handback: SweptHandback;
         status: string;
       }): Promise<{
         page: AsyncAgentResultRecord[];
@@ -1570,7 +1571,7 @@ describe("SubagentCoordinator", () => {
         isDone: true,
       }),
     );
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockResolvedValue(false);
@@ -1609,10 +1610,10 @@ describe("SubagentCoordinator", () => {
         expect.stringContaining("rewritten 1"),
         expect.stringContaining("rewritten 1"),
       ]);
-      expect(observe).not.toHaveBeenCalled();
+      expect(markHandback).not.toHaveBeenCalled();
     } finally {
       pages.mockRestore();
-      observe.mockRestore();
+      markHandback.mockRestore();
       hooks.mockRestore();
     }
   });
@@ -1627,13 +1628,14 @@ describe("SubagentCoordinator", () => {
       { ...lostRow("event_young"), handback: "pending", updatedAt: minutes(5) },
       { ...lostRow("event_old"), handback: "pending", updatedAt: minutes(30) },
     ];
-    const windows: Array<{ handback?: string; updatedBefore: string }> = [];
+    const windows: Array<{ handback: SweptHandback; updatedBefore: string }> =
+      [];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
-        handback?: string;
+        handback: SweptHandback;
         status: string;
         updatedBefore: string;
       }): Promise<{
@@ -1658,7 +1660,7 @@ describe("SubagentCoordinator", () => {
         };
       },
     );
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockResolvedValue(false);
@@ -1683,10 +1685,10 @@ describe("SubagentCoordinator", () => {
       );
 
       expect(resumed).toEqual([lostRow("event_old").eventId]);
-      expect(observe).not.toHaveBeenCalled();
+      expect(markHandback).not.toHaveBeenCalled();
       // A pending result waits out the parent's whole hold, longer than the
       // grace a detached one gets.
-      const before = (handback: string | undefined): string =>
+      const before = (handback: SweptHandback): string =>
         windows.find((window): boolean => window.handback === handback)!
           .updatedBefore;
       expect(before("pending") < before("detached")).toBe(true);
@@ -1708,7 +1710,7 @@ describe("SubagentCoordinator", () => {
       ]);
     } finally {
       pages.mockRestore();
-      observe.mockRestore();
+      markHandback.mockRestore();
       info.mockRestore();
     }
   });
@@ -1735,13 +1737,13 @@ describe("SubagentCoordinator", () => {
         updatedAt: minutes(40),
       },
     ];
-    const windows: Array<{ handback?: string; status: string }> = [];
+    const windows: Array<{ handback: SweptHandback; status: string }> = [];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
-        handback?: string;
+        handback: SweptHandback;
         status: string;
         updatedBefore: string;
       }): Promise<{
@@ -1763,7 +1765,7 @@ describe("SubagentCoordinator", () => {
         };
       },
     );
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockResolvedValue(false);
@@ -1804,11 +1806,11 @@ describe("SubagentCoordinator", () => {
           { onlyWhileProcessing: true, handback: "detached" },
         ],
       ]);
-      expect(observe).not.toHaveBeenCalled();
+      expect(markHandback).not.toHaveBeenCalled();
       expect(resumed).toEqual([]);
     } finally {
       pages.mockRestore();
-      observe.mockRestore();
+      markHandback.mockRestore();
       record.mockRestore();
     }
   });
@@ -1832,10 +1834,10 @@ describe("SubagentCoordinator", () => {
     ];
     const pages = spyOn(
       asyncAgentResults,
-      "listUnobservedAsyncAgentResults",
+      "listOwedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
-        handback?: string;
+        handback: SweptHandback;
         status: string;
       }): Promise<{
         page: AsyncAgentResultRecord[];
@@ -1850,7 +1852,7 @@ describe("SubagentCoordinator", () => {
         isDone: true,
       }),
     );
-    const observe = spyOn(
+    const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockResolvedValue(false);
@@ -1886,8 +1888,13 @@ describe("SubagentCoordinator", () => {
       );
 
       expect(resumed).toEqual([lostRow("event_conflict").eventId]);
-      expect(observe.mock.calls.map(([eventId]) => eventId).sort()).toEqual(
-        [rows[0]!.eventId, rows[1]!.eventId, rows[2]!.eventId].sort(),
+      expect(markHandback.mock.calls).toHaveLength(3);
+      expect(markHandback.mock.calls).toEqual(
+        expect.arrayContaining(
+          rows
+            .slice(0, 3)
+            .map(({ eventId }): [string, "stored"] => [eventId, "stored"]),
+        ),
       );
       // An outcome that lands after the list is never overwritten.
       expect(record.mock.calls).toEqual([
@@ -1899,7 +1906,7 @@ describe("SubagentCoordinator", () => {
       ]);
     } finally {
       pages.mockRestore();
-      observe.mockRestore();
+      markHandback.mockRestore();
       record.mockRestore();
     }
   });

@@ -1390,7 +1390,7 @@ describe("runtime ingress", () => {
       await t.query(internal.runtime.getAsyncAgentResult, {
         eventId: "resumed-first",
       }),
-    ).toMatchObject({ handback: "stored", observed: true });
+    ).toMatchObject({ handback: "stored" });
   });
 
   test("admits no late resume of a result its parent's conversation already stores, whatever status its row recorded", async (): Promise<void> => {
@@ -1453,7 +1453,6 @@ describe("runtime ingress", () => {
     // Stored now, so the recovery sweep stops retrying it.
     expect(await row("stored")).toMatchObject({
       handback: "stored",
-      observed: true,
     });
     expect(await resume("resume-lagging", "lagging")).toMatchObject({
       outcome: "duplicate",
@@ -1513,14 +1512,13 @@ describe("runtime ingress", () => {
     });
     expect(await row("resumed")).toMatchObject({
       handback: "stored",
-      observed: true,
     });
     expect(await resume("resume-again", "resumed")).toMatchObject({
       outcome: "duplicate",
     });
 
     // async_status read it first: the continuation admits nothing.
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
       resultId: "read-first",
       handback: "stored",
     });
@@ -1544,7 +1542,6 @@ describe("runtime ingress", () => {
     });
     expect(await row("written")).toMatchObject({
       handback: "stored",
-      observed: true,
     });
   });
 
@@ -1583,7 +1580,7 @@ describe("runtime ingress", () => {
       await t.query(internal.runtime.getAsyncAgentResult, {
         eventId: "owner-result",
       }),
-    ).toMatchObject({ handback: "detached", observed: false });
+    ).toMatchObject({ handback: "detached" });
     // ...nor is refused once its owner has stored it.
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "owner-result",
@@ -2717,7 +2714,7 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         ?.handback,
     listed: async (t, id): Promise<boolean> =>
       (
-        await t.query(internal.runtime.listUnobservedAsyncAgentResults, {
+        await t.query(internal.runtime.listOwedAsyncAgentResults, {
           ...SWEEP_WINDOW,
           handback: "detached",
           status: "completed",
@@ -2766,14 +2763,14 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         ?.handback,
     listed: async (t, id): Promise<boolean> =>
       (
-        await t.query(internal.runtime.listUnobservedAsyncToolResults, {
+        await t.query(internal.runtime.listOwedAsyncToolResults, {
           ...SWEEP_WINDOW,
           handback: "pending",
           status: "completed",
         })
       ).page.some((row): boolean => row.resultId === id),
     read: async (t, id): Promise<boolean> =>
-      await t.mutation(internal.runtime.observeAsyncToolResult, {
+      await t.mutation(internal.runtime.markAsyncToolHandback, {
         resultId: id,
         handback: "stored",
       }),
