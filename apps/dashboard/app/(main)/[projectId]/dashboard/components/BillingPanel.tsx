@@ -325,18 +325,24 @@ function PlanTable({
       <div className="grid divide-y divide-border text-sm sm:hidden">
         {PLANS.map((plan) => (
           <div key={plan}>
-            <div className="px-2 py-2.5 font-medium">
+            <h3 className="px-2 py-2.5 font-medium">
               <PlanName plan={plan} current={current} status={status} />
-            </div>
-            {LIMIT_ROWS.map((row) => (
-              <div
-                key={row.key}
-                className="flex items-center justify-between gap-4 border-t border-border px-2 py-2"
-              >
-                <ResourceLabel row={row} />
-                <LimitValue row={row} plan={plan} current={current} />
-              </div>
-            ))}
+            </h3>
+            <dl>
+              {LIMIT_ROWS.map((row) => (
+                <div
+                  key={row.key}
+                  className="flex items-center justify-between gap-4 border-t border-border px-2 py-2"
+                >
+                  <dt>
+                    <ResourceLabel row={row} />
+                  </dt>
+                  <dd>
+                    <LimitValue row={row} plan={plan} current={current} />
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
         ))}
       </div>
