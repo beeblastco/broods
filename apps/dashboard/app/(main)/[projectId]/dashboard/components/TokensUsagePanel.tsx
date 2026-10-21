@@ -149,7 +149,7 @@ const PER_TASK_SERIES: Record<
     label: "Avg cost per task",
     color: "var(--color-usage-output)",
     format: formatUsd,
-    help: `${TASK_HELP} Models without a public price are left out.`,
+    help: `${TASK_HELP} Models without a public price add no cost but their tasks still count.`,
   },
   calls: {
     key: "calls",
@@ -566,25 +566,21 @@ function UsageStats({
   onMetric: (metric: PerTaskMetric) => void;
 }): React.JSX.Element {
   const modelsShown = modelFilter?.length ?? modelsTotal;
-  const target = useMemo(() => {
-    const perTask = (n: number): number =>
-      scope.invocations > 0 ? n / scope.invocations : 0;
-
-    return [
+  const target = useMemo(
+    () => [
       [
         scope.totalTokens,
         estimatedCost,
         scope.invocations,
         scope.modelCalls,
-        perTask(estimatedCost),
-        perTask(scope.modelCalls),
-        perTask(scope.totalTokens),
+        perTask(estimatedCost, scope.invocations),
+        perTask(scope.modelCalls, scope.invocations),
+        perTask(scope.totalTokens, scope.invocations),
       ],
-    ];
-  }, [scope, estimatedCost]);
+    ],
+    [scope, estimatedCost],
+  );
   const values = useTween(target)[0];
-  const perTask = (n: number): number =>
-    scope.invocations > 0 ? n / scope.invocations : 0;
   const columns = [
     {
       label: "Tokens",
@@ -609,7 +605,7 @@ function UsageStats({
       value: formatNumber(values[2]),
       detail:
         scope.invocations > 0
-          ? `${formatMs(perTask(scope.runtimeWallMs))} average run`
+          ? `${formatMs(perTask(scope.runtimeWallMs, scope.invocations))} average run`
           : "No runs",
       trend: bins.map((b) => b.invocations),
       color: "var(--color-usage-tasks)",
@@ -618,7 +614,7 @@ function UsageStats({
     {
       label: "Model calls",
       value: formatNumber(values[3]),
-      detail: `${perTask(scope.modelCalls).toFixed(1)} per task`,
+      detail: `${perTask(scope.modelCalls, scope.invocations).toFixed(1)} per task`,
       trend: bins.map((b) => b.modelCalls),
       color: "var(--color-usage-model-calls)",
     },
@@ -692,7 +688,7 @@ function UsageStats({
               <button
                 type="button"
                 aria-pressed={active}
-                aria-label={`${series.label}: ${active ? "show tokens on the chart" : "show on the chart"}`}
+                aria-label={`${series.label}: ${column.value}, ${column.detail}`}
                 onClick={() => onMetric(column.metric)}
                 className="grid min-w-0 cursor-pointer gap-1 rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
@@ -904,6 +900,11 @@ function numericAttribute(span: ObservabilitySpanRow, key: string): number {
 }
 
 /** Whole-number share for the numbers row, 0% when empty. */
+/** `n` averaged over `tasks`, or 0 with no tasks. */
+function perTask(n: number, tasks: number): number {
+  return tasks > 0 ? n / tasks : 0;
+}
+
 function percent(part: number, whole: number): string {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%";
 }
