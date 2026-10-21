@@ -29,18 +29,8 @@ const BUDGET_FILE = join(__dirname, "first-load-budget.json");
 // Chunk hashes and minifier output move the gzip size a little per build.
 const BYTES_HEADROOM = 1.05;
 const RECORD = process.env.E2E_RECORD_FIRST_LOAD === "1";
-
-interface FirstLoad {
-  jsRequests: number;
-  jsBytes: number;
-}
-
 // The canvas carries React Flow; the projects page is the shell alone.
-const PAGES: Array<{
-  name: string;
-  path: () => string;
-  ready: (page: Page) => Locator;
-}> = [
+const PAGES: ProbePage[] = [
   {
     name: "canvas",
     path: () => `/${readProjectId()}`,
@@ -52,6 +42,17 @@ const PAGES: Array<{
     ready: (page) => page.getByRole("heading", { name: "Projects" }),
   },
 ];
+
+interface FirstLoad {
+  jsRequests: number;
+  jsBytes: number;
+}
+
+interface ProbePage {
+  name: string;
+  path: () => string;
+  ready: (page: Page) => Locator;
+}
 
 test.skip(!hasProbe(), MISSING_PROBE);
 
