@@ -50,6 +50,13 @@ crons.interval(
   internal.runtime.pruneExpired,
   {},
 );
+// One-time: unsets the dead `observed` flag so the next release can drop it.
+crons.interval(
+  "strip observed from async results",
+  { minutes: 10 },
+  internal.observedMigration.stripObserved,
+  {},
+);
 // Expiry is checked inline on every session resolve; this only bounds growth.
 crons.interval(
   "prune role sessions",
