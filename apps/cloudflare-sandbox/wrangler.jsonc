@@ -3,8 +3,8 @@
   "name": "broods-cloudflare-sandbox",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-30",
-  // `sst deploy` names it per stage. The infra repo puts SANDBOX_API_KEY on it,
-  // which core sends as CLOUDFLARE_SANDBOX_API_KEY; until then it refuses every call.
+  // Set with `wrangler secret put SANDBOX_API_KEY`; core sends it as CLOUDFLARE_SANDBOX_API_KEY.
+  "secrets": { "required": ["SANDBOX_API_KEY"] },
   "containers": [
     {
       "class_name": "Sandbox",
