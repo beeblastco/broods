@@ -2865,6 +2865,33 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     ).toMatchObject({ status: "completed" });
   });
 
+  test("writes the queue counters down when a clear refused by the owner completes the resume", async (): Promise<void> => {
+    const { t, accountId, conversationKey, resume } = await busyConversation();
+    expect(await resume()).toMatchObject({ outcome: "queued" });
+    await kind.read(t, "late");
+
+    expect(
+      await t.mutation(internal.runtimeIngress.acquireClear, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+        ownerEventId: "clear",
+        leaseTtlMs: 60_000,
+      }),
+    ).toBeNull();
+    expect(
+      await t.run(
+        async (ctx) =>
+          await ctx.db
+            .query("runtimeConversationCoordinators")
+            .withIndex("by_conversationKey", (q) =>
+              q.eq("conversationKey", conversationKey),
+            )
+            .unique(),
+      ),
+    ).toMatchObject({ queuedCount: 0, queuedBytes: 0 });
+  });
+
   test("answers a retry whose payload drifted as a duplicate while the first still waits", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();
