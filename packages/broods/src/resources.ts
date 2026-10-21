@@ -199,8 +199,9 @@ export interface McpDefinitionConfig {
   command?: string[];
   /**
    * Hosted alternative to `url`: declare the server inline as
-   * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
-   * right next to the `defineMcp` call. The CLI bundles the defining module
+   * `handler: createMcpHandler(factory, { legacy: "reject" })` from
+   * @modelcontextprotocol/server, right next to the `defineMcp` call; Broods
+   * speaks MCP 2026-07-28 only. The CLI bundles the defining module
    * and the platform hosts it, one invocation per batch of requests: with
    * `runtime` "auto" on Cloudflare Workers when the bundle builds for them,
    * on Lambda otherwise.

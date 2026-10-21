@@ -122,26 +122,29 @@ const MARKDOWN_RESPONSE = z.object({ result: z.string() });
 export const browser = defineMcp({
   name: "browser",
   description: "Cloudflare Browser Run on Kitesurf.",
-  handler: createMcpHandler(({ requestInfo }): McpServer => {
-    const server = new McpServer({ name: "kitesurf", version: "1.0.0" });
-    server.registerTool(
-      "markdown",
-      {
-        description: "Open a URL and return the page as Markdown.",
-        inputSchema: z.object({ url: z.url() }),
-      },
-      async ({ url }): Promise<CallToolResult> => {
-        const response = await quickAction(requestInfo, "markdown", {
-          url: url,
-        });
-        const { result } = MARKDOWN_RESPONSE.parse(await response.json());
+  handler: createMcpHandler(
+    ({ requestInfo }): McpServer => {
+      const server = new McpServer({ name: "kitesurf", version: "1.0.0" });
+      server.registerTool(
+        "markdown",
+        {
+          description: "Open a URL and return the page as Markdown.",
+          inputSchema: z.object({ url: z.url() }),
+        },
+        async ({ url }): Promise<CallToolResult> => {
+          const response = await quickAction(requestInfo, "markdown", {
+            url: url,
+          });
+          const { result } = MARKDOWN_RESPONSE.parse(await response.json());
 
-        return { content: [{ type: "text", text: result }] };
-      },
-    );
+          return { content: [{ type: "text", text: result }] };
+        },
+      );
 
-    return server;
-  }),
+      return server;
+    },
+    { legacy: "reject" },
+  ),
 });
 
 export const researcher = defineAgent({
