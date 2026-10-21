@@ -40,7 +40,7 @@ export default function getSubagentStatusTool(
   return {
     get_subagent_status: tool({
       description:
-        "Check a persistent subagent started earlier in this conversation, using the taskId and agentId from run_subagent. A running subagent this turn started is waited on for up to 60 seconds first. You rarely need this: its result arrives in this conversation as a new message when it finishes, even after your turn ends, so you can simply end your turn.",
+        'Check a persistent subagent started earlier in this conversation, using the taskId and agentId from run_subagent. A running subagent this turn started is waited on for up to 60 seconds first. You rarely need this: its result arrives in this conversation as a new message when it finishes, even after your turn ends, so you can simply end your turn. A result already on its way answers delivery "automatic" instead of a response: it arrives as the next message.',
       inputSchema: jsonSchema<SubagentToolInput>({
         type: "object",
         properties: SUBAGENT_TOOL_PROPERTIES,
