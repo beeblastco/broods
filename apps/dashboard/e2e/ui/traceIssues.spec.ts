@@ -1,15 +1,13 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts";
-
-/** The page's frozen clock; the live run started a minute before it. */
-const NOW_MS = Date.parse("2026-09-15T10:00:00Z");
+import { answerObservabilitySocket, NOW_MS } from "../lib/observabilitySocket";
 
 const TRACE_ID = "a".repeat(32);
 
 test("a live run shows its failures and retries on the row and the time axis", async ({
   page,
 }) => {
-  await answerTraceSocket(page, liveRun());
+  await answerObservabilitySocket(page, { traces: liveRun() });
   await page.goto(`/ui-gallery?tab=tracing&range=30d&trace=${TRACE_ID}`);
 
   // The failed tool's error reads under its row, without opening it.
@@ -38,32 +36,7 @@ test("a live run shows its failures and retries on the row and the time axis", a
   ).toHaveCount(2);
 });
 
-/** Serve the trace stream from `spans`. */
-async function answerTraceSocket(
-  page: Page,
-  spans: ObservabilitySpanRow[],
-): Promise<void> {
-  await page.clock.setFixedTime(NOW_MS);
-  await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
-    socket.onMessage((raw) => {
-      const message = JSON.parse(String(raw)) as {
-        type: string;
-        stream: string;
-      };
-      if (message.type !== "subscribe") return;
-      socket.send(JSON.stringify({ type: "ready" }));
-      socket.send(
-        JSON.stringify({
-          type: "backfill",
-          stream: message.stream,
-          entries: message.stream === "traces" ? spans : [],
-        }),
-      );
-    });
-  });
-}
-
-/** A run still going: a step that retried a 429, a failed tool, a running step. */
+/** A run still going, started a minute before the frozen clock: a step that retried a 429, a failed tool, a running step. */
 function liveRun(): ObservabilitySpanRow[] {
   const start = NOW_MS - 60_000;
   const span = (

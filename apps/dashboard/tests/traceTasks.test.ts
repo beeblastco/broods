@@ -37,7 +37,6 @@ describe("groupSpans", () => {
     expect(rest).toHaveLength(0);
     expect(group.root.spanId).toBe("asked");
     expect(group.status).toBe("ok");
-    expect(group.issueCount).toBe(1);
     const nested = group.childrenByParent.get("asked") ?? [];
     expect(nested.map((span) => span.spanId)).toEqual([
       "asked-bash",

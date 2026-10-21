@@ -7,7 +7,11 @@ import {
 } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
-import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
+import {
+  STATUS_TONE_BG,
+  StatusDot,
+  type StatusTone,
+} from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -431,8 +435,6 @@ export interface SpanGroup {
   status: SpanStatus;
   // Whether the latest pass is still live, so a stale "running" reads as ended.
   live: boolean;
-  // Tool calls that failed, even when the run recovered.
-  issueCount: number;
   childrenByParent: Map<string, ObservabilitySpanRow[]>;
   // Root first, then every child, for search and selection.
   spans: ObservabilitySpanRow[];
@@ -487,7 +489,7 @@ export type WaterfallItem =
 // Something that went wrong on one span: a failure, or retries it got past.
 export interface SpanIssue {
   atMs: number;
-  level: "error" | "warn";
+  level: Extract<StatusTone, "error" | "warn">;
   label: string;
   text: string;
 }
@@ -500,7 +502,7 @@ interface RowOnPath {
 }
 
 // The run's issues in time order, each with the rows above it, and per span
-// id the issues under it.
+// id (a fold's too) the issues under it.
 export interface RunIssues {
   all: Array<{
     issue: SpanIssue;
@@ -1073,6 +1075,7 @@ export function TracingPanel({
           >
             {selectedGroup && (
               <TaskWaterfall
+                key={spanKey(selectedGroup.root)}
                 attempt={continueAttempts.get(selectedGroup.root.traceId)}
                 chain={chain}
                 projectSlug={projectSlug}
@@ -1275,10 +1278,7 @@ export function runIssues(group: SpanGroup): RunIssues {
   const below = new Map<string, SpanIssue[]>();
   const walk = (span: ObservabilitySpanRow, path: RowOnPath[]): SpanIssue[] => {
     const isTaskRow = span === group.root;
-    const children =
-      span.kind === "subtask" && !isTaskRow
-        ? []
-        : (group.childrenByParent.get(span.spanId) ?? []);
+    const children = rowChildren(span, isTaskRow, group);
     // The task row is always open, so it is never on a path.
     const inside = isTaskRow
       ? path
@@ -1286,15 +1286,19 @@ export function runIssues(group: SpanGroup): RunIssues {
           ...path,
           { key: spanKey(span), startsOpen: span.kind === "model.step" },
         ];
-    const under = foldSteps(children, group.childrenByParent).flatMap((item) =>
-      item.type === "span"
-        ? walk(item.span, inside)
-        : item.fold.steps.flatMap((step) =>
-            walk(step, [
-              ...inside,
-              { key: spanKey(item.fold.span), startsOpen: false },
-            ]),
-          ),
+    const under = foldSteps(children, group.childrenByParent).flatMap(
+      (item) => {
+        if (item.type === "span") return walk(item.span, inside);
+        const folded = item.fold.steps.flatMap((step) =>
+          walk(step, [
+            ...inside,
+            { key: spanKey(item.fold.span), startsOpen: false },
+          ]),
+        );
+        below.set(item.fold.span.spanId, folded);
+
+        return folded;
+      },
     );
     below.set(span.spanId, under);
     const issue = spanIssue(span);
@@ -1508,6 +1512,20 @@ function retryWaitMs(span: ObservabilitySpanRow): number | undefined {
     numericAttribute(span, "model.retry_wait_ms") ??
     numericAttribute(span, "tool.retry.wait_ms")
   );
+}
+
+/**
+ * The spans listed under a row, for the waterfall and its issues alike. A
+ * subagent is one leaf line: its own run lists on its own.
+ */
+function rowChildren(
+  span: ObservabilitySpanRow,
+  isTaskRow: boolean,
+  group: SpanGroup,
+): ObservabilitySpanRow[] {
+  return span.kind === "subtask" && !isTaskRow
+    ? []
+    : (group.childrenByParent.get(span.spanId) ?? []);
 }
 
 /** Where a moment falls on the timeline, as a percent of its width. */
@@ -1857,9 +1875,6 @@ function taskGroup(
     root: root,
     status: last.status,
     live: live,
-    issueCount: children.filter(
-      (span) => span.kind === "tool.call" && span.status === "error",
-    ).length,
     childrenByParent: childrenByParent,
     spans: [root, ...members],
     windowStart: windowStart,
@@ -2072,22 +2087,19 @@ function ContinueAction({
 
 /**
  * A failed span's error, on its own line right under the span's row, so it
- * reads without opening anything. Selects the span. Nothing for a span that
- * did not fail or failed without a message.
+ * reads without opening anything. Selects the span.
  */
 function ErrorRow({
   depth,
   isSelected,
-  issue,
   onClick,
+  text,
 }: {
   depth: number;
   isSelected: boolean;
-  issue: SpanIssue | null;
   onClick: () => void;
-}): React.JSX.Element | null {
-  if (issue?.level !== "error" || !issue.text) return null;
-
+  text: string;
+}): React.JSX.Element {
   return (
     <tr
       onClick={onClick}
@@ -2101,13 +2113,13 @@ function ErrorRow({
         colSpan={5}
         className="relative pt-0 pr-3 pb-1.5 pl-(--row-indent) text-destructive"
         style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
-        title={issue.text}
+        title={text}
       >
         <span
           aria-hidden="true"
           className="absolute inset-y-0 left-0 w-0.5 bg-destructive"
         />
-        <span className="line-clamp-2 wrap-anywhere">{issue.text}</span>
+        <span className="line-clamp-2 wrap-anywhere">{text}</span>
       </td>
     </tr>
   );
@@ -2193,10 +2205,7 @@ function RowStatus({
           )}
           title={issue.text || undefined}
         >
-          <StatusDot
-            tone={issue.level === "error" ? "error" : "warn"}
-            label={issue.label}
-          />
+          <StatusDot tone={issue.level} />
           {issue.label}
         </span>
       );
@@ -2558,7 +2567,7 @@ function SpanRow({
             aria-hidden="true"
             className={cn(
               "absolute inset-y-0 left-0 w-0.5",
-              issue.level === "error" ? "bg-destructive" : "bg-warning",
+              STATUS_TONE_BG[issue.level],
             )}
           />
         )}
@@ -2799,8 +2808,8 @@ function TaskWaterfall({
   const { group } = panelView;
   const now = useNow(group.live ? LIVE_TICK_MS : null);
   const issues = useMemo(() => runIssues(group), [group]);
-  // The clock can trail the stream by a tick (or more, the first tick after a
-  // switch to a live run), so now is never earlier than the newest span.
+  // The clock can trail the stream by a tick, so now is never earlier than
+  // the newest span. Keyed per run, a switch to a live run starts it fresh.
   const nowMs = Math.max(group.windowStart + group.windowSpan, now);
   const view: WaterfallView = {
     ...panelView,
@@ -3027,7 +3036,7 @@ function TimelineBar({
     <div className="relative h-4 w-full">
       <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60" />
       <div
-        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm transition-all duration-200 ease-linear motion-reduce:transition-none"
+        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm transition-timeline"
         style={{ "--bar-left": `${leftPct}%`, "--bar-width": `${widthPct}%` }}
         title={title}
       >
@@ -3056,7 +3065,7 @@ function TimelineBar({
             key={index}
             className={cn(
               "absolute inset-y-0 left-(--mark-left) w-0.5",
-              mark.level === "error" ? "bg-destructive" : "bg-warning",
+              STATUS_TONE_BG[mark.level],
             )}
             style={{
               "--mark-left": `${Math.min(100, Math.max(0, ((mark.atMs - span.startTimeMs) / shownMs) * 100))}%`,
@@ -3086,15 +3095,20 @@ function TimelineAxis({
     <div className="relative h-4 w-full font-normal">
       <span className="sr-only">Timeline</span>
       {axisTicks(scale.spanMs)
-        .filter((offset) => (offset / scale.spanMs) * 100 <= AXIS_LAST_TICK_PCT)
+        .filter(
+          (offset) =>
+            timelinePct(scale.startMs + offset, scale) <= AXIS_LAST_TICK_PCT,
+        )
         .map((offset) => (
           <span
             key={offset}
             className={cn(
-              "absolute top-0 left-(--tick-left) font-mono tabular-nums transition-all duration-200 ease-linear motion-reduce:transition-none",
+              "absolute top-0 left-(--tick-left) font-mono tabular-nums transition-timeline",
               offset > 0 && "-translate-x-1/2",
             )}
-            style={{ "--tick-left": `${(offset / scale.spanMs) * 100}%` }}
+            style={{
+              "--tick-left": `${timelinePct(scale.startMs + offset, scale)}%`,
+            }}
           >
             {axisLabel(offset)}
           </span>
@@ -3102,24 +3116,28 @@ function TimelineAxis({
       {scale.nowMs !== null && (
         <span
           aria-hidden="true"
-          className="absolute -bottom-2 left-(--now-left) size-1.5 -translate-x-1/2 rounded-full bg-info transition-all duration-200 ease-linear motion-reduce:transition-none"
+          className="absolute -bottom-2 left-(--now-left) size-1.5 -translate-x-1/2 rounded-full bg-info transition-timeline"
           style={{ "--now-left": `${timelinePct(scale.nowMs, scale)}%` }}
         />
       )}
-      {issues.map(({ issue, path, span }) => (
-        <button
-          key={`${spanKey(span)}:${issue.atMs}`}
-          type="button"
-          onClick={() => onPick({ issue: issue, path: path, span: span })}
-          aria-label={`${issue.label}: ${spanLabel(span)}`}
-          title={`${formatTime(issue.atMs)} · ${spanLabel(span)} · ${issue.label}${issue.text ? ` · ${issue.text}` : ""}`}
-          className={cn(
-            "absolute -bottom-2.5 left-(--mark-left) size-2 -translate-x-1/2 rotate-45 cursor-pointer rounded-xs transition-all duration-200 ease-linear motion-reduce:transition-none",
-            issue.level === "error" ? "bg-destructive" : "bg-warning",
-          )}
-          style={{ "--mark-left": `${timelinePct(issue.atMs, scale)}%` }}
-        />
-      ))}
+      {issues.map((entry) => {
+        const { issue, span } = entry;
+
+        return (
+          <button
+            key={`${spanKey(span)}:${issue.atMs}`}
+            type="button"
+            onClick={() => onPick(entry)}
+            aria-label={`${issue.label}: ${spanLabel(span)}`}
+            title={`${formatTime(issue.atMs)} · ${spanLabel(span)} · ${issue.label}${issue.text ? ` · ${issue.text}` : ""}`}
+            className={cn(
+              "absolute -bottom-2.5 left-(--mark-left) size-2 -translate-x-1/2 rotate-45 cursor-pointer rounded-xs transition-timeline",
+              STATUS_TONE_BG[issue.level],
+            )}
+            style={{ "--mark-left": `${timelinePct(issue.atMs, scale)}%` }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -3147,7 +3165,7 @@ function TimelineLines({
         <span
           key={`${spanKey(span)}:${issue.atMs}`}
           className={cn(
-            "absolute inset-y-0 left-(--line-left) w-px transition-all duration-200 ease-linear motion-reduce:transition-none",
+            "absolute inset-y-0 left-(--line-left) w-px transition-timeline",
             issue.level === "error" ? "bg-destructive/30" : "bg-warning/30",
           )}
           style={{ "--line-left": `${timelinePct(issue.atMs, scale)}%` }}
@@ -3155,7 +3173,7 @@ function TimelineLines({
       ))}
       {scale.nowMs !== null && (
         <span
-          className="absolute inset-y-0 left-(--now-left) w-px bg-info/60 transition-all duration-200 ease-linear motion-reduce:transition-none"
+          className="absolute inset-y-0 left-(--now-left) w-px bg-info/60 transition-timeline"
           style={{ "--now-left": `${timelinePct(scale.nowMs, scale)}%` }}
         />
       )}
@@ -3191,13 +3209,6 @@ function renderFoldRows(
 ): ReactNode[] {
   const key = spanKey(fold.span);
   const isOpen = view.toggled.has(key);
-  // The fold is a stand-in, so what went wrong is its steps' and theirs.
-  const below = fold.steps.flatMap((step): SpanIssue[] => {
-    const issue = spanIssue(step);
-    const under = view.issues.below.get(step.spanId) ?? [];
-
-    return issue ? [issue, ...under] : under;
-  });
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}
@@ -3214,7 +3225,7 @@ function renderFoldRows(
       highlighted={false}
       onFocusTrace={view.onFocusTrace}
       issue={null}
-      below={below}
+      below={view.issues.below.get(fold.span.spanId) ?? []}
       scale={view.scale}
     />,
   ];
@@ -3245,10 +3256,7 @@ function renderSpanRows(
   const isStep = span.kind === "model.step";
   const isOpen = isTaskRow || isStep !== view.toggled.has(key);
   const isSelected = key === view.selectedKey;
-  const children =
-    span.kind === "subtask" && !isTaskRow
-      ? []
-      : (view.group.childrenByParent.get(span.spanId) ?? []);
+  const children = rowChildren(span, isTaskRow, view.group);
   const reasoning = isStep ? noteText(span, "model.reasoning") : undefined;
   const response = isStep ? noteText(span, "model.response") : undefined;
   const hasNotes = reasoning !== undefined || response !== undefined;
@@ -3275,15 +3283,17 @@ function renderSpanRows(
       scale={view.scale}
     />,
   ];
-  rows.push(
-    <ErrorRow
-      key={`error:${key}`}
-      depth={depth}
-      isSelected={isSelected}
-      issue={issue}
-      onClick={() => view.onSelect(key)}
-    />,
-  );
+  if (issue?.level === "error" && issue.text) {
+    rows.push(
+      <ErrorRow
+        key={`error:${key}`}
+        depth={depth}
+        isSelected={isSelected}
+        onClick={() => view.onSelect(key)}
+        text={issue.text}
+      />,
+    );
+  }
   if (!isOpen) return rows;
   if (reasoning !== undefined) {
     rows.push(
