@@ -1333,10 +1333,11 @@ export function spanIssue(span: ObservabilitySpanRow): SpanIssue | null {
   if (retries <= 0) return null;
 
   return {
-    atMs: span.startTimeMs + (retryWaitMs(span) ?? 0),
+    atMs:
+      span.startTimeMs + (numericAttribute(span, "model.retry_wait_ms") ?? 0),
     level: "warn",
     label: `Retried ${retries}×`,
-    text: attributeText(span.attributes?.["model.attempt_errors"]) ?? "",
+    text: attemptErrors(span),
   };
 }
 
@@ -1346,6 +1347,26 @@ function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
     ...group.spans,
     ...group.subagents.flatMap((subagent) => subagent.spans),
   ];
+}
+
+/** A retried model call's failed attempts on one line; core sends them as a JSON array. */
+function attemptErrors(span: ObservabilitySpanRow): string {
+  const raw = attributeText(span.attributes?.["model.attempt_errors"]);
+  if (!raw) return "";
+  try {
+    const parsed: unknown = JSON.parse(raw);
+
+    return Array.isArray(parsed) ? parsed.map(String).join(" · ") : raw;
+  } catch {
+    return raw;
+  }
+}
+
+function attributeText(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "number") return value.toLocaleString();
+
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /** A time axis tick, short enough to sit five to a column: `0`, `500ms`, `15s`, `1m 30s`, `15h`. */
@@ -1359,13 +1380,6 @@ function axisLabel(ms: number): string {
       : [Math.floor(ms / 3_600_000), "h", (ms % 3_600_000) / 60_000, "m"];
 
   return minor > 0 ? `${major}${unit} ${minor}${minorUnit}` : `${major}${unit}`;
-}
-
-function attributeText(value: unknown): string | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
-  if (typeof value === "number") return value.toLocaleString();
-
-  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 // Only a failed top-level task can be continued: a subtask belongs to its
@@ -1506,33 +1520,6 @@ function isStackOpen(
   );
 }
 
-/** The span's retry wait at its start, for the warning segment on its bar. */
-function retryWaitMs(span: ObservabilitySpanRow): number | undefined {
-  return (
-    numericAttribute(span, "model.retry_wait_ms") ??
-    numericAttribute(span, "tool.retry.wait_ms")
-  );
-}
-
-/**
- * The spans listed under a row, for the waterfall and its issues alike. A
- * subagent is one leaf line: its own run lists on its own.
- */
-function rowChildren(
-  span: ObservabilitySpanRow,
-  isTaskRow: boolean,
-  group: SpanGroup,
-): ObservabilitySpanRow[] {
-  return span.kind === "subtask" && !isTaskRow
-    ? []
-    : (group.childrenByParent.get(span.spanId) ?? []);
-}
-
-/** Where a moment falls on the timeline, as a percent of its width. */
-function timelinePct(ms: number, scale: TimelineScale): number {
-  return ((ms - scale.startMs) / scale.spanMs) * 100;
-}
-
 /** A live "running" span under a task that already finished never reported its end. */
 function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
   return span.status === "running" && !taskRunning;
@@ -1625,6 +1612,20 @@ function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
       return [{ ...section, summary: summary, value: value }];
     },
   );
+}
+
+/**
+ * The spans listed under a row, for the waterfall and its issues alike. A
+ * subagent is one leaf line: its own run lists on its own.
+ */
+function rowChildren(
+  span: ObservabilitySpanRow,
+  isTaskRow: boolean,
+  group: SpanGroup,
+): ObservabilitySpanRow[] {
+  return span.kind === "subtask" && !isTaskRow
+    ? []
+    : (group.childrenByParent.get(span.spanId) ?? []);
 }
 
 /** A row's name. A later run nested under its task reads as resumed. */
@@ -1903,6 +1904,11 @@ function taskKey(root: ObservabilitySpanRow): string {
     root.attributes?.["task.root_id"] ?? root.attributes?.["task.id"];
 
   return typeof taskId === "string" && taskId ? taskId : root.traceId;
+}
+
+/** Where a moment falls on the timeline, as a percent of its width. */
+function timelinePct(ms: number, scale: TimelineScale): number {
+  return ((ms - scale.startMs) / scale.spanMs) * 100;
 }
 
 /** The icon a tool call's line opens with. */
@@ -2196,7 +2202,7 @@ function RowStatus({
   taskRunning: boolean;
 }): React.JSX.Element | null {
   if (!group) {
-    if (issue) {
+    if (issue && (issue.level === "error" || span.status === "ok")) {
       return (
         <span
           className={cn(
@@ -2806,7 +2812,12 @@ function TaskWaterfall({
   view: Omit<WaterfallView, "issues" | "scale">;
 }): React.JSX.Element {
   const { group } = panelView;
-  const now = useNow(group.live ? LIVE_TICK_MS : null);
+  const { root } = group;
+  const runs = group.spans.filter((span) => isRootSpanKind(span.kind));
+  // groupSpans judged the latest pass when the stream last moved; one that
+  // ran past its limit since has ended, so the clock stops with it.
+  const live = group.live && isTaskRunning(runs.at(-1) ?? root);
+  const now = useNow(live ? LIVE_TICK_MS : null);
   const issues = useMemo(() => runIssues(group), [group]);
   // The clock can trail the stream by a tick, so now is never earlier than
   // the newest span. Keyed per run, a switch to a live run starts it fresh.
@@ -2814,7 +2825,7 @@ function TaskWaterfall({
   const view: WaterfallView = {
     ...panelView,
     issues: issues,
-    scale: group.live
+    scale: live
       ? {
           startMs: group.windowStart,
           spanMs: (nowMs - group.windowStart) * LIVE_HEADROOM,
@@ -2838,10 +2849,8 @@ function TaskWaterfall({
         ?.scrollIntoView({ block: "nearest" }),
     );
   };
-  const { root } = group;
   const request = spanLabel(root);
   const ancestors = chain.slice(0, -1);
-  const runs = view.group.spans.filter((span) => isRootSpanKind(span.kind));
   const failedRun = runs.findLast((span) => span.error);
   const run = failedRun ?? runs.at(-1) ?? root;
   const prompt =
@@ -3016,13 +3025,15 @@ function TimelineBar({
   );
 
   // A retried model call waits before its first token, so the retry wait
-  // leads the bar and the rest of the time to first token follows it.
-  const retryMs = retryWaitMs(span) ?? 0;
+  // leads the bar and the rest of the time to first token follows it. A span
+  // with no length has nothing to split.
+  const lengthMs = end - span.startTimeMs;
+  const retryMs = numericAttribute(span, "model.retry_wait_ms") ?? 0;
   const ttftMs = numericAttribute(span, "model.ttft_ms");
-  const retryFrac = Math.min(1, retryMs / shownMs);
+  const retryFrac = lengthMs > 0 ? Math.min(1, retryMs / lengthMs) : 0;
   const ttftFrac =
-    ttftMs !== undefined
-      ? Math.min(1 - retryFrac, Math.max(0, ttftMs - retryMs) / shownMs)
+    lengthMs > 0 && ttftMs !== undefined
+      ? Math.min(1 - retryFrac, Math.max(0, ttftMs - retryMs) / lengthMs)
       : 0;
   const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${
     retryMs > 0 ? ` · retry wait ${formatDuration(retryMs)}` : ""
@@ -3263,7 +3274,10 @@ function renderSpanRows(
   const isRoot = isRootSpanKind(span.kind);
   // A root is judged on its own freshness; a child on its enclosing root's liveness.
   const rootLive = isRoot ? isTaskRunning(span) : enclosingRootLive;
-  const issue = spanIssue(span);
+  // The task row stands for the whole request, so a first pass that failed
+  // and was continued does not paint it failed.
+  const issue =
+    isTaskRow && view.group.status !== "error" ? null : spanIssue(span);
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}

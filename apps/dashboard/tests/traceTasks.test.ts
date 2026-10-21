@@ -362,7 +362,7 @@ describe("waterfall issues", () => {
       atMs: 2_500,
       level: "warn",
       label: "Retried 2×",
-      text: '["429 rate limited"]',
+      text: "429 rate limited",
     });
     expect(spanIssue(step("run", 1, 0, 1))).toBe(null);
   });
@@ -374,7 +374,7 @@ describe("waterfall issues", () => {
     };
 
     expect(spanIssue(tool)).toMatchObject({
-      atMs: 1_400,
+      atMs: 1_000,
       level: "warn",
       label: "Retried 2×",
     });

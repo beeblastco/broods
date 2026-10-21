@@ -19,10 +19,7 @@ export async function answerObservabilitySocket(
   await page.clock.setFixedTime(NOW_MS);
   await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
     socket.onMessage((raw) => {
-      const message = JSON.parse(String(raw)) as {
-        type: string;
-        stream: string;
-      };
+      const message: { type: string; stream: string } = JSON.parse(String(raw));
       if (message.type !== "subscribe") return;
       socket.send(JSON.stringify({ type: "ready" }));
       socket.send(
