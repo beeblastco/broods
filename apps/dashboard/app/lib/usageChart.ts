@@ -32,6 +32,13 @@ export interface TokenParts {
   reasoning: number;
 }
 
+/** One value per bin for each per-task average the Usage tab charts. */
+export interface PerTaskAverages {
+  cost: number[];
+  calls: number[];
+  tokens: number[];
+}
+
 /**
  * Start of every bin in the range ending at `now`, floored to whole bins the
  * way the server floors `bucketStart`, so filled bins meet the data bins even
@@ -47,6 +54,25 @@ export function bucketStartsAcrossRange(
   const count = Math.ceil(rangeSeconds / binSeconds);
 
   return Array.from({ length: count }, (_, i) => endMs - (count - i) * binMs);
+}
+
+/**
+ * Each bin's cost, model calls and tokens per task: the bin's total divided by
+ * the tasks that finished in it, 0 for a bin with none. The window's average
+ * is the window's totals over its tasks, not the mean of these.
+ */
+export function perTaskAverages(
+  bins: Array<{ invocations: number; modelCalls: number; totalTokens: number }>,
+  binCosts: number[],
+): PerTaskAverages {
+  const per = (bin: (typeof bins)[number], total: number): number =>
+    bin.invocations > 0 ? total / bin.invocations : 0;
+
+  return {
+    cost: bins.map((bin, i) => per(bin, binCosts[i] ?? 0)),
+    calls: bins.map((bin) => per(bin, bin.modelCalls)),
+    tokens: bins.map((bin) => per(bin, bin.totalTokens)),
+  };
 }
 
 /** Axis label for a round tick: formatNumber without the trailing ".0". */
