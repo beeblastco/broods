@@ -8,6 +8,7 @@
  */
 
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
+import { browserSandboxProblem } from "@broods/convex/model/sandboxProviders";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { toErrorMessage } from "../../shared/errors.ts";
@@ -60,17 +61,8 @@ type BrowseInput = z.infer<typeof browseInput>;
 export function assertBrowseSandbox(
   sandbox: SandboxExecutorConfig | undefined,
 ): void {
-  if (sandbox?.provider === "machine") return;
-  if (sandbox?.provider !== "lambda" || sandbox.image !== "obscura") {
-    throw new Error(
-      'config.browser needs the agent\'s first sandbox on provider lambda with image: "obscura", or a machine sandbox with obscura installed',
-    );
-  }
-  if (sandbox.network?.mode !== "allow-all") {
-    throw new Error(
-      "config.browser needs the agent's first sandbox to set network.mode to allow-all",
-    );
-  }
+  const problem = browserSandboxProblem(sandbox);
+  if (problem) throw new Error(problem);
 }
 
 export default function browseTool(context: SandboxToolContext): ToolSet {

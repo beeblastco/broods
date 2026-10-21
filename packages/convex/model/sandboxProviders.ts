@@ -52,3 +52,29 @@ export const SUSPEND_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 // Cloudflare bridge in its Container. The rest keep the bounded `exec` runner.
 export const LIVE_TERMINAL_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda", "cloudflare"]);
+
+/** The sandbox fields `browserSandboxProblem` reads. */
+export interface BrowserSandboxShape {
+  provider?: string;
+  image?: string;
+  network?: { mode?: string };
+}
+
+/**
+ * Why a sandbox cannot run the `browse` tool, or null when it can. Core checks
+ * an agent's first sandbox with it before a run, and the CLI before a deploy,
+ * so a wrong pairing is refused at sync instead of failing every run.
+ */
+export function browserSandboxProblem(
+  sandbox: BrowserSandboxShape | undefined,
+): string | null {
+  if (sandbox?.provider === "machine") return null;
+  if (sandbox?.provider !== "lambda" || sandbox.image !== "obscura") {
+    return 'config.browser needs the agent\'s first sandbox on provider lambda with image: "obscura", or a machine sandbox with obscura installed';
+  }
+  if (sandbox.network?.mode !== "allow-all") {
+    return "config.browser needs the agent's first sandbox to set network.mode to allow-all";
+  }
+
+  return null;
+}

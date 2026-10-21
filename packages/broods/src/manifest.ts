@@ -8,7 +8,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import module from "node:module";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import type {
   AgentHookEventName,
   CliManifest,
@@ -27,6 +34,7 @@ import {
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
 import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
+import { browserSandboxProblem } from "../../convex/model/sandboxProviders.ts";
 import { MAX_CONFIGURED_SKILLS } from "../../convex/model/skillLimits.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
@@ -41,6 +49,7 @@ import {
   type AnyConnectionDefinition,
   type AnyResource,
   type AgentHooks,
+  type AgentResource,
   type BroodsConfigDefinition,
   type BroodsProjectConfig,
   type McpDefinitionConfig,
@@ -375,14 +384,32 @@ let typeScriptLoaderRegistered = false;
  * tools, makes both runtimes compile the same file, which is what lets
  * `broods` run on plain `node`. A load hook keeps each module's own URL, so a
  * resource that reads a file relative to `import.meta.url` still resolves
- * against its source directory. No-op under Bun, which loads TypeScript
- * natively and ships no `registerHooks`.
+ * against its source directory. The resolve hook gives a relative import
+ * without an extension (`./prompts`) the `.ts` or `/index.ts` Bun would find.
+ * No-op under Bun, which loads TypeScript natively and ships no
+ * `registerHooks`.
  */
 function registerTypeScriptLoader(): void {
   if (typeScriptLoaderRegistered) return;
   typeScriptLoaderRegistered = true;
   if (typeof module.registerHooks !== "function") return;
   module.registerHooks({
+    resolve: (specifier, context, nextResolve) => {
+      try {
+        return nextResolve(specifier, context);
+      } catch (error) {
+        if (!/^\.{1,2}\//.test(specifier) || extname(specifier) !== "")
+          throw error;
+        for (const candidate of [`${specifier}.ts`, `${specifier}/index.ts`]) {
+          try {
+            return nextResolve(candidate, context);
+          } catch {
+            // Try the next candidate; the original error reports the miss.
+          }
+        }
+        throw error;
+      }
+    },
     load: (url, context, nextLoad) => {
       // `loadExports` appends a cache-busting query the file system cannot see.
       const [href] = url.split("?");
@@ -815,7 +842,27 @@ function assertAgentSandboxes(resources: AnyResource[]): void {
         );
       }
     }
+    assertBrowserSandbox(resource, sandboxes[0], resources);
   }
+}
+
+// Core refuses a browser on the wrong sandbox when a run starts; checked here
+// too so `deploy` never breaks a working agent. A name this project does not
+// declare is the stage's own sandbox, which only core can see.
+function assertBrowserSandbox(
+  agent: AgentResource,
+  first: unknown,
+  resources: AnyResource[],
+): void {
+  if (agent.config.browser?.enabled !== true) return;
+  const name = isResource(first) ? first.name : first;
+  const sandbox = resources.find(
+    (resource): resource is SandboxResource =>
+      resource.kind === "sandbox" && resource.name === name,
+  );
+  if (first !== undefined && sandbox === undefined) return;
+  const problem = browserSandboxProblem(sandbox?.config);
+  if (problem) throw new Error(`Agent "${agent.name}": ${problem}`);
 }
 
 function assertUniqueResources(

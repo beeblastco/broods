@@ -109,3 +109,28 @@ export const support = defineAgent({
   // which silently breaks a resource that reads a prompt next to itself.
   expect(result.stdout).toContain(join(cwd, "broods"));
 });
+
+test("node resolves an extensionless relative import to its .ts file", async () => {
+  const cwd = await fixtureProject(`
+import { defineAgent } from "${RESOURCES_MODULE}";
+import { SYSTEM } from "./prompts/support";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  agent: { system: SYSTEM },
+});
+`);
+  await mkdir(join(cwd, "broods", "prompts"), { recursive: true });
+  await writeFile(
+    join(cwd, "broods", "prompts", "support.ts"),
+    'export const SYSTEM: string = "be brief";\n',
+    "utf8",
+  );
+
+  const result = await compileWithNode(cwd);
+
+  expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("be brief");
+});
