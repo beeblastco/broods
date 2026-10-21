@@ -57,10 +57,10 @@ const SCOPE_PARAM = parseAsStringLiteral(SCOPES.map((scope) => scope.id))
   .withDefault("project")
   .withOptions({ clearOnDefault: true });
 
-// One row per resource. `share` names the cap it counts toward; ingress is
-// free, so it has none. `help` says what the amount is counted from, where
+// One row per resource, here and in the Billing tab's plan table. `share`
+// names the cap it counts toward; ingress is free, so it has none. `help` says what the amount is counted from, where
 // the label alone does not.
-const ROWS: AllowanceRow[] = [
+export const ALLOWANCE_ROWS: AllowanceRow[] = [
   {
     key: "sandboxHours",
     label: "Sandbox time",
@@ -105,7 +105,7 @@ const ROWS: AllowanceRow[] = [
 const OTHER_USAGE_HELP =
   "Usage no single project made: account-wide sandboxes and workspaces, chat attachments, skills and bundles, deleted projects, and anything metered before usage was split by project.";
 
-interface AllowanceRow {
+export interface AllowanceRow {
   key: keyof UsageAmounts;
   label: string;
   unit: AmountUnit;
@@ -252,7 +252,7 @@ function ScopedAllowance({
   projectId: string;
   scope: AllowanceScope;
 }): React.JSX.Element {
-  const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
+  const [picked, setPicked] = useState<AllowanceRow>(ALLOWANCE_ROWS[0]);
   const projectCount = budget.projects?.length ?? 0;
   const slices = useMemo(
     () =>
@@ -316,7 +316,7 @@ function ScopedAllowance({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <AllowanceTableRow
                   key={row.key}
                   budget={budget}
@@ -598,7 +598,7 @@ function ProjectsTable({
           <TableHeader>
             <TableRow>
               <TableHead>Project</TableHead>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <TableHead key={row.key} className="text-right">
                   {row.label}
                 </TableHead>
@@ -647,7 +647,7 @@ function ProjectsTable({
                       )}
                     </span>
                   </TableCell>
-                  {ROWS.map((row) => (
+                  {ALLOWANCE_ROWS.map((row) => (
                     <TableCell key={row.key} className="text-right">
                       <span
                         className={cn(

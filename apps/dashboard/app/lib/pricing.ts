@@ -3,6 +3,7 @@ import {
   PRO_INCLUDED_DEVELOPER_SEATS,
   UNIT_PRICE_EUR,
 } from "@broods/convex/model/orgBilling";
+import { PLAN_LIMITS } from "@broods/convex/model/planLimits";
 /** Plan tier as stored on the user; the Convex schema validator owns the union. */
 export type PlanTier = Doc<"users">["plan"];
 
@@ -51,4 +52,4 @@ export function perMonth(units: number): string {
 }
 
 /** What Pro offers its owner, wherever an upgrade is offered. */
-export const PRO_OFFER = `Pro is ${perMonth(1)}: it lets you create orgs and gives you ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats to use across all of them. Extra seats are ${perMonth(1)} each.`;
+export const PRO_OFFER = `Pro is ${perMonth(1)}: higher sandbox, hosted MCP, storage and egress limits, up to ${PLAN_LIMITS.pro.maxOwnedOrgs} orgs, and ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats to use across all of them. Extra seats are ${perMonth(1)} each.`;
