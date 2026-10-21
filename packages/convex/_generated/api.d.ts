@@ -5426,9 +5426,6 @@ export declare const internal: {
       }
     >;
   };
-  observedMigration: {
-    stripObserved: FunctionReference<"mutation", "internal", {}, number>;
-  };
   org: {
     orgs: {
       adoptExternalAccount: FunctionReference<
@@ -5683,7 +5680,6 @@ export declare const internal: {
         eventId: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
-        observed?: boolean;
         questions?: Array<any>;
         response?: any;
         status:
@@ -5735,7 +5731,6 @@ export declare const internal: {
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
         input: any;
-        observed?: boolean;
         parentEventId: string;
         response?: any;
         resultId: string;
@@ -5975,7 +5970,6 @@ export declare const internal: {
           eventId: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
-          observed?: boolean;
           questions?: Array<any>;
           response?: any;
           status:
@@ -6037,7 +6031,6 @@ export declare const internal: {
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
           input: any;
-          observed?: boolean;
           parentEventId: string;
           response?: any;
           resultId: string;
@@ -6077,7 +6070,6 @@ export declare const internal: {
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
         input: any;
-        observed?: boolean;
         parentEventId: string;
         response?: any;
         resultId: string;
@@ -6182,7 +6174,6 @@ export declare const internal: {
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
         input: any;
-        observed?: boolean;
         parentEventId: string;
         response?: any;
         resultId: string;
