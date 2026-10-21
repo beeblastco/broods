@@ -1,4 +1,12 @@
-import { beforeEach, expect, setSystemTime, spyOn, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  jest,
+  setSystemTime,
+  spyOn,
+  test,
+} from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import type {
@@ -70,6 +78,9 @@ import {
 
 // Trace lookups are shared process-wide, and tests reuse trace ids with different spans.
 beforeEach(resetTempoTraceCacheForTests);
+afterEach((): void => {
+  jest.useRealTimers();
+});
 
 // The scope every observability fixture lives in: stage shop/dev of acct-1.
 const TEST_SCOPE: ObservabilityScope = {
@@ -537,6 +548,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
 });
 
 test("finishes buffered replay before applying terminal tail grace", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -720,6 +732,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
 });
 
 test("closes a zero-frame attach after durable completion and emits one terminal frame", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -790,6 +803,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
 });
 
 test("backs off status polls while an attached run stays quiet", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -848,8 +862,7 @@ test("backs off status polls while an attached run stays quiet", async () => {
     const gaps = polledAt
       .slice(1)
       .map((at, index) => at - (polledAt[index] ?? at));
-    expect(gaps[0]).toBeLessThan(900);
-    expect(gaps[1]).toBeGreaterThanOrEqual(950);
+    expect(gaps).toEqual([500, 1000]);
   } finally {
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
@@ -857,6 +870,7 @@ test("backs off status polls while an attached run stays quiet", async () => {
 }, 10_000);
 
 test("does not duplicate a streamed error when durable failure arrives without done", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -947,6 +961,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
 }, 10_000);
 
 test("closes a zero-frame queued execute consumer after durable completion", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -1777,6 +1792,7 @@ test("asks Loki to drop the levels a subscription does not want", () => {
 });
 
 test("a sandbox tail relays each guest line once and ignores a repeat subscribe", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const originalLokiUrl = process.env.LOKI_URL;
   process.env.LOKI_URL = "http://loki.example";
@@ -1836,7 +1852,8 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
   openObservabilitySocket(socket);
   try {
     await handleObservabilityMessage(socket, subscribe, noNats);
-    await waitForGatewayMessage(sent, (message) => message.type === "log", 400);
+    // The first poll runs 2 s after the backfill settles.
+    await waitForGatewayMessage(sent, (message) => message.type === "log", 500);
 
     expect(sent.map((message) => message.type)).toEqual([
       "ready",
@@ -3619,7 +3636,10 @@ async function waitForGatewayMessage(
 /**
  * For conditions that do not depend on a sent frame. `sent.some(predicate)`
  * never calls the predicate while `sent` is empty, so those waits would time
- * out even once the condition held.
+ * out even once the condition held. Each attempt is 5 ms: real, or on a fake
+ * clock the pending promise work runs and the clock moves 5 ms. It yields on
+ * microtasks only, since in bun 1.4.2 a queued setImmediate can stall a fake
+ * clock, and every stub here answers in process.
  */
 async function waitForCondition(
   condition: () => boolean,
@@ -3630,7 +3650,12 @@ async function waitForCondition(
     if (condition()) {
       return;
     }
-    await Bun.sleep(5);
+    if (jest.isFakeTimers()) {
+      for (let hop = 0; hop < 100; hop += 1) await Promise.resolve();
+      jest.advanceTimersByTime(5);
+    } else {
+      await Bun.sleep(5);
+    }
   }
 
   throw new Error(`Timed out waiting for ${describe()}`);

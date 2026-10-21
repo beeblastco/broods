@@ -42,6 +42,8 @@ interface Script {
   events?: number;
   /** Starts a fresh account on the same store once the first stops, this much later. */
   restartAfterMs?: number;
+  /** How long a webhook POST may hang before it fails; the real 10 s when unset. */
+  webhookTimeoutMs?: number;
 }
 
 const SIX_MINUTES = 6 * 60_000;
@@ -70,6 +72,7 @@ const SCRIPTS: Record<string, Script> = {
   timeout: {
     answers: { a: [{ status: "hang", stop: true }] },
     restartAfterMs: SIX_MINUTES,
+    webhookTimeoutMs: 200,
   },
   transient: { answers: { a: [{ status: 503 }] } },
 };
@@ -247,6 +250,7 @@ function startAccount(): InstanceType<typeof MatrixAccount> {
     apiUrl: `http://localhost:${server.port}`,
     storeDir: storeDir,
     targets: (): ForwardTarget[] => targets,
+    webhookTimeoutMs: script.webhookTimeoutMs,
   });
   started.start();
 
