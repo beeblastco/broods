@@ -53,12 +53,11 @@ import {
   ArrowUpRight,
   Brain,
   ChevronRight,
+  ChevronsLeft,
   FileText,
   GitPullRequestArrow,
   MessageCircleQuestionMark,
   MessageSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
   Terminal,
   TriangleAlert,
   Wrench,
@@ -87,6 +86,7 @@ import {
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
 import { useObservabilityView } from "@/app/hooks/useObservabilityView";
+import { useElementWidth } from "@/app/hooks/useElementWidth";
 import { useIsMobile } from "@/app/hooks/useIsMobile";
 import { useRemembered } from "@/app/hooks/useRemembered";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -399,9 +399,18 @@ const AXIS_MAX_STEPS = 3;
 // A tick this close to the axis end would overflow the column, so it is left out.
 const AXIS_LAST_TICK_PCT = 94;
 
-// The Timeline column's share of the waterfall table, for its colgroup and the
-// lines drawn over it.
-const TIMELINE_COLUMN_PCT = 22;
+// The Timeline column's share of the waterfall table: up to 40%, less where
+// that would leave the Span column under SPAN_MIN_PX, never under 22%.
+const TIMELINE_MAX_PCT = 40;
+const TIMELINE_MIN_PCT = 22;
+
+// The Span column's floor, and the Started, Status and Duration columns
+// (w-22, w-20, w-19) beside it.
+const SPAN_MIN_PX = 288;
+const FIXED_COLUMNS_PX = 244;
+
+// How long a picked or linked run's first row stays ringed.
+const FOCUS_FLASH_MS = 1500;
 
 // One matcher per `field:value` search token. Values arrive lowercased. A task
 // matches on its own runs and on its subagents'.
@@ -530,7 +539,8 @@ interface TimelineScale {
 
 // What every waterfall row of the selected run reads and calls.
 interface WaterfallView {
-  focusTraceId: string | null;
+  /** The run that was just picked or linked to, ringed for a moment. */
+  flashTraceId: string | null;
   group: SpanGroup;
   issues: RunIssues;
   live: boolean;
@@ -761,10 +771,20 @@ export function TracingPanel({
   const [missingTrace, setMissingTrace] = useState<string | null>(null);
   // A new focus target retires the notice about the previous one.
   const [prevFocusTraceId, setPrevFocusTraceId] = useState(focusTraceId);
+  // The run a pick or a link lands on rings for a moment so it stands out in
+  // a chain, then fades; a ring that stayed would read as a second selection.
+  const [flashTraceId, setFlashTraceId] = useState(focusTraceId);
   if (focusTraceId !== prevFocusTraceId) {
     setPrevFocusTraceId(focusTraceId);
+    setFlashTraceId(focusTraceId);
     if (focusTraceId) setMissingTrace(null);
   }
+  useEffect(() => {
+    if (!flashTraceId) return;
+    const timer = setTimeout(() => setFlashTraceId(null), FOCUS_FLASH_MS);
+
+    return () => clearTimeout(timer);
+  }, [flashTraceId]);
   // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
   // below would otherwise swallow a repeat click on the same subagent link).
   const [refocusNonce, setRefocusNonce] = useState(0);
@@ -1095,7 +1115,7 @@ export function TracingPanel({
                 onContinue={() => void continueTask(selectedGroup.root)}
                 onPickRun={pickTask}
                 view={{
-                  focusTraceId: focusTraceId,
+                  flashTraceId: flashTraceId,
                   group: selectedGroup,
                   onFocusTrace: focusTrace,
                   onSelect: (key) =>
@@ -1839,6 +1859,19 @@ function taskKey(root: ObservabilitySpanRow): string {
     root.attributes?.["task.root_id"] ?? root.attributes?.["task.id"];
 
   return typeof taskId === "string" && taskId ? taskId : root.traceId;
+}
+
+/**
+ * The Timeline column's share of a waterfall table `tableWidth` px wide: the
+ * most it can take while the Span column keeps SPAN_MIN_PX. Unmeasured (0), it
+ * takes the least.
+ */
+function timelineColumnPct(tableWidth: number): number {
+  if (tableWidth <= 0) return TIMELINE_MIN_PCT;
+  const room =
+    ((tableWidth - FIXED_COLUMNS_PX - SPAN_MIN_PX) / tableWidth) * 100;
+
+  return Math.min(TIMELINE_MAX_PCT, Math.max(TIMELINE_MIN_PCT, room));
 }
 
 /** Where a moment falls on the timeline, as a percent of its width. */
@@ -2768,6 +2801,8 @@ function SpanTimings({
  * The task list, or its rail: the toggle at the top, then one row or one dot
  * per task. The rail keeps the order, the status and the selection of the
  * list in 36px, so one trace gets the width without losing where you are.
+ * The pane slides between the two widths; the list keeps its own width
+ * inside, so it is uncovered rather than reflowed.
  */
 function TaskListPane({
   rail,
@@ -2787,76 +2822,81 @@ function TaskListPane({
     <div
       data-scroll-pane
       className={cn(
-        "max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:border-r md:border-b-0",
+        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border transition-width md:max-h-none md:border-r md:border-b-0",
         rail ? "md:w-9" : "md:w-80",
       )}
     >
-      <div
-        className={cn(
-          "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
-          rail ? "justify-center" : "justify-end",
-        )}
-      >
-        <button
-          type="button"
-          onClick={onToggleRail}
-          aria-pressed={rail}
-          aria-label={rail ? "Show the task list" : "Fold the task list"}
-          title={rail ? "Show the task list" : "Fold the task list to its dots"}
-          className="cursor-pointer p-2 text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {rail ? (
-            <PanelLeftOpen className="size-4" />
-          ) : (
-            <PanelLeftClose className="size-4" />
+      <div className={cn("min-h-full", rail ? "md:w-9" : "md:w-80")}>
+        <div
+          className={cn(
+            "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
+            rail ? "justify-center" : "justify-end",
           )}
-        </button>
+        >
+          <button
+            type="button"
+            onClick={onToggleRail}
+            aria-pressed={rail}
+            aria-label={rail ? "Show the task list" : "Fold the task list"}
+            title={
+              rail ? "Show the task list" : "Fold the task list to its dots"
+            }
+            className="cursor-pointer p-2 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronsLeft
+              className={cn(
+                "size-4 transition-transform duration-200 motion-reduce:transition-none",
+                rail && "rotate-180",
+              )}
+            />
+          </button>
+        </div>
+        {rows.map(({ group, parent }) =>
+          rail ? (
+            <TaskRailDot
+              key={spanKey(group.root)}
+              root={group.root}
+              status={group.status}
+              tone={groupTone(group)}
+              isSubagent={parent !== null}
+              isSelected={group === selectedGroup}
+              onSelect={onSelect}
+            />
+          ) : (
+            <TaskListRow
+              key={spanKey(group.root)}
+              root={group.root}
+              status={group.status}
+              tone={groupTone(group)}
+              taskDurationMs={group.taskDurationMs}
+              cause={failureCause(group)}
+              isSubagent={parent !== null}
+              subagentNames={group.subagents
+                .map((subagent) => subagentName(subagent.root))
+                .join("\n")}
+              isSelected={group === selectedGroup}
+              stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
+              onSelect={onSelect}
+              onToggleStack={onToggleStack}
+            />
+          ),
+        )}
+        {!rail && rows.length === 0 && (
+          <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+            {emptyMessage}
+          </p>
+        )}
+        {!rail && (
+          <LoadMore
+            shown={shown}
+            total={total}
+            noun={["task", "tasks"]}
+            pageSize={PAGE_SIZE}
+            remaining={remaining}
+            onLoad={onLoadMore}
+          />
+        )}
       </div>
-      {rows.map(({ group, parent }) =>
-        rail ? (
-          <TaskRailDot
-            key={spanKey(group.root)}
-            root={group.root}
-            status={group.status}
-            tone={groupTone(group)}
-            isSubagent={parent !== null}
-            isSelected={group === selectedGroup}
-            onSelect={onSelect}
-          />
-        ) : (
-          <TaskListRow
-            key={spanKey(group.root)}
-            root={group.root}
-            status={group.status}
-            tone={groupTone(group)}
-            taskDurationMs={group.taskDurationMs}
-            cause={failureCause(group)}
-            isSubagent={parent !== null}
-            subagentNames={group.subagents
-              .map((subagent) => subagentName(subagent.root))
-              .join("\n")}
-            isSelected={group === selectedGroup}
-            stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
-            onSelect={onSelect}
-            onToggleStack={onToggleStack}
-          />
-        ),
-      )}
-      {!rail && rows.length === 0 && (
-        <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-          {emptyMessage}
-        </p>
-      )}
-      {!rail && (
-        <LoadMore
-          shown={shown}
-          total={total}
-          noun={["task", "tasks"]}
-          pageSize={PAGE_SIZE}
-          remaining={remaining}
-          onLoad={onLoadMore}
-        />
-      )}
     </div>
   );
 }
@@ -3016,6 +3056,8 @@ function TaskWaterfall({
   const live = isTaskRunning(group.latest);
   const issues = useMemo(() => runIssues(group), [group]);
   const view: WaterfallView = { ...panelView, issues: issues, live: live };
+  const [tableWidth, measureTable] = useElementWidth(0);
+  const columnPct = timelineColumnPct(tableWidth);
   const failures = issues.all.filter(({ issue }) => issue.level === "error");
   const retries = issues.all.filter(({ issue }) => issue.level === "warn");
   // Opens an issue's span in the side panel, opens the rows folded above it,
@@ -3135,7 +3177,7 @@ function TaskWaterfall({
         )}
       </div>
       <TimelineClock group={group} live={live}>
-        <div className="relative min-w-xl">
+        <div className="relative min-w-xl" ref={measureTable}>
           <table className="w-full table-fixed text-xs">
             <colgroup>
               <col className="w-22" />
@@ -3144,7 +3186,7 @@ function TaskWaterfall({
               <col className="w-19" />
               <col
                 className="w-(--timeline-width)"
-                style={{ "--timeline-width": `${TIMELINE_COLUMN_PCT}%` }}
+                style={{ "--timeline-width": `${columnPct}%` }}
               />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
@@ -3160,7 +3202,7 @@ function TaskWaterfall({
             </thead>
             <tbody>{renderSpanRows(root, 0, live, view, undefined)}</tbody>
           </table>
-          <TimelineLines issues={issues.all} />
+          <TimelineLines issues={issues.all} columnPct={columnPct} />
         </div>
       </TimelineClock>
     </>
@@ -3367,8 +3409,10 @@ function TimelineClock({
  */
 function TimelineLines({
   issues,
+  columnPct,
 }: {
   issues: RunIssues["all"];
+  columnPct: number;
 }): React.JSX.Element {
   const scale = useContext(TimelineScaleContext);
 
@@ -3377,7 +3421,7 @@ function TimelineLines({
       aria-hidden="true"
       className="pointer-events-none absolute inset-y-0 right-3 left-(--timeline-left)"
       style={{
-        "--timeline-left": `calc(${100 - TIMELINE_COLUMN_PCT}% + 0.75rem)`,
+        "--timeline-left": `calc(${100 - columnPct}% + 0.75rem)`,
       }}
     >
       {issues.map(({ issue, span }) => (
@@ -3461,7 +3505,7 @@ function renderSpanRows(
       onClick={select}
       group={view.group}
       taskRunning={rootLive}
-      highlighted={isRoot && span.traceId === view.focusTraceId}
+      highlighted={isRoot && span.traceId === view.flashTraceId}
       onFocusTrace={view.onFocusTrace}
       issue={issue}
       below={view.issues.below.get(span.spanId) ?? []}

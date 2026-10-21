@@ -254,6 +254,18 @@ body {
   transition-property: width, height;
 }
 
+/* A pane that folds to a rail and back, such as the trace task list, slides its
+   edge instead of jumping. */
+@utility transition-width {
+  transition-property: width;
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
+
+  @media (prefers-reduced-motion: reduce) {
+    transition-property: none;
+  }
+}
+
 /* The trace waterfall rescales once a second while a run is live, so its bars,
    ticks and lines slide to the new scale. Position only: a bar's color change
    stays instant. */

@@ -1,5 +1,6 @@
 "use client";
 
+import { useElementWidth } from "@/app/hooks/useElementWidth";
 import { useTween } from "@/app/hooks/useTween";
 import {
   knownRuns,
@@ -9,7 +10,7 @@ import {
   type TokenParts,
 } from "@/app/lib/usageChart";
 import { cn } from "@/app/lib/utils";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 const PAD_TOP = 6;
 const PAD_BOTTOM = 18;
@@ -673,21 +674,4 @@ function GridLines({
       })}
     </>
   );
-}
-
-/** Width of the element under the returned callback ref, kept current as it resizes. */
-function useElementWidth(
-  initial: number,
-): [number, (el: HTMLElement | null) => void] {
-  const [width, setWidth] = useState(initial);
-  const observerRef = useRef<ResizeObserver | null>(null);
-  const measureRef = useCallback((el: HTMLElement | null): void => {
-    observerRef.current?.disconnect();
-    if (!el) return;
-    const observer = new ResizeObserver(() => setWidth(el.offsetWidth));
-    observer.observe(el);
-    observerRef.current = observer;
-  }, []);
-
-  return [width, measureRef];
 }
