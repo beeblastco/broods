@@ -233,7 +233,7 @@ export const accept = internalMutation({
       recovered = await promoteQueuedGroup(ctx, {
         coordinator: coordinator,
         queue: queue,
-        rows: prepared.rows,
+        live: prepared.live,
         now: now,
         leaseTtlMs: args.leaseTtlMs,
         ownerGeneration: coordinator.ownerGeneration + 1,
@@ -346,7 +346,7 @@ export const acquireClear = internalMutation({
         conversationKey: args.conversationKey,
         now: now,
       }));
-    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+    const { queue } = await sweepQueuedEnvelopes(ctx, coordinator, now);
     if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) return null;
     const generation = coordinator.ownerGeneration + 1;
     await ctx.db.patch(coordinator._id, {
@@ -750,8 +750,8 @@ export const recoverQueued = internalMutation({
       // counter, and a page short of a full batch is the whole queue: the
       // counters follow it.
       const rows = await queuedEnvelopes(ctx, coordinator.conversationKey);
-      const swept = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-      const live = rows.filter((row) => row.expiresAt > now);
+      const swept = await sweepQueuedEnvelopes(ctx, coordinator, now, rows);
+      const live = swept.live;
       const queue =
         rows.length < MAX_DRAIN_ENVELOPES
           ? {
@@ -761,11 +761,11 @@ export const recoverQueued = internalMutation({
                 0,
               ),
             }
-          : swept;
+          : swept.queue;
       const applied = await promoteQueuedGroup(ctx, {
         coordinator: coordinator,
         queue: queue,
-        rows: rows,
+        live: live,
         now: now,
         leaseTtlMs: args.leaseTtlMs,
         ownerGeneration: coordinator.ownerGeneration + 1,
@@ -1000,12 +1000,11 @@ export const takeNext = internalMutation({
         ...args.settle,
       });
     }
-    const rows = await queuedPage(ctx, coordinator);
-    const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
+    const { queue, live } = await sweepQueuedEnvelopes(ctx, coordinator, now);
     const promoted = await promoteQueuedGroup(ctx, {
       coordinator: coordinator,
       queue: queue,
-      rows: rows,
+      live: live,
       now: now,
       leaseTtlMs: args.leaseTtlMs,
       ownerGeneration: args.ownerGeneration + 1,
@@ -1251,14 +1250,9 @@ async function expiredUndeliveredResume(
   envelope: Doc<"runtimeIngressEnvelopes">,
 ): Promise<boolean> {
   if (envelope.status !== "expired") return false;
-  const rows = [
-    await asyncAgentResultRow(ctx, envelope.resultEventId),
-    await asyncToolResultRow(ctx, envelope.toolResultId),
-  ];
 
-  return rows.some(
-    (row): boolean =>
-      row?.accountId === envelope.accountId && !isResultStored(row),
+  return (await resumedResults(ctx, envelope)).some(
+    (row): boolean => !isResultStored(row),
   );
 }
 
@@ -1281,9 +1275,11 @@ async function claimSteering(
   if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
     return null;
   }
-  const rows = await queuedPage(ctx, coordinator);
-  const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-  const active = rows.filter((row) => row.expiresAt > now);
+  const { queue, live: active } = await sweepQueuedEnvelopes(
+    ctx,
+    coordinator,
+    now,
+  );
   const steering = active[0]?.requestedMode === "steer";
   // A steer joins the running turn, so it must come from that turn's sender.
   const owner = steering
@@ -1472,34 +1468,54 @@ async function createCoordinator(
 }
 
 /**
- * Marks expired queued work terminal and returns adjusted queue counters.
- * `rows` is the queued page when the caller already read it (`queuedPage`),
- * so one mutation reads the queue once.
+ * Marks expired queued work terminal, and completes a queued resume whose
+ * result the conversation already has (a status read took it while the resume
+ * waited), so no apply tells the parent twice. Returns adjusted queue
+ * counters and the `live` rows left to apply. `rows` is the queued page when
+ * the caller already read it (`queuedPage`), so one mutation reads the queue
+ * once.
  */
-async function expireQueuedEnvelopes(
+async function sweepQueuedEnvelopes(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
   rows?: Doc<"runtimeIngressEnvelopes">[],
-): Promise<{ queuedCount: number; queuedBytes: number }> {
+): Promise<{
+  queue: { queuedCount: number; queuedBytes: number };
+  live: Doc<"runtimeIngressEnvelopes">[];
+}> {
   const page = rows ?? (await queuedPage(ctx, coordinator));
-  let expiredCount = 0;
-  let expiredBytes = 0;
+  const live: Doc<"runtimeIngressEnvelopes">[] = [];
+  let sweptCount = 0;
+  let sweptBytes = 0;
   for (const row of page) {
-    if (row.expiresAt > now) continue;
-    expiredCount += 1;
-    expiredBytes += row.sizeBytes;
-    await ctx.db.patch(row._id, {
-      ...RELEASED_PAYLOAD,
-      status: "expired",
-      error: "Ingress expired before it reached a runnable boundary",
-      updatedAt: now,
-    });
+    if (row.expiresAt <= now) {
+      await ctx.db.patch(row._id, {
+        ...RELEASED_PAYLOAD,
+        status: "expired",
+        error: "Ingress expired before it reached a runnable boundary",
+        updatedAt: now,
+      });
+    } else if ((await resumedResults(ctx, row)).some(isResultStored)) {
+      await ctx.db.patch(row._id, {
+        ...RELEASED_PAYLOAD,
+        status: "completed",
+        updatedAt: now,
+      });
+    } else {
+      live.push(row);
+      continue;
+    }
+    sweptCount += 1;
+    sweptBytes += row.sizeBytes;
   }
 
   return {
-    queuedCount: Math.max(0, coordinator.queuedCount - expiredCount),
-    queuedBytes: Math.max(0, coordinator.queuedBytes - expiredBytes),
+    queue: {
+      queuedCount: Math.max(0, coordinator.queuedCount - sweptCount),
+      queuedBytes: Math.max(0, coordinator.queuedBytes - sweptBytes),
+    },
+    live: live,
   };
 }
 
@@ -1596,6 +1612,30 @@ async function markDeliveredResultsStored(
 }
 
 /**
+ * The result rows of its own account a resume `envelope` delivers; none for
+ * any other envelope.
+ */
+async function resumedResults(
+  ctx: QueryCtx,
+  envelope: Pick<
+    Doc<"runtimeIngressEnvelopes">,
+    "accountId" | "resultEventId" | "toolResultId"
+  >,
+): Promise<
+  (Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">)[]
+> {
+  const rows = [
+    await asyncAgentResultRow(ctx, envelope.resultEventId),
+    await asyncToolResultRow(ctx, envelope.toolResultId),
+  ];
+
+  return rows.filter(
+    (row): row is NonNullable<typeof row> =>
+      row?.accountId === envelope.accountId,
+  );
+}
+
+/**
  * Whether `envelope` and the admission `args` resume the same late result;
  * `checkDuplicateAdmission` answers such a retry as a duplicate even when its
  * payload drifted.
@@ -1618,9 +1658,9 @@ function resumesSameResult(
 /**
  * Coordinator stage of `accept`: loads or creates the conversation
  * coordinator, verifies its scope, pins the latest channel target, and
- * reconciles queue counters after expiring stale queued work and a stale
+ * reconciles queue counters after sweeping queued work and expiring a stale
  * owner's envelope. The returned coordinator reflects every patch applied;
- * `rows` is the queued page that sweep read, for recovery to promote from.
+ * `live` is the queued work that sweep left, for recovery to promote from.
  */
 async function prepareAdmissionCoordinator(
   ctx: MutationCtx,
@@ -1634,7 +1674,7 @@ async function prepareAdmissionCoordinator(
 ): Promise<{
   coordinator: Doc<"runtimeConversationCoordinators">;
   queue: { queuedCount: number; queuedBytes: number };
-  rows: Doc<"runtimeIngressEnvelopes">[];
+  live: Doc<"runtimeIngressEnvelopes">[];
 }> {
   let coordinator =
     (await getCoordinator(ctx, args.conversationKey)) ??
@@ -1661,25 +1701,24 @@ async function prepareAdmissionCoordinator(
       updatedAt: now,
     };
   }
-  const rows = await queuedPage(ctx, coordinator);
-  const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
+  const { queue, live } = await sweepQueuedEnvelopes(ctx, coordinator, now);
   await expireStaleOwner(ctx, coordinator, now);
   coordinator = await patchQueueCounters(ctx, coordinator, queue, now);
 
-  return { coordinator: coordinator, queue: queue, rows: rows };
+  return { coordinator: coordinator, queue: queue, live: live };
 }
 
 /**
  * Promotes the oldest runnable queued group (one follow-up, or a contiguous
  * collect/steer prefix) to processing under the supplied owner generation.
- * `rows` is the queued page when the caller already read it (`queuedPage`).
+ * `live` is the queued work `sweepQueuedEnvelopes` left in this mutation.
  */
 async function promoteQueuedGroup(
   ctx: MutationCtx,
   options: {
     coordinator: Doc<"runtimeConversationCoordinators">;
     queue: { queuedCount: number; queuedBytes: number };
-    rows?: Doc<"runtimeIngressEnvelopes">[];
+    live: Doc<"runtimeIngressEnvelopes">[];
     now: number;
     leaseTtlMs: number;
     ownerGeneration: number;
@@ -1696,16 +1735,14 @@ async function promoteQueuedGroup(
   configRef?: Infer<typeof ingressConfigRefValidator>;
   ephemeralSystem?: unknown[];
 } | null> {
-  const { coordinator, queue, now } = options;
-  const rows = options.rows ?? (await queuedPage(ctx, coordinator));
-  const active = rows.filter((row) => row.expiresAt > now);
-  const first = active[0];
+  const { coordinator, queue, live, now } = options;
+  const first = live[0];
   if (!first) return null;
   // Collect batches by design; steer batches too. Every queued steer aimed at
   // the same dead run, so a contiguous prefix runs as one merged follow-up.
   const batchable =
     first.requestedMode === "collect" || first.requestedMode === "steer";
-  const selected = batchable ? contiguousModePrefix(active) : [first];
+  const selected = batchable ? contiguousModePrefix(live) : [first];
   const appliedMode: "collect" | "followup" =
     first.requestedMode === "collect" ? "collect" : "followup";
   const appliedToEventId = first.eventId;

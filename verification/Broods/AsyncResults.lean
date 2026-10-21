@@ -22,7 +22,9 @@ with `observed` kept in step for one release. The parent's `get_subagent_status`
 the result (`insertConversationEvents`) and a late result's resume reaching its owner
 (`runtimeIngress.accept` with `resultEventId` as owner, or the apply of the envelope it
 queued) all store it, and the resume is admitted only while it is not stored and no
-resume of it is queued, so the parent is told a result once. A queued resume that
+resume of it is queued, so the parent is told a result once. A read while a resume
+waits stores the row too, and the sweep before every apply (`sweepQueuedEnvelopes`)
+then completes that resume without handing it over. A queued resume that
 expires leaves the row as it was, for the sweep to resume again. `pending`, which the
 row carries from its creation, admits like unset: only the sweep reads it, past the
 parent's hold. A tool row's `handback` moves the same way: its
@@ -253,9 +255,11 @@ inductive ObserveCall where
   whether another run owns the conversation, so the resume queues. -/
   | resume (room stored busy : Bool)
   /-- The owner takes the queued resume (`promoteQueuedGroup` or `claimSteering`),
-  storing the row in the same mutation (`markDeliveredResultsStored`). -/
+  storing the row in the same mutation (`markDeliveredResultsStored`). The sweep
+  before it (`sweepQueuedEnvelopes`) completes the resume unapplied once the row is
+  stored. -/
   | apply
-  /-- The queued resume expires (`maintain`, `expireQueuedEnvelopes`), writing nothing
+  /-- The queued resume expires (`maintain`, `sweepQueuedEnvelopes`), writing nothing
   to the row; a later resume under its key replaces it (`expiredUndeliveredResume`). -/
   | expire
   deriving DecidableEq, Repr
@@ -279,7 +283,10 @@ def Handback.step (h : Handback) : ObserveCall → Handback × Bool
     else if !busy then ({ h with flag := .seen }, true)
     else if room then ({ h with queued := true }, false)
     else (h, false)
-  | .apply => if h.queued then (⟨.seen, false⟩, true) else (h, false)
+  | .apply =>
+    if !h.queued then (h, false)
+    else if h.flag == .seen then ({ h with queued := false }, false)
+    else (⟨.seen, false⟩, true)
   | .expire => ({ h with queued := false }, false)
 
 /-- How many times `cs` tells the parent the result from state `h`. -/
@@ -377,17 +384,18 @@ theorem step_tells_seen (h : Handback) (c : ObserveCall) (ht : (h.step c).2 = tr
   cases o <;> cases q <;> cases c <;> simp_all [Handback.step] <;>
     (repeat' split at ht) <;> simp_all
 
-/-- A seen row with nothing queued never moves, and tells the parent nothing. -/
-theorem seen_step (c : ObserveCall) :
-    (Handback.mk .seen false).step c = (⟨.seen, false⟩, false) := by
-  cases c <;> simp [Handback.step]
+/-- A seen row stays seen, and tells the parent nothing. -/
+theorem seen_step (q : Bool) (c : ObserveCall) :
+    ∃ q', (Handback.mk .seen q).step c = (⟨.seen, q'⟩, false) := by
+  cases q <;> cases c <;> simp [Handback.step]
 
-/-- Nothing tells the parent a result its row has seen, once no resume is queued. -/
-theorem seen_tells_none : ∀ cs : List ObserveCall, (Handback.mk .seen false).told cs = 0
-  | [] => rfl
-  | c :: cs => by
-    simp only [Handback.told, seen_step]
-    simp [seen_tells_none cs]
+/-- Nothing tells the parent a result its row has seen, queued resume or not. -/
+theorem seen_tells_none : ∀ (q : Bool) (cs : List ObserveCall), (Handback.mk .seen q).told cs = 0
+  | _, [] => rfl
+  | q, c :: cs => by
+    obtain ⟨q', hs⟩ := seen_step q c
+    simp only [Handback.told, hs]
+    simp [seen_tells_none q' cs]
 
 /-- However the status reads, detaches, resumes, applies and expiries interleave, the
 parent is told a late result by a resume at most once. -/
@@ -400,11 +408,11 @@ theorem resume_at_most_once (h : Handback) (cs : List ObserveCall) : h.told cs �
     · simp [ht, step_tells_seen h c ht, seen_tells_none]
     · simp [ht, ih]
 
-/-- A status read of a finished result with no resume queued shuts out every later
-resume: a child finishing after the read but before the read's step saved tells the
-parent nothing more. -/
-theorem read_shuts_out_resume (o : Observed) (cs : List ObserveCall) :
-    ((Handback.mk o false).step (.read true)).1.told cs = 0 := by
+/-- A status read of a finished result shuts out every later resume, and the apply of
+one already queued: a child finishing after the read but before the read's step saved
+tells the parent nothing more. -/
+theorem read_shuts_out_resume (o : Observed) (q : Bool) (cs : List ObserveCall) :
+    ((Handback.mk o q).step (.read true)).1.told cs = 0 := by
   cases o <;> simp [Handback.step, seen_tells_none]
 
 /-- A resume refused because the conversation already stores its result shuts out every
@@ -423,10 +431,10 @@ theorem expired_resume_told_again (o : Observed) (room : Bool) (ho : o ≠ .seen
 /-! ## Witnesses -/
 
 /-- A status read while a resume of the result waits in the queue: the read returns
-the result, and the apply still tells the parent, so it sees it twice. Before stores were
-moved to the apply the queued admission stored the row first, and this was the same. -/
+the result, and the sweep then completes the resume unapplied, so the parent sees it
+once. -/
 example :
-    (Handback.mk .waiting false).told [.resume true false true, .read true, .apply] = 1 := by
+    (Handback.mk .waiting false).told [.resume true false true, .read true, .apply] = 0 := by
   decide
 
 /-- The run completes and its cron settle throws: both rows stay completed. -/
