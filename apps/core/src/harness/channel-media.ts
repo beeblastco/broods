@@ -642,10 +642,10 @@ function mediaFileName(
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
 }
 
-/** The sealed links a message carries, one entry per part (null for none). */
-function mediaLinks(message: ModelMessage): (string | null)[] {
+/** The sealed pictures a message carries, one entry per part (null for none). */
+function imageLinks(message: ModelMessage): (string | null)[] {
   if (message.role === "user" && typeof message.content !== "string") {
-    return message.content.map(sealedMediaLink);
+    return message.content.map(sealedImageLink);
   }
 
   return message.role === "tool"
@@ -1040,6 +1040,14 @@ function sealedLinkFor(ticket: AttachmentMediaTicket): string | undefined {
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }
 
+/** The sealed media URL a picture points at, or null; a PDF is not one. */
+function sealedImageLink(part: UserContentPart): string | null {
+  return part.type === "image" ||
+    (part.type === "file" && part.mediaType.startsWith("image"))
+    ? sealedMediaLink(part)
+    : null;
+}
+
 /** The sealed media URL an image or file part points at, or null. */
 function sealedMediaLink(part: UserContentPart): string | null {
   if (part.type !== "image" && part.type !== "file") {
@@ -1232,12 +1240,13 @@ function whereItLanded(
 }
 
 /**
- * The messages with every sealed link before the newest MAX_REPLAYED_MEDIA as a
- * line of text, so a long conversation replays its recent pictures, not all.
+ * The messages with every sealed picture before the newest MAX_REPLAYED_MEDIA as
+ * a line of text, so a long conversation replays its recent pictures, not all.
+ * Other files are not counted: the cap is the providers' limit on images.
  */
 function withOldMediaOmitted(messages: ModelMessage[]): ModelMessage[] {
   let toOmit =
-    messages.flatMap(mediaLinks).filter((link) => link !== null).length -
+    messages.flatMap(imageLinks).filter((link) => link !== null).length -
     MAX_REPLAYED_MEDIA;
   if (toOmit <= 0) {
     return messages;
@@ -1257,7 +1266,7 @@ function withOldMediaOmitted(messages: ModelMessage[]): ModelMessage[] {
       return {
         ...message,
         content: message.content.map((part): UserContentPart =>
-          omits(sealedMediaLink(part)) ? note : part,
+          omits(sealedImageLink(part)) ? note : part,
         ),
       };
     }
