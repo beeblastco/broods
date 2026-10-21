@@ -9,7 +9,12 @@
 import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { assertStep, connectMachine, type VerifyContext } from "./harness.ts";
+import {
+  assertStep,
+  connectMachine,
+  pollUntil,
+  type VerifyContext,
+} from "./harness.ts";
 
 const BASELINE_PATH = join(import.meta.dir, "perf-baseline.json");
 const BURST_ROUNDS = 3;
@@ -32,7 +37,7 @@ interface ScenarioResult {
   p95: number;
 }
 
-/** Runs every scenario, prints and summarizes it, and returns false when a Convex call budget grew. */
+/** Measures turns, checks their persisted usage, and grades the Convex call budgets. */
 export async function runPerf(
   context: VerifyContext,
   options: { record: boolean; tracePath: string },
@@ -126,6 +131,25 @@ export async function runPerf(
       p50: percentile(burst, 0.5),
       p95: percentile(burst, 0.95),
     });
+    const expectedRuns = WARMUP + ITERATIONS * 3 + BURST_ROUNDS * BURST_SIZE;
+    let persistedRuns = 0;
+    await pollUntil(
+      { initialIntervalMs: 50, maxIntervalMs: 500, timeoutMs: 15_000 },
+      async (): Promise<true | null> => {
+        const page = await context.account.audit.list({ limit: 500 });
+        // run.completed is appended in the same transaction as task usage.
+        persistedRuns = page.events.filter(
+          (event): boolean => event.action === "run.completed",
+        ).length;
+
+        return persistedRuns === expectedRuns ? true : null;
+      },
+    );
+    assertStep(
+      "every measured run persisted its usage",
+      persistedRuns === expectedRuns,
+      `${persistedRuns}/${expectedRuns} run.completed rows`,
+    );
 
     return report(results, options.record);
   } finally {

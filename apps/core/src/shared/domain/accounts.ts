@@ -1,6 +1,6 @@
 /**
- * Account types, id/secret/hash helpers, input normalization, and public
- * projection. Persistence is reached through `../storage.ts`.
+ * Account records, credentials and signup validation. Account updates and
+ * public responses belong to the Convex config plane.
  */
 
 import { ACCOUNT_KEY_PREFIX } from "@broods/convex/model/accountSecrets";

@@ -3,6 +3,7 @@ import type {
   ObservabilityLogEntry,
   ObservabilitySpanRow,
 } from "../../../../packages/broods/src/observability-contracts";
+import { answerObservabilitySocket, NOW_MS } from "../lib/observabilitySocket";
 
 /** A loaded page of tasks: more than Tracing's first page of 50 holds. */
 const TASKS = 60;
@@ -10,13 +11,16 @@ const TASKS = 60;
 /** The task View trace opens: the last row on Tracing's first page. */
 const TARGET_TASK = 50;
 
-/** The page's frozen clock; the fixture's tasks are minutes before it. */
-const NOW_MS = Date.parse("2026-09-15T10:00:00Z");
+test.beforeEach(async ({ page }) => {
+  await answerObservabilitySocket(page, {
+    logs: logEntries(),
+    traces: spanRows(),
+  });
+});
 
 test("View trace opens Tracing on the task without sliding the page", async ({
   page,
 }) => {
-  await answerObservabilitySocket(page);
   await page.goto("/ui-gallery?tab=monitoring");
 
   // The newest log belongs to the target task, so opening it needs no scroll.
@@ -43,7 +47,6 @@ test("View trace opens Tracing on the task without sliding the page", async ({
 test("a Tracing link opens its search, range and task, and ignores a bad param", async ({
   page,
 }) => {
-  await answerObservabilitySocket(page);
   // The fixture's tasks are weeks old, so only the 30 day range lists them.
   await page.goto(
     `/ui-gallery?tab=tracing&q=task&range=30d&trace=${traceId(5)}&from=abc`,
@@ -68,7 +71,6 @@ test("a Tracing link opens its search, range and task, and ignores a bad param",
 test("a log line the search hides drops its strip marker and panel", async ({
   page,
 }) => {
-  await answerObservabilitySocket(page);
   await page.goto("/ui-gallery?tab=monitoring");
   const marker = page.locator("span.w-px.bg-destructive");
 
@@ -81,28 +83,6 @@ test("a log line the search hides drops its strip marker and panel", async ({
   await expect(marker).toHaveCount(0);
   await expect(page.getByRole("button", { name: "View trace" })).toHaveCount(0);
 });
-
-/** Serve every observability subscription from the fixture data below. */
-async function answerObservabilitySocket(page: Page): Promise<void> {
-  await page.clock.setFixedTime(NOW_MS);
-  await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
-    socket.onMessage((raw) => {
-      const message = JSON.parse(String(raw)) as {
-        type: string;
-        stream: string;
-      };
-      if (message.type !== "subscribe") return;
-      socket.send(JSON.stringify({ type: "ready" }));
-      socket.send(
-        JSON.stringify({
-          type: "backfill",
-          stream: message.stream,
-          entries: message.stream === "logs" ? logEntries() : spanRows(),
-        }),
-      );
-    });
-  });
-}
 
 function logEntries(): ObservabilityLogEntry[] {
   return Array.from({ length: TASKS }, (_, index) => {

@@ -1,11 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { MachineComputerFrame } from "../../../apps/core/src/shared/machine-socket.ts";
 import { startDesktop, type DesktopDriver } from "../src/cli/desktop.ts";
 import { runMachineDaemon } from "../src/cli/machine.ts";
 import { startFakeCore } from "./fixtures/fake-core.ts";
 
-// These drive this Mac through the real Swift helper, so they skip elsewhere.
-const macOnly = test.skipIf(process.platform !== "darwin");
+// These capture the screen and move the pointer. Run them with `test:desktop`.
+const macOnly = test.skipIf(
+  process.platform !== "darwin" || process.env.BROODS_TEST_DESKTOP !== "1",
+);
 const drivers: DesktopDriver[] = [];
 const servers: Bun.Server<undefined>[] = [];
 
@@ -24,7 +29,7 @@ macOnly(
 
     const shot = await driver.run(computer("screenshot"));
     expect(shot.error).toBeUndefined();
-    expect(pngSize(shot.image?.data ?? "")).toEqual({
+    expect(await imageSize(shot.image?.data ?? "")).toEqual({
       width: display.width,
       height: display.height,
     });
@@ -32,17 +37,19 @@ macOnly(
     const before = await driver.run(computer("cursor_position"));
     const x = Math.round(display.width / 3);
     const y = Math.round(display.height / 3);
-    await driver.run(computer("mouse_move", { coordinate: [x, y] }));
-    const after = await driver.run(computer("cursor_position"));
-    expect(after.text).toBe(`X=${x},Y=${y}`);
-    // Put the cursor back where the person left it.
-    const restore = /X=(\d+),Y=(\d+)/.exec(before.text ?? "");
-    if (restore) {
-      await driver.run(
-        computer("mouse_move", {
-          coordinate: [Number(restore[1]), Number(restore[2])],
-        }),
-      );
+    try {
+      await driver.run(computer("mouse_move", { coordinate: [x, y] }));
+      const after = await driver.run(computer("cursor_position"));
+      expect(after.text).toBe(`X=${x},Y=${y}`);
+    } finally {
+      const restore = /X=(\d+),Y=(\d+)/.exec(before.text ?? "");
+      if (restore) {
+        await driver.run(
+          computer("mouse_move", {
+            coordinate: [Number(restore[1]), Number(restore[2])],
+          }),
+        );
+      }
     }
 
     const outside = await driver.run(
@@ -92,9 +99,30 @@ function computer(
   };
 }
 
-// Width and height from a PNG header.
-function pngSize(data: string): { width: number; height: number } {
-  const bytes = Buffer.from(data, "base64");
+// The helper switches to JPEG for large images; sips decodes either format.
+async function imageSize(
+  data: string,
+): Promise<{ width: number; height: number }> {
+  const dir = await mkdtemp(join(tmpdir(), "broods-desktop-test-"));
+  try {
+    const path = join(dir, "screenshot");
+    await writeFile(path, Buffer.from(data, "base64"));
+    const child = Bun.spawn([
+      "sips",
+      "-g",
+      "pixelWidth",
+      "-g",
+      "pixelHeight",
+      path,
+    ]);
+    const output = await new Response(child.stdout).text();
+    expect(await child.exited).toBe(0);
 
-  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+    return {
+      width: Number(/pixelWidth: (\d+)/.exec(output)?.[1]),
+      height: Number(/pixelHeight: (\d+)/.exec(output)?.[1]),
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
