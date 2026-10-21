@@ -2942,6 +2942,7 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
 
     expect(createOpenAICompatibleMock).toHaveBeenCalledWith({
+      supportsMultiPartToolContent: true,
       apiKey: "custom-key",
       baseURL: "https://llm.example/v1",
       fetch: expect.any(Function),
