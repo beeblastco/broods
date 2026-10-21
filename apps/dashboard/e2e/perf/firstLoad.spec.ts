@@ -98,7 +98,7 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
       firstLoad.map((request) => request.response()),
     );
     const bodies = await Promise.all(
-      responses.map((response) => response?.body()),
+      responses.flatMap((response) => (response ? [response.body()] : [])),
     );
     await context.close();
     test.skip(devServer, "next dev ships dev chunks; run against a build");
@@ -115,7 +115,7 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     ).toEqual([]);
     measured[probe.name] = {
       jsRequests: firstLoad.length,
-      jsBytes: bodies.reduce((sum, body) => sum + (body?.byteLength ?? 0), 0),
+      jsBytes: bodies.reduce((sum, body) => sum + body.byteLength, 0),
     };
   }
 
