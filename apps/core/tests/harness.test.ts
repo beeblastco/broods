@@ -1385,13 +1385,16 @@ describe("runAgentLoop", () => {
       scenario,
     );
 
-    const consumed = Promise.resolve(stream.consumeStream());
+    const thrown = await Promise.resolve(stream.consumeStream()).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
     // Only the hard failure rethrows to the caller; the hook has fired by then.
-    if (scenario === "hard-throw") {
-      await expect(consumed).rejects.toThrow("stream transport failed");
-    } else {
-      await consumed;
-    }
+    expect(thrown).toEqual(
+      scenario === "hard-throw"
+        ? new Error("stream transport failed")
+        : undefined,
+    );
 
     expect(stream.didFail()).toBe(true);
     expect(fired).toEqual([
