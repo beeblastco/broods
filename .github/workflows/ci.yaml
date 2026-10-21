@@ -57,6 +57,11 @@ jobs:
         # promises, awaiting a non-promise) fails here, not only the plain rules.
         run: bun run check
 
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
+
       - name: Read the Node version
         id: node
         run: echo "version=$(node -v)" >> "$GITHUB_OUTPUT"
@@ -175,6 +180,11 @@ jobs:
         # The gate's own grading rules. A gate that silently stops failing is
         # worse than no gate, so it is tested before it is trusted.
         run: bun run bench:test
+
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
 
       - name: Read the Node version
         id: node
