@@ -38,6 +38,9 @@ const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
+// The most queued envelopes a conversation holds (core's
+// `DEFAULT_INGRESS_MAX_COUNT`), all read to find a queued resume.
+const QUEUED_RESUME_SCAN = 100;
 // One recovery sweep's page of late subagent or async tool results.
 const OWED_RESULT_PAGE_SIZE = 100;
 
@@ -529,28 +532,39 @@ export const listOwedAsyncAgentResults = internalQuery({
  * up delivering it, `stored` when the parent reads it or is never told. A
  * stored row stays stored, and a running row is never marked stored. The
  * parent's own append and a late result's admission mark `stored` inside
- * their own transactions instead.
- * @returns null after the row is marked or skipped
+ * their own transactions instead. A row whose resume waits in the parent's
+ * queue is that resume's to deliver, so `stored` leaves it alone.
+ * @returns true when a resume of the result waits in the parent's queue, so
+ * the caller must not hand the result over itself
  */
 export const markAsyncAgentHandback = internalMutation({
   args: {
     eventId: v.string(),
     handback: handbackMoveValidator,
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
     const row = await asyncAgentResultRow(ctx, args.eventId);
     if (
       !row ||
       row.handback === "stored" ||
       (args.handback === "stored" && row.status === "processing")
     ) {
-      return null;
+      return false;
     }
     await requireActiveAccount(ctx, row.accountId);
+    if (
+      args.handback === "stored" &&
+      row.subagent !== undefined &&
+      (await isResumeQueued(ctx, row.subagent.parentConversationKey, {
+        resultEventId: row.eventId,
+      }))
+    ) {
+      return true;
+    }
     await ctx.db.patch(row._id, { handback: args.handback });
 
-    return null;
+    return false;
   },
 });
 
@@ -620,6 +634,33 @@ export async function markResultStored(
   if (row?.accountId === accountId && row.handback !== "stored") {
     await ctx.db.patch(row._id, { handback: "stored" });
   }
+}
+
+/**
+ * Whether a resume carrying this result waits, unexpired, in
+ * `conversationKey`'s queue. A status read then leaves the result to it, so
+ * the parent is told once and a read whose step is never saved loses nothing.
+ */
+async function isResumeQueued(
+  ctx: QueryCtx,
+  conversationKey: string,
+  fence: { resultEventId: string } | { toolResultId: string },
+): Promise<boolean> {
+  const now = Date.now();
+  const queued = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q.eq("conversationKey", conversationKey).eq("status", "queued"),
+    )
+    .take(QUEUED_RESUME_SCAN);
+
+  return queued.some(
+    (row): boolean =>
+      row.expiresAt > now &&
+      ("resultEventId" in fence
+        ? row.resultEventId === fence.resultEventId
+        : row.toolResultId === fence.toolResultId),
+  );
 }
 
 /**
@@ -899,28 +940,39 @@ export const updateAsyncToolResult = internalMutation({
  * started it gives up delivering it, `stored` when the model reads it with
  * async_status. A stored row stays stored, and a row still running is left
  * alone. The parent's own append and the continuation's admission mark
- * `stored` inside their own transactions instead.
- * @returns null after the row is marked or skipped
+ * `stored` inside their own transactions instead. A row whose continuation
+ * waits in the conversation's queue is that continuation's to deliver, so
+ * `stored` leaves it alone.
+ * @returns true when a continuation of the result waits in the
+ * conversation's queue, so the caller must not hand the result over itself
  */
 export const markAsyncToolHandback = internalMutation({
   args: {
     resultId: v.string(),
     handback: handbackMoveValidator,
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
     const row = await asyncToolResultRow(ctx, args.resultId);
     if (!row || row.status === "processing" || row.handback === "stored") {
-      return null;
+      return false;
     }
     await requireActiveAccount(ctx, row.accountId);
+    if (
+      args.handback === "stored" &&
+      (await isResumeQueued(ctx, row.conversationKey, {
+        toolResultId: row.resultId,
+      }))
+    ) {
+      return true;
+    }
     await ctx.db.patch(row._id, {
       handback: args.handback,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
 
-    return null;
+    return false;
   },
 });
 

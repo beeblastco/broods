@@ -540,7 +540,7 @@ stateDiagram-v2
 - `network.mode: "allow-all"` starts with `enableInternet: true`, anything else without; `restricted` is rejected. `size` maps to the nearest instance type, `standard-1` to `standard-4` (`CLOUDFLARE_INSTANCE_TYPES` in `apps/core/src/shared/sandbox-sizes.ts`).
 - Limits are in `apps/cloudflare-sandbox/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 15 minute timeout, 6 hour idle (the `setInactivityTimeout` ceiling). An ephemeral Container idles only a minute past its command, so one whose `DELETE` failed stops soon.
 - Exit 124 or 137 counts as a timeout only once the deadline passed; earlier it is the command's own exit or an OOM kill.
-- `deploy.yaml` does not deploy the bridge. A deployment that offers the provider runs `wrangler deploy` and sets `SANDBOX_API_KEY` on the Worker equal to core's `CLOUDFLARE_SANDBOX_API_KEY`, with `CLOUDFLARE_SANDBOX_URL` pointing at it.
+- `sst deploy` ships the bridge per stage with wrangler, as `cloudflareWorkers.sandbox`, when the deploy has `CLOUDFLARE_API_TOKEN`; wrangler builds the Container image, so it needs Docker. The infra repo generates `SANDBOX_API_KEY`, puts it on the Worker and in core's `CLOUDFLARE_SANDBOX_API_KEY`, and points `CLOUDFLARE_SANDBOX_URL` at it. Each stage's bridge has its own Containers.
 
 ## Worker
 

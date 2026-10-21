@@ -1276,8 +1276,10 @@ describe("SubagentCoordinator", () => {
       asyncAgentResults,
       "markAsyncAgentHandback",
     ).mockImplementation(
-      async (eventId: string, handback: string): Promise<void> => {
+      async (eventId: string, handback: string): Promise<boolean> => {
         if (handback === "stored") seen.add(eventId);
+
+        return false;
       },
     );
     const told: string[] = [];
@@ -1372,7 +1374,7 @@ describe("SubagentCoordinator", () => {
     const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const { default: getStatus } =
       await import("../src/harness/tools/get-subagent-status.tool.ts");
@@ -1409,7 +1411,7 @@ describe("SubagentCoordinator", () => {
     const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
@@ -1473,7 +1475,7 @@ describe("SubagentCoordinator", () => {
     const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     let hookRuns = 0;
     const hooks = spyOn(
       hookDispatcher,
@@ -1572,7 +1574,7 @@ describe("SubagentCoordinator", () => {
     const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     let hookRuns = 0;
     const hooks = spyOn(
       hookDispatcher,
@@ -1661,7 +1663,7 @@ describe("SubagentCoordinator", () => {
     const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     const info = spyOn(log, "logInfo");
     const resumed: string[] = [];
     const { resumeLostSubagentResults } =
@@ -1766,7 +1768,7 @@ describe("SubagentCoordinator", () => {
     const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     const record = spyOn(
       asyncAgentResults,
       "recordAsyncAgentResult",
@@ -1853,7 +1855,7 @@ describe("SubagentCoordinator", () => {
     const markHandback = spyOn(
       asyncAgentResults,
       "markAsyncAgentHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     const record = spyOn(
       asyncAgentResults,
       "recordAsyncAgentResult",
