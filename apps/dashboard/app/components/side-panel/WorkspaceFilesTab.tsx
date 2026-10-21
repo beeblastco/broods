@@ -20,7 +20,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StyleProps } from "react-file-icon";
 import { FileIcon, defaultStyles } from "react-file-icon";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -447,12 +447,18 @@ export function WorkspaceFilesView({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
-  // The row that takes focus back after a rename or a cancelled delete, on
-  // the next render, unless the user already moved focus somewhere else.
+  // The row that takes focus once a rename or a delete dialog ends, as soon as
+  // it renders, unless the user already moved focus somewhere else.
   const pendingFocusRef = useRef<string | null>(null);
 
-  const tree = files ? buildTree(files) : [];
-  const visible = visibleNodes(tree, expanded);
+  const tree = useMemo(
+    (): FileNode[] => (files ? buildTree(files) : []),
+    [files],
+  );
+  const visible = useMemo(
+    (): FileNode[] => visibleNodes(tree, expanded),
+    [tree, expanded],
+  );
   const tabStop = visible.some((node) => node.path === selected)
     ? selected
     : (visible[0]?.path ?? null);
@@ -460,9 +466,16 @@ export function WorkspaceFilesView({
   useEffect(() => {
     const path = pendingFocusRef.current;
     if (!path) return;
+    if (document.activeElement && document.activeElement !== document.body) {
+      pendingFocusRef.current = null;
+
+      return;
+    }
+    // A Convex rename renders the new row only once its query catches up.
+    const row = rowElement(treeRef.current, path);
+    if (!row) return;
     pendingFocusRef.current = null;
-    if (!document.activeElement || document.activeElement === document.body)
-      rowElement(treeRef.current, path)?.focus();
+    row.focus();
   });
 
   const toggleFolder = useCallback((path: string) => {
@@ -498,15 +511,17 @@ export function WorkspaceFilesView({
 
     const fileEntries: UploadEntry[] = [];
     const folderPaths: string[] = [];
+    // The drag data store closes once this handler first yields, so every
+    // item is read before the first await.
+    const dropped = Array.from(e.dataTransfer.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.webkitGetAsEntry?.() ?? item.getAsFile());
 
-    for (const item of Array.from(e.dataTransfer.items)) {
-      if (item.kind !== "file") continue;
-      const entry = item.webkitGetAsEntry?.();
-      if (entry) {
+    for (const entry of dropped) {
+      if (entry instanceof File) {
+        fileEntries.push({ file: entry, path: entry.name });
+      } else if (entry) {
         await collectEntries(entry, "", fileEntries, folderPaths);
-      } else {
-        const f = item.getAsFile();
-        if (f) fileEntries.push({ file: f, path: f.name });
       }
     }
 
@@ -722,9 +737,7 @@ export function WorkspaceFilesView({
                 No files yet
               </p>
               <p className="text-2xs text-muted-foreground">
-                {canWrite
-                  ? "Drop files or folders here, or use the buttons above."
-                  : "Files uploaded to this workspace show here."}
+                Drop files or folders here, or use the buttons above.
               </p>
             </div>
           </div>
@@ -804,8 +817,11 @@ export function WorkspaceFilesView({
           critical={false}
           onConfirm={async () => {
             setIsDeletingNode(true);
+            const next = rowAfterRemoval(visible, pendingDeleteNode.path);
             try {
               await onDelete(pendingDeleteNode);
+              setSelected(next);
+              pendingFocusRef.current = next;
               setPendingDeleteNode(null);
             } finally {
               setIsDeletingNode(false);
@@ -867,12 +883,23 @@ function nodeAt(
 }
 
 /** The path a file or folder moves to when renamed in place. */
-function renamedPath(path: string, newName: string): string {
+export function renamedPath(path: string, newName: string): string {
   const slash = path.lastIndexOf("/");
 
   return slash === -1 ? newName : `${path.slice(0, slash)}/${newName}`;
 }
 
+/** The row that takes over when a row and everything under it goes: the next one, else the one before. */
+function rowAfterRemoval(visible: FileNode[], path: string): string | null {
+  const index = visible.findIndex((node) => node.path === path);
+  const after = visible
+    .slice(index + 1)
+    .find((node) => !node.path.startsWith(`${path}/`));
+
+  return after?.path ?? visible[index - 1]?.path ?? null;
+}
+
+/** A row's treeitem element, by the `data-path` it carries. */
 function rowElement(
   tree: HTMLElement | null,
   path: string,
@@ -930,13 +957,13 @@ function visibleNodes(nodes: FileNode[], expanded: Set<string>): FileNode[] {
   );
 }
 
-function withoutPath(files: FileRecord[], path: string): FileRecord[] {
+export function withoutPath(files: FileRecord[], path: string): FileRecord[] {
   return files.filter(
     (file) => file.path !== path && !file.path.startsWith(`${path}/`),
   );
 }
 
-function withRenamedPath(
+export function withRenamedPath(
   files: FileRecord[],
   path: string,
   newPath: string,

@@ -25,22 +25,31 @@ function log(scope: Locator): Locator {
   return scope.locator("[data-files-log] li");
 }
 
-/** Drops one file on the explorer the way a browser does: enter, over, drop. */
-async function dropFile(
-  page: Page,
-  scope: Locator,
-  name: string,
-): Promise<void> {
-  const dataTransfer = await page.evaluateHandle((fileName) => {
+/**
+ * Drops one file on the explorer the way a browser does: enter, over, drop.
+ * Returns whether the page cancelled the drop: an uncancelled drop opens the
+ * file in the tab. A synthetic DataTransfer ignores `dropEffect`, so the
+ * no-drop cursor is not asserted here.
+ */
+async function dropFile(scope: Locator, name: string): Promise<boolean> {
+  return scope.getByRole("tree").evaluate((zone, fileName) => {
     const transfer = new DataTransfer();
     transfer.items.add(new File(["hello"], fileName, { type: "text/plain" }));
+    const fire = (type: string): DragEvent => {
+      const event = new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer,
+      });
+      zone.dispatchEvent(event);
 
-    return transfer;
+      return event;
+    };
+    fire("dragenter");
+    fire("dragover");
+
+    return fire("drop").defaultPrevented;
   }, name);
-  const zone = scope.getByRole("tree");
-  await zone.dispatchEvent("dragenter", { dataTransfer: dataTransfer });
-  await zone.dispatchEvent("dragover", { dataTransfer: dataTransfer });
-  await zone.dispatchEvent("drop", { dataTransfer: dataTransfer });
 }
 
 test("Tab enters the tree once and arrows walk, open and close folders", async ({
@@ -136,14 +145,20 @@ test("Delete asks first, Escape keeps the file, confirming removes it", async ({
 
   await page.keyboard.press("Delete");
   await dialog.getByRole("textbox").fill("delete README.md");
-  await dialog.getByRole("button", { name: "Delete" }).click();
+  await dialog.getByRole("textbox").press("Enter");
   await expect(row(writer, "README.md")).toHaveCount(0);
   await expect(log(writer)).toHaveText(["delete README.md"]);
+  // The last row went, so the one before it takes focus and the selection.
+  await expect(row(writer, "notes.txt")).toBeFocused();
+  await expect(row(writer, "notes.txt")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 test("a dropped file uploads for a writer", async ({ page }) => {
   const writer = await openExplorer(page, "files-writer");
-  await dropFile(page, writer, "dropped.txt");
+  expect(await dropFile(writer, "dropped.txt")).toBe(true);
 
   await expect(row(writer, "dropped.txt")).toBeVisible();
   await expect(log(writer)).toHaveText(["upload dropped.txt"]);
@@ -168,7 +183,8 @@ test("a member can browse but not rename, delete or drop", async ({ page }) => {
   await page.keyboard.press("Delete");
   await expect(page.locator(DIALOG)).toHaveCount(0);
 
-  await dropFile(page, member, "dropped.txt");
+  // Refused, not ignored: the drop is cancelled, so the browser never opens the file.
+  expect(await dropFile(member, "dropped.txt")).toBe(true);
   await expect(member.getByText("Drop to upload")).toHaveCount(0);
   await expect(row(member, "dropped.txt")).toHaveCount(0);
   await expect(log(member)).toHaveCount(0);
