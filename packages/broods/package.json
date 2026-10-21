@@ -52,7 +52,8 @@
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
     "pack:check": "bun run build && publint && attw --pack .",
     "prepublishOnly": "bun run build",
-    "test": "bun test"
+    "test": "bun test",
+    "test:desktop": "BROODS_TEST_DESKTOP=1 bun test tests/cli-desktop.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.2.0",

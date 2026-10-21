@@ -1,5 +1,5 @@
 /**
- * Agent policy runtime contracts: records, ids, and the OPA decision
+ * Agent policy runtime contracts: records and the OPA decision
  * input/output shapes. Document validation lives in the config
  * plane (packages/convex/model/policyRules.ts); runtime decisions are made by
  * OPA using the same document/input shape.

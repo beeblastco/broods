@@ -112,18 +112,21 @@ test("a source's bucket depends on the server secret", async (): Promise<void> =
 });
 
 test("failed-auth rows stay bounded however many sources fail", async (): Promise<void> => {
-  const keys = new Set<string>();
-  for (let i = 0; i < AUTH_FAILURE_BUCKETS * 4; i += 1) {
-    keys.add(
-      await authFailureKey(
-        new Request("https://config.test/v1/agents", {
-          headers: {
-            "x-forwarded-for": `10.${i >> 16}.${(i >> 8) & 255}.${i & 255}`,
-          },
-        }),
+  const keys = new Set(
+    await Promise.all(
+      Array.from(
+        { length: AUTH_FAILURE_BUCKETS * 4 },
+        (_, i): Promise<string> =>
+          authFailureKey(
+            new Request("https://config.test/v1/agents", {
+              headers: {
+                "x-forwarded-for": `10.${i >> 16}.${(i >> 8) & 255}.${i & 255}`,
+              },
+            }),
+          ),
       ),
-    );
-  }
+    ),
+  );
   expect(keys.size).toBeLessThanOrEqual(AUTH_FAILURE_BUCKETS);
 
   // A full table is the most a daily prune ever deletes, in bounded batches.

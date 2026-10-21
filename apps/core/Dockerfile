@@ -1,9 +1,9 @@
-# Self-hosted core runtime image (epic #85 phase 9a): one Bun binary serving
-# both harness-processing and account-manage over HTTP, routed by Host header.
+# Core's Bun server and its native Node isolate runner.
 # Build from the monorepo root: docker build -f apps/core/Dockerfile .
 # Pin the digest: the version tag is republished when the base image rebuilds.
-# checkov:skip=CKV_DOCKER_7:BUN_IMAGE defaults to a version and immutable digest; the scanner does not resolve ARG in FROM.
+# checkov:skip=CKV_DOCKER_7:Image args pin a version and digest; the scanner does not resolve ARG in FROM.
 ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f
+ARG NODE_IMAGE=node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
@@ -21,13 +21,8 @@ COPY packages/broods/package.json ./packages/broods/
 # generated explicitly in the builder stage instead.
 RUN bun install --frozen-lockfile --ignore-scripts
 
-FROM ${BUN_IMAGE} AS builder
+FROM deps AS builder
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
-COPY --from=deps /app/packages/ai-sdk-sandbox/node_modules ./packages/ai-sdk-sandbox/node_modules
-COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
-COPY package.json bun.lock ./
 # The storage provider require()s @broods/convex/_generated/api (committed).
 COPY packages/ai-sdk-sandbox ./packages/ai-sdk-sandbox
 COPY packages/convex ./packages/convex
@@ -44,27 +39,26 @@ RUN cd apps/core && bun run scripts/compaction-prompt.ts \
 # Reuse the server's PORT parser in the image probe.
 RUN bun build apps/core/src/shared/env.ts --target=node --outfile /out/health-env.mjs
 
-FROM node:22-alpine AS isolate-deps
+FROM ${NODE_IMAGE} AS isolate-deps
 WORKDIR /app/isolate-runner
-# The source build leaves object files, a static archive, the package tarball and
-# every platform's prebuilds behind; the runner needs only what node-gyp-build
-# loads. Loading the copy here fails the build if that list ever falls short.
-RUN apk add --no-cache build-base python3 \
-    && npm init -y \
-    && npm i isolated-vm@7.0.0 \
+# The pinned package ships prebuilds. Keep only the addon for this Node ABI,
+# architecture and libc instead of carrying every platform into the runtime.
+# Load the trimmed copy here so missing runtime files fail the image build.
+RUN npm init -y \
+    && npm i --ignore-scripts isolated-vm@7.0.0 \
     && mkdir -p /out/node_modules/isolated-vm/build/Release \
     && cp -R node_modules/node-gyp-build /out/node_modules/ \
     && cp node_modules/isolated-vm/package.json node_modules/isolated-vm/isolated-vm.js node_modules/isolated-vm/LICENSE /out/node_modules/isolated-vm/ \
-    && cp node_modules/isolated-vm/build/Release/isolated_vm.node /out/node_modules/isolated-vm/build/Release/ \
+    && node -e "require('node:fs').copyFileSync(require('node-gyp-build').path(require('node:path').resolve('node_modules/isolated-vm')), '/out/node_modules/isolated-vm/build/Release/isolated_vm.node')" \
     && cd /out && node -e "new (require('isolated-vm').Isolate)().dispose()"
 
-FROM alpine:3.22 AS runner
+FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000 \
     ISOLATE_RUNNER_PATH=/app/isolate-runner/runner.mjs
-RUN apk add --no-cache ca-certificates libgcc libstdc++ nodejs \
+RUN apk add --no-cache ca-certificates libgcc libstdc++ \
     && addgroup --system --gid 1001 core \
     && adduser --system --uid 1001 core
 COPY --from=builder --chown=1001:1001 /out/core-server ./core-server

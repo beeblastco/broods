@@ -12,6 +12,7 @@ import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Textarea } from "@/app/components/ui/textarea";
+import { toErrorMessage } from "@/app/lib/errors";
 import {
   clearSkillsBearerToken,
   getSkillsBearerToken,
@@ -21,8 +22,14 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { AlertTriangle, BookOpen, Eye, EyeOff, Send, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 const ALLOWED_EXTENSIONS = new Set([
   "css",
@@ -92,25 +99,23 @@ export function SkillFilesTab({
     if (!skillMdUrl) setSkillMeta(null);
   }
 
+  // A download can finish after the path or its writer changed.
+  const onMetadataLoaded = useEffectEvent((text: string): void => {
+    const meta = parseSkillMd(text);
+    setSkillMeta(meta);
+    if (!meta.name) return;
+    const accountPart = skillPath.includes("/") ? skillPath.split("/")[0] : "";
+    const newPath = accountPart ? `${accountPart}/${meta.name}` : meta.name;
+    if (newPath !== skillPath) onUpdateSkillPath(newPath);
+  });
+
   useEffect(() => {
     if (!skillMdUrl) return;
     let cancelled = false;
     fetch(skillMdUrl)
       .then((r) => r.text())
       .then((text) => {
-        if (!cancelled) {
-          const meta = parseSkillMd(text);
-          setSkillMeta(meta);
-          if (meta.name) {
-            const accountPart = skillPath.includes("/")
-              ? skillPath.split("/")[0]
-              : "";
-            const newPath = accountPart
-              ? `${accountPart}/${meta.name}`
-              : meta.name;
-            if (newPath !== skillPath) onUpdateSkillPath(newPath);
-          }
-        }
+        if (!cancelled) onMetadataLoaded(text);
       })
       .catch(() => {
         if (!cancelled) setSkillMeta(null);
@@ -355,6 +360,7 @@ function CreateSkillMdForm({
   onSubmit: (name: string, description: string) => void;
   onCancel: () => void;
 }): React.JSX.Element {
+  const formId = useId();
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const nameValid =
@@ -367,6 +373,7 @@ function CreateSkillMdForm({
           Create SKILL.md
         </span>
         <button
+          aria-label="Cancel skill creation"
           className="cursor-pointer text-muted-foreground hover:text-foreground"
           onClick={onCancel}
         >
@@ -377,8 +384,14 @@ function CreateSkillMdForm({
         Lowercase letters, numbers, hyphens. Required at the bundle root.
       </p>
       <div className="flex flex-col gap-1">
-        <label className="text-3xs text-muted-foreground">Skill name</label>
+        <label
+          htmlFor={`${formId}-name`}
+          className="text-3xs text-muted-foreground"
+        >
+          Skill name
+        </label>
         <Input
+          id={`${formId}-name`}
           value={name}
           placeholder="support-flow"
           className="h-7 font-mono text-2xs"
@@ -393,8 +406,14 @@ function CreateSkillMdForm({
         )}
       </div>
       <div className="flex flex-col gap-1">
-        <label className="text-3xs text-muted-foreground">Description</label>
+        <label
+          htmlFor={`${formId}-description`}
+          className="text-3xs text-muted-foreground"
+        >
+          Description
+        </label>
         <Textarea
+          id={`${formId}-description`}
           value={desc}
           placeholder="What this skill does and when to use it."
           className="h-16 resize-none text-2xs"
