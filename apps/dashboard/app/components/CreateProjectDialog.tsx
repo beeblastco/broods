@@ -1,6 +1,5 @@
 "use client";
 
-import { markProjectCreated } from "@/app/components/canvas/CanvasKeyReady";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -12,10 +11,12 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { markProjectCreated } from "@/app/lib/createdProject";
 import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
+import { analytics } from "@/app/lib/analytics";
 import { useEffect, useState } from "react";
 
 /** Generate a random project name like "bold-panda-427". */
@@ -90,6 +91,9 @@ export function CreateProjectDialog({
       const id = await createProject({
         name: name.trim(),
         description: undefined,
+      });
+      void analytics.then((posthog): void => {
+        posthog.capture("project_created");
       });
       handleOpenChange(false);
       markProjectCreated(id);

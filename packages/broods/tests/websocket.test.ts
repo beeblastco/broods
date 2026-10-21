@@ -1,11 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   BroodsWebSocketClient,
-  WebsocketClient,
-  toWebSocketBaseUrl,
   type WebSocketServerMessage,
   type WebSocketLike,
 } from "../src/websocket.ts";
@@ -35,7 +30,14 @@ class FakeWebSocket implements WebSocketLike {
     this.sent.push(data);
   }
 
+  // Rejects the codes a browser rejects, so the SDK never closes with them.
   close(code = 1000, reason = "closed"): void {
+    if (code !== 1000 && (code < 3000 || code > 4999)) {
+      throw new DOMException(
+        `close code ${code} must be 1000 or 3000-4999`,
+        "InvalidAccessError",
+      );
+    }
     this.readyState = 3;
     this.onclose?.({ code: code, reason: reason });
   }
@@ -66,50 +68,6 @@ test("websocket client accepts host as a shorthand for the core service URL", ()
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
     "wss://app.example/v1/agents/agent_1/ws",
   );
-});
-
-test("websocket URL normalization accepts https and wss service URLs", () => {
-  expect(toWebSocketBaseUrl("https://app.example")).toBe("wss://app.example");
-  expect(toWebSocketBaseUrl("wss://app.example")).toBe("wss://app.example");
-});
-
-test("exports WebsocketClient as an alias", () => {
-  expect(WebsocketClient).toBe(BroodsWebSocketClient);
-});
-
-test("websocket client reads apiKey from the shared SDK environment variable", () => {
-  process.env.BROODS_API_KEY = "env-key";
-  const client = new BroodsWebSocketClient({
-    host: "app.example",
-    WebSocket: FakeWebSocket,
-  });
-
-  expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://app.example/v1/agents/agent_1/ws",
-  );
-});
-
-test("websocket client reads apiKey from package-local .env.local", () => {
-  const originalCwd = process.cwd();
-  const tempDir = mkdtempSync(join(tmpdir(), "broods-websocket-"));
-  delete process.env.BROODS_API_KEY;
-  writeFileSync(join(tempDir, ".env.local"), "BROODS_API_KEY=local-env-key\n");
-  process.chdir(tempDir);
-
-  try {
-    const client = new BroodsWebSocketClient({
-      host: "app.example",
-      WebSocket: FakeWebSocket,
-    });
-
-    expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-      "wss://app.example/v1/agents/agent_1/ws",
-    );
-  } finally {
-    process.chdir(originalCwd);
-    rmSync(tempDir, { recursive: true, force: true });
-    delete process.env.BROODS_API_KEY;
-  }
 });
 
 test("websocket client can be constructed without options", () => {
@@ -231,6 +189,30 @@ test("websocket client sends answers in place of events", async () => {
     answers: answers,
     sessionId: "session_1",
   });
+});
+
+test("websocket client closes with a browser-valid code on a server error", async () => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: Error[] = [];
+
+  client.subscribe(
+    { endpointId: "agent_1", sessionId: "session_1", input: "hi" },
+    {
+      onError: (error: Error): void => {
+        errors.push(error);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances[0]!;
+  socket.emit({ type: "error", error: "boom" });
+  expect(errors).toHaveLength(1);
+  expect(socket.readyState).toBe(3);
 });
 
 test("websocket client unwraps output envelopes for handlers and stream consumers", async () => {

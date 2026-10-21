@@ -12,11 +12,9 @@ const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
 const AWS_PROFILE = process.env.CI
   ? undefined
   : (process.env.AWS_PROFILE ?? "default");
-// Whether to import (vs first-create) the region-scoped sandbox ECR repo. The 4 image-based
-// sandbox Lambdas this used to gate are gone. The "lambda" provider is now an AWS Lambda
-// MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
-// The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
-// there); its teardown belongs to the Phase 4 infra cleanup. See apps/docs/docs/internals/sandboxes.md.
+// Whether to import (vs first-create) the region-scoped sandbox ECR repo. The "lambda"
+// provider is an AWS Lambda MicroVM whose image is built from an S3 zip, not pulled from
+// ECR; the repo stays only because the lambda-sanbdox container image still publishes there.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 // Convex credentials are required for every stage and back all persistence.
 // Runtime credentials live on the container (infra repo), not here.
@@ -114,28 +112,66 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
   throw new Error(`${name} must be a boolean-like value`);
 }
 
-function ecrRepositoryExists(name: string, region: string): boolean {
-  try {
-    const result = Bun.spawnSync({
-      cmd: [
-        "aws",
-        "ecr",
-        "describe-repositories",
-        "--repository-names",
-        name,
-        "--region",
-        region,
-        "--output",
-        "json",
-      ],
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+/**
+ * Ships apps/cloudflare-<service> with its `deploy` script as the Worker
+ * `resourceName(service)`. wrangler deploys it because the Cloudflare
+ * provider can declare neither a Worker Loader binding nor a Container image.
+ * It reruns when a file in its folder or in `sources`, or a var, changes.
+ * There is no delete: the Worker keeps the key infra put on it, and a removed
+ * stage's Worker (and the bridge's Container application) is deleted by hand.
+ */
+async function deployCloudflareWorker(
+  command: typeof import("@pulumi/command"),
+  stage: string,
+  region: string,
+  service: string,
+  sources: string[] = [],
+  vars: Record<string, $util.Input<string>> = {},
+): Promise<string> {
+  const name = resourceName(service, stage, region);
+  const app = `apps/cloudflare-${service}`;
+  new command.local.Command(`CloudflareWorker-${service}`, {
+    dir: `${$cli.paths.root}/../cloudflare-${service}`,
+    create: "bun run deploy",
+    environment: {
+      WORKER_NAME: name,
+      // Read by nothing: a new value is what reruns the deploy.
+      SOURCES_HASH: await sourceFilesHash([app, ...sources]),
+      ...vars,
+    },
+  });
 
-    return result.success;
-  } catch {
-    return false;
-  }
+  return name;
+}
+
+// A hash of the files under `paths` (relative to the repo root) as they are on
+// disk, untracked ones included and ignored ones left out, so it changes
+// whenever what wrangler ships changes. git only reads: nothing is staged.
+// SST runs this file in Node and allows no top-level imports, hence the lazy ones.
+async function sourceFilesHash(paths: string[]): Promise<string> {
+  const { execFileSync } = await import("node:child_process");
+  const { createHash } = await import("node:crypto");
+  const git = (args: string[]): string =>
+    execFileSync("git", ["-C", `${$cli.paths.root}/../..`, ...args], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  const list = (flags: string[]): string[] =>
+    git(["ls-files", "-z", ...flags, "--", ...paths])
+      .split("\0")
+      .filter(Boolean);
+  const deleted = new Set(list(["--deleted"]));
+  const files = list([
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--deduplicate",
+  ]).filter((file) => !deleted.has(file));
+
+  return createHash("sha256")
+    .update(files.join("\0"))
+    .update(git(["hash-object", "--", ...files]))
+    .digest("hex");
 }
 
 interface PermissionStatement {
@@ -788,20 +824,9 @@ export default $config({
       }),
     });
 
-    // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
-    // the repo lifecycle stays in sync with the functions that consume it, with no cross-repo
-    // coordination. Lambda pulls only from PRIVATE ECR in its own region (public.ecr.aws is
-    // rejected), so the repo is region-scoped: each deploy region gets its own. The arm64
-    // image is pushed by the lambda-just-bash-rust CI; for a brand-new region that push must
-    // land before the sandbox functions can be created (the first deploy creates the empty
-    // repo, then re-deploy once the image exists). See apps/docs/docs/internals/sandboxes.md.
+    // The sandbox image ECR repo, one per deploy region. The lambda-sanbdox CI pushes its
+    // arm64 image here; nothing in this app pulls from it.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
-    const sandboxImageRepoExists = ecrRepositoryExists(
-      sandboxImageRepoName,
-      region,
-    );
-    const sandboxImageRepoShouldImport =
-      SANDBOX_IMAGE_READY || sandboxImageRepoExists;
     const sandboxEcr = new aws.ecr.Repository(
       "SandboxImage",
       {
@@ -814,11 +839,8 @@ export default $config({
         retainOnDelete: isProduction,
         // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
         // CI pushes `latest-arm64` to this exact name). When SANDBOX_IMAGE_READY is true,
-        // the deploy workflow has already made the regional repo, so import it
-        // even if the local describe probe cannot run from inside SST config evaluation.
-        ...(sandboxImageRepoShouldImport
-          ? { import: sandboxImageRepoName }
-          : {}),
+        // the deploy workflow has already made the regional repo, so import it.
+        ...(SANDBOX_IMAGE_READY ? { import: sandboxImageRepoName } : {}),
       },
     );
 
@@ -1136,13 +1158,49 @@ export default $config({
       ),
     });
 
+    // The Cloudflare Workers, named per stage, when the deploy has a
+    // Cloudflare token (they are optional). The infra repo puts each one's
+    // key on it and points core at its workers.dev URL.
+    const cloudflareWorkers = process.env.CLOUDFLARE_API_TOKEN
+      ? {
+          // Hosted MCP servers that can run on Dynamic Workers; its bucket
+          // only caches bundles from this stage's S3 bucket.
+          mcp: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "mcp",
+            ["bun.lock"],
+            {
+              BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
+            },
+          ),
+          // The `cloudflare` sandbox provider's bridge. It leaves out
+          // `bun.lock`, so a lockfile-only bump (zod, wrangler) ships with
+          // its next change rather than redeploying live sandboxes.
+          sandbox: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "sandbox",
+          ),
+          // The `worker` sandbox provider: bash in a V8 isolate.
+          worker: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "worker",
+            ["apps/cloudflare-sandbox/src/bearer.ts", "bun.lock"],
+          ),
+        }
+      : undefined;
+
     return {
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
       toolRunnerFunctionName: mcpRunnerFn.name,
-      // deploy.yaml deploys the Cloudflare MCP runtime Worker under this name.
-      cloudflareMcpWorkerName: resourceName("mcp", stage, region),
+      cloudflareWorkers: cloudflareWorkers,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,

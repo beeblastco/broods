@@ -24,16 +24,3 @@ export interface AccountHookRecord {
   updatedAt: string;
   deletedAt?: string;
 }
-
-export interface PublicAccountHookRecord {
-  accountId: string;
-  hookId: string;
-  name: string;
-  description?: string;
-  events: AgentHookEventName[];
-  sha256: string;
-  status: AccountHookStatus;
-  createdAt: string;
-  updatedAt: string;
-  deletedAt?: string;
-}

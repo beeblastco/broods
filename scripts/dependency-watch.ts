@@ -1,11 +1,17 @@
 /**
- * Reports upstream releases for the dependencies whose types the repo builds on.
+ * Reports upstream releases for the dependencies whose types the repo builds on,
+ * and what the audit gate's exceptions need: a release that could retire one,
+ * or a review date about to pass.
  * Exits 0 when current, 1 when a release is available, 2 when the check failed.
  */
 
 import { readFile } from "node:fs/promises";
+import { EXCEPTIONS, type Exception } from "./audit-gate.ts";
 
 const REGISTRY = "https://registry.npmjs.org";
+
+/** An exception this close to its `expires` date gets a review row. */
+const EXPIRY_WARNING_DAYS = 30;
 
 /** Watched outside the AI SDK family, where a caret bump is not automatic. */
 const EXTRA_WATCHED = ["esbuild"];
@@ -18,6 +24,12 @@ const WORKSPACES = [
   "packages/broods",
   "packages/convex",
 ];
+
+/** One line of the audit exception table. */
+interface ExceptionRow {
+  package: string;
+  action: string;
+}
 
 interface Install {
   workspace: string;
@@ -40,15 +52,73 @@ interface WatchedPackage {
   installs: Install[];
 }
 
-try {
-  const packages = await collectWatched();
+if (import.meta.main) {
+  try {
+    const [packages, exceptionRows] = await Promise.all([
+      collectWatched(),
+      collectExceptionRows(new Date().toISOString().slice(0, 10)),
+    ]);
 
-  console.log(renderReport(packages));
-  process.exit(packages.some(isStale) ? 1 : 0);
-} catch (error) {
-  // Exit 2 keeps a registry outage from reading as "everything is current".
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(2);
+    console.log(renderReport(packages, exceptionRows));
+    process.exit(packages.some(isStale) || exceptionRows.length > 0 ? 1 : 0);
+  } catch (error) {
+    // Exit 2 keeps a registry outage from reading as "everything is current".
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
+}
+
+/**
+ * Rows the watch issue carries for one audit exception: a newer release that
+ * may retire it, and a review date within EXPIRY_WARNING_DAYS. Empty while the
+ * exception stands as reviewed.
+ */
+export function judgeException(
+  exception: Exception,
+  installed: string | undefined,
+  latest: string,
+  today: string,
+): ExceptionRow[] {
+  const rows: ExceptionRow[] = [];
+  if (installed !== undefined && Bun.semver.order(latest, installed) > 0) {
+    rows.push({
+      package: exception.package,
+      action: `exception fix candidate: ${exception.package} ${installed} -> ${latest}, delete the exception in scripts/audit-gate.ts after bumping`,
+    });
+  }
+  const daysLeft = Math.round(
+    (Date.parse(exception.expires) - Date.parse(today)) / 86_400_000,
+  );
+  if (daysLeft <= EXPIRY_WARNING_DAYS) {
+    rows.push({
+      package: exception.package,
+      action: `exception for ${exception.package} expires ${exception.expires}, re-review reachability or bump the date`,
+    });
+  }
+
+  return rows;
+}
+
+/**
+ * Judges every audit exception against the registry. The locked version is the
+ * one the audit gate judges, so it is the one compared here.
+ */
+async function collectExceptionRows(today: string): Promise<ExceptionRow[]> {
+  const lock = await readFile("bun.lock", "utf8");
+  const rows = await Promise.all(
+    EXCEPTIONS.map(async (exception) => {
+      const latest = await readLatest(exception.package);
+
+      return judgeException(
+        exception,
+        readLockedVersion(lock, exception.package),
+        latest.version,
+        today,
+      );
+    }),
+  );
+
+  return rows.flat();
 }
 
 async function collectWatched(): Promise<WatchedPackage[]> {
@@ -134,6 +204,23 @@ async function readLatest(
   };
 }
 
+/**
+ * A transitive package has no hoisted copy under an isolated install, so its
+ * version comes from the lock text: the lowest one when several are locked.
+ */
+function readLockedVersion(lock: string, name: string): string | undefined {
+  const marker = `["${name}@`;
+  const versions = lock.split("\n").flatMap((line) => {
+    const start = line.indexOf(marker);
+    if (start === -1) return [];
+    const rest = line.slice(start + marker.length);
+
+    return [rest.slice(0, rest.indexOf('"'))];
+  });
+
+  return versions.sort(Bun.semver.order)[0];
+}
+
 async function readManifest(
   path: string,
 ): Promise<PackageManifest | undefined> {
@@ -201,26 +288,42 @@ function renderLockstep(packages: WatchedPackage[]): string {
   return `**Conflict:** the latest releases disagree on \`ai\`: ${conflict}. Hold the upgrade until they converge.`;
 }
 
-function renderReport(packages: WatchedPackage[]): string {
+function renderReport(
+  packages: WatchedPackage[],
+  exceptionRows: ExceptionRow[],
+): string {
   const stale = packages.filter(isStale);
-  if (stale.length === 0) {
+  if (stale.length === 0 && exceptionRows.length === 0) {
     return "All watched dependencies are current.";
   }
 
-  const lines = [
-    "| Package | Workspace | Installed | Latest | Pins `ai` |",
-    "| --- | --- | --- | --- | --- |",
-  ];
-  for (const entry of stale) {
-    for (const install of entry.installs) {
-      if (install.version === entry.latest) continue;
-      lines.push(
-        `| \`${entry.name}\` | ${install.workspace} | ` +
-          `${install.version ?? "not installed"} | ${entry.latest} | ` +
-          `${entry.pinnedAi ?? "none"} |`,
-      );
+  const sections: string[] = [];
+  if (stale.length > 0) {
+    const lines = [
+      "| Package | Workspace | Installed | Latest | Pins `ai` |",
+      "| --- | --- | --- | --- | --- |",
+    ];
+    for (const entry of stale) {
+      for (const install of entry.installs) {
+        if (install.version === entry.latest) continue;
+        lines.push(
+          `| \`${entry.name}\` | ${install.workspace} | ` +
+            `${install.version ?? "not installed"} | ${entry.latest} | ` +
+            `${entry.pinnedAi ?? "none"} |`,
+        );
+      }
     }
+    sections.push([...lines, "", renderLockstep(packages)].join("\n"));
+  }
+  if (exceptionRows.length > 0) {
+    sections.push(
+      [
+        "| Audit exception | Action |",
+        "| --- | --- |",
+        ...exceptionRows.map((row) => `| \`${row.package}\` | ${row.action} |`),
+      ].join("\n"),
+    );
   }
 
-  return [...lines, "", renderLockstep(packages)].join("\n");
+  return sections.join("\n\n");
 }

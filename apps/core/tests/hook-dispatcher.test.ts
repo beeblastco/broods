@@ -33,15 +33,6 @@ function dispatcherReturning(
 }
 
 describe("wrapToolsWithHooks", () => {
-  it("returns the same ToolSet when no tool-scoped hooks exist", () => {
-    const tools: ToolSet = { echo: fakeTool((input) => input) };
-    const wrapped = wrapToolsWithHooks(
-      tools,
-      dispatcherReturning(() => undefined, []),
-    );
-    expect(wrapped).toBe(tools);
-  });
-
   it("denies a tool call when the hook returns decision: deny", async () => {
     const tools: ToolSet = { bash: fakeTool(() => "ran") };
     const wrapped = wrapToolsWithHooks(

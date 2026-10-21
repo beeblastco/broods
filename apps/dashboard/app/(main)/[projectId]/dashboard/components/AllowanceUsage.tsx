@@ -20,20 +20,24 @@ import {
   TableRow,
 } from "@/app/components/ui/table";
 import {
+  ALLOWANCE_ROWS,
+  type AllowanceRow,
+  BUDGET_LEVEL_TEXT,
   billingReset,
-  type AmountUnit,
   type BudgetUsage,
   dailySeries,
   formatAmount,
   formatPercent,
   monthLabel,
+  otherOrgsSlice,
+  poolNote,
   projectSlices,
-  type UsageAmounts,
   type UsageSlice,
   usageSlices,
 } from "@/app/lib/allowance";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
+import { budgetLevel } from "@broods/convex/model/planLimits";
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
@@ -54,62 +58,8 @@ const SCOPE_PARAM = parseAsStringLiteral(SCOPES.map((scope) => scope.id))
   .withDefault("project")
   .withOptions({ clearOnDefault: true });
 
-// One row per resource. `share` names the cap it counts toward; ingress is
-// free, so it has none. `help` says what the amount is counted from, where
-// the label alone does not.
-const ROWS: AllowanceRow[] = [
-  {
-    key: "sandboxHours",
-    label: "Sandbox time",
-    unit: "hours",
-    share: "sandboxHours",
-    color: "var(--color-usage-agent-sandbox)",
-    help: "Hours your sandboxes spent running, idle time until they stop included, at the default 1 vCPU / 2 GB size. A bigger sandbox, a resume or a kept snapshot uses hours faster. Sandboxes on your own provider account are free.",
-  },
-  {
-    key: "hostedMcpHours",
-    label: "Hosted MCP time",
-    unit: "hours",
-    share: "hostedMcpHours",
-    color: "var(--color-usage-mcp-sandbox)",
-    help: "Time your hosted MCP servers spent answering tool calls, at the runner's memory size, plus a small share per request. Idle servers cost nothing.",
-  },
-  {
-    key: "storageGb",
-    label: "Workspaces and files",
-    unit: "gb",
-    share: "storageGb",
-    color: "var(--color-usage-storage)",
-    help: "What the latest daily snapshot found stored in your workspaces, chat attachments, skills and bundles. A size, not a monthly total. A project counts its own workspaces; the rest is the organization's.",
-  },
-  {
-    key: "egressGb",
-    label: "Egress",
-    unit: "gb",
-    share: "egressGb",
-    color: "var(--color-usage-egress)",
-    help: "Data served out of Broods storage, such as media your agents sent to channels. Files on your own bucket are not counted.",
-  },
-  {
-    key: "ingressGb",
-    label: "Ingress",
-    unit: "gb",
-    share: null,
-    color: "var(--color-usage-ingress)",
-  },
-];
-
 const OTHER_USAGE_HELP =
   "Usage no single project made: account-wide sandboxes and workspaces, chat attachments, skills and bundles, deleted projects, and anything metered before usage was split by project.";
-
-interface AllowanceRow {
-  key: keyof UsageAmounts;
-  label: string;
-  unit: AmountUnit;
-  share: keyof BudgetUsage["shares"] | null;
-  color: string;
-  help?: string;
-}
 
 /**
  * The Usage tab's Allowance: the org's month per resource against its caps,
@@ -233,10 +183,12 @@ export function AllowanceView({
 }
 
 /**
- * The org's caps per resource and a daily chart of the picked one. From this
- * project: its amount leads, and each bar's solid part is it and the grey
- * part the other projects. From all projects: each bar is split by project,
- * and a table of the projects follows.
+ * The caps per resource and a daily chart of the picked one. Each bar is the
+ * owner's pool, what stops runs: this org's slices, then the faded part the
+ * owner's other organizations used. From this project: its amount leads, and
+ * the solid part of the bar is it and the grey part the other projects. From
+ * all projects: the bar is split by project, and a table of the projects
+ * follows. The chart and the table stay this org's own.
  */
 function ScopedAllowance({
   budget,
@@ -247,33 +199,47 @@ function ScopedAllowance({
   projectId: string;
   scope: AllowanceScope;
 }): React.JSX.Element {
-  const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
+  const [picked, setPicked] = useState<AllowanceRow>(ALLOWANCE_ROWS[0]);
   const projectCount = budget.projects?.length ?? 0;
   const slices = useMemo(
     () =>
       scope === "all" ? usageSlices(budget) : projectSlices(budget, projectId),
     [budget, projectId, scope],
   );
+  const pool = useMemo(() => otherOrgsSlice(budget), [budget]);
+  // What each bar is cut into: this org's slices, then the other organizations'.
+  const bars = useMemo(
+    () => (pool ? [...slices, pool] : slices),
+    [slices, pool],
+  );
   const own = scope === "project" ? slices[0] : null;
   const legend = useMemo(
     () =>
-      slices.map((slice) => ({
-        key: slice.projectId ?? "other",
+      bars.map((slice) => ({
+        key: slice.projectId ?? slice.name,
         label: slice.name,
         color: slice.color,
       })),
-    [slices],
+    [bars],
   );
+  // One plain line: whose limits these are, then how to read a split bar.
+  const notes = [
+    poolNote(budget) ??
+      (own
+        ? projectCount > 1
+          ? `Limits are shared by all ${projectCount} projects in this organization.`
+          : "Limits are shared by every project in this organization."
+        : null),
+    own && projectCount > 1
+      ? `The solid part of each bar is this project, the grey part the rest of the organization${pool ? ", the faded part the owner's other organizations" : ""}.`
+      : null,
+  ].filter((note): note is string => note !== null);
 
   return (
     <div className="grid gap-6 *:min-w-0">
       <div className="grid gap-2">
-        {own && (
-          <p className="text-xs text-muted-foreground">
-            {projectCount > 1
-              ? `Limits are shared by all ${projectCount} projects in this organization. The solid part of each bar is this project, the grey part the rest of the organization.`
-              : "Limits are shared by every project in this organization."}
-          </p>
+        {notes.length > 0 && (
+          <p className="text-xs text-muted-foreground">{notes.join(" ")}</p>
         )}
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <Table>
@@ -283,9 +249,12 @@ function ScopedAllowance({
                 {own && (
                   <TableHead className="text-right">This project</TableHead>
                 )}
-                <TableHead className="text-right">
-                  {own ? "All projects" : "Used"}
-                </TableHead>
+                <TableHead className="text-right">This organization</TableHead>
+                {pool && (
+                  <TableHead className="text-right">
+                    All organizations
+                  </TableHead>
+                )}
                 <TableHead className="text-right">Limit</TableHead>
                 <TableHead
                   className={cn("min-w-24", own ? "w-1/4" : "w-2/5")}
@@ -294,12 +263,13 @@ function ScopedAllowance({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <AllowanceTableRow
                   key={row.key}
                   budget={budget}
                   row={row}
-                  slices={slices}
+                  bars={bars}
+                  pool={pool}
                   own={own}
                   active={row.key === picked.key}
                   onPick={() => setPicked(row)}
@@ -324,26 +294,32 @@ function ScopedAllowance({
   );
 }
 
-// One resource: used, its cap, and how close it is, the bar split into the
-// slices' parts. With `own`, its amount leads. Ingress reads Free.
+// One resource: used, its cap, and how close the pool is to it, the bar cut
+// into `bars`. With `own`, its amount leads. Ingress reads Free.
 function AllowanceTableRow({
   budget,
   row,
-  slices,
+  bars,
+  pool,
   own,
   active,
   onPick,
 }: {
   budget: BudgetUsage;
   row: AllowanceRow;
-  slices: UsageSlice[];
+  bars: UsageSlice[];
+  pool: UsageSlice | null;
   own: UsageSlice | null;
   active: boolean;
   onPick: () => void;
 }): React.JSX.Element {
   const share = row.share === null ? null : budget.shares[row.share];
+  const level = share === null ? null : budgetLevel(share);
   const cap =
     row.share === null || !budget.caps ? null : budget.caps[row.share];
+  const pooled = budget.pool?.shared
+    ? budget.pool.totals[row.key]
+    : budget.totals[row.key];
 
   return (
     <TableRow
@@ -362,14 +338,7 @@ function AllowanceTableRow({
       }}
     >
       <TableCell>
-        <span className="flex items-center gap-2">
-          <span
-            className="size-2 rounded-sm bg-(--series-color)"
-            style={{ "--series-color": row.color }}
-          />
-          {row.label}
-          {row.help && <HelpMark text={row.help} />}
-        </span>
+        <ResourceLabel row={row} />
       </TableCell>
       {own && (
         <TableCell className="text-right">
@@ -383,6 +352,13 @@ function AllowanceTableRow({
           {formatAmount(budget.totals[row.key], row.unit)}
         </span>
       </TableCell>
+      {pool && (
+        <TableCell className="text-right">
+          <span className="tabular-nums text-muted-foreground">
+            {formatAmount(pooled, row.unit)}
+          </span>
+        </TableCell>
+      )}
       <TableCell className="text-right">
         <span className="tabular-nums text-muted-foreground">
           {row.share === null
@@ -396,9 +372,9 @@ function AllowanceTableRow({
         {share !== null && (
           <SplitBar
             share={share}
-            total={budget.totals[row.key]}
-            parts={slices.map((slice) => ({
-              key: slice.projectId ?? "other",
+            total={pooled}
+            parts={bars.map((slice) => ({
+              key: slice.projectId ?? slice.name,
               amount: slice.totals[row.key],
               color: slice.color,
             }))}
@@ -408,12 +384,7 @@ function AllowanceTableRow({
       <TableCell className="text-right">
         {share !== null && (
           <span
-            className={cn(
-              "tabular-nums",
-              share < 80 && "text-muted-foreground",
-              share >= 80 && share < 100 && "text-warning",
-              share >= 100 && "text-destructive",
-            )}
+            className={cn("tabular-nums", level && BUDGET_LEVEL_TEXT[level])}
           >
             {formatPercent(share)}
           </span>
@@ -424,8 +395,32 @@ function AllowanceTableRow({
 }
 
 /**
+ * A row's color swatch, when it has one, name and help mark, as the first
+ * cell of the allowance and plan tables.
+ */
+export function ResourceLabel({
+  row,
+}: {
+  row: Pick<AllowanceRow, "label" | "help"> & { color?: string };
+}): React.JSX.Element {
+  return (
+    <span className="flex items-center gap-2">
+      {row.color && (
+        <span
+          className="size-2 rounded-sm bg-(--series-color)"
+          style={{ "--series-color": row.color }}
+        />
+      )}
+      {row.label}
+      {row.help && <HelpMark text={row.help} />}
+    </span>
+  );
+}
+
+/**
  * A cap's bar, `share` percent long, cut into each part's piece of `total`.
- * Unknown amounts (a storage day no snapshot measured) draw as one piece.
+ * An unknown amount (a storage day no snapshot measured), in the total or in
+ * any part, draws the bar as one piece.
  */
 function SplitBar({
   share,
@@ -436,7 +431,10 @@ function SplitBar({
   total: number | null;
   parts: Array<{ key: string; amount: number | null; color: string }>;
 }): React.JSX.Element {
-  const known = total !== null && total > 0;
+  // The split is unknown as soon as one part is: this org before its first
+  // storage snapshot on a pool another org has measured.
+  const known =
+    total !== null && total > 0 && parts.every((part) => part.amount !== null);
 
   return (
     <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
@@ -484,7 +482,7 @@ function DailyChart({
   const series = useMemo(
     () =>
       slices.map((slice) => ({
-        key: slice.projectId ?? "other",
+        key: slice.projectId ?? slice.name,
         label: slice.name,
         color: slice.color,
       })),
@@ -558,7 +556,7 @@ function ProjectsTable({
           <TableHeader>
             <TableRow>
               <TableHead>Project</TableHead>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <TableHead key={row.key} className="text-right">
                   {row.label}
                 </TableHead>
@@ -578,7 +576,7 @@ function ProjectsTable({
                     : 0;
 
               return (
-                <TableRow key={slice.projectId ?? "other"}>
+                <TableRow key={slice.projectId ?? slice.name}>
                   <TableCell>
                     <span className="flex items-center gap-2">
                       <span
@@ -607,7 +605,7 @@ function ProjectsTable({
                       )}
                     </span>
                   </TableCell>
-                  {ROWS.map((row) => (
+                  {ALLOWANCE_ROWS.map((row) => (
                     <TableCell key={row.key} className="text-right">
                       <span
                         className={cn(

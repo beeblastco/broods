@@ -11,6 +11,7 @@ export const SANDBOX_PROVIDERS = [
   "daytona",
   "vercel",
   "cloudflare",
+  "worker",
   "machine",
   "custom",
 ] as const;
@@ -22,6 +23,12 @@ export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
 // or can be a fallback, since what reaches them lives outside the config.
 export const STATELESS_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["machine", "custom"]);
+
+// Providers the platform runs on its own Cloudflare account, so a config
+// carries no credentials for them and only the options every provider shares.
+// Their egress is on or off: `restricted` has nothing to enforce it.
+export const PLATFORM_WORKER_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
+  new Set<SandboxProvider>(["cloudflare", "worker"]);
 
 // Providers whose `snapshot` names what a sandbox boots from, in the provider's
 // own format: sandbox a workdir image, lambda a MicroVM image ARN, daytona a

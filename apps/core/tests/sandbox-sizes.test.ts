@@ -53,10 +53,6 @@ describe("resolveSandboxSpecs", () => {
     });
   });
 
-  it("falls back to the xsmall default", () => {
-    expect(resolveSandboxSpecs({})).toEqual(SANDBOX_SIZES.xsmall);
-  });
-
   it("reports a lambda MicroVM's real size whatever the config asks for", () => {
     const real = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
     expect(resolveSandboxSpecs({ provider: "lambda" })).toEqual(real);
@@ -67,6 +63,15 @@ describe("resolveSandboxSpecs", () => {
         options: { cpu: 1 },
       }),
     ).toEqual(real);
+  });
+
+  it("reports the one size a V8 Worker command runs in, whatever the config says", () => {
+    const fixed = { vcpu: 1, memoryMb: 128, storageGb: 0 };
+
+    expect(resolveSandboxSpecs({ provider: "worker" })).toEqual(fixed);
+    expect(resolveSandboxSpecs({ provider: "worker", size: "large" })).toEqual(
+      fixed,
+    );
   });
 
   it("reports the Cloudflare instance type a size starts", () => {

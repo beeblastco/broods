@@ -26,6 +26,12 @@ import {
   requireActiveAccount,
   requireActiveKeyAccount,
 } from "./model/activeAccount";
+import {
+  handbackMoveValidator,
+  parseHandbackDedupeKey,
+  sweptHandbackValidator,
+  type Handback,
+} from "./model/subagentResults";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 // Bytes and not rows bound a page: the per-query read limit counts bytes, and
@@ -33,7 +39,10 @@ const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
-// One recovery sweep's page of late subagent results.
+// The most queued envelopes a conversation holds (core's
+// `DEFAULT_INGRESS_MAX_COUNT`), all read to find a queued resume.
+const QUEUED_RESUME_SCAN = 100;
+// One recovery sweep's page of late subagent or async tool results.
 const UNOBSERVED_RESULT_PAGE_SIZE = 100;
 
 const REPLACED_SANDBOX_ERROR =
@@ -186,7 +195,9 @@ export const appendConversationEvent = internalMutation({
 /**
  * Inserts history rows in order. A row whose dedupe key this conversation
  * already stores is skipped: its first append committed and only the reply
- * was lost, so the retry must not store it again.
+ * was lost, so the retry must not store it again. A row keyed as a subagent
+ * or async tool result marks that result's hand-back stored in the transaction
+ * that inserts it, so the row and the flag can never disagree.
  */
 export async function insertConversationEvents(
   ctx: MutationCtx,
@@ -213,6 +224,15 @@ export async function insertConversationEvents(
       accountId: accountId,
       conversationKey: conversationKey,
     });
+    const handback =
+      entry.dedupeKey === undefined
+        ? undefined
+        : parseHandbackDedupeKey(entry.dedupeKey);
+    if (handback?.kind === "subagent") {
+      await markAsyncAgentResultSeen(ctx, accountId, handback.eventId);
+    } else if (handback?.kind === "async-tool") {
+      await markAsyncToolResultSeen(ctx, accountId, handback.resultId);
+    }
   }
 }
 
@@ -403,7 +423,10 @@ export const clearConversation = internalMutation({
 });
 
 /**
- * Creates an idempotent processing row for async agent polling.
+ * Creates an idempotent processing row for async agent polling. A subagent's
+ * row starts its hand-back `pending`: the parent owes the result its write
+ * from the start, so a child whose parent and pod die before any detach is
+ * the recovery sweep's once no live run can hold it, not unseen for 7 days.
  * @returns whether a new result row was created
  */
 export const createAsyncAgentResult = internalMutation({
@@ -426,6 +449,7 @@ export const createAsyncAgentResult = internalMutation({
     await ctx.db.insert("runtimeAsyncAgentResults", {
       accountId: accountId,
       ...args,
+      ...(args.subagent ? { handback: "pending" as const } : {}),
       status: "processing",
       createdAt: now,
       updatedAt: now,
@@ -448,15 +472,18 @@ export const getAsyncAgentResult = internalQuery({
 });
 
 /**
- * One page of subagent results in `status` that the parent stopped waiting for
- * and has not seen, written inside the window, oldest first. Core's recovery
- * sweep resumes their parents, walking every page each pass so rows it must
- * retry never crowd others out. A row of an inactive account is left out: no
- * resume of it can be admitted.
+ * One page of subagent results in `status` whose hand-back is `handback`
+ * (`pending` or `detached`), written inside the window, oldest first. Core's
+ * recovery sweep resumes their parents, walking every page each pass so rows
+ * it must retry never crowd others out. A row of an inactive account is left
+ * out: no resume of it can be admitted. Without `handback` it lists the rows
+ * the release before `handback` wrote, by their `observed: false` flag; that
+ * path goes away next release, once every such row has aged out.
  * @returns the page and the cursor for the next one
  */
 export const listUnobservedAsyncAgentResults = internalQuery({
   args: {
+    handback: v.optional(sweptHandbackValidator),
     status: runtimeAsyncAgentResultsFields.status,
     updatedAfter: v.string(),
     updatedBefore: v.string(),
@@ -475,22 +502,36 @@ export const listUnobservedAsyncAgentResults = internalQuery({
     cursor: string;
     isDone: boolean;
   }> => {
-    const result = await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_observed_and_status_and_updatedAt", (q) =>
-        q
-          .eq("observed", false)
-          .eq("status", args.status)
-          .gt("updatedAt", args.updatedAfter)
-          .lt("updatedAt", args.updatedBefore),
-      )
-      .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
-    const page: Doc<"runtimeAsyncAgentResults">[] = [];
-    for (const row of result.page) {
-      if ((await ctx.db.get(row.accountId))?.status === "active") {
-        page.push(row);
-      }
-    }
+    const handback = args.handback;
+    const result = await (
+      handback === undefined
+        ? ctx.db
+            .query("runtimeAsyncAgentResults")
+            .withIndex("by_observed_and_status_and_updatedAt", (q) =>
+              q
+                .eq("observed", false)
+                .eq("status", args.status)
+                .gt("updatedAt", args.updatedAfter)
+                .lt("updatedAt", args.updatedBefore),
+            )
+        : ctx.db
+            .query("runtimeAsyncAgentResults")
+            .withIndex("by_handback_and_status_and_updatedAt", (q) =>
+              q
+                .eq("handback", handback)
+                .eq("status", args.status)
+                .gt("updatedAt", args.updatedAfter)
+                .lt("updatedAt", args.updatedBefore),
+            )
+    ).paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
+    // The pre-handback list is for rows with no `handback`: a detached row
+    // also reads `observed: false` and has its own window.
+    const page = await activeAccountRows(
+      ctx,
+      result.page.filter(
+        (row): boolean => handback !== undefined || row.handback === undefined,
+      ),
+    );
 
     return {
       page: page,
@@ -501,28 +542,45 @@ export const listUnobservedAsyncAgentResults = internalQuery({
 });
 
 /**
- * Records whether a subagent's parent has its result: false when the parent
- * stops waiting on it, true when the parent reads it or is never told. A row
- * the parent has stays that way, and a running row is never marked seen. A
- * late result's admission sets it too, inside `runtimeIngress.accept`.
- * @returns null after the row is marked or skipped
+ * Moves a subagent result's hand-back: `detached` when the parent's run gives
+ * up delivering it, `stored` when the parent reads it or is never told. A
+ * stored row stays stored, and a running row is never marked stored. The
+ * parent's own append and a late result's admission mark `stored` inside
+ * their own transactions instead. `observed` is written beside it for one
+ * release, for readers of the flag the previous release used. A row whose
+ * resume waits in the parent's queue is that resume's to deliver, so `stored`
+ * leaves it alone.
+ * @returns true when a resume of the result waits in the parent's queue, so
+ * the caller must not hand the result over itself
  */
-export const observeAsyncAgentResult = internalMutation({
-  args: { eventId: v.string(), observed: v.boolean() },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+export const markAsyncAgentHandback = internalMutation({
+  args: {
+    eventId: v.string(),
+    handback: handbackMoveValidator,
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
     const row = await asyncAgentResultRow(ctx, args.eventId);
     if (
       !row ||
-      row.observed === true ||
-      (args.observed && row.status === "processing")
+      isResultStored(row) ||
+      (args.handback === "stored" && row.status === "processing")
     ) {
-      return null;
+      return false;
     }
     await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, { observed: args.observed });
+    if (
+      args.handback === "stored" &&
+      row.subagent !== undefined &&
+      (await isResumeQueued(ctx, row.subagent.parentConversationKey, {
+        resultEventId: row.eventId,
+      }))
+    ) {
+      return true;
+    }
+    await ctx.db.patch(row._id, handbackPatch(args.handback));
 
-    return null;
+    return false;
   },
 });
 
@@ -539,16 +597,22 @@ export const updateAsyncAgentResult = internalMutation({
     eventId: v.string(),
     ...asyncAgentOutcomeValidator.fields,
     onlyWhileProcessing: v.optional(v.boolean()),
+    // `detached` hands the result to the recovery sweep in the same write,
+    // for a child the sweep fails because its parent run died with it.
+    handback: v.optional(v.literal("detached")),
   },
   returns: v.null(),
-  handler: async (ctx, { onlyWhileProcessing, ...args }): Promise<null> => {
+  handler: async (
+    ctx,
+    { onlyWhileProcessing, handback, ...args },
+  ): Promise<null> => {
     if (
       onlyWhileProcessing &&
       (await asyncAgentResultRow(ctx, args.eventId))?.status !== "processing"
     ) {
       return null;
     }
-    if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
+    if (!(await writeAsyncAgentResult(ctx, args.eventId, args, handback))) {
       throw new Error("Async agent result not found");
     }
 
@@ -558,7 +622,8 @@ export const updateAsyncAgentResult = internalMutation({
 
 /**
  * The polling row for `eventId`, or null, also when there is no id. A late
- * subagent result whose row has `observed === true` is one its parent has.
+ * subagent result whose row is `stored` (or `observed === true`, written by
+ * the release before) is one its parent has.
  */
 export async function asyncAgentResultRow(
   ctx: QueryCtx,
@@ -573,8 +638,60 @@ export async function asyncAgentResultRow(
 }
 
 /**
- * Marks a subagent result seen inside the transaction that delivers it
- * (`accept`), only when the row is `accountId`'s own.
+ * Whether a result row's conversation has it: `stored`, or `observed === true`
+ * on a row the release before `handback` wrote. Every stored check reads this,
+ * so dropping `observed` edits one place.
+ */
+export function isResultStored(row: {
+  handback?: Handback;
+  observed?: boolean;
+}): boolean {
+  return row.handback === "stored" || row.observed === true;
+}
+
+/**
+ * Whether a resume carrying this result waits, unexpired, in
+ * `conversationKey`'s queue. A status read then leaves the result to it, so
+ * the parent is told once and a read whose step is never saved loses nothing.
+ */
+async function isResumeQueued(
+  ctx: QueryCtx,
+  conversationKey: string,
+  fence: { resultEventId: string } | { toolResultId: string },
+): Promise<boolean> {
+  const now = Date.now();
+  const queued = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q.eq("conversationKey", conversationKey).eq("status", "queued"),
+    )
+    .take(QUEUED_RESUME_SCAN);
+
+  return queued.some(
+    (row): boolean =>
+      row.expiresAt > now &&
+      ("resultEventId" in fence
+        ? row.resultEventId === fence.resultEventId
+        : row.toolResultId === fence.toolResultId),
+  );
+}
+
+/**
+ * The patch for a hand-back move, with the `observed` flag the previous
+ * release read kept in step: stored is seen, detached is not.
+ */
+export function handbackPatch(handback: Exclude<Handback, "pending">): {
+  handback: Handback;
+  observed: boolean;
+} {
+  return { handback: handback, observed: handback === "stored" };
+}
+
+/**
+ * Marks a subagent result's hand-back stored inside the transaction that
+ * delivers it: the parent's append of the result row, or the late resume
+ * carrying it taking its owner (`accept` as owner, or the apply of a queued
+ * one). Only when the row is `accountId`'s own and not stored already.
  */
 export async function markAsyncAgentResultSeen(
   ctx: MutationCtx,
@@ -582,29 +699,78 @@ export async function markAsyncAgentResultSeen(
   eventId: string | undefined,
 ): Promise<void> {
   const row = await asyncAgentResultRow(ctx, eventId);
-  if (row?.accountId === accountId) {
-    await ctx.db.patch(row._id, { observed: true });
+  if (row?.accountId === accountId && row.handback !== "stored") {
+    await ctx.db.patch(row._id, handbackPatch("stored"));
   }
 }
 
 /**
- * Patches the polling row for `eventId` with a run's outcome.
+ * The async tool row for `resultId`, or null, also when there is no id. A
+ * settled row that is `stored` (or `observed === true`, written by the release
+ * before) is one its conversation has.
+ */
+export async function asyncToolResultRow(
+  ctx: QueryCtx,
+  resultId: string | undefined,
+): Promise<Doc<"runtimeAsyncToolResults"> | null> {
+  if (resultId === undefined) return null;
+
+  return await ctx.db
+    .query("runtimeAsyncToolResults")
+    .withIndex("by_resultId", (q) => q.eq("resultId", resultId))
+    .unique();
+}
+
+/**
+ * Marks an async tool result's hand-back stored inside the transaction that
+ * delivers it: the parent's append of the result row, or the continuation
+ * carrying it taking its owner (`accept` as owner, or the apply of a queued
+ * one). Only when the row is `accountId`'s own and not stored already.
+ */
+export async function markAsyncToolResultSeen(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  resultId: string | undefined,
+): Promise<void> {
+  const row = await asyncToolResultRow(ctx, resultId);
+  if (row?.accountId === accountId && row.handback !== "stored") {
+    await ctx.db.patch(row._id, handbackPatch("stored"));
+  }
+}
+
+/**
+ * Patches the polling row for `eventId` with a run's outcome. A subagent's
+ * row created before hand-backs started at creation has none yet: its finish
+ * starts it `pending`, the parent owing it the write until it stores it,
+ * unless the release before `handback` already detached it (`observed:
+ * false`): that row is the sweep's at once. A hand-back already set keeps its
+ * state; the outcome never moves it back, and `handback` moves a row that is
+ * not stored to `detached` in the same write.
  * @returns false when the row no longer exists
  */
 export async function writeAsyncAgentResult(
   ctx: MutationCtx,
   eventId: string,
   outcome: Infer<typeof asyncAgentOutcomeValidator>,
+  handback?: "detached",
 ): Promise<boolean> {
   const row = await asyncAgentResultRow(ctx, eventId);
   if (!row) return false;
   await requireActiveAccount(ctx, row.accountId);
+  const finished =
+    outcome.status === "completed" || outcome.status === "failed";
+  const stored = isResultStored(row);
   await ctx.db.patch(row._id, {
     status: outcome.status,
     response: outcome.response,
     error: outcome.error,
     approvals: outcome.approvals,
     questions: outcome.questions,
+    ...(handback === "detached" && !stored
+      ? handbackPatch("detached")
+      : row.subagent && finished && row.handback === undefined
+        ? { handback: row.observed === false ? "detached" : "pending" }
+        : {}),
     updatedAt: new Date().toISOString(),
     expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
   });
@@ -739,8 +905,61 @@ export const listPendingAsyncToolResults = internalQuery({
 });
 
 /**
+ * One page of async tool results in `status` whose hand-back is `handback`
+ * (`pending` or `detached`), written inside the window, oldest first. Core's
+ * recovery sweep resumes their conversations, walking every page each pass so
+ * rows it must retry never crowd others out. A row of an inactive account is
+ * left out: no resume of it can be admitted.
+ * @returns the page and the cursor for the next one
+ */
+export const listUnobservedAsyncToolResults = internalQuery({
+  args: {
+    handback: sweptHandbackValidator,
+    status: runtimeAsyncToolResultsFields.status,
+    updatedAfter: v.string(),
+    updatedBefore: v.string(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.object({
+    page: v.array(asyncToolDoc),
+    cursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    page: Infer<typeof asyncToolDoc>[];
+    cursor: string;
+    isDone: boolean;
+  }> => {
+    const result = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_handback_and_status_and_updatedAt", (q) =>
+        q
+          .eq("handback", args.handback)
+          .eq("status", args.status)
+          .gt("updatedAt", args.updatedAfter)
+          .lt("updatedAt", args.updatedBefore),
+      )
+      .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
+    const page = (await activeAccountRows(ctx, result.page)).map(
+      hideCompletionTokenHash,
+    );
+
+    return {
+      page: page,
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
+/**
  * Settles or observes an async tool row with optional processing-only CAS
- * semantics.
+ * semantics. A row that finishes starts its hand-back `pending`: the
+ * conversation that started it owes the result its write until it stores it.
+ * A hand-back already `detached` or `stored` keeps that state.
  * @returns the updated public row, or null when the conditional update is rejected
  */
 export const updateAsyncToolResult = internalMutation({
@@ -753,10 +972,7 @@ export const updateAsyncToolResult = internalMutation({
   },
   returns: v.union(asyncToolDoc, v.null()),
   handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("runtimeAsyncToolResults")
-      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
-      .unique();
+    const row = await asyncToolResultRow(ctx, args.resultId);
     if (row) await requireActiveAccount(ctx, row.accountId);
     if (!row || (args.onlyWhenProcessing && row.status !== "processing")) {
       return null;
@@ -775,6 +991,9 @@ export const updateAsyncToolResult = internalMutation({
         : { status: args.status, response: args.response, error: args.error };
     const patch = {
       ...outcome,
+      ...(outcome.status !== "processing" && row.handback === undefined
+        ? { handback: "pending" as const }
+        : {}),
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     };
@@ -785,27 +1004,44 @@ export const updateAsyncToolResult = internalMutation({
 });
 
 /**
- * Marks a finished async tool row observed, so its result is not delivered
- * again. A row still running is left alone.
- * @returns null after the row is marked or skipped
+ * Moves a finished async tool result's hand-back: `detached` when the run that
+ * started it gives up delivering it, `stored` when the model reads it with
+ * async_status. A stored row stays stored, and a row still running is left
+ * alone. The parent's own append and the continuation's admission mark
+ * `stored` inside their own transactions instead. `observed` is written beside
+ * it for one release, for readers of the flag the previous release used. A
+ * row whose continuation waits in the conversation's queue is that
+ * continuation's to deliver, so `stored` leaves it alone.
+ * @returns true when a continuation of the result waits in the
+ * conversation's queue, so the caller must not hand the result over itself
  */
 export const observeAsyncToolResult = internalMutation({
-  args: { resultId: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncToolResults")
-      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
-      .unique();
-    if (!row || row.status === "processing") return null;
+  args: {
+    resultId: v.string(),
+    handback: handbackMoveValidator,
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const row = await asyncToolResultRow(ctx, args.resultId);
+    if (!row || row.status === "processing" || row.handback === "stored") {
+      return false;
+    }
     await requireActiveAccount(ctx, row.accountId);
+    if (
+      args.handback === "stored" &&
+      (await isResumeQueued(ctx, row.conversationKey, {
+        toolResultId: row.resultId,
+      }))
+    ) {
+      return true;
+    }
     await ctx.db.patch(row._id, {
-      observed: true,
+      ...handbackPatch(args.handback),
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
 
-    return null;
+    return false;
   },
 });
 
@@ -1604,4 +1840,22 @@ async function sandboxStillReserved(
     .unique();
 
   return row?.externalId === sandbox.externalId;
+}
+
+/**
+ * The rows of active accounts, in order: a row of an inactive account is left
+ * out of a recovery sweep's page, since no resume of it can be admitted.
+ */
+async function activeAccountRows<T extends { accountId: Id<"accounts"> }>(
+  ctx: QueryCtx,
+  rows: T[],
+): Promise<T[]> {
+  const page: T[] = [];
+  for (const row of rows) {
+    if ((await ctx.db.get(row.accountId))?.status === "active") {
+      page.push(row);
+    }
+  }
+
+  return page;
 }

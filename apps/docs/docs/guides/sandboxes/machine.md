@@ -78,7 +78,7 @@ With one computer reachable, `computer` takes just the action. With several, it 
 
 ## Local MCP servers
 
-Start the daemon with `--mcp <file>` and the stdio MCP servers in that file run on your computer for your agents. The file uses the `.mcp.json` shape that Claude Code, Cursor and Codex read, so existing setups work as they are.
+Start the daemon with `--mcp <file>` and the stdio MCP servers in that file run on your computer for your agents. The file uses the `.mcp.json` shape that Claude Code, Cursor and Codex read. Each server must speak MCP 2026-07-28: a server built on a 2025-era SDK is refused when the daemon first starts it, with an error naming the version. Starting a server also runs its command once more, briefly, to ask which version it speaks.
 
 ```json title=".mcp.json"
 {

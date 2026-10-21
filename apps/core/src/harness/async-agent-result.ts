@@ -1,5 +1,6 @@
 /** Async agent status persistence backed by Convex transactions. */
 
+import type { Handback } from "@broods/convex/model/subagentResults";
 import type { JSONValue } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import { toErrorMessage } from "../shared/errors.ts";
@@ -35,8 +36,13 @@ export interface AsyncAgentResultRecord {
   conversationKey: string;
   subagent?: SubagentTaskRecord;
   // False while the parent stopped waiting on this subagent and has not seen
-  // its result; true once it has.
+  // its result; true once it has. Written by the release before `handback`;
+  // read through `isHandbackOwed` for one release.
   observed?: boolean;
+  // Where a finished subagent result stands with its parent: `pending` until
+  // the parent's run stores it, `detached` once that run gave up and the
+  // recovery sweep owns it, `stored` once the parent has it.
+  handback?: Handback;
   status: AsyncAgentStatus;
   createdAt: string;
   updatedAt: string;
@@ -59,10 +65,22 @@ export function getAsyncAgentResult(
   return runtime.query("getAsyncAgentResult", { eventId: eventId });
 }
 /**
- * One page of subagent results in `status` no parent has seen yet, written in
- * the window, from `cursor`. The recovery sweep walks every page.
+ * Whether a finished subagent result is still owed to its parent: its
+ * hand-back is not `stored`. A row the release before `handback` wrote is
+ * owed only once that release detached it (`observed: false`).
+ */
+export function isHandbackOwed(record: AsyncAgentResultRecord): boolean {
+  return record.handback === undefined
+    ? record.observed === false
+    : record.handback !== "stored";
+}
+/**
+ * One page of subagent results in `status` whose hand-back is `handback`,
+ * written in the window, from `cursor`; without `handback`, the rows the
+ * release before it detached. The recovery sweep walks every page.
  */
 export function listUnobservedAsyncAgentResults(options: {
+  handback?: Exclude<Handback, "stored">;
   status: AsyncAgentStatus;
   updatedAfter: string;
   updatedBefore: string;
@@ -75,25 +93,30 @@ export function listUnobservedAsyncAgentResults(options: {
   return runtime.query("listUnobservedAsyncAgentResults", options);
 }
 /**
- * Records whether a subagent's parent has its result: false when the parent
- * stops waiting on it, true when the parent reads it or is never told. The
- * row already holds the result, so a failed write is only logged.
+ * Moves a subagent result's hand-back: `detached` when this run gives up
+ * delivering it, `stored` when the parent reads it or is never told. A
+ * stored row stays stored. The row already holds the result, so a failed
+ * write is only logged: a pending row reaches the recovery sweep later.
+ * @returns true when a resume of the result waits in the parent's queue: the
+ * row stays unstored and the caller must not hand the result over itself
  */
-export async function observeAsyncAgentResult(
+export async function markAsyncAgentHandback(
   eventId: string,
-  observed: boolean,
-): Promise<void> {
+  handback: Exclude<Handback, "pending">,
+): Promise<boolean> {
   try {
-    await runtime.mutate("observeAsyncAgentResult", {
+    return await runtime.mutate("markAsyncAgentHandback", {
       eventId: eventId,
-      observed: observed,
+      handback: handback,
     });
   } catch (error) {
-    logError("Failed to record whether the parent saw a subagent result", {
+    logError("Failed to record a subagent result's hand-back", {
       eventId: eventId,
-      observed: observed,
+      handback: handback,
       error: toErrorMessage(error),
     });
+
+    return false;
   }
 }
 /**
@@ -103,7 +126,7 @@ export async function observeAsyncAgentResult(
 export async function recordAsyncAgentResult(
   eventId: string,
   outcome: AsyncAgentOutcome,
-  guard: { onlyWhileProcessing?: boolean } = {},
+  guard: { onlyWhileProcessing?: boolean; handback?: "detached" } = {},
 ): Promise<void> {
   await runtime.mutate("updateAsyncAgentResult", {
     eventId: eventId,

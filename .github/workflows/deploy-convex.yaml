@@ -51,6 +51,17 @@ jobs:
           # The sign-in the target backend trusts. The environment owns the
           # backend, so it owns this too; unset means WorkOS, the managed login.
           AUTH_PROVIDER: ${{ vars.BROODS_AUTH_PROVIDER || 'workos' }}
+          # Keys the PostHog user id, same value as core's; unset leaves the
+          # backend's value alone.
+          ANALYTICS_ID_SECRET: ${{ secrets.ANALYTICS_ID_SECRET }}
+          # The dashboard's sign-in callback, whose origin is the only one
+          # Stripe checkout and the portal may return to; unset leaves the
+          # backend's value alone.
+          DASHBOARD_ORIGIN: ${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
+          # The Pro and extra seat prices Upgrade and Add seat bill; unset
+          # leaves the backend's value alone.
+          STRIPE_PRO_PRICE_ID: ${{ vars.STRIPE_PRO_PRICE_ID }}
+          STRIPE_SEAT_PRICE_ID: ${{ vars.STRIPE_SEAT_PRICE_ID }}
         run: |
           # Self-hosted backends authenticate with an admin key against an
           # explicit URL; there is no deploy key. The environment provides one
@@ -79,4 +90,15 @@ jobs:
           # The deploy fails on an auth config that reads an unset variable, so
           # the provider is pinned before every deploy.
           bunx convex env set BROODS_AUTH_PROVIDER "$AUTH_PROVIDER"
+          if [[ -n "$ANALYTICS_ID_SECRET" ]]; then
+            bunx convex env set ANALYTICS_ID_SECRET "$ANALYTICS_ID_SECRET"
+          fi
+          if [[ -n "$DASHBOARD_ORIGIN" ]]; then
+            bunx convex env set DASHBOARD_ORIGIN "$(bun -p 'new URL(process.env.DASHBOARD_ORIGIN).origin')"
+          fi
+          for name in STRIPE_PRO_PRICE_ID STRIPE_SEAT_PRICE_ID; do
+            if [[ -n "${!name}" ]]; then
+              bunx convex env set "$name" "${!name}"
+            fi
+          done
           bun run deploy

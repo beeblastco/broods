@@ -3,7 +3,6 @@ import { spyOn } from "bun:test";
 import {
   resetPublicHostsForTests,
   type CoreRequest,
-  type RequestContext,
 } from "../../src/shared/http.ts";
 
 export function coreRequest(
@@ -68,14 +67,6 @@ export function requestUrl(input: string | URL | Request): string {
   if (typeof input === "string") return input;
 
   return input instanceof URL ? input.href : input.url;
-}
-
-export function testContext(): RequestContext {
-  return {
-    requestId: "request-id",
-    deadlineMs: Date.now() + 60_000,
-    waitUntil: function () {},
-  };
 }
 
 export async function responseJson(response: Response): Promise<any> {

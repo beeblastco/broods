@@ -116,7 +116,14 @@
     {
       "files": ["apps/core/sst.config.ts"],
       "rules": {
-        "typescript/triple-slash-reference": "off"
+        "typescript/triple-slash-reference": "off",
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "Bun",
+            "message": "SST runs sst.config.ts in Node; use a lazy node: import."
+          }
+        ]
       }
     }
   ],

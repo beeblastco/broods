@@ -206,6 +206,7 @@ export function SandboxResourceDetailsTab({
             { value: "lambda", label: "Lambda" },
             { value: "e2b", label: "e2b" },
             { value: "daytona", label: "Daytona" },
+            { value: "worker", label: "Fast Cloudflare V8 Worker" },
             { value: "machine", label: "Your computer" },
           ]}
         />

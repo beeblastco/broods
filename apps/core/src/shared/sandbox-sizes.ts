@@ -81,14 +81,6 @@ export const SANDBOX_SIZES: Record<SandboxSize, Required<SandboxSpecs>> = {
   large: { vcpu: 4, memoryMb: 8192, storageGb: 32 },
 };
 
-export const SANDBOX_SIZE_NAMES: readonly SandboxSize[] = [
-  "tiny",
-  "xsmall",
-  "small",
-  "medium",
-  "large",
-];
-
 /**
  * Cloudflare's named instance type nearest each size, with its documented specs
  * (developers.cloudflare.com/containers/platform/limits). A custom type needs a
@@ -124,10 +116,15 @@ export const CLOUDFLARE_INSTANCE_TYPES: Record<
 // the platform default, a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk.
 const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
 
+// What every V8 Worker command runs in: Cloudflare's per-isolate memory, no
+// machine and no disk of its own. The config's `size` does not change it.
+const WORKER_SPECS: SandboxSpecs = { vcpu: 1, memoryMb: 128, storageGb: 0 };
+
 /**
  * The providers resolveSandboxSpecs sizes from the config, which are therefore
  * the machine's real size: workdir creates the VM with them, every MicroVM is
- * MICROVM_SPECS, and cloudflare starts the CLOUDFLARE_INSTANCE_TYPES entry.
+ * MICROVM_SPECS, every V8 Worker command is WORKER_SPECS, and cloudflare starts
+ * the CLOUDFLARE_INSTANCE_TYPES entry.
  * Keep it in step with the provider branches there.
  */
 export const CONFIGURED_SIZE_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
@@ -145,7 +142,8 @@ const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
 /**
  * Resolve the specs to mirror (and bill) for a sandbox config. A workdir (`sandbox`)
  * config bills exactly the resources its VM is created with (see workdirResources),
- * a cloudflare config the instance type it starts, and a lambda config reports the
+ * a cloudflare config the instance type it starts, a worker config the one isolate
+ * size, and a lambda config reports the
  * MicroVM's real size whatever it asks for. Daytona, e2b and vercel executors
  * replace these with what the provider reports once the machine exists.
  * Elsewhere a pinned `size` wins; otherwise the explicit resource options
@@ -171,6 +169,9 @@ export function resolveSandboxSpecs(input: {
   }
   if (input.provider === "lambda") {
     return MICROVM_SPECS;
+  }
+  if (input.provider === "worker") {
+    return WORKER_SPECS;
   }
   if (input.provider === "cloudflare") {
     return CLOUDFLARE_INSTANCE_TYPES[input.size ?? DEFAULT_SIZE].specs;

@@ -5,7 +5,7 @@
  * string, so a run token can never open a stage ticket or the reverse. Core
  * is the only minter and verifier; the config plane refuses the prefix.
  * The same secret also tags the subagent conversation keys core mints, under
- * another info string.
+ * its own info string.
  */
 
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";

@@ -17,7 +17,9 @@ import {
   ensureS3DirectoryMarkers,
   getS3ObjectUrl,
   listS3Prefix,
+  readS3Bytes,
   s3ObjectExists,
+  s3ObjectSize,
   writeS3Object,
 } from "./s3";
 import {
@@ -167,6 +169,34 @@ export async function purgeWorkspaceFilesystem(
   }
 
   return await deleteS3Prefix(target.bucket, target.prefix, target.access);
+}
+
+/**
+ * Read one workspace file as text, for the dashboard preview. Read here rather
+ * than through a presigned URL, so the bucket needs no CORS rule for the
+ * dashboard origin.
+ * @param ref the workspace to read
+ * @param rawPath the file path
+ * @returns the file decoded as UTF-8
+ * @throws when the file is missing or larger than the upload limit
+ */
+export async function readWorkspaceFile(
+  ref: WorkspaceFsRef,
+  rawPath: unknown,
+): Promise<string> {
+  const path = normalizeFilePath(rawPath);
+  const target = await resolveTarget(ref);
+  const key = `${target.prefix}${path}`;
+  // Sized before the read, so an agent's multi-gigabyte file is refused
+  // without pulling it into the action's memory.
+  const size = await s3ObjectSize(target.bucket, key, target.access);
+  if (size === null) throw new ClientError("Workspace file not found");
+  if (size > MAX_WORKSPACE_FILE_BYTES)
+    throw new ClientError("Workspace files over 512 KiB cannot be previewed");
+
+  return new TextDecoder().decode(
+    await readS3Bytes(target.bucket, key, target.access),
+  );
 }
 
 /**

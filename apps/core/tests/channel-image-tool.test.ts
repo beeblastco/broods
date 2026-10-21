@@ -16,9 +16,14 @@ import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const s3ObjectExistsMock = mock(async (_bucket: string, _key: string) => true);
 
+// The real module underneath, so an export added to s3.ts never breaks this file
+// when it runs alone. The no-network preload fails any unstubbed call.
+const realS3 = { ...(await import("../src/shared/s3.ts")) };
+
 await mock.module("../src/shared/s3.ts", () => ({
+  ...realS3,
   s3ObjectExists: s3ObjectExistsMock,
-  // Full surface so transitive importers keep working (mock.module replaces the module).
+  // Canned answers for the S3 calls the code under test makes.
   headS3Object: mock(async () => ({
     contentLength: 1,
     contentType: "image/png",

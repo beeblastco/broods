@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useParams, useRouter } from "next/navigation";
+import { analytics } from "@/app/lib/analytics";
 import { useCallback } from "react";
 
 export function UserMenu(): React.JSX.Element | null {
@@ -49,7 +50,7 @@ export function UserMenu(): React.JSX.Element | null {
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
-  // The plan is the active org's: each org pays for its own.
+  // The active org inherits its owner's plan.
   const activeOrg = useQuery(
     api.org.orgs.getActive,
     useSignedIn() ? {} : "skip",
@@ -224,7 +225,12 @@ export function UserMenu(): React.JSX.Element | null {
             <DropdownMenuItem
               variant="destructive"
               className="cursor-pointer"
-              onClick={() => signOut()}
+              onClick={() => {
+                void analytics.then((posthog): void => {
+                  posthog.reset();
+                });
+                signOut();
+              }}
             >
               <LogOut />
               Sign out

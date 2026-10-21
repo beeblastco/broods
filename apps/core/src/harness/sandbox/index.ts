@@ -9,6 +9,7 @@ import { CloudflareSandboxExecutor } from "./cloudflare-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
 import { HttpSandboxExecutor } from "./http-executor.ts";
+import { WorkerSandboxExecutor } from "./worker-executor.ts";
 import { MachineSandboxExecutor } from "./machine-executor.ts";
 import { assertSandboxBudget } from "../plan-limits.ts";
 import { MicrovmSandboxExecutor } from "./microvm-executor.ts";
@@ -39,6 +40,7 @@ const EXECUTORS: Record<SandboxProvider, SandboxExecutorFactory> = {
   machine: (config): SandboxExecutor => new MachineSandboxExecutor(config),
   sandbox: (config): SandboxExecutor => new WorkdirSandboxExecutor(config),
   vercel: (config): SandboxExecutor => new VercelSandboxExecutor(config),
+  worker: (config): SandboxExecutor => new WorkerSandboxExecutor(config),
 };
 
 /**

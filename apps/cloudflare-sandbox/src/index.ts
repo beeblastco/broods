@@ -8,7 +8,8 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
-import type { SandboxExecResponse } from "../../core/src/shared/domain/sandbox-config.ts";
+import type { SandboxExecAnswer } from "../../core/src/shared/domain/sandbox-config.ts";
+import { bearerMatches } from "./bearer.ts";
 import {
   MAX_IDLE_TIMEOUT_SECONDS,
   MAX_OUTPUT_BYTES,
@@ -53,23 +54,8 @@ interface Env {
   SANDBOX_API_KEY: string;
 }
 
-/**
- * One finished command, its output capped at the request's limit per stream:
- * core's `SandboxExecResponse` (the sandbox exec contract), so core reads it
- * with the parser every exec server goes through.
- */
-export type ExecResult = Required<
-  Pick<
-    SandboxExecResponse,
-    | "duration_ms"
-    | "exit_code"
-    | "ok"
-    | "stderr"
-    | "stdout"
-    | "timed_out"
-    | "truncated"
-  >
->;
+/** One finished command, its output capped at the request's limit per stream. */
+export type ExecResult = SandboxExecAnswer;
 
 /** One sandbox: the Container it starts and the commands core runs in it. */
 export class Sandbox extends DurableObject<Env> {
@@ -294,7 +280,7 @@ const handler: ExportedHandler<Env> = {
     const match = SANDBOX_PATH.exec(new URL(request.url).pathname);
     const action = match?.[2];
     const allowed =
-      (await authorized(request, env.SANDBOX_API_KEY)) ||
+      (await bearerMatches(request, env.SANDBOX_API_KEY)) ||
       (action === "/terminal" &&
         (await terminalAuthorized(request, env.SANDBOX_API_KEY, match![1]!)));
     if (!allowed) return new Response("Unauthorized", { status: 401 });
@@ -324,26 +310,13 @@ const handler: ExportedHandler<Env> = {
 
 export default handler;
 
-// Hashing first makes the compare constant-time whatever the token lengths.
-async function authorized(request: Request, apiKey: string): Promise<boolean> {
-  if (!apiKey) return false;
-  const header = request.headers.get("Authorization") ?? "";
-  const encoder = new TextEncoder();
-  const [given, expected] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(header)),
-    crypto.subtle.digest("SHA-256", encoder.encode(`Bearer ${apiKey}`)),
-  ]);
-
-  return crypto.subtle.timingSafeEqual(given, expected);
-}
-
 async function terminalAuthorized(
   request: Request,
   apiKey: string,
   sandboxId: string,
 ): Promise<boolean> {
   const header = request.headers.get("Authorization") ?? "";
-  if (!apiKey || !header.startsWith("Bearer ")) return false;
+  if (!header.startsWith("Bearer ")) return false;
 
   return await verifyTerminalToken(
     apiKey,

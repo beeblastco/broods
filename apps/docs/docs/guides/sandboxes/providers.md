@@ -8,6 +8,7 @@ Every provider runs the same tools, but setup, storage and network support diffe
 | `lambda`                   | AWS Lambda MicroVM           | [`lambda`](#lambda)                                       |
 | `daytona`, `e2b`, `vercel` | A vendor account you bring   | [`daytona`](#daytona), [`e2b`](#e2b), [`vercel`](#vercel) |
 | `cloudflare`               | Cloudflare Container         | [`cloudflare`](#cloudflare)                               |
+| `worker`                   | Fast Cloudflare V8 Worker    | [`worker`](#worker)                                       |
 | `machine`                  | Your own computer            | [Your computer](machine.md)                               |
 | `custom`                   | Your server over HTTP        | [Your own server](custom.md)                              |
 
@@ -182,6 +183,37 @@ export const box = defineSandbox({
 - `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
 - A `persistent` sandbox gets the live dashboard terminal, a login shell in `/workspace`. It opens only on a running Container, so run a command first to wake one that slept.
 - The provider needs the deployment's Cloudflare bridge. Without it every run fails with an error saying the bridge is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#cloudflare).
+
+## `worker`
+
+Runs `bash` in a V8 isolate on Cloudflare Workers: no container, no machine, nothing running between commands. The shell is [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 built-in commands: `cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `cut`, `gzip`, `base64`, `sha256sum`, `date` and the rest of the text toolbox, plus `curl` once internet is on. Use it for the cheapest compute an agent can get: a command starts in well under a second and costs only the milliseconds it ran.
+
+```ts
+export const box = defineSandbox({
+  name: "worker",
+  provider: "worker",
+  persistent: true,
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  timeout: 30,
+});
+```
+
+| Field          | Behavior                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `persistent`   | `true` keeps the sandbox's files between calls, in storage. `false` runs every call on an empty disk           |
+| `network.mode` | `allow-all` registers `curl` and turns internet on, `deny-all` has no network at all, `restricted` is rejected |
+| `timeout`      | Seconds per call, at most 60: the isolate's CPU limit is the call's timeout                                    |
+| `options`      | Only `workspaceRoot` and `reservationKey`                                                                      |
+
+- Only built-ins run. There is no `python`, `node`, `git`, `npm` or any binary, no process and no port; a command outside the 81 answers `command not found`. Use `sandbox` or `lambda` for a real machine.
+- Files are the sandbox's whole state. A persistent sandbox restores them into a fresh shell on every call and stores what changed, up to 24 MiB on disk and 16 MiB compressed; an ephemeral one keeps nothing. The shell's own layout (`/bin`, `/dev`, `/proc`) is rebuilt every time and never stored.
+- Each call runs in 128 MB of memory, and a command that never yields is stopped at the timeout by the isolate's CPU limit.
+- The shell itself stops a script at 100,000 commands, 100,000 loop iterations or 100 nested function calls, with an error naming the limit. A job that big belongs on `sandbox` or `lambda`.
+- `size` does nothing, like on `lambda`: every command gets the same 128 MB. `snapshot`, `lifecycle`, `onCreate`, `onResume` and workspaces are rejected. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
+- `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
+- Billing counts only the milliseconds each command took, waits included, plus one request each, inside Sandbox time; nothing idles. A `sleep` costs the same as a busy command, a fraction of a VM's idle time.
+- The provider needs the deployment's V8 Worker. Without it every run fails with an error saying the Worker is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#worker).
 
 ## Environment variables in every provider
 

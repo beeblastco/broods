@@ -1,7 +1,5 @@
 # Contributing
 
-Thanks for helping improve broods. Bug fixes, new channels, new tools, and docs changes are all welcome.
-
 ## Quick start
 
 ```bash
@@ -17,7 +15,7 @@ cp apps/core/.env.example apps/core/.env
 
 ```bash
 bun run check            # type-aware oxlint, oxfmt check, and every workspace check (dashboard adds @shadcn/lint)
-bun run test             # core, convex, and broods SDK tests
+bun run test             # every workspace's unit tests, scripts and benchmark gates
 bun run build            # build the core Bun container binary
 bun run verification:test # TypeScript contracts mirrored by the Lean models
 (cd verification && lake build) # machine-check those models
@@ -27,6 +25,7 @@ cd packages/demos/basic-stream && bun run start
 
 - Dashboard: `bun run format` for formatting.
 - Docs: `bun run docs` to preview locally.
+- macOS desktop integration: `bun run --filter broods test:desktop` captures the screen and moves the pointer. It requires Screen Recording and Accessibility permissions, and stays out of the default unit suite.
 - Do not deploy locally (`bun run deploy`) unless explicitly asked. Merge to `dev` and let CI/CD deploy. `main` is protected and only moves through the "Promote dev to main" workflow.
 
 - Use Bun, not npm, yarn, or pnpm.
@@ -51,14 +50,14 @@ cd packages/demos/basic-stream && bun run start
 - File header comments use a block docstring (`/** ... */`) with one blank line before the first import.
 - Keep docstrings short. Describe the file boundary, not a function inventory.
 - Use `key: value` object syntax instead of shorthand.
-- Each `return` statement should have one blank line before it.
+- Put one blank line before a function's final `return`.
 - Prefer reusing existing interfaces from the Vercel AI SDK or other libraries rather than creating new ones.
 - Keep code simple and readable. Avoid unnecessary abstraction.
 
 ## Adding features
 
 - **New channel.** Create `apps/core/src/shared/<channel>-channel.ts` implementing `ChannelAdapter`, then wire it into `apps/core/src/harness/integrations.ts`. Keep channel-specific logic inside the channel module.
-- **New tool.** Create `apps/core/src/harness/tools/<name>.tool.ts`, export a default factory, register it in `apps/core/src/harness/tools/index.ts`, and add config validation in `packages/convex/model/agentRules.ts`.
+- **New tool.** Create `apps/core/src/harness/tools/<name>.tool.ts`, export a default factory, and register it in `apps/core/src/harness/tools/index.ts`. Add validation in `packages/convex/model/agentRules.ts` if the tool accepts `config.tools.<name>` options.
 - **New command.** Add an entry to `apps/core/src/shared/commands.ts`.
 
 ## Cross-workspace rules
@@ -75,9 +74,9 @@ cd packages/demos/basic-stream && bun run start
 
 ## CI
 
-`.github/workflows/ci.yaml` runs `check`, `test`, and `build` on every PR. Docs-only changes are skipped.
+`.github/workflows/ci.yaml` runs `check`, `test`, and `build` on every PR, including docs-only changes. It also checks dependency advisories and performance budgets, builds the dashboard, and runs its browser fixtures. The docs build runs when docs or dependencies change.
 
-## Questions?
+## Community
 
 - Chat with maintainers on [Discord](https://discord.gg/beeblast).
 - File bugs and feature requests in [GitHub Issues](https://github.com/beeblastco/broods/issues).

@@ -214,7 +214,24 @@ export declare const api: {
           level: "ok" | "warning" | "exhausted";
           month: string;
           months: Array<string>;
+          orgShares: {
+            egressGb: number;
+            hostedMcpHours: number;
+            sandboxHours: number;
+            storageGb: number;
+          };
           plan: "free" | "pro";
+          pool?: {
+            orgs?: number;
+            shared: boolean;
+            totals: {
+              egressGb: number;
+              hostedMcpHours: number;
+              ingressGb: number;
+              sandboxHours: number;
+              storageGb: number | null;
+            };
+          };
           projects?: Array<{
             days: Array<{
               day: string;
@@ -285,6 +302,92 @@ export declare const api: {
         } | null
       >;
     };
+  };
+  accountApiKeys: {
+    create: FunctionReference<
+      "mutation",
+      "public",
+      {
+        actions: Array<
+          | "account:read"
+          | "account:write"
+          | "agents:read"
+          | "agents:write"
+          | "audit:read"
+          | "audit:write"
+          | "channels:read"
+          | "channels:write"
+          | "crons:read"
+          | "crons:write"
+          | "env:read"
+          | "env:write"
+          | "hooks:read"
+          | "hooks:write"
+          | "mcp:read"
+          | "mcp:write"
+          | "policies:read"
+          | "policies:write"
+          | "sandboxes:read"
+          | "sandboxes:write"
+          | "skills:read"
+          | "skills:write"
+          | "workspaces:read"
+          | "workspaces:write"
+        >;
+        description?: string;
+        expiresAt?: number;
+        name: string;
+        orgId: Id<"orgs">;
+        projectId?: Id<"projects">;
+        stageId?: Id<"stages">;
+      },
+      { _id: Id<"accountApiKeys">; keyHint: string; token: string }
+    >;
+    remove: FunctionReference<
+      "mutation",
+      "public",
+      { keyId: Id<"accountApiKeys">; orgId: Id<"orgs"> },
+      Id<"accountApiKeys">
+    >;
+    update: FunctionReference<
+      "mutation",
+      "public",
+      {
+        actions?: Array<
+          | "account:read"
+          | "account:write"
+          | "agents:read"
+          | "agents:write"
+          | "audit:read"
+          | "audit:write"
+          | "channels:read"
+          | "channels:write"
+          | "crons:read"
+          | "crons:write"
+          | "env:read"
+          | "env:write"
+          | "hooks:read"
+          | "hooks:write"
+          | "mcp:read"
+          | "mcp:write"
+          | "policies:read"
+          | "policies:write"
+          | "sandboxes:read"
+          | "sandboxes:write"
+          | "skills:read"
+          | "skills:write"
+          | "workspaces:read"
+          | "workspaces:write"
+        >;
+        description?: string;
+        expiresAt?: number | null;
+        keyId: Id<"accountApiKeys">;
+        name?: string;
+        orgId: Id<"orgs">;
+        scope?: { projectId?: Id<"projects">; stageId?: Id<"stages"> };
+      },
+      Id<"accountApiKeys">
+    >;
   };
   agent: {
     agents: {
@@ -719,13 +822,52 @@ export declare const api: {
       "query",
       "public",
       {},
-      Array<{
-        createdAt: number;
-        createdBy?: { avatarUrl?: string; name: string };
-        description: string;
-        keyHint?: string;
-        name: string;
-      }> | null
+      {
+        keys: Array<{
+          _id?: Id<"accountApiKeys">;
+          actions?: Array<
+            | "account:read"
+            | "account:write"
+            | "agents:read"
+            | "agents:write"
+            | "audit:read"
+            | "audit:write"
+            | "channels:read"
+            | "channels:write"
+            | "crons:read"
+            | "crons:write"
+            | "env:read"
+            | "env:write"
+            | "hooks:read"
+            | "hooks:write"
+            | "mcp:read"
+            | "mcp:write"
+            | "policies:read"
+            | "policies:write"
+            | "sandboxes:read"
+            | "sandboxes:write"
+            | "skills:read"
+            | "skills:write"
+            | "workspaces:read"
+            | "workspaces:write"
+          >;
+          createdAt: number;
+          createdBy?: { avatarUrl?: string; name: string };
+          description?: string;
+          expiresAt?: number;
+          keyHint?: string;
+          lastUsedAt?: number;
+          name: string;
+          projectId?: Id<"projects">;
+          stageId?: Id<"stages">;
+        }>;
+        stages: Array<{
+          projectId: Id<"projects">;
+          projectName: string;
+          stageId: Id<"stages">;
+          stageName: string;
+        }>;
+      } | null
     >;
     listForProject: FunctionReference<
       "query",
@@ -1316,6 +1458,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -1366,6 +1509,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -1489,6 +1633,7 @@ export declare const api: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           pulledCount: number;
@@ -1627,6 +1772,7 @@ export declare const api: {
     >;
   };
   user: {
+    analyticsId: FunctionReference<"query", "public", {}, null | string>;
     ensureSynced: FunctionReference<"action", "public", {}, null>;
     getCurrent: FunctionReference<
       "query",
@@ -1772,6 +1918,12 @@ export declare const api: {
       >;
     };
     filesPublic: {
+      downloadUrl: FunctionReference<
+        "action",
+        "public",
+        { path: string; projectId: Id<"projects">; workspaceId: string },
+        string
+      >;
       list: FunctionReference<
         "action",
         "public",
@@ -1783,6 +1935,12 @@ export declare const api: {
           sizeBytes?: number;
           updatedAt?: string;
         }>
+      >;
+      read: FunctionReference<
+        "action",
+        "public",
+        { path: string; projectId: Id<"projects">; workspaceId: string },
+        string
       >;
       remove: FunctionReference<
         "action",
@@ -1990,6 +2148,81 @@ export declare const internal: {
         } | null
       >;
     };
+    apiKeys: {
+      resolve: FunctionReference<
+        "query",
+        "internal",
+        { keyHash: string; now: number },
+        {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
+          keyId: Id<"accountApiKeys">;
+          principal: {
+            accountId: Id<"accounts">;
+            policy: {
+              mode?: "enforce" | "audit";
+              rules: Array<{
+                actions: Array<string>;
+                conditions?: Array<{
+                  attribute: string;
+                  operator:
+                    | "equals"
+                    | "notEquals"
+                    | "in"
+                    | "notIn"
+                    | "prefix"
+                    | "contains";
+                  value:
+                    | string
+                    | number
+                    | boolean
+                    | Array<string>
+                    | Array<number>
+                    | Array<boolean>;
+                }>;
+                effect: "allow" | "deny";
+                id: string;
+                resources?: {
+                  filePaths?: Array<string>;
+                  mcpIds?: Array<string>;
+                  resourceIds?: Array<string>;
+                  skillPaths?: Array<string>;
+                  subagentIds?: Array<string>;
+                  toolNames?: Array<string>;
+                  workspaceIds?: Array<string>;
+                  workspaceNames?: Array<string>;
+                };
+              }>;
+              version: 1;
+            };
+            projectId?: Id<"projects">;
+            roleId: string;
+            stageId?: Id<"stages">;
+          };
+          stampDue: boolean;
+        } | null
+      >;
+      touchLastUsed: FunctionReference<
+        "mutation",
+        "internal",
+        { keyId: Id<"accountApiKeys">; usedAt: number },
+        null
+      >;
+    };
     budget: {
       claimWarning: FunctionReference<
         "mutation",
@@ -2076,6 +2309,8 @@ export declare const internal: {
             hostedMcpRequests?: number;
             ingressGb?: number;
             storageGbMonths?: number;
+            workerMs?: number;
+            workerRequests?: number;
           };
           writeId?: string;
         },
@@ -3968,6 +4203,7 @@ export declare const internal: {
             kind:
               | "dashboardUser"
               | "apiAccountSecret"
+              | "accountApiKey"
               | "admin"
               | "service"
               | "cli"
@@ -3985,6 +4221,7 @@ export declare const internal: {
             id?: string;
             kind:
               | "account"
+              | "accountApiKey"
               | "agent"
               | "skill"
               | "hook"
@@ -4036,6 +4273,7 @@ export declare const internal: {
             kind:
               | "dashboardUser"
               | "apiAccountSecret"
+              | "accountApiKey"
               | "admin"
               | "service"
               | "cli"
@@ -4050,6 +4288,7 @@ export declare const internal: {
             id?: string;
             kind:
               | "account"
+              | "accountApiKey"
               | "agent"
               | "skill"
               | "hook"
@@ -5277,6 +5516,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5303,6 +5543,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5378,6 +5619,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5428,6 +5670,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5448,6 +5691,7 @@ export declare const internal: {
         error?: string;
         eventId: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         observed?: boolean;
         questions?: Array<any>;
         response?: any;
@@ -5498,6 +5742,7 @@ export declare const internal: {
         delivery?: any;
         error?: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         input: any;
         observed?: boolean;
         parentEventId: string;
@@ -5512,6 +5757,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5552,6 +5798,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5575,6 +5822,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5592,6 +5840,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5615,6 +5864,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5638,6 +5888,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         scope: "account" | { projectId: Id<"projects">; stageId: Id<"stages"> };
@@ -5672,6 +5923,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5695,6 +5947,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5715,6 +5968,7 @@ export declare const internal: {
         delivery?: any;
         error?: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         input: any;
         observed?: boolean;
         parentEventId: string;
@@ -5729,6 +5983,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5744,6 +5999,7 @@ export declare const internal: {
       "internal",
       {
         cursor: string | null;
+        handback?: "pending" | "detached";
         status:
           | "processing"
           | "awaiting_approval"
@@ -5766,6 +6022,7 @@ export declare const internal: {
           error?: string;
           eventId: string;
           expiresAt: number;
+          handback?: "pending" | "detached" | "stored";
           observed?: boolean;
           questions?: Array<any>;
           response?: any;
@@ -5804,17 +6061,66 @@ export declare const internal: {
         }>;
       }
     >;
-    observeAsyncAgentResult: FunctionReference<
+    listUnobservedAsyncToolResults: FunctionReference<
+      "query",
+      "internal",
+      {
+        cursor: string | null;
+        handback: "pending" | "detached";
+        status: "processing" | "completed" | "failed";
+        updatedAfter: string;
+        updatedBefore: string;
+      },
+      {
+        cursor: string;
+        isDone: boolean;
+        page: Array<{
+          _creationTime: number;
+          _id: Id<"runtimeAsyncToolResults">;
+          accountId: Id<"accounts">;
+          conversationKey: string;
+          createdAt: string;
+          delivery?: any;
+          error?: string;
+          expiresAt: number;
+          handback?: "pending" | "detached" | "stored";
+          input: any;
+          observed?: boolean;
+          parentEventId: string;
+          response?: any;
+          resultId: string;
+          sandbox?: {
+            externalId: string;
+            provider:
+              | "sandbox"
+              | "lambda"
+              | "e2b"
+              | "daytona"
+              | "vercel"
+              | "cloudflare"
+              | "worker"
+              | "machine"
+              | "custom";
+            reservationKey: string;
+          };
+          status: "processing" | "completed" | "failed";
+          toolCallId: string;
+          toolName: string;
+          updatedAt: string;
+        }>;
+      }
+    >;
+    markAsyncAgentHandback: FunctionReference<
       "mutation",
       "internal",
-      { eventId: string; observed: boolean },
-      null
+      { eventId: string; handback: "detached" | "stored" },
+      boolean
     >;
     observeAsyncToolResult: FunctionReference<
       "mutation",
       "internal",
-      { resultId: string },
-      null
+      { handback: "detached" | "stored"; resultId: string },
+      boolean
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
     releaseClaim: FunctionReference<
@@ -5836,6 +6142,7 @@ export declare const internal: {
           | "daytona"
           | "vercel"
           | "cloudflare"
+          | "worker"
           | "machine"
           | "custom";
         reservationKey: string;
@@ -5850,6 +6157,7 @@ export declare const internal: {
         approvals?: Array<any>;
         error?: string;
         eventId: string;
+        handback?: "detached";
         onlyWhileProcessing?: boolean;
         questions?: Array<any>;
         response?: any;
@@ -5881,6 +6189,7 @@ export declare const internal: {
         delivery?: any;
         error?: string;
         expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
         input: any;
         observed?: boolean;
         parentEventId: string;
@@ -5895,6 +6204,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -5946,6 +6256,7 @@ export declare const internal: {
         runId: string;
         sizeBytes: number;
         statusTtlMs: number;
+        toolResultId?: string;
       },
       {
         eventId?: string;
@@ -6354,6 +6665,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6546,6 +6858,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6639,6 +6952,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           reservationKey: string;
@@ -6736,6 +7050,7 @@ export declare const internal: {
             | "daytona"
             | "vercel"
             | "cloudflare"
+            | "worker"
             | "machine"
             | "custom";
           scope:
@@ -6752,45 +7067,6 @@ export declare const internal: {
         null
       >;
     };
-  };
-  seatMigration: {
-    resyncAllSeats: FunctionReference<
-      "action",
-      "internal",
-      { dryRun: boolean },
-      {
-        done: Array<{
-          authId: string;
-          newQuantity: number;
-          oldQuantity: number;
-          stripeSubscriptionId: string;
-        }>;
-        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
-        failed: Array<{ authId: string; error: string }>;
-      }
-    >;
-    resyncPageInternal: FunctionReference<
-      "query",
-      "internal",
-      { cursor: string | null },
-      {
-        continueCursor: string;
-        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
-        isDone: boolean;
-        resyncs: Array<{
-          authId: string;
-          newQuantity: number;
-          oldQuantity: number;
-          stripeSubscriptionId: string;
-        }>;
-      }
-    >;
-    syncPlanInternal: FunctionReference<
-      "mutation",
-      "internal",
-      { authId: string },
-      null
-    >;
   };
   stripe: {
     applySubscriptionInternal: FunctionReference<

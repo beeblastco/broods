@@ -489,7 +489,7 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_2", "second result"));
 
     coordinator.markDelivered(completion("subagent_1", "").eventId);
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
 
     expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
@@ -520,7 +520,7 @@ describe("SubagentCoordinator", () => {
     });
 
     coordinator.markDelivered(completion("subagent_1", "").eventId);
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
 
     expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     expect(messageText(persistModelMessages.mock.calls[0]?.[0]?.[0])).toContain(
@@ -573,7 +573,7 @@ describe("SubagentCoordinator", () => {
     internals.pending.set("subagent_1", new Promise<void>(() => {}));
 
     coordinator.markDelivered(read.eventId);
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
     await internals.completeTask(read);
     await internals.completeTask({
       ...completion("subagent_1", "follow-up result"),
@@ -910,14 +910,14 @@ describe("SubagentCoordinator", () => {
       ]);
       // Each unsaved result is left for the recovery sweep should its resume fail.
       for (const eventId of ["event_subagent_2", "event_subagent_3"]) {
-        expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
+        expect(mutate).toHaveBeenCalledWith("markAsyncAgentHandback", {
           eventId: eventId,
-          observed: false,
+          handback: "detached",
         });
       }
-      expect(mutate).not.toHaveBeenCalledWith("observeAsyncAgentResult", {
+      expect(mutate).not.toHaveBeenCalledWith("markAsyncAgentHandback", {
         eventId: "event_subagent_1",
-        observed: false,
+        handback: "detached",
       });
       // Nothing is left queued to be written or resumed again.
       expect(await coordinator.drainCompletionsToParent()).toBe(0);
@@ -984,13 +984,67 @@ describe("SubagentCoordinator", () => {
         "subagent_2",
       ]);
       for (const eventId of ["event_subagent_1", "event_subagent_2"]) {
-        expect(mutate).toHaveBeenCalledWith("observeAsyncAgentResult", {
+        expect(mutate).toHaveBeenCalledWith("markAsyncAgentHandback", {
           eventId: eventId,
-          observed: false,
+          handback: "detached",
         });
       }
       expect(await coordinator.drainCompletionsToParent()).toBe(0);
     } finally {
+      mutate.mockRestore();
+    }
+  });
+
+  it("leaves a dropped completion pending when the detach write and the resume both fail", async () => {
+    const mutate = spyOn(runtime, "mutate").mockRejectedValue(
+      new Error("convex down"),
+    );
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const resumeParent = mock(
+      async (): Promise<SubagentResumeOutcome> => "capacity",
+    );
+    const coordinator = new SubagentCoordinator(
+      parentSession({
+        persistModelMessages: mock(async (): Promise<never> => {
+          throw new Error("append failed");
+        }),
+      }),
+      {},
+      Date.now() + 60_000,
+      { resumeParent: resumeParent },
+    );
+    coordinator["completions"].push({
+      ...lateChild(),
+      status: "completed",
+      response: "dropped",
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown): void => {
+      unhandled.push(error);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      // Only the append's own error surfaces; the detach write and the
+      // refused resume are logged and swallowed.
+      expect(
+        await coordinator
+          .drainCompletionsToParent()
+          .catch((error: unknown): string => String(error)),
+      ).toBe("Error: append failed");
+      await Bun.sleep(0);
+      expect(mutate.mock.calls).toEqual([
+        [
+          "markAsyncAgentHandback",
+          { eventId: "event_subagent_1", handback: "detached" },
+        ],
+      ]);
+      expect(resumeParent).toHaveBeenCalledTimes(1);
+      expect(unhandled).toEqual([]);
+      // Nothing is left queued here: the row, still pending, is the sweep's.
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
       mutate.mockRestore();
     }
   });
@@ -1021,7 +1075,7 @@ describe("SubagentCoordinator", () => {
       conversationKey: "subagent-subagent_1",
     });
     coordinator.markDelivered("event_subagent_1");
-    coordinator.confirmDelivered();
+    await coordinator.confirmDelivered();
 
     expect(await coordinator.waitForIdle()).toBe("timeout");
     expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(0);
@@ -1047,10 +1101,10 @@ describe("SubagentCoordinator", () => {
         }),
     );
     // The child finishes, and leaves the coordinator, while the detach awaits
-    // its observed write.
+    // its hand-back write.
     const mutate = spyOn(runtime, "mutate").mockImplementation(
       async (name): Promise<true> => {
-        if (name === "observeAsyncAgentResult") {
+        if (name === "markAsyncAgentHandback") {
           finish();
           while (coordinator.runningCount > 0) await Bun.sleep(1);
         }
@@ -1210,7 +1264,7 @@ describe("SubagentCoordinator", () => {
         "agent_child",
         "subagent-child",
       ),
-      observed: false,
+      handback: "detached",
       status: "completed",
       response: "the late answer",
       createdAt: "2026-10-11T00:00:00.000Z",
@@ -1219,10 +1273,12 @@ describe("SubagentCoordinator", () => {
     });
     const observe = spyOn(
       asyncAgentResults,
-      "observeAsyncAgentResult",
+      "markAsyncAgentHandback",
     ).mockImplementation(
-      async (eventId: string, observed: boolean): Promise<void> => {
-        if (observed) seen.add(eventId);
+      async (eventId: string, handback: string): Promise<boolean> => {
+        if (handback === "stored") seen.add(eventId);
+
+        return false;
       },
     );
     const told: string[] = [];
@@ -1286,11 +1342,75 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("marks a pending result the model read stored once the step that carries the read is saved, not at the read", async (): Promise<void> => {
+    const parentEventId = "acct:account_1:agent:agent_parent:api:event_parent";
+    const parentKey = "acct:account_1:agent:agent_parent:api:chat";
+    const taskId = createSubagentTaskId(parentEventId);
+    const childEventId = scopedDirectEventId(
+      "account_1",
+      "agent_child",
+      taskId,
+    );
+    // A child of an earlier run that finished with nobody storing it.
+    const owned = spyOn(
+      subagentToolUtils,
+      "getOwnedSubagent",
+    ).mockResolvedValue({
+      accountId: "account_1",
+      eventId: childEventId,
+      conversationKey: scopedDirectConversationKey(
+        "account_1",
+        "agent_child",
+        "subagent-child",
+      ),
+      handback: "pending",
+      status: "completed",
+      response: "the answer",
+      createdAt: "2026-10-11T00:00:00.000Z",
+      updatedAt: "2026-10-11T00:00:00.000Z",
+      expiresAt: Date.now() + 60_000,
+    });
+    const observe = spyOn(
+      asyncAgentResults,
+      "markAsyncAgentHandback",
+    ).mockResolvedValue(false);
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const { default: getStatus } =
+      await import("../src/harness/tools/get-subagent-status.tool.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession({ conversationKey: parentKey }),
+      {},
+      Date.now() + 60_000,
+    );
+
+    try {
+      await getStatus({
+        accountId: "account_1",
+        eventId: parentEventId,
+        conversationKey: parentKey,
+        watch: coordinator,
+      }).get_subagent_status?.execute?.(
+        { taskId: taskId, agentId: "agent_child" },
+        { toolCallId: "call-1", messages: [], context: {} },
+      );
+      // The read alone stores nothing: a pod that dies before the step saves
+      // leaves the row to the sweep.
+      expect(observe).not.toHaveBeenCalled();
+
+      await coordinator.confirmDelivered();
+
+      expect(observe.mock.calls).toEqual([[childEventId, "stored"]]);
+    } finally {
+      owned.mockRestore();
+      observe.mockRestore();
+    }
+  });
+
   it("keeps a result the parent already has seen when its child detaches on a follow-up", async (): Promise<void> => {
     const observe = spyOn(
       asyncAgentResults,
-      "observeAsyncAgentResult",
-    ).mockResolvedValue();
+      "markAsyncAgentHandback",
+    ).mockResolvedValue(false);
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
@@ -1316,19 +1436,20 @@ describe("SubagentCoordinator", () => {
       await coordinator.drainCompletionsAndDetachToParent();
 
       // Only the child the parent has nothing from is left to the sweep.
-      expect(observe.mock.calls).toEqual([["event_2", false]]);
+      expect(observe.mock.calls).toEqual([["event_2", "detached"]]);
     } finally {
       observe.mockRestore();
     }
   });
 
-  it("walks every page of lost results and retries a full conversation without rerunning its hook", async (): Promise<void> => {
+  it("walks every page of lost results and retries a full conversation or a still queued resume without rerunning its hook", async (): Promise<void> => {
     const rows = [lostRow("event_full"), lostRow("event_other")];
     const pages = spyOn(
       asyncAgentResults,
       "listUnobservedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
+        handback?: string;
         status: string;
         cursor: string | null;
       }): Promise<{
@@ -1337,7 +1458,8 @@ describe("SubagentCoordinator", () => {
         isDone: boolean;
       }> => {
         const unseen = rows.filter(
-          (row): boolean => row.status === options.status,
+          (row): boolean =>
+            row.handback === options.handback && row.status === options.status,
         );
         // One row a page, so the second is only reached through the cursor.
         const index = options.cursor === null ? 0 : 1;
@@ -1351,8 +1473,8 @@ describe("SubagentCoordinator", () => {
     );
     const observe = spyOn(
       asyncAgentResults,
-      "observeAsyncAgentResult",
-    ).mockResolvedValue();
+      "markAsyncAgentHandback",
+    ).mockResolvedValue(false);
     let hookRuns = 0;
     const hooks = spyOn(
       hookDispatcher,
@@ -1366,8 +1488,10 @@ describe("SubagentCoordinator", () => {
       },
     });
     const info = spyOn(log, "logInfo");
-    // The first conversation's queue is full on the first pass only.
-    const full = [true];
+    // The first conversation's queue is full on the first pass, and on the
+    // second its resume is a duplicate of one still queued, which stores the
+    // row when applied or is admitted again once it expired.
+    const refusals: SubagentResumeOutcome[] = ["capacity", "duplicate"];
     const resumed: Array<{ eventId: string; message: string }> = [];
     const resumeParent = async (
       _parent: unknown,
@@ -1375,9 +1499,9 @@ describe("SubagentCoordinator", () => {
       message: UserModelMessage,
       resultEventId: string,
     ): Promise<SubagentResumeOutcome> => {
-      if (resultEventId === rows[0]!.eventId && full.shift()) {
-        return "capacity";
-      }
+      const refusal =
+        resultEventId === rows[0]!.eventId ? refusals.shift() : undefined;
+      if (refusal) return refusal;
       resumed.push({ eventId: resultEventId, message: messageText(message) });
       rows.splice(
         rows.findIndex((row): boolean => row.eventId === resultEventId),
@@ -1397,6 +1521,8 @@ describe("SubagentCoordinator", () => {
           message: expect.stringContaining("rewritten 2"),
         },
       ]);
+      await resumeLostSubagentResults(lostParent, resumeParent);
+      expect(resumed).toHaveLength(1);
       await resumeLostSubagentResults(lostParent, resumeParent);
 
       // The retry carries the first pass's rewrite; the hook ran once a row.
@@ -1418,6 +1544,272 @@ describe("SubagentCoordinator", () => {
       observe.mockRestore();
       hooks.mockRestore();
       info.mockRestore();
+    }
+  });
+
+  it("holds a resume it queued, so the next pass reuses its message instead of rerunning the hook", async (): Promise<void> => {
+    // The row stays listed: a queued resume stores it only when applied.
+    const rows = [lostRow("event_queued")];
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        handback?: string;
+        status: string;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => ({
+        page: rows.filter(
+          (row): boolean =>
+            row.handback === options.handback && row.status === options.status,
+        ),
+        cursor: "end",
+        isDone: true,
+      }),
+    );
+    const observe = spyOn(
+      asyncAgentResults,
+      "markAsyncAgentHandback",
+    ).mockResolvedValue(false);
+    let hookRuns = 0;
+    const hooks = spyOn(
+      hookDispatcher,
+      "createAgentHookDispatcher",
+    ).mockResolvedValue({
+      hasHooksFor: (): boolean => true,
+      runMutation: async (): Promise<Record<string, unknown>> => {
+        hookRuns += 1;
+
+        return { visibleResult: `rewritten ${hookRuns}` };
+      },
+    });
+    const outcomes: SubagentResumeOutcome[] = ["queued", "duplicate"];
+    const messages: string[] = [];
+    const resumeParent = async (
+      _parent: unknown,
+      _taskId: string,
+      message: UserModelMessage,
+    ): Promise<SubagentResumeOutcome> => {
+      messages.push(messageText(message));
+
+      return outcomes.shift()!;
+    };
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(lostParent, resumeParent);
+      await resumeLostSubagentResults(lostParent, resumeParent);
+
+      expect(hookRuns).toBe(1);
+      expect(messages).toEqual([
+        expect.stringContaining("rewritten 1"),
+        expect.stringContaining("rewritten 1"),
+      ]);
+      expect(observe).not.toHaveBeenCalled();
+    } finally {
+      pages.mockRestore();
+      observe.mockRestore();
+      hooks.mockRestore();
+    }
+  });
+
+  it("the sweep resumes a pending hand-back only past the parent's hold window", async (): Promise<void> => {
+    const now = Date.now();
+    const minutes = (count: number): string =>
+      new Date(now - count * 60 * 1000).toISOString();
+    // Both rows finished with no run detaching them. The young one's parent
+    // may still be draining it; the old one has no live parent run left.
+    const rows: AsyncAgentResultRecord[] = [
+      { ...lostRow("event_young"), handback: "pending", updatedAt: minutes(5) },
+      { ...lostRow("event_old"), handback: "pending", updatedAt: minutes(30) },
+    ];
+    const windows: Array<{ handback?: string; updatedBefore: string }> = [];
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        handback?: string;
+        status: string;
+        updatedBefore: string;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => {
+        windows.push({
+          handback: options.handback,
+          updatedBefore: options.updatedBefore,
+        });
+
+        return {
+          page: rows.filter(
+            (row): boolean =>
+              row.handback === options.handback &&
+              row.status === options.status &&
+              row.updatedAt < options.updatedBefore,
+          ),
+          cursor: "end",
+          isDone: true,
+        };
+      },
+    );
+    const observe = spyOn(
+      asyncAgentResults,
+      "markAsyncAgentHandback",
+    ).mockResolvedValue(false);
+    const info = spyOn(log, "logInfo");
+    const resumed: string[] = [];
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(
+        lostParent,
+        async (
+          _parent: unknown,
+          _taskId: string,
+          _message: UserModelMessage,
+          resultEventId: string,
+        ): Promise<SubagentResumeOutcome> => {
+          resumed.push(resultEventId);
+
+          return "queued";
+        },
+      );
+
+      expect(resumed).toEqual([lostRow("event_old").eventId]);
+      expect(observe).not.toHaveBeenCalled();
+      // A pending result waits out the parent's whole hold, longer than the
+      // grace a detached one gets.
+      const before = (handback: string | undefined): string =>
+        windows.find((window): boolean => window.handback === handback)!
+          .updatedBefore;
+      expect(before("pending") < before("detached")).toBe(true);
+      expect(before("pending") < minutes(15)).toBe(true);
+      // Each one is counted: a parent run dropped it without a trace.
+      expect(
+        info.mock.calls
+          .filter(
+            ([message]): boolean =>
+              message === "Subagent result left pending past the parent's hold",
+          )
+          .map(([, data]) => data),
+      ).toEqual([
+        {
+          eventId: lostRow("event_old").eventId,
+          ageMs: expect.any(Number),
+          outcome: "completed",
+        },
+      ]);
+    } finally {
+      pages.mockRestore();
+      observe.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  it("fails a pending child still running past the bound and detaches it, so the next pass delivers it after the grace", async (): Promise<void> => {
+    const now = Date.now();
+    const minutes = (count: number): string =>
+      new Date(now - count * 60 * 1000).toISOString();
+    // Both parents and their pod died before any detach: the young child may
+    // still be running on its budget, the old one cannot be.
+    const rows: AsyncAgentResultRecord[] = [
+      {
+        ...lostRow("event_young"),
+        handback: "pending",
+        status: "processing",
+        response: undefined,
+        updatedAt: minutes(5),
+      },
+      {
+        ...lostRow("event_dead"),
+        handback: "pending",
+        status: "processing",
+        response: undefined,
+        updatedAt: minutes(40),
+      },
+    ];
+    const windows: Array<{ handback?: string; status: string }> = [];
+    const pages = spyOn(
+      asyncAgentResults,
+      "listUnobservedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        handback?: string;
+        status: string;
+        updatedBefore: string;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => {
+        windows.push({ handback: options.handback, status: options.status });
+
+        return {
+          page: rows.filter(
+            (row): boolean =>
+              row.handback === options.handback &&
+              row.status === options.status &&
+              row.updatedAt < options.updatedBefore,
+          ),
+          cursor: "end",
+          isDone: true,
+        };
+      },
+    );
+    const observe = spyOn(
+      asyncAgentResults,
+      "markAsyncAgentHandback",
+    ).mockResolvedValue(false);
+    const record = spyOn(
+      asyncAgentResults,
+      "recordAsyncAgentResult",
+    ).mockResolvedValue();
+    const resumed: string[] = [];
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(
+        lostParent,
+        async (
+          _parent: unknown,
+          _taskId: string,
+          _message: UserModelMessage,
+          resultEventId: string,
+        ): Promise<SubagentResumeOutcome> => {
+          resumed.push(resultEventId);
+
+          return "queued";
+        },
+      );
+
+      // The pending window covers processing rows like the others.
+      expect(windows).toContainEqual({
+        handback: "pending",
+        status: "processing",
+      });
+      // Failed and detached in one write, so a crash between the two never
+      // leaves a failed row waiting out another hold.
+      expect(record.mock.calls).toEqual([
+        [
+          lostRow("event_dead").eventId,
+          { status: "failed", error: expect.stringContaining("restarted") },
+          { onlyWhileProcessing: true, handback: "detached" },
+        ],
+      ]);
+      expect(observe).not.toHaveBeenCalled();
+      expect(resumed).toEqual([]);
+    } finally {
+      pages.mockRestore();
+      observe.mockRestore();
+      record.mockRestore();
     }
   });
 
@@ -1443,21 +1835,25 @@ describe("SubagentCoordinator", () => {
       "listUnobservedAsyncAgentResults",
     ).mockImplementation(
       async (options: {
+        handback?: string;
         status: string;
       }): Promise<{
         page: AsyncAgentResultRecord[];
         cursor: string;
         isDone: boolean;
       }> => ({
-        page: rows.filter((row): boolean => row.status === options.status),
+        page: rows.filter(
+          (row): boolean =>
+            row.handback === options.handback && row.status === options.status,
+        ),
         cursor: "end",
         isDone: true,
       }),
     );
     const observe = spyOn(
       asyncAgentResults,
-      "observeAsyncAgentResult",
-    ).mockResolvedValue();
+      "markAsyncAgentHandback",
+    ).mockResolvedValue(false);
     const record = spyOn(
       asyncAgentResults,
       "recordAsyncAgentResult",
@@ -2408,7 +2804,7 @@ function lostRow(name: string): AsyncAgentResultRecord {
         name,
       ),
     },
-    observed: false,
+    handback: "detached",
     status: "completed",
     response: `the answer of ${name}`,
     createdAt: longAgo,

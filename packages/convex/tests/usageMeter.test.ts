@@ -17,6 +17,7 @@ import {
 import {
   EMPTY_USAGE,
   HOSTED_MCP_MEMORY_GB,
+  meterCostByCategoryEur,
   meterCostEur,
 } from "../model/pricing";
 import {
@@ -143,6 +144,10 @@ describe("sandboxAccrual", () => {
     expect(sandboxAccrual({ ...base, provider: "machine" }, NOW).usage).toEqual(
       {},
     );
+    // An isolate's commands are metered as they end; its row never bills.
+    expect(sandboxAccrual({ ...base, provider: "worker" }, NOW).usage).toEqual(
+      {},
+    );
     expect(
       sandboxAccrual({ ...daytona, ownCredentials: true }, NOW).usage,
     ).toEqual({});
@@ -182,6 +187,17 @@ test("an hour of the default MicroVM costs about €0.14", () => {
   });
 
   expect(cost).toBeCloseTo(0.1368, 4);
+});
+
+test("an hour of worker commands costs about €0.07 and counts as sandbox time", () => {
+  const usage = {
+    ...EMPTY_USAGE,
+    workerMs: 3600 * 1000,
+    workerRequests: 3600,
+  };
+
+  expect(meterCostEur(usage)).toBeCloseTo(0.07308, 4);
+  expect(meterCostByCategoryEur(usage).sandboxes).toBeCloseTo(0.07308, 4);
 });
 
 test("maxing every cap costs no more than the plan's budget", () => {
@@ -530,6 +546,12 @@ describe("budget", () => {
       egressGb: 16.5,
       ingressGb: 2,
     };
+    const shares = {
+      sandboxHours: 0,
+      hostedMcpHours: 0,
+      storageGb: 30,
+      egressGb: 110,
+    };
     expect(usage).toEqual({
       enforced: true,
       plan: "free",
@@ -537,15 +559,13 @@ describe("budget", () => {
       months: ["2026-09"],
       usedPercent: 110,
       caps: PLAN_LIMITS.free.caps,
-      shares: {
-        sandboxHours: 0,
-        hostedMcpHours: 0,
-        storageGb: 30,
-        egressGb: 110,
-      },
+      shares: shares,
+      // The owner's one org is its own pool.
+      orgShares: shares,
       level: "exhausted",
       totals: amounts,
       days: [{ day: "2026-09-23", ...amounts }],
+      pool: { orgs: 1, shared: false, totals: amounts },
     });
   });
 
@@ -660,12 +680,13 @@ describe("budget", () => {
   });
 });
 
+// One owner per plan: owners pool their orgs' usage (`usagePool.test.ts`).
 async function seedAccount(t: T, plan: Plan = "free"): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",
       slug: "beeblast",
-      ownerAuthId: "auth_owner",
+      ownerAuthId: `auth_owner_${plan}`,
       plan: plan,
       createdAt: Date.now(),
     });

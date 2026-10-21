@@ -123,10 +123,6 @@ export function agentNamespaceFolder(agentId: string): string {
   return `agent/${normalizeFilesystemNamespace(agentId)}`;
 }
 
-export function conversationLeaseKey(conversationKey: string): string {
-  return `${INTERNAL_EVENT_ID_PREFIX}${hashScopedValue("conversation-lease", conversationKey)}`;
-}
-
 export function channelScopeKeyFromConversation(
   conversationKey: string,
   scope: "channel" | "conversation" = "channel",
@@ -282,10 +278,6 @@ export function accountAgentScopedKey(
   key: string,
 ): string {
   return accountScopedKey(accountId, `agent:${agentId}:${key}`);
-}
-
-export function accountScopedPrefix(accountId: string): string {
-  return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:`;
 }
 
 /**

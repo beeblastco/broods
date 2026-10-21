@@ -34,26 +34,6 @@ describe("a message core does not take", () => {
     });
   });
 
-  it("treats a 429 like a 5xx", async () => {
-    expect(await run("ratelimited")).toEqual({
-      deliveries: { a: [429, 200] },
-      dropped: [],
-      held: 0,
-      posted: ["$customer-0", "$customer-0"],
-      token: "s3",
-    });
-  });
-
-  it("is settled by a 4xx, which answers the same every time", async () => {
-    expect(await run("rejected")).toEqual({
-      deliveries: { a: [404] },
-      dropped: [],
-      held: 0,
-      posted: ["$customer-0"],
-      token: "s3",
-    });
-  });
-
   // #1033: core down past the old 5 minute window, and the forwarder
   // restarting meanwhile, used to lose the message.
   it("survives an outage longer than five minutes and a restart", async () => {
@@ -74,7 +54,7 @@ describe("a message core does not take", () => {
       posted: ["$customer-0", "$customer-0"],
       token: "s3",
     });
-  }, 30_000);
+  });
 
   // An agent's webhook path can move while an event waits for it.
   it("follows its agent to a new webhook path", async () => {

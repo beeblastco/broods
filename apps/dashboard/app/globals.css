@@ -40,6 +40,8 @@
   --color-card: var(--card);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  /* The pool's part the owner's other organizations used: muted, faded toward the empty track. */
+  --color-usage-other-orgs: var(--usage-other-orgs);
   --color-needs-input: var(--needs-input);
   --color-info: var(--info);
   --color-folder: var(--folder);
@@ -182,6 +184,7 @@ body {
   --sidebar-ring: oklch(0.708 0 0);
   --success: oklch(0.596 0.145 163.225);
   --warning: oklch(0.666 0.179 58.318);
+  --usage-other-orgs: oklch(0.784 0 0);
   --needs-input: oklch(0.558 0.288 302.321);
   --info: oklch(0.546 0.245 262.881);
   --folder: oklch(0.554 0.135 66.442);
@@ -230,6 +233,7 @@ body {
   --sidebar-ring: oklch(0.556 0 0);
   --success: oklch(0.765 0.177 163.223);
   --warning: oklch(0.828 0.189 84.429);
+  --usage-other-orgs: oklch(0.467 0 0);
   --needs-input: oklch(0.714 0.203 305.504);
   --info: oklch(0.707 0.165 254.624);
   --folder: oklch(0.852 0.199 91.936);
@@ -248,6 +252,19 @@ body {
    transform a drag writes and leave the frame trailing the cursor. */
 @utility transition-box {
   transition-property: width, height;
+}
+
+/* The trace waterfall rescales once a second while a run is live, so its bars,
+   ticks and lines slide to the new scale. Position only: a bar's color change
+   stays instant. */
+@utility transition-timeline {
+  transition-property: left, width;
+  transition-duration: 200ms;
+  transition-timing-function: linear;
+
+  @media (prefers-reduced-motion: reduce) {
+    transition-property: none;
+  }
 }
 
 @layer base {

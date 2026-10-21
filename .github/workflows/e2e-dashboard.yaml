@@ -4,7 +4,8 @@ name: Dashboard e2e
 # `perf` for the render budget) against the deployment a rollout just
 # updated, since a green build and rollout only say the image is on the
 # cluster. On a pull request the same suites run inside ci.yaml, against the
-# build that job makes.
+# build that job makes, except the @rollout and @post-rollout tests: only this
+# run covers those.
 #
 # Needs the probe account in the target environment: DASHBOARD_E2E_EMAIL and
 # DASHBOARD_E2E_PASSWORD, a WorkOS user with email + password auth. The suites

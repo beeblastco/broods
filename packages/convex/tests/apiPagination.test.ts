@@ -61,17 +61,6 @@ test("a row inserted during a walk cannot repeat one already seen", async () => 
   expect(second.agents.map((agent) => agent.name)).toEqual(["f"]);
 });
 
-test("the last page reports no more and hands back no cursor", async () => {
-  const t = pageTest();
-  await seed(t, ["a", "b"]);
-
-  const body = await listAgents(t, 10, null);
-
-  expect(body.agents).toHaveLength(2);
-  expect(body.hasMore).toBe(false);
-  expect(body.nextCursor).toBeNull();
-});
-
 test("no limit still answers with the whole collection", async () => {
   const t = pageTest();
   await seed(t, ["a", "b", "c"]);

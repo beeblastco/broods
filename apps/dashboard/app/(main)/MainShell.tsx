@@ -18,8 +18,15 @@ import {
 import { CONVEX_ID_SHAPE } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useConvex,
+  useConvexAuth,
+  useMutation,
+  useQuery,
+} from "convex/react";
 import dynamic from "next/dynamic";
+import { analytics } from "@/app/lib/analytics";
 import { notFound, useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
@@ -58,6 +65,7 @@ export function MainShell({
   const syncProfile = useMutation(api.user.syncProfile);
   const signedIn = useSignedIn();
   const currentUser = useQuery(api.user.getCurrent, signedIn ? {} : "skip");
+  const convex = useConvex();
   const profileSynced = useRef(false);
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
   const [syncRetry, setSyncRetry] = useState(0);
@@ -72,9 +80,13 @@ export function MainShell({
   }, []);
 
   // An expired session signs in again and lands back where it was; the
-  // sign-in route validates `returnTo`.
+  // sign-in route validates `returnTo`. PostHog starts a fresh anonymous id
+  // first, so a different account signing in here is not counted as this one.
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
+      void analytics.then((posthog): void => {
+        posthog.reset();
+      });
       const returnTo = window.location.pathname + window.location.search;
       router.replace(`/auth/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
     }
@@ -109,6 +121,26 @@ export function MainShell({
       profileSynced.current = false;
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
+
+  // PostHog tracks behaviour anonymously and never learns who the user is: it
+  // gets a keyed id that counts one person once across devices, and the plan
+  // rides every event as a property to segment by. A one-off query, so a
+  // backend that lacks it (a deploy in flight) costs the id, never the page.
+  useEffect(() => {
+    if (!currentUser) return;
+    void analytics.then((posthog): void => {
+      posthog.register({ plan: currentUser.plan });
+    });
+    convex
+      .query(api.user.analyticsId, {})
+      .then((id): void => {
+        if (id)
+          void analytics.then((posthog): void => {
+            posthog.identify(id);
+          });
+      })
+      .catch((): void => {});
+  }, [convex, currentUser]);
 
   // The reporter is the first child of both fragments, one tree position, so
   // it survives the auth flip instead of registering every observer twice.

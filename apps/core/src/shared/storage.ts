@@ -319,6 +319,21 @@ interface RoleSessionStore {
   resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;
 }
 
+/** Scoped account keys: a bask_ that is not the account key acts as a role. Made in the dashboard. */
+interface AccountApiKeyStore {
+  /**
+   * A live key on an active account and the role principal it acts as;
+   * null when unknown, expired or disabled. `stampDue` asks for a lastUsedAt write.
+   */
+  resolveByKeyHash(keyHash: string): Promise<{
+    keyId: string;
+    account: AccountRecord;
+    principal: RolePrincipal;
+    stampDue: boolean;
+  } | null>;
+  touchLastUsed(keyId: string, usedAt: number): Promise<void>;
+}
+
 /** The project a usage write came from, or the agent or workspace that names it. */
 export interface UsageSource {
   projectId?: string;
@@ -328,8 +343,8 @@ export interface UsageSource {
 
 /**
  * The account's monthly compute budget and the usage only core sees:
- * hosted-MCP invokes, media egress and attachment ingress. Sandbox time and
- * storage are metered in Convex itself.
+ * hosted-MCP invokes, worker commands, media egress and attachment ingress.
+ * Other sandbox time and storage are metered in Convex itself.
  */
 interface BudgetStore {
   /** Null for an unknown account. */
@@ -342,7 +357,12 @@ interface BudgetStore {
     accountId: string,
     usage: Pick<
       Partial<UsageQuantities>,
-      "hostedMcpGbSeconds" | "hostedMcpRequests" | "egressGb" | "ingressGb"
+      | "hostedMcpGbSeconds"
+      | "hostedMcpRequests"
+      | "workerMs"
+      | "workerRequests"
+      | "egressGb"
+      | "ingressGb"
     >,
     source?: UsageSource,
   ): Promise<void>;
@@ -386,6 +406,7 @@ interface AuditLedgerStore {
 export interface Storage {
   auditLedger: AuditLedgerStore;
   accounts: AccountStore;
+  accountApiKeys: AccountApiKeyStore;
   agents: AgentStore;
   budgets: BudgetStore;
   agentDeployments: AgentDeploymentStore;
