@@ -484,19 +484,6 @@ type TaskQueryField = (typeof TASK_QUERY_FIELDS)[number];
 // words, rejoined, must appear in one span's search text.
 export type TaskQuery = Query<TaskQueryField>;
 
-// Consecutive model steps that all called one tool, shown as one row. `span`
-// is the synthetic row: first start to last end, summed duration.
-export interface StepFold {
-  label: string;
-  span: ObservabilitySpanRow;
-  steps: ObservabilitySpanRow[];
-}
-
-// One sibling row in the waterfall: a span, or a fold of steps.
-export type WaterfallItem =
-  | { type: "span"; span: ObservabilitySpanRow }
-  | { type: "fold"; fold: StepFold };
-
 // Something that went wrong on one span: a failure, or retries it got past.
 export interface SpanIssue {
   atMs: number;
@@ -513,7 +500,7 @@ interface RowOnPath {
 }
 
 // The run's issues in time order, each with the rows above it; per span id
-// (a fold's too) the issues under it; and per span id its own.
+// the issues under it; and per span id its own.
 export interface RunIssues {
   all: Array<{
     issue: SpanIssue;
@@ -542,8 +529,8 @@ interface WaterfallView {
   onSelect: (key: string) => void;
   selectedKey: string | null;
   toggle: (key: string) => void;
-  // Rows whose fold the person flipped from its default: a step starts open,
-  // a fold of steps closed.
+  // Rows the person flipped from their default: a step starts open, anything
+  // else closed.
   toggled: Set<string>;
 }
 
@@ -1210,33 +1197,6 @@ export function failureCause(group: SpanGroup): string | null {
     : error;
 }
 
-/**
- * The waterfall's sibling rows: runs of two or more model steps whose tool
- * calls all go to one tool fold into one row, everything else stays a span.
- */
-export function foldSteps(
-  siblings: ObservabilitySpanRow[],
-  childrenByParent: Map<string, ObservabilitySpanRow[]>,
-): WaterfallItem[] {
-  const runs: Array<{ tool: string | null; spans: ObservabilitySpanRow[] }> =
-    [];
-  for (const span of siblings) {
-    const tool = soleToolName(span, childrenByParent);
-    const last = runs.at(-1);
-    if (tool !== null && last?.tool === tool) {
-      last.spans.push(span);
-    } else {
-      runs.push({ tool: tool, spans: [span] });
-    }
-  }
-
-  return runs.flatMap(({ tool, spans }): WaterfallItem[] =>
-    tool !== null && spans.length > 1
-      ? [{ type: "fold", fold: stepFold(tool, spans, childrenByParent) }]
-      : spans.map((span): WaterfallItem => ({ type: "span", span: span })),
-  );
-}
-
 /** Whether a request passes the search box: every field token, then the free text. */
 export function matchesTaskQuery(group: SpanGroup, query: TaskQuery): boolean {
   if (
@@ -1282,8 +1242,7 @@ export function axisTicks(spanMs: number): number[] {
 
 /**
  * Every issue in the run in time order, and the issues under each span, read
- * down the same tree the waterfall renders: steps folded, a subagent one leaf
- * line. Each issue keeps the rows above it, so a click can open them.
+ * down the same tree the waterfall renders: a subagent is one leaf line. Each issue keeps the rows above it, so a click can open them.
  */
 export function runIssues(group: SpanGroup): RunIssues {
   const all: RunIssues["all"] = [];
@@ -1299,20 +1258,7 @@ export function runIssues(group: SpanGroup): RunIssues {
           ...path,
           { key: spanKey(span), startsOpen: span.kind === "model.step" },
         ];
-    const under = foldSteps(children, group.childrenByParent).flatMap(
-      (item) => {
-        if (item.type === "span") return walk(item.span, inside);
-        const folded = item.fold.steps.flatMap((step) =>
-          walk(step, [
-            ...inside,
-            { key: spanKey(item.fold.span), startsOpen: false },
-          ]),
-        );
-        below.set(item.fold.span.spanId, folded);
-
-        return folded;
-      },
-    );
+    const under = children.flatMap((child) => walk(child, inside));
     below.set(span.spanId, under);
     // A failure counts once, where it happened: core closes the open step and
     // tool with the run's error, so a span that failed with a failure under it
@@ -1658,22 +1604,6 @@ function rowLabel(span: ObservabilitySpanRow, isTaskRow: boolean): string {
     : spanLabel(span);
 }
 
-/** The one named tool every tool call of a model step went to, or null. */
-function soleToolName(
-  span: ObservabilitySpanRow,
-  childrenByParent: Map<string, ObservabilitySpanRow[]>,
-): string | null {
-  if (span.kind !== "model.step") return null;
-  const names = new Set(
-    (childrenByParent.get(span.spanId) ?? [])
-      .filter((child) => child.kind === "tool.call")
-      .map((child) => child.attributes?.["tool.name"]),
-  );
-  const [name] = names;
-
-  return names.size === 1 && typeof name === "string" ? name : null;
-}
-
 function spanKey(span: ObservabilitySpanRow): string {
   return `${span.traceId}:${span.spanId}`;
 }
@@ -1765,57 +1695,6 @@ function runTraceIds(group: SpanGroup): string[] {
 /** Keeps a click inside a line's own control from selecting the row. */
 function stopRowClick(event: MouseEvent): void {
   event.stopPropagation();
-}
-
-/** The folded row for steps that all called `tool`, spanning first start to last end. */
-function stepFold(
-  tool: string,
-  steps: ObservabilitySpanRow[],
-  childrenByParent: Map<string, ObservabilitySpanRow[]>,
-): StepFold {
-  const first = steps[0];
-  const firstNumber = numericAttribute(first, "agent.step_number");
-  const lastNumber = numericAttribute(
-    steps[steps.length - 1],
-    "agent.step_number",
-  );
-  const range =
-    firstNumber !== undefined && lastNumber !== undefined
-      ? `step ${firstNumber + 1}-${lastNumber + 1}`
-      : "steps";
-  const calls = steps.reduce(
-    (count, step) =>
-      count +
-      (childrenByParent.get(step.spanId) ?? []).filter(
-        (child) => child.kind === "tool.call",
-      ).length,
-    0,
-  );
-  const endTimeMs = Math.max(...steps.map((step) => step.endTimeMs));
-
-  return {
-    label: `${range} ${tool} ×${calls}`,
-    steps: steps,
-    span: {
-      ...first,
-      spanId: `${first.spanId}:fold`,
-      endTimeMs: endTimeMs,
-      durationMs: steps.reduce((sum, step) => sum + step.durationMs, 0),
-      // A failed tool call leaves its step ok, so the fold looks at both.
-      status: steps.some(
-        (step) =>
-          step.status === "error" ||
-          (childrenByParent.get(step.spanId) ?? []).some(
-            (child) => child.status === "error",
-          ),
-      )
-        ? "error"
-        : steps.some((step) => step.status === "running")
-          ? "running"
-          : "ok",
-      attributes: {},
-    },
-  };
 }
 
 /** The agent a subagent run is, for its avatar and name. */
@@ -2384,7 +2263,6 @@ function SpanLine({
   hasChildren,
   isOpen,
   isTaskRow,
-  label,
   onFocusTrace,
   onToggle,
   span,
@@ -2392,7 +2270,6 @@ function SpanLine({
   hasChildren: boolean;
   isOpen: boolean;
   isTaskRow: boolean;
-  label: string | undefined;
   onFocusTrace: (traceId: string) => void;
   onToggle: () => void;
   span: ObservabilitySpanRow;
@@ -2416,14 +2293,14 @@ function SpanLine({
     <StepLine
       hasChildren={hasChildren}
       isOpen={isOpen}
-      name={label ?? rowLabel(span, false)}
+      name={rowLabel(span, false)}
       onToggle={onToggle}
       span={span}
     />
   );
 }
 
-/** A model step, a fold of steps or a resumed pass: the name, the tokens, and the chevron that folds what ran under it. */
+/** A model step or a resumed pass: the name, the tokens, and the chevron that folds what ran under it. */
 function StepLine({
   hasChildren,
   isOpen,
@@ -2549,14 +2426,13 @@ function ToolLine({ span }: { span: ObservabilitySpanRow }): React.JSX.Element {
 
 /**
  * One waterfall row. The task row (depth 0) is always open and reads the whole
- * request's status and duration. `label` names a folded run of steps. An
- * issue on the row marks its edge; `below` counts the issues under it and,
- * while it is closed, marks them on its bar.
+ * request's status and duration. An issue on the row marks its edge;
+ * `below` counts the issues under it and, while it is closed, marks them on
+ * its bar.
  */
 function SpanRow({
   span,
   depth,
-  label,
   isOpen,
   hasChildren,
   onToggle,
@@ -2572,7 +2448,6 @@ function SpanRow({
 }: {
   span: ObservabilitySpanRow;
   depth: number;
-  label?: string;
   isOpen: boolean;
   hasChildren: boolean;
   onToggle: () => void;
@@ -2631,7 +2506,6 @@ function SpanRow({
               hasChildren={hasChildren}
               isOpen={isOpen}
               isTaskRow={isTaskRow}
-              label={label}
               onFocusTrace={onFocusTrace}
               onToggle={onToggle}
               span={span}
@@ -3263,46 +3137,9 @@ function TimingChip({
   );
 }
 
-/** A folded run of steps: one row that opens onto the individual steps. */
-function renderFoldRows(
-  fold: StepFold,
-  depth: number,
-  enclosingRootLive: boolean,
-  view: WaterfallView,
-): ReactNode[] {
-  const key = spanKey(fold.span);
-  const isOpen = view.toggled.has(key);
-  const rows: ReactNode[] = [
-    <SpanRow
-      key={`row:${key}`}
-      span={fold.span}
-      depth={depth}
-      label={fold.label}
-      isOpen={isOpen}
-      hasChildren
-      onToggle={() => view.toggle(key)}
-      isSelected={false}
-      onClick={() => view.toggle(key)}
-      group={view.group}
-      taskRunning={enclosingRootLive}
-      highlighted={false}
-      onFocusTrace={view.onFocusTrace}
-      issue={null}
-      below={view.issues.below.get(fold.span.spanId) ?? []}
-      live={view.live}
-    />,
-  ];
-  if (!isOpen) return rows;
-  for (const step of fold.steps) {
-    rows.push(...renderSpanRows(step, depth + 1, enclosingRootLive, view));
-  }
-
-  return rows;
-}
-
 /**
  * A span's row, then what ran under it when open: a step's reasoning, its
- * tool calls (steps folded) and its answer. A step starts open, anything
+ * tool calls and its answer. A step starts open, anything
  * else closed, and `view.toggled` flips that. `enclosingRootLive` is whether
  * the nearest enclosing root run is live; a resumed pass is itself a root
  * and judged on its own freshness. A subagent is one leaf line here: its own
@@ -3371,12 +3208,8 @@ function renderSpanRows(
       />,
     );
   }
-  for (const item of foldSteps(children, view.group.childrenByParent)) {
-    rows.push(
-      ...(item.type === "span"
-        ? renderSpanRows(item.span, depth + 1, rootLive, view)
-        : renderFoldRows(item.fold, depth + 1, rootLive, view)),
-    );
+  for (const child of children) {
+    rows.push(...renderSpanRows(child, depth + 1, rootLive, view));
   }
   if (response !== undefined) {
     rows.push(
