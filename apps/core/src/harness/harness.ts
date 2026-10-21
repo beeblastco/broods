@@ -109,10 +109,12 @@ import {
 import {
   attemptRecordingMiddleware,
   cacheBreakpointFromProviderOptions,
+  markedForCache,
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
+  withCacheBreakpoint,
 } from "./provider.ts";
 import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
@@ -2019,37 +2021,6 @@ function withEnvironment(
       ],
     },
   ];
-}
-
-/**
- * Marks the item at `index` (the last by default) as a prompt cache
- * breakpoint, at the ends of the stored system prompt and history the next run
- * reads back. Unchanged when the run's model takes no breakpoint.
- */
-function withCacheBreakpoint<T extends { providerOptions?: ProviderOptions }>(
-  items: T[],
-  breakpoint: ProviderOptions | undefined,
-  index: number = items.length - 1,
-): T[] {
-  const item = items[index];
-  if (breakpoint === undefined || item === undefined) {
-    return items;
-  }
-
-  return items.with(index, markedForCache(item, breakpoint));
-}
-
-/** `item` with the breakpoint's options merged into its own, per provider. */
-function markedForCache<T extends { providerOptions?: ProviderOptions }>(
-  item: T,
-  breakpoint: ProviderOptions,
-): T {
-  const providerOptions = { ...item.providerOptions };
-  for (const [provider, options] of Object.entries(breakpoint)) {
-    providerOptions[provider] = { ...providerOptions[provider], ...options };
-  }
-
-  return { ...item, providerOptions: providerOptions };
 }
 
 /**
