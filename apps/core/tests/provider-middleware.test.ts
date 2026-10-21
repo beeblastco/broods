@@ -506,7 +506,7 @@ describe("toolImagesAsUserMessageMiddleware", () => {
           _url: Parameters<typeof fetch>[0],
           init?: RequestInit,
         ): Promise<Response> => {
-          body = JSON.parse(String(init?.body));
+          body = await new Response(init?.body).json();
 
           return Response.json({
             choices: [
