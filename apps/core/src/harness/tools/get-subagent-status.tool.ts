@@ -27,10 +27,12 @@ interface GetSubagentStatusContext extends SubagentToolContext {
   watch?: SubagentWatch;
 }
 
+// `delivery: "automatic"` stands in for the result when a resume of it already
+// waits in the queue and tells the conversation next.
 type SubagentStatusOutput = Pick<
   AsyncAgentResultRecord,
   "status" | "response" | "error"
->;
+> & { delivery?: "automatic" };
 
 export default function getSubagentStatusTool(
   context: GetSubagentStatusContext,
@@ -38,7 +40,7 @@ export default function getSubagentStatusTool(
   return {
     get_subagent_status: tool({
       description:
-        "Check a persistent subagent started earlier in this conversation, using the taskId and agentId from run_subagent. A running subagent this turn started is waited on for up to 60 seconds first. You rarely need this: its result arrives in this conversation as a new message when it finishes, even after your turn ends, so you can simply end your turn.",
+        'Check a persistent subagent started earlier in this conversation, using the taskId and agentId from run_subagent. A running subagent this turn started is waited on for up to 60 seconds first. You rarely need this: its result arrives in this conversation as a new message when it finishes, even after your turn ends, so you can simply end your turn. A result already on its way answers delivery "automatic" instead of a response: it arrives as the next message.',
       inputSchema: jsonSchema<SubagentToolInput>({
         type: "object",
         properties: SUBAGENT_TOOL_PROPERTIES,
@@ -68,13 +70,16 @@ export default function getSubagentStatusTool(
         // coordinator marks it once the step that carries this read is saved
         // (`confirmDelivered`), so a pod that dies in between leaves it to the
         // sweep. A detached row is the sweep's already, so the read marks it
-        // now, as does a read with no coordinator to confirm it later.
+        // now, as does a read with no coordinator to confirm it later. A
+        // resume of it already queued keeps it: that resume tells it next, so
+        // this read hands nothing over.
         if (record.status === "completed" || record.status === "failed") {
           if (
             isHandbackOwed(record) &&
-            (!context.watch || record.handback !== "pending")
+            (!context.watch || record.handback !== "pending") &&
+            (await markAsyncAgentHandback(record.eventId, "stored"))
           ) {
-            await markAsyncAgentHandback(record.eventId, "stored");
+            return { status: record.status, delivery: "automatic" };
           }
           context.watch?.markDelivered(record.eventId);
         }

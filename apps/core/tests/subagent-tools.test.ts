@@ -196,6 +196,49 @@ it("marks a detached child's result seen at read, and a failed mark keeps the re
   }
 });
 
+it("leaves a detached child's result to its queued resume", async (): Promise<void> => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
+  const owned = spyOn(subagentToolUtils, "getOwnedSubagent").mockResolvedValue({
+    accountId: ACCOUNT_ID,
+    eventId: childEventId,
+    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "late"),
+    handback: "detached",
+    status: "completed",
+    response: "late answer",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  });
+  // Convex answers that a resume of the result already waits in the queue.
+  spyOn(runtime, "mutate").mockResolvedValue(true as never);
+  const delivered: string[] = [];
+  const { default: getStatus } =
+    await import("../src/harness/tools/get-subagent-status.tool.ts");
+  const tools = getStatus({
+    accountId: ACCOUNT_ID,
+    eventId: PARENT_EVENT_ID,
+    conversationKey: PARENT_CONVERSATION_KEY,
+    watch: watchWith({
+      markDelivered: (eventId: string): void => {
+        delivered.push(eventId);
+      },
+    }),
+  });
+
+  try {
+    expect(
+      await execute(tools.get_subagent_status, {
+        taskId: taskId,
+        agentId: AGENT_ID,
+      }),
+    ).toEqual({ status: "completed", delivery: "automatic" });
+    expect(delivered).toEqual([]);
+  } finally {
+    owned.mockRestore();
+  }
+});
+
 it("does not wait on a task paired with the wrong agent", async () => {
   const taskId = createSubagentTaskId(PARENT_EVENT_ID);
   spyOn(runtime, "query").mockResolvedValue({
