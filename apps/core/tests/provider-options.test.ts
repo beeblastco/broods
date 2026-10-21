@@ -3,15 +3,37 @@
  * conversation run, and the calls that must not get them.
  */
 
-import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 import { describe, expect, test } from "bun:test";
 import {
   cacheBreakpointFromProviderOptions,
   providerOptionsFromModelConfig,
 } from "../src/harness/provider.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
+import {
+  compatibleEndpoint,
+  type ChatRequest,
+} from "./helpers/compatible-endpoint.ts";
 
 const CONVERSATION_KEY = "channel:acct:chat";
+
+// The body a custom endpoint receives for one unmarked call with the
+// conversation run's options for `modelId`.
+async function requestBody(modelId: string): Promise<ChatRequest | undefined> {
+  const config: AgentConfig = {
+    model: { provider: "custom", modelId: modelId },
+  };
+  const { bodies, chat } = compatibleEndpoint(modelId);
+  const providerOptions = providerOptionsFromModelConfig(
+    config,
+    CONVERSATION_KEY,
+  );
+  await chat.doGenerate({
+    prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    ...(providerOptions ? { providerOptions: providerOptions } : {}),
+  });
+
+  return bodies[0];
+}
 
 describe("providerOptionsFromModelConfig", () => {
   test("defaults anthropic cacheControl to ephemeral", () => {
@@ -76,9 +98,19 @@ describe("providerOptionsFromModelConfig", () => {
     expect(options?.["cx"]?.["prompt_cache_key"]).toMatch(/^[0-9a-f]{32}$/);
   });
 
-  test("a custom endpoint serving anything else gets no cache key", () => {
+  test("a custom endpoint serving Claude gets cache_control, no key", () => {
     const config: AgentConfig = {
       model: { provider: "custom", modelId: "cc/claude-sonnet-5" },
+    };
+
+    expect(providerOptionsFromModelConfig(config, CONVERSATION_KEY)).toEqual({
+      openaiCompatible: { cache_control: { type: "ephemeral" } },
+    });
+  });
+
+  test("a custom endpoint serving anything else gets nothing", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "qwen3-coder" },
     };
 
     expect(
@@ -87,46 +119,15 @@ describe("providerOptionsFromModelConfig", () => {
   });
 
   test("the custom cache key reaches the request body", async () => {
-    const config: AgentConfig = {
-      model: { provider: "custom", modelId: "gpt-6-luna" },
-    };
-    const bodies: Array<Record<string, unknown>> = [];
-    const chat = new OpenAICompatibleChatLanguageModel("gpt-6-luna", {
-      provider: "custom.chat",
-      url: ({ path }): string => `https://models.example.test/v1${path}`,
-      fetch: Object.assign(
-        async (
-          _url: Parameters<typeof fetch>[0],
-          init?: RequestInit,
-        ): Promise<Response> => {
-          if (typeof init?.body === "string")
-            bodies.push(JSON.parse(init.body));
+    const body = await requestBody("gpt-6-luna");
 
-          return Response.json({
-            choices: [
-              {
-                message: { role: "assistant", content: "ok" },
-                finish_reason: "stop",
-              },
-            ],
-          });
-        },
-        { preconnect: fetch.preconnect },
-      ),
-    });
-    const providerOptions = providerOptionsFromModelConfig(
-      config,
-      CONVERSATION_KEY,
-    );
+    expect(body?.["prompt_cache_key"]).toMatch(/^[0-9a-f]{32}$/);
+  });
 
-    await chat.doGenerate({
-      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
-      ...(providerOptions ? { providerOptions: providerOptions } : {}),
-    });
+  test("the Claude cache mark adds no field to the request body", async () => {
+    const body = await requestBody("cc/claude-sonnet-5");
 
-    expect(bodies[0]?.["prompt_cache_key"]).toBe(
-      providerOptions?.["custom"]?.["prompt_cache_key"],
-    );
+    expect(JSON.stringify(body)).not.toContain("cache_control");
   });
 
   test("leaves other providers untouched", () => {

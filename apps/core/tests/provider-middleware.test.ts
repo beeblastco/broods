@@ -17,7 +17,6 @@ import {
   type LanguageModelV4CallOptions,
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
-import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { describe, expect, it } from "bun:test";
 import {
@@ -32,13 +31,12 @@ import {
   type ModelAttempt,
 } from "../src/harness/provider.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
+import {
+  compatibleEndpoint,
+  type ChatRequest,
+} from "./helpers/compatible-endpoint.ts";
 
 type PromptMessage = { role: string; content: unknown };
-
-// A chat-completions request body as the compatible converter builds it.
-type ChatRequest = {
-  messages: { role: string; content: unknown; tool_call_id?: string }[];
-};
 
 async function transform(prompt: PromptMessage[]): Promise<PromptMessage[]> {
   const result = await mergeSystemMessagesMiddleware.transformParams!({
@@ -499,43 +497,12 @@ describe("tool result images on a custom endpoint", () => {
   };
 
   // Each request the converter builds over `calls` calls to a fresh endpoint,
-  // answered by `statuses` in turn. The model class, not the factory:
-  // harness.test.ts mocks `createOpenAICompatible` for the files after it.
+  // answered by `statuses` in turn.
   async function requests(
     statuses: number[],
     calls = 1,
   ): Promise<ChatRequest[]> {
-    const bodies: ChatRequest[] = [];
-    const chat = new OpenAICompatibleChatLanguageModel("cx/gpt-6.1-sol", {
-      provider: "custom.chat",
-      url: ({ path }): string => `https://models.example.test/v1${path}`,
-      supportsMultiPartToolContent: true,
-      fetch: Object.assign(
-        async (
-          _url: Parameters<typeof fetch>[0],
-          init?: RequestInit,
-        ): Promise<Response> => {
-          if (typeof init?.body === "string")
-            bodies.push(JSON.parse(init.body));
-          const status = statuses[bodies.length - 1] ?? 200;
-
-          return status === 200
-            ? Response.json({
-                choices: [
-                  {
-                    message: { role: "assistant", content: "7392" },
-                    finish_reason: "stop",
-                  },
-                ],
-              })
-            : Response.json(
-                { error: { message: "image input is not supported" } },
-                { status: status },
-              );
-        },
-        { preconnect: fetch.preconnect },
-      ),
-    });
+    const { bodies, chat } = compatibleEndpoint("cx/gpt-6.1-sol", statuses);
     const model = wrapLanguageModel({
       model: chat,
       middleware: [
@@ -619,39 +586,16 @@ describe("tool result images on a custom endpoint", () => {
 });
 
 describe("cache marks on a custom endpoint", () => {
-  const mark = { openaiCompatible: { cache_control: { type: "ephemeral" } } };
-  const cacheControl = { type: "ephemeral" };
+  // A configured TTL, to show the latest message copies the harness's mark.
+  const cacheControl = { type: "ephemeral", ttl: "1h" };
+  const mark = { openaiCompatible: { cache_control: cacheControl } };
 
   // The request body a compatible endpoint receives for `prompt`, sent through
   // the system merge and the latest-message mark.
   async function requestFor(
     prompt: LanguageModelV4Message[],
   ): Promise<ChatRequest | undefined> {
-    const bodies: ChatRequest[] = [];
-    const chat = new OpenAICompatibleChatLanguageModel("cc/claude-sonnet-5", {
-      provider: "custom.chat",
-      url: ({ path }): string => `https://models.example.test/v1${path}`,
-      supportsMultiPartToolContent: true,
-      fetch: Object.assign(
-        async (
-          _url: Parameters<typeof fetch>[0],
-          init?: RequestInit,
-        ): Promise<Response> => {
-          if (typeof init?.body === "string")
-            bodies.push(JSON.parse(init.body));
-
-          return Response.json({
-            choices: [
-              {
-                message: { role: "assistant", content: "ok" },
-                finish_reason: "stop",
-              },
-            ],
-          });
-        },
-        { preconnect: fetch.preconnect },
-      ),
-    });
+    const { bodies, chat } = compatibleEndpoint("cc/claude-sonnet-5");
     const model = wrapLanguageModel({
       model: chat,
       middleware: [mergeSystemMessagesMiddleware, cacheLatestMessageMiddleware],
