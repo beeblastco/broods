@@ -1,4 +1,4 @@
-import type { GetObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { readWorkspaceFile } from "../model/workspaceFs";
 import { workspaceNamespace } from "../model/workspaceRules";
@@ -7,13 +7,16 @@ const { bucket, mockSend } = vi.hoisted(() => {
   const bucket = new Map<string, Uint8Array>();
   const mockSend = vi.fn(
     async (
-      command: GetObjectCommand,
+      command: GetObjectCommand | HeadObjectCommand,
     ): Promise<{
-      Body: { transformToByteArray: () => Promise<Uint8Array> };
+      ContentLength?: number;
+      Body?: { transformToByteArray: () => Promise<Uint8Array> };
     }> => {
       const bytes = bucket.get(command.input.Key ?? "");
       if (!bytes)
         throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+      if (command instanceof HeadObjectCommand)
+        return { ContentLength: bytes.byteLength };
 
       return { Body: { transformToByteArray: async () => bytes } };
     },
@@ -32,6 +35,7 @@ const REF = { accountId: "account_a", workspaceId: "workspace_a" };
 beforeEach(() => {
   vi.stubEnv("FILESYSTEM_BUCKET_NAME", "managed-workspace-bucket");
   bucket.clear();
+  mockSend.mockClear();
 });
 
 afterEach(() => {
@@ -51,11 +55,16 @@ test("a missing file is a client error, not a crash", async () => {
   );
 });
 
-test("a file over the upload limit is refused", async () => {
+test("a file over the upload limit is refused before it is downloaded", async () => {
   const namespace = await workspaceNamespace("account_a", "workspace_a");
   bucket.set(`${namespace}/big.log`, new Uint8Array(512 * 1024 + 1));
 
   await expect(readWorkspaceFile(REF, "big.log")).rejects.toThrow(
     "cannot be previewed",
   );
+  expect(
+    mockSend.mock.calls.some(
+      ([command]) => command instanceof GetObjectCommand,
+    ),
+  ).toBe(false);
 });

@@ -16,10 +16,10 @@ import {
   deleteS3Prefix,
   ensureS3DirectoryMarkers,
   getS3ObjectUrl,
-  isMissingS3Error,
   listS3Prefix,
   readS3Bytes,
   s3ObjectExists,
+  s3ObjectSize,
   writeS3Object,
 } from "./s3";
 import {
@@ -186,19 +186,17 @@ export async function readWorkspaceFile(
 ): Promise<string> {
   const path = normalizeFilePath(rawPath);
   const target = await resolveTarget(ref);
-  const bytes = await readS3Bytes(
-    target.bucket,
-    `${target.prefix}${path}`,
-    target.access,
-  ).catch((error: unknown) => {
-    if (isMissingS3Error(error))
-      throw new ClientError("Workspace file not found");
-    throw error;
-  });
-  if (bytes.byteLength > MAX_WORKSPACE_FILE_BYTES)
+  const key = `${target.prefix}${path}`;
+  // Sized before the read, so an agent's multi-gigabyte file is refused
+  // without pulling it into the action's memory.
+  const size = await s3ObjectSize(target.bucket, key, target.access);
+  if (size === null) throw new ClientError("Workspace file not found");
+  if (size > MAX_WORKSPACE_FILE_BYTES)
     throw new ClientError("Workspace files over 512 KiB cannot be previewed");
 
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder().decode(
+    await readS3Bytes(target.bucket, key, target.access),
+  );
 }
 
 /**

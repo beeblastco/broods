@@ -325,14 +325,31 @@ export async function s3ObjectExists(
   key: string,
   access?: S3Access,
 ): Promise<boolean> {
+  return (await s3ObjectSize(bucket, key, access)) !== null;
+}
+
+/**
+ * @param bucket source bucket
+ * @param key object key
+ * @param access optional overrides for a bring-your-own bucket
+ * @returns the object's size in bytes, or null when it does not exist
+ * @throws on non-404 S3 errors
+ */
+export async function s3ObjectSize(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<number | null> {
   const client = await s3Client(access);
   try {
-    await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    const head = await client.send(
+      new HeadObjectCommand({ Bucket: bucket, Key: key }),
+    );
 
-    return true;
+    return head.ContentLength ?? 0;
   } catch (err) {
     if (isMissingS3Error(err)) {
-      return false;
+      return null;
     }
     throw err;
   }
