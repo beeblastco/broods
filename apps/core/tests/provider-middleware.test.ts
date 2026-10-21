@@ -15,7 +15,7 @@ import {
   type LanguageModelV4CallOptions,
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { describe, expect, it } from "bun:test";
 import {
@@ -531,12 +531,13 @@ describe("toolImagesAsUserMessageMiddleware", () => {
   });
 
   // The converter is what used to stringify the image, so the request it
-  // builds is the proof the model is handed a picture.
+  // builds is the proof the model is handed a picture. The model class, not
+  // the factory: harness.test.ts mocks `createOpenAICompatible` for later files.
   it("reaches a chat-completions request as image_url", async () => {
     let body: { messages: { role: string; content: unknown }[] } | undefined;
-    const provider = createOpenAICompatible({
-      name: "custom",
-      baseURL: "https://models.example.test/v1",
+    const chat = new OpenAICompatibleChatLanguageModel("cx/gpt-6.1-sol", {
+      provider: "custom.chat",
+      url: ({ path }): string => `https://models.example.test/v1${path}`,
       fetch: Object.assign(
         async (
           _url: Parameters<typeof fetch>[0],
@@ -558,7 +559,7 @@ describe("toolImagesAsUserMessageMiddleware", () => {
       ),
     });
     const model = wrapLanguageModel({
-      model: provider("cx/gpt-6.1-sol"),
+      model: chat,
       middleware: [toolImagesAsUserMessageMiddleware],
     });
     await model.doGenerate({ prompt: toolPrompt });
