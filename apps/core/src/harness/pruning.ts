@@ -3,9 +3,10 @@
  * Keep transient context cleanup here; persistence stays in session.ts.
  */
 
-import { pruneMessages, type ModelMessage } from "ai";
+import { pruneMessages, type ImagePart, type ModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { STORED_ITEM_PROVIDERS } from "./provider.ts";
+import type { ToolContentPart } from "./tools/utils.ts";
 
 export function pruneSessionMessages(
   messages: ModelMessage[],
@@ -18,6 +19,7 @@ export function pruneSessionMessages(
       ? messages
       : stripReasoningFromMessages(messages);
   // An approval resume keeps the assistant tool call its approvalId points at.
+  const keptMessages = approvalResume ? 2 : 1;
   const prunedToolCalls = approvalResume
     ? "before-last-2-messages"
     : "before-last-message";
@@ -27,7 +29,9 @@ export function pruneSessionMessages(
   }
 
   return pruneMessages({
-    messages: modelMessages,
+    messages: retainsReasoning
+      ? modelMessages
+      : withToolImagesKept(modelMessages, modelMessages.length - keptMessages),
     // Never `before-last-message` here. Half-stripping leaves older assistant
     // messages referencing stored items whose reasoning is gone, which is the
     // same rejection this retention exists to avoid, only deferred a turn.
@@ -70,4 +74,64 @@ export function hasPendingToolApprovalResponse(
     lastMessage.content.length > 0 &&
     lastMessage.content.every((part) => part.type === "tool-approval-response")
   );
+}
+
+/** A tool result's content item as a picture a user message can carry. */
+function toolImage(item: ToolContentPart): ImagePart[] {
+  switch (item.type) {
+    case "image-data":
+      return [{ type: "image", image: item.data, mediaType: item.mediaType }];
+    case "file-url":
+      return item.mediaType?.startsWith("image/")
+        ? [{ type: "image", image: item.url, mediaType: item.mediaType }]
+        : [];
+    case "file":
+      return item.mediaType.startsWith("image/") &&
+        (item.data.type === "data" || item.data.type === "url")
+        ? [
+            {
+              type: "image",
+              image: item.data.type === "data" ? item.data.data : item.data.url,
+              mediaType: item.mediaType,
+            },
+          ]
+        : [];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Pruning drops every tool call before `prunedBefore`, and the pictures their
+ * results carried would go with them. Each tool message there is followed by a
+ * user message holding its pictures, which pruning keeps, so the model sees a
+ * screenshot on every later turn, not only the one that took it.
+ */
+function withToolImagesKept(
+  messages: ModelMessage[],
+  prunedBefore: number,
+): ModelMessage[] {
+  return messages.flatMap((message, index): ModelMessage[] => {
+    if (message.role !== "tool" || index >= prunedBefore) {
+      return [message];
+    }
+    const images = message.content.flatMap((part): ImagePart[] =>
+      part.type === "tool-result" && part.output.type === "content"
+        ? part.output.value.flatMap(toolImage)
+        : [],
+    );
+
+    return images.length === 0
+      ? [message]
+      : [
+          message,
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Images a tool returned earlier:" },
+              ...images,
+            ],
+          },
+        ];
+  });
 }

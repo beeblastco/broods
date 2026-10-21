@@ -3,8 +3,9 @@
  * quirks: mergeSystemMessagesMiddleware folds multiple system messages into
  * one (extras return an empty stream), and normalizeStreamDeltasMiddleware
  * rewrites cumulative-snapshot deltas to increments and back-fills missing
- * reasoning-token usage, and toolImagesAsUserMessageMiddleware moves tool
- * result images to where chat endpoints read them.
+ * reasoning-token usage. A tool result's image stays in the tool message, moves
+ * to a user message when the endpoint refuses it there, and becomes a note when
+ * a text-only model refuses it anywhere.
  * retryWithoutStoredItemsMiddleware covers the OpenAI Responses path, where a
  * replayed item reference can go stale.
  */
@@ -24,19 +25,21 @@ import {
   dropUnsupportedMediaMiddleware,
   mergeSystemMessagesMiddleware,
   normalizeStreamDeltasMiddleware,
+  moveRefusedToolImagesMiddleware,
   retryWithoutStoredItemsMiddleware,
-  toolImagesAsUserMessageMiddleware,
   type ModelAttempt,
 } from "../src/harness/provider.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
 
 type PromptMessage = { role: string; content: unknown };
 
-async function transform(
-  prompt: PromptMessage[],
-  middleware: LanguageModelMiddleware = mergeSystemMessagesMiddleware,
-): Promise<PromptMessage[]> {
-  const result = await middleware.transformParams!({
+// A chat-completions request body as the compatible converter builds it.
+type ChatRequest = {
+  messages: { role: string; content: unknown; tool_call_id?: string }[];
+};
+
+async function transform(prompt: PromptMessage[]): Promise<PromptMessage[]> {
+  const result = await mergeSystemMessagesMiddleware.transformParams!({
     params: { prompt: prompt } as never,
     type: "stream",
     model: {} as never,
@@ -466,7 +469,7 @@ describe("dropUnsupportedMediaMiddleware", () => {
   });
 });
 
-describe("toolImagesAsUserMessageMiddleware", () => {
+describe("tool result images on a custom endpoint", () => {
   const screenshot = {
     type: "file" as const,
     mediaType: "image/jpeg",
@@ -496,82 +499,101 @@ describe("toolImagesAsUserMessageMiddleware", () => {
     },
   ];
 
-  it("moves a tool result's image into a user message after it", async () => {
-    const prompt = await transform(
-      toolPrompt,
-      toolImagesAsUserMessageMiddleware,
-    );
+  const imageUrl = {
+    type: "image_url",
+    image_url: { url: "data:image/jpeg;base64,aGVsbG8=" },
+  };
 
-    expect(prompt.slice(2)).toEqual([
-      {
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: "c1",
-            toolName: "shot",
-            output: {
-              type: "content",
-              value: [
-                { type: "text", text: "captured" },
-                { type: "text", text: "[image 1 is in the next message]" },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Images from the tool results above:" },
-          screenshot,
-        ],
-      },
-    ]);
-  });
-
-  // The converter is what used to stringify the image, so the request it
-  // builds is the proof the model is handed a picture. The model class, not
-  // the factory: harness.test.ts mocks `createOpenAICompatible` for later files.
-  it("reaches a chat-completions request as image_url", async () => {
-    let body: { messages: { role: string; content: unknown }[] } | undefined;
+  // Each request the converter builds, answered by `statuses` in turn. The
+  // model class, not the factory: harness.test.ts mocks `createOpenAICompatible`
+  // for the files after it.
+  async function requests(statuses: number[]): Promise<ChatRequest[]> {
+    const bodies: ChatRequest[] = [];
     const chat = new OpenAICompatibleChatLanguageModel("cx/gpt-6.1-sol", {
       provider: "custom.chat",
       url: ({ path }): string => `https://models.example.test/v1${path}`,
+      supportsMultiPartToolContent: true,
       fetch: Object.assign(
         async (
           _url: Parameters<typeof fetch>[0],
           init?: RequestInit,
         ): Promise<Response> => {
-          body =
-            typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+          if (typeof init?.body === "string")
+            bodies.push(JSON.parse(init.body));
+          const status = statuses[bodies.length - 1] ?? 200;
 
-          return Response.json({
-            choices: [
-              {
-                message: { role: "assistant", content: "7392" },
-                finish_reason: "stop",
-              },
-            ],
-          });
+          return status === 200
+            ? Response.json({
+                choices: [
+                  {
+                    message: { role: "assistant", content: "7392" },
+                    finish_reason: "stop",
+                  },
+                ],
+              })
+            : Response.json(
+                { error: { message: "image input is not supported" } },
+                { status: status },
+              );
         },
         { preconnect: fetch.preconnect },
       ),
     });
     const model = wrapLanguageModel({
       model: chat,
-      middleware: [toolImagesAsUserMessageMiddleware],
+      middleware: [
+        dropRefusedImagesMiddleware,
+        moveRefusedToolImagesMiddleware,
+      ],
     });
     await model.doGenerate({ prompt: toolPrompt });
 
+    return bodies;
+  }
+
+  it("keeps a tool result's image in the tool message", async () => {
+    const [body] = await requests([200]);
+
     expect(body?.messages.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: "c1",
+      content: [{ type: "text", text: "captured" }, imageUrl],
+    });
+  });
+
+  it("moves the image into a user message when the endpoint refuses it there", async () => {
+    const bodies = await requests([400, 200]);
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]?.messages.slice(-2)).toEqual([
+      {
+        role: "tool",
+        tool_call_id: "c1",
+        content: [
+          { type: "text", text: "captured" },
+          { type: "text", text: "[image 1 is in the next message]" },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images from the tool results above:" },
+          imageUrl,
+        ],
+      },
+    ]);
+  });
+
+  it("drops the image when a text-only model refuses it anywhere", async () => {
+    const bodies = await requests([400, 400, 200]);
+
+    expect(bodies).toHaveLength(3);
+    expect(JSON.stringify(bodies[2])).not.toContain("image_url");
+    expect(bodies[2]?.messages.at(-1)).toEqual({
       role: "user",
       content: [
         { type: "text", text: "Images from the tool results above:" },
-        {
-          type: "image_url",
-          image_url: { url: "data:image/jpeg;base64,aGVsbG8=" },
-        },
+        { type: "text", text: unreadableMediaNote(undefined, "image/jpeg") },
       ],
     });
   });

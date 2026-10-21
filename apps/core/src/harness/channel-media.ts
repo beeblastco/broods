@@ -18,7 +18,13 @@ import {
   getTopLevelMediaType,
   mediaTypeToExtension,
 } from "@ai-sdk/provider-utils";
-import type { ModelMessage, UserContent } from "ai";
+import type {
+  FilePart,
+  ImagePart,
+  ModelMessage,
+  ToolModelMessage,
+  UserContent,
+} from "ai";
 import type { Attachment } from "chat";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { channelAdapterFromConfig } from "./integrations.ts";
@@ -59,6 +65,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import type { ToolContentPart } from "./tools/utils.ts";
 
 /** Where an inbound attachment lands, relative to the workspace root. */
 const MEDIA_DIRECTORY = "media";
@@ -339,9 +346,13 @@ export async function rehydrateStoredMedia(
 ): Promise<ModelMessage[]> {
   const carriesMedia = messages.some(
     (message) =>
-      message.role === "user" &&
-      typeof message.content !== "string" &&
-      message.content.some(isStoredMediaPart),
+      (message.role === "user" &&
+        typeof message.content !== "string" &&
+        message.content.some(isStoredMediaPart)) ||
+      (message.role === "tool" &&
+        toolContentItems(message).some(
+          (item): boolean => sealedToolLink(item) !== null,
+        )),
   );
   if (!carriesMedia) {
     return messages;
@@ -377,6 +388,21 @@ export function resolveMediaType(
   }
 
   return sniffed ?? claimed ?? "application/octet-stream";
+}
+
+/**
+ * Moves the media a message carries as bytes into the attachment store, so its
+ * row keeps a sealed link `rehydrateStoredMedia` reads back on every later turn
+ * instead of dropping the picture. A part that cannot be stored stays as it
+ * was, and the row drops it as before.
+ */
+export async function sealConversationMedia(
+  messages: ModelMessage[],
+  accountId: string,
+): Promise<ModelMessage[]> {
+  return await Promise.all(
+    messages.map((message) => sealMessageMedia(message, accountId)),
+  );
 }
 
 /** Throws the size failure `storeAttachment` turns into the agent's note. */
@@ -526,6 +552,59 @@ function formatBytes(bytes: number): string {
  */
 function isStoredMediaPart(part: UserContentPart): boolean {
   return mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null;
+}
+
+/**
+ * The bytes a part carries itself. Null for anything that already points
+ * elsewhere: a URL, a sealed link, a channel reference, a provider reference.
+ */
+function mediaBytes(
+  value: ImagePart["image"] | FilePart["data"],
+): Buffer | null {
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value);
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value);
+  }
+  if (typeof value === "string") {
+    const dataUrl = /^data:[^,]*;base64,/i.exec(value);
+    if (dataUrl) {
+      return Buffer.from(value.slice(dataUrl[0].length), "base64");
+    }
+
+    return /^[a-z][a-z0-9+.-]*:/i.test(value)
+      ? null
+      : Buffer.from(value, "base64");
+  }
+  if (!(value instanceof URL) && "type" in value && value.type === "data") {
+    return mediaBytes(value.data);
+  }
+
+  return null;
+}
+
+/** A tool message with `map` applied to every content item of its results. */
+async function mapToolItems(
+  message: ToolModelMessage,
+  map: (item: ToolContentPart) => Promise<ToolContentPart>,
+): Promise<ToolModelMessage> {
+  const content = await Promise.all(
+    message.content.map(
+      async (part): Promise<ToolModelMessage["content"][number]> =>
+        part.type === "tool-result" && part.output.type === "content"
+          ? {
+              ...part,
+              output: {
+                ...part.output,
+                value: await Promise.all(part.output.value.map(map)),
+              },
+            }
+          : part,
+    ),
+  );
+
+  return { ...message, content: content };
 }
 
 /** The byte cap for one attachment: smaller for pictures, which go inline. */
@@ -683,10 +762,9 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * nothing else ties a link pasted into a conversation to the account running it.
  */
 async function readSealedMedia(
-  part: UserContentPart,
+  link: string | null,
   replay: SealedReplay,
 ): Promise<SealedMedia | null> {
-  const link = sealedMediaLink(part);
   const ticket = link
     ? openMediaTicket(
         link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
@@ -745,6 +823,9 @@ async function rehydrateMessage(
   agentConfig: AgentConfig,
   replay: SealedReplay,
 ): Promise<ModelMessage> {
+  if (message.role === "tool") {
+    return rehydrateToolMessage(message, replay);
+  }
   if (message.role !== "user" || typeof message.content === "string") {
     return message;
   }
@@ -770,7 +851,7 @@ async function rehydrateMessage(
       }
       const reference = mediaReferenceOf(part);
       if (!reference) {
-        const sealed = await readSealedMedia(part, replay);
+        const sealed = await readSealedMedia(sealedMediaLink(part), replay);
         if (!sealed) {
           return part;
         }
@@ -846,6 +927,91 @@ async function resolveMediaReference(
   }
 }
 
+/**
+ * A tool message with its sealed links read back into bytes, or into a line
+ * saying the file is gone.
+ */
+async function rehydrateToolMessage(
+  message: ToolModelMessage,
+  replay: SealedReplay,
+): Promise<ToolModelMessage> {
+  return mapToolItems(message, async (item): Promise<ToolContentPart> => {
+    const sealed = await readSealedMedia(sealedToolLink(item), replay);
+    if (!sealed || item.type !== "file-url") {
+      return item;
+    }
+
+    return "gone" in sealed
+      ? { type: "text", text: `[${sealed.gone} is no longer available]` }
+      : {
+          type: "file",
+          mediaType: item.mediaType ?? "application/octet-stream",
+          data: { type: "data", data: sealed.bytes },
+        };
+  });
+}
+
+/**
+ * Stores bytes in the attachment store under their hash, so a screenshot sent
+ * twice is kept once, and returns the sealed link with the type the bytes name.
+ * Undefined for a part that carries no bytes, with no public base URL, or when
+ * the write fails: the caller keeps the part as it was.
+ */
+async function sealBytes(
+  value: ImagePart["image"] | FilePart["data"],
+  claimed: string | undefined,
+  accountId: string,
+): Promise<{ link: string; mediaType: string } | undefined> {
+  const bytes = mediaBytes(value);
+  if (!bytes || bytes.byteLength === 0) {
+    return undefined;
+  }
+  const mediaType = resolveMediaType(bytes, claimed);
+  const extension = mediaTypeToExtension(mediaType);
+  const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+  const ticket: AttachmentMediaTicket = {
+    accountId: accountId,
+    path: `${MEDIA_DIRECTORY}/${hash}${extension ? `.${extension}` : ""}`,
+  };
+  const link = sealedLinkFor(ticket);
+  if (!link) {
+    return undefined;
+  }
+  try {
+    await writeS3Object(
+      requireEnv("FILESYSTEM_BUCKET_NAME"),
+      attachmentStoreKey(ticket),
+      bytes,
+      { contentType: mediaType },
+    );
+  } catch (err) {
+    logWarn("Conversation media could not be stored", {
+      accountId: accountId,
+      mediaType: mediaType,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return undefined;
+  }
+  cacheMedia(link, bytes);
+
+  return { link: link, mediaType: mediaType };
+}
+
+/** The public link that opens a ticket; undefined with no public base URL. */
+function sealedLinkFor(ticket: AttachmentMediaTicket): string | undefined {
+  const baseUrl = getHarnessPublicUrl();
+  if (!baseUrl) {
+    return undefined;
+  }
+  const token = sealMediaTicket(
+    ticket,
+    requireSecretsEnv("MEDIA_TICKET_SECRET")[0],
+  );
+
+  return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
+}
+
 /** The sealed media URL an image or file part points at, or null. */
 function sealedMediaLink(part: UserContentPart): string | null {
   if (part.type !== "image" && part.type !== "file") {
@@ -856,6 +1022,68 @@ function sealedMediaLink(part: UserContentPart): string | null {
   return typeof value === "string" && value.includes(MEDIA_PATH_PREFIX)
     ? value
     : null;
+}
+
+/** Every content item of a tool message's results, in order. */
+function toolContentItems(message: ToolModelMessage): ToolContentPart[] {
+  return message.content.flatMap((part): ToolContentPart[] =>
+    part.type === "tool-result" && part.output.type === "content"
+      ? part.output.value
+      : [],
+  );
+}
+
+/** The sealed media URL a tool result's content item points at, or null. */
+function sealedToolLink(item: ToolContentPart): string | null {
+  return item.type === "file-url" && item.url.includes(MEDIA_PATH_PREFIX)
+    ? item.url
+    : null;
+}
+
+/** One message with each picture or file it carries as bytes swapped for a sealed link. */
+async function sealMessageMedia(
+  message: ModelMessage,
+  accountId: string,
+): Promise<ModelMessage> {
+  if (message.role === "user" && typeof message.content !== "string") {
+    const content = await Promise.all(
+      message.content.map(async (part): Promise<UserContentPart> => {
+        if (part.type !== "image" && part.type !== "file") {
+          return part;
+        }
+        const sealed = await sealBytes(
+          part.type === "image" ? part.image : part.data,
+          part.mediaType,
+          accountId,
+        );
+        if (!sealed) {
+          return part;
+        }
+
+        return part.type === "image"
+          ? { ...part, image: sealed.link, mediaType: sealed.mediaType }
+          : { ...part, data: sealed.link, mediaType: sealed.mediaType };
+      }),
+    );
+
+    return { ...message, content: content };
+  }
+  if (message.role !== "tool") {
+    return message;
+  }
+
+  return mapToolItems(message, async (item): Promise<ToolContentPart> => {
+    const sealed =
+      item.type === "image-data" ||
+      item.type === "file-data" ||
+      item.type === "file"
+        ? await sealBytes(item.data, item.mediaType, accountId)
+        : undefined;
+
+    return sealed
+      ? { type: "file-url", url: sealed.link, mediaType: sealed.mediaType }
+      : item;
+  });
 }
 
 /**
@@ -1012,14 +1240,6 @@ async function writeMediaObject(
       { contentType: mediaType },
     ),
   ]);
-  const baseUrl = getHarnessPublicUrl();
-  if (!baseUrl) {
-    return undefined;
-  }
-  const token = sealMediaTicket(
-    ticket,
-    requireSecretsEnv("MEDIA_TICKET_SECRET")[0],
-  );
 
-  return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
+  return sealedLinkFor(ticket);
 }

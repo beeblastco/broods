@@ -480,6 +480,56 @@ describe("session pruning", () => {
     ).toEqual(messages);
   });
 
+  // Old tool calls are pruned, but a screenshot a tool returned stays in view
+  // on every later turn.
+  it("keeps an earlier tool's image when its call is pruned", async () => {
+    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
+    const screenshot = {
+      type: "file" as const,
+      mediaType: "image/png",
+      data: { type: "data" as const, data: new Uint8Array([1]) },
+    };
+    const messages: actualAi.ModelMessage[] = [
+      { role: "user", content: "take a screenshot" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "c1", toolName: "shot", input: {} },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "shot",
+            output: { type: "content", value: [screenshot] },
+          },
+        ],
+      },
+      { role: "assistant", content: "OK" },
+      { role: "user", content: "what number was on the button?" },
+    ];
+
+    expect(pruneSessionMessages(messages, {})).toEqual([
+      { role: "user", content: "take a screenshot" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images a tool returned earlier:" },
+          {
+            type: "image",
+            image: new Uint8Array([1]),
+            mediaType: "image/png",
+          },
+        ],
+      },
+      { role: "assistant", content: "OK" },
+      { role: "user", content: "what number was on the button?" },
+    ]);
+  });
+
   it("strips completed assistant reasoning even when pruning is disabled", async () => {
     const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [

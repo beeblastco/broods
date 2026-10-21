@@ -45,7 +45,7 @@ import {
 import { mergeSandboxEnv } from "../sandbox/utils.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 import { logInfo } from "../../shared/log.ts";
-import { withImageLimits } from "../tools/utils.ts";
+import { withImageLimits, type ToolContentPart } from "../tools/utils.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -168,7 +168,11 @@ export async function callMcpTool(
 
   // An image is something the model can look at, so a result carrying one goes
   // through as content parts instead of being flattened to text.
-  if (result.content.some((block): boolean => block.type === "image")) {
+  if (
+    result.content.some(
+      (block): boolean => block.type === "image" || isImageLink(block),
+    )
+  ) {
     return imageContentOutput(result.content, result.structuredContent);
   }
 
@@ -490,8 +494,8 @@ async function connectClient(
 
 /**
  * A result's content as model content parts: images as image data, within the
- * limits on what one result may show, the rest as text, and any
- * structuredContent as one more JSON text part.
+ * limits on what one result may show, a link to an image as that image's URL,
+ * the rest as text, and any structuredContent as one more JSON text part.
  */
 function imageContentOutput(
   content: CallToolResult["content"],
@@ -500,20 +504,38 @@ function imageContentOutput(
   return {
     type: "content",
     value: withImageLimits([
-      ...content.map((block) =>
-        block.type === "image"
-          ? {
-              type: "image-data" as const,
-              data: block.data,
-              mediaType: block.mimeType,
-            }
-          : { type: "text" as const, text: renderContent([block]) },
-      ),
+      ...content.map((block): ToolContentPart => {
+        if (block.type === "image") {
+          return {
+            type: "image-data",
+            data: block.data,
+            mediaType: block.mimeType,
+          };
+        }
+
+        return isImageLink(block)
+          ? { type: "file-url", url: block.uri, mediaType: block.mimeType }
+          : { type: "text", text: renderContent([block]) };
+      }),
       ...(structured
         ? [{ type: "text" as const, text: JSON.stringify(structured) }]
         : []),
     ]),
   };
+}
+
+/** A resource link to a picture the model provider can fetch itself. */
+function isImageLink(
+  block: CallToolResult["content"][number],
+): block is Extract<
+  CallToolResult["content"][number],
+  { type: "resource_link" }
+> & { mimeType: string } {
+  return (
+    block.type === "resource_link" &&
+    block.mimeType?.startsWith("image/") === true &&
+    /^https?:\/\//i.test(block.uri)
+  );
 }
 
 /** The agent id, and its chain when known (base64url JSON, ids and kinds only), so a server can authorize per agent. */

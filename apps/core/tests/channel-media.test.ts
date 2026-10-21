@@ -119,6 +119,7 @@ const {
   readAttachmentBytes,
   rehydrateStoredMedia,
   resolveMediaType,
+  sealConversationMedia,
 } = await import("../src/harness/channel-media.ts");
 
 const ORIGINAL_ENV = { ...process.env };
@@ -989,6 +990,99 @@ function workspaceTicket(): MediaTicket {
 // the ones production opens, not an injected connection. The guard's own
 // behavior is covered in isolate-pinned-fetch.test.ts; these tests prove the
 // attachment path threads it correctly.
+describe("sealConversationMedia", () => {
+  const base64 = PNG_BYTES.toString("base64");
+  const conversation: ModelMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what does it say?" },
+        { type: "image", image: base64, mediaType: "image/png" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "screenshot",
+          output: {
+            type: "content",
+            value: [
+              { type: "text", text: "Screenshot taken." },
+              { type: "image-data", data: base64, mediaType: "image/png" },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+
+  // The row keeps a link, never the bytes, and every later turn reads the
+  // picture back: the model keeps seeing it for the life of the conversation.
+  it("stores a picture once and replays it on later turns", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+
+    expect(JSON.stringify(sealed)).not.toContain(base64);
+    // The same screenshot twice is one object, keyed by its hash.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
+    const keys = writeS3ObjectMock.mock.calls.map(([, key]) => key);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toMatch(/^attachments\/acct_1\/media\/[0-9a-f]{32}\.png$/);
+
+    const replay = await rehydrateStoredMedia(
+      sealed,
+      modelConfig("custom"),
+      ACCOUNT,
+    );
+
+    expect(replay).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what does it say?" },
+          { type: "image", image: PNG_BYTES, mediaType: "image/png" },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "screenshot",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "Screenshot taken." },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  data: { type: "data", data: PNG_BYTES },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves a picture it could not store as it was", async (): Promise<void> => {
+    writeS3ObjectMock.mockImplementationOnce(async (): Promise<never> => {
+      throw new Error("bucket down");
+    });
+
+    const sealed = await sealConversationMedia(
+      conversation.slice(0, 1),
+      ACCOUNT,
+    );
+
+    expect(sealed).toEqual(conversation.slice(0, 1));
+  });
+});
+
 describe("readAttachmentBytes URL guard", () => {
   it("refuses a host that resolves to a private address", async (): Promise<void> => {
     // The URL comes out of the webhook body, so the sender picks the host. A

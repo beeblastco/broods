@@ -1316,6 +1316,48 @@ describe("connected MCP servers", () => {
     });
   });
 
+  it("hands a link to an image to the model as that image, not as text", async () => {
+    setMcpForTests({
+      callTool: async function () {
+        return {
+          content: [
+            {
+              type: "resource_link" as const,
+              uri: "https://cdn.example.com/shot.png",
+              name: "shot.png",
+              mimeType: "image/png",
+            },
+            {
+              type: "resource_link" as const,
+              uri: "file:///tmp/shot.png",
+              name: "local.png",
+              mimeType: "image/png",
+            },
+          ],
+        };
+      },
+    });
+
+    const result = await callMcpTool(
+      mcpConnection(mcpRecord(), undefined),
+      "screenshot",
+      {},
+    );
+
+    // A file:// link names a file only the server can read, so it stays text.
+    expect(result).toEqual({
+      type: "content",
+      value: [
+        {
+          type: "file-url",
+          url: "https://cdn.example.com/shot.png",
+          mediaType: "image/png",
+        },
+        { type: "text", text: "[resource link: file:///tmp/shot.png]" },
+      ],
+    });
+  });
+
   it("shows the model only images it can read, within one result's budget", async () => {
     // A PNG header padded to just over 6 MB once decoded.
     const huge = `${pngHeader(10, 10)}${"A".repeat(8 * 1024 * 1024)}`;

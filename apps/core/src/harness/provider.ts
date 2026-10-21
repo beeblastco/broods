@@ -522,49 +522,6 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
   },
 };
 
-// Chat-completions endpoints read a tool message as text: the compatible
-// converter JSON-stringifies a tool result's content parts, so a screenshot an
-// MCP tool returned reaches the model as base64 it never sees as a picture. Each
-// image moves into one user message right after its tool message, the one place
-// those endpoints read an `image_url`, and the result keeps a line pointing at it.
-export const toolImagesAsUserMessageMiddleware: LanguageModelMiddleware = {
-  transformParams: async ({ params }) => ({
-    ...params,
-    prompt: params.prompt.flatMap((message): LanguageModelV4Message[] => {
-      if (message.role !== "tool") return [message];
-      const images: LanguageModelV4FilePart[] = [];
-      const content = message.content.map((part) => {
-        if (part.type !== "tool-result" || part.output.type !== "content") {
-          return part;
-        }
-        const value = part.output.value.map((item) => {
-          if (!isMovableImage(item)) return item;
-          images.push(item);
-
-          return {
-            type: "text" as const,
-            text: `[image ${images.length} is in the next message]`,
-          };
-        });
-
-        return { ...part, output: { ...part.output, value: value } };
-      });
-      if (images.length === 0) return [message];
-
-      return [
-        { ...message, content: content },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Images from the tool results above:" },
-            ...images,
-          ],
-        },
-      ];
-    }),
-  }),
-};
-
 export type ModelAttempt = { startedAt: number; error?: string };
 
 // One entry per doStream call. The SDK's retry loop re-invokes doStream, so
@@ -600,6 +557,13 @@ export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
 // answer.
 export const dropRefusedImagesMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutRefusedImages);
+
+// A custom endpoint gets a tool result's image inside the tool message, where
+// vLLM-style servers read it. OpenAI's own chat API answers that with a 400 and
+// reads an `image_url` only from a user message, so retry once with each image
+// moved into one user message right after its tool message.
+export const moveRefusedToolImagesMiddleware: LanguageModelMiddleware =
+  retryingMiddleware(withToolImagesMoved);
 
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or
@@ -689,17 +653,18 @@ function withoutUnsupportedMedia(
   return withoutUserMedia(params, isDroppableMedia);
 }
 
-// The same call with every picture replaced by a line naming it, or undefined
-// when the endpoint did not answer 400 or there was no picture to drop.
+// The same call with every picture, a tool result's too, replaced by a line
+// naming it, or undefined when the endpoint did not answer 400 or there was no
+// picture to drop.
 function withoutRefusedImages(
   error: unknown,
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions | undefined {
-  if (
-    !APICallError.isInstance(error) ||
-    error.statusCode !== 400 ||
-    !carriesUserMedia(params, isImage)
-  ) {
+  if (!APICallError.isInstance(error) || error.statusCode !== 400) {
+    return undefined;
+  }
+  const moved = { ...params, prompt: toolImagesAsUserMessages(params.prompt) };
+  if (!carriesUserMedia(moved, isImage)) {
     return undefined;
   }
   logWarn("Retrying model call without images the provider refused", {
@@ -707,7 +672,28 @@ function withoutRefusedImages(
     error: error.message,
   });
 
-  return withoutUserMedia(params, isImage);
+  return withoutUserMedia(moved, isImage);
+}
+
+// The same call with tool result images moved into user messages, or undefined
+// when the endpoint did not answer 400 or no tool result carries an image.
+function withToolImagesMoved(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
+  if (!APICallError.isInstance(error) || error.statusCode !== 400) {
+    return undefined;
+  }
+  const prompt = toolImagesAsUserMessages(params.prompt);
+  if (prompt.length === params.prompt.length) {
+    return undefined;
+  }
+  logWarn("Retrying model call with tool images in a user message", {
+    url: error.url,
+    error: error.message,
+  });
+
+  return { ...params, prompt: prompt };
 }
 
 // Whether any user message carries a part `matches` picks out.
@@ -745,6 +731,45 @@ function isMovableImage(
     item.mediaType.startsWith("image/") &&
     (item.data.type === "data" || item.data.type === "url")
   );
+}
+
+// Each tool message followed by one user message holding the images its results
+// carried; the result keeps a line pointing at each one.
+function toolImagesAsUserMessages(
+  prompt: LanguageModelV4Message[],
+): LanguageModelV4Message[] {
+  return prompt.flatMap((message): LanguageModelV4Message[] => {
+    if (message.role !== "tool") return [message];
+    const images: LanguageModelV4FilePart[] = [];
+    const content = message.content.map((part) => {
+      if (part.type !== "tool-result" || part.output.type !== "content") {
+        return part;
+      }
+      const value = part.output.value.map((item) => {
+        if (!isMovableImage(item)) return item;
+        images.push(item);
+
+        return {
+          type: "text" as const,
+          text: `[image ${images.length} is in the next message]`,
+        };
+      });
+
+      return { ...part, output: { ...part.output, value: value } };
+    });
+    if (images.length === 0) return [message];
+
+    return [
+      { ...message, content: content },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images from the tool results above:" },
+          ...images,
+        ],
+      },
+    ];
+  });
 }
 
 // The call with every user part `drop` picks out replaced by a line naming it.
@@ -825,7 +850,10 @@ function resolveOpenAICompatibleModel(
   // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
   // return thinking text in `reasoning`/`reasoning_content` fields, which only
   // the compatible provider parses into reasoning parts (#115).
+  // A tool result keeps its images, as the tool returned them, unless the
+  // endpoint refuses them there (`moveRefusedToolImagesMiddleware`).
   const provider = createOpenAICompatible({
+    supportsMultiPartToolContent: true,
     ...openAIConfig,
     baseURL: customProviderBaseURL(providerConfig) ?? "",
     name:
@@ -840,11 +868,13 @@ function resolveOpenAICompatibleModel(
     provider: provider,
     model: wrapLanguageModel({
       model: provider(modelId),
+      // The first entry wraps the rest: a 400 tries moving tool images first,
+      // and only drops images when that is refused too.
       middleware: [
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
-        toolImagesAsUserMessageMiddleware,
         dropRefusedImagesMiddleware,
+        moveRefusedToolImagesMiddleware,
         dropUnsupportedMediaMiddleware,
       ],
     }),
