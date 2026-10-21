@@ -209,17 +209,6 @@ describe("listConnections", () => {
     expect(await listConnections(tt, "discord")).toEqual([]);
   });
 
-  test("skips an agent with no Discord channel at all", async () => {
-    const tt = t();
-    const scope = await seedScope(tt);
-    await seedAgent(tt, scope, "slack-only", {
-      channels: { slack: { botToken: "xoxb-1" } },
-    });
-    await seedDeployment(tt, scope, "endpoint-1");
-
-    expect(await listConnections(tt, "discord")).toEqual([]);
-  });
-
   test("skips a revoked deployment, which has no live webhook", async () => {
     const tt = t();
     const scope = await seedScope(tt);

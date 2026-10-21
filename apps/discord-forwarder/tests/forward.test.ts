@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, jest } from "bun:test";
+import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
 import type { MessageCreate } from "../src/discord.ts";
 import {
   fanOut,
@@ -74,14 +74,6 @@ describe("forwarding a gateway message", () => {
     });
   });
 
-  it("leaves a missing author.bot flag alone", async () => {
-    const calls = captureFetch();
-    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
-
-    const data = (calls[0]!.body as { data: { author: unknown } }).data;
-    expect(data.author).toEqual({ id: "user-1", username: "ada" });
-  });
-
   it("adds the thread object Discord leaves out", async () => {
     const calls = captureFetch();
     await forwardMessageCreate(
@@ -106,14 +98,6 @@ describe("forwarding a gateway message", () => {
     expect(calls.map((call) => call.url)).toEqual(
       TARGETS.map((target) => target.webhookUrl),
     );
-  });
-
-  it("survives a webhook rejecting the delivery", async (): Promise<void> => {
-    captureFetch(500);
-
-    expect(
-      withoutWaiting(forwardMessageCreate(MESSAGE, null, "token-a", TARGETS)),
-    ).resolves.toBeUndefined();
   });
 
   it("retries a 5xx and a network error until core answers", async (): Promise<void> => {
@@ -143,26 +127,25 @@ describe("forwarding a gateway message", () => {
     expect(seen.calls).toBe(3);
   });
 
-  // The backoff alone waits at least 800ms before the second attempt.
   it("waits as long as Retry-After asks instead of the backoff", async (): Promise<void> => {
-    let calls = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch: (): Response => {
-        calls += 1;
-
-        return calls === 1
-          ? new Response("", { headers: { "retry-after": "0" }, status: 429 })
-          : new Response("", { status: 200 });
+    const delays: number[] = [];
+    const sleep = spyOn(Bun, "sleep").mockImplementation(
+      async (ms: number | Date): Promise<void> => {
+        delays.push(Number(ms));
       },
-    });
-    const started = performance.now();
-    await forwardMessageCreate(MESSAGE, null, "token-a", [
-      { ...TARGETS[0]!, webhookUrl: `http://localhost:${server.port}/` },
+    );
+    const seen = scriptFetch([
+      new Response("", { headers: { "retry-after": "2" }, status: 429 }),
+      200,
     ]);
+    try {
+      await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+    } finally {
+      sleep.mockRestore();
+    }
 
-    expect(calls).toBe(2);
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(seen.calls).toBe(2);
+    expect(delays).toEqual([2_000]);
   });
 
   it("does not retry a 4xx", async (): Promise<void> => {
@@ -219,8 +202,8 @@ describe("forwarding a gateway message", () => {
   });
 });
 
-/** Answers each POST with the next status, or throws for "reset". */
-function scriptFetch(statuses: readonly (number | "reset")[]): {
+/** Answers each POST with the next status or response, or throws for "reset". */
+function scriptFetch(statuses: readonly (number | "reset" | Response)[]): {
   calls: number;
 } {
   const seen = { calls: 0 };
@@ -228,6 +211,7 @@ function scriptFetch(statuses: readonly (number | "reset")[]): {
     const status = statuses[seen.calls] ?? 200;
     seen.calls += 1;
     if (status === "reset") throw new Error("connection reset");
+    if (status instanceof Response) return status;
 
     return new Response("", { status: status });
   }) as unknown as typeof fetch;

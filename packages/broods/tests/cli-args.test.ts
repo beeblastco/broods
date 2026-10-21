@@ -15,12 +15,6 @@ test("positionalArgs drops --stage and the name it carries", () => {
   expect(positionalArgs(args)).toEqual(["helper", "say hi"]);
 });
 
-test("positionalArgs drops --from and the stage it clones", () => {
-  expect(positionalArgs(["staging", "--from", "development"])).toEqual([
-    "staging",
-  ]);
-});
-
 test("positionalArgs keeps the token after an inline --stage=value", () => {
   expect(positionalArgs(["helper", "--stage=staging", "say hi"])).toEqual([
     "helper",

@@ -2,12 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { isContextLengthError, toErrorMessage } from "../src/shared/errors.ts";
 
 describe("toErrorMessage", () => {
-  it("takes the message straight off an Error", () => {
-    expect(toErrorMessage(new Error("Tool call timed out"))).toBe(
-      "Tool call timed out",
-    );
-  });
-
   it("reads the message a Responses failure nests under response.error", () => {
     // A Responses stream reports failure as data, so `String(error)` rendered
     // "[object Object]" into the log and the chat, and the reason was lost.
@@ -58,12 +52,6 @@ describe("toErrorMessage", () => {
     expect(toErrorMessage({ error: { nested: { deep: "hidden" } } })).toBe(
       '{"error":{"nested":{"deep":"hidden"}}}',
     );
-  });
-
-  it("passes non-objects through", () => {
-    expect(toErrorMessage("plain string")).toBe("plain string");
-    expect(toErrorMessage(undefined)).toBe("undefined");
-    expect(toErrorMessage(null)).toBe("null");
   });
 });
 

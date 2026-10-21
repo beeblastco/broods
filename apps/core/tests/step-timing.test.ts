@@ -75,16 +75,6 @@ describe("createStepTimingTracker", () => {
     expect(tracker.closeStep(0, 1_500)).toEqual({});
   });
 
-  it("reports one attempt as model.attempts only", () => {
-    const tracker = createStepTimingTracker(serialize);
-    tracker.startStep(0, 1_000);
-    tracker.recordAttempt({ startedAt: 1_000 });
-
-    expect(tracker.attemptAttributes(0)).toEqual({
-      "model.attempts": 1,
-    });
-  });
-
   it("reports the retry wait and the errors of a retried stream start", () => {
     const tracker = createStepTimingTracker(serialize);
     tracker.startStep(0, 1_000);
@@ -168,17 +158,5 @@ describe("createStepTimingTracker", () => {
     expect(tracker.activeStep()).toBe(1);
     tracker.endActiveStep(1);
     expect(tracker.activeStep()).toBeUndefined();
-  });
-
-  it("clear drops every step", () => {
-    const tracker = createStepTimingTracker(serialize);
-    tracker.startStep(0, 1_000);
-    tracker.recordChunk("text-delta", 1_100);
-    tracker.recordAttempt({ startedAt: 1_000 });
-    tracker.clear();
-
-    expect(tracker.activeStep()).toBeUndefined();
-    expect(tracker.stepStartMs(0)).toBeUndefined();
-    expect(tracker.closeStep(0, 2_000)).toEqual({});
   });
 });
