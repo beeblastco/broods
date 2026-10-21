@@ -73,7 +73,7 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
       }
     });
     page.on("websocket", (socket) => {
-      if (socket.url().includes("/_next/webpack-hmr")) devServer = true;
+      if (socket.url().includes("/_next/hmr")) devServer = true;
     });
 
     await page.goto(probe.path(), { waitUntil: "load" });
