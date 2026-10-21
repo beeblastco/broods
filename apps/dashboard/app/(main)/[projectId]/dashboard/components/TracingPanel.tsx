@@ -1466,6 +1466,11 @@ function inlinePayload(value: unknown): string {
     : text;
 }
 
+/** Whether a waterfall row is open: a step starts open, anything else closed, and `toggled` flips that. */
+function isRowOpen(span: ObservabilitySpanRow, toggled: Set<string>): boolean {
+  return (span.kind === "model.step") !== toggled.has(spanKey(span));
+}
+
 /**
  * Whether a request's subagent rows list: the person's choice for it, else
  * while the selected run is the request or one of its subagents.
@@ -2734,12 +2739,8 @@ function TaskWaterfall({
   const showSpan = ({ path, span }: RunIssues["all"][number]): void => {
     const key = spanKey(span);
     if (key !== view.selectedKey) view.onSelect(key);
-    // A step starts open and anything else closed; `toggled` flips that.
     for (const row of path) {
-      const rowKey = spanKey(row);
-      if ((row.kind === "model.step") === view.toggled.has(rowKey)) {
-        view.toggle(rowKey);
-      }
+      if (!isRowOpen(row, view.toggled)) view.toggle(spanKey(row));
     }
     requestAnimationFrame(() =>
       document
@@ -3151,7 +3152,7 @@ function renderSpanRows(
   const key = spanKey(span);
   const isTaskRow = depth === 0;
   const isStep = span.kind === "model.step";
-  const isOpen = isTaskRow || isStep !== view.toggled.has(key);
+  const isOpen = isTaskRow || isRowOpen(span, view.toggled);
   const isSelected = key === view.selectedKey;
   const children = rowChildren(span, isTaskRow, view.group);
   const reasoning = isStep ? noteText(span, "model.reasoning") : undefined;
