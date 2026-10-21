@@ -134,12 +134,17 @@ test("an owner on Hobby sees their plan next to what Pro raises, and no develope
   await expect(plan.getByRole("columnheader", { name: /^Pro/ })).toContainText(
     "€20/month",
   );
-  // Each limit Pro raises says by how much.
-  await expect(limitRow(page, "Sandbox time")).toContainText("9 h");
-  await expect(limitRow(page, "Sandbox time")).toContainText("18 h");
-  await expect(limitRow(page, "Sandbox time")).toContainText("2×");
-  await expect(limitRow(page, "Developer seats")).toContainText("None");
-  await expect(limitRow(page, "Developer seats")).toContainText("2 included");
+  // Hobby's limit, then Pro's with how many times it raises Hobby's.
+  await expect(limitCells(page, "Sandbox time")).toHaveText([
+    /^Sandbox time/,
+    "9 h",
+    "18 h2×",
+  ]);
+  await expect(limitCells(page, "Developer seats")).toHaveText([
+    /^Developer seats/,
+    "None",
+    "2 included",
+  ]);
   await expect(
     page.getByText(/^Resets .+\. Just you in this org\.$/),
   ).toBeVisible();
@@ -483,11 +488,12 @@ function seatRow(page: Page, name: string): ReturnType<Page["locator"]> {
     .filter({ has: page.getByText(name, { exact: true }) });
 }
 
-/** One limit's row in the plan table, every plan's value in it. */
-function limitRow(page: Page, label: string): Locator {
+/** One limit's cells in the plan table: its label, then each plan's value. */
+function limitCells(page: Page, label: string): Locator {
   return sectionNamed(page, "Your plan")
     .getByRole("row")
-    .filter({ hasText: label });
+    .filter({ hasText: label })
+    .getByRole("cell");
 }
 
 async function openMembers(page: Page): Promise<void> {
