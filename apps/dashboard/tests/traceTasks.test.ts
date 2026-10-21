@@ -3,7 +3,6 @@ import type { ObservabilitySpanRow } from "../app/hooks/useObservabilityStream";
 import {
   axisTicks,
   failureCause,
-  foldSteps,
   groupSpans,
   matchesTaskQuery,
   runIssues,
@@ -161,96 +160,6 @@ describe("groupSpans", () => {
   });
 });
 
-describe("foldSteps", () => {
-  test("folds consecutive steps that each call the same one tool", () => {
-    const steps = [3, 4, 5].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 400),
-    );
-    const other = step("run", 6, 7_000, 7_500);
-    const children = new Map([
-      ...steps.map((s): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [toolOf(s, "get_subagent_status")],
-      ]),
-      [other.spanId, [toolOf(other, "bash")]],
-    ]);
-
-    const items = foldSteps([...steps, other], children);
-
-    expect(items).toHaveLength(2);
-    const [fold, rest] = items;
-    if (fold.type !== "fold") throw new Error("expected a fold");
-    expect(fold.fold.label).toBe("step 4-6 get_subagent_status ×3");
-    expect(fold.fold.steps).toEqual(steps);
-    expect(fold.fold.span).toMatchObject({
-      startTimeMs: 3_000,
-      endTimeMs: 5_400,
-      durationMs: 1_200,
-      status: "ok",
-    });
-    expect(rest).toEqual({ type: "span", span: other });
-  });
-
-  test("marks a fold failed when one of its tool calls failed", () => {
-    const steps = [0, 1].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 100),
-    );
-    const children = new Map(
-      steps.map((s, index): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [
-          {
-            ...toolOf(s, "bash"),
-            status: index === 1 ? "error" : "ok",
-          },
-        ],
-      ]),
-    );
-
-    const [fold] = foldSteps(steps, children);
-    if (fold.type !== "fold") throw new Error("expected a fold");
-    expect(fold.fold.span.status).toBe("error");
-  });
-
-  test("does not fold steps whose tool calls carry no tool name", () => {
-    const steps = [0, 1].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 100),
-    );
-    const children = new Map(
-      steps.map((s): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [{ ...toolOf(s, "unnamed"), attributes: {} }],
-      ]),
-    );
-
-    expect(foldSteps(steps, children).map((item) => item.type)).toEqual([
-      "span",
-      "span",
-    ]);
-  });
-
-  test("leaves a lone step, mixed tools and interleaved spans unfolded", () => {
-    const first = step("run", 0, 1_000, 1_100);
-    const mixed = step("run", 1, 2_000, 2_100);
-    const phase = { ...step("run", 2, 3_000, 3_100), kind: "phase" as const };
-    const last = step("run", 3, 4_000, 4_100);
-    const children = new Map<string, ObservabilitySpanRow[]>([
-      [first.spanId, [toolOf(first, "bash")]],
-      [mixed.spanId, [toolOf(mixed, "bash"), toolOf(mixed, "read")]],
-      [last.spanId, [toolOf(last, "bash")]],
-    ]);
-
-    const items = foldSteps([first, mixed, phase, last], children);
-
-    expect(items.map((item) => item.type)).toEqual([
-      "span",
-      "span",
-      "span",
-      "span",
-    ]);
-  });
-});
-
 describe("task search", () => {
   test("splits field tokens from free words, ignoring unknown and empty fields", () => {
     expect(
@@ -397,10 +306,9 @@ describe("waterfall issues", () => {
       "run-step-0-bash",
     ]);
     // The failed tool sits under its step, which a click must open.
-    expect(issues.all.map(({ path }) => path)).toEqual([
-      [],
-      [{ key: "trace-run:run-step-0", startsOpen: true }],
-    ]);
+    expect(
+      issues.all.map(({ path }) => path.map((span) => span.spanId)),
+    ).toEqual([[], ["run-step-0"]]);
     expect(issues.below.get("run")).toHaveLength(2);
     expect(issues.below.get("run-step-0")).toHaveLength(1);
     expect(issues.below.get("run-step-0-bash")).toEqual([]);
