@@ -248,7 +248,8 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
 /**
  * The plan table with the closest cap and `actions` under it. A skeleton
- * while the budget loads; nothing on a self-hosted install, which has no
+ * the card's height while the budget or the seats load, so the current plan
+ * is never marked on a guess; nothing on a self-hosted install, which has no
  * limits.
  */
 function PlanCard({
@@ -265,13 +266,15 @@ function PlanCard({
   usageHref: string;
   actions: React.ReactNode;
 }): React.JSX.Element | null {
-  if (budget === undefined) return <Skeleton className="h-80 rounded-lg" />;
+  if (budget === undefined || status === undefined) {
+    return <Skeleton className="h-88 rounded-lg" />;
+  }
   if (budget?.enforced === false) return null;
 
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       <PlanTable current={current} status={status ?? null} />
-      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border px-2 py-2.5">
         <ClosestCap budget={budget} usageHref={usageHref} />
         {actions}
       </div>
@@ -281,7 +284,7 @@ function PlanCard({
 
 /**
  * Every plan's limits side by side, `current` marked with its status. Each
- * limit a better plan raises says by how many times.
+ * limit a better plan raises at least 1.5 times says by how many times.
  */
 function PlanTable({
   current,
@@ -329,7 +332,7 @@ function PlanTable({
                   >
                     {row.format?.(limit) ?? limit.toLocaleString()}
                   </span>
-                  {gain > 1 && (
+                  {gain >= 1.5 && (
                     <span className="ml-1.5 text-2xs text-success">
                       {Math.round(gain)}×
                     </span>
@@ -486,7 +489,7 @@ function SeatsSection({
               </Table>
             )}
             {canAdd && (
-              <div className="flex justify-end border-t border-border px-4 py-2.5">
+              <div className="flex justify-end border-t border-border px-2 py-2.5">
                 <AddSeatButton seats={seats} />
               </div>
             )}
@@ -784,13 +787,14 @@ function planDetail(
 
 // The line under the plan's heading: what it costs and when it renews or
 // resets, then whose limits these are, the same note as the Usage tab.
-// Nothing until the budget is known, so the line never swaps under the reader.
+// Nothing until the budget and seats are known, so the line never swaps
+// under the reader.
 function planSummary(
   budget: BudgetUsage | null | undefined,
   seats: OrgSeats | undefined,
   plan: PlanTier,
 ): string | undefined {
-  if (budget === undefined) return undefined;
+  if (budget === undefined || seats === undefined) return undefined;
   if (budget?.enforced === false) {
     return "Your own install. Every feature, no limits.";
   }
