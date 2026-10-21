@@ -57,6 +57,8 @@ import {
   GitPullRequestArrow,
   MessageCircleQuestionMark,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Terminal,
   TriangleAlert,
   Wrench,
@@ -85,6 +87,8 @@ import {
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
 import { useObservabilityView } from "@/app/hooks/useObservabilityView";
+import { useIsMobile } from "@/app/hooks/useIsMobile";
+import { useRemembered } from "@/app/hooks/useRemembered";
 import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
@@ -364,6 +368,9 @@ const STATUS_ALIASES: Readonly<Record<string, SpanStatus>> = {
 // divider never pushes the waterfall's columns out of view.
 const TRACE_TABLE_MIN_WIDTH = 896;
 
+// Where the browser remembers that the task list is folded to its rail.
+const LIST_RAIL_KEY = "tracing:list-rail";
+
 // A live run's clock: its now line, running bars and durations move once a second.
 const LIVE_TICK_MS = 1000;
 
@@ -534,6 +541,24 @@ interface ListRow {
   parent: SpanGroup | null;
 }
 
+// The task list on the left: its rows, or a rail of their status dots.
+interface TaskListPaneProps {
+  rail: boolean;
+  onToggleRail: () => void;
+  rows: ListRow[];
+  selectedGroup: SpanGroup | null;
+  stackChoices: ReadonlyMap<string, boolean>;
+  onSelect: (root: ObservabilitySpanRow) => void;
+  onToggleStack: (root: ObservabilitySpanRow, open: boolean) => void;
+  // What the list says when it has no rows.
+  emptyMessage: string;
+  // Tasks loaded and in all, counted by request; subagent rows are extra.
+  shown: number;
+  total: number;
+  remaining: number;
+  onLoadMore: () => void;
+}
+
 // The list row's props, primitives and stable callbacks so the memoized row
 // skips a flush that left them as they were.
 interface TaskListRowProps {
@@ -564,6 +589,12 @@ export function TracingPanel({
     parseAsTraceId,
   );
   const [toggled, setToggled] = useState<Set<string>>(new Set());
+  // The task list folded to a rail of status dots, so one trace gets the width.
+  // Desktop only: on a phone the list stacks above the trace, so a rail of
+  // full-width dot rows saves nothing.
+  const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
+  const isMobile = useIsMobile();
+  const rail = railChosen && !isMobile;
   // Whether a request's subagent rows list, where the person chose; with no
   // choice they list while the selected run is that request or under it.
   const [stackChoices, setStackChoices] = useState<
@@ -1023,44 +1054,24 @@ export function TracingPanel({
         }
       >
         <div className="flex h-full min-h-0 flex-col md:flex-row">
-          <div
-            data-scroll-pane
-            className="max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-80 md:border-r md:border-b-0"
-          >
-            {listRows.map(({ group, parent }) => (
-              <TaskListRow
-                key={spanKey(group.root)}
-                root={group.root}
-                status={group.status}
-                tone={groupTone(group)}
-                taskDurationMs={group.taskDurationMs}
-                cause={failureCause(group)}
-                isSubagent={parent !== null}
-                subagentNames={group.subagents
-                  .map((subagent) => subagentName(subagent.root))
-                  .join("\n")}
-                isSelected={group === selectedGroup}
-                stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
-                onSelect={pickTask}
-                onToggleStack={toggleStack}
-              />
-            ))}
-            {groups.length === 0 && (
-              <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                {entries.length === 0
-                  ? emptyStreamMessage(history, error, "traces", "7 days")
-                  : "No tasks match the current filters."}
-              </p>
-            )}
-            <LoadMore
-              shown={groups.length}
-              total={allGroups.length}
-              noun={["task", "tasks"]}
-              pageSize={PAGE_SIZE}
-              remaining={remaining}
-              onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
-            />
-          </div>
+          <TaskListPane
+            rail={rail}
+            onToggleRail={() => setRail(!railChosen)}
+            rows={listRows}
+            selectedGroup={selectedGroup}
+            stackChoices={stackChoices}
+            onSelect={pickTask}
+            onToggleStack={toggleStack}
+            emptyMessage={
+              entries.length === 0
+                ? emptyStreamMessage(history, error, "traces", "7 days")
+                : "No tasks match the current filters."
+            }
+            shown={groups.length}
+            total={allGroups.length}
+            remaining={remaining}
+            onLoadMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
+          />
 
           <div
             data-scroll-pane
@@ -2625,6 +2636,103 @@ function SpanTimings({
 }
 
 /**
+ * The task list, or its rail: the toggle at the top, then one row or one dot
+ * per task. The rail keeps the order, the status and the selection of the
+ * list in 36px, so one trace gets the width without losing where you are.
+ */
+function TaskListPane({
+  rail,
+  onToggleRail,
+  rows,
+  selectedGroup,
+  stackChoices,
+  onSelect,
+  onToggleStack,
+  emptyMessage,
+  shown,
+  total,
+  remaining,
+  onLoadMore,
+}: TaskListPaneProps): React.JSX.Element {
+  return (
+    <div
+      data-scroll-pane
+      className={cn(
+        "max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:border-r md:border-b-0",
+        rail ? "md:w-9" : "md:w-80",
+      )}
+    >
+      <div
+        className={cn(
+          "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
+          rail ? "justify-center" : "justify-end",
+        )}
+      >
+        <button
+          type="button"
+          onClick={onToggleRail}
+          aria-pressed={rail}
+          aria-label={rail ? "Show the task list" : "Fold the task list"}
+          title={rail ? "Show the task list" : "Fold the task list to its dots"}
+          className="cursor-pointer p-2 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {rail ? (
+            <PanelLeftOpen className="size-4" />
+          ) : (
+            <PanelLeftClose className="size-4" />
+          )}
+        </button>
+      </div>
+      {rows.map(({ group, parent }) =>
+        rail ? (
+          <TaskRailDot
+            key={spanKey(group.root)}
+            root={group.root}
+            status={group.status}
+            tone={groupTone(group)}
+            isSubagent={parent !== null}
+            isSelected={group === selectedGroup}
+            onSelect={onSelect}
+          />
+        ) : (
+          <TaskListRow
+            key={spanKey(group.root)}
+            root={group.root}
+            status={group.status}
+            tone={groupTone(group)}
+            taskDurationMs={group.taskDurationMs}
+            cause={failureCause(group)}
+            isSubagent={parent !== null}
+            subagentNames={group.subagents
+              .map((subagent) => subagentName(subagent.root))
+              .join("\n")}
+            isSelected={group === selectedGroup}
+            stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
+            onSelect={onSelect}
+            onToggleStack={onToggleStack}
+          />
+        ),
+      )}
+      {!rail && rows.length === 0 && (
+        <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+          {emptyMessage}
+        </p>
+      )}
+      {!rail && (
+        <LoadMore
+          shown={shown}
+          total={total}
+          noun={["task", "tasks"]}
+          pageSize={PAGE_SIZE}
+          remaining={remaining}
+          onLoad={onLoadMore}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
  * One row of the task list: dot, request and duration, then start time and
  * the failure cause or open wait. A subagent row is indented under its
  * request and names its agent, with its task after the time. A request with
@@ -2702,6 +2810,53 @@ const TaskListRow = memo(function TaskListRow({
     </div>
   );
 });
+
+/**
+ * One task on the rail: its status dot, ringed when selected, indented for a
+ * subagent. Hover names the task and its time; the id is the same focus
+ * target as the list row, so j/k and a trace link still scroll to it.
+ */
+function TaskRailDot({
+  root,
+  status,
+  tone,
+  isSubagent,
+  isSelected,
+  onSelect,
+}: {
+  root: ObservabilitySpanRow;
+  status: SpanStatus;
+  tone: StatusTone;
+  isSubagent: boolean;
+  isSelected: boolean;
+  onSelect: (root: ObservabilitySpanRow) => void;
+}): React.JSX.Element {
+  const request = spanLabel(root);
+
+  return (
+    <button
+      type="button"
+      id={`task-${root.traceId}`}
+      onClick={() => onSelect(root)}
+      aria-current={isSelected || undefined}
+      aria-label={request}
+      title={`${request}\n${formatDateTime(root.startTimeMs)} · ${status}`}
+      className={cn(
+        "flex w-full cursor-pointer justify-center border-b border-border/40 py-2 transition-colors hover:bg-accent/20",
+        isSelected && "bg-accent",
+        isSubagent && "pl-2",
+      )}
+    >
+      <StatusDot
+        tone={tone}
+        label={status}
+        className={cn(
+          isSelected && "ring-2 ring-foreground ring-offset-1 ring-offset-card",
+        )}
+      />
+    </button>
+  );
+}
 
 /**
  * The selected run on the right: its request, or its chain for a subagent,
