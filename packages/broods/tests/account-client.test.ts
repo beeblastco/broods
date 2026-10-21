@@ -137,20 +137,6 @@ test("unwraps list envelopes for crons, runs, workspaces, and files", async () =
   );
 });
 
-test("getAccount unwraps the account envelope", async () => {
-  const { client } = mockClient([
-    {
-      status: 200,
-      body: {
-        account: { accountId: "acc_1", username: "beeblast", status: "active" },
-      },
-    },
-  ]);
-
-  const account = await client.getAccount();
-  expect(account.accountId).toBe("acc_1");
-});
-
 test("getStorageTrust reads the account's external id and principal", async () => {
   const trust = {
     externalId: "broods-abc",

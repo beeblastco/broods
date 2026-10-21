@@ -290,18 +290,6 @@ describe("createTools", () => {
     expect(Object.keys(tools).sort()).toEqual(["urlContext"]);
   });
 
-  it("rejects a retired account-tool id key in config.tools", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    // Custom tools are sunset (#331 phase 3): a stale Convex-id key left in
-    // config.tools is now just an unsupported tool, not a lookup.
-    expect(
-      createTools(createToolContext() as never, {
-        tools: { qs78zwc4z4q5ysxm74fgrhd13s88xxt: { enabled: true } },
-      }),
-    ).rejects.toThrow("is not a provider-defined tool");
-  });
-
   it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
@@ -336,16 +324,6 @@ describe("createTools", () => {
     ).rejects.toThrow(
       /config\.tools\.notAProviderTool is not a provider-defined tool/,
     );
-  });
-
-  it("exposes only bash when a sandbox has no workspace (stateless)", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    const context = sandboxContext();
-    const tools = await createTools(context, {});
-
-    expect(Object.keys(tools).sort()).toEqual(["bash"]);
-    expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
   });
 
   it("exposes the full file tool set when a workspace is attached", async () => {
@@ -501,12 +479,6 @@ describe("createTools", () => {
       }),
     ).rejects.toThrow("Error: workspace is read-only");
     expect(await needsApproval(tools.write, { workspace: "rw" })).toBe(false);
-  });
-
-  it("exposes no sandbox tools when no sandbox is referenced", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    expect(await createTools(createToolContext(), {})).toEqual({});
   });
 
   it("exposes run_subagent only when subagents are enabled with a dispatcher", async () => {

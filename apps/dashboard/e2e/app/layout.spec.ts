@@ -77,7 +77,9 @@ async function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
-test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and stays collapsed across a reload", async ({
+// @post-rollout: the hover opens over a CSS transition, which flaked on the
+// shared pull request runner. e2e-dashboard.yaml runs it after the rollout.
+test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and stays collapsed across a reload @post-rollout", async ({
   page,
 }) => {
   await page.goto(`/${readProjectId()}/dashboard?tab=tracing`);

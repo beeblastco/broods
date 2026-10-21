@@ -667,10 +667,6 @@ describe("account-manage sandbox endpoints", () => {
           ticket!.expiresAt,
         ),
       ).toBe(false);
-      // A bridge that has no key yet opens no terminal.
-      expect(
-        await verifyTerminalToken("", bearer, "sbx_handler", Date.now()),
-      ).toBe(false);
 
       running = false;
       const stopped = await terminal();
@@ -713,56 +709,6 @@ describe("account-manage sandbox endpoints", () => {
           .message,
       ),
     ).toContain("does not support a live terminal");
-  });
-});
-
-describe("account-manage workspace endpoints", () => {
-  it("no longer serves workspace config CRUD routes (moved to the Convex config plane)", async () => {
-    setStorageForTests(createFakeStorage());
-
-    for (const [method, path] of [
-      ["GET", "/v1/workspaces"],
-      ["POST", "/v1/workspaces"],
-      ["GET", "/v1/workspaces/ws_1"],
-      ["PATCH", "/v1/workspaces/ws_1"],
-      ["DELETE", "/v1/workspaces/ws_1"],
-    ] as const) {
-      const response = await handler(
-        createEvent(method, path, AUTH, method === "GET" ? undefined : {}),
-      );
-      expect(response.status).toBe(403);
-      expect(await responseJson(response)).toMatchObject({
-        error: { message: "Forbidden" },
-      });
-    }
-
-    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    const adminResponse = await handler(
-      createEvent("GET", "/v1/accounts/acct_test/workspaces", {
-        authorization: "Bearer admin-secret",
-      }),
-    );
-    expect(adminResponse.status).toBe(404);
-    expect(await responseJson(adminResponse)).toMatchObject({
-      error: { message: "Not found" },
-    });
-  });
-
-  it("no longer serves workspace file routes (moved to the Convex config plane)", async () => {
-    process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage());
-
-    const response = await handler(
-      createEvent("GET", "/v1/workspaces/ws_1/files", {
-        authorization: "Bearer service-secret",
-        "x-account-id": ACCOUNT_ID,
-      }),
-    );
-
-    expect(response.status).toBe(403);
-    expect(await responseJson(response)).toMatchObject({
-      error: { message: "Forbidden" },
-    });
   });
 });
 

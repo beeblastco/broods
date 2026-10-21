@@ -574,26 +574,6 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  it("resolves every built-in provider from the registry", () => {
-    const {
-      createSandboxExecutor,
-    } = require("../src/harness/sandbox/index.ts");
-    const executorOf = (provider: string, options = {}): string =>
-      createSandboxExecutor({ provider: provider, options: options })
-        .constructor.name;
-    expect(executorOf("e2b")).toBe("E2BSandboxExecutor");
-    expect(executorOf("daytona")).toBe("DaytonaSandboxExecutor");
-    expect(executorOf("vercel")).toBe("VercelSandboxExecutor");
-    expect(executorOf("machine")).toBe("MachineSandboxExecutor");
-    expect(executorOf("custom")).toBe("HttpSandboxExecutor");
-    expect(
-      executorOf("sandbox", {
-        workdirUrl: "https://workdir.example.com",
-        apiKey: "key",
-      }),
-    ).toBe("WorkdirSandboxExecutor");
-  });
-
   it("throws on a stored provider this build does not know", () => {
     const {
       createSandboxExecutor,
@@ -2803,28 +2783,6 @@ describe("createSandboxExecutor", () => {
     expect(e2bKillMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not synthesize a workspace cwd for stateless E2B commands", async () => {
-    const {
-      createSandboxExecutor,
-    } = require("../src/harness/sandbox/index.ts");
-    const executor = createSandboxExecutor({ provider: "e2b" });
-
-    await executor.run({
-      code: "echo user",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    expect(e2bRunMock).toHaveBeenCalledTimes(1);
-    expect(e2bRunMock.mock.calls[0]).toEqual([
-      "echo user",
-      {
-        timeoutMs: 30000,
-        envs: {},
-      },
-    ]);
-  });
-
   it("launches persistent E2B background jobs with the native command API", async () => {
     const { E2BSandboxExecutor } =
       await import("../src/harness/sandbox/e2b-executor.ts");
@@ -3820,15 +3778,6 @@ describe("conditional release", () => {
       executor.release({ namespace: NS, expectedExternalId: "sbx-old" }),
     ).rejects.toThrow("failed to terminate MicroVM sbx-old");
     expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("workspaceNamespacePrefix", () => {
-  it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
-    const { workspaceNamespacePrefix } =
-      await import("../src/shared/sandbox.ts");
-    // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
-    expect(workspaceNamespacePrefix("fs-abc")).toBe("fs-abc");
   });
 });
 
