@@ -76,24 +76,31 @@ test("the handle owns the resize cursor, the group holds it through a drag, and 
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
 
+  // A few pixels off the 1px line still shows the cursor, where a press drags.
+  const offLine = await page.evaluate(
+    ([px, py]) => getComputedStyle(document.elementFromPoint(px, py)!).cursor,
+    [x + 4, y],
+  );
+  expect(offLine).toBe("col-resize");
   await page.mouse.move(x, y);
-  expect(await cursor(handle)).toBe("col-resize");
-  expect(await cursor(group)).toBe("auto");
-  expect(await pageWideRules(page)).toBe(0);
+  // The library's `*` rule would reach the group and the body.
+  await expect(group).toHaveCSS("cursor", "auto");
+  const body = page.locator("body");
+  await expect(body).toHaveCSS("cursor", "auto");
 
   // Off the handle mid-drag, the group shows the resize cursor, even over a
-  // child with its own.
+  // child with its own, and the page outside it stays untouched.
   const close = group.getByRole("button", { name: "Close details" });
-  expect(await cursor(close)).toBe("pointer");
+  await expect(close).toHaveCSS("cursor", "pointer");
   await page.mouse.down();
   await page.mouse.move(x - DRAG, y + DRAG, { steps: 5 });
-  expect(await cursor(group)).toBe("col-resize");
-  expect(await cursor(close)).toBe("col-resize");
-  expect(await pageWideRules(page)).toBe(0);
+  await expect(group).toHaveCSS("cursor", "col-resize");
+  await expect(close).toHaveCSS("cursor", "col-resize");
+  await expect(body).toHaveCSS("cursor", "auto");
 
   await page.mouse.up();
-  expect(await cursor(group)).toBe("auto");
-  expect(await cursor(close)).toBe("pointer");
+  await expect(group).toHaveCSS("cursor", "auto");
+  await expect(close).toHaveCSS("cursor", "pointer");
 });
 
 test("on a phone the open detail takes the table's place, and closing it brings the table back", async ({
@@ -175,10 +182,6 @@ test.describe("drag performance", () => {
   });
 });
 
-async function cursor(element: Locator): Promise<string> {
-  return await element.evaluate((node) => getComputedStyle(node).cursor);
-}
-
 /** Press the handle and slide it `dx` pixels along the row. */
 async function dragHandle(
   page: Page,
@@ -197,16 +200,6 @@ async function dragHandle(
 
 function expectNear(actual: number, expected: number): void {
   expect(Math.abs(actual - expected)).toBeLessThanOrEqual(TOLERANCE_PX);
-}
-
-/** Rules in constructed style sheets, where the library put its `*` cursor rule. */
-async function pageWideRules(page: Page): Promise<number> {
-  return await page.evaluate(() =>
-    document.adoptedStyleSheets.reduce(
-      (count, sheet) => count + sheet.cssRules.length,
-      0,
-    ),
-  );
 }
 
 /**
