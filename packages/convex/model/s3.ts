@@ -283,8 +283,9 @@ export async function listS3Prefix(
 export async function readS3Bytes(
   bucket: string,
   key: string,
+  access?: S3Access,
 ): Promise<Uint8Array> {
-  const client = await s3Client();
+  const client = await s3Client(access);
   const result = await client.send(
     new GetObjectCommand({ Bucket: bucket, Key: key }),
   );
