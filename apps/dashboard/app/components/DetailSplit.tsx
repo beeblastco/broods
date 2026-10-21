@@ -104,7 +104,7 @@ export function DetailSplit({
       </ResizablePanel>
       {detail && (
         <>
-          <ResizableHandle className="cursor-col-resize max-md:hidden" />
+          <ResizableHandle className="max-md:hidden" />
           <ResizablePanel
             defaultSize={DETAIL_DEFAULT_WIDTH}
             minSize={DETAIL_MIN_WIDTH}
