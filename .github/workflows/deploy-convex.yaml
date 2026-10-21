@@ -58,6 +58,8 @@ jobs:
           # Stripe checkout and the portal may return to; unset leaves the
           # backend's value alone.
           DASHBOARD_ORIGIN: ${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
+          # The Pro price Upgrade bills; unset leaves the backend's value alone.
+          STRIPE_PRO_PRICE_ID: ${{ vars.STRIPE_PRO_PRICE_ID }}
         run: |
           # Self-hosted backends authenticate with an admin key against an
           # explicit URL; there is no deploy key. The environment provides one
@@ -91,5 +93,8 @@ jobs:
           fi
           if [[ -n "$DASHBOARD_ORIGIN" ]]; then
             bunx convex env set DASHBOARD_ORIGIN "$(bun -p 'new URL(process.env.DASHBOARD_ORIGIN).origin')"
+          fi
+          if [[ -n "$STRIPE_PRO_PRICE_ID" ]]; then
+            bunx convex env set STRIPE_PRO_PRICE_ID "$STRIPE_PRO_PRICE_ID"
           fi
           bun run deploy

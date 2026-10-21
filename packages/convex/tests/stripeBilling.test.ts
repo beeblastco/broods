@@ -17,10 +17,12 @@ const AUTH_ID = "auth_payer";
 const CUSTOMER_ID = "cus_payer";
 const SUBSCRIPTION_ID = "sub_payer";
 const ITEM_ID = "si_payer";
+const PRO_ITEM_ID = "si_payer_pro";
 const WEBHOOK_SECRET = "whsec_billing_test";
 
 const stripeCalls = vi.hoisted(() => ({
   customers: vi.fn(),
+  retrieveCustomer: vi.fn(),
   // What Stripe holds now, by subscription id. The webhook reads it back.
   live: new Map<string, Record<string, unknown>>(),
   retrieveSubscription: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("stripe", async (importOriginal) => {
     constructor(key: string) {
       super(key);
       this.customers.update = stripeCalls.customers;
+      this.customers.retrieve = stripeCalls.retrieveCustomer;
       this.subscriptions.retrieve = stripeCalls.retrieveSubscription;
       this.subscriptions.update = stripeCalls.subscriptions;
     }
@@ -455,8 +458,8 @@ describe("owner billing", () => {
     await seedPayer(t);
     await addMember(t, "auth_member", "member@example.com");
     const customer = vi
-      .spyOn(stripeClient, "getOrCreateCustomer")
-      .mockResolvedValue({ customerId: CUSTOMER_ID, isNew: false });
+      .spyOn(stripeClient, "createCustomer")
+      .mockResolvedValue({ customerId: CUSTOMER_ID });
     const checkoutSession = vi
       .spyOn(stripeClient, "createCheckoutSession")
       .mockResolvedValue({ sessionId: "cs_pro", url: "https://checkout.test" });
@@ -468,18 +471,19 @@ describe("owner billing", () => {
 
     expect(url).toBe("https://checkout.test");
     expect(customer).toHaveBeenCalledWith(expect.anything(), {
-      userId: AUTH_ID,
       email: "payer@example.com",
+      metadata: { userId: AUTH_ID },
+      idempotencyKey: AUTH_ID,
     });
     expect(checkoutSession).toHaveBeenCalledWith(expect.anything(), {
-      priceId: "price_seat",
+      priceId: "price_pro",
       customerId: CUSTOMER_ID,
       mode: "subscription",
-      quantity: 1,
       successUrl: "http://localhost:3000/ok",
       cancelUrl: "http://localhost:3000/cancel",
       subscriptionMetadata: { userId: AUTH_ID },
       params: {
+        line_items: [{ price: "price_pro", quantity: 1 }],
         allow_promotion_codes: true,
         payment_method_collection: "if_required",
       },
@@ -496,9 +500,8 @@ describe("owner billing", () => {
     await addMember(t, "auth_kept_a", "a@example.com", second);
     await addMember(t, "auth_kept_c", "c@example.com", second);
     await addMember(t, "auth_kept_d", "d@example.com", second);
-    vi.spyOn(stripeClient, "getOrCreateCustomer").mockResolvedValue({
+    vi.spyOn(stripeClient, "createCustomer").mockResolvedValue({
       customerId: CUSTOMER_ID,
-      isNew: false,
     });
     const checkoutSession = vi
       .spyOn(stripeClient, "createCheckoutSession")
@@ -511,8 +514,59 @@ describe("owner billing", () => {
 
     expect(checkoutSession).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ quantity: 3 }),
+      expect.objectContaining({
+        params: expect.objectContaining({
+          line_items: [
+            { price: "price_pro", quantity: 1 },
+            { price: "price_seat", quantity: 2 },
+          ],
+        }),
+      }),
     );
+  });
+
+  test("checkout replaces a filed customer Stripe no longer has", async () => {
+    vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(t, "customer.created", {
+      id: "cus_gone",
+      object: "customer",
+      email: "payer@example.com",
+      metadata: { userId: AUTH_ID },
+    });
+    stripeCalls.retrieveCustomer.mockRejectedValue(
+      new Stripe.errors.StripeInvalidRequestError({
+        message: "No such customer: 'cus_gone'",
+        type: "invalid_request_error",
+        code: "resource_missing",
+      }),
+    );
+    const customer = vi
+      .spyOn(stripeClient, "createCustomer")
+      .mockResolvedValue({ customerId: CUSTOMER_ID });
+    const checkoutSession = vi
+      .spyOn(stripeClient, "createCheckoutSession")
+      .mockResolvedValue({ sessionId: "cs_pro", url: "https://checkout.test" });
+
+    await t.action(api.stripe.createCheckoutSession, {
+      successUrl: "http://localhost:3000/ok",
+      cancelUrl: "http://localhost:3000/cancel",
+    });
+
+    expect(customer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ idempotencyKey: `${AUTH_ID}_after_cus_gone` }),
+    );
+    expect(checkoutSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ customerId: CUSTOMER_ID }),
+    );
+    expect(
+      await t.query(components.stripe.public.getCustomerByUserId, {
+        userId: AUTH_ID,
+      }),
+    ).toBeNull();
   });
 
   test("refuses a second checkout while the owner has a live subscription", async () => {
@@ -633,7 +687,7 @@ describe("owner billing", () => {
 
     expect(cancel).not.toHaveBeenCalled();
     expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
-      items: [{ id: ITEM_ID, price: "price_seat", quantity: 1 }],
+      items: [{ id: ITEM_ID, deleted: true }],
       proration_behavior: "create_prorations",
       payment_behavior: "error_if_incomplete",
     });
@@ -848,7 +902,7 @@ describe("seat pool", () => {
 
     expect(seats).toBe(3);
     expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
-      items: [{ id: ITEM_ID, price: "price_seat", quantity: 2 }],
+      items: [{ price: "price_seat", quantity: 1 }],
       proration_behavior: "always_invoice",
       payment_behavior: "error_if_incomplete",
     });
@@ -964,7 +1018,7 @@ describe("seat pool", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
-      items: [{ id: ITEM_ID, price: "price_seat", quantity: 1 }],
+      items: [{ id: ITEM_ID, deleted: true }],
       proration_behavior: "create_prorations",
       payment_behavior: "error_if_incomplete",
     });
@@ -1017,7 +1071,7 @@ describe("seat pool", () => {
     expect(sub?.status).toBe("canceled");
   });
 
-  test("a subscription bought at one unit per member drops to the new count on its next sync", async () => {
+  test("a subscription bought as seat units alone gets its Pro line and drops to the new count on its next sync", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
     vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
     const t = billingTest();
@@ -1028,12 +1082,11 @@ describe("seat pool", () => {
       "auth_member",
       "member@example.com",
     );
-    // Three members at the old one unit each.
-    await sendEvent(
-      t,
-      "customer.subscription.created",
-      subscription("active", SUBSCRIPTION_ID, 3),
-    );
+    // Three members at the old one seat unit each, with no Pro line.
+    await sendEvent(t, "customer.subscription.created", {
+      ...subscription("active"),
+      items: { data: [seatItem(3)] },
+    });
     stripeCalls.subscriptions.mockImplementation(updateLive);
 
     vi.useFakeTimers();
@@ -1041,7 +1094,10 @@ describe("seat pool", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(stripeCalls.subscriptions).toHaveBeenCalledWith(SUBSCRIPTION_ID, {
-      items: [{ id: ITEM_ID, price: "price_seat", quantity: 1 }],
+      items: [
+        { price: "price_pro", quantity: 1 },
+        { id: ITEM_ID, deleted: true },
+      ],
       proration_behavior: "create_prorations",
       payment_behavior: "error_if_incomplete",
     });
@@ -1064,7 +1120,7 @@ describe("seat pool", () => {
     expect(stripeCalls.subscriptions).toHaveBeenCalledWith(
       SUBSCRIPTION_ID,
       expect.objectContaining({
-        items: [{ id: ITEM_ID, price: "price_seat", quantity: 1 }],
+        items: [{ id: ITEM_ID, deleted: true }],
       }),
     );
   });
@@ -1262,6 +1318,14 @@ describe("creating an org", () => {
 beforeEach(() => {
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_billing");
   vi.stubEnv("STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET);
+  vi.stubEnv("STRIPE_PRO_PRICE_ID", "price_pro");
+  // Stripe has every customer the component filed, unless a test says not.
+  stripeCalls.retrieveCustomer.mockImplementation(
+    async (id: string): Promise<Record<string, unknown>> => ({
+      id: id,
+      object: "customer",
+    }),
+  );
   // processEvent also fetches the latest invoice on checkout completion.
   stripeCalls.retrieveSubscription.mockImplementation(
     async (id: string): Promise<Record<string, unknown>> =>
@@ -1430,12 +1494,15 @@ async function ownedOrgCount(t: T): Promise<number> {
   });
 }
 
-/** Stripe's answer to a seat change: the subscription at its new quantity. */
+/** Stripe's answer to a seat change: the subscription at its new units, its Pro line kept. */
 async function updateLive(
   id: string,
   params: Stripe.SubscriptionUpdateParams,
 ): Promise<Record<string, unknown>> {
-  const next = subscription("active", id, params.items?.[0]?.quantity ?? 1);
+  const seats = (params.items ?? [])
+    .filter((item) => !item.deleted && item.price === "price_seat")
+    .reduce((units, item) => units + (item.quantity ?? 1), 0);
+  const next = subscription("active", id, 1 + seats);
   stripeCalls.live.set(id, next);
 
   return next;
@@ -1488,7 +1555,7 @@ async function deliver(
   });
 }
 
-/** A subscription as Stripe returns it; by default the payer's. */
+/** A subscription as Stripe returns it, its Pro line then any extra seats; by default the payer's. */
 function subscription(
   status: Stripe.Subscription.Status,
   id = SUBSCRIPTION_ID,
@@ -1506,12 +1573,23 @@ function subscription(
     items: {
       data: [
         {
-          id: ITEM_ID,
+          id: PRO_ITEM_ID,
           current_period_end: 1_900_000_000,
-          quantity: quantity,
-          price: { id: "price_seat" },
+          quantity: 1,
+          price: { id: "price_pro" },
         },
+        ...(quantity > 1 ? [seatItem(quantity - 1)] : []),
       ],
     },
+  };
+}
+
+/** A subscription's seat line at `quantity` units. */
+function seatItem(quantity: number): Record<string, unknown> {
+  return {
+    id: ITEM_ID,
+    current_period_end: 1_900_000_000,
+    quantity: quantity,
+    price: { id: "price_seat" },
   };
 }
