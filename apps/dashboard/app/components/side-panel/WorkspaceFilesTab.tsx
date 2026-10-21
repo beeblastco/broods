@@ -212,7 +212,9 @@ export function WorkspaceFilesTab({
         } catch (err) {
           setError(toErrorMessage(err));
         } finally {
-          await refreshRuntimeFiles(false, true);
+          await refreshRuntimeFiles(false, true).catch((err) =>
+            setError(toErrorMessage(err)),
+          );
         }
 
         return;
@@ -359,7 +361,9 @@ export function WorkspaceFilesTab({
         } catch (err) {
           setError(toErrorMessage(err));
         } finally {
-          await refreshRuntimeFiles(false, true);
+          await refreshRuntimeFiles(false, true).catch((err) =>
+            setError(toErrorMessage(err)),
+          );
         }
 
         return;
