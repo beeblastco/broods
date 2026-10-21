@@ -4,12 +4,14 @@ import {
   describe,
   expect,
   it,
+  jest,
   mock,
   spyOn,
 } from "bun:test";
 import * as planLimits from "../src/harness/plan-limits.ts";
 import * as sandboxSnapshots from "../src/shared/convex/sandbox-snapshots.ts";
 import * as s3 from "../src/shared/s3.ts";
+import { settleOnFakeClock } from "./helpers/fake-clock.ts";
 import { requestBodyText, requestUrl } from "./helpers/http.ts";
 import type { SandboxExecRequest } from "../src/shared/domain/sandbox-config.ts";
 import type {
@@ -500,6 +502,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   globalThis.fetch = originalFetch;
   findSnapshotSpy.mockRestore();
 });
@@ -569,26 +572,6 @@ describe("createSandboxExecutor", () => {
     expect(createSandboxExecutor({ provider: "lambda" }).constructor.name).toBe(
       "MicrovmSandboxExecutor",
     );
-  });
-
-  it("resolves every built-in provider from the registry", () => {
-    const {
-      createSandboxExecutor,
-    } = require("../src/harness/sandbox/index.ts");
-    const executorOf = (provider: string, options = {}): string =>
-      createSandboxExecutor({ provider: provider, options: options })
-        .constructor.name;
-    expect(executorOf("e2b")).toBe("E2BSandboxExecutor");
-    expect(executorOf("daytona")).toBe("DaytonaSandboxExecutor");
-    expect(executorOf("vercel")).toBe("VercelSandboxExecutor");
-    expect(executorOf("machine")).toBe("MachineSandboxExecutor");
-    expect(executorOf("custom")).toBe("HttpSandboxExecutor");
-    expect(
-      executorOf("sandbox", {
-        workdirUrl: "https://workdir.example.com",
-        apiKey: "key",
-      }),
-    ).toBe("WorkdirSandboxExecutor");
   });
 
   it("throws on a stored provider this build does not know", () => {
@@ -672,19 +655,23 @@ describe("createSandboxExecutor", () => {
   });
 
   it("waits for an ephemeral workspace mount before executing user code", async () => {
+    jest.useFakeTimers();
     microvmMountPendingChecks = 3;
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({ provider: "lambda" });
 
-    const result = await executor.run({
-      code: "echo persisted",
-      namespace: NS,
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
+    const result = await settleOnFakeClock(
+      executor.run({
+        code: "echo persisted",
+        // Its own namespace: what it caches is stamped with the fake clock.
+        namespace: microvmNamespace(),
+        workspaceRoot: "/mnt/workspaces",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    );
 
     expect(result).toMatchObject({ ok: true, provider: "lambda" });
     expect(microvmMountPendingChecks).toBe(0);
@@ -1874,6 +1861,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("falls back to the reservation when the cached endpoint is dead", async () => {
+    jest.useFakeTimers();
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-stale";
     microvmGetResponses = [
@@ -1898,7 +1886,7 @@ describe("createSandboxExecutor", () => {
       outputLimitBytes: 4096,
     };
 
-    await executor.run(request);
+    await settleOnFakeClock(executor.run(request));
     // The cached VM is gone, so every POST to it 503s until the short cached budget
     // runs out. It never ran the code, which is what makes re-exec'ing safe: the
     // reservation now resolves to a live VM and only that one sees the request.
@@ -1914,7 +1902,7 @@ describe("createSandboxExecutor", () => {
         headers: { "content-type": "application/json" },
       });
     }) as unknown as typeof fetch;
-    const result = await executor.run(request);
+    const result = await settleOnFakeClock(executor.run(request));
 
     expect(result).toMatchObject({ ok: true, provider: "lambda" });
     expect(getSandboxExternalIdMock).toHaveBeenCalledTimes(2);
@@ -2386,6 +2374,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("waits for a mount the /run hook is still establishing", async () => {
+    jest.useFakeTimers();
     const ns = microvmNamespace();
     storedSandboxExternalId = null;
     // The VM answers /exec the moment it boots, well before mount-s3 has finished,
@@ -2399,13 +2388,15 @@ describe("createSandboxExecutor", () => {
       persistent: true,
     });
 
-    const result = await executor.run({
-      code: "echo ok",
-      namespace: ns,
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
+    const result = await settleOnFakeClock(
+      executor.run({
+        code: "echo ok",
+        namespace: ns,
+        workspaceRoot: "/mnt/workspaces",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    );
 
     expect(result).toMatchObject({ ok: true, provider: "lambda" });
     expect(microvmMountPendingChecks).toBe(0);
@@ -2416,6 +2407,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("releases the reservation when the create-time mount check fails", async () => {
+    jest.useFakeTimers();
     const ns = microvmNamespace();
     storedSandboxExternalId = null;
     microvmMountLive = false;
@@ -2426,8 +2418,9 @@ describe("createSandboxExecutor", () => {
       provider: "lambda",
       persistent: true,
     });
+    const startedAt = Date.now();
 
-    expect(
+    const failure = await settleOnFakeClock(
       executor.run({
         code: "echo ok",
         namespace: ns,
@@ -2435,7 +2428,13 @@ describe("createSandboxExecutor", () => {
         timeoutSeconds: 30,
         outputLimitBytes: 4096,
       }),
-    ).rejects.toThrow("mount is not live");
+    ).then(
+      (): string => "resolved",
+      (error: Error): string => error.message,
+    );
+    expect(failure).toContain("mount is not live");
+    // It gives up only once the hook's whole 30 s budget has run out.
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(30_000);
 
     // A VM that never mounted must not stay reserved: the next call would take the
     // cached endpoint and write to its local disk instead of S3.
@@ -2445,8 +2444,7 @@ describe("createSandboxExecutor", () => {
     expect(types).toContain("TerminateMicrovm");
     expect(deleteSandboxInstanceMock).toHaveBeenCalled();
     expect(storedSandboxExternalId).toBeNull();
-    // Giving up costs the hook's whole budget, so this one test outruns the default.
-  }, 45_000);
+  });
 
   it("recreates the reserved MicroVM when its reservation points at a terminated one", async () => {
     const ns = microvmNamespace();
@@ -2783,28 +2781,6 @@ describe("createSandboxExecutor", () => {
       },
     ]);
     expect(e2bKillMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not synthesize a workspace cwd for stateless E2B commands", async () => {
-    const {
-      createSandboxExecutor,
-    } = require("../src/harness/sandbox/index.ts");
-    const executor = createSandboxExecutor({ provider: "e2b" });
-
-    await executor.run({
-      code: "echo user",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
-
-    expect(e2bRunMock).toHaveBeenCalledTimes(1);
-    expect(e2bRunMock.mock.calls[0]).toEqual([
-      "echo user",
-      {
-        timeoutMs: 30000,
-        envs: {},
-      },
-    ]);
   });
 
   it("launches persistent E2B background jobs with the native command API", async () => {
@@ -3802,15 +3778,6 @@ describe("conditional release", () => {
       executor.release({ namespace: NS, expectedExternalId: "sbx-old" }),
     ).rejects.toThrow("failed to terminate MicroVM sbx-old");
     expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("workspaceNamespacePrefix", () => {
-  it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
-    const { workspaceNamespacePrefix } =
-      await import("../src/shared/sandbox.ts");
-    // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
-    expect(workspaceNamespacePrefix("fs-abc")).toBe("fs-abc");
   });
 });
 

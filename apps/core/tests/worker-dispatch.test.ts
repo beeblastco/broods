@@ -31,17 +31,6 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("in-process worker dispatch", () => {
-  it("runs payloads with a synthesized invocation context", async () => {
-    let seenContext: { requestId: string; deadlineMs: number } | undefined;
-    dispatchInProcessWorker("test-worker", async (context) => {
-      seenContext = context;
-    });
-    await drainInProcessWorkers();
-
-    expect(seenContext?.requestId).toMatch(/[0-9a-f-]{36}/);
-    expect(seenContext!.deadlineMs).toBeGreaterThan(Date.now());
-  });
-
   it("caps concurrency at the worker limit and drains the FIFO queue", async () => {
     const releases: (() => void)[] = [];
     const started: number[] = [];

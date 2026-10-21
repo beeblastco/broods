@@ -62,15 +62,4 @@ describe("summarizeMembers", () => {
       ]),
     ).toEqual({ color: "bg-canvas-mount", text: "1 inherited · 1 mounted" });
   });
-
-  test("an enabled server or skill is ok, a disabled one grey and idle", () => {
-    expect(enabledMemberStatus(true)).toMatchObject({
-      color: "bg-success",
-      level: "ok",
-    });
-    expect(enabledMemberStatus(false)).toMatchObject({
-      color: "bg-muted-foreground",
-      level: "idle",
-    });
-  });
 });

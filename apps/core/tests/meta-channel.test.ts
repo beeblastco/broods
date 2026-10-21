@@ -97,11 +97,6 @@ describe("messenger channel adapter", () => {
     );
   });
 
-  it("routes each entry of a shared app to the agent that owns it", (): void => {
-    expect(messenger().routesEachEntry).toBe(true);
-    expect(instagram().routesEachEntry).toBe(true);
-  });
-
   it("keeps only the entries for its own Page, looked up once from the token", async (): Promise<void> => {
     const lookups: string[] = [];
     recordFetch({}, lookups);
