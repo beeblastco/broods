@@ -47,7 +47,11 @@ import { publicHostFetch } from "../../shared/http.ts";
 import { logInfo } from "../../shared/log.ts";
 import { MAX_IMAGE_BYTES } from "../../shared/media-types.ts";
 import { guardedFetch } from "../isolate/runner/pinned-fetch.mjs";
-import { withImageLimits, type ToolContentPart } from "../tools/utils.ts";
+import {
+  MAX_RESULT_IMAGES,
+  withImageLimits,
+  type ToolContentPart,
+} from "../tools/utils.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -504,6 +508,9 @@ async function imageContentOutput(
   content: CallToolResult["content"],
   structured: CallToolResult["structuredContent"],
 ): Promise<ToolResultOutput> {
+  // Only as many links are read as one result may show, so a result naming a
+  // hundred pictures never holds them all in memory at once.
+  const links = content.filter(isImageLink).slice(0, MAX_RESULT_IMAGES);
   const parts = await Promise.all(
     content.map(async (block): Promise<ToolContentPart> => {
       if (block.type === "image") {
@@ -513,9 +520,10 @@ async function imageContentOutput(
           mediaType: block.mimeType,
         };
       }
-      const linked = isImageLink(block)
-        ? await linkedImage(block.uri, block.mimeType)
-        : undefined;
+      const linked =
+        isImageLink(block) && links.includes(block)
+          ? await linkedImage(block.uri, block.mimeType)
+          : undefined;
 
       return linked ?? { type: "text", text: renderContent([block]) };
     }),

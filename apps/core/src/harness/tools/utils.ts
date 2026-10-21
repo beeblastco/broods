@@ -41,7 +41,7 @@ export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
 export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
 // Images one tool result may show the model; together they share MAX_IMAGE_BYTES.
-const MAX_RESULT_IMAGES = 8;
+export const MAX_RESULT_IMAGES = 8;
 // The longest side a model provider takes for an inline image.
 const MAX_IMAGE_SIDE = 8000;
 // What every model provider reads inline.
