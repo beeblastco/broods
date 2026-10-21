@@ -312,7 +312,7 @@ describe("createConfiguredHarnessAgent", () => {
 });
 
 describe("createMicrovmHarnessAgent", () => {
-  it.each(["claude-code"] as const)(
+  it.each(["claude-code", "codex", "deepagents", "opencode", "pi"] as const)(
     "constructs the %s bridge on a version-scoped MicroVM reservation",
     async (type) => {
       const result = await runProbe(`
