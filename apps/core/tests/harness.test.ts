@@ -1362,6 +1362,58 @@ describe("runAgentLoop", () => {
     expect(delivered[0]?.signature).toMatch(/^sha256=[0-9a-f]{64}$/);
   });
 
+  it("runs the onError code hook when the model returns nothing", async () => {
+    installHarnessEnv();
+    const fired: Array<{ event: string; error: unknown }> = [];
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+
+    const stream = await runAgentLoop(
+      {
+        accountId: "acct_test",
+        agentId: "agent_test",
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: () => [],
+        environmentText: () => "<environment>",
+        persistModelMessages: async () => [],
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "hello" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+      undefined,
+      {
+        hooks: {
+          hasHooksFor: (event) => event === "agent.failed",
+          runMutation: async (event, payload) => {
+            fired.push({ event: event, error: payload.error });
+
+            return undefined;
+          },
+        },
+      },
+    );
+
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(true);
+    expect(fired).toHaveLength(1);
+    expect(fired[0]?.event).toBe("agent.failed");
+    expect(fired[0]?.error).toEqual(expect.any(String));
+  });
+
   it("keeps the provider error when the stream also finishes with empty text", async () => {
     streamTextScenario = "error-then-empty";
     installHarnessEnv();

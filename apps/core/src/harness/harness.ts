@@ -99,7 +99,11 @@ import {
 } from "./sandbox/live-status.ts";
 import { configString } from "./sandbox/utils.ts";
 import { shouldAutoCompact } from "./compaction.ts";
-import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import {
+  createAgentLifecycleEmitter,
+  toLifecycleValue,
+  type AgentLifecycleEventPayload,
+} from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import {
   channelPolicyIdentity,
@@ -352,6 +356,16 @@ export async function runAgentLoop(
   const hooks =
     options.hooks ??
     (await createAgentHookDispatcher(session.accountId, agentConfig));
+  // Every failure path announces through here, so the lifecycle webhook and
+  // the observe-only onError code hook always fire together.
+  const emitFailed = async (
+    payload: AgentLifecycleEventPayload & { error: string },
+  ): Promise<void> => {
+    await lifecycle.emit("agent.failed", payload);
+    if (hooks.hasHooksFor("agent.failed")) {
+      await hooks.runMutation("agent.failed", { error: payload.error });
+    }
+  };
 
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   const taskTotals = createTaskTotals();
@@ -1310,7 +1324,7 @@ export async function runAgentLoop(
         },
       );
 
-      await lifecycle.emit("agent.failed", {
+      await emitFailed({
         error: errorText,
         toolsUsed: toLifecycleValue(tools.toolsUsed),
         toolUsage: toLifecycleValue(tools.toolUsage),
@@ -1428,7 +1442,7 @@ export async function runAgentLoop(
               usage: taskTotals.usage(),
             },
           );
-          await lifecycle.emit("agent.failed", {
+          await emitFailed({
             error: errorText,
             finishReason: finishReason,
             stepCount: stepCount,
@@ -1532,16 +1546,12 @@ export async function runAgentLoop(
           errorDetails: serializeError(err),
         });
 
-        await lifecycle.emit("agent.failed", {
+        await emitFailed({
           error: errorText,
           toolsUsed: toLifecycleValue(tools.toolsUsed),
           toolUsage: toLifecycleValue(tools.toolUsage),
           toolCalls: toLifecycleValue(tools.toolCalls),
         });
-        // agent.failed is observe-only for hooks (side effects, no mutation).
-        if (hooks.hasHooksFor("agent.failed")) {
-          await hooks.runMutation("agent.failed", { error: errorText });
-        }
         await reply?.onErrorText(errorText).catch(() => {});
       } finally {
         await finalizer.finalize(
@@ -1628,7 +1638,7 @@ export async function runAgentLoop(
     const message = errorMessage(error);
     failureText = message;
     terminalError = error instanceof Error ? error : new Error(message);
-    await lifecycle.emit("agent.failed", { error: message });
+    await emitFailed({ error: message });
     await reply?.onErrorText(message).catch(() => {});
     await finalizer.finalize(
       "failed",
