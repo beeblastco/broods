@@ -106,10 +106,10 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     );
     await context.close();
 
-    // A failed chunk has no response, so it would slip past both checks below.
+    // A chunk that failed or errored must not pass as a lighter page.
     expect(
       firstLoad
-        .filter((_, index) => !responses[index])
+        .filter((_, index) => !responses[index]?.ok())
         .map((request) => request.url()),
       `every ${probe.name} chunk loads`,
     ).toEqual([]);
