@@ -116,10 +116,9 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
  * Ships apps/cloudflare-<service> with its `deploy` script as the Worker
  * `resourceName(service)`. wrangler deploys it because the Cloudflare
  * provider can declare neither a Worker Loader binding nor a Container image.
- * It reruns when a file in its folder or in `sources`, the lockfile, or a var
- * changes. There is no delete: the Worker keeps the key infra put on it, and a
- * removed stage's Worker (and the bridge's Container application) is deleted
- * by hand.
+ * It reruns when a file in its folder or in `sources`, or a var, changes.
+ * There is no delete: the Worker keeps the key infra put on it, and a removed
+ * stage's Worker (and the bridge's Container application) is deleted by hand.
  */
 async function deployCloudflareWorker(
   command: typeof import("@pulumi/command"),
@@ -137,7 +136,7 @@ async function deployCloudflareWorker(
     environment: {
       WORKER_NAME: name,
       // Read by nothing: a new value is what reruns the deploy.
-      SOURCES_HASH: await sourceFilesHash([app, ...sources, "bun.lock"]),
+      SOURCES_HASH: await sourceFilesHash([app, ...sources]),
       ...vars,
     },
   });
@@ -1166,10 +1165,19 @@ export default $config({
       ? {
           // Hosted MCP servers that can run on Dynamic Workers; its bucket
           // only caches bundles from this stage's S3 bucket.
-          mcp: await deployCloudflareWorker(command, stage, region, "mcp", [], {
-            BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
-          }),
-          // The `cloudflare` sandbox provider's bridge; needs Docker.
+          mcp: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "mcp",
+            ["bun.lock"],
+            {
+              BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
+            },
+          ),
+          // The `cloudflare` sandbox provider's bridge. It leaves out
+          // `bun.lock`, so a lockfile-only bump (zod, wrangler) ships with
+          // its next change rather than redeploying live sandboxes.
           sandbox: await deployCloudflareWorker(
             command,
             stage,
@@ -1182,7 +1190,7 @@ export default $config({
             stage,
             region,
             "worker",
-            ["apps/cloudflare-sandbox/src/bearer.ts"],
+            ["apps/cloudflare-sandbox/src/bearer.ts", "bun.lock"],
           ),
         }
       : undefined;
