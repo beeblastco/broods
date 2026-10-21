@@ -109,6 +109,7 @@ import {
 import {
   attemptRecordingMiddleware,
   cacheBreakpointFromProviderOptions,
+  markedForCache,
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
   providerOptionsFromModelConfig,
@@ -2037,19 +2038,6 @@ function withCacheBreakpoint<T extends { providerOptions?: ProviderOptions }>(
   }
 
   return items.with(index, markedForCache(item, breakpoint));
-}
-
-/** `item` with the breakpoint's options merged into its own, per provider. */
-function markedForCache<T extends { providerOptions?: ProviderOptions }>(
-  item: T,
-  breakpoint: ProviderOptions,
-): T {
-  const providerOptions = { ...item.providerOptions };
-  for (const [provider, options] of Object.entries(breakpoint)) {
-    providerOptions[provider] = { ...providerOptions[provider], ...options };
-  }
-
-  return { ...item, providerOptions: providerOptions };
 }
 
 /**

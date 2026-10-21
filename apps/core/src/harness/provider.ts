@@ -89,6 +89,13 @@ const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 // `gpt-5.6` or the fine-tune `ft:gpt-6-luna:org::id`.
 const GPT_VERSION_PATTERN = /^(?:ft:)?gpt-(\d+)(?:\.(\d+))?(?:[-:]|$)/i;
 
+// Anthropic's cache mark on a chat message, the field OpenRouter and LiteLLM
+// read. The compatible provider puts `openaiCompatible` options on the message
+// or content part they came with.
+const CUSTOM_CACHE_BREAKPOINT: SharedV4ProviderOptions = {
+  openaiCompatible: { cache_control: { type: "ephemeral" } },
+};
+
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
 
@@ -373,11 +380,18 @@ export function providerOptionsFromModelConfig(
  * started with nothing cached to read. Anthropic's is the run's cacheControl.
  * Only `openai` gets the OpenAI mark: Azure reads its options under its own
  * name and a deployment name, and ChatGPT plan usage documents no such field.
+ * Claude behind a custom endpoint gets `cache_control` on the marked message.
  */
 export function cacheBreakpointFromProviderOptions(
   agentConfig: AgentConfig,
   providerOptions: AgentModelProviderOptions | undefined,
 ): AgentModelProviderOptions | undefined {
+  if (
+    agentConfig.model?.provider === "custom" &&
+    /claude/i.test(servedModelId(agentConfig))
+  ) {
+    return CUSTOM_CACHE_BREAKPOINT;
+  }
   if (
     agentConfig.model?.provider === "openai" &&
     providerOptions?.openai?.promptCacheKey !== undefined &&
@@ -444,6 +458,10 @@ export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
       (message) => message.role === "system",
     );
     if (systems.length <= 1) return params;
+    // The stored system prompt's cache mark now ends the one message.
+    const marked = systems.findLast(
+      (message) => message.providerOptions !== undefined,
+    );
 
     return {
       ...params,
@@ -451,12 +469,45 @@ export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
         {
           role: "system",
           content: systems.map((message) => message.content).join("\n\n"),
+          ...(marked ? { providerOptions: marked.providerOptions } : {}),
         },
         ...params.prompt.filter((message) => message.role !== "system"),
       ],
     };
   },
 };
+
+/**
+ * A custom endpoint caches only the blocks a request marks; nothing marks the
+ * latest one the way Anthropic's own API does. So once the harness has marked a
+ * prompt, its latest message is marked too, and each step of a run reads the
+ * step before it from cache. A call the harness left unmarked stays unmarked.
+ */
+export const cacheLatestMessageMiddleware: LanguageModelMiddleware = {
+  transformParams: async ({ params }) => {
+    const latest = params.prompt.at(-1);
+    if (latest === undefined || !params.prompt.some(isMarkedForCache)) {
+      return params;
+    }
+
+    return {
+      ...params,
+      prompt: params.prompt.with(-1, withLatestPartMarked(latest)),
+    };
+  },
+};
+
+/** `item` with the breakpoint's options merged into its own, per provider. */
+export function markedForCache<
+  T extends { providerOptions?: SharedV4ProviderOptions },
+>(item: T, breakpoint: SharedV4ProviderOptions): T {
+  const providerOptions = { ...item.providerOptions };
+  for (const [provider, options] of Object.entries(breakpoint)) {
+    providerOptions[provider] = { ...providerOptions[provider], ...options };
+  }
+
+  return { ...item, providerOptions: providerOptions };
+}
 
 // The same endpoints have two streaming quirks the custom-provider path must
 // absorb. First, `reasoning`/`reasoning_content` chunks may carry a growing
@@ -963,6 +1014,8 @@ function resolveOpenAICompatibleModel(
         dropRefusedImagesMiddleware,
         moveRefusedToolImagesMiddleware(`${baseURL} ${modelId}`),
         dropUnsupportedMediaMiddleware,
+        // Last, so the retries above get the mark on their own latest message.
+        cacheLatestMessageMiddleware,
       ],
     }),
   };
@@ -1128,9 +1181,8 @@ function customProviderOptions(
 ): AgentModelProviderOptions | undefined {
   const configured = agentConfig.model?.providerOptions;
   const name = customProviderName(agentConfig.provider?.custom);
-  const servedModelId = agentConfig.model?.modelId?.split("/").at(-1);
   if (
-    !GPT_VERSION_PATTERN.test(servedModelId ?? "") ||
+    !GPT_VERSION_PATTERN.test(servedModelId(agentConfig)) ||
     configured?.[name]?.prompt_cache_key !== undefined
   ) {
     return configured;
@@ -1167,6 +1219,60 @@ function customProviderName(
   return typeof providerConfig?.name === "string"
     ? providerConfig.name
     : "custom";
+}
+
+// Whether a custom endpoint's prompt message or one of its parts is marked.
+function isMarkedForCache(message: LanguageModelV4Message): boolean {
+  const marked = (item: {
+    providerOptions?: SharedV4ProviderOptions;
+  }): boolean =>
+    item.providerOptions?.["openaiCompatible"]?.["cache_control"] !== undefined;
+
+  return (
+    marked(message) ||
+    (typeof message.content !== "string" && message.content.some(marked))
+  );
+}
+
+// The model id the endpoint serves, without a router prefix like `cx/`.
+function servedModelId(agentConfig: AgentConfig): string {
+  return agentConfig.model?.modelId?.split("/").at(-1) ?? "";
+}
+
+// The message with its last block marked where the compatible provider reads
+// it: a user message's last part, a tool message's last result, and the
+// message itself for the rest.
+function withLatestPartMarked(
+  message: LanguageModelV4Message,
+): LanguageModelV4Message {
+  if (message.role === "user") {
+    const index = message.content.length - 1;
+
+    return {
+      ...message,
+      content: message.content.map((part, partIndex) =>
+        partIndex === index
+          ? markedForCache(part, CUSTOM_CACHE_BREAKPOINT)
+          : part,
+      ),
+    };
+  }
+  if (message.role === "tool") {
+    const index = message.content.findLastIndex(
+      (part) => part.type === "tool-result",
+    );
+
+    return {
+      ...message,
+      content: message.content.map((part, partIndex) =>
+        partIndex === index
+          ? markedForCache(part, CUSTOM_CACHE_BREAKPOINT)
+          : part,
+      ),
+    };
+  }
+
+  return markedForCache(message, CUSTOM_CACHE_BREAKPOINT);
 }
 
 // One conversation's prompt cache key, the same on every call it makes.

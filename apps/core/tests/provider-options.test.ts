@@ -198,6 +198,34 @@ describe("cacheBreakpointFromProviderOptions", () => {
     ).toEqual({ openai: { promptCacheBreakpoint: { mode: "explicit" } } });
   });
 
+  test("Claude behind a custom endpoint gets cache_control", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cc/claude-sonnet-5" },
+    };
+
+    expect(
+      cacheBreakpointFromProviderOptions(
+        config,
+        providerOptionsFromModelConfig(config, CONVERSATION_KEY),
+      ),
+    ).toEqual({
+      openaiCompatible: { cache_control: { type: "ephemeral" } },
+    });
+  });
+
+  test("GPT behind a custom endpoint gets no mark, only its key", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cx/gpt-6-luna" },
+    };
+
+    expect(
+      cacheBreakpointFromProviderOptions(
+        config,
+        providerOptionsFromModelConfig(config, CONVERSATION_KEY),
+      ),
+    ).toBeUndefined();
+  });
+
   test("a call without a conversation gets none", () => {
     const config: AgentConfig = {
       model: { provider: "openai", modelId: "gpt-6-luna" },
