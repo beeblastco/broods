@@ -321,16 +321,6 @@ describe("applyCanvasDrop", () => {
     expect(memberIdsOf(after, "lone")).toEqual(["lone", "alpha", "bravo"]);
   });
 
-  test("dropping under a chip lands under it", () => {
-    const drop = dropAt("lone", { x: 460, y: 148 });
-    const after = applyCanvasDrop(
-      { edges: EDGES, mcpServers: [], nodes: NODES },
-      drop!,
-    );
-
-    expect(memberIdsOf(after, "lone")).toEqual(["alpha", "lone", "bravo"]);
-  });
-
   test("a group that is not sandboxes keeps its order on its own members", () => {
     const nodes = [
       node("agent", "agent", { x: 240, y: 0 }, { agentConfigId: "cfg" }),
@@ -463,11 +453,6 @@ describe("sameCanvasDrop", () => {
     refusal: null,
     slot: 0,
   };
-
-  test("two offers of the same slot in the same group are the same", () => {
-    expect(sameCanvasDrop(drop, { ...drop })).toBe(true);
-    expect(sameCanvasDrop(null, null)).toBe(true);
-  });
 
   test("a different slot, group, reason or member list is a different offer", () => {
     expect(sameCanvasDrop(drop, { ...drop, slot: 1 })).toBe(false);

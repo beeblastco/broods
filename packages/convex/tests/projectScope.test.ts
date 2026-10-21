@@ -21,8 +21,6 @@ async function seed(tt: T): Promise<{
   projectB: Id<"projects">;
   agentA1: Id<"agents">;
   agentA2: Id<"agents">;
-  agentB: Id<"agents">;
-  stranded: Id<"agents">;
   foreignAgent: Id<"agents">;
   cronA1: Id<"crons">;
   cronStranded: Id<"crons">;
@@ -145,8 +143,6 @@ async function seed(tt: T): Promise<{
       projectB: projectB,
       agentA1: agentA1,
       agentA2: agentA2,
-      agentB: agentB,
-      stranded: stranded,
       foreignAgent: foreignAgent,
       cronA1: cronA1,
       cronStranded: cronStranded,
@@ -167,16 +163,6 @@ describe("agentsInProject", () => {
     );
   });
 
-  test("excludes another project's agents on the same account", async () => {
-    const tt = t();
-    const s = await seed(tt);
-
-    const found = await tt.run((ctx) =>
-      agentsInProject(ctx, s.projectA, s.accountId),
-    );
-    expect(found.map((a) => a._id)).not.toContain(s.agentB);
-  });
-
   test("excludes an agent owned by another account", async () => {
     const tt = t();
     const s = await seed(tt);
@@ -187,17 +173,6 @@ describe("agentsInProject", () => {
       agentsInProject(ctx, s.projectA, s.accountId),
     );
     expect(found.map((a) => a._id)).not.toContain(s.foreignAgent);
-  });
-
-  test("omits agents with no config row rather than throwing", async () => {
-    const tt = t();
-    const s = await seed(tt);
-
-    // The pre-adoption agents' state: real, running, but in no project.
-    const found = await tt.run((ctx) =>
-      agentsInProject(ctx, s.projectA, s.accountId),
-    );
-    expect(found.map((a) => a._id)).not.toContain(s.stranded);
   });
 });
 

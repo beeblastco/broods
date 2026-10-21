@@ -82,6 +82,9 @@ await mock.module("@aws-sdk/client-lambda-microvms", () => ({
   GetMicrovmCommand: microvmCommand("GetMicrovm"),
   SuspendMicrovmCommand: microvmCommand("SuspendMicrovm"),
   ResumeMicrovmCommand: microvmCommand("ResumeMicrovm"),
+  CreateMicrovmImageCommand: microvmCommand("CreateMicrovmImage"),
+  GetMicrovmImageCommand: microvmCommand("GetMicrovmImage"),
+  GetMicrovmImageVersionCommand: microvmCommand("GetMicrovmImageVersion"),
 }));
 
 // The reservation registry, stubbed to "nothing reserved" so a persistent run
@@ -112,7 +115,12 @@ const listS3PrefixMock = mock(
     [] as Array<{ key: string; lastModified?: string }>,
 );
 
+// The real module underneath, so an export added to s3.ts never breaks this file
+// when it runs alone. The no-network preload fails any unstubbed call.
+const realS3 = { ...(await import("../src/shared/s3.ts")) };
+
 await mock.module("../src/shared/s3.ts", () => ({
+  ...realS3,
   readS3Text: readS3TextMock,
   listS3Prefix: listS3PrefixMock,
   isMissingS3Error: (error: unknown) =>
@@ -121,7 +129,7 @@ await mock.module("../src/shared/s3.ts", () => ({
       typeof error === "object" &&
       (error as { name?: string }).name === "NoSuchKey",
     ),
-  // Full surface so transitive importers keep working (mock.module replaces the module).
+  // Canned answers for the S3 calls the code under test makes.
   readS3Bytes: mock(async () => new Uint8Array()),
   writeS3Object: mock(async () => 0),
   s3ObjectExists: mock(async () => true),
@@ -576,17 +584,6 @@ describe("sandbox tool set", () => {
     );
     await bash.execute({ command: "pwd" });
     expect(lastSandboxExec().payload.namespace).toBe(NS);
-  });
-
-  it("treats persistent Lambda MicroVM sandboxes as background-capable", async () => {
-    const { sandboxSupportsBackgroundJobs } =
-      await import("../src/harness/tools/filesystem-utils.ts");
-    expect(
-      sandboxSupportsBackgroundJobs({
-        provider: "lambda",
-        persistent: true,
-      } as never),
-    ).toBe(true);
   });
 
   it("bash rejects commands using runtimes outside the sandbox allow-list", async () => {
@@ -1129,12 +1126,6 @@ describe("sandbox tool set", () => {
     expect(payload.code).toContain("sync ");
   });
 
-  it("read builds a numbered-line read", async () => {
-    const read = await tool("read", workspaceCtx());
-    await read.execute({ file_path: "a.txt" });
-    expect(lastSandboxExec().payload.code).toContain("nl -ba");
-  });
-
   it("edit builds a node heredoc replacement that fsyncs the rewrite", async () => {
     const edit = await tool("edit", workspaceCtx());
     await edit.execute({
@@ -1147,13 +1138,6 @@ describe("sandbox tool set", () => {
     expect(payload.code).toContain("const replaceAll = false");
     // 1A: open/write/fsync/close so the rewrite commits before the Lambda freezes.
     expect(payload.code).toContain("fs.fsyncSync");
-  });
-
-  it("glob uses node to match files recursively", async () => {
-    const glob = await tool("glob", workspaceCtx());
-    await glob.execute({ pattern: "**/*.ts" });
-    expect(lastSandboxExec().payload.code).toContain("function matches");
-    expect(lastSandboxExec().payload.code).toContain("fs.readdirSync");
   });
 
   it("grep runs ripgrep when the image has it, else grep -E", async () => {

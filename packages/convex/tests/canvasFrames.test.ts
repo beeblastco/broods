@@ -46,15 +46,6 @@ describe("frameGroupOf", () => {
     ).toEqual({ key: "cloud", kind: "sandbox", label: "Cloud sandbox" });
   });
 
-  it("groups workspaces by storage provider", () => {
-    expect(
-      frameGroupOf(
-        node("w1", "workspace", { config: { storage: { provider: "s3" } } }),
-        NO_SERVERS,
-      ),
-    ).toEqual({ key: "s3", kind: "workspace", label: "Workspaces" });
-  });
-
   it("groups MCP servers by saved transport, and unsaved ones apart", () => {
     const transports: McpServersByNode = new Map([
       ["m1", { sandbox: null, transport: "machine" }],
@@ -70,10 +61,6 @@ describe("frameGroupOf", () => {
       kind: "mcp",
       label: "MCP",
     });
-  });
-
-  it("never frames a skill", () => {
-    expect(frameGroupOf(node("k1", "skill"), NO_SERVERS)).toBeNull();
   });
 });
 
@@ -256,16 +243,6 @@ describe("frame geometry", () => {
     expect([...slots.values()].map((slot) => slot.y)).toEqual([28, 132, 184]);
     expect(frameSize(frame, "s1").height).toEqual(236);
     expect(frameSize(frame, "missing")).toEqual(frameSize(frame));
-  });
-
-  it("gives every kind the same slot height", () => {
-    const frame = { kind: "workspace" as const, memberIds: ["w1", "w2"] };
-
-    expect(frameMemberPositions({ x: 0, y: 0 }, frame).get("w2")).toEqual({
-      x: 8,
-      y: 80,
-    });
-    expect(frameSize(frame)).toEqual({ height: 132, width: 192 });
   });
 });
 

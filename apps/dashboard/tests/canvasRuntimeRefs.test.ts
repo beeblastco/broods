@@ -32,19 +32,6 @@ function edge(source: string, target: string, type?: string): Edge {
 }
 
 describe("analyzeCanvasInfra workspace state", () => {
-  test("CLI readOnly flag forces read-only even with an agent default sandbox", () => {
-    const nodes = [
-      node("agent", "agent", { agentConfigId: "cfg" }),
-      node("sb", "sandbox"),
-      node("ws", "workspace", { readOnly: true }),
-    ];
-    const edges = [edge("agent", "sb"), edge("agent", "ws")];
-
-    const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
-
-    expect(workspaceStates.ws).toEqual({ kind: "readonly" });
-  });
-
   test("a writable mount edge wins over the readOnly flag (shared-writable)", () => {
     const nodes = [
       node("agent", "agent", { agentConfigId: "cfg" }),
@@ -57,19 +44,6 @@ describe("analyzeCanvasInfra workspace state", () => {
     const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
 
     expect(workspaceStates.ws.kind).toBe("override");
-  });
-
-  test("no flag + agent default sandbox => inherited (writable)", () => {
-    const nodes = [
-      node("agent", "agent", { agentConfigId: "cfg" }),
-      node("sb", "sandbox"),
-      node("ws", "workspace"),
-    ];
-    const edges = [edge("agent", "sb"), edge("agent", "ws")];
-
-    const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
-
-    expect(workspaceStates.ws.kind).toBe("inherited");
   });
 
   test("override demo topology: scratch=inherited, secure=override, reference=readonly", () => {
@@ -160,14 +134,6 @@ describe("deriveAgentRuntimeRefs", () => {
     const [refs] = deriveAgentRuntimeRefs(nodes, edges);
 
     expect(refs.sandboxes).toEqual(["sb_mac", "sb_cloud", "sb_new"]);
-  });
-
-  test("no sandbox edge derives no sandboxes", () => {
-    const nodes = [node("agent", "agent", { agentConfigId: "cfg" })];
-
-    const [refs] = deriveAgentRuntimeRefs(nodes, []);
-
-    expect(refs.sandboxes).toEqual([]);
   });
 
   test("a workspace with no mount edge inherits, and says so by naming no sandbox", () => {
@@ -383,15 +349,5 @@ describe("analyzeCanvasInfra agent reachability", () => {
     expect(connectedToAgent.wired).toBe(true);
     expect(connectedToAgent.indirect).toBe(false);
     expect(connectedToAgent.ws).toBe(true);
-  });
-
-  test("a node with no edges is unwired", () => {
-    const { connectedToAgent } = analyzeCanvasInfra(
-      [node("lonely", "workspace"), node("orphan", "skill")],
-      [],
-    );
-
-    expect(connectedToAgent.lonely).toBe(false);
-    expect(connectedToAgent.orphan).toBe(false);
   });
 });

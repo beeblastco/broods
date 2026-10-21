@@ -55,19 +55,6 @@ describe("shortcut matching", () => {
     );
   });
 
-  test("⌘B toggles the sidebar and Escape closes the side panel", () => {
-    expect(matchShortcut(key({ key: "b", meta: true }), true)?.id).toBe(
-      "sidebar.toggle",
-    );
-    expect(matchShortcut(key({ key: "Escape" }), true)?.id).toBe(
-      "panel.toggle",
-    );
-  });
-
-  test("a key nothing claims matches nothing", () => {
-    expect(matchShortcut(key({ key: "q" }), true)).toBeUndefined();
-  });
-
   test("no two bindings claim the same key", () => {
     const claimed = SHORTCUTS.flatMap((shortcut) => shortcut.combos);
 

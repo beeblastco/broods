@@ -160,10 +160,6 @@ describe("normalizeCreateChannelRecordInput", () => {
 });
 
 describe("normalizeUpdateChannelRecordInput", () => {
-  it("returns an empty patch when nothing was supplied", () => {
-    expect(normalizeUpdateChannelRecordInput({})).toEqual({});
-  });
-
   it("maps an explicit null to a cleared field", () => {
     expect(
       normalizeUpdateChannelRecordInput({

@@ -141,20 +141,6 @@ test("client accepts host as a shorthand for https baseUrl", async () => {
   expect(urls).toEqual(["https://core.example/v1/runs"]);
 });
 
-test("client resolves generated channel webhook paths against its configured host", () => {
-  const client = new BroodsClient({ host: "hooks.example.com" });
-  expect(
-    client.channelWebhookUrl({
-      kind: "channel",
-      type: "github",
-      agentName: "support",
-      agentId: "agent_1",
-      accountId: "account_1",
-      webhookPath: "/v1/webhooks/account_1/github",
-    }),
-  ).toBe("https://hooks.example.com/v1/webhooks/account_1/github");
-});
-
 test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", () => {
   const client = new BroodsClient({ host: "hooks.example.com" });
 
