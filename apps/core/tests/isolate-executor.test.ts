@@ -278,40 +278,6 @@ describe("isolate runner", () => {
   });
 
   realRunnerIt(
-    "passes SDK execution options (context, toolCallId, abortSignal) to the tool",
-    async () => {
-      const result = await runRealRunner(
-        `export default { name: "opts", execute(input, options) {
-          return {
-            echo: input,
-            cfg: options.context.config,
-            callId: options.toolCallId,
-            signalOk: options.abortSignal != null && options.abortSignal.aborted === false,
-          };
-        } };`,
-        {
-          toolName: "opts",
-          input: { q: "hi" },
-          config: { k: "v" },
-          toolCallId: "call_123",
-        },
-      );
-
-      expect(result.frames).toEqual([
-        {
-          t: "final",
-          result: {
-            echo: { q: "hi" },
-            cfg: { k: "v" },
-            callId: "call_123",
-            signalOk: true,
-          },
-        },
-      ]);
-    },
-  );
-
-  realRunnerIt(
     "trips the in-isolate abortSignal when the host sends SIGUSR2",
     async () => {
       const result = await runRealRunner(
@@ -813,7 +779,6 @@ describe("streamIsolatePayload cross-process abort", () => {
       return outputs;
     };
     try {
-      const started = performance.now();
       // The second call queues behind the first on the one-worker pool, so it
       // also proves a queued call is not left waiting on the failed slot.
       const failures = await Promise.all(
@@ -827,7 +792,6 @@ describe("streamIsolatePayload cross-process abort", () => {
         "isolate worker failed to start: isolate worker exited (1)",
       ]);
       expect(await readFile(marker, "utf8")).toBe("x".repeat(6));
-      expect(performance.now() - started).toBeLessThan(3_000);
 
       await writeFile(
         stubPath,

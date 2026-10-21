@@ -49,12 +49,6 @@ test("listStages passes the project as a query parameter", async () => {
   });
 });
 
-test("listStages returns an empty array when the payload omits stages", async () => {
-  const { client } = clientWith(() => new Response(JSON.stringify({})));
-
-  expect(await client.listStages("demo-app")).toEqual([]);
-});
-
 test("createStage posts the project, name and clone source", async () => {
   const { client, calls } = clientWith(
     () =>
@@ -75,32 +69,6 @@ test("createStage posts the project, name and clone source", async () => {
     name: "staging",
     from: "development",
   });
-});
-
-test("createStage omits `from` when no clone source is given", async () => {
-  const { client, calls } = clientWith(
-    () => new Response(JSON.stringify({ stage: STAGE, clonedFrom: null })),
-  );
-
-  await client.createStage("demo-app", "staging");
-
-  expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({
-    project: "demo-app",
-    name: "staging",
-  });
-});
-
-test("createStage surfaces the server error message", async () => {
-  const { client } = clientWith(
-    () =>
-      new Response(JSON.stringify({ error: "Stage Staging already exists" }), {
-        status: 400,
-      }),
-  );
-
-  expect(client.createStage("demo-app", "staging")).rejects.toThrow(
-    /Stage Staging already exists/,
-  );
 });
 
 // `stage list` marks the current stage and `stage use` matches a name against

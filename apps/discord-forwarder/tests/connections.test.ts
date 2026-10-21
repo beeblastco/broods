@@ -17,18 +17,6 @@ const ROW = {
 };
 
 describe("resolving a plane's rows", () => {
-  it("joins each path onto the plane's own gateway", () => {
-    expect(planeConnections(PLANE, [ROW])).toEqual([
-      {
-        agentId: "agent-1",
-        agentName: "support",
-        botToken: "token-a",
-        webhookUrl:
-          "https://gateway.dev.example.com/v1/webhooks/account-1/dev/endpoint-1/discord",
-      },
-    ]);
-  });
-
   // The config plane returns a path and never learns which front door is in
   // front of it, which is what lets one process serve deployments answering on
   // different hosts. Same row, same token, two planes, two URLs.

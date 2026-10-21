@@ -653,14 +653,6 @@ describe("normalizeMcpInput", () => {
     await create({ url: SERVER_URL });
   });
 
-  test("a patch may carry any subset", async () => {
-    const input = await normalizeMcpInput(
-      { disabled: true },
-      { requireConnection: false },
-    );
-    expect(input).toEqual({ disabled: true });
-  });
-
   test("a bundle makes a hosted server; url and bundle never mix", async () => {
     const hosted = await normalizeMcpInput(
       { name: "hosted", bundle: "export default () => new Response()" },

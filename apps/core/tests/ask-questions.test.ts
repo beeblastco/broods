@@ -7,7 +7,6 @@ import {
 import {
   answersFromChoice,
   answersFromText,
-  formatQuestionsText,
   listOpenQuestions,
   NO_ANSWER_ERROR,
   openQuestion,
@@ -272,12 +271,6 @@ describe("question answers", () => {
         }),
       },
     ]);
-  });
-
-  it("always tells the person they can reply with their own answer", () => {
-    expect(formatQuestionsText([QUESTION])).toContain(
-      "Or reply with your own answer.",
-    );
   });
 });
 

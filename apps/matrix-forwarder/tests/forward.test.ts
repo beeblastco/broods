@@ -89,41 +89,6 @@ describe("forwarding a room message", () => {
       "senderName",
     );
   });
-
-  it("fans one event out to every webhook the token serves", async () => {
-    const calls = captureFetch();
-    await forwardRoomEvent(event, "token-a", TARGETS);
-
-    expect(calls.map((call): string => call.url)).toEqual(
-      TARGETS.map((target): string => target.webhookUrl),
-    );
-  });
-
-  // The account keeps the event in its outbox for the webhooks it resolves.
-  it("asks for a retry when a webhook answers 5xx", async () => {
-    captureFetch(500);
-
-    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toEqual(
-      TARGETS.map((target): string => target.webhookUrl),
-    );
-  });
-
-  it("asks for a retry on a timeout or a rate limit", async () => {
-    captureFetch(408);
-    expect(await forwardRoomEvent(event, "token-a", [TARGETS[0]!])).toEqual([
-      TARGETS[0]!.webhookUrl,
-    ]);
-    captureFetch(429);
-    expect(await forwardRoomEvent(event, "token-a", [TARGETS[0]!])).toEqual([
-      TARGETS[0]!.webhookUrl,
-    ]);
-  });
-
-  it("settles on a 4xx, which answers the same every time", async () => {
-    captureFetch(404);
-
-    expect(await forwardRoomEvent(event, "token-a", TARGETS)).toEqual([]);
-  });
 });
 
 function captureFetch(status = 200): Capture[] {

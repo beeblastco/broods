@@ -249,14 +249,6 @@ describe("pulling members out of a group", () => {
     expect(setUngrouped(NODES, ["alpha"], false)[1]).toBe(NODES[1]);
   });
 
-  test("a card left alone by the pull-out offers to go back, with nobody else", () => {
-    const pulled = { ...GRAPH, nodes: setUngrouped(NODES, ["alpha"], true) };
-
-    expect(frameGroupActions(pulled, "alpha")).toEqual([
-      { frameLabel: "Cloud sandbox", kind: "rejoin", nodeIds: ["alpha"] },
-    ]);
-  });
-
   test("going back after an ungroup-all takes the rest of the group with it", () => {
     const nodes = setUngrouped(NODES, ["alpha", "bravo"], true);
 

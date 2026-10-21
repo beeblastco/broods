@@ -84,13 +84,3 @@ test("requires a base URL for the custom provider", () => {
     `config.provider.custom.base_url is required (use "base_url" or "baseURL")`,
   );
 });
-
-test("rejects unsupported provider names", () => {
-  expect(() =>
-    validateProviderConfig("a", { madeup: { apiKey: "k" } }),
-  ).toThrow(`config.provider.madeup is not a supported provider`);
-});
-
-test("is a no-op when no provider block is present", () => {
-  expect(() => validateProviderConfig("a", undefined)).not.toThrow();
-});

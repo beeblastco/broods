@@ -600,17 +600,14 @@ describe("slack channel adapter", () => {
   });
 
   it("flushes coalesced reasoning on the interval while a long think streams", async () => {
-    // The interval check reads Date.now(); undo the suite's frozen clock so
-    // elapsed time is real here (beforeEach re-freezes it for other tests).
-    setSystemTime();
-    const wait = (ms: number): Promise<unknown> =>
-      new Promise((resolve) => setTimeout(resolve, ms));
     const chunks = await collect(
       toSlackStream(
         (async function* () {
           yield { type: "reasoning-start", id: "r1" };
           yield { type: "reasoning-delta", id: "r1", text: "first" };
-          await wait(550);
+          // The interval check reads Date.now(), so moving the frozen clock
+          // past it stands in for a long think.
+          setSystemTime(new Date(Date.now() + 550));
           yield { type: "reasoning-delta", id: "r1", text: " second" };
           yield { type: "reasoning-delta", id: "r1", text: " third" };
           yield { type: "reasoning-end", id: "r1" };
