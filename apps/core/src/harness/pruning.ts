@@ -8,6 +8,8 @@ import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { STORED_ITEM_PROVIDERS } from "./provider.ts";
 import { toolContentItems, type ToolContentPart } from "./tools/utils.ts";
 
+const NO_IMAGES: readonly ImagePart[] = [];
+
 export function pruneSessionMessages(
   messages: ModelMessage[],
   agentConfig: AgentConfig,
@@ -20,9 +22,6 @@ export function pruneSessionMessages(
       : stripReasoningFromMessages(messages);
   // An approval resume keeps the assistant tool call its approvalId points at.
   const keptMessages = approvalResume ? 2 : 1;
-  const prunedToolCalls = approvalResume
-    ? "before-last-2-messages"
-    : "before-last-message";
 
   if (agentConfig.session?.pruning?.enabled === false) {
     return modelMessages;
@@ -37,7 +36,9 @@ export function pruneSessionMessages(
     // same rejection this retention exists to avoid, only deferred a turn.
     reasoning: "none",
     // A pruned tool call orphans its reasoning item on a stored-item provider.
-    toolCalls: retainsReasoning ? "none" : prunedToolCalls,
+    toolCalls: retainsReasoning
+      ? "none"
+      : `before-last-${keptMessages}-messages`,
     emptyMessages: "remove",
   });
 }
@@ -76,8 +77,11 @@ export function hasPendingToolApprovalResponse(
   );
 }
 
-/** A tool result's content item as a picture a user message can carry. */
-function toolImage(item: ToolContentPart): ImagePart[] {
+/**
+ * A tool result's content item as a picture a user message can carry. Shared
+ * empty result, so the check for any picture allocates nothing per item.
+ */
+function toolImage(item: ToolContentPart): readonly ImagePart[] {
   switch (item.type) {
     case "image-data":
       return [{ type: "image", image: item.data, mediaType: item.mediaType }];
@@ -86,11 +90,11 @@ function toolImage(item: ToolContentPart): ImagePart[] {
     case "file-data":
       return item.mediaType.startsWith("image")
         ? [{ type: "image", image: item.data, mediaType: item.mediaType }]
-        : [];
+        : NO_IMAGES;
     case "file-url":
       return item.mediaType?.startsWith("image")
         ? [{ type: "image", image: item.url, mediaType: item.mediaType }]
-        : [];
+        : NO_IMAGES;
     case "file":
       return item.mediaType.startsWith("image") &&
         (item.data.type === "data" || item.data.type === "url")
@@ -101,9 +105,9 @@ function toolImage(item: ToolContentPart): ImagePart[] {
               mediaType: item.mediaType,
             },
           ]
-        : [];
+        : NO_IMAGES;
     default:
-      return [];
+      return NO_IMAGES;
   }
 }
 
@@ -131,23 +135,25 @@ function withToolImagesKept(
   if (!carriesImages) {
     return messages;
   }
-  const kept: ModelMessage[] = [];
-  messages.forEach((message, index): void => {
-    kept.push(message);
+
+  return messages.flatMap((message, index): ModelMessage[] => {
     if (message.role !== "tool" || index >= prunedBefore) {
-      return;
+      return [message];
     }
     const images = toolContentItems(message).flatMap(toolImage);
-    if (images.length > 0) {
-      kept.push({
+    if (images.length === 0) {
+      return [message];
+    }
+
+    return [
+      message,
+      {
         role: "user",
         content: [
           { type: "text", text: "Images a tool returned earlier:" },
           ...images,
         ],
-      });
-    }
+      },
+    ];
   });
-
-  return kept;
 }

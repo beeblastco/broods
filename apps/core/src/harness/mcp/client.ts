@@ -73,6 +73,8 @@ const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
+// How long reading one picture a result links to may take.
+const LINKED_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_TTL_MS = 60 * 60_000;
 
@@ -86,7 +88,6 @@ const RATE_LIMIT_PATTERN = /\b429\b|rate limit/i;
 const RATE_LIMIT_WAIT_PATTERN =
   /(?:retry after|try again in) (\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|seconds?)\b/i;
 const RATE_LIMIT_BACKOFF_MS = 2_000;
-const LINKED_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_RATE_LIMIT_WAIT_MS = 60_000;
 
 const discoverCache = new Map<string, CachedDiscover>();
@@ -510,7 +511,9 @@ async function imageContentOutput(
 ): Promise<ToolResultOutput> {
   // Only as many links are read as one result may show, so a result naming a
   // hundred pictures never holds them all in memory at once.
-  const links = content.filter(isImageLink).slice(0, MAX_RESULT_IMAGES);
+  const links = new Set(
+    content.filter(isImageLink).slice(0, MAX_RESULT_IMAGES),
+  );
   const parts = await Promise.all(
     content.map(async (block): Promise<ToolContentPart> => {
       if (block.type === "image") {
@@ -521,7 +524,7 @@ async function imageContentOutput(
         };
       }
       const linked =
-        isImageLink(block) && links.includes(block)
+        isImageLink(block) && links.has(block)
           ? await linkedImage(block.uri, block.mimeType)
           : undefined;
 
@@ -573,9 +576,16 @@ async function linkedImage(
       throw new Error(`answered ${response.status}`);
     }
 
+    // A view, not a copy: the guard assembled the body into a fresh allocation.
+    const bytes = response.bodyBytes;
+
     return {
       type: "image-data",
-      data: Buffer.from(response.bodyBytes).toString("base64"),
+      data: Buffer.from(
+        bytes.buffer,
+        bytes.byteOffset,
+        bytes.byteLength,
+      ).toString("base64"),
       mediaType: mediaType,
     };
   } catch (err) {

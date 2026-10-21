@@ -580,14 +580,16 @@ export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
 export function moveRefusedToolImagesMiddleware(
   endpoint: string,
 ): LanguageModelMiddleware {
-  const retrying = retryingMiddleware((error, params) => {
-    const moved = withToolImagesMoved(error, params);
-    if (moved) {
-      toolImageRefusals.add(endpoint);
-    }
+  const retrying = retryingMiddleware(
+    (error, params): LanguageModelV4CallOptions | undefined => {
+      const moved = withToolImagesMoved(error, params);
+      if (moved) {
+        toolImageRefusals.add(endpoint);
+      }
 
-    return moved;
-  });
+      return moved;
+    },
+  );
 
   return {
     ...retrying,
@@ -886,10 +888,10 @@ function resolveOpenAICompatibleModel(
   // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
   // return thinking text in `reasoning`/`reasoning_content` fields, which only
   // the compatible provider parses into reasoning parts (#115).
-  // A tool result keeps its images, as the tool returned them, unless the
-  // endpoint refuses them there (`moveRefusedToolImagesMiddleware`).
   const baseURL = customProviderBaseURL(providerConfig) ?? "";
   const provider = createOpenAICompatible({
+    // A tool result keeps its images, as the tool returned them, unless the
+    // endpoint refuses them there (`moveRefusedToolImagesMiddleware`).
     supportsMultiPartToolContent: true,
     ...openAIConfig,
     baseURL: baseURL,
@@ -905,7 +907,7 @@ function resolveOpenAICompatibleModel(
     provider: provider,
     model: wrapLanguageModel({
       model: provider(modelId),
-      // The first entry wraps the rest: a 400 tries moving tool images first,
+      // Each entry wraps the ones after it: a 400 tries moving tool images first,
       // and only drops images when that is refused too.
       middleware: [
         mergeSystemMessagesMiddleware,

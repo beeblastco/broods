@@ -24,8 +24,8 @@ import {
   dropRefusedImagesMiddleware,
   dropUnsupportedMediaMiddleware,
   mergeSystemMessagesMiddleware,
-  normalizeStreamDeltasMiddleware,
   moveRefusedToolImagesMiddleware,
+  normalizeStreamDeltasMiddleware,
   retryWithoutStoredItemsMiddleware,
   type ModelAttempt,
 } from "../src/harness/provider.ts";

@@ -86,8 +86,9 @@ const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 // Sealed-link bytes one turn inlines into the prompt. Every replayed picture
 // rides each model request as base64, and providers cap a request (Anthropic at
 // 32 MB, after base64's third), while the pod holds them all at once. Past it a
-// link stays a link and the provider fetches it, as it did before replay read.
-// One file inlines only up to the picture cap, so a big PDF stays a link too.
+// user part's link stays a link and the provider fetches it, as it did before
+// replay read; a tool result's becomes OMITTED_MEDIA_NOTE. One file inlines
+// only up to the picture cap, so a big PDF stays a link too.
 const MAX_REPLAY_BYTES_PER_TURN = 20 * 1024 * 1024;
 
 // Stored pictures one turn replays, the newest. Each rides every model request,
@@ -353,14 +354,11 @@ export async function rehydrateStoredMedia(
   accountId: string | undefined,
 ): Promise<ModelMessage[]> {
   const carriesMedia = messages.some(
-    (message) =>
+    (message): boolean =>
       (message.role === "user" &&
         typeof message.content !== "string" &&
         message.content.some(isStoredMediaPart)) ||
-      (message.role === "tool" &&
-        toolContentItems(message).some(
-          (item): boolean => sealedToolLink(item) !== null,
-        )),
+      (message.role === "tool" && imageLinks(message).length > 0),
   );
   if (!carriesMedia) {
     return messages;
@@ -372,8 +370,9 @@ export async function rehydrateStoredMedia(
   };
 
   return await Promise.all(
-    withOldMediaOmitted(messages).map((message) =>
-      rehydrateMessage(message, agentConfig, replay),
+    (await withOldMediaOmitted(messages)).map(
+      (message): Promise<ModelMessage> =>
+        rehydrateMessage(message, agentConfig, replay),
     ),
   );
 }
@@ -410,8 +409,25 @@ export async function sealConversationMedia(
   messages: ModelMessage[],
   accountId: string,
 ): Promise<ModelMessage[]> {
+  const carriesMedia = messages.some(
+    (message): boolean =>
+      (message.role === "user" &&
+        typeof message.content !== "string" &&
+        message.content.some(
+          (part): boolean => part.type === "image" || part.type === "file",
+        )) ||
+      (message.role === "tool" &&
+        toolContentItems(message).some(isToolImageBytes)),
+  );
+  // With no public base URL there is no link to keep, so nothing is stored.
+  if (!carriesMedia || !getHarnessPublicUrl()) {
+    return messages;
+  }
+
   return await Promise.all(
-    messages.map((message) => sealMessageMedia(message, accountId)),
+    messages.map((message): Promise<ModelMessage> =>
+      sealMessageMedia(message, accountId),
+    ),
   );
 }
 
@@ -556,12 +572,39 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+/** The sealed picture links a message carries, in order. */
+function imageLinks(message: ModelMessage): string[] {
+  const links =
+    message.role === "user" && typeof message.content !== "string"
+      ? message.content.map(sealedImageLink)
+      : message.role === "tool"
+        ? toolContentItems(message).map(sealedToolLink)
+        : [];
+
+  return links.filter((link): link is string => link !== null);
+}
+
 /**
  * A part this module stored: a channel reference or a sealed media link. Tool
  * results and subagent output are file parts too, and must not be re-gated.
  */
 function isStoredMediaPart(part: UserContentPart): boolean {
   return mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null;
+}
+
+/** A tool result's picture that may carry its own bytes, the one tool media a row keeps. */
+function isToolImageBytes(
+  item: ToolContentPart,
+): item is Extract<
+  ToolContentPart,
+  { type: "image-data" | "file-data" | "file" }
+> {
+  return (
+    (item.type === "image-data" ||
+      item.type === "file-data" ||
+      item.type === "file") &&
+    item.mediaType.startsWith("image")
+  );
 }
 
 /** The byte cap for one attachment: smaller for pictures, which go inline. */
@@ -571,7 +614,10 @@ function limitForMediaType(mediaType: string | undefined): number {
     : MAX_ATTACHMENT_BYTES;
 }
 
-/** A tool message with `map` applied to every content item of its results. */
+/**
+ * A tool message with `map` applied to every content item of its results. Each
+ * `map` call starts in item order, so its code before an await may count.
+ */
 async function mapToolItems(
   message: ToolModelMessage,
   map: (item: ToolContentPart) => Promise<ToolContentPart>,
@@ -640,17 +686,6 @@ function mediaFileName(
   const extension = mediaTypeToExtension(mediaType);
 
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
-}
-
-/** The sealed pictures a message carries, one entry per part (null for none). */
-function imageLinks(message: ModelMessage): (string | null)[] {
-  if (message.role === "user" && typeof message.content !== "string") {
-    return message.content.map(sealedImageLink);
-  }
-
-  return message.role === "tool"
-    ? toolContentItems(message).map(sealedToolLink)
-    : [];
 }
 
 /**
@@ -776,7 +811,8 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * The bytes behind a sealed link, read once per turn and kept in the media
  * cache. A link left for the provider is fetched by it again on every model
  * step, and a file the agent deleted would 404 there and fail the whole turn.
- * Null keeps the link: not a sealed link, another account's link, a file over
+ * Null keeps a user part's link (a tool result's becomes a note): not a sealed
+ * link, another account's link, a file over
  * the picture cap or past the turn's budget, or a read error (a file over the media cap among them),
  * which is not proof of a deletion. The account check matters because this
  * read runs on core's own credentials and meters the ticket's account, and
@@ -905,6 +941,39 @@ async function rehydrateMessage(
 }
 
 /**
+ * A tool message with its sealed links read back into bytes, or into a line
+ * when they cannot be. A link is never left for the provider: Bedrock refuses
+ * a URL in a tool result before the request is sent.
+ */
+async function rehydrateToolMessage(
+  message: ToolModelMessage,
+  replay: SealedReplay,
+): Promise<ToolModelMessage> {
+  if (imageLinks(message).length === 0) {
+    return message;
+  }
+
+  return mapToolItems(message, async (item): Promise<ToolContentPart> => {
+    const link = sealedToolLink(item);
+    if (item.type !== "file-url" || !link) {
+      return item;
+    }
+    const sealed = await readSealedMedia(link, replay);
+    if (!sealed) {
+      return { type: "text", text: OMITTED_MEDIA_NOTE };
+    }
+
+    return "gone" in sealed
+      ? { type: "text", text: `[${sealed.gone} is no longer available]` }
+      : {
+          type: "file",
+          mediaType: item.mediaType ?? "application/octet-stream",
+          data: { type: "data", data: sealed.bytes },
+        };
+  });
+}
+
+/**
  * The bytes behind one reference, read through the channel that delivered it so
  * the provider's own credentials are used. Null rather than a throw: this runs
  * while a turn is being assembled, and one unreadable picture must not take the
@@ -949,35 +1018,6 @@ async function resolveMediaReference(
 }
 
 /**
- * A tool message with its sealed links read back into bytes, or into a line
- * when they cannot be. A link is never left for the provider: Bedrock refuses
- * a URL in a tool result before the request is sent.
- */
-async function rehydrateToolMessage(
-  message: ToolModelMessage,
-  replay: SealedReplay,
-): Promise<ToolModelMessage> {
-  return mapToolItems(message, async (item): Promise<ToolContentPart> => {
-    const link = sealedToolLink(item);
-    if (item.type !== "file-url" || !link) {
-      return item;
-    }
-    const sealed = await readSealedMedia(link, replay);
-    if (!sealed) {
-      return { type: "text", text: OMITTED_MEDIA_NOTE };
-    }
-
-    return "gone" in sealed
-      ? { type: "text", text: `[${sealed.gone} is no longer available]` }
-      : {
-          type: "file",
-          mediaType: item.mediaType ?? "application/octet-stream",
-          data: { type: "data", data: sealed.bytes },
-        };
-  });
-}
-
-/**
  * Stores bytes in the attachment store under their hash, so a screenshot sent
  * twice is kept once, and returns the sealed link with the type the bytes name.
  * Undefined for a part that carries no bytes, with no public base URL, or when
@@ -994,14 +1034,14 @@ async function sealBytes(
     return undefined;
   }
   const mediaType = resolveMediaType(bytes, claimed);
-  const extension = mediaTypeToExtension(mediaType);
-  const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 32);
-  const ticket: AttachmentMediaTicket = {
-    accountId: accountId,
-    path: `${MEDIA_DIRECTORY}/${hash}${extension ? `.${extension}` : ""}`,
-  };
   try {
     assertWithinLimit(bytes.byteLength, mediaType);
+    const extension = mediaTypeToExtension(mediaType);
+    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+    const ticket: AttachmentMediaTicket = {
+      accountId: accountId,
+      path: `${MEDIA_DIRECTORY}/${hash}${extension ? `.${extension}` : ""}`,
+    };
     const link = sealedLinkFor(ticket);
     if (!link) {
       return undefined;
@@ -1026,6 +1066,14 @@ async function sealBytes(
   }
 }
 
+/** The sealed media URL a picture points at, or null; a PDF is not one. */
+function sealedImageLink(part: UserContentPart): string | null {
+  return part.type === "image" ||
+    (part.type === "file" && part.mediaType.startsWith("image"))
+    ? sealedMediaLink(part)
+    : null;
+}
+
 /** The public link that opens a ticket; undefined with no public base URL. */
 function sealedLinkFor(ticket: AttachmentMediaTicket): string | undefined {
   const baseUrl = getHarnessPublicUrl();
@@ -1038,14 +1086,6 @@ function sealedLinkFor(ticket: AttachmentMediaTicket): string | undefined {
   );
 
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
-}
-
-/** The sealed media URL a picture points at, or null; a PDF is not one. */
-function sealedImageLink(part: UserContentPart): string | null {
-  return part.type === "image" ||
-    (part.type === "file" && part.mediaType.startsWith("image"))
-    ? sealedMediaLink(part)
-    : null;
 }
 
 /** The sealed media URL an image or file part points at, or null. */
@@ -1101,13 +1141,9 @@ async function sealMessageMedia(
 
   // Only a tool's pictures: another file it returns is dropped from the row.
   return mapToolItems(message, async (item): Promise<ToolContentPart> => {
-    const sealed =
-      (item.type === "image-data" ||
-        item.type === "file-data" ||
-        item.type === "file") &&
-      item.mediaType.startsWith("image")
-        ? await sealBytes(item.data, item.mediaType, accountId)
-        : undefined;
+    const sealed = isToolImageBytes(item)
+      ? await sealBytes(item.data, item.mediaType, accountId)
+      : undefined;
 
     return sealed
       ? { type: "file-url", url: sealed.link, mediaType: sealed.mediaType }
@@ -1244,10 +1280,10 @@ function whereItLanded(
  * a line of text, so a long conversation replays its recent pictures, not all.
  * Other files are not counted: the cap is the providers' limit on images.
  */
-function withOldMediaOmitted(messages: ModelMessage[]): ModelMessage[] {
-  let toOmit =
-    messages.flatMap(imageLinks).filter((link) => link !== null).length -
-    MAX_REPLAYED_MEDIA;
+async function withOldMediaOmitted(
+  messages: ModelMessage[],
+): Promise<ModelMessage[]> {
+  let toOmit = messages.flatMap(imageLinks).length - MAX_REPLAYED_MEDIA;
   if (toOmit <= 0) {
     return messages;
   }
@@ -1261,36 +1297,24 @@ function withOldMediaOmitted(messages: ModelMessage[]): ModelMessage[] {
   };
   const note = { type: "text" as const, text: OMITTED_MEDIA_NOTE };
 
-  return messages.map((message): ModelMessage => {
-    if (message.role === "user" && typeof message.content !== "string") {
-      return {
-        ...message,
-        content: message.content.map((part): UserContentPart =>
-          omits(sealedImageLink(part)) ? note : part,
-        ),
-      };
-    }
-    if (message.role !== "tool") {
-      return message;
-    }
+  return await Promise.all(
+    messages.map(async (message): Promise<ModelMessage> => {
+      if (message.role === "user" && typeof message.content !== "string") {
+        return {
+          ...message,
+          content: message.content.map((part): UserContentPart =>
+            omits(sealedImageLink(part)) ? note : part,
+          ),
+        };
+      }
 
-    return {
-      ...message,
-      content: message.content.map((part) =>
-        part.type === "tool-result" && part.output.type === "content"
-          ? {
-              ...part,
-              output: {
-                ...part.output,
-                value: part.output.value.map((item): ToolContentPart =>
-                  omits(sealedToolLink(item)) ? note : item,
-                ),
-              },
-            }
-          : part,
-      ),
-    };
-  });
+      return message.role === "tool"
+        ? mapToolItems(message, async (item): Promise<ToolContentPart> =>
+            omits(sealedToolLink(item)) ? note : item,
+          )
+        : message;
+    }),
+  );
 }
 
 /**
