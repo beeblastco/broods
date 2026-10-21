@@ -26,7 +26,7 @@ import {
   useQuery,
 } from "convex/react";
 import dynamic from "next/dynamic";
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
 import { notFound, useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 
@@ -84,7 +84,9 @@ export function MainShell({
   // first, so a different account signing in here is not counted as this one.
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      posthog.reset();
+      void analytics.then((posthog): void => {
+        posthog.reset();
+      });
       const returnTo = window.location.pathname + window.location.search;
       router.replace(`/auth/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
     }
@@ -126,11 +128,16 @@ export function MainShell({
   // backend that lacks it (a deploy in flight) costs the id, never the page.
   useEffect(() => {
     if (!currentUser) return;
-    posthog.register({ plan: currentUser.plan });
+    void analytics.then((posthog): void => {
+      posthog.register({ plan: currentUser.plan });
+    });
     convex
       .query(api.user.analyticsId, {})
       .then((id): void => {
-        if (id) posthog.identify(id);
+        if (id)
+          void analytics.then((posthog): void => {
+            posthog.identify(id);
+          });
       })
       .catch((): void => {});
   }, [convex, currentUser]);

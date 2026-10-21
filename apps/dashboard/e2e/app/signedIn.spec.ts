@@ -18,9 +18,18 @@ test.skip(!hasProbe(), MISSING_PROBE);
 // which may not have the Convex functions the home route calls until the
 // merge deploys them. e2e-dashboard.yaml runs it after the rollout.
 test("the home route opens the caller's project @rollout", async ({ page }) => {
+  const settingsFetches: string[] = [];
+  page.on("request", (request: Request) => {
+    const { pathname } = new URL(request.url());
+    if (pathname.startsWith("/settings/")) settingsFetches.push(pathname);
+  });
+
   await page.goto("/");
   await page.waitForURL(new RegExp(`/${readProjectId()}(\\?|$)`));
   await expect(page.locator(CANVAS_READY)).toBeVisible();
+  // Home only redirects: its account links compete with the project's own
+  // chunks if they prefetch.
+  expect(settingsFetches, "home prefetches no account page").toEqual([]);
 });
 
 test("a cold project load is one document, no server action, no logo fetch", async ({
