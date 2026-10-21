@@ -343,7 +343,7 @@ export function WorkspaceFilesTab({
   );
 
   const handleRename = useCallback(
-    async (node: FileRecord, newName: string) => {
+    async (node: FileRecord, newName: string): Promise<boolean> => {
       if (workspaceId && projectId) {
         const newPath = renamedPath(node.path, newName);
         refreshRequestRef.current += 1;
@@ -358,20 +358,26 @@ export function WorkspaceFilesTab({
             path: node.path,
             newPath: newPath,
           });
+
+          return true;
         } catch (err) {
           setError(toErrorMessage(err));
+
+          return false;
         } finally {
           await refreshRuntimeFiles(false, true).catch((err) =>
             setError(toErrorMessage(err)),
           );
         }
-
-        return;
       }
       try {
         await renameMut({ fileId: node._id!, newName: newName });
+
+        return true;
       } catch (err) {
         setError(toErrorMessage(err));
+
+        return false;
       }
     },
     [
@@ -437,7 +443,8 @@ export function WorkspaceFilesView({
   onDismissError: () => void;
   onUpload: (entries: UploadEntry[], folders: string[]) => Promise<void>;
   onDelete: (node: FileRecord) => Promise<void>;
-  onRename: (node: FileRecord, newName: string) => Promise<void>;
+  /** Resolves whether the rename landed; the view keeps the old row when it did not. */
+  onRename: (node: FileRecord, newName: string) => Promise<boolean>;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
@@ -452,7 +459,7 @@ export function WorkspaceFilesView({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   // The row that takes focus once a rename or a delete dialog ends, as soon as
-  // it renders, unless the user already moved focus somewhere else.
+  // it renders, unless the user already moved focus out of the tree.
   const pendingFocusRef = useRef<string | null>(null);
 
   const tree = useMemo(
@@ -470,7 +477,12 @@ export function WorkspaceFilesView({
   useEffect(() => {
     const path = pendingFocusRef.current;
     if (!path) return;
-    if (document.activeElement && document.activeElement !== document.body) {
+    const active = document.activeElement;
+    if (
+      active &&
+      active !== document.body &&
+      !treeRef.current?.contains(active)
+    ) {
       pendingFocusRef.current = null;
 
       return;
@@ -641,7 +653,11 @@ export function WorkspaceFilesView({
     const newPath = renamedPath(node.path, newName);
     setSelected(newPath);
     endRename(newPath);
-    void onRename(node, newName);
+    void onRename(node, newName).then((renamed) => {
+      if (renamed) return;
+      setSelected(node.path);
+      pendingFocusRef.current = node.path;
+    });
   };
 
   return (

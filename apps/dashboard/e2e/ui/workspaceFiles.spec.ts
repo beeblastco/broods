@@ -125,9 +125,21 @@ test("F2 renames the focused row, Escape cancels, focus stays on the row", async
   // Keys typed into the input stay there: arrows do not move the selection.
   await page.keyboard.press("F2");
   await page.keyboard.press("ArrowUp");
-  await expect(
-    writer.getByRole("textbox", { name: "Rename todo.txt" }),
-  ).toBeFocused();
+  const again = writer.getByRole("textbox", { name: "Rename todo.txt" });
+  await expect(again).toBeFocused();
+
+  // A refused rename keeps the row it started from, selected and focused.
+  await again.fill("README.md");
+  await page.keyboard.press("Enter");
+  await expect(log(writer)).toHaveText([
+    "rename notes.txt todo.txt",
+    "refused todo.txt README.md",
+  ]);
+  await expect(row(writer, "todo.txt")).toBeFocused();
+  await expect(row(writer, "todo.txt")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 test("Delete asks first, Escape keeps the file, confirming removes it", async ({

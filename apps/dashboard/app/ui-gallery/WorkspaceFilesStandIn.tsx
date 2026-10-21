@@ -64,8 +64,16 @@ export function WorkspaceFilesStandIn({
             await new Promise((resolve) =>
               setTimeout(resolve, RENAME_LATENCY_MS),
             );
+            // A name already taken is refused, the way the backend refuses it.
+            if (files.some((f) => f.path === newPath)) {
+              record(`refused ${node.path} ${newPath}`);
+
+              return false;
+            }
             setFiles((prev) => withRenamedPath(prev, node.path, newPath));
             record(`rename ${node.path} ${newPath}`);
+
+            return true;
           }}
         />
       </div>
