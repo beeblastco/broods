@@ -1193,27 +1193,17 @@ describe("context prepare", () => {
   // it: the context is rebuilt from rows, so the bytes are put back by cursor.
   it("shows the turn's own base64 image while its row drops it", async (): Promise<void> => {
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const originalQuery = runtime.query.bind(runtime);
     const originalMutate = runtime.mutate.bind(runtime);
-    const written: StoredConversationEventPage["page"] = [];
+    const page = userRows(1);
+    const history = await stubHistory(page);
     runtime.mutate = (async (
       _name: string,
       args: { events: [] },
     ): Promise<null> => {
-      written.push(...args.events);
+      page.push(...args.events);
 
       return null;
     }) as typeof runtime.mutate;
-    runtime.query = (async (
-      name: string,
-    ): Promise<StoredConversationEventPage | null> =>
-      name === "listConversationEvents"
-        ? {
-            page: [...userRows(1), ...written],
-            isDone: true,
-            continueCursor: null,
-          }
-        : null) as typeof runtime.query;
     const content: UserContent = [
       { type: "text", text: "what does the button say?" },
       { type: "image", image: "aGVsbG8=", mediaType: "image/jpeg" },
@@ -1225,7 +1215,7 @@ describe("context prepare", () => {
         [{ role: "user", content: content }],
       );
 
-      expect(written.map((row) => row.event.message.content)).toEqual([
+      expect(page.slice(1).map((row) => row.event.message.content)).toEqual([
         [{ type: "text", text: "what does the button say?" }],
       ]);
       expect(turnContext.messages.map((message) => message.content)).toEqual([
@@ -1233,7 +1223,7 @@ describe("context prepare", () => {
         content,
       ]);
     } finally {
-      runtime.query = originalQuery;
+      history.restore();
       runtime.mutate = originalMutate;
     }
   });

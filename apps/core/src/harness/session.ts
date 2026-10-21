@@ -754,21 +754,15 @@ export class Session {
     const prepareStartedMs = Date.now();
     const input = splitIngressEvents(ingress);
     const ephemeralSystem = [...input.ephemeralSystem, ...extraEphemeralSystem];
-    // Rows are minted per message so each user message keys its own content by
-    // cursor: the row drops media carrying its own bytes, and this turn's
-    // model must still see it.
-    const minted = input.persisted.map((message) => ({
-      message: message,
-      rows: this.storedEvents([message]),
-    }));
-    const appended = minted.flatMap(({ rows }) => rows);
-    const turnContent = new Map(
-      minted.flatMap(({ message, rows }): [string, UserContent][] =>
-        message.role === "user" && rows[0]
-          ? [[rows[0].cursor, message.content]]
-          : [],
-      ),
-    );
+    // Minted per message so each user message keys its full content by cursor.
+    const appended: AppendedConversationEvent[] = [];
+    const turnContent = new Map<string, UserContent>();
+    for (const message of input.persisted) {
+      const [row] = this.storedEvents([message]);
+      if (!row) continue;
+      appended.push(row);
+      if (message.role === "user") turnContent.set(row.cursor, message.content);
+    }
     // The turn's own rows merge into the history read by cursor either way. A
     // fenced turn writes them with its first step boundary, one mutation
     // fewer; an unfenced one appends them now.
@@ -1343,8 +1337,8 @@ export class Session {
   // rows so media its rows could not hold still reaches this turn.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
-    appended: { cursor: string; event: StoredConversationEvent }[] = [],
-    turnContent: ReadonlyMap<string, UserContent> = new Map(),
+    appended: { cursor: string; event: StoredConversationEvent }[],
+    turnContent: ReadonlyMap<string, UserContent>,
   ): Promise<TurnHistory> {
     const entries = await timePhase(phases, "historyMs", () =>
       this.loadConversationEntries(),

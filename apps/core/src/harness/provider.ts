@@ -32,7 +32,7 @@ import {
   type LanguageModelV4FilePart,
   type LanguageModelV4Message,
   type LanguageModelV4StreamPart,
-  type LanguageModelV4ToolResultPart,
+  type LanguageModelV4ToolResultOutput,
   type SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import { createTogetherAI } from "@ai-sdk/togetherai";
@@ -62,7 +62,7 @@ import type {
   AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
-import { logInfo } from "../shared/log.ts";
+import { logInfo, logWarn } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
 
@@ -136,6 +136,12 @@ type CloudflareProviderSettings = Extract<
   gatewayId?: string;
   headers?: Record<string, string>;
 };
+
+// One part of a user message as the provider receives it.
+type UserPromptPart = Extract<
+  LanguageModelV4Message,
+  { role: "user" }
+>["content"][number];
 
 interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
@@ -588,6 +594,13 @@ export function attemptRecordingMiddleware(
 export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutUnsupportedMedia);
 
+// A text-only model behind a custom endpoint answers a picture with a 400, so a
+// screenshot from an MCP tool would fail every turn after it. Retry once with
+// each picture replaced by a line naming it: the turn loses its images, not the
+// answer.
+export const dropRefusedImagesMiddleware: LanguageModelMiddleware =
+  retryingMiddleware(withoutRefusedImages);
+
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or
 // the agent's model changes and the old reasoning can no longer be decrypted.
@@ -665,10 +678,7 @@ function withoutUnsupportedMedia(
 ): LanguageModelV4CallOptions | undefined {
   if (
     !UnsupportedFunctionalityError.isInstance(error) ||
-    !params.prompt.some(
-      (message) =>
-        message.role === "user" && message.content.some(isDroppableMedia),
-    )
+    !carriesUserMedia(params, isDroppableMedia)
   ) {
     return undefined;
   }
@@ -676,6 +686,72 @@ function withoutUnsupportedMedia(
     error: error.message,
   });
 
+  return withoutUserMedia(params, isDroppableMedia);
+}
+
+// The same call with every picture replaced by a line naming it, or undefined
+// when the endpoint did not answer 400 or there was no picture to drop.
+function withoutRefusedImages(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
+  if (
+    !APICallError.isInstance(error) ||
+    error.statusCode !== 400 ||
+    !carriesUserMedia(params, isImage)
+  ) {
+    return undefined;
+  }
+  logWarn("Retrying model call without images the provider refused", {
+    url: error.url,
+    error: error.message,
+  });
+
+  return withoutUserMedia(params, isImage);
+}
+
+// Whether any user message carries a part `matches` picks out.
+function carriesUserMedia(
+  params: LanguageModelV4CallOptions,
+  matches: (part: UserPromptPart) => part is LanguageModelV4FilePart,
+): boolean {
+  return params.prompt.some(
+    (message) => message.role === "user" && message.content.some(matches),
+  );
+}
+
+// Images are the one media kind every provider reads, so a converter that
+// refused something refused something else.
+function isDroppableMedia(
+  part: UserPromptPart,
+): part is LanguageModelV4FilePart {
+  return part.type === "file" && !part.mediaType.startsWith("image/");
+}
+
+function isImage(part: UserPromptPart): part is LanguageModelV4FilePart {
+  return part.type === "file" && part.mediaType.startsWith("image/");
+}
+
+// An image a user message can carry: bytes or a URL. A provider reference or
+// inline text stays in the tool result it came in.
+function isMovableImage(
+  item: Extract<
+    LanguageModelV4ToolResultOutput,
+    { type: "content" }
+  >["value"][number],
+): item is LanguageModelV4FilePart {
+  return (
+    item.type === "file" &&
+    item.mediaType.startsWith("image/") &&
+    (item.data.type === "data" || item.data.type === "url")
+  );
+}
+
+// The call with every user part `drop` picks out replaced by a line naming it.
+function withoutUserMedia(
+  params: LanguageModelV4CallOptions,
+  drop: (part: UserPromptPart) => part is LanguageModelV4FilePart,
+): LanguageModelV4CallOptions {
   return {
     ...params,
     prompt: params.prompt.map((message) =>
@@ -684,7 +760,7 @@ function withoutUnsupportedMedia(
         : {
             ...message,
             content: message.content.map((part) =>
-              isDroppableMedia(part)
+              drop(part)
                 ? {
                     type: "text" as const,
                     text: unreadableMediaNote(part.filename, part.mediaType),
@@ -694,29 +770,6 @@ function withoutUnsupportedMedia(
           },
     ),
   };
-}
-
-// Images are the one media kind every provider reads, so a converter that
-// refused something refused something else.
-function isDroppableMedia(
-  part: Extract<LanguageModelV4Message, { role: "user" }>["content"][number],
-): part is LanguageModelV4FilePart {
-  return part.type === "file" && !part.mediaType.startsWith("image/");
-}
-
-// An image a user message can carry: bytes or a URL. A provider reference or
-// inline text stays in the tool result it came in.
-function isMovableImage(
-  item: Extract<
-    LanguageModelV4ToolResultPart["output"],
-    { type: "content" }
-  >["value"][number],
-): item is LanguageModelV4FilePart {
-  return (
-    item.type === "file" &&
-    item.mediaType.startsWith("image") &&
-    (item.data.type === "data" || item.data.type === "url")
-  );
 }
 
 function withoutStaleStoredItems(
@@ -791,6 +844,7 @@ function resolveOpenAICompatibleModel(
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
         toolImagesAsUserMessageMiddleware,
+        dropRefusedImagesMiddleware,
         dropUnsupportedMediaMiddleware,
       ],
     }),

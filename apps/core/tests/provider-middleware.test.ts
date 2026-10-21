@@ -4,8 +4,9 @@
  * one (extras return an empty stream), and normalizeStreamDeltasMiddleware
  * rewrites cumulative-snapshot deltas to increments and back-fills missing
  * reasoning-token usage, and toolImagesAsUserMessageMiddleware moves tool
- * result images to where chat endpoints read them. retryWithoutStoredItemsMiddleware covers the OpenAI
- * Responses path, where a replayed item reference can go stale.
+ * result images to where chat endpoints read them.
+ * retryWithoutStoredItemsMiddleware covers the OpenAI Responses path, where a
+ * replayed item reference can go stale.
  */
 
 import {
@@ -15,10 +16,11 @@ import {
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { wrapLanguageModel } from "ai";
+import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { describe, expect, it } from "bun:test";
 import {
   attemptRecordingMiddleware,
+  dropRefusedImagesMiddleware,
   dropUnsupportedMediaMiddleware,
   mergeSystemMessagesMiddleware,
   normalizeStreamDeltasMiddleware,
@@ -30,8 +32,11 @@ import { unreadableMediaNote } from "../src/shared/media-types.ts";
 
 type PromptMessage = { role: string; content: unknown };
 
-async function transform(prompt: PromptMessage[]): Promise<PromptMessage[]> {
-  const result = await mergeSystemMessagesMiddleware.transformParams!({
+async function transform(
+  prompt: PromptMessage[],
+  middleware: LanguageModelMiddleware = mergeSystemMessagesMiddleware,
+): Promise<PromptMessage[]> {
+  const result = await middleware.transformParams!({
     params: { prompt: prompt } as never,
     type: "stream",
     model: {} as never,
@@ -371,9 +376,10 @@ describe("dropUnsupportedMediaMiddleware", () => {
   async function dropCall(
     error: unknown,
     prompt: LanguageModelV4Message[] = mediaPrompt,
+    middleware: LanguageModelMiddleware = dropUnsupportedMediaMiddleware,
   ): Promise<LanguageModelV4CallOptions | undefined> {
     let retried: LanguageModelV4CallOptions | undefined;
-    await dropUnsupportedMediaMiddleware.wrapStream!({
+    await middleware.wrapStream!({
       doStream: async (): Promise<never> => {
         throw error;
       },
@@ -427,6 +433,37 @@ describe("dropUnsupportedMediaMiddleware", () => {
       ]),
     ).rejects.toThrow("file part media type audio/ogg");
   });
+
+  // A text-only custom model answers a picture with a 400; the turn keeps going
+  // without it instead of failing on every screenshot a tool returns.
+  it("retries a 400 with each picture replaced by a line naming it", async () => {
+    const params = await dropCall(
+      apiCallError("image input is not supported"),
+      mediaPrompt,
+      dropRefusedImagesMiddleware,
+    );
+
+    expect(params?.prompt[0]?.content).toEqual([
+      { type: "text", text: "what did I say?" },
+      { type: "text", text: unreadableMediaNote("photo.png", "image/png") },
+      {
+        type: "file",
+        mediaType: "audio/ogg",
+        filename: "voice.ogg",
+        data: { type: "data", data: new Uint8Array([2]) },
+      },
+    ]);
+  });
+
+  it("rethrows a 400 when the prompt carries no picture", async () => {
+    expect(
+      dropCall(
+        apiCallError("bad tool schema"),
+        [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        dropRefusedImagesMiddleware,
+      ),
+    ).rejects.toThrow("bad tool schema");
+  });
 });
 
 describe("toolImagesAsUserMessageMiddleware", () => {
@@ -460,13 +497,12 @@ describe("toolImagesAsUserMessageMiddleware", () => {
   ];
 
   it("moves a tool result's image into a user message after it", async () => {
-    const result = await toolImagesAsUserMessageMiddleware.transformParams!({
-      params: { prompt: toolPrompt } as never,
-      type: "stream",
-      model: {} as never,
-    });
+    const prompt = await transform(
+      toolPrompt,
+      toolImagesAsUserMessageMiddleware,
+    );
 
-    expect(result.prompt.slice(2)).toEqual([
+    expect(prompt.slice(2)).toEqual([
       {
         role: "tool",
         content: [
@@ -506,7 +542,8 @@ describe("toolImagesAsUserMessageMiddleware", () => {
           _url: Parameters<typeof fetch>[0],
           init?: RequestInit,
         ): Promise<Response> => {
-          body = await new Response(init?.body).json();
+          body =
+            typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
 
           return Response.json({
             choices: [
