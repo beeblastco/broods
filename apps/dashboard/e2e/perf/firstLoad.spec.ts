@@ -77,6 +77,10 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     });
 
     await page.goto(probe.path(), { waitUntil: "load" });
+    // The HMR socket opens as the page boots, before any wait below can time
+    // out on a cold `next dev` compile.
+    if (devServer) await context.close();
+    test.skip(devServer, "next dev ships dev chunks; run against a build");
     await waitForReady(probe.ready(page));
     await waitForReady(page.locator('[data-hydrated="true"]'));
     // Only the chunks asked for before the load event: what loads after it
@@ -101,7 +105,6 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
       responses.flatMap((response) => (response ? [response.body()] : [])),
     );
     await context.close();
-    test.skip(devServer, "next dev ships dev chunks; run against a build");
 
     expect(
       responses
