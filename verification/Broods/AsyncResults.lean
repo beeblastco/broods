@@ -22,7 +22,9 @@ with `observed` kept in step for one release. The parent's `get_subagent_status`
 the result (`insertConversationEvents`) and a late result's resume reaching its owner
 (`runtimeIngress.accept` with `resultEventId` as owner, or the apply of the envelope it
 queued) all store it, and the resume is admitted only while it is not stored and no
-resume of it is queued, so the parent is told a result once. A queued resume that
+resume of it is queued, so the parent is told a result once. A status read gives way to
+a resume already queued: it stores nothing and hands nothing over, so the resume tells
+it, and a read whose step is never saved loses nothing. A queued resume that
 expires leaves the row as it was, for the sweep to resume again. `pending`, which the
 row carries from its creation, admits like unset: only the sweep reads it, past the
 parent's hold. A tool row's `handback` moves the same way: its
@@ -243,9 +245,13 @@ inductive ObserveCall where
   | detach
   /-- `markAsyncAgentHandback` with `stored`: the save of the step that carries a
   `get_subagent_status` read (`confirmDelivered`), or that read itself of a detached
-  row, a result the parent is never told, or the parent's own append of the result
-  (`insertConversationEvents`). `finished` is whether the row has its outcome yet. -/
+  row, or a result the parent is never told. `finished` is whether the row has its
+  outcome yet. It leaves a row whose resume is queued to that resume
+  (`isResumeQueued`), and the read then answers `delivery: "automatic"`. -/
   | read (finished : Bool)
+  /-- The parent's own append of the result (`insertConversationEvents`), which
+  stores the row in the same transaction. -/
+  | append
   /-- `runtimeIngress.accept` with `resultEventId`, the late resume, under its one
   idempotency key; `room` is whether the conversation's queue has room for it, `stored`
   whether the conversation already stores the result under its dedupe key
@@ -267,12 +273,15 @@ structure Handback where
   deriving DecidableEq, Repr
 
 /-- One call in its own transaction: the new state, and whether it told the parent the
-result, as a resume admitted as owner or a queued one applied. A resume is admitted only
-while the row is not seen and none of it is queued. A resume of a result the conversation
+result, as a status read that hands it over, a resume admitted as owner or a queued one
+applied. A read of a seen row hands over nothing new. A resume is admitted only while
+the row is not seen and none of it is queued. A resume of a result the conversation
 already stores is refused and marks the row seen. -/
 def Handback.step (h : Handback) : ObserveCall → Handback × Bool
   | .detach => (if h.flag == .seen then h else { h with flag := .waiting }, false)
-  | .read finished => (if finished then { h with flag := .seen } else h, false)
+  | .read finished =>
+    if finished && !h.queued then ({ h with flag := .seen }, h.flag != .seen) else (h, false)
+  | .append => ({ h with flag := .seen }, false)
   | .resume room stored busy =>
     if h.flag == .seen || h.queued then (h, false)
     else if stored then ({ h with flag := .seen }, false)
@@ -380,7 +389,7 @@ theorem step_tells_seen (h : Handback) (c : ObserveCall) (ht : (h.step c).2 = tr
 /-- A seen row with nothing queued never moves, and tells the parent nothing. -/
 theorem seen_step (c : ObserveCall) :
     (Handback.mk .seen false).step c = (⟨.seen, false⟩, false) := by
-  cases c <;> simp [Handback.step]
+  cases c <;> simp [Handback.step] <;> split <;> rfl
 
 /-- Nothing tells the parent a result its row has seen, once no resume is queued. -/
 theorem seen_tells_none : ∀ cs : List ObserveCall, (Handback.mk .seen false).told cs = 0
@@ -389,9 +398,10 @@ theorem seen_tells_none : ∀ cs : List ObserveCall, (Handback.mk .seen false).t
     simp only [Handback.told, seen_step]
     simp [seen_tells_none cs]
 
-/-- However the status reads, detaches, resumes, applies and expiries interleave, the
-parent is told a late result by a resume at most once. -/
-theorem resume_at_most_once (h : Handback) (cs : List ObserveCall) : h.told cs ≤ 1 := by
+/-- However the status reads, appends, detaches, resumes, applies and expiries
+interleave, the parent is told a late result at most once, by a status read or by a
+resume. -/
+theorem told_at_most_once (h : Handback) (cs : List ObserveCall) : h.told cs ≤ 1 := by
   induction cs generalizing h with
   | nil => simp [Handback.told]
   | cons c cs ih =>
@@ -413,6 +423,15 @@ theorem stored_shuts_out_resume (o : Observed) (room busy : Bool) (cs : List Obs
     ((Handback.mk o false).step (.resume room true busy)).1.told cs = 0 := by
   cases o <;> simp [Handback.step, seen_tells_none]
 
+/-- A status read while a resume of the result waits in the queue stores nothing and
+hands nothing over, so the resume still tells the parent, and when it expires, the
+sweep's next resume does: a read whose step is never saved loses nothing. -/
+theorem read_defers_to_queued_resume (o : Observed) (f room : Bool) (ho : o ≠ .seen) :
+    (Handback.mk o true).step (.read f) = (⟨o, true⟩, false) ∧
+      (Handback.mk o true).told [.read f, .apply] = 1 ∧
+      (Handback.mk o true).told [.read f, .expire, .resume room false false] = 1 := by
+  cases o <;> cases f <;> simp_all [Handback.told, Handback.step]
+
 /-- A queued resume that expires writes nothing to the row, so a row the parent never
 got stays the sweep's, and the sweep's next resume tells the parent. -/
 theorem expired_resume_told_again (o : Observed) (room : Bool) (ho : o ≠ .seen) :
@@ -422,9 +441,9 @@ theorem expired_resume_told_again (o : Observed) (room : Bool) (ho : o ≠ .seen
 
 /-! ## Witnesses -/
 
-/-- A status read while a resume of the result waits in the queue: the read returns
-the result, and the apply still tells the parent, so it sees it twice. Before stores were
-moved to the apply the queued admission stored the row first, and this was the same. -/
+/-- A status read while a resume of the result waits in the queue: the read hands
+nothing over and the apply tells the parent, so it sees the result once. Before the read
+gave way, it returned the result and the apply told it again: twice. -/
 example :
     (Handback.mk .waiting false).told [.resume true false true, .read true, .apply] = 1 := by
   decide
