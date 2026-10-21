@@ -254,15 +254,22 @@ body {
   transition-property: width, height;
 }
 
-/* A pane that folds to a rail and back, such as the trace task list, slides its
-   edge instead of jumping. */
-@utility transition-width {
-  transition-property: width;
-  transition-duration: 200ms;
-  transition-timing-function: ease-out;
+/* A picked or linked run's first row in the trace waterfall rings once and
+   fades, so it is easy to find in a chain; a ring that stayed would read as a
+   second selection. It animates back to the row's own colors. */
+@keyframes trace-flash {
+  from {
+    background-color: color-mix(in oklab, var(--color-info) 10%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in oklab, var(--color-info) 40%, transparent);
+  }
+}
+
+@utility animate-trace-flash {
+  animation: trace-flash 1.5s ease-out;
 
   @media (prefers-reduced-motion: reduce) {
-    transition-property: none;
+    animation: none;
   }
 }
 

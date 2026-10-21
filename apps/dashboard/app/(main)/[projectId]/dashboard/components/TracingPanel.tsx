@@ -86,7 +86,6 @@ import {
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
 import { useObservabilityView } from "@/app/hooks/useObservabilityView";
-import { useElementWidth } from "@/app/hooks/useElementWidth";
 import { useIsMobile } from "@/app/hooks/useIsMobile";
 import { useRemembered } from "@/app/hooks/useRemembered";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -399,18 +398,12 @@ const AXIS_MAX_STEPS = 3;
 // A tick this close to the axis end would overflow the column, so it is left out.
 const AXIS_LAST_TICK_PCT = 94;
 
-// The Timeline column's share of the waterfall table: up to 40%, less where
-// that would leave the Span column under SPAN_MIN_PX, never under 22%.
-const TIMELINE_MAX_PCT = 40;
-const TIMELINE_MIN_PCT = 22;
-
-// The Span column's floor, and the Started, Status and Duration columns
-// (w-22, w-20, w-19) beside it.
-const SPAN_MIN_PX = 288;
-const FIXED_COLUMNS_PX = 244;
-
-// How long a picked or linked run's first row stays ringed.
-const FOCUS_FLASH_MS = 1500;
+// The Timeline column's width, for its colgroup and the lines drawn over it,
+// in units of the waterfall's own width (its div is a size container): up to
+// 40%, less where that leaves the Span column under 18rem beside the other
+// three (15.25rem), never under 22%. Container units, unlike a % mixed with rem,
+// hold on a fixed-layout table's column.
+const TIMELINE_WIDTH = "clamp(22cqw, 100cqw - 33.25rem, 40cqw)";
 
 // One matcher per `field:value` search token. Values arrive lowercased. A task
 // matches on its own runs and on its subagents'.
@@ -539,8 +532,8 @@ interface TimelineScale {
 
 // What every waterfall row of the selected run reads and calls.
 interface WaterfallView {
-  /** The run that was just picked or linked to, ringed for a moment. */
-  flashTraceId: string | null;
+  /** The run a pick or a link landed on, ringed for a moment. */
+  focusTraceId: string | null;
   group: SpanGroup;
   issues: RunIssues;
   live: boolean;
@@ -771,20 +764,10 @@ export function TracingPanel({
   const [missingTrace, setMissingTrace] = useState<string | null>(null);
   // A new focus target retires the notice about the previous one.
   const [prevFocusTraceId, setPrevFocusTraceId] = useState(focusTraceId);
-  // The run a pick or a link lands on rings for a moment so it stands out in
-  // a chain, then fades; a ring that stayed would read as a second selection.
-  const [flashTraceId, setFlashTraceId] = useState(focusTraceId);
   if (focusTraceId !== prevFocusTraceId) {
     setPrevFocusTraceId(focusTraceId);
-    setFlashTraceId(focusTraceId);
     if (focusTraceId) setMissingTrace(null);
   }
-  useEffect(() => {
-    if (!flashTraceId) return;
-    const timer = setTimeout(() => setFlashTraceId(null), FOCUS_FLASH_MS);
-
-    return () => clearTimeout(timer);
-  }, [flashTraceId]);
   // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
   // below would otherwise swallow a repeat click on the same subagent link).
   const [refocusNonce, setRefocusNonce] = useState(0);
@@ -1115,7 +1098,7 @@ export function TracingPanel({
                 onContinue={() => void continueTask(selectedGroup.root)}
                 onPickRun={pickTask}
                 view={{
-                  flashTraceId: flashTraceId,
+                  focusTraceId: focusTraceId,
                   group: selectedGroup,
                   onFocusTrace: focusTrace,
                   onSelect: (key) =>
@@ -1859,19 +1842,6 @@ function taskKey(root: ObservabilitySpanRow): string {
     root.attributes?.["task.root_id"] ?? root.attributes?.["task.id"];
 
   return typeof taskId === "string" && taskId ? taskId : root.traceId;
-}
-
-/**
- * The Timeline column's share of a waterfall table `tableWidth` px wide: the
- * most it can take while the Span column keeps SPAN_MIN_PX. Unmeasured (0), it
- * takes the least.
- */
-function timelineColumnPct(tableWidth: number): number {
-  if (tableWidth <= 0) return TIMELINE_MIN_PCT;
-  const room =
-    ((tableWidth - FIXED_COLUMNS_PX - SPAN_MIN_PX) / tableWidth) * 100;
-
-  return Math.min(TIMELINE_MAX_PCT, Math.max(TIMELINE_MIN_PCT, room));
 }
 
 /** Where a moment falls on the timeline, as a percent of its width. */
@@ -2647,7 +2617,7 @@ function SpanRow({
         "cursor-pointer border-b border-border/40 transition hover:bg-accent/20",
         isSelected && "bg-accent",
         !isRootSpanKind(span.kind) && "text-foreground/80",
-        highlighted && "bg-info/10 ring-1 ring-inset ring-info/40",
+        highlighted && "animate-trace-flash",
         // A span that arrives while the run is live fades in once.
         live && "starting:opacity-0",
       )}
@@ -2818,15 +2788,17 @@ function TaskListPane({
   remaining,
   onLoadMore,
 }: TaskListPaneProps): React.JSX.Element {
+  const width = rail ? "md:w-9" : "md:w-80";
+
   return (
     <div
       data-scroll-pane
       className={cn(
-        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border transition-width md:max-h-none md:border-r md:border-b-0",
-        rail ? "md:w-9" : "md:w-80",
+        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border transition-box duration-200 ease-out motion-reduce:transition-none md:max-h-none md:border-r md:border-b-0",
+        width,
       )}
     >
-      <div className={cn("min-h-full", rail ? "md:w-9" : "md:w-80")}>
+      <div className={cn("min-h-full", width)}>
         <div
           className={cn(
             "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
@@ -3056,8 +3028,6 @@ function TaskWaterfall({
   const live = isTaskRunning(group.latest);
   const issues = useMemo(() => runIssues(group), [group]);
   const view: WaterfallView = { ...panelView, issues: issues, live: live };
-  const [tableWidth, measureTable] = useElementWidth(0);
-  const columnPct = timelineColumnPct(tableWidth);
   const failures = issues.all.filter(({ issue }) => issue.level === "error");
   const retries = issues.all.filter(({ issue }) => issue.level === "warn");
   // Opens an issue's span in the side panel, opens the rows folded above it,
@@ -3177,7 +3147,7 @@ function TaskWaterfall({
         )}
       </div>
       <TimelineClock group={group} live={live}>
-        <div className="relative min-w-xl" ref={measureTable}>
+        <div className="@container relative min-w-xl">
           <table className="w-full table-fixed text-xs">
             <colgroup>
               <col className="w-22" />
@@ -3186,7 +3156,7 @@ function TaskWaterfall({
               <col className="w-19" />
               <col
                 className="w-(--timeline-width)"
-                style={{ "--timeline-width": `${columnPct}%` }}
+                style={{ "--timeline-width": TIMELINE_WIDTH }}
               />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
@@ -3202,7 +3172,7 @@ function TaskWaterfall({
             </thead>
             <tbody>{renderSpanRows(root, 0, live, view, undefined)}</tbody>
           </table>
-          <TimelineLines issues={issues.all} columnPct={columnPct} />
+          <TimelineLines issues={issues.all} />
         </div>
       </TimelineClock>
     </>
@@ -3409,10 +3379,8 @@ function TimelineClock({
  */
 function TimelineLines({
   issues,
-  columnPct,
 }: {
   issues: RunIssues["all"];
-  columnPct: number;
 }): React.JSX.Element {
   const scale = useContext(TimelineScaleContext);
 
@@ -3421,7 +3389,7 @@ function TimelineLines({
       aria-hidden="true"
       className="pointer-events-none absolute inset-y-0 right-3 left-(--timeline-left)"
       style={{
-        "--timeline-left": `calc(${100 - columnPct}% + 0.75rem)`,
+        "--timeline-left": `calc(100cqw - ${TIMELINE_WIDTH} + 0.75rem)`,
       }}
     >
       {issues.map(({ issue, span }) => (
@@ -3505,7 +3473,7 @@ function renderSpanRows(
       onClick={select}
       group={view.group}
       taskRunning={rootLive}
-      highlighted={isRoot && span.traceId === view.flashTraceId}
+      highlighted={isRoot && span.traceId === view.focusTraceId}
       onFocusTrace={view.onFocusTrace}
       issue={issue}
       below={view.issues.below.get(span.spanId) ?? []}
