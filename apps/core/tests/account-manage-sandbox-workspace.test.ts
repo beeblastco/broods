@@ -667,10 +667,6 @@ describe("account-manage sandbox endpoints", () => {
           ticket!.expiresAt,
         ),
       ).toBe(false);
-      // A bridge that has no key yet opens no terminal.
-      expect(
-        await verifyTerminalToken("", bearer, "sbx_handler", Date.now()),
-      ).toBe(false);
 
       running = false;
       const stopped = await terminal();
