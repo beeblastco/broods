@@ -20,7 +20,7 @@ import {
 import { toLifecycleValue } from "./lifecycle.ts";
 import type { ContinuationOutcome } from "./responses.ts";
 import type { Session } from "./session.ts";
-import { lostResultWindows } from "./subagents.ts";
+import { lostResultWindows, SWEPT_HANDBACKS } from "./subagents.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
 import {
   modelValueToUserParts,
@@ -29,8 +29,6 @@ import {
 
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
-// The hand-back states the sweep lists, each with its own window.
-const SWEPT_HANDBACKS = ["detached", "pending"] as const;
 
 /** Resumes a conversation with a settled row; the handler's `continueAfterAsyncToolSettlement`. */
 export type AsyncToolSettlementResumer = (

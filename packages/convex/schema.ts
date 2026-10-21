@@ -1358,9 +1358,8 @@ export const runtimeAsyncAgentResultsFields = {
   eventId: v.string(),
   conversationKey: v.string(),
   subagent: v.optional(subagentTaskValidator),
-  // False once the parent stopped waiting on this subagent and has not seen its
-  // result; true once it has, read with get_subagent_status or resumed with it.
-  // Read beside `handback` for one release, for rows written before it.
+  // Neither read nor written. Rows the release before wrote keep it until they
+  // expire, 7 days after their last write; drop it from the schema then.
   observed: v.optional(v.boolean()),
   // Set once a subagent's row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),
@@ -1404,8 +1403,8 @@ export const runtimeAsyncToolResultsFields = {
   error: v.optional(v.string()),
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
-  // True once the model read the result with async_status. Read beside
-  // `handback` for one release, for rows written before it.
+  // Neither read nor written. Rows the release before wrote keep it until they
+  // expire, 7 days after their last write; drop it from the schema then.
   observed: v.optional(v.boolean()),
   // Set once the row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),
@@ -1923,11 +1922,6 @@ export default defineSchema({
     .index("by_accountId", ["accountId"])
     .index("by_conversationKey", ["conversationKey"])
     .index("by_expiresAt", ["expiresAt"])
-    .index("by_observed_and_status_and_updatedAt", [
-      "observed",
-      "status",
-      "updatedAt",
-    ])
     .index("by_handback_and_status_and_updatedAt", [
       "handback",
       "status",

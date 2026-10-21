@@ -16,16 +16,16 @@ two change together or not at all. A handler is a list of `Act`s; any await may 
 so a run is the program plus the index of the await that throws, if any, and the catch
 block then runs as `recover`.
 
-A subagent's row also carries `handback`: whether its parent has the result (`stored`),
-with `observed` kept in step for one release. The parent's `get_subagent_status` read
+A subagent's row also carries `handback`: whether its parent has the result (`stored`).
+The parent's `get_subagent_status` read
 (`markAsyncAgentHandback`, once the step that carries it is saved), its own append of
 the result (`insertConversationEvents`) and a late result's resume reaching its owner
 (`runtimeIngress.accept` with `resultEventId` as owner, or the apply of the envelope it
 queued) all store it, and the resume is admitted only while it is not stored and no
 resume of it is queued, so the parent is told a result once. A queued resume that
-expires leaves the row as it was, for the sweep to resume again. `pending`, which the
-row carries from its creation, admits like unset: only the sweep reads it, past the
-parent's hold. A tool row's `handback` moves the same way: its
+expires leaves the row as it was, for the sweep to resume again. Only the sweep reads
+`pending`, which the row carries from its creation, past the parent's hold. A tool
+row's `handback` moves the same way: its
 settle writes `pending`, the parent's append, `async_status` and the continuation
 reaching its owner (`accept` with `toolResultId`) store it, and `observe` here stands
 for either move of `observeAsyncToolResult`, which never touches the status the proofs
@@ -227,12 +227,11 @@ def ToolRow.changes (row : ToolRow) : List ToolCall → Nat
   | c :: cs =>
     (if (row.update c).status == row.status then 0 else 1) + (row.update c).changes cs
 
-/-- `runtimeAsyncAgentResults.handback` on a subagent's row (`observed` beside it):
-`pending` from the row's creation (unset on a row the release before wrote), `detached`
-(`observed: false`) once the parent stopped waiting on the child, `stored`
-(`observed: true`) once the parent has its result. -/
+/-- `runtimeAsyncAgentResults.handback` on a subagent's row: `pending` from the row's
+creation, `detached` once the parent stopped waiting on the child, `stored` once the
+parent has its result. -/
 inductive Observed where
-  | unset | waiting | seen
+  | pending | waiting | seen
   deriving DecidableEq, Repr
 
 /-- The calls that touch `handback`, in any order a race gives them. -/

@@ -6,7 +6,6 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
 import {
   getAsyncAgentResult,
-  isHandbackOwed,
   markAsyncAgentHandback,
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
@@ -71,8 +70,8 @@ export default function getSubagentStatusTool(
         // now, as does a read with no coordinator to confirm it later.
         if (record.status === "completed" || record.status === "failed") {
           if (
-            isHandbackOwed(record) &&
-            (!context.watch || record.handback !== "pending")
+            record.handback === "detached" ||
+            (record.handback === "pending" && !context.watch)
           ) {
             await markAsyncAgentHandback(record.eventId, "stored");
           }

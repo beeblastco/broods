@@ -39,9 +39,6 @@ export interface AsyncToolResultRecord {
   response?: JSONValue;
   error?: string;
   delivery?: AsyncToolDelivery;
-  // True once the model read the result with async_status. Written by the
-  // release before `handback`; read beside it for one release.
-  observed?: boolean;
   // Where a finished result stands with the run that started it: `pending`
   // until that run stores it, `detached` once it gave up and the recovery
   // sweep owns it, `stored` once the conversation has it.

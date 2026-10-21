@@ -5987,7 +5987,7 @@ export declare const internal: {
       "internal",
       {
         cursor: string | null;
-        handback?: "pending" | "detached";
+        handback: "pending" | "detached";
         status:
           | "processing"
           | "awaiting_approval"

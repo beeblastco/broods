@@ -118,10 +118,10 @@ describe("queued ingress recovery", () => {
         return { page: [], cursor: "end", isDone: true };
       },
     );
-    // One list a window: detached, pending and pre-handback subagent rows in
-    // completed, failed and processing; then detached and pending tool rows
-    // in completed and failed.
-    const windows = 9;
+    // One list a window: detached and pending subagent rows in completed,
+    // failed and processing; then detached and pending tool rows in
+    // completed and failed.
+    const windows = 6;
     const toolWindows = 4;
     try {
       startIngressRecovery();
