@@ -6,10 +6,10 @@ import type { Doc } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
-// More rows than one page, so the strip schedules itself across pages.
+// More rows than one batch, so the strip schedules itself again.
 const ROWS_PER_TABLE = 60;
 
-test("strips observed from every row of both result tables, page by page", async (): Promise<void> => {
+test("strips observed from every row of both result tables, batch by batch", async (): Promise<void> => {
   vi.useFakeTimers();
   const t = convexTest(schema, modules);
   await t.run(async (ctx): Promise<void> => {
@@ -28,7 +28,7 @@ test("strips observed from every row of both result tables, page by page", async
         accountId: accountId,
         eventId: `event-${i}`,
         conversationKey: "conversation",
-        observed: i % 2 === 0,
+        ...(i % 3 === 0 ? {} : { observed: i % 2 === 0 }),
         handback: "stored",
         status: "completed",
         createdAt: stamp,

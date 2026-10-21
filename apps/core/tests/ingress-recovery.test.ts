@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import * as asyncAgentResults from "../src/harness/async-agent-result.ts";
+import type { SweptHandback } from "@broods/convex/model/subagentResults";
 import type { AsyncAgentResultRecord } from "../src/harness/async-agent-result.ts";
 import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
@@ -261,7 +262,7 @@ describe("queued ingress recovery", () => {
     const spies = [
       spyOn(asyncAgentResults, "listOwedAsyncAgentResults").mockImplementation(
         async (options: {
-          handback?: string;
+          handback: SweptHandback;
           status: string;
         }): Promise<{
           page: AsyncAgentResultRecord[];

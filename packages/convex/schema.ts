@@ -1358,8 +1358,8 @@ export const runtimeAsyncAgentResultsFields = {
   eventId: v.string(),
   conversationKey: v.string(),
   subagent: v.optional(subagentTaskValidator),
-  // Neither read nor written. Rows the release before wrote keep it until they
-  // expire, 7 days after their last write; drop it from the schema then.
+  // Neither read nor written. `observedMigration:stripObserved` unsets it on
+  // every row; the release after drops it with its `by_observed` index.
   observed: v.optional(v.boolean()),
   // Set once a subagent's row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),
@@ -1403,8 +1403,8 @@ export const runtimeAsyncToolResultsFields = {
   error: v.optional(v.string()),
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
-  // Neither read nor written. Rows the release before wrote keep it until they
-  // expire, 7 days after their last write; drop it from the schema then.
+  // Neither read nor written. `observedMigration:stripObserved` unsets it on
+  // every row; the release after drops it with its `by_observed` index.
   observed: v.optional(v.boolean()),
   // Set once the row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),
@@ -1926,7 +1926,8 @@ export default defineSchema({
       "handback",
       "status",
       "updatedAt",
-    ]),
+    ])
+    .index("by_observed", ["observed"]),
   runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
     .index("by_resultId", ["resultId"])
     .index("by_accountId", ["accountId"])
@@ -1940,7 +1941,8 @@ export default defineSchema({
       "status",
       "updatedAt",
     ])
-    .index("by_expiresAt", ["expiresAt"]),
+    .index("by_expiresAt", ["expiresAt"])
+    .index("by_observed", ["observed"]),
   sandboxReservations: defineTable(sandboxReservationsFields)
     .index("by_provider_and_reservationKey", ["provider", "reservationKey"])
     .index("by_accountId", ["accountId"])

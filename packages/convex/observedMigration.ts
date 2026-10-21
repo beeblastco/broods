@@ -4,57 +4,51 @@
  * documents do not match, and a row's expiry moves forward with every write.
  * Run it once per deployment after this release deploys:
  * `npx convex run observedMigration:stripObserved`
- * It pages through both tables on its own. Delete this file with the schema
- * field; that push fails if any row still carries the flag.
+ * It schedules itself until no row carries the flag; a run that returns 0
+ * confirms it is done. Delete this file with the schema field and its
+ * `by_observed` indexes.
  */
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 
-// Rows carry whole results; a small page stays far under the read limit.
-const PAGE_SIZE = 50;
+// Rows carry whole results, up to 1 MiB each: a small batch per table stays
+// under one mutation's read limit.
+const BATCH_SIZE = 4;
+const TABLES = ["runtimeAsyncAgentResults", "runtimeAsyncToolResults"] as const;
 
 /**
- * Unsets `observed` on one page of `table`, then schedules the next page:
- * the agent table first, the tool table after its last page.
- * @returns how many rows this page unset
+ * Unsets `observed` on a batch of each table's flagged rows, read through
+ * `by_observed` (a set flag sorts after every unset one), and schedules
+ * itself again while a table filled its batch.
+ * @returns how many rows this batch unset
  */
 export const stripObserved = internalMutation({
-  args: {
-    table: v.optional(
-      v.union(
-        v.literal("runtimeAsyncAgentResults"),
-        v.literal("runtimeAsyncToolResults"),
-      ),
-    ),
-    cursor: v.optional(v.union(v.string(), v.null())),
-  },
+  args: {},
   returns: v.number(),
-  handler: async (ctx, args): Promise<number> => {
-    const table = args.table ?? "runtimeAsyncAgentResults";
-    const result = await ctx.db
-      .query(table)
-      .paginate({ cursor: args.cursor ?? null, numItems: PAGE_SIZE });
-    const rows = result.page.filter(
-      (row): boolean => row.observed !== undefined,
-    );
-    for (const row of rows) {
-      await ctx.db.patch(row._id, { observed: undefined });
+  handler: async (ctx): Promise<number> => {
+    let stripped = 0;
+    let more = false;
+    for (const table of TABLES) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex("by_observed", (q) => q.gte("observed", false))
+        .take(BATCH_SIZE);
+      for (const row of rows) {
+        await ctx.db.patch(row._id, { observed: undefined });
+      }
+      stripped += rows.length;
+      more ||= rows.length === BATCH_SIZE;
     }
-    const next = !result.isDone
-      ? { table: table, cursor: result.continueCursor }
-      : table === "runtimeAsyncAgentResults"
-        ? { table: "runtimeAsyncToolResults" as const, cursor: null }
-        : null;
-    if (next) {
+    if (more) {
       await ctx.scheduler.runAfter(
         0,
         internal.observedMigration.stripObserved,
-        next,
+        {},
       );
     }
 
-    return rows.length;
+    return stripped;
   },
 });

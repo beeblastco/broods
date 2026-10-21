@@ -5427,15 +5427,7 @@ export declare const internal: {
     >;
   };
   observedMigration: {
-    stripObserved: FunctionReference<
-      "mutation",
-      "internal",
-      {
-        cursor?: string | null;
-        table?: "runtimeAsyncAgentResults" | "runtimeAsyncToolResults";
-      },
-      number
-    >;
+    stripObserved: FunctionReference<"mutation", "internal", {}, number>;
   };
   org: {
     orgs: {
