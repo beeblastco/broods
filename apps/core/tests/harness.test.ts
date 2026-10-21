@@ -1362,7 +1362,13 @@ describe("runAgentLoop", () => {
     expect(delivered[0]?.signature).toMatch(/^sha256=[0-9a-f]{64}$/);
   });
 
-  it("runs the onError code hook when the model returns nothing", async () => {
+  it.each([
+    ["an empty response", "empty"],
+    ["a provider error then empty text", "error-then-empty"],
+    ["a provider error with no finish", "error-no-finish"],
+    ["a hard stream failure", "hard-throw"],
+  ] as const)("runs the onError code hook once on %s", async (_, scenario) => {
+    streamTextScenario = scenario;
     installHarnessEnv();
     const fired: Array<{ event: string; error: unknown }> = [];
     const { runAgentLoop } = await import("../src/harness/harness.ts");
@@ -1406,12 +1412,13 @@ describe("runAgentLoop", () => {
       },
     );
 
-    await stream.consumeStream();
+    // The hard failure rethrows to the caller; the hook has fired by then.
+    await stream.consumeStream().catch(() => {});
 
     expect(stream.didFail()).toBe(true);
-    expect(fired).toHaveLength(1);
-    expect(fired[0]?.event).toBe("agent.failed");
-    expect(fired[0]?.error).toEqual(expect.any(String));
+    expect(fired).toEqual([
+      { event: "agent.failed", error: stream.failureText() },
+    ]);
   });
 
   it("keeps the provider error when the stream also finishes with empty text", async () => {

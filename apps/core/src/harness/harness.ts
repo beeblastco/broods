@@ -356,11 +356,14 @@ export async function runAgentLoop(
   const hooks =
     options.hooks ??
     (await createAgentHookDispatcher(session.accountId, agentConfig));
-  // Every failure path announces through here, so the lifecycle webhook and
-  // the observe-only onError code hook always fire together.
-  const emitFailed = async (
+  // A run fails once: its first failure fires the lifecycle webhook and the
+  // observe-only onError code hook, and later errors of the same run do not.
+  let failureAnnounced = false;
+  const announceFailure = async (
     payload: AgentLifecycleEventPayload & { error: string },
   ): Promise<void> => {
+    if (failureAnnounced) return;
+    failureAnnounced = true;
     await lifecycle.emit("agent.failed", payload);
     if (hooks.hasHooksFor("agent.failed")) {
       await hooks.runMutation("agent.failed", { error: payload.error });
@@ -1324,13 +1327,13 @@ export async function runAgentLoop(
         },
       );
 
-      await emitFailed({
+      await reply?.onErrorText(errorText).catch(() => {});
+      await announceFailure({
         error: errorText,
         toolsUsed: toLifecycleValue(tools.toolsUsed),
         toolUsage: toLifecycleValue(tools.toolUsage),
         toolCalls: toLifecycleValue(tools.toolCalls),
       });
-      await reply?.onErrorText(errorText).catch(() => {});
       if (isContextLengthError(errorText)) {
         await autoCompact(undefined, true);
       }
@@ -1442,7 +1445,8 @@ export async function runAgentLoop(
               usage: taskTotals.usage(),
             },
           );
-          await emitFailed({
+          await reply?.onErrorText(errorText).catch(() => {});
+          await announceFailure({
             error: errorText,
             finishReason: finishReason,
             stepCount: stepCount,
@@ -1451,7 +1455,6 @@ export async function runAgentLoop(
             toolUsage: toLifecycleValue(tools.toolUsage),
             toolCalls: toLifecycleValue(tools.toolCalls),
           });
-          await reply?.onErrorText(errorText).catch(() => {});
 
           return;
         }
@@ -1546,13 +1549,13 @@ export async function runAgentLoop(
           errorDetails: serializeError(err),
         });
 
-        await emitFailed({
+        await reply?.onErrorText(errorText).catch(() => {});
+        await announceFailure({
           error: errorText,
           toolsUsed: toLifecycleValue(tools.toolsUsed),
           toolUsage: toLifecycleValue(tools.toolUsage),
           toolCalls: toLifecycleValue(tools.toolCalls),
         });
-        await reply?.onErrorText(errorText).catch(() => {});
       } finally {
         await finalizer.finalize(
           didFail ? "failed" : "completed",
@@ -1638,8 +1641,8 @@ export async function runAgentLoop(
     const message = errorMessage(error);
     failureText = message;
     terminalError = error instanceof Error ? error : new Error(message);
-    await emitFailed({ error: message });
     await reply?.onErrorText(message).catch(() => {});
+    await announceFailure({ error: message });
     await finalizer.finalize(
       "failed",
       toolCallSummaries.size,
@@ -1733,6 +1736,8 @@ export async function runAgentLoop(
         "Model stream ended without a completion callback",
       );
       failureText ??= terminalError.message;
+      // A hard stream failure or an abandoned read never reached onError.
+      await announceFailure({ error: failureText });
     }
     await finalizer.finalize(
       "failed",
