@@ -356,20 +356,6 @@ export async function runAgentLoop(
   const hooks =
     options.hooks ??
     (await createAgentHookDispatcher(session.accountId, agentConfig));
-  // A run fails once: its first failure fires the lifecycle webhook and the
-  // observe-only onError code hook, and later errors of the same run do not.
-  let failureAnnounced = false;
-  const announceFailure = async (
-    payload: AgentLifecycleEventPayload & { error: string },
-  ): Promise<void> => {
-    if (failureAnnounced) return;
-    failureAnnounced = true;
-    await lifecycle.emit("agent.failed", payload);
-    if (hooks.hasHooksFor("agent.failed")) {
-      await hooks.runMutation("agent.failed", { error: payload.error });
-    }
-  };
-
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   const taskTotals = createTaskTotals();
   const sandboxCpu = createSandboxCpuLedger();
@@ -694,6 +680,29 @@ export async function runAgentLoop(
   // span closes.
   const stepTiming = createStepTimingTracker(traceAttribute);
   const toolCallSummaries = new Map<string, ToolCallSummary>();
+  // A run fails once: its first failure fires the lifecycle webhook and the
+  // observe-only onError code hook, and later errors of the same run do not.
+  let failureAnnounced = false;
+  const announceFailure = async (
+    error: string,
+    extra: AgentLifecycleEventPayload = {},
+  ): Promise<void> => {
+    if (failureAnnounced) return;
+    failureAnnounced = true;
+    const tools = summarizeToolsUsed(toolCallSummaries);
+    await Promise.all([
+      lifecycle.emit("agent.failed", {
+        error: error,
+        ...extra,
+        toolsUsed: toLifecycleValue(tools.toolsUsed),
+        toolUsage: toLifecycleValue(tools.toolUsage),
+        toolCalls: toLifecycleValue(tools.toolCalls),
+      }),
+      hooks.hasHooksFor("agent.failed")
+        ? hooks.runMutation("agent.failed", { error: error })
+        : undefined,
+    ]);
+  };
   const logContext = {
     accountId: session.accountId,
     agentId: session.agentId,
@@ -1328,12 +1337,7 @@ export async function runAgentLoop(
       );
 
       await reply?.onErrorText(errorText).catch(() => {});
-      await announceFailure({
-        error: errorText,
-        toolsUsed: toLifecycleValue(tools.toolsUsed),
-        toolUsage: toLifecycleValue(tools.toolUsage),
-        toolCalls: toLifecycleValue(tools.toolCalls),
-      });
+      await announceFailure(errorText);
       if (isContextLengthError(errorText)) {
         await autoCompact(undefined, true);
       }
@@ -1446,14 +1450,10 @@ export async function runAgentLoop(
             },
           );
           await reply?.onErrorText(errorText).catch(() => {});
-          await announceFailure({
-            error: errorText,
+          await announceFailure(errorText, {
             finishReason: finishReason,
             stepCount: stepCount,
             toolCallCount: toolCallCount,
-            toolsUsed: toLifecycleValue(tools.toolsUsed),
-            toolUsage: toLifecycleValue(tools.toolUsage),
-            toolCalls: toLifecycleValue(tools.toolCalls),
           });
 
           return;
@@ -1550,12 +1550,7 @@ export async function runAgentLoop(
         });
 
         await reply?.onErrorText(errorText).catch(() => {});
-        await announceFailure({
-          error: errorText,
-          toolsUsed: toLifecycleValue(tools.toolsUsed),
-          toolUsage: toLifecycleValue(tools.toolUsage),
-          toolCalls: toLifecycleValue(tools.toolCalls),
-        });
+        await announceFailure(errorText);
       } finally {
         await finalizer.finalize(
           didFail ? "failed" : "completed",
@@ -1642,7 +1637,7 @@ export async function runAgentLoop(
     failureText = message;
     terminalError = error instanceof Error ? error : new Error(message);
     await reply?.onErrorText(message).catch(() => {});
-    await announceFailure({ error: message });
+    await announceFailure(message);
     await finalizer.finalize(
       "failed",
       toolCallSummaries.size,
@@ -1737,7 +1732,7 @@ export async function runAgentLoop(
       );
       failureText ??= terminalError.message;
       // A hard stream failure or an abandoned read never reached onError.
-      await announceFailure({ error: failureText });
+      await announceFailure(failureText);
     }
     await finalizer.finalize(
       "failed",

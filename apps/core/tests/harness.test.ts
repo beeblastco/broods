@@ -1368,37 +1368,8 @@ describe("runAgentLoop", () => {
     ["a provider error with no finish", "error-no-finish"],
     ["a hard stream failure", "hard-throw"],
   ] as const)("runs the onError code hook once on %s", async (_, scenario) => {
-    streamTextScenario = scenario;
-    installHarnessEnv();
     const fired: Array<{ event: string; error: unknown }> = [];
-    const { runAgentLoop } = await import("../src/harness/harness.ts");
-
-    const stream = await runAgentLoop(
-      {
-        accountId: "acct_test",
-        agentId: "agent_test",
-        conversationKey: "direct:conversation",
-        eventId: "direct-event",
-        filesystemNamespace: () => "fs-test",
-        resolvedWorkspaces: () => [],
-        sandboxes: () => [],
-        environmentText: () => "<environment>",
-        persistModelMessages: async () => [],
-        loadRefreshedSystemPromptParts: async () => ({
-          systemContextSnapshot: { cursor: null, messages: [] },
-          system: [],
-        }),
-      } as never,
-      {
-        messages: [{ role: "user", content: "hello" }],
-        system: [],
-        ephemeralSystem: [],
-        systemContextSnapshot: { cursor: null, messages: [] },
-      },
-      {
-        provider: { google: { apiKey: "google-key" } },
-        model: { provider: "google", modelId: "gemini-test" },
-      },
+    const stream = await startTwoStepTurn(
       undefined,
       {
         hooks: {
@@ -1410,10 +1381,15 @@ describe("runAgentLoop", () => {
           },
         },
       },
+      undefined,
+      scenario,
     );
 
-    // The hard failure rethrows to the caller; the hook has fired by then.
-    await stream.consumeStream().catch(() => {});
+    try {
+      await stream.consumeStream();
+    } catch {
+      // The hard failure rethrows to the caller; the hook has fired by then.
+    }
 
     expect(stream.didFail()).toBe(true);
     expect(fired).toEqual([

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
+import { openGallery } from "../lib/gallery";
 
 /**
  * The workspace file explorer by keyboard, against the fixture in
@@ -11,8 +12,7 @@ import type { Locator, Page } from "@playwright/test";
 const DIALOG = '[data-slot="dialog-content"]';
 
 async function openExplorer(page: Page, fixture: string): Promise<Locator> {
-  await page.goto("/ui-gallery?tab=workspace-files");
-  await page.locator('main[data-hydrated="true"]').waitFor();
+  await openGallery(page, "workspace-files");
 
   return page.locator(`[data-fixture="${fixture}"]`);
 }

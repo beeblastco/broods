@@ -209,9 +209,9 @@ export function WorkspaceFilesTab({
             workspaceId: workspaceId,
             path: node.path,
           });
-          await refreshRuntimeFiles(false, true);
         } catch (err) {
           setError(toErrorMessage(err));
+        } finally {
           await refreshRuntimeFiles(false, true);
         }
 
@@ -356,9 +356,9 @@ export function WorkspaceFilesTab({
             path: node.path,
             newPath: newPath,
           });
-          await refreshRuntimeFiles(false, true);
         } catch (err) {
           setError(toErrorMessage(err));
+        } finally {
           await refreshRuntimeFiles(false, true);
         }
 
@@ -580,6 +580,12 @@ export function WorkspaceFilesView({
   };
 
   // Row clicks and keys are delegated here, so each row is a plain treeitem.
+  // A row press, by click or Enter/Space: select it and toggle a folder.
+  const activate = (node: FileNode): void => {
+    setSelected(node.path);
+    if (node.isFolder) toggleFolder(node.path);
+  };
+
   const handleTreeClick = (e: React.MouseEvent<HTMLDivElement>): void => {
     const node = nodeAt(visible, e.target);
     if (!node) {
@@ -588,21 +594,18 @@ export function WorkspaceFilesView({
 
       return;
     }
-    setSelected(node.path);
-    if (node.isFolder) toggleFolder(node.path);
+    activate(node);
   };
 
   const handleTreeKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
     // Only a focused row: the rename input and row buttons keep their keys.
-    const node =
-      e.target instanceof HTMLElement && e.target.dataset.path !== undefined
-        ? nodeAt(visible, e.target)
-        : undefined;
+    const path =
+      e.target instanceof HTMLElement ? e.target.dataset.path : undefined;
+    const node = path ? visible.find((row) => row.path === path) : undefined;
     if (!node) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      setSelected(node.path);
-      if (node.isFolder) toggleFolder(node.path);
+      activate(node);
 
       return;
     }
