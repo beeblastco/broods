@@ -546,9 +546,10 @@ async function changeSeats(
 }
 
 /**
- * The caller's Stripe customer: the one filed under them while Stripe still
- * has it, else a new one. A customer deleted in Stripe, or made under another
- * secret key, is unfiled first: the component keeps its row, and
+ * The caller's Stripe customer while Stripe still has it: the one behind
+ * their subscription billing acts on, else the one filed under them, else a
+ * new one. A filed customer deleted in Stripe, or made under another secret
+ * key, is unfiled first: the component keeps its row, and
  * `createOrUpdateCustomer` can only rename the row's userId, not clear it.
  */
 async function customerFor(
@@ -556,6 +557,12 @@ async function customerFor(
   authUser: { id: string; email?: string | null },
 ): Promise<string> {
   const stripe = stripeApi();
+  const subs = await ctx.runQuery(
+    components.stripe.public.listSubscriptionsByUserId,
+    { userId: authUser.id },
+  );
+  const billed = currentOf(subs)?.stripeCustomerId;
+  if (billed && (await stripeHasCustomer(stripe, billed))) return billed;
   let gone: string | null = null;
   let filed = await filedCustomer(ctx, authUser.id);
   while (filed) {
@@ -617,6 +624,7 @@ function itemsFor(
   ];
 }
 
+/** The Stripe price an env var names: Pro, or one extra seat. */
 function priceId(name: "STRIPE_PRO_PRICE_ID" | "STRIPE_SEAT_PRICE_ID"): string {
   const id = process.env[name];
   if (!id) throw new Error(`${name} is not configured`);

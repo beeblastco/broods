@@ -605,6 +605,32 @@ describe("owner billing", () => {
     expect(await plans(t)).toEqual({ user: "free", org: "free" });
   });
 
+  test("the portal opens on the customer behind the owner's subscription, even with no customer filed for them", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+    await sendEvent(
+      t,
+      "customer.subscription.updated",
+      subscription("past_due"),
+    );
+    const customer = vi
+      .spyOn(stripeClient, "createCustomer")
+      .mockResolvedValue({ customerId: "cus_new" });
+    const portalSession = vi
+      .spyOn(stripeClient, "createCustomerPortalSession")
+      .mockResolvedValue({ url: "https://portal.test" });
+
+    await t.action(api.stripe.createPortalSession, {
+      returnUrl: "http://localhost:3000/billing",
+    });
+
+    expect(customer).not.toHaveBeenCalled();
+    expect(portalSession).toHaveBeenCalledWith(expect.anything(), {
+      customerId: CUSTOMER_ID,
+      returnUrl: "http://localhost:3000/billing",
+    });
+  });
+
   test("getBillingInfo shows a member the owner's subscription", async () => {
     const t = billingTest();
     await seedPayer(t);
