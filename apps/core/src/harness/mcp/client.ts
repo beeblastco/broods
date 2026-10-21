@@ -45,7 +45,13 @@ import {
 import { mergeSandboxEnv } from "../sandbox/utils.ts";
 import { publicHostFetch } from "../../shared/http.ts";
 import { logInfo } from "../../shared/log.ts";
-import { withImageLimits } from "../tools/utils.ts";
+import { MAX_IMAGE_BYTES } from "../../shared/media-types.ts";
+import { guardedFetch } from "../isolate/runner/pinned-fetch.mjs";
+import {
+  MAX_RESULT_IMAGES,
+  withImageLimits,
+  type ToolContentPart,
+} from "../tools/utils.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -67,6 +73,8 @@ const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
+// How long reading one picture a result links to may take.
+const LINKED_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_TTL_MS = 60 * 60_000;
 
@@ -168,8 +176,12 @@ export async function callMcpTool(
 
   // An image is something the model can look at, so a result carrying one goes
   // through as content parts instead of being flattened to text.
-  if (result.content.some((block): boolean => block.type === "image")) {
-    return imageContentOutput(result.content, result.structuredContent);
+  if (
+    result.content.some(
+      (block): boolean => block.type === "image" || isImageLink(block),
+    )
+  ) {
+    return await imageContentOutput(result.content, result.structuredContent);
   }
 
   return result.structuredContent ?? renderContent(result.content);
@@ -492,30 +504,104 @@ async function connectClient(
 
 /**
  * A result's content as model content parts: images as image data, within the
- * limits on what one result may show, the rest as text, and any
- * structuredContent as one more JSON text part.
+ * limits on what one result may show, a linked image read into image data, the
+ * rest as text, and any structuredContent as one more JSON text part.
  */
-function imageContentOutput(
+async function imageContentOutput(
   content: CallToolResult["content"],
   structured: CallToolResult["structuredContent"],
-): ToolResultOutput {
+): Promise<ToolResultOutput> {
+  // Only as many links are read as one result may show, so a result naming a
+  // hundred pictures never holds them all in memory at once.
+  const links = new Set(
+    content.filter(isImageLink).slice(0, MAX_RESULT_IMAGES),
+  );
+  const parts = await Promise.all(
+    content.map(async (block): Promise<ToolContentPart[]> => {
+      if (block.type === "image") {
+        return [
+          { type: "image-data", data: block.data, mediaType: block.mimeType },
+        ];
+      }
+      // A linked picture keeps its line, so the model still knows its source.
+      const text: ToolContentPart = {
+        type: "text",
+        text: renderContent([block]),
+      };
+      const linked =
+        isImageLink(block) && links.has(block)
+          ? await linkedImage(block.uri, block.mimeType)
+          : undefined;
+
+      return linked ? [text, linked] : [text];
+    }),
+  );
+
   return {
     type: "content",
     value: withImageLimits([
-      ...content.map((block) =>
-        block.type === "image"
-          ? {
-              type: "image-data" as const,
-              data: block.data,
-              mediaType: block.mimeType,
-            }
-          : { type: "text" as const, text: renderContent([block]) },
-      ),
+      ...parts.flat(),
       ...(structured
         ? [{ type: "text" as const, text: JSON.stringify(structured) }]
         : []),
     ]),
   };
+}
+
+/** A resource link to a picture core can read. */
+function isImageLink(
+  block: CallToolResult["content"][number],
+): block is Extract<
+  CallToolResult["content"][number],
+  { type: "resource_link" }
+> & { mimeType: string } {
+  return (
+    block.type === "resource_link" &&
+    block.mimeType?.startsWith("image/") === true &&
+    /^https?:\/\//i.test(block.uri)
+  );
+}
+
+/**
+ * A linked picture as image data, read through the same pinned guard as an
+ * inbound attachment: no private or metadata address, no unbounded body.
+ * Undefined when it cannot be read, so the link stays a line of text.
+ */
+async function linkedImage(
+  uri: string,
+  mediaType: string,
+): Promise<ToolContentPart | undefined> {
+  try {
+    const response = await guardedFetch(uri, undefined, {
+      binary: true,
+      bodyLimitBytes: MAX_IMAGE_BYTES,
+      timeoutMs: LINKED_IMAGE_TIMEOUT_MS,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`answered ${response.status}`);
+    }
+
+    // A view, not a copy: the guard assembled the body into a fresh allocation.
+    const bytes = response.bodyBytes;
+
+    return {
+      type: "image-data",
+      data: Buffer.from(
+        bytes.buffer,
+        bytes.byteOffset,
+        bytes.byteLength,
+      ).toString("base64"),
+      mediaType: mediaType,
+    };
+  } catch (err) {
+    // The host only: a signed link carries its token in the path or query.
+    logInfo("MCP image link could not be read", {
+      host: URL.canParse(uri) ? new URL(uri).host : undefined,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return undefined;
+  }
 }
 
 /** The agent id, and its chain when known (base64url JSON, ids and kinds only), so a server can authorize per agent. */
