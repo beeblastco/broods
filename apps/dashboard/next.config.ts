@@ -55,7 +55,9 @@ const nextConfig: NextConfig = {
   headers: async function () {
     return [
       {
-        source: "/:path*",
+        // Pages only: these headers mean nothing on a script or stylesheet,
+        // and the asset CDN repeats them uncompressed on every chunk.
+        source: "/:path((?!_next/static/).*)",
         headers: [
           {
             key: "Content-Security-Policy",
