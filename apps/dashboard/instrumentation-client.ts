@@ -51,8 +51,7 @@ void analytics.then((posthog): void => {
 // Runs on every event, so it holds after posthog.reset() clears registered
 // properties: no GeoIP lookup, URLs without typed params, and each exception
 // message replaced with its type so error tracking still groups by type and
-// stack frames. An uncaught error from a CDN chunk has neither: the browser
-// reports it as a bare "Script error.".
+// stack frames.
 function anonymized(capture: CaptureResult | null): CaptureResult | null {
   if (!capture) return capture;
   capture.properties.$geoip_disable = true;
