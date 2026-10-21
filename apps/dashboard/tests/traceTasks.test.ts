@@ -306,10 +306,9 @@ describe("waterfall issues", () => {
       "run-step-0-bash",
     ]);
     // The failed tool sits under its step, which a click must open.
-    expect(issues.all.map(({ path }) => path)).toEqual([
-      [],
-      [{ key: "trace-run:run-step-0", startsOpen: true }],
-    ]);
+    expect(
+      issues.all.map(({ path }) => path.map((span) => span.spanId)),
+    ).toEqual([[], ["run-step-0"]]);
     expect(issues.below.get("run")).toHaveLength(2);
     expect(issues.below.get("run-step-0")).toHaveLength(1);
     expect(issues.below.get("run-step-0-bash")).toEqual([]);

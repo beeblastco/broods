@@ -492,19 +492,13 @@ export interface SpanIssue {
   text: string;
 }
 
-// A row that must be open for a row under it to render: its key, and
-// whether it starts open (a step) before `toggled` flips it.
-interface RowOnPath {
-  key: string;
-  startsOpen: boolean;
-}
-
-// The run's issues in time order, each with the rows above it; per span id
-// the issues under it; and per span id its own.
+// The run's issues in time order, each with the rows above it that must be
+// open for it to render; per span id the issues under it; and per span id
+// its own.
 export interface RunIssues {
   all: Array<{
     issue: SpanIssue;
-    path: RowOnPath[];
+    path: ObservabilitySpanRow[];
     span: ObservabilitySpanRow;
   }>;
   below: Map<string, SpanIssue[]>;
@@ -1242,22 +1236,21 @@ export function axisTicks(spanMs: number): number[] {
 
 /**
  * Every issue in the run in time order, and the issues under each span, read
- * down the same tree the waterfall renders: a subagent is one leaf line. Each issue keeps the rows above it, so a click can open them.
+ * down the same tree the waterfall renders: a subagent is one leaf line.
+ * Each issue keeps the rows above it, so a click can open them.
  */
 export function runIssues(group: SpanGroup): RunIssues {
   const all: RunIssues["all"] = [];
   const below = new Map<string, SpanIssue[]>();
   const own = new Map<string, SpanIssue>();
-  const walk = (span: ObservabilitySpanRow, path: RowOnPath[]): SpanIssue[] => {
+  const walk = (
+    span: ObservabilitySpanRow,
+    path: ObservabilitySpanRow[],
+  ): SpanIssue[] => {
     const isTaskRow = span === group.root;
     const children = rowChildren(span, isTaskRow, group);
     // The task row is always open, so it is never on a path.
-    const inside = isTaskRow
-      ? path
-      : [
-          ...path,
-          { key: spanKey(span), startsOpen: span.kind === "model.step" },
-        ];
+    const inside = isTaskRow ? path : [...path, span];
     const under = children.flatMap((child) => walk(child, inside));
     below.set(span.spanId, under);
     // A failure counts once, where it happened: core closes the open step and
@@ -1598,8 +1591,8 @@ function rowChildren(
 }
 
 /** A row's name. A later run nested under its task reads as resumed. */
-function rowLabel(span: ObservabilitySpanRow, isTaskRow: boolean): string {
-  return !isTaskRow && (span.kind === "task" || span.kind === "cron")
+function rowLabel(span: ObservabilitySpanRow): string {
+  return span.kind === "task" || span.kind === "cron"
     ? "resumed"
     : spanLabel(span);
 }
@@ -2293,7 +2286,7 @@ function SpanLine({
     <StepLine
       hasChildren={hasChildren}
       isOpen={isOpen}
-      name={rowLabel(span, false)}
+      name={rowLabel(span)}
       onToggle={onToggle}
       span={span}
     />
@@ -2741,8 +2734,12 @@ function TaskWaterfall({
   const showSpan = ({ path, span }: RunIssues["all"][number]): void => {
     const key = spanKey(span);
     if (key !== view.selectedKey) view.onSelect(key);
+    // A step starts open and anything else closed; `toggled` flips that.
     for (const row of path) {
-      if (row.startsOpen === view.toggled.has(row.key)) view.toggle(row.key);
+      const rowKey = spanKey(row);
+      if ((row.kind === "model.step") === view.toggled.has(rowKey)) {
+        view.toggle(rowKey);
+      }
     }
     requestAnimationFrame(() =>
       document
@@ -3139,11 +3136,11 @@ function TimingChip({
 
 /**
  * A span's row, then what ran under it when open: a step's reasoning, its
- * tool calls and its answer. A step starts open, anything
- * else closed, and `view.toggled` flips that. `enclosingRootLive` is whether
- * the nearest enclosing root run is live; a resumed pass is itself a root
- * and judged on its own freshness. A subagent is one leaf line here: its own
- * run lists on its own.
+ * tool calls and its answer. A step starts open, anything else closed, and
+ * `view.toggled` flips that. `enclosingRootLive` is whether the nearest
+ * enclosing root run is live; a resumed pass is itself a root and judged on
+ * its own freshness. A subagent is one leaf line here: its own run lists on
+ * its own.
  */
 function renderSpanRows(
   span: ObservabilitySpanRow,
