@@ -117,7 +117,7 @@ sequenceDiagram
 
 ## MCP servers
 
-Core is a stateless MCP client, spec 2026-07-28, Streamable HTTP only (`src/harness/mcp/client.ts`). `MCP_PROTOCOL_VERSION` in `src/shared/mcp-protocol.ts` is the one revision every Broods surface speaks, with no 2025-era `initialize` fallback: core's client, the `broods machine --mcp` host and the `broods mcp` server pin it, and hosted templates pass `createMcpHandler(factory, { legacy: "reject" })`. The MicroVM host behind `mcp/sandbox.ts` lives in `lambda-sanbdox` and moves to it there. Each run lists tools (cached per row for the listing's `ttlMs`) and registers them as `<server>__<tool>`. Every `tools/call` is one POST with no session. The row's transport decides where that POST goes:
+Core is a stateless MCP client, spec 2026-07-28, Streamable HTTP only (`src/harness/mcp/client.ts`). `MCP_PROTOCOL_VERSION` in `src/shared/mcp-protocol.ts` is the one revision every MCP surface in this repo speaks, with no 2025-era `initialize` fallback: core's client, the `broods machine --mcp` host and the `broods mcp` server pin it, and hosted templates pass `createMcpHandler(factory, { legacy: "reject" })`. The MicroVM host behind `mcp/sandbox.ts` lives in `lambda-sanbdox` and still speaks 2025-06-18 until it moves there. Each run lists tools (cached per row for the listing's `ttlMs`) and registers them as `<server>__<tool>`. Every `tools/call` is one POST with no session. The row's transport decides where that POST goes:
 
 ```mermaid
 flowchart LR
