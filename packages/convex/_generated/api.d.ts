@@ -1918,6 +1918,12 @@ export declare const api: {
       >;
     };
     filesPublic: {
+      downloadUrl: FunctionReference<
+        "action",
+        "public",
+        { path: string; projectId: Id<"projects">; workspaceId: string },
+        string
+      >;
       list: FunctionReference<
         "action",
         "public",
@@ -1929,6 +1935,12 @@ export declare const api: {
           sizeBytes?: number;
           updatedAt?: string;
         }>
+      >;
+      read: FunctionReference<
+        "action",
+        "public",
+        { path: string; projectId: Id<"projects">; workspaceId: string },
+        string
       >;
       remove: FunctionReference<
         "action",
