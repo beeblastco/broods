@@ -81,12 +81,18 @@ function toolImage(item: ToolContentPart): ImagePart[] {
   switch (item.type) {
     case "image-data":
       return [{ type: "image", image: item.data, mediaType: item.mediaType }];
+    case "image-url":
+      return [{ type: "image", image: item.url }];
+    case "file-data":
+      return item.mediaType.startsWith("image")
+        ? [{ type: "image", image: item.data, mediaType: item.mediaType }]
+        : [];
     case "file-url":
-      return item.mediaType?.startsWith("image/")
+      return item.mediaType?.startsWith("image")
         ? [{ type: "image", image: item.url, mediaType: item.mediaType }]
         : [];
     case "file":
-      return item.mediaType.startsWith("image/") &&
+      return item.mediaType.startsWith("image") &&
         (item.data.type === "data" || item.data.type === "url")
         ? [
             {
