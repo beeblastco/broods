@@ -114,15 +114,6 @@ export function DetailPayload({
   value: string;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(open === true);
-  // Parsing a large payload is the expensive part; the parent re-renders on
-  // every stream message while a run is live.
-  const json = useMemo(
-    () =>
-      expanded && value.length <= JSON_VIEW_MAX_CHARS
-        ? parseJson(value)
-        : undefined,
-    [expanded, value],
-  );
 
   return (
     <details
@@ -133,22 +124,54 @@ export function DetailPayload({
       <SectionSummary label={label} summary={summary} />
       {expanded && (
         <div className="relative mx-2 mb-2">
-          {json === undefined ? (
-            // wrap-anywhere, unlike wrap-break-word, also lowers the min-content width.
-            <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere py-1 pl-1 pr-11 text-xs leading-relaxed text-foreground/90">
-              {value}
-            </pre>
-          ) : (
-            <div className="max-h-[50vh] overflow-auto rounded-md border border-border bg-code-background py-2 pl-1 pr-11 text-xs leading-relaxed">
-              <JsonView value={json} />
-            </div>
-          )}
+          <PayloadBody value={value} className="max-h-[50vh] pl-1 pr-11" />
           <div className="absolute right-4 top-1">
             <CopyButton value={value} label={label.toLowerCase()} />
           </div>
         </div>
       )}
     </details>
+  );
+}
+
+/**
+ * A payload's text: JSON as a folding code view, where a string with line
+ * breaks reads as lines, and anything else pre-wrapped. Used by the detail
+ * pane and by the trace's open payload rows; `className` sets height and inset.
+ */
+export function PayloadBody({
+  value,
+  className,
+}: {
+  value: string;
+  className: string;
+}): React.JSX.Element {
+  // Parsing a large payload is the expensive part; the parent re-renders on
+  // every stream message while a run is live.
+  const json = useMemo(
+    () => (value.length <= JSON_VIEW_MAX_CHARS ? parseJson(value) : undefined),
+    [value],
+  );
+
+  return json === undefined ? (
+    // wrap-anywhere, unlike wrap-break-word, also lowers the min-content width.
+    <pre
+      className={cn(
+        "overflow-auto whitespace-pre-wrap wrap-anywhere py-1 text-xs leading-relaxed text-foreground/90",
+        className,
+      )}
+    >
+      {value}
+    </pre>
+  ) : (
+    <div
+      className={cn(
+        "overflow-auto rounded-md border border-border bg-code-background py-2 text-xs leading-relaxed",
+        className,
+      )}
+    >
+      <JsonView value={json} />
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import {
   DetailFields,
   DetailPayload,
   type DetailRow,
+  PayloadBody,
 } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
@@ -316,9 +317,6 @@ const NOTE_ICONS: Record<NoteKind, LucideIcon> = {
 
 // Avatars a task row stacks before "+N" for the rest of its subagents.
 const STACK_AVATARS = 4;
-
-// How much of a payload a line shows inline; the detail pane has it whole.
-const INLINE_PAYLOAD_CHARS = 2_000;
 
 // How many characters of a tool's first string argument its line shows.
 const TOOL_SUMMARY_CHARS = 80;
@@ -1479,15 +1477,6 @@ function hasTrace(group: SpanGroup, traceId: string): boolean {
   );
 }
 
-/** The start of a payload for its line; the detail pane has it whole. */
-function inlinePayload(value: unknown): string {
-  const text = displayAttribute(value);
-
-  return text.length > INLINE_PAYLOAD_CHARS
-    ? `${text.slice(0, INLINE_PAYLOAD_CHARS)}…`
-    : text;
-}
-
 /** Whether a waterfall row is open: a step starts open, anything else closed, and `toggled` flips that. */
 function isRowOpen(span: ObservabilitySpanRow, toggled: Set<string>): boolean {
   return (span.kind === "model.step") !== toggled.has(spanKey(span));
@@ -2224,15 +2213,16 @@ function PayloadText({
 }): React.JSX.Element {
   return (
     <div className="grid min-w-0 gap-1">
-      <span className="flex items-center gap-2 text-2xs text-muted-foreground/70">
+      <span className="flex items-center gap-2 text-2xs text-muted-foreground">
         {label}
         <span className="font-mono tabular-nums">
           {formatNumber(value.length)} chars
         </span>
       </span>
-      <pre className="max-h-48 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md border border-border/60 px-2 py-1 text-foreground/80">
-        {inlinePayload(value)}
-      </pre>
+      <PayloadBody
+        value={value}
+        className="max-h-48 rounded-md border border-border/60 px-2"
+      />
     </div>
   );
 }
