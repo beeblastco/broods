@@ -90,13 +90,14 @@ const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 // `gpt-5.6` or the fine-tune `ft:gpt-6-luna:org::id`.
 const GPT_VERSION_PATTERN = /^(?:ft:)?gpt-(\d+)(?:\.(\d+))?(?:[-:]|$)/i;
 
-// A Claude model id, after any router prefix like `cc/`.
-const CLAUDE_MODEL_PATTERN = /^claude-/i;
+// A Claude model id after any router prefix like `cc/`, Bedrock-style
+// `us.anthropic.claude-` ones included.
+const CLAUDE_MODEL_PATTERN = /(?:^|\.)claude-/i;
 
 // Where a custom endpoint's Claude cache mark lives: Anthropic's `cache_control`
-// on a chat message, the field OpenRouter and LiteLLM read. The compatible
-// provider puts `openaiCompatible` options on the message or part they came
-// with, and sends none of them as a body field.
+// on a chat message or content part, the convention Claude proxies such as
+// LiteLLM follow. The compatible provider puts `openaiCompatible` options on
+// the message or part they came with, and sends none of them as a body field.
 const CUSTOM_CACHE_PROVIDER = "openaiCompatible";
 const CUSTOM_CACHE_FIELD = "cache_control";
 
@@ -444,25 +445,28 @@ export function modelOutputFromModelConfig(
 // stream (`data: [DONE]`), which surfaces as "Model returned empty response".
 // The harness legitimately sends two (the base prompt + the dynamic context
 // snapshot), so fold every system message into one before the request leaves.
+// A cache mark (Claude only) ends the stored system prompt: the run's own
+// system text after it stays a second message, so the stored prefix still reads
+// from cache when that text changes.
 export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
-  transformParams: async ({ params }) => {
+  transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
     const systems = params.prompt.filter(
       (message) => message.role === "system",
     );
     if (systems.length <= 1) return params;
-    // The stored system prompt's cache mark now ends the one message.
-    const marked = systems.findLast(
-      (message) => message.providerOptions !== undefined,
-    );
+    const storedEnd =
+      systems.findLastIndex(
+        (message) => message.providerOptions !== undefined,
+      ) + 1;
+    const groups =
+      storedEnd > 0 && storedEnd < systems.length
+        ? [systems.slice(0, storedEnd), systems.slice(storedEnd)]
+        : [systems];
 
     return {
       ...params,
       prompt: [
-        {
-          role: "system",
-          content: systems.map((message) => message.content).join("\n\n"),
-          ...(marked ? { providerOptions: marked.providerOptions } : {}),
-        },
+        ...groups.map(mergedSystemMessage),
         ...params.prompt.filter((message) => message.role !== "system"),
       ],
     };
@@ -471,16 +475,15 @@ export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
 
 /**
  * Claude behind a custom endpoint caches only the blocks a request marks, and
- * nothing marks the latest one the way Anthropic's own API does. So once the
- * harness has marked a prompt, its latest message gets the same mark, and each
- * step of a run reads the step before it from cache. A call the harness left
- * unmarked, like compaction, stays unmarked.
+ * nothing marks the latest one the way Anthropic's own API does. So when the
+ * run carries a cache mark, its latest message gets it too, and each step of a
+ * run reads the step before it from cache. A call without one, like
+ * compaction, stays unmarked.
  */
 export const cacheLatestMessageMiddleware: LanguageModelMiddleware = {
-  transformParams: async ({ params }) => {
-    const cacheControl = params.prompt
-      .map(customCacheControlOf)
-      .find((mark) => mark !== undefined);
+  transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
+    const cacheControl =
+      params.providerOptions?.[CUSTOM_CACHE_PROVIDER]?.[CUSTOM_CACHE_FIELD];
     const latest = params.prompt.at(-1);
     if (cacheControl === undefined || latest === undefined) {
       return params;
@@ -1034,9 +1037,7 @@ function resolveOpenAICompatibleModel(
         dropRefusedImagesMiddleware,
         moveRefusedToolImagesMiddleware(`${baseURL} ${modelId}`),
         dropUnsupportedMediaMiddleware,
-        ...(CLAUDE_MODEL_PATTERN.test(servedModelId(modelId))
-          ? [cacheLatestMessageMiddleware]
-          : []),
+        cacheLatestMessageMiddleware,
       ],
     }),
   };
@@ -1200,23 +1201,6 @@ function customCacheBreakpoint(
   return { [CUSTOM_CACHE_PROVIDER]: { [CUSTOM_CACHE_FIELD]: cacheControl } };
 }
 
-// The cache_control a custom endpoint's prompt message or one of its parts
-// carries, the message's own first.
-function customCacheControlOf(
-  message: LanguageModelV4Message,
-): JSONValue | undefined {
-  const items =
-    typeof message.content === "string"
-      ? [message]
-      : [message, ...message.content];
-
-  return items
-    .map((item) => item.providerOptions?.[CUSTOM_CACHE_PROVIDER])
-    .find((options) => options?.[CUSTOM_CACHE_FIELD] !== undefined)?.[
-    CUSTOM_CACHE_FIELD
-  ];
-}
-
 // A custom endpoint's cache defaults by the model family it serves. GPT gets
 // its key in the request body, where the compatible provider copies the options
 // under its name. Claude gets the cache_control its breakpoints carry, under
@@ -1270,6 +1254,19 @@ function customProviderName(
   return typeof providerConfig?.name === "string"
     ? providerConfig.name
     : "custom";
+}
+
+// One system message holding `systems` in order, with the last one's options.
+function mergedSystemMessage(
+  systems: Extract<LanguageModelV4Message, { role: "system" }>[],
+): LanguageModelV4Message {
+  const providerOptions = systems.at(-1)?.providerOptions;
+
+  return {
+    role: "system",
+    content: systems.map((message) => message.content).join("\n\n"),
+    ...(providerOptions ? { providerOptions: providerOptions } : {}),
+  };
 }
 
 // One conversation's prompt cache key, the same on every call it makes.

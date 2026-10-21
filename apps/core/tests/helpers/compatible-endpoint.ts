@@ -9,7 +9,12 @@ import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 
 // A chat-completions request body as the compatible converter builds it.
 export type ChatRequest = {
-  messages: { role: string; content: unknown; tool_call_id?: string }[];
+  messages: {
+    role: string;
+    content: unknown;
+    tool_call_id?: string;
+    cache_control?: unknown;
+  }[];
   [field: string]: unknown;
 };
 

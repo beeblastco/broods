@@ -591,56 +591,68 @@ describe("cache marks on a custom endpoint", () => {
   const mark = { openaiCompatible: { cache_control: cacheControl } };
 
   // The request body a compatible endpoint receives for `prompt`, sent through
-  // the system merge and the latest-message mark.
+  // the system merge and the latest-message mark, in a run carrying the mark
+  // or, for a call like compaction, none.
   async function requestFor(
     prompt: LanguageModelV4Message[],
+    runMark?: typeof mark,
   ): Promise<ChatRequest | undefined> {
     const { bodies, chat } = compatibleEndpoint("cc/claude-sonnet-5");
     const model = wrapLanguageModel({
       model: chat,
       middleware: [mergeSystemMessagesMiddleware, cacheLatestMessageMiddleware],
     });
-    await model.doGenerate({ prompt: prompt });
+    await model.doGenerate({
+      prompt: prompt,
+      ...(runMark ? { providerOptions: runMark } : {}),
+    });
 
     return bodies[0];
   }
 
-  it("keeps the system mark and marks the latest tool result", async () => {
-    const body = await requestFor([
-      { role: "system", content: "stored", providerOptions: mark },
-      { role: "system", content: "ephemeral" },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "apply", providerOptions: mark },
-          { type: "text", text: "<environment/>" },
-        ],
-      },
-      {
-        role: "assistant",
-        content: [
-          { type: "tool-call", toolCallId: "c1", toolName: "read", input: {} },
-        ],
-      },
-      {
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: "c1",
-            toolName: "read",
-            output: { type: "text", value: "page" },
-          },
-        ],
-      },
-    ]);
+  it("ends the stored system prompt and marks the latest tool result", async () => {
+    const body = await requestFor(
+      [
+        { role: "system", content: "stored", providerOptions: mark },
+        { role: "system", content: "ephemeral" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "apply", providerOptions: mark },
+            { type: "text", text: "<environment/>" },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "read",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "read",
+              output: { type: "text", value: "page" },
+            },
+          ],
+        },
+      ],
+      mark,
+    );
 
-    expect(body?.messages[0]).toMatchObject({
-      role: "system",
-      content: "stored\n\nephemeral",
-      cache_control: cacheControl,
-    });
-    expect(body?.messages[1]?.content).toEqual([
+    expect(body?.messages.slice(0, 2)).toEqual([
+      { role: "system", content: "stored", cache_control: cacheControl },
+      { role: "system", content: "ephemeral" },
+    ]);
+    expect(body?.messages[2]?.content).toEqual([
       { type: "text", text: "apply", cache_control: cacheControl },
       { type: "text", text: "<environment/>" },
     ]);
@@ -650,11 +662,17 @@ describe("cache marks on a custom endpoint", () => {
     });
   });
 
-  it("leaves a prompt the harness did not mark alone", async () => {
+  it("leaves a call without a mark alone", async () => {
     const body = await requestFor([
       { role: "system", content: "summarize" },
+      { role: "system", content: "context" },
       { role: "user", content: [{ type: "text", text: "history" }] },
     ]);
+
+    expect(body?.messages[0]).toEqual({
+      role: "system",
+      content: "summarize\n\ncontext",
+    });
 
     expect(JSON.stringify(body)).not.toContain("cache_control");
   });

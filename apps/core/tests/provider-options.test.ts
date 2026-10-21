@@ -108,6 +108,19 @@ describe("providerOptionsFromModelConfig", () => {
     });
   });
 
+  test("a Bedrock-style Claude id behind a proxy is Claude too", () => {
+    const config: AgentConfig = {
+      model: {
+        provider: "custom",
+        modelId: "bedrock/us.anthropic.claude-sonnet-5-v1:0",
+      },
+    };
+
+    expect(providerOptionsFromModelConfig(config, CONVERSATION_KEY)).toEqual({
+      openaiCompatible: { cache_control: { type: "ephemeral" } },
+    });
+  });
+
   test("a custom endpoint serving anything else gets nothing", () => {
     const config: AgentConfig = {
       model: { provider: "custom", modelId: "qwen3-coder" },
