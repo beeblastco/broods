@@ -1193,6 +1193,30 @@ function requireProviderSettings(
   return providerConfig;
 }
 
+// A custom endpoint's Claude breakpoint carrying `cacheControl`.
+function customCacheBreakpoint(
+  cacheControl: JSONValue,
+): SharedV4ProviderOptions {
+  return { [CUSTOM_CACHE_PROVIDER]: { [CUSTOM_CACHE_FIELD]: cacheControl } };
+}
+
+// The cache_control a custom endpoint's prompt message or one of its parts
+// carries, the message's own first.
+function customCacheControlOf(
+  message: LanguageModelV4Message,
+): JSONValue | undefined {
+  const items =
+    typeof message.content === "string"
+      ? [message]
+      : [message, ...message.content];
+
+  return items
+    .map((item) => item.providerOptions?.[CUSTOM_CACHE_PROVIDER])
+    .find((options) => options?.[CUSTOM_CACHE_FIELD] !== undefined)?.[
+    CUSTOM_CACHE_FIELD
+  ];
+}
+
 // A custom endpoint's cache defaults by the model family it serves. GPT gets
 // its key in the request body, where the compatible provider copies the options
 // under its name. Claude gets the cache_control its breakpoints carry, under
@@ -1248,28 +1272,12 @@ function customProviderName(
     : "custom";
 }
 
-// A custom endpoint's Claude breakpoint carrying `cacheControl`.
-function customCacheBreakpoint(
-  cacheControl: JSONValue,
-): SharedV4ProviderOptions {
-  return { [CUSTOM_CACHE_PROVIDER]: { [CUSTOM_CACHE_FIELD]: cacheControl } };
-}
-
-// The cache_control a custom endpoint's prompt message or one of its parts
-// carries, the message's own first.
-function customCacheControlOf(
-  message: LanguageModelV4Message,
-): JSONValue | undefined {
-  const items =
-    typeof message.content === "string"
-      ? [message]
-      : [message, ...message.content];
-
-  return items
-    .map((item) => item.providerOptions?.[CUSTOM_CACHE_PROVIDER])
-    .find((options) => options?.[CUSTOM_CACHE_FIELD] !== undefined)?.[
-    CUSTOM_CACHE_FIELD
-  ];
+// One conversation's prompt cache key, the same on every call it makes.
+function promptCacheKey(conversationKey: string): string {
+  return createHash("sha256")
+    .update(conversationKey)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 // The model id the endpoint serves, without a router prefix like `cx/`.
@@ -1277,7 +1285,7 @@ function servedModelId(modelId: string | undefined): string {
   return modelId?.split("/").at(-1) ?? "";
 }
 
-// `defaults` set under `provider` unless the account configured `field` there.
+// `configured` with `value` as `provider`'s `field`, unless the account set it.
 function withDefaultOption(
   configured: AgentModelProviderOptions | undefined,
   provider: string,
@@ -1319,14 +1327,6 @@ function withLatestPartMarked(
   }
 
   return markedForCache(message, breakpoint);
-}
-
-// One conversation's prompt cache key, the same on every call it makes.
-function promptCacheKey(conversationKey: string): string {
-  return createHash("sha256")
-    .update(conversationKey)
-    .digest("hex")
-    .slice(0, 32);
 }
 
 function createModelOutput(
