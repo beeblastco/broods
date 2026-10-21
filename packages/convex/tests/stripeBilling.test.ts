@@ -479,6 +479,10 @@ describe("owner billing", () => {
       successUrl: "http://localhost:3000/ok",
       cancelUrl: "http://localhost:3000/cancel",
       subscriptionMetadata: { userId: AUTH_ID },
+      params: {
+        allow_promotion_codes: true,
+        payment_method_collection: "if_required",
+      },
     });
   });
 

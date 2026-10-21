@@ -90,6 +90,12 @@ export const createCheckoutSession = action({
       // The component files a subscription under `metadata.userId`: who pays,
       // and whose orgs it covers.
       subscriptionMetadata: { userId: authUser.id },
+      // A promotion code made in Stripe can discount Pro, down to free; a
+      // free checkout asks for no card.
+      params: {
+        allow_promotion_codes: true,
+        payment_method_collection: "if_required",
+      },
     });
 
     if (!session.url) throw new Error("No checkout URL returned");
