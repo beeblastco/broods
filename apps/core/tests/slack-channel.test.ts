@@ -599,6 +599,33 @@ describe("slack channel adapter", () => {
     });
   });
 
+  it("flushes coalesced reasoning on the interval while a long think streams", async () => {
+    const chunks = await collect(
+      toSlackStream(
+        (async function* () {
+          yield { type: "reasoning-start", id: "r1" };
+          yield { type: "reasoning-delta", id: "r1", text: "first" };
+          // The interval check reads Date.now(), so moving the frozen clock
+          // past it stands in for a long think.
+          setSystemTime(new Date(Date.now() + 550));
+          yield { type: "reasoning-delta", id: "r1", text: " second" };
+          yield { type: "reasoning-delta", id: "r1", text: " third" };
+          yield { type: "reasoning-end", id: "r1" };
+        })(),
+      ),
+    );
+
+    const details = chunks
+      .filter(
+        (chunk) =>
+          typeof chunk === "object" && chunk !== null && "details" in chunk,
+      )
+      .map((chunk) => (chunk as { details: string }).details);
+    // The delta arriving after the interval flushes what has accumulated so
+    // far; the remainder flushes at reasoning-end.
+    expect(details).toEqual(["first second", " third"]);
+  });
+
   it("stops appending reasoning details once the task text budget is spent", async () => {
     const long = "x".repeat(1300);
     const chunks = await collect(

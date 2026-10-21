@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, jest } from "bun:test";
+import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
 import type { MessageCreate } from "../src/discord.ts";
 import {
   fanOut,
@@ -125,6 +125,31 @@ describe("forwarding a gateway message", () => {
     );
 
     expect(seen.calls).toBe(3);
+  });
+
+  it("waits as long as Retry-After asks instead of the backoff", async (): Promise<void> => {
+    const delays: number[] = [];
+    const sleep = spyOn(Bun, "sleep").mockImplementation(
+      async (ms: number | Date): Promise<void> => {
+        delays.push(Number(ms));
+      },
+    );
+    let calls = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      calls += 1;
+
+      return calls === 1
+        ? new Response("", { headers: { "retry-after": "2" }, status: 429 })
+        : new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+    } finally {
+      sleep.mockRestore();
+    }
+
+    expect(calls).toBe(2);
+    expect(delays).toEqual([2_000]);
   });
 
   it("does not retry a 4xx", async (): Promise<void> => {
