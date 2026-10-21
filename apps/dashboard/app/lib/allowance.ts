@@ -1,5 +1,6 @@
 import type { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import type { BudgetLevel } from "@broods/convex/model/planLimits";
 import type { FunctionReturnType } from "convex/server";
 import { SERIES_COLORS } from "./usageChart";
 
@@ -54,6 +55,70 @@ export const OTHER_USAGE_COLOR = "var(--color-muted-foreground)";
 
 /** The color of the pool's part the owner's other organizations used. */
 export const OTHER_ORGS_COLOR = "var(--color-usage-other-orgs)";
+
+/** The text color a share of a cap reads in at each level. */
+export const BUDGET_LEVEL_TEXT: Record<BudgetLevel, string> = {
+  ok: "text-muted-foreground",
+  warning: "text-warning",
+  exhausted: "text-destructive",
+};
+
+/**
+ * One row per billed resource, for the Usage tab's allowance and the Billing
+ * tab's plan table. `share` names the cap it counts toward; ingress is free,
+ * so it has none. `help` says what the amount is counted from, where the
+ * label alone does not.
+ */
+export const ALLOWANCE_ROWS: AllowanceRow[] = [
+  {
+    key: "sandboxHours",
+    label: "Sandbox time",
+    unit: "hours",
+    share: "sandboxHours",
+    color: "var(--color-usage-agent-sandbox)",
+    help: "Hours your sandboxes spent running, idle time until they stop included, at the default 1 vCPU / 2 GB size. A bigger sandbox, a resume or a kept snapshot uses hours faster. A V8 Worker counts only the seconds its commands ran, loading their stored files included. Sandboxes on your own provider account are free.",
+  },
+  {
+    key: "hostedMcpHours",
+    label: "Hosted MCP time",
+    unit: "hours",
+    share: "hostedMcpHours",
+    color: "var(--color-usage-mcp-sandbox)",
+    help: "Time your hosted MCP servers spent answering tool calls, at the runner's memory size, plus a small share per request. Idle servers cost nothing.",
+  },
+  {
+    key: "storageGb",
+    label: "Workspaces and files",
+    unit: "gb",
+    share: "storageGb",
+    color: "var(--color-usage-storage)",
+    help: "What the latest daily snapshot found stored in your workspaces, chat attachments, skills and bundles. A size, not a monthly total. A project counts its own workspaces; the rest is the organization's.",
+  },
+  {
+    key: "egressGb",
+    label: "Egress",
+    unit: "gb",
+    share: "egressGb",
+    color: "var(--color-usage-egress)",
+    help: "Data served out of Broods storage, such as media your agents sent to channels. Files on your own bucket are not counted.",
+  },
+  {
+    key: "ingressGb",
+    label: "Ingress",
+    unit: "gb",
+    share: null,
+    color: "var(--color-usage-ingress)",
+  },
+];
+
+export interface AllowanceRow {
+  key: keyof UsageAmounts;
+  label: string;
+  unit: AmountUnit;
+  share: keyof BudgetUsage["shares"] | null;
+  color: string;
+  help?: string;
+}
 
 /**
  * The org's month split into `projects` (all of `budget.projects` unless
