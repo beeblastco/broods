@@ -1888,9 +1888,14 @@ describe("SubagentCoordinator", () => {
       );
 
       expect(resumed).toEqual([lostRow("event_conflict").eventId]);
-      expect(
-        markHandback.mock.calls.map(([eventId]) => eventId).sort(),
-      ).toEqual([rows[0]!.eventId, rows[1]!.eventId, rows[2]!.eventId].sort());
+      expect(markHandback.mock.calls).toHaveLength(3);
+      expect(markHandback.mock.calls).toEqual(
+        expect.arrayContaining(
+          rows
+            .slice(0, 3)
+            .map(({ eventId }): [string, "stored"] => [eventId, "stored"]),
+        ),
+      );
       // An outcome that lands after the list is never overwritten.
       expect(record.mock.calls).toEqual([
         [
