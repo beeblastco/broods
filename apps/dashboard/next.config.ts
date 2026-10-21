@@ -45,7 +45,7 @@ const nextConfig: NextConfig = {
   assetPrefix: assetOrigin,
   // CORS-loaded chunks report their real errors to error tracking instead of
   // a bare "Script error." when they come from the asset origin.
-  crossOrigin: "anonymous",
+  crossOrigin: assetOrigin ? "anonymous" : undefined,
   // esbuild ships platform binaries; bundling it into the /api/mcp/bundle
   // route crashes Turbopack. Load it from node_modules at runtime instead.
   serverExternalPackages: ["esbuild"],
