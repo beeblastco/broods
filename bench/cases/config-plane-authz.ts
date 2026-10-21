@@ -9,6 +9,7 @@ import {
   apiActionForRequest,
   authorize,
   type ApiPrincipal,
+  type ApiResource,
 } from "../../packages/convex/model/apiAuthorization.ts";
 import type {
   PolicyDocument,
@@ -76,13 +77,24 @@ const POLICY: PolicyDocument = {
   rules: [...POLICY_RULES],
 };
 
+// The stage the role is pinned to. A resource off the pin is refused before any
+// rule is read, so both the role and every resource it is asked about carry it;
+// config-plane-authz.test.ts fails if a case stops reaching its decision.
+const PIN = { projectId: "prj_acme", stageId: "stg_production" };
+
 const PRINCIPAL: ApiPrincipal = {
   kind: "role",
   accountId: "acc_5f21c9",
   roleId: "brole_8c1d4a9e",
   policy: POLICY,
-  projectId: "prj_acme",
-  stageId: "stg_production",
+  ...PIN,
+};
+
+const OWN_AGENT: ApiResource = { type: "agents", id: "agt_c93d5f77", ...PIN };
+const OWN_POLICY: ApiResource = {
+  type: "policies",
+  id: "pol_guardrails",
+  ...PIN,
 };
 
 export const configPlaneAuthzCases: readonly BenchCase[] = [
@@ -90,10 +102,11 @@ export const configPlaneAuthzCases: readonly BenchCase[] = [
     name: "convex/api-authorize-allow",
     iterations: 200_000,
     run: (): unknown => {
-      return authorize(PRINCIPAL, apiActionForRequest("PATCH", "agents"), {
-        type: "agents",
-        id: "agt_c93d5f77",
-      });
+      return authorize(
+        PRINCIPAL,
+        apiActionForRequest("PATCH", "agents"),
+        OWN_AGENT,
+      );
     },
   },
   {
@@ -102,10 +115,11 @@ export const configPlaneAuthzCases: readonly BenchCase[] = [
     // No rule grants policies:write, so this walks every rule and falls through
     // to the default deny: the worst case, and the one an attacker drives.
     run: (): unknown => {
-      return authorize(PRINCIPAL, apiActionForRequest("POST", "policies"), {
-        type: "policies",
-        id: "pol_guardrails",
-      });
+      return authorize(
+        PRINCIPAL,
+        apiActionForRequest("POST", "policies"),
+        OWN_POLICY,
+      );
     },
   },
 ];

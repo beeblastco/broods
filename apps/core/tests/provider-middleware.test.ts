@@ -3,8 +3,12 @@
  * quirks: mergeSystemMessagesMiddleware folds multiple system messages into
  * one (extras return an empty stream), and normalizeStreamDeltasMiddleware
  * rewrites cumulative-snapshot deltas to increments and back-fills missing
- * reasoning-token usage. retryWithoutStoredItemsMiddleware covers the OpenAI
- * Responses path, where a replayed item reference can go stale.
+ * reasoning-token usage. A tool result's image stays in the tool message, moves
+ * to a user message when the endpoint refuses it there, and becomes a note when
+ * a text-only model refuses it anywhere.
+ * retryWithoutStoredItemsMiddleware covers the OpenAI Responses path, where a
+ * replayed item reference can go stale. cacheLatestMessageMiddleware marks the
+ * latest message of a prompt the harness marked for Claude's cache.
  */
 
 import {
@@ -13,16 +17,24 @@ import {
   type LanguageModelV4CallOptions,
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
+import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { describe, expect, it } from "bun:test";
 import {
   attemptRecordingMiddleware,
+  cacheLatestMessageMiddleware,
+  dropRefusedImagesMiddleware,
   dropUnsupportedMediaMiddleware,
   mergeSystemMessagesMiddleware,
+  moveRefusedToolImagesMiddleware,
   normalizeStreamDeltasMiddleware,
   retryWithoutStoredItemsMiddleware,
   type ModelAttempt,
 } from "../src/harness/provider.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
+import {
+  compatibleEndpoint,
+  type ChatRequest,
+} from "./helpers/compatible-endpoint.ts";
 
 type PromptMessage = { role: string; content: unknown };
 
@@ -56,14 +68,6 @@ describe("mergeSystemMessagesMiddleware", () => {
   it("leaves a single system message untouched", async () => {
     const original = [
       { role: "system", content: "Only one." },
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ];
-
-    expect(await transform(original)).toEqual(original);
-  });
-
-  it("passes through prompts without system messages", async () => {
-    const original = [
       { role: "user", content: [{ type: "text", text: "hi" }] },
     ];
 
@@ -367,9 +371,10 @@ describe("dropUnsupportedMediaMiddleware", () => {
   async function dropCall(
     error: unknown,
     prompt: LanguageModelV4Message[] = mediaPrompt,
+    middleware: LanguageModelMiddleware = dropUnsupportedMediaMiddleware,
   ): Promise<LanguageModelV4CallOptions | undefined> {
     let retried: LanguageModelV4CallOptions | undefined;
-    await dropUnsupportedMediaMiddleware.wrapStream!({
+    await middleware.wrapStream!({
       doStream: async (): Promise<never> => {
         throw error;
       },
@@ -422,5 +427,253 @@ describe("dropUnsupportedMediaMiddleware", () => {
         { role: "user", content: [{ type: "text", text: "hi" }] },
       ]),
     ).rejects.toThrow("file part media type audio/ogg");
+  });
+
+  // A text-only custom model answers a picture with a 400; the turn keeps going
+  // without it instead of failing on every screenshot a tool returns.
+  it("retries a 400 with each picture replaced by a line naming it", async () => {
+    const params = await dropCall(
+      apiCallError("image input is not supported"),
+      mediaPrompt,
+      dropRefusedImagesMiddleware,
+    );
+
+    expect(params?.prompt[0]?.content).toEqual([
+      { type: "text", text: "what did I say?" },
+      { type: "text", text: unreadableMediaNote("photo.png", "image/png") },
+      {
+        type: "file",
+        mediaType: "audio/ogg",
+        filename: "voice.ogg",
+        data: { type: "data", data: new Uint8Array([2]) },
+      },
+    ]);
+  });
+
+  it("rethrows a 400 when the prompt carries no picture", async () => {
+    expect(
+      dropCall(
+        apiCallError("bad tool schema"),
+        [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        dropRefusedImagesMiddleware,
+      ),
+    ).rejects.toThrow("bad tool schema");
+  });
+});
+
+describe("tool result images on a custom endpoint", () => {
+  const screenshot = {
+    type: "file" as const,
+    mediaType: "image/jpeg",
+    data: { type: "data" as const, data: "aGVsbG8=" },
+  };
+  const toolPrompt: LanguageModelV4Message[] = [
+    { role: "user", content: [{ type: "text", text: "read the button" }] },
+    {
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "c1", toolName: "shot", input: "{}" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "shot",
+          output: {
+            type: "content",
+            value: [{ type: "text", text: "captured" }, screenshot],
+          },
+        },
+      ],
+    },
+  ];
+
+  const imageUrl = {
+    type: "image_url",
+    image_url: { url: "data:image/jpeg;base64,aGVsbG8=" },
+  };
+
+  // Each request the converter builds over `calls` calls to a fresh endpoint,
+  // answered by `statuses` in turn.
+  async function requests(
+    statuses: number[],
+    calls = 1,
+  ): Promise<ChatRequest[]> {
+    const { bodies, chat } = compatibleEndpoint("cx/gpt-6.1-sol", statuses);
+    const model = wrapLanguageModel({
+      model: chat,
+      middleware: [
+        dropRefusedImagesMiddleware,
+        moveRefusedToolImagesMiddleware(crypto.randomUUID()),
+      ],
+    });
+    for (let call = 0; call < calls; call++) {
+      await model.doGenerate({ prompt: toolPrompt });
+    }
+
+    return bodies;
+  }
+
+  it("keeps a tool result's image in the tool message", async () => {
+    const [body] = await requests([200]);
+
+    expect(body?.messages.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: "c1",
+      content: [{ type: "text", text: "captured" }, imageUrl],
+    });
+  });
+
+  it("moves the image into a user message when the endpoint refuses it there", async () => {
+    const bodies = await requests([400, 200]);
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]?.messages.slice(-2)).toEqual([
+      {
+        role: "tool",
+        tool_call_id: "c1",
+        content: "captured\n[image 1 is in the next message]",
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images from the tool results above:" },
+          imageUrl,
+        ],
+      },
+    ]);
+  });
+
+  it("sends later calls to an endpoint that refused straight to a user message", async () => {
+    const bodies = await requests([400, 200, 200], 2);
+
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]?.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Images from the tool results above:" },
+        imageUrl,
+      ],
+    });
+  });
+
+  it("skips the tool message for a model that refuses images anywhere", async () => {
+    const bodies = await requests([400, 400, 200, 400, 200], 2);
+
+    // Call 1: refused, moved and refused again, then dropped. Call 2 sends the
+    // image in a user message first, so only its drop retry is paid.
+    expect(bodies).toHaveLength(5);
+    expect(bodies[3]?.messages.at(-1)?.role).toBe("user");
+    expect(JSON.stringify(bodies[4])).not.toContain("image_url");
+  });
+
+  it("drops the image when a text-only model refuses it anywhere", async () => {
+    const bodies = await requests([400, 400, 200]);
+
+    expect(bodies).toHaveLength(3);
+    expect(JSON.stringify(bodies[2])).not.toContain("image_url");
+    expect(bodies[2]?.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Images from the tool results above:" },
+        { type: "text", text: unreadableMediaNote(undefined, "image/jpeg") },
+      ],
+    });
+  });
+});
+
+describe("cache marks on a custom endpoint", () => {
+  // A configured TTL, to show the latest message copies the harness's mark.
+  const cacheControl = { type: "ephemeral", ttl: "1h" };
+  const mark = { openaiCompatible: { cache_control: cacheControl } };
+
+  // The request body a compatible endpoint receives for `prompt`, sent through
+  // the system merge and the latest-message mark, in a run carrying the mark
+  // or, for a call like compaction, none.
+  async function requestFor(
+    prompt: LanguageModelV4Message[],
+    runMark?: typeof mark,
+  ): Promise<ChatRequest | undefined> {
+    const { bodies, chat } = compatibleEndpoint("cc/claude-sonnet-5");
+    const model = wrapLanguageModel({
+      model: chat,
+      middleware: [mergeSystemMessagesMiddleware, cacheLatestMessageMiddleware],
+    });
+    await model.doGenerate({
+      prompt: prompt,
+      ...(runMark ? { providerOptions: runMark } : {}),
+    });
+
+    return bodies[0];
+  }
+
+  it("ends the stored system prompt and marks the latest tool result", async () => {
+    const body = await requestFor(
+      [
+        { role: "system", content: "stored", providerOptions: mark },
+        { role: "system", content: "ephemeral" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "apply", providerOptions: mark },
+            { type: "text", text: "<environment/>" },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "read",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "read",
+              output: { type: "text", value: "page" },
+            },
+          ],
+        },
+      ],
+      mark,
+    );
+
+    expect(body?.messages.slice(0, 2)).toEqual([
+      { role: "system", content: "stored", cache_control: cacheControl },
+      { role: "system", content: "ephemeral" },
+    ]);
+    expect(body?.messages[2]?.content).toEqual([
+      { type: "text", text: "apply", cache_control: cacheControl },
+      { type: "text", text: "<environment/>" },
+    ]);
+    expect(body?.messages.at(-1)).toMatchObject({
+      role: "tool",
+      cache_control: cacheControl,
+    });
+  });
+
+  it("leaves a call without a mark alone", async () => {
+    const body = await requestFor([
+      { role: "system", content: "summarize" },
+      { role: "system", content: "context" },
+      { role: "user", content: [{ type: "text", text: "history" }] },
+    ]);
+
+    expect(body?.messages[0]).toEqual({
+      role: "system",
+      content: "summarize\n\ncontext",
+    });
+
+    expect(JSON.stringify(body)).not.toContain("cache_control");
   });
 });

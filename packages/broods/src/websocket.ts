@@ -171,7 +171,7 @@ export class BroodsWebSocketClient {
 
     const fail = (error: Error) => {
       handlers.onError?.(error);
-      close(1011, "websocket error");
+      close(1000, "websocket error");
     };
 
     const finish = () => {
@@ -315,7 +315,7 @@ export class BroodsWebSocketClient {
     // The abnormal close that follows a socket error is reported once, here.
     socket.onerror = () => {
       if (closed) return;
-      close(1011, "websocket error");
+      close(1000, "websocket error");
       handlers.onError?.(webSocketAccessError(this.baseUrl));
     };
     socket.onclose = (event) => {

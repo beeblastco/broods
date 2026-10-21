@@ -75,6 +75,7 @@ beforeEach(() => {
 
 afterEach(() => {
   spyOn(S3Client.prototype, "send").mockRestore();
+  spyOn(Bun, "sleep").mockRestore();
 });
 
 function fill(count: number): void {
@@ -82,6 +83,12 @@ function fill(count: number): void {
     keys.add(`${PREFIX}${String(index).padStart(5, "0")}`);
   }
   keys.add("acct_cleanup-neighbour/keep");
+}
+
+// The retry tests check which keys go again, not how long the backoff is, so
+// they skip its waits.
+function skipBackoff(): void {
+  spyOn(Bun, "sleep").mockResolvedValue(undefined);
 }
 
 test("deletes 2,001 keys a page at a time, one request in flight", async (): Promise<void> => {
@@ -121,6 +128,7 @@ test("a key the store refuses fails the cleanup and stops it", async (): Promise
 });
 
 test("retries only the keys that hit a transient error", async (): Promise<void> => {
+  skipBackoff();
   fill(3);
   failures.set(`${PREFIX}00001`, ["SlowDown", "InternalError"]);
 
@@ -130,6 +138,7 @@ test("retries only the keys that hit a transient error", async (): Promise<void>
 });
 
 test("gives up on a key still failing after three attempts", async (): Promise<void> => {
+  skipBackoff();
   fill(2);
   failures.set(`${PREFIX}00000`, ["SlowDown", "SlowDown", "SlowDown"]);
 

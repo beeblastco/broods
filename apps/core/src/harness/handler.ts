@@ -11,7 +11,6 @@ import type {
   ToolSet,
   UserModelMessage,
 } from "ai";
-import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
 import {
   extractText,
@@ -42,7 +41,7 @@ import {
   directPrincipalChain,
   runPrincipal,
 } from "../shared/domain/principal.ts";
-import { booleanEnv } from "../shared/env.ts";
+import { booleanEnv, optionalEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import {
   errorResponse,
@@ -94,18 +93,13 @@ import {
   completionToParentMessage,
 } from "./async-tools.ts";
 import {
-  DEADLINE_WIND_DOWN_MS,
   readAgentFullStream,
   recordFailedTurn,
-  runAgentLoop,
-  USER_STOP_MESSAGE,
-  type AgentLoopStream,
   type ToolApprovalSummary,
 } from "./harness.ts";
 import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
-  type HookDispatcher,
 } from "./hook-dispatcher.ts";
 import {
   acceptIngress,
@@ -119,6 +113,7 @@ import {
   takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
+  type IngressCandidate,
   type IngressConfigRef,
   type IngressDelivery,
   type IngressMode,
@@ -161,7 +156,6 @@ import {
   openQuestion,
   settleQuestion,
   type OpenQuestion,
-  type PendingQuestionSummary,
   type QuestionAnswerResult,
 } from "./questions.ts";
 import {
@@ -187,8 +181,16 @@ import {
   WORKER_QUEUE_FULL,
   withQueuePlace,
 } from "./worker-queue.ts";
+import {
+  AGENT_PROCESSING_FAILED,
+  isRunnableModelInput,
+  runAgentLoopUntilSubagentsIdle,
+  runParentContinuationLoop,
+  turnSettlement,
+  waitUntilMs,
+  type ContinuationDependencies,
+} from "./continuation.ts";
 
-const AGENT_PROCESSING_FAILED = "Agent processing failed";
 // The one user turn a "Continue" adds; the history it lands on already ends
 // in the tool results of the cut-off step.
 const CONTINUE_TURN_TEXT =
@@ -204,11 +206,6 @@ const CHANNEL_APPROVAL_DENIAL_REASON =
   "Tool approval is only supported through the direct API.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
-// What a subagent or async-tool wait leaves of the request budget, so the parent
-// still has time for the turn that reads the results before the deadline. The
-// harness yields or winds down in that same window, so they match.
-const WAIT_DEADLINE_MARGIN_MS = DEADLINE_WIND_DOWN_MS;
-const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
@@ -226,10 +223,15 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "waiting",
 ]);
 const textEncoder = new TextEncoder();
-// What every parent run's SubagentCoordinator takes from the handler.
-const SUBAGENT_DEPENDENCIES = {
-  dispatchNextIngress: dispatchNextIngress,
-  resumeParent: resumeAfterSubagentResult,
+// What every parent run's continuation loop takes from the handler: the
+// functions that move conversation ownership.
+const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
+  dispatchAppliedIngress: dispatchAppliedIngress,
+  dispatchSessionMessage: dispatchSessionMessage,
+  subagents: {
+    dispatchNextIngress: dispatchNextIngress,
+    resumeParent: resumeAfterSubagentResult,
+  },
 };
 
 interface AsyncWorkerInvocation {
@@ -254,15 +256,6 @@ interface CronInvocation {
 interface DirectTurn {
   session: Session;
   turnContext: Awaited<ReturnType<Session["createTurnContext"]>>;
-}
-
-interface ParentContinuationResult {
-  didFail: boolean;
-  failureText: string | null;
-  finalResponse?: JSONValue;
-  traceId?: string;
-  approvals: ToolApprovalSummary[];
-  questions: PendingQuestionSummary[];
 }
 
 export async function handler(
@@ -602,16 +595,25 @@ async function asyncToolRowSecretValues(
 }
 
 /**
- * After a detached tool row settles, resume the conversation with its result.
- * Derives the account/agent from the (scoped) parentEventId so it serves both
- * the account-authed and token-authed completion paths.
+ * After an async tool row settles, resume the conversation with its result.
+ * Derives the account/agent from the (scoped) parentEventId so it serves the
+ * account-authed and token-authed completion paths and the recovery sweep.
+ * Admitted once per result, under the row as `toolResultId`, so a result the
+ * conversation already stores is refused there.
  */
-async function continueAfterAsyncToolSettlement(
+export async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
-  // A result the model already pulled via async_status would be answered twice.
-  if (!scope || settled.status === "processing" || settled.observed === true) {
+  // A result the model already pulled via async_status, or one the
+  // conversation stores, would be answered twice. `observed` is the flag the
+  // release before `handback` wrote.
+  if (
+    !scope ||
+    settled.status === "processing" ||
+    settled.handback === "stored" ||
+    settled.observed === true
+  ) {
     return { kind: "skip" };
   }
   const publicEventId = `async-tools-${settled.resultId}`;
@@ -619,8 +621,9 @@ async function continueAfterAsyncToolSettlement(
 
   return resumeConversation({
     ...scope,
-    eventId: asyncToolContinuationEventId(settled.parentEventId),
+    eventId: asyncToolContinuationEventId(settled),
     publicEventId: publicEventId,
+    toolResultId: settled.resultId,
     conversationKey: settled.conversationKey,
     // An answered question streams under its own id, the one the answer
     // response names. Any other job keeps the parent's, so a reconnect that
@@ -726,6 +729,7 @@ async function resumeConversation(options: {
   message: UserModelMessage;
   requestedMode: IngressMode;
   resultEventId?: string;
+  toolResultId?: string;
   target?: ReentryTarget;
 }): Promise<ContinuationOutcome> {
   const target =
@@ -782,7 +786,12 @@ async function resumeConversation(options: {
     await admitInternalContinuation(
       continuationEvent,
       continuationDelivery(onSocket(continuationEvent, options.delivery)),
-      options.resultEventId,
+      {
+        ...(options.resultEventId
+          ? { resultEventId: options.resultEventId }
+          : {}),
+        ...(options.toolResultId ? { toolResultId: options.toolResultId } : {}),
+      },
     );
   if (!ownedContinuation) {
     return {
@@ -1333,6 +1342,7 @@ async function handleAsyncWorkerRequest(
               await finish({ status: "awaiting_input", questions: questions });
             },
           },
+          CONTINUATION_DEPENDENCIES,
         );
       }
     }
@@ -1473,7 +1483,7 @@ async function handleNatsWorkerRequest(
         session,
         event.agentConfig,
         (): number => waitUntilMs(context),
-        SUBAGENT_DEPENDENCIES,
+        CONTINUATION_DEPENDENCIES.subagents,
       );
       const asyncToolCoordinator = new AsyncToolCoordinator(
         session,
@@ -1486,6 +1496,7 @@ async function handleNatsWorkerRequest(
         asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
+        dependencies: CONTINUATION_DEPENDENCIES,
         ...(context ? { context: context } : {}),
         consumeStream: (stream) =>
           pipeAgentStream(stream, (chunk): Promise<void> =>
@@ -1969,6 +1980,7 @@ async function runChannelTurns(
                   });
                 },
               },
+              CONTINUATION_DEPENDENCIES,
               hooks,
             );
             if (approvalRequired) {
@@ -2352,9 +2364,7 @@ function dashboardTraceUrl(
     return null;
   }
   const dashboardUrl = (
-    process.env.BROODS_DASHBOARD_URL ??
-    process.env.DASHBOARD_URL ??
-    DEFAULT_DASHBOARD_URL
+    optionalEnv("BROODS_DASHBOARD_URL") ?? DEFAULT_DASHBOARD_URL
   ).replace(/\/+$/, "");
   const params = new URLSearchParams({
     project: event.projectSlug,
@@ -2648,13 +2658,15 @@ async function dispatchSessionMessage(
   };
 }
 
+// `fence` names the result row the continuation delivers, so admission
+// refuses it once the conversation has that result and stores it otherwise.
 async function admitInternalContinuation(
   event: DirectInboundEvent,
   delivery: IngressDelivery,
-  resultEventId?: string,
+  fence: Pick<IngressCandidate, "resultEventId" | "toolResultId"> = {},
 ): Promise<{ admission: IngressAdmission; owned: DirectInboundEvent | null }> {
   const admission = await acceptIngress({
-    ...(resultEventId ? { resultEventId: resultEventId } : {}),
+    ...fence,
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
@@ -2735,8 +2747,13 @@ async function invokeHarnessWorker(
   );
 }
 
-function asyncToolContinuationEventId(parentEventId: string): string {
-  return `${parentEventId}:async-tools`;
+// One continuation per result, under the event a person started: a run's
+// async tool results all share its event id, and a detached row's parent
+// event already names the row.
+function asyncToolContinuationEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
 }
 
 /**
@@ -2978,7 +2995,7 @@ async function streamDirectContinuation(
     session,
     event.agentConfig,
     (): number => waitUntilMs(context),
-    SUBAGENT_DEPENDENCIES,
+    CONTINUATION_DEPENDENCIES.subagents,
   );
   const asyncToolCoordinator = new AsyncToolCoordinator(session, (): number =>
     waitUntilMs(context),
@@ -2998,6 +3015,7 @@ async function streamDirectContinuation(
       asyncToolCoordinator: asyncToolCoordinator,
       initialTurnContext: initialTurnContext,
       agentConfig: event.agentConfig,
+      dependencies: CONTINUATION_DEPENDENCIES,
       context: context,
       consumeStream: async (stream): Promise<void> => {
         try {
@@ -3053,323 +3071,6 @@ async function streamDirectContinuation(
       await session.releaseConversationLease().catch(() => {});
     }
   }
-}
-
-async function runAgentLoopUntilSubagentsIdle(
-  session: Session,
-  initialTurnContext: DirectTurn["turnContext"],
-  agentConfig: DirectInboundEvent["agentConfig"],
-  context: RequestContext | undefined,
-  reply: {
-    onFinalText(response: JSONValue, traceId?: string): Promise<void>;
-    onErrorText(error: string, traceId?: string): Promise<void>;
-    onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
-    onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-    streamMessage?(stream: AgentLoopStream): Promise<void>;
-  },
-  hooks?: HookDispatcher,
-): Promise<{
-  didFail: boolean;
-  failureText: string | null;
-  traceId?: string;
-  questions: PendingQuestionSummary[];
-}> {
-  const subagentCoordinator = new SubagentCoordinator(
-    session,
-    agentConfig,
-    (): number => waitUntilMs(context),
-    SUBAGENT_DEPENDENCIES,
-  );
-  const asyncToolCoordinator = new AsyncToolCoordinator(session, (): number =>
-    waitUntilMs(context),
-  );
-  const result = await runParentContinuationLoop({
-    session: session,
-    subagentCoordinator: subagentCoordinator,
-    asyncToolCoordinator: asyncToolCoordinator,
-    initialTurnContext: initialTurnContext,
-    agentConfig: agentConfig,
-    ...(hooks ? { hooks: hooks } : {}),
-    ...(context ? { context: context } : {}),
-    ...(reply.onQuestionsPending
-      ? { onQuestionsPending: reply.onQuestionsPending.bind(reply) }
-      : {}),
-    consumeStream:
-      reply.streamMessage?.bind(reply) ??
-      (async (stream) => {
-        await stream.consumeStream();
-      }),
-  });
-  if (result.approvals.length > 0) {
-    await reply.onApprovalRequired?.(result.approvals);
-
-    return {
-      didFail: false,
-      failureText: null,
-      ...(result.traceId ? { traceId: result.traceId } : {}),
-      questions: [],
-    };
-  }
-
-  if (result.didFail) {
-    await reply.onErrorText(
-      result.failureText ?? AGENT_PROCESSING_FAILED,
-      result.traceId,
-    );
-
-    return {
-      didFail: true,
-      failureText: result.failureText,
-      ...(result.traceId ? { traceId: result.traceId } : {}),
-      questions: [],
-    };
-  }
-
-  if (result.finalResponse !== undefined) {
-    await reply.onFinalText(result.finalResponse, result.traceId);
-  }
-
-  return {
-    didFail: false,
-    failureText: null,
-    ...(result.traceId ? { traceId: result.traceId } : {}),
-    questions: result.questions,
-  };
-}
-
-/**
- * Runs parent model passes until there is no runnable injected work.
- *
- * Heartbeats are emitted only while this request or worker waits on
- * in-process subagents and async tools. Detached sandbox background jobs
- * settle through their completion callback, not through pending work here.
- */
-async function runParentContinuationLoop(options: {
-  session: Session;
-  subagentCoordinator: SubagentCoordinator;
-  asyncToolCoordinator: AsyncToolCoordinator;
-  initialTurnContext: DirectTurn["turnContext"];
-  agentConfig: DirectInboundEvent["agentConfig"];
-  hooks?: HookDispatcher;
-  // The worker's budget: its abort ends the pass and skips the wait on async
-  // work it left running, and a pass near its deadline yields the slot.
-  context?: RequestContext;
-  consumeStream(stream: AgentLoopStream): Promise<void>;
-  onLoopErrorText?(error: string): Promise<void>;
-  onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
-  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-  onHeartbeat?(pendingCount: number): void | Promise<void>;
-}): Promise<ParentContinuationResult> {
-  let turnContext = options.initialTurnContext;
-  let finalResponse: JSONValue | undefined;
-  let traceId: string | undefined;
-
-  // One hook dispatcher for the whole parent request: every loop iteration and
-  // the subagent-finish fire-points share a single ctx.state and one storage load.
-  const hooks =
-    options.hooks ??
-    (await createAgentHookDispatcher(
-      options.session.accountId,
-      options.agentConfig,
-    ));
-  options.subagentCoordinator.attachHooks(hooks);
-
-  for (;;) {
-    let approvals: ToolApprovalSummary[] = [];
-    const stream = await runAgentLoop(
-      options.session,
-      turnContext,
-      options.agentConfig,
-      {
-        onFinalText: async (response) => {
-          finalResponse = response;
-        },
-        onErrorText: async (error) => {
-          await options.onLoopErrorText?.(error);
-        },
-        onApprovalRequired: async (approvalSummaries) => {
-          approvals = approvalSummaries;
-          await options.onApprovalRequired?.(approvalSummaries);
-        },
-        onQuestionsPending: async (questions) => {
-          await options.onQuestionsPending?.(questions);
-        },
-      },
-      {
-        dispatchAppliedIngress: dispatchAppliedIngress,
-        dispatchSubagents: options.subagentCoordinator.dispatch,
-        subagentWatch: options.subagentCoordinator,
-        dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
-        dispatchSessionMessage: (
-          input: SessionMessageInput,
-        ): Promise<SessionMessageResult> =>
-          dispatchSessionMessage(options.session, input),
-        pendingWork: (): TaskWaitingOn | undefined =>
-          options.subagentCoordinator.runningCount > 0
-            ? "subagent"
-            : options.asyncToolCoordinator.pendingCount > 0
-              ? "tool"
-              : undefined,
-        hooks: hooks,
-        ...(options.context
-          ? {
-              ...(options.context.abortSignal
-                ? { abortSignal: options.context.abortSignal }
-                : {}),
-              deadlineMs: options.context.deadlineMs,
-              canYield: options.context.yieldSlot !== undefined,
-            }
-          : {}),
-      },
-    );
-    traceId = stream.traceId();
-
-    await options.consumeStream(stream);
-    // The pass gave its slot to the next queued run; the next pass carries on
-    // from the stored tool results once a slot is free again.
-    if (stream.yielded()) {
-      turnContext = await resumeAfterYield(
-        options.session,
-        options.context,
-        turnContext.ephemeralSystem,
-      );
-      continue;
-    }
-    // Only a clean pass leads to another pass that can answer a subagent.
-    if (
-      approvals.length > 0 ||
-      stream.questionSummaries().length > 0 ||
-      stream.didFail()
-    ) {
-      options.subagentCoordinator.closeQuestions();
-    }
-    if (approvals.length > 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: approvals,
-        questions: [],
-      };
-    }
-    // Like an approval: the answer resumes the conversation later, so nothing
-    // waits for injected work now.
-    const questions = stream.questionSummaries();
-    if (questions.length > 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: questions,
-      };
-    }
-    // A stop means stop: the children it started stop too, and nothing waits
-    // on the work it left running.
-    const stopped = stream.failureText() === USER_STOP_MESSAGE;
-    if (stopped) {
-      options.subagentCoordinator.stopChildren();
-    }
-    if (
-      stream.didFail() &&
-      !stopped &&
-      !options.context?.abortSignal?.aborted
-    ) {
-      // Subagents and async tools from earlier steps may still be running or
-      // already done. Wait for them and write their results into the history,
-      // so the next turn ("try again") sees them instead of redoing the work.
-      await waitAndDrainAsyncWork(
-        options.subagentCoordinator,
-        options.asyncToolCoordinator,
-        {
-          onHeartbeat: (pendingCount: number): void | Promise<void> =>
-            options.onHeartbeat?.(pendingCount),
-        },
-      ).catch((error: unknown) =>
-        logError("Failed run could not keep its async results", {
-          eventId: options.session.eventId,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    }
-    if (stream.didFail()) {
-      return {
-        didFail: true,
-        failureText: stream.failureText(),
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
-    }
-
-    const injected = await waitAndDrainAsyncWork(
-      options.subagentCoordinator,
-      options.asyncToolCoordinator,
-      {
-        onHeartbeat: (pendingCount: number): void | Promise<void> =>
-          options.onHeartbeat?.(pendingCount),
-      },
-    );
-    if (injected === 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
-    }
-
-    turnContext = await options.session.createTurnContext();
-    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
-    }
-  }
-}
-
-/**
- * Hands a yielded pass's worker slot to the next queued run, holding the
- * conversation lease meanwhile, then reloads the stored history, which ends in
- * the cut-off step's tool results, for the next pass on the fresh budget. The
- * turn's one-turn system messages are not stored, so they carry over.
- */
-async function resumeAfterYield(
-  session: Session,
-  context: RequestContext | undefined,
-  ephemeralSystem: SystemModelMessage[],
-): Promise<DirectTurn["turnContext"]> {
-  await context?.yieldSlot?.(
-    session.ownerGeneration === undefined
-      ? undefined
-      : {
-          conversationKey: session.conversationKey,
-          ownerEventId: session.eventId,
-          ownerGeneration: session.ownerGeneration,
-        },
-  );
-
-  return session.createTurnContext(ephemeralSystem);
 }
 
 /**
@@ -3461,82 +3162,6 @@ async function commandOutcome(
   }
 }
 
-/**
- * Bridges one completed parent model pass to the next continuation pass: waits
- * for outstanding in-process work, heartbeats while waiting, and injects
- * parent-visible completions plus timeout notices near the request or worker
- * deadline. Detached sandbox background jobs add no in-memory pending work, so
- * waiting here only holds the caller for subagents and async tools.
- */
-async function waitAndDrainAsyncWork(
-  subagentCoordinator: SubagentCoordinator,
-  asyncToolCoordinator: AsyncToolCoordinator,
-  options: {
-    onHeartbeat?: (pendingCount: number) => void | Promise<void>;
-  } = {},
-): Promise<number> {
-  if (
-    subagentCoordinator.pendingCount === 0 &&
-    asyncToolCoordinator.pendingCount === 0
-  ) {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
-
-    return subagentCount + asyncToolCount;
-  }
-
-  const onHeartbeat = (): void | Promise<void> =>
-    options.onHeartbeat?.(
-      subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
-    );
-  // A subagent's question wakes the parent before the rest finish, so its
-  // answer can unblock the child. The async tools keep running meanwhile.
-  const subagentStatus = await subagentCoordinator.waitForIdle({
-    onHeartbeat: onHeartbeat,
-  });
-  if (subagentStatus === "question") {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
-
-    return subagentCount + asyncToolCount;
-  }
-  const asyncToolStatus = await asyncToolCoordinator.waitForIdle({
-    onHeartbeat: onHeartbeat,
-  });
-
-  if (subagentStatus === "idle" && asyncToolStatus === "idle") {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
-
-    return subagentCount + asyncToolCount;
-  }
-
-  const [subagentCount, asyncToolCount] = await Promise.all([
-    subagentStatus === "idle"
-      ? subagentCoordinator.drainCompletionsToParent()
-      : subagentCoordinator.drainCompletionsAndDetachToParent(),
-    asyncToolStatus === "idle"
-      ? asyncToolCoordinator.drainCompletionsToParent()
-      : asyncToolCoordinator.drainCompletionsAndTimeoutsToParent(),
-  ]);
-
-  return subagentCount + asyncToolCount;
-}
-
-function waitUntilMs(context: RequestContext | undefined): number {
-  if (context?.deadlineMs && Number.isFinite(context.deadlineMs)) {
-    return Math.max(Date.now(), context.deadlineMs - WAIT_DEADLINE_MARGIN_MS);
-  }
-
-  return Date.now() + DEFAULT_PARENT_WAIT_MS;
-}
-
 function createChannelApprovalDenial(
   approvals: ToolApprovalSummary[],
 ): ToolModelMessage {
@@ -3601,22 +3226,6 @@ function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
   return event.events.some(isRunnableModelInput);
 }
 
-// A persisted tool result is history, not new model input. Only user turns and
-// AI SDK approval responses should start or resume a model run.
-function isRunnableModelInput(
-  message:
-    | DirectInboundEvent["events"][number]
-    | DirectTurn["turnContext"]["messages"][number]
-    | undefined,
-): boolean {
-  return (
-    message?.role === "user" ||
-    (message?.role === "tool" &&
-      message.content.length > 0 &&
-      message.content.every((part) => part.type === "tool-approval-response"))
-  );
-}
-
 /**
  * Records an async run's outcome: the envelope and its polling rows settle in
  * one mutation, and without an owned envelope only the rows are written.
@@ -3650,33 +3259,4 @@ function asyncResultEventIds(event: DirectInboundEvent): string[] {
   return [
     ...new Set([event.asyncResultEventId ?? event.eventId, event.eventId]),
   ];
-}
-
-/** The terminal envelope outcome of a finished parent turn, for settle or takeNext. */
-function turnSettlement(result: ParentContinuationResult): IngressSettlement {
-  if (result.didFail) {
-    return {
-      status: "failed",
-      error: result.failureText ?? AGENT_PROCESSING_FAILED,
-    };
-  }
-  if (result.approvals.length > 0) {
-    return outcomeSettlement({
-      status: "awaiting_approval",
-      approvals: result.approvals,
-    });
-  }
-  if (result.questions.length > 0) {
-    return outcomeSettlement({
-      status: "awaiting_input",
-      questions: result.questions,
-    });
-  }
-
-  return {
-    status: "completed",
-    ...(result.finalResponse !== undefined
-      ? { result: result.finalResponse }
-      : {}),
-  };
 }

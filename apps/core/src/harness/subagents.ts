@@ -35,11 +35,12 @@ import {
   subagentParentEventId,
 } from "../shared/runtime-keys.ts";
 import { subagentKeyTag } from "../shared/run-token.ts";
+import { WORKER_TIMEOUT_BUDGET_MS } from "../shared/env.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
   listUnobservedAsyncAgentResults,
-  observeAsyncAgentResult,
+  markAsyncAgentHandback,
   recordAsyncAgentResult,
   type AsyncAgentOutcome,
   type AsyncAgentResultRecord,
@@ -97,10 +98,20 @@ const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 // What the parent model reads for a child it stopped waiting for.
 const STILL_RUNNING_NOTE =
   "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
-// How long the run that detached a child has to deliver its result before the
+// How long the run that detached a result has to deliver it before the
 // recovery sweep takes it over, and the age past which nobody waits for it.
 const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
 const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Resume outcomes that leave a lost result's row, and the message its finish
+// hook shaped, to the next sweep pass: a queued resume stores the row only when
+// applied, a full conversation has no room, and a duplicate is a resume of it
+// still queued.
+const HELD_RESUME_OUTCOMES: ReadonlySet<SubagentResumeOutcome> =
+  new Set<SubagentResumeOutcome>(["queued", "capacity", "duplicate"]);
+// Rows the release before `handback` detached carry only `observed: false`.
+// The sweep lists them beside the hand-back windows for one release; drop
+// `undefined` from this list next release.
+const SWEPT_HANDBACKS = ["detached", "pending", undefined] as const;
 const LOST_SUBAGENT_ERROR =
   "Subagent stopped without a result: the runtime restarted while it was running.";
 // The parent message of each lost result a sweep pass could not resume yet, so
@@ -110,6 +121,16 @@ let heldLostResults = new Map<string, UserModelMessage>();
 // answer DEADLINE_WIND_DOWN_MS before; a turn still running that long past the
 // budget, stuck in a tool call, is aborted.
 const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
+// Past this age a finished child's result is nobody's: a child still
+// processing died with its pod, and a result still `pending` has no live
+// parent run left to store it. A live parent drains a result at its next step
+// boundary, when it yields its slot, or in its last write, within one run budget (a worker slot's, or
+// a child's when the parent is itself a subagent) plus wind-down, and a
+// parent that stopped waiting wrote `detached`, swept after the grace.
+const PENDING_HANDBACK_MAX_AGE_MS =
+  Math.max(SUBAGENT_BUDGET_MS, WORKER_TIMEOUT_BUDGET_MS) +
+  DEADLINE_WIND_DOWN_MS +
+  LATE_RESULT_GRACE_MS;
 const SUBAGENT_BUDGET_INSTRUCTION = `You are a subagent with a ${SUBAGENT_BUDGET_MS / 60_000}-minute budget for this task. Pace yourself: near the end your tools are turned off and you must answer with what you have.`;
 const SUBAGENT_BUDGET_EXCEEDED = `Subagent ran far past its ${SUBAGENT_BUDGET_MS / 60_000}-minute budget and was cut off before it answered.`;
 
@@ -187,7 +208,7 @@ type SubagentParentLoader = (
 
 // Collaborators the handler owns. Every one has a working default, so tests and
 // non-handler callers override only what they exercise.
-interface SubagentCoordinatorDependencies {
+export interface SubagentCoordinatorDependencies {
   lifecycle?: AgentLifecycleEmitter;
   publisherFactory?: SubagentPublisherFactory;
   dispatchNextIngress?: SubagentIngressDispatcher;
@@ -435,7 +456,8 @@ export class SubagentCoordinator {
    * Records that get_subagent_status showed the model this run's outcome, by
    * the result row's event id. It counts once `confirmDelivered` runs after
    * that tool result is saved, so a failed save still gets this turn's
-   * injection. The row's durable `observed` flag keeps a late resume away.
+   * injection, and the row is only then marked `stored`, so a pod that dies
+   * between the read and the save leaves the result to the recovery sweep.
    */
   markDelivered(eventId: string): void {
     this.readUnsaved.add(eventId);
@@ -443,11 +465,15 @@ export class SubagentCoordinator {
 
   /**
    * Called once the parent's step output is saved. Each result read by then
-   * never starts another pass: a queued injection is dropped now and one that
-   * is enqueued later is skipped.
+   * never starts another pass: a queued injection is dropped now, one that is
+   * enqueued later is skipped, and the row's hand-back is marked `stored`, so
+   * no late resume or sweep tells it again. A stored row stays stored and a
+   * failed mark only logs: the sweep then delivers the result once more.
    */
-  confirmDelivered(): void {
-    for (const eventId of this.readUnsaved) {
+  async confirmDelivered(): Promise<void> {
+    const read = [...this.readUnsaved];
+    this.readUnsaved.clear();
+    for (const eventId of read) {
       this.delivered.add(eventId);
       // A finish hook's rewrite never reached the model through the tool.
       const index = this.completions.findIndex(
@@ -459,7 +485,11 @@ export class SubagentCoordinator {
         this.completions.splice(index, 1);
       }
     }
-    this.readUnsaved.clear();
+    await Promise.all(
+      read.map((eventId): Promise<boolean> =>
+        markAsyncAgentHandback(eventId, "stored"),
+      ),
+    );
   }
 
   /**
@@ -473,15 +503,16 @@ export class SubagentCoordinator {
       return (await this.takeParentMessages()).length;
     } catch (error: unknown) {
       // A put-back running notice is dropped: its child is detached and
-      // resumes the parent itself. Each result is marked unseen first, so
-      // the recovery sweep retries a resume that fails too.
+      // resumes the parent itself. Each result is detached first, so the
+      // recovery sweep retries a resume that fails too; when that write fails
+      // as well the row is still `pending`, and the sweep takes it later.
       await this.detachPending();
       const finished = this.completions
         .splice(0)
         .filter(({ status }): boolean => status !== "running");
       await Promise.all(
         finished.map(async (completion): Promise<void> => {
-          await observeAsyncAgentResult(completion.eventId, false);
+          await markAsyncAgentHandback(completion.eventId, "detached");
           await this.resumeParentWith(completion);
         }),
       );
@@ -667,8 +698,8 @@ export class SubagentCoordinator {
     await Promise.all(
       detaching
         .filter(({ eventId }): boolean => !this.handled.has(eventId))
-        .map(({ eventId }): Promise<void> =>
-          observeAsyncAgentResult(eventId, false),
+        .map(({ eventId }): Promise<boolean> =>
+          markAsyncAgentHandback(eventId, "detached"),
         ),
     );
 
@@ -1322,9 +1353,10 @@ export class SubagentCoordinator {
       } else {
         this.completions.push(visible);
       }
-    } else if (detached) {
-      // Never told, so the recovery sweep must not tell it either.
-      await observeAsyncAgentResult(completion.eventId, true);
+    } else {
+      // Never told, so the recovery sweep must not tell it either: a finished
+      // row left `pending` would be swept past the parent's hold.
+      await markAsyncAgentHandback(completion.eventId, "stored");
     }
     this.handled.add(completion.eventId);
     this.notifyCompletion();
@@ -1384,8 +1416,9 @@ export class SubagentCoordinator {
   }
 
   // A result the parent stopped waiting for starts its own parent turn. Its
-  // row already holds the result, so a failed resume is only logged, and the
-  // recovery sweep retries it.
+  // row already holds the result, so a failed or refused resume is only
+  // logged: the row is `detached` or still `pending`, and the recovery sweep
+  // retries it from either.
   private async resumeParentWith(
     completion: SubagentCompletion,
   ): Promise<void> {
@@ -1427,35 +1460,39 @@ export class SubagentCoordinator {
 }
 
 /**
- * Resumes each parent whose detached subagent result no live run delivered:
- * the run that detached it died with its pod, or its resume failed. Each pass
- * walks every page, so rows it must retry never crowd the rest out. The
- * ingress recovery sweep calls it on its timer, with the handler's re-entry.
+ * Resumes each parent whose subagent result no live run delivered: the run
+ * that detached it died with its pod or its resume failed, or the result is
+ * still `pending` past any live parent's hold, because the run that owed it
+ * died before its write and its detach. Each pass walks every page, so rows
+ * it must retry never crowd the rest out. The ingress recovery sweep calls it
+ * on its timer, with the handler's re-entry.
  */
 export async function resumeLostSubagentResults(
   loadParent: SubagentParentLoader,
   resumeParent: SubagentParentResumer,
 ): Promise<void> {
   const now = Date.now();
-  const updatedAfter = new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString();
-  const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();
-  const ranges: Array<[AsyncAgentStatus, string]> = [
-    ["completed", settledBefore],
-    ["failed", settledBefore],
-    // A child still running this long past its budget died with its pod.
-    [
-      "processing",
-      new Date(
-        now - SUBAGENT_BUDGET_MS - DEADLINE_WIND_DOWN_MS - LATE_RESULT_GRACE_MS,
-      ).toISOString(),
-    ],
-  ];
+  const { updatedAfter, finishedBefore, abandonedBefore } =
+    lostResultWindows(now);
+  const ranges: Array<
+    [(typeof SWEPT_HANDBACKS)[number], AsyncAgentStatus, string]
+  > = [];
+  for (const handback of SWEPT_HANDBACKS) {
+    const settledBefore = finishedBefore(handback);
+    ranges.push(
+      [handback, "completed", settledBefore],
+      [handback, "failed", settledBefore],
+      // A child still running this long past its budget died with its pod.
+      [handback, "processing", abandonedBefore],
+    );
+  }
   const held = new Map<string, UserModelMessage>();
-  for (const [status, updatedBefore] of ranges) {
+  for (const [handback, status, updatedBefore] of ranges) {
     let cursor: string | null = null;
     let isDone = false;
     while (!isDone) {
       const result = await listUnobservedAsyncAgentResults({
+        ...(handback === undefined ? {} : { handback: handback }),
         status: status,
         updatedAfter: updatedAfter,
         updatedBefore: updatedBefore,
@@ -1464,11 +1501,17 @@ export async function resumeLostSubagentResults(
       for (const row of result.page) {
         // A child listed still running died with its pod: its row is failed,
         // unless its outcome landed since, and a later pass tells the parent.
+        // Its parent run is gone too, so a pending row is detached in the
+        // same write: the sweep owns it, and delivers the failure after the
+        // grace, not another hold.
         if (row.status === "processing") {
           await recordAsyncAgentResult(
             row.eventId,
             { status: "failed", error: LOST_SUBAGENT_ERROR },
-            { onlyWhileProcessing: true },
+            {
+              onlyWhileProcessing: true,
+              ...(handback === "pending" ? { handback: "detached" } : {}),
+            },
           );
           continue;
         }
@@ -1486,12 +1529,50 @@ export async function resumeLostSubagentResults(
           return heldLostResults.get(row.eventId);
         });
         if (retry) held.set(row.eventId, retry);
+        // Counted the first pass that takes it up: each one is a result a
+        // parent run dropped without a trace. A row held from an earlier pass
+        // is not counted again, and a queued resume, which the apply stores
+        // without the sweep, is still counted.
+        if (handback === "pending" && !heldLostResults.has(row.eventId)) {
+          logInfo("Subagent result left pending past the parent's hold", {
+            eventId: row.eventId,
+            ageMs: now - Date.parse(row.updatedAt),
+            outcome: row.status,
+          });
+        }
       }
       cursor = result.cursor;
       isDone = result.isDone;
     }
   }
   heldLostResults = held;
+}
+
+/**
+ * The windows the recovery sweeps list lost results in, at `now`: rows written
+ * within a day, a detached one once the run that detached it had its grace, a
+ * pending one only once no live run can still store it, and a child still
+ * running that long past its budget, which died with its pod. The async tool
+ * sweep (`async-tools.ts`) runs on the same windows.
+ */
+export function lostResultWindows(now: number): {
+  updatedAfter: string;
+  // A row the release before `handback` detached (no hand-back) gets the
+  // detached window.
+  finishedBefore: (handback: "pending" | "detached" | undefined) => string;
+  abandonedBefore: string;
+} {
+  const settledBefore = new Date(now - LATE_RESULT_GRACE_MS).toISOString();
+  const abandonedBefore = new Date(
+    now - PENDING_HANDBACK_MAX_AGE_MS,
+  ).toISOString();
+
+  return {
+    updatedAfter: new Date(now - LATE_RESULT_MAX_AGE_MS).toISOString(),
+    finishedBefore: (handback): string =>
+      handback === "pending" ? abandonedBefore : settledBefore,
+    abandonedBefore: abandonedBefore,
+  };
 }
 
 export async function pipeSubagentNatsStream(
@@ -1582,14 +1663,14 @@ async function parentVisibleCompletion(
 }
 
 /**
- * Marks a lost result seen without resuming its parent, logged once: the row
- * then leaves the sweep's list.
+ * Marks a lost result stored without resuming its parent, logged once: the
+ * row then leaves the sweep's list.
  */
 async function giveUpLostSubagentResult(
   eventId: string,
   reason: string,
 ): Promise<void> {
-  await observeAsyncAgentResult(eventId, true);
+  await markAsyncAgentHandback(eventId, "stored");
   logInfo("Gave up on a lost subagent result", {
     eventId: eventId,
     reason: reason,
@@ -1599,10 +1680,13 @@ async function giveUpLostSubagentResult(
 /**
  * One finished row of `resumeLostSubagentResults`: it resumes the parent,
  * from `held` when an earlier pass already ran its finish hook. A row no
- * resume can ever deliver is given up. The row's `eventId` is
+ * resume can ever deliver is given up. A duplicate is never given up:
+ * admission marks the row stored once its conversation has the result, and
+ * a resume still queued marks it when applied, or is admitted again by a
+ * later pass once it expired. The row's `eventId` is
  * `scopedDirectEventId(account, child agent, taskId)`.
  * @returns the parent message to retry on the next pass, when the
- *   conversation had no room for it or the resume failed
+ *   conversation had no room for it, its resume is still queued or failed
  */
 async function resumeLostSubagentResult(
   row: AsyncAgentResultRecord,
@@ -1694,11 +1778,11 @@ async function resumeLostSubagentResult(
       taskId: taskId,
       admission: outcome,
     });
-
-    return undefined;
   }
-  if (outcome === "capacity") return message;
-  await giveUpLostSubagentResult(row.eventId, `resume ${outcome}`);
+  if (HELD_RESUME_OUTCOMES.has(outcome)) return message;
+  if (outcome !== "owner") {
+    await giveUpLostSubagentResult(row.eventId, `resume ${outcome}`);
+  }
 
   return undefined;
 }

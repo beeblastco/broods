@@ -19,7 +19,8 @@ import {
   getAsyncToolResult,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
-  markAsyncToolResultObserved,
+  markAsyncToolHandback,
+  type AsyncToolResultRecord,
 } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type {
@@ -100,31 +101,15 @@ The result is delivered back into the conversation automatically when it finishe
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // The model is consuming the terminal result here, so mark it observed
-        // (awaited, since the resume gate reads this row the moment the turn ends)
-        // to stop the auto-delivery resume from injecting the same answer again.
-        if (record.status === "completed") {
-          await markAsyncToolResultObserved(statusId);
-          // For a settled background job, `logs` returns just the captured output
-          // (mirroring the live tail) instead of the whole settled record.
-          const settledLogs =
-            action === "logs" ? settledJobLogs(record.response) : undefined;
-          if (settledLogs !== undefined) {
-            return settledLogs.length > 0 ? settledLogs : "(no output)";
-          }
-
-          return {
-            status: record.status,
-            response: record.response ?? null,
-          };
-        }
-        if (record.status === "failed") {
-          await markAsyncToolResultObserved(statusId);
-
-          return {
-            status: record.status,
-            error: record.error ?? null,
-          };
+        // The model is consuming the terminal result here, so mark it stored,
+        // awaited, since the resume gate reads this row the moment the turn
+        // ends. A failed mark only logs: the row keeps the result, and the
+        // sweep may then deliver it once more. A continuation already queued
+        // tells the conversation next, so this read hands nothing over.
+        if (record.status !== "processing") {
+          return (await markAsyncToolHandback(statusId, "stored"))
+            ? { status: record.status, delivery: "automatic" }
+            : settledResult(record, action);
         }
 
         // Still processing. A sandbox-job row can be polled live; any other async
@@ -223,6 +208,24 @@ function sandboxJobRef(input: unknown): SandboxJobRef | undefined {
   return { namespace: record.namespace, jobId: record.jobId };
 }
 
+// A settled row's answer: for `logs`, a settled background job's captured
+// output alone (mirroring the live tail), else its result or error.
+function settledResult(
+  record: AsyncToolResultRecord,
+  action: AsyncStatusInput["action"],
+): JSONValue {
+  if (record.status === "failed") {
+    return { status: record.status, error: record.error ?? null };
+  }
+  const settledLogs =
+    action === "logs" ? settledJobLogs(record.response) : undefined;
+  if (settledLogs !== undefined) {
+    return settledLogs.length > 0 ? settledLogs : "(no output)";
+  }
+
+  return { status: record.status, response: record.response ?? null };
+}
+
 // A settled background-job response carries the captured logs (see
 // settleTerminalJob); non-job async tools return undefined here.
 function settledJobLogs(response: JSONValue | undefined): string | undefined {
@@ -262,8 +265,11 @@ async function settleTerminalJob(
       error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}`,
     });
   }
-  // Consumed through the poll, so the auto-delivery resume must not re-inject it.
-  await markAsyncToolResultObserved(resultId);
+  // Consumed through the poll, so the auto-delivery resume must not re-inject
+  // it, unless one already waits in the queue: that one tells it next.
+  if (await markAsyncToolHandback(resultId, "stored")) {
+    return { status: status.state, delivery: "automatic" };
+  }
 
   return {
     status: status.state,

@@ -48,7 +48,13 @@ export type ConfigAuth =
   | { kind: "admin" }
   | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
   | { kind: "deployment" }
-  | { kind: "role"; account: Doc<"accounts">; role: RolePrincipal };
+  | {
+      kind: "role";
+      account: Doc<"accounts">;
+      role: RolePrincipal;
+      // Set when a scoped account key, not a bsts_ session, carries the role.
+      keyId?: Id<"accountApiKeys">;
+    };
 
 /**
  * The keyring from an HTTP action, which has no `ctx.db`. A `read` fetches the
@@ -79,7 +85,11 @@ export async function accountCipherForAction(
 export function auditActorForAuth(auth: ConfigAuth): AuditActor {
   if (auth.kind === "admin") return { kind: "admin" };
   if (auth.kind === "deployment") return { kind: "deployKey" };
-  if (auth.kind === "role") return { kind: "role", id: auth.role.roleId };
+  if (auth.kind === "role") {
+    return auth.keyId
+      ? { kind: "accountApiKey", id: auth.keyId }
+      : { kind: "role", id: auth.role.roleId };
+  }
   if (auth.viaServiceToken === true) return { kind: "service" };
 
   return { kind: "apiAccountSecret", id: auth.account._id };
@@ -516,7 +526,7 @@ function digestEqual(left: string, right: string): boolean {
 
 /**
  * Resolve Bearer auth into admin, account, service-account, deployment, or
- * role-session auth.
+ * role auth (a role session or a scoped account key).
  * @param ctx Convex action context
  * @param req incoming HTTP request
  * @returns auth context or null for missing/unknown/disabled credentials
@@ -575,10 +585,43 @@ async function resolveBearerAuth(
     internal.account.accounts.getBySecretHash,
     { secretHash: tokenHash },
   );
+  if (!account) return await resolveScopedKeyAuth(ctx, tokenHash);
 
-  return account && account.status === "active"
+  return account.status === "active"
     ? { kind: "account", account: account }
     : null;
+}
+
+/**
+ * Resolve a scoped account key to role auth on its active account. Its
+ * lastUsedAt is stamped off the request when due; a stamp that fails to
+ * schedule is logged, never a refusal.
+ */
+async function resolveScopedKeyAuth(
+  ctx: ActionCtx,
+  keyHash: string,
+): Promise<ConfigAuth | null> {
+  const now = Date.now();
+  const key = await ctx.runQuery(internal.account.apiKeys.resolve, {
+    keyHash: keyHash,
+    now: now,
+  });
+  if (!key) return null;
+  if (key.stampDue) {
+    await ctx.scheduler
+      .runAfter(0, internal.account.apiKeys.touchLastUsed, {
+        keyId: key.keyId,
+        usedAt: now,
+      })
+      .catch((err: unknown) => console.warn("lastUsedAt stamp failed", err));
+  }
+
+  return {
+    kind: "role",
+    account: key.account,
+    role: key.principal,
+    keyId: key.keyId,
+  };
 }
 
 /** Resolve a role session token hash to role auth on its active account. */

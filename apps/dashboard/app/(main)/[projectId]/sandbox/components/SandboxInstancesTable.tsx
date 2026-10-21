@@ -486,9 +486,7 @@ export function SandboxInstancesTable({
         </ResizablePanel>
         {dock && (
           <>
-            <ResizableHandle
-              className={dockHidden ? "hidden" : "cursor-row-resize"}
-            />
+            <ResizableHandle className={dockHidden ? "hidden" : undefined} />
             <ResizablePanel
               defaultSize={DOCK_DEFAULT_HEIGHT}
               minSize={DOCK_MIN_HEIGHT}

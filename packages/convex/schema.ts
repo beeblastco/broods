@@ -5,6 +5,7 @@ import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
+import { handbackValidator } from "./model/subagentResults";
 
 /** Billing tier. After insert, only the Stripe plan sync (`stripe:applySubscriptionInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -220,6 +221,33 @@ export const deployKeysFields = {
   status: v.union(v.literal("active"), v.literal("revoked")),
   lastUsedAt: v.optional(v.number()),
   /** The member who made it; a key made over the API has none. */
+  createdBy: v.optional(v.id("users")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+};
+
+/**
+ * A scoped account key (`bask_…`) beside the org's account key: same prefix,
+ * but it acts as a role over `policy`, optionally pinned to one project and
+ * stage, until `expiresAt`. Made on Organization › API access; revoking
+ * deletes the row. Only the SHA-256 hash is stored.
+ */
+export const accountApiKeysFields = {
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+  name: v.string(),
+  description: v.optional(v.string()),
+  /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
+  keyHash: v.string(),
+  /** Masked display label (prefix + last four), safe to list without revealing the secret. */
+  keyHint: v.string(),
+  /** PolicyDocument (version 1) over the API action namespace, as `accountRoles` stores it. */
+  policy: policyDocumentValidator,
+  /** The key stops authenticating at this time; unset never expires. */
+  expiresAt: v.optional(v.number()),
+  lastUsedAt: v.optional(v.number()),
+  /** The member who made it. */
   createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -946,6 +974,7 @@ export const environmentVariableRevealsFields = {
 export const auditActorKindValidator = v.union(
   v.literal("dashboardUser"),
   v.literal("apiAccountSecret"),
+  v.literal("accountApiKey"),
   v.literal("admin"),
   v.literal("service"),
   v.literal("cli"),
@@ -956,6 +985,7 @@ export const auditActorKindValidator = v.union(
 
 export const auditResourceKindValidator = v.union(
   v.literal("account"),
+  v.literal("accountApiKey"),
   v.literal("agent"),
   v.literal("skill"),
   v.literal("hook"),
@@ -1254,6 +1284,11 @@ export const runtimeIngressEnvelopesFields = {
   // is rebuilt from the ref at dispatch; it never sits here with its secrets.
   configRef: v.optional(ingressConfigRefValidator),
   ephemeralSystem: v.optional(v.array(v.any())),
+  // The subagent or async tool result row a late resume delivers. A queued
+  // resume marks it stored only when it is applied, so one that expires in
+  // the queue leaves it for the recovery sweep.
+  resultEventId: v.optional(v.string()),
+  toolResultId: v.optional(v.string()),
   appliedMode: v.optional(ingressModeValidator),
   appliedToEventId: v.optional(v.string()),
   applicationId: v.optional(v.string()),
@@ -1325,7 +1360,10 @@ export const runtimeAsyncAgentResultsFields = {
   subagent: v.optional(subagentTaskValidator),
   // False once the parent stopped waiting on this subagent and has not seen its
   // result; true once it has, read with get_subagent_status or resumed with it.
+  // Read beside `handback` for one release, for rows written before it.
   observed: v.optional(v.boolean()),
+  // Set once a subagent's row finishes; see `handbackValidator`.
+  handback: v.optional(handbackValidator),
   status: v.union(
     v.literal("processing"),
     v.literal("awaiting_approval"),
@@ -1366,7 +1404,11 @@ export const runtimeAsyncToolResultsFields = {
   error: v.optional(v.string()),
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
+  // True once the model read the result with async_status. Read beside
+  // `handback` for one release, for rows written before it.
   observed: v.optional(v.boolean()),
+  // Set once the row finishes; see `handbackValidator`.
+  handback: v.optional(handbackValidator),
   // Set once the launch reports which machine took the job. A settle after the
   // reservation stopped naming it fails the row instead.
   sandbox: v.optional(reservedSandboxValidator),
@@ -1515,6 +1557,9 @@ export const usageQuantityFields = {
   sandboxSnapshotGbMonths: v.number(),
   hostedMcpGbSeconds: v.number(),
   hostedMcpRequests: v.number(),
+  /** Milliseconds `worker` sandbox commands ran on the Worker, waits included; nothing runs between them. */
+  workerMs: v.number(),
+  workerRequests: v.number(),
   storageGbMonths: v.number(),
   egressGb: v.number(),
   /** Channel attachments core received. Free; shown, never priced. */
@@ -1522,6 +1567,12 @@ export const usageQuantityFields = {
 };
 
 export const usageQuantitiesValidator = v.object(usageQuantityFields);
+
+/** The V8 Worker quantities, absent on rows metered before the provider existed. */
+const workerUsageFields = {
+  workerMs: v.optional(v.number()),
+  workerRequests: v.optional(v.number()),
+};
 
 /**
  * One account's metered usage for one UTC calendar month. Quantities, not
@@ -1532,13 +1583,32 @@ export const usageMetersFields = {
   /** "YYYY-MM", UTC. */
   month: v.string(),
   ...usageQuantityFields,
+  ...workerUsageFields,
   /** Absent on months metered before ingress was. */
   ingressGb: v.optional(v.number()),
   /** Absent on months metered before suspended snapshots were. */
   sandboxSnapshotGbMonths: v.optional(v.number()),
   /** GB stored at the month's latest snapshot, zero-byte ones included. */
   storageGb: v.optional(v.number()),
-  /** When the 80% warning went out; at most once per month. */
+  /** When the 80% warning went out, before `usagePools.warnedAt` took it over. */
+  warnedAt: v.optional(v.number()),
+  updatedAt: v.number(),
+};
+
+/**
+ * The same usage summed over every account whose org one user owns, for one
+ * UTC calendar month: the pool the owner's plan caps are measured against
+ * (`model/usageMeter.ts`). Written together with each account's meter.
+ */
+export const usagePoolsFields = {
+  /** The paying user: `orgs.ownerAuthId` of every org drawing on the pool. */
+  ownerAuthId: v.string(),
+  /** "YYYY-MM", UTC. */
+  month: v.string(),
+  ...usageQuantityFields,
+  /** GB the owner's accounts hold at their latest snapshots, summed. */
+  storageGb: v.optional(v.number()),
+  /** When the 80% warning went out; at most once per owner per month. */
   warnedAt: v.optional(v.number()),
   updatedAt: v.number(),
 };
@@ -1552,6 +1622,7 @@ export const usageDaysFields = {
   /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
+  ...workerUsageFields,
   /** Absent on days metered before suspended snapshots were. */
   sandboxSnapshotGbMonths: v.optional(v.number()),
   /** GB stored at the day's latest snapshot; absent before one runs. */
@@ -1570,6 +1641,7 @@ export const usageProjectDaysFields = {
   /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
+  ...workerUsageFields,
   /** GB the project's workspaces held at the day's latest snapshot. */
   storageGb: v.optional(v.number()),
   updatedAt: v.number(),
@@ -1654,6 +1726,10 @@ export default defineSchema({
   deployKeys: defineTable(deployKeysFields)
     .index("by_keyHash", ["keyHash"])
     .index("by_projectId_and_stageId", ["projectId", "stageId"]),
+  accountApiKeys: defineTable(accountApiKeysFields)
+    .index("by_keyHash", ["keyHash"])
+    .index("by_accountId", ["accountId"])
+    .index("by_stageId", ["stageId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
     .index("by_codeHash", ["codeHash"])
     .index("by_accountId", ["accountId"])
@@ -1851,6 +1927,11 @@ export default defineSchema({
       "observed",
       "status",
       "updatedAt",
+    ])
+    .index("by_handback_and_status_and_updatedAt", [
+      "handback",
+      "status",
+      "updatedAt",
     ]),
   runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
     .index("by_resultId", ["resultId"])
@@ -1859,6 +1940,11 @@ export default defineSchema({
       "conversationKey",
       "toolName",
       "status",
+    ])
+    .index("by_handback_and_status_and_updatedAt", [
+      "handback",
+      "status",
+      "updatedAt",
     ])
     .index("by_expiresAt", ["expiresAt"]),
   sandboxReservations: defineTable(sandboxReservationsFields)
@@ -1898,6 +1984,10 @@ export default defineSchema({
     ]),
   usageMeters: defineTable(usageMetersFields).index("by_accountId_and_month", [
     "accountId",
+    "month",
+  ]),
+  usagePools: defineTable(usagePoolsFields).index("by_ownerAuthId_and_month", [
+    "ownerAuthId",
     "month",
   ]),
   usageDays: defineTable(usageDaysFields).index("by_accountId_and_day", [

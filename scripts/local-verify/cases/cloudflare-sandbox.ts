@@ -1,8 +1,7 @@
-import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   MODEL_KEY_HINT,
   assertStep,
-  runToTerminal,
+  persistentSandboxKeepsFile,
   type VerifyContext,
 } from "../harness.ts";
 
@@ -54,40 +53,10 @@ export async function cloudflareSandbox(context: VerifyContext): Promise<void> {
     );
     return;
   }
-  const { agentId } = await context.account.createAgent({
-    name: key,
-    config: {
-      ...context.model,
-      agent: {
-        system:
-          "Use the bash tool to run exactly the command the user gives, then reply with exactly its output and nothing else.",
-      },
-      sandboxes: [sandbox.sandboxId],
-    },
+  await persistentSandboxKeepsFile(context, {
+    key: key,
+    label: "cloudflare",
+    path: "/tmp/marker",
+    sandboxId: sandbox.sandboxId,
   });
-  const turn = (text: string, step: string): Promise<AsyncStatus> =>
-    context.measure(step, (): Promise<AsyncStatus> =>
-      runToTerminal(context, {
-        agentId: agentId,
-        conversationKey: key,
-        eventId: `${key}-${step}`,
-        text: text,
-      }),
-    );
-  // The read answers the marker reversed, which no prompt contains, so the
-  // model cannot pass it from the conversation without the file.
-  const marker = `cf-${context.runId}`;
-  const reversed = marker.split("").reverse().join("");
-  const wrote = await turn(
-    `Run: echo ${marker} > /tmp/marker`,
-    "cloudflare write",
-  );
-  const read = await turn("Run: rev /tmp/marker", "cloudflare read");
-  assertStep(
-    "a warm cloudflare container keeps a file between turns",
-    wrote.status === "completed" &&
-      read.status === "completed" &&
-      JSON.stringify(read.response ?? "").includes(reversed),
-    `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
-  );
 }

@@ -13,9 +13,6 @@ import {
 } from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 
-/** Canvas node types that participate in broods runtime reference projection. */
-export type RuntimeNodeType = "agent" | "workspace" | "sandbox";
-
 /** A single broods AgentWorkspaceRef emitted from the canvas graph. */
 export type WorkspaceRef = {
   name: string;

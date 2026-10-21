@@ -7,7 +7,8 @@
   "scripts": {
     "check": "tsc --noEmit && tsc --noEmit -p tests",
     "test": "bun test",
-    "dev": "wrangler dev"
+    "dev": "wrangler dev",
+    "deploy": "(wrangler r2 bucket create broods-mcp-bundles 2>/dev/null || wrangler r2 bucket info broods-mcp-bundles >/dev/null) && wrangler r2 bucket lifecycle set broods-mcp-bundles --file r2-lifecycle.json --force && wrangler deploy --name \"$WORKER_NAME\" --var \"BUNDLE_ORIGIN:$BUNDLE_ORIGIN\""
   },
   "dependencies": {
     "zod": "^4.4.3"

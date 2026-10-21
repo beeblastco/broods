@@ -3,38 +3,32 @@ import {
   PRO_INCLUDED_DEVELOPER_SEATS,
   UNIT_PRICE_EUR,
 } from "@broods/convex/model/orgBilling";
-import type { VariantProps } from "class-variance-authority";
-
-import type { badgeVariants } from "@/app/components/ui/badge";
-
+import { PLAN_LIMITS } from "@broods/convex/model/planLimits";
 /** Plan tier as stored on the user; the Convex schema validator owns the union. */
 export type PlanTier = Doc<"users">["plan"];
 
 export interface PlanConfig {
   key: PlanTier;
   label: string;
-  description: string;
-  order: number;
-  badgeVariant: NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
+  price: string;
 }
 
 /** Tier shown while the user row is still loading. */
 export const DEFAULT_PLAN: PlanTier = "free";
 
+/** Every plan, cheapest first. */
+export const PLANS: PlanTier[] = ["free", "pro"];
+
 export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
   free: {
     key: "free",
     label: "Hobby",
-    description: "Free tier for personal projects",
-    order: 0,
-    badgeVariant: "secondary",
+    price: "Free",
   },
   pro: {
     key: "pro",
     label: "Pro",
-    description: "For teams and advanced workloads",
-    order: 1,
-    badgeVariant: "warning",
+    price: perMonth(1),
   },
 };
 
@@ -58,4 +52,4 @@ export function perMonth(units: number): string {
 }
 
 /** What Pro offers its owner, wherever an upgrade is offered. */
-export const PRO_OFFER = `Pro is ${perMonth(1)}: it lets you create orgs and gives you ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats to use across all of them. Extra seats are ${perMonth(1)} each.`;
+export const PRO_OFFER = `Pro is ${perMonth(1)}: higher usage limits, up to ${PLAN_LIMITS.pro.maxOwnedOrgs} orgs, and ${PRO_INCLUDED_DEVELOPER_SEATS} developer seats to use across all of them. Extra seats are ${perMonth(1)} each.`;

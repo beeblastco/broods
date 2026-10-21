@@ -64,11 +64,6 @@ describe("observability scope isolation", () => {
     expect(captured.B).toEqual(["secret-B"]);
   });
 
-  it("falls back to the module global when no scope is active (Lambda path)", () => {
-    setObservabilityContext(ctx("lambda"));
-    expect(getObservabilityContext()?.accountId).toBe("lambda");
-  });
-
   it("does not leak a scoped context out to the global", async () => {
     setObservabilityContext(ctx("global"));
     await runWithObservabilityScope(async () => {

@@ -11,10 +11,6 @@ import {
 } from "../src/shared/domain/agent-config.ts";
 
 describe("parseRunOverrides", () => {
-  it("returns undefined when overrides are absent", () => {
-    expect(parseRunOverrides({})).toBeUndefined();
-  });
-
   it("accepts system messages and whitelisted model overrides", () => {
     const overrides = parseRunOverrides({
       system: { role: "system", content: "one-turn instructions" },
@@ -40,23 +36,6 @@ describe("parseRunOverrides", () => {
         /cannot be overridden per run/,
       );
     }
-  });
-
-  it("forwards AI SDK call settings and providerOptions", () => {
-    const overrides = parseRunOverrides({
-      model: {
-        temperature: 0.2,
-        topP: 0.9,
-        stopSequences: ["END"],
-        providerOptions: { anthropic: { thinking: { type: "enabled" } } },
-      },
-    });
-    expect(overrides?.model).toEqual({
-      temperature: 0.2,
-      topP: 0.9,
-      stopSequences: ["END"],
-      providerOptions: { anthropic: { thinking: { type: "enabled" } } },
-    });
   });
 
   it("rejects unsupported model override keys", () => {

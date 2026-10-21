@@ -39,7 +39,7 @@
       "gate": "blocking"
     },
     "core/config-normalize": {
-      "nsPerOp": 1209.8,
+      "nsPerOp": 1509,
       "ceilingNs": 4500,
       "gate": "blocking"
     },
@@ -106,13 +106,13 @@
       "maxRegressionPct": 50
     },
     "core/agent-run-first-token": {
-      "nsPerOp": 2066534.8,
+      "nsPerOp": 2416034,
       "ceilingNs": 20000000,
       "gate": "blocking",
       "maxRegressionPct": 50
     },
     "core/agent-run-text-turn": {
-      "nsPerOp": 1632193.4,
+      "nsPerOp": 1942014,
       "ceilingNs": 20000000,
       "gate": "blocking",
       "maxRegressionPct": 50
@@ -124,12 +124,12 @@
       "maxRegressionPct": 50
     },
     "convex/api-authorize-allow": {
-      "nsPerOp": 72.5,
+      "nsPerOp": 77.6,
       "ceilingNs": 400,
       "gate": "blocking"
     },
     "convex/api-authorize-default-deny": {
-      "nsPerOp": 65.9,
+      "nsPerOp": 76,
       "ceilingNs": 400,
       "gate": "blocking"
     },

@@ -74,6 +74,8 @@ export interface MatrixAccountOptions {
    * while the account runs.
    */
   targets: () => readonly ForwardTarget[];
+  /** How long one webhook POST may take; `forwardRoomEvent`'s default when unset. */
+  webhookTimeoutMs?: number;
 }
 
 /** What exists once whoami answered and the store is open. */
@@ -227,6 +229,7 @@ export class MatrixAccount {
         }),
         this.options.accessToken,
         tryNow,
+        this.options.webhookTimeoutMs,
       );
       const retryAtMs =
         Date.now() + backoffDelayMs(entry.attempts, BACKOFF_CEILING_MS);

@@ -5,7 +5,7 @@
  * where something actually enforces, plus OPA_API_TOKEN authentication.
  */
 
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import {
   channelPolicyIdentity,
   createPolicyToolApproval,
@@ -13,10 +13,12 @@ import {
   policyDecisionLogMessage,
 } from "../src/harness/policy.ts";
 import {
+  getStorage,
   setStorageForTests,
   type AuditLedgerInput,
   type Storage,
 } from "../src/shared/storage.ts";
+import { drainInFlight } from "../src/shared/in-flight.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
 let policyMode: "enforce" | "audit" = "enforce";
@@ -205,6 +207,35 @@ describe("agent policy enforce mode", () => {
       },
     });
     expect(JSON.stringify(auditWrites[0])).not.toContain("rm -rf");
+  });
+
+  it("drains an enforced denial's audit write before shutdown", async (): Promise<void> => {
+    const release = Promise.withResolvers<void>();
+    const append = spyOn(getStorage().auditLedger, "append").mockImplementation(
+      async (): Promise<void> => {
+        await release.promise;
+      },
+    );
+    let drained = false;
+    let draining: Promise<void> | undefined;
+    try {
+      const approval = await createPolicyToolApproval(
+        agentConfig(),
+        { accountId: "acct_1", agentId: "agent_1" },
+        [],
+      );
+      expect(decisionType(await approval!(toolCallEvent))).toBe("denied");
+      draining = drainInFlight().then((): void => {
+        drained = true;
+      });
+      await Bun.sleep(0);
+      expect(drained).toBe(false);
+    } finally {
+      release.resolve();
+      await draining;
+      append.mockRestore();
+    }
+    expect(drained).toBe(true);
   });
 
   // An auditing policy is downgraded by the rego, not here: the harness must

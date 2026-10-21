@@ -90,7 +90,7 @@ const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 const DEFAULT_S3_SECRET_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
 
 // workdir rejects an out-of-range auto_stop with a 400, and the account-facing
-// `idleTimeoutSeconds` allows far more than it accepts (up to MAX_IDLE_TIMEOUT_SECONDS).
+// `idleTimeoutSeconds` allows far more than it accepts (up to seven days).
 // Clamping keeps a legal config running with the closest idle window workdir supports,
 // where forwarding it verbatim would fail every create the sandbox ever attempts.
 const AUTO_STOP_MIN_SECONDS = 30;

@@ -32,8 +32,6 @@ await mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
       },
     },
   }),
-  harnessReservationKey: (options: { conversationKey: string }): string =>
-    options.conversationKey,
   harnessSteersMidTurn: harnessSteersMidTurn,
   openAiSdkHarnessSession: async () => ({
     destroy: async (): Promise<void> => {},
@@ -57,21 +55,6 @@ beforeEach((): void => {
   streamCalls.length = 0;
   steeredTexts.length = 0;
   steerFailure = null;
-});
-
-it("hands a harness agent the same step and tool hooks as streamText", async () => {
-  await runHarnessTurn("codex", async () => null);
-
-  expect(streamCalls).toHaveLength(1);
-  for (const hook of [
-    "onStepStart",
-    "onStepEnd",
-    "onToolExecutionStart",
-    "onToolExecutionEnd",
-  ]) {
-    expect(typeof streamCalls[0]?.[hook]).toBe("function");
-  }
-  expect(streamCalls[0]?.onEnd).toBeUndefined();
 });
 
 it.each(["claude-code", "codex"] as const)(

@@ -1,5 +1,5 @@
 /**
- * Agent policy runtime contracts: records, ids, and the OPA decision
+ * Agent policy runtime contracts: records and the OPA decision
  * input/output shapes. Document validation lives in the config
  * plane (packages/convex/model/policyRules.ts); runtime decisions are made by
  * OPA using the same document/input shape.
@@ -9,7 +9,6 @@ import type {
   PolicyAction,
   PolicyDocument,
 } from "@broods/convex/model/policyRules";
-import { randomBytes } from "node:crypto";
 import type { Principal } from "./principal.ts";
 
 export type {
@@ -77,8 +76,4 @@ export interface PolicyDecision {
   matchedRuleIds: string[];
   /** Deny rules that fired but only recorded, because their policy is auditing. */
   auditedRuleIds: string[];
-}
-
-export function createPolicyId(): string {
-  return `policy_${randomBytes(12).toString("base64url")}`;
 }

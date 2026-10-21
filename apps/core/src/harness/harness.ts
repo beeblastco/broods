@@ -13,8 +13,6 @@ import {
   trace as otelTraceApi,
   SpanStatusCode,
   TraceFlags,
-  type Context as OtelContext,
-  type Span,
 } from "@opentelemetry/api";
 import {
   isStepCount,
@@ -38,7 +36,7 @@ import type {
   ObservabilitySpanRow,
   TaskWaitingOn,
 } from "../../../../packages/broods/src/observability-contracts.ts";
-import { extractText, type ChannelQuestion } from "../shared/channels.ts";
+import { extractText } from "../shared/channels.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import {
   AGENT_MAX_TURN_UNLIMITED,
@@ -47,7 +45,6 @@ import {
 import { principalChainLabel } from "../shared/domain/principal.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
 import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
-import { waitUntil } from "../shared/in-flight.ts";
 import {
   collectSecretValues,
   logError,
@@ -69,7 +66,6 @@ import {
   mintSpanId,
   mintTraceId,
   observabilityAttributes,
-  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
@@ -84,7 +80,6 @@ import {
 } from "./hook-dispatcher.ts";
 import {
   createConfiguredHarnessAgent,
-  harnessReservationKey,
   harnessSteersMidTurn,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
@@ -93,20 +88,22 @@ import {
 // whole, and this is run-loop plumbing they keep real.
 import {
   MID_TURN_STEERING_UNSUPPORTED,
-  requireHarnessSandbox,
-  startHarnessLeaseMonitor,
+  prepareHarnessTurn,
   steerHarnessTurn,
+  type HarnessTurn,
 } from "./ai-sdk-harness/session.ts";
 import {
   agentSandboxStatus,
   formatSandboxStatus,
   occupySandbox,
-  sandboxNeighbours,
-  type SandboxUsage,
 } from "./sandbox/live-status.ts";
-import { configString, configuredSandboxSpecs } from "./sandbox/utils.ts";
+import { configString } from "./sandbox/utils.ts";
 import { shouldAutoCompact } from "./compaction.ts";
-import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import {
+  createAgentLifecycleEmitter,
+  toLifecycleValue,
+  type AgentLifecycleEventPayload,
+} from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import {
   channelPolicyIdentity,
@@ -116,25 +113,29 @@ import {
 import {
   attemptRecordingMiddleware,
   cacheBreakpointFromProviderOptions,
+  markedForCache,
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
-  type ModelAttempt,
+  withCacheBreakpoint,
 } from "./provider.ts";
+import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
+import { createRunFinalizer } from "./run-finalizer.ts";
+import { createRunSpanTracker } from "./run-spans.ts";
 import {
   stripEnvelopeFieldsFromMessages,
   type ConversationIngressEvent,
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
-import { getAsyncToolResult, rootEventId } from "./async-tool-result.ts";
+import { rootEventId } from "./async-tool-result.ts";
 import { rehydrateStoredMedia } from "./channel-media.ts";
 import {
-  formatQuestionsText,
-  openQuestion,
+  openWorkAfterRun,
   type PendingQuestionSummary,
+  type RunOpenWork,
 } from "./questions.ts";
 import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
@@ -148,6 +149,8 @@ import {
 } from "./tools/utils.ts";
 import {
   createSandboxCpuLedger,
+  createStepTimingTracker,
+  createTaskTotals,
   extractCacheWriteTokens,
   usageTokenTotals,
 } from "./usage-metering.ts";
@@ -185,9 +188,6 @@ const MODEL_CALL_BOUNDARY_PART_TYPES: ReadonlySet<string> = new Set([
   "tool-error",
   "tool-output-denied",
 ]);
-// A machine only one conversation uses is released after a day idle instead of
-// the default week, so abandoned subagent tasks stop holding machines.
-const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
 /** Failure text of a stopped run; handler and subagents match on it to treat a stop as intended, not a failure. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 /** Failure text of a persistent subagent run its parent stopped with stop_subagent. */
@@ -200,34 +200,8 @@ const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
 // Tracing labels a run with its request. The whole text is already in
 // model.input, so this only has to fill one row.
 const MAX_TASK_INPUT_CHARS = 500;
-// The usage tab shows one line of it per task, and the row is kept 90 days.
-const USAGE_INPUT_PREVIEW_CHARS = 160;
 
 const SPAN_ENCODER = new TextEncoder();
-
-// Generated-content stream parts that count toward per-step streaming windows
-// (time-to-first-token / last-token). v7 delivers every TextStreamPart to
-// onChunk, so boundary, lifecycle, and post-execution parts must not qualify.
-const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
-  "text-delta",
-  "reasoning-delta",
-  "tool-input-start",
-  "tool-input-delta",
-  "tool-call",
-  "file",
-]);
-
-/** An open model.step or tool.call span plus the ids its live NATS rows reuse. */
-type TrackedSpan = {
-  otelSpan: Span;
-  otelContext: OtelContext;
-  name: "model.step" | "tool.call";
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  startTimeMs: number;
-  attributes: Record<string, string | number | boolean>;
-};
 
 type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
 type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
@@ -382,28 +356,9 @@ export async function runAgentLoop(
   const hooks =
     options.hooks ??
     (await createAgentHookDispatcher(session.accountId, agentConfig));
-
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
-  let taskCacheWriteTokens = 0;
+  const taskTotals = createTaskTotals();
   const sandboxCpu = createSandboxCpuLedger();
-  // Child OTel spans remain open until the corresponding AI SDK finish hook.
-  // Their real OTel IDs are reused in the live NATS trace rows.
-  const stepSpans = new Map<number, TrackedSpan>();
-  const toolSpans = new Map<string, TrackedSpan>();
-  /** Passed to the tool registry as `onToolRetry`; tallies each wait on the call's open span. */
-  const recordToolRetry = (toolCallId: string, waitMs: number): void => {
-    const tracked = toolSpans.get(toolCallId);
-    if (!tracked) return;
-    const retry = {
-      "tool.retry.count":
-        Number(tracked.attributes["tool.retry.count"] ?? 0) + 1,
-      "tool.retry.wait_ms":
-        Number(tracked.attributes["tool.retry.wait_ms"] ?? 0) + waitMs,
-    };
-    // A fresh object: the running row published at start may still hold the old one.
-    tracked.attributes = { ...tracked.attributes, ...retry };
-    tracked.otelSpan.setAttributes(retry);
-  };
 
   // Start the root span up front so one trace id is on every log line, NATS
   // span row and Tempo span. A noop tracer (OTel not initialised) has all-zero
@@ -443,6 +398,21 @@ export async function runAgentLoop(
     otelContextApi.active(),
     otelRootSpan,
   );
+  // The run's model.step, tool.call and phase spans under that root, each an
+  // OTel span and a live NATS row.
+  const spans = createRunSpanTracker({
+    tracer: tracer,
+    scope: observabilityScope,
+    traceId: traceId,
+    rootSpanId: rootSpanId,
+    rootOtelContext: rootOtelContext,
+    session: {
+      endpointId: session.endpointId,
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+    },
+    publish: publishSpan,
+  });
   // The invoking run's identity, mirrored onto any sandbox it reserves so the
   // dashboard activity links back to this trace and task. Shared by the tool
   // registry and the resident-harness reservation.
@@ -545,67 +515,12 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
-  /**
-   * Emits a closed phase span under the root for non-model work (cold start,
-   * context prepare, compaction), so a slow turn can be attributed. Best-effort.
-   */
-  const emitPhaseSpan = (
-    phaseName: string,
-    label: string,
-    startMs: number,
-    endMs: number,
-    extraAttributes: Record<string, number> = {},
-  ): void => {
-    try {
-      const durationMs = Math.max(0, endMs - startMs);
-      const attributes = {
-        "phase.name": label,
-        "phase.duration_ms": durationMs,
-        ...extraAttributes,
-      };
-      const phaseSpan = tracer.startSpan(
-        phaseName,
-        {
-          startTime: startMs,
-          attributes: {
-            ...observabilityAttributes(observabilityScope),
-            ...attributes,
-          },
-        },
-        rootOtelContext,
-      );
-      const spanContext = phaseSpan.spanContext();
-      phaseSpan.end(endMs);
-      void publishSpan({
-        traceId: /[^0]/.test(spanContext.traceId)
-          ? spanContext.traceId
-          : traceId,
-        spanId: /[^0]/.test(spanContext.spanId)
-          ? spanContext.spanId
-          : mintSpanId(),
-        parentSpanId: rootSpanId,
-        name: phaseName,
-        kind: "phase",
-        startTimeMs: startMs,
-        endTimeMs: endMs,
-        durationMs: durationMs,
-        status: "ok",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: attributes,
-      });
-    } catch {
-      // Best-effort: a telemetry failure must not affect the run.
-    }
-  };
-
   // Cold start is charged to the first run in this execution environment; later
   // (warm) runs consume nothing. Context prepare comes from the turn context
   // the handler assembled before this loop began.
   const coldStart = consumeColdStart(runStartedAt);
   if (coldStart) {
-    emitPhaseSpan(
+    spans.phase(
       "phase.cold_start",
       "Cold start",
       coldStart.startMs,
@@ -614,7 +529,7 @@ export async function runAgentLoop(
   }
   if (turnContext.timings) {
     const { phases, prepareEndedMs, prepareStartedMs } = turnContext.timings;
-    emitPhaseSpan(
+    spans.phase(
       "phase.context_prepare",
       "Context prepare",
       prepareStartedMs,
@@ -657,7 +572,7 @@ export async function runAgentLoop(
         dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: sandboxCpu.record,
-        onToolRetry: recordToolRetry,
+        onToolRetry: spans.retry,
         onBlockingQuestion: (question): void => {
           questionSummaries.push(question);
         },
@@ -761,84 +676,33 @@ export async function runAgentLoop(
   let lastStepText = "";
 
   const toolStepNumbers = new Map<string, number | undefined>();
-  /** Opens a model.step or tool.call OTel span and keeps the ids its live NATS row reuses. */
-  const startTrackedSpan = (
-    name: "model.step" | "tool.call",
-    startTimeMs: number,
-    parentContext: OtelContext,
-    parentSpanId: string,
-    attributes: Record<string, string | number | boolean>,
-  ): TrackedSpan => {
-    const otelSpan = tracer.startSpan(
-      name,
-      {
-        startTime: startTimeMs,
-        attributes: {
-          ...observabilityAttributes(observabilityScope),
-          ...attributes,
-        },
-      },
-      parentContext,
-    );
-    const spanContext = otelSpan.spanContext();
-
-    return {
-      otelSpan: otelSpan,
-      otelContext: otelTraceApi.setSpan(parentContext, otelSpan),
-      name: name,
-      traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
-      spanId: /[^0]/.test(spanContext.spanId)
-        ? spanContext.spanId
-        : mintSpanId(),
-      parentSpanId: parentSpanId,
-      startTimeMs: startTimeMs,
-      attributes: attributes,
-    };
-  };
-
-  // Per-step timing state, read when each step's span closes.
-  const stepStartedAt = new Map<number, number>();
-  // First and last generated chunk per step, attributed to the active step since
-  // onChunk has no step number. They split a step into ttft, streaming and tool
-  // wait; tool results are not generation, so a slow tool never inflates streaming.
-  const firstChunkAt = new Map<number, number>();
-  const lastModelChunkAt = new Map<number, number>();
-  // Per-part streaming windows (first/last delta per kind) so the dashboard can show
-  // how long the model spent streaming reasoning vs text vs tool-call input. Windows
-  // are first->last per kind and may overlap slightly for models that interleave.
-  type StreamWindow = { first: number; last: number };
-  const reasoningWindow = new Map<number, StreamWindow>();
-  const textWindow = new Map<number, StreamWindow>();
-  const toolInputWindow = new Map<number, StreamWindow>();
-  // The SDK retries a failed stream start inside the ttft window with nothing
-  // recorded; attemptRecordingMiddleware fills this per doStream call.
-  const stepAttempts = new Map<number, ModelAttempt[]>();
-  /**
-   * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
-   * server wait, so a retried 429 is distinguishable from queueing.
-   */
-  const attemptAttributes = (
-    stepNumber: number,
-    stepStartMs: number,
-  ): Record<string, string | number> => {
-    const attempts = stepAttempts.get(stepNumber) ?? [];
-    const errors = attempts.flatMap((attempt) =>
-      attempt.error ? [attempt.error] : [],
-    );
-    const lastAttemptAt = attempts.at(-1)?.startedAt;
-
-    return {
-      ...(attempts.length > 0 ? { "model.attempts": attempts.length } : {}),
-      ...(attempts.length > 1 && lastAttemptAt !== undefined
-        ? { "model.retry_wait_ms": Math.max(0, lastAttemptAt - stepStartMs) }
-        : {}),
-      ...(errors.length > 0
-        ? { "model.attempt_errors": traceAttribute(errors) }
-        : {}),
-    };
-  };
-  let activeStepNumber: number | undefined;
+  // Per-step timing (ttft, streaming windows, retries), read when each step's
+  // span closes.
+  const stepTiming = createStepTimingTracker(traceAttribute);
   const toolCallSummaries = new Map<string, ToolCallSummary>();
+  // A run fails once: its first failure fires the lifecycle webhook and the
+  // observe-only onError code hook, and later errors of the same run do not.
+  let failureAnnounced = false;
+  const announceFailure = async (
+    error: string,
+    extra: AgentLifecycleEventPayload = {},
+  ): Promise<void> => {
+    if (failureAnnounced) return;
+    failureAnnounced = true;
+    const tools = summarizeToolsUsed(toolCallSummaries);
+    await Promise.all([
+      lifecycle.emit("agent.failed", {
+        error: error,
+        ...extra,
+        toolsUsed: toLifecycleValue(tools.toolsUsed),
+        toolUsage: toLifecycleValue(tools.toolUsage),
+        toolCalls: toLifecycleValue(tools.toolCalls),
+      }),
+      hooks.hasHooksFor("agent.failed")
+        ? hooks.runMutation("agent.failed", { error: error })
+        : undefined,
+    ]);
+  };
   const logContext = {
     accountId: session.accountId,
     agentId: session.agentId,
@@ -847,6 +711,7 @@ export async function runAgentLoop(
     modelProvider: configuredModel.providerName,
     modelId: agentConfig.model?.modelId,
   };
+  const usesAiSdkHarness = agentConfig.harness !== undefined;
   // Once the model has answered with no tool call left, a long context folds
   // into a summary before the next queued message runs. A turn the provider
   // refused for context length folds too, so the next turn fits. A harness
@@ -856,7 +721,7 @@ export async function runAgentLoop(
     contextExceeded = false,
   ): Promise<void> => {
     if (
-      harnessRuntime ||
+      usesAiSdkHarness ||
       !shouldAutoCompact(agentConfig, lastInputTokens, contextExceeded)
     ) {
       return;
@@ -872,23 +737,16 @@ export async function runAgentLoop(
       });
     }
     if (compacted > 0) {
-      emitPhaseSpan("phase.compaction", "Compaction", startedMs, Date.now(), {
+      spans.phase("phase.compaction", "Compaction", startedMs, Date.now(), {
         "compaction.message_count": compacted,
         "compaction.input_tokens": lastInputTokens ?? 0,
       });
     }
   };
 
-  // Finalize-once guard: usage is written exactly once per task and the root OTel
-  // span is ended once. Finalization happens after terminal logs/replies so those
-  // records retain tenant/trace context. The usage write runs in the background
-  // and shutdown drains it before flushing the exporters.
-  let usageFinalized = false;
   let finishObserved = false;
   let persistedResponseCount = 0;
   const runAbort = new AbortController();
-  let taskUsage: LanguageModelUsage | undefined;
-  let taskStepCount = 0;
   let terminalError: Error | undefined;
   const abortRun = (): void => {
     const reason: unknown = options.abortSignal?.reason;
@@ -904,233 +762,49 @@ export async function runAgentLoop(
       signal: runAbort.signal,
     });
   }
-  /**
-   * What a run that ended cleanly still waits on, the person first: an approval
-   * or an open question needs them, while subagents, async tools and background
-   * jobs settle by themselves. Empty when it failed or nothing is left open.
-   * `questions` is what the person was asked, for the trace's wait row.
-   */
-  const openWorkAfterRun = async (
-    status: "completed" | "failed",
-  ): Promise<{ waitingOn?: TaskWaitingOn; questions: ChannelQuestion[] }> => {
-    if (status === "failed") return { questions: [] };
-    if (approvalSummaries.length > 0) {
-      return { waitingOn: "approval", questions: [] };
-    }
-    const rows = await Promise.all(
-      detachedResultIds.map((resultId) =>
-        getAsyncToolResult(resultId).catch(() => null),
-      ),
-    );
-    const open = rows.filter((row) => row?.status === "processing");
-    const questions = open.flatMap(
-      (row): ChannelQuestion[] =>
-        openQuestion(row, session.conversationKey)?.pending.questions ?? [],
-    );
-    // The rows, not questionSummaries: an answer can settle one before the run
-    // ends. A blocking question whose row could not be read still counts.
-    const unread = questionSummaries
-      .filter(
-        (summary) => rows[detachedResultIds.indexOf(summary.statusId)] === null,
-      )
-      .flatMap((summary) => summary.questions);
-    if (questions.length > 0 || unread.length > 0) {
-      return { waitingOn: "question", questions: [...questions, ...unread] };
-    }
-    const pending = options.pendingWork?.();
-    if (pending) return { waitingOn: pending, questions: [] };
-
-    return {
-      ...(open.length > 0 ? { waitingOn: "tool" } : {}),
-      questions: [],
-    };
-  };
-  /**
-   * Settles the run once: closes open spans and the root span, then writes task
-   * usage. Called from onEnd, the setup failure path and `ensureFinalized`.
-   */
-  const finalizeUsage = async (
-    status: "completed" | "failed",
-    usage: LanguageModelUsage | undefined,
-    stepCount: number,
-    toolCallCount: number,
-    durationMs: number,
-    error?: Error,
-  ): Promise<void> => {
-    if (usageFinalized) return;
-    usageFinalized = true;
-    options.abortSignal?.removeEventListener("abort", abortRun);
-    releaseSandboxOccupancy?.();
-    const taskTokens = usageTokenTotals(usage);
-    const { waitingOn, questions: openQuestions } =
-      await openWorkAfterRun(status);
-    const rootStatus = rootSpanStatus(status, waitingOn);
-
-    const context = getObservabilityContext();
-    const sanitizedError = error
-      ? new Error(redactSensitiveText(error.message, context?.secretValues))
-      : undefined;
-
-    const endTimeMs = runStartedAt + durationMs;
-    const orphanedSpans = [
-      ...[...toolSpans.values()].map((tracked) => ({
-        tracked: tracked,
-        extraAttributes: undefined,
-      })),
-      // A step whose every attempt failed never reaches onStepEnd, so its
-      // attempt attributes are attached here instead.
-      ...[...stepSpans.entries()].map(([stepNumber, tracked]) => ({
-        tracked: tracked,
-        extraAttributes: attemptAttributes(stepNumber, tracked.startTimeMs),
-      })),
-    ];
-    for (const { tracked, extraAttributes } of orphanedSpans) {
-      if (status === "failed") {
-        tracked.otelSpan.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: sanitizedError?.message,
-        });
-      }
-      if (extraAttributes) tracked.otelSpan.setAttributes(extraAttributes);
-      tracked.otelSpan.end(endTimeMs);
-      void publishSpan({
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: tracked.name,
-        kind: tracked.name,
-        startTimeMs: tracked.startTimeMs,
-        endTimeMs: endTimeMs,
-        durationMs: Math.max(0, endTimeMs - tracked.startTimeMs),
-        status: status === "completed" ? "ok" : "error",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: {
-          ...tracked.attributes,
-          ...extraAttributes,
-          [tracked.name === "model.step" ? "step.state" : "tool.state"]: status,
-        },
-        ...(sanitizedError ? { error: sanitizedError.message } : {}),
-      });
-    }
-    toolSpans.clear();
-    stepSpans.clear();
-    stepAttempts.clear();
-    // Task totals on the root span: token usage and sandbox CPU split per provider
-    // so the dashboard reads final usage straight off the trace stream.
-    const sandboxCpuAttributes = sandboxCpu.typeAttributes();
-    const rootSpanRow: ObservabilitySpanRow = {
+  // Settles the run exactly once: usage is written once per task and the root
+  // OTel span is ended once. Finalization happens after terminal logs/replies so
+  // those records retain tenant/trace context. The usage write runs in the
+  // background and shutdown drains it before flushing the exporters.
+  const finalizer = createRunFinalizer({
+    session: session,
+    root: {
+      span: otelRootSpan,
       traceId: traceId,
       spanId: rootSpanId,
       name: rootSpanName,
       kind: rootSpanKind,
       startTimeMs: runStartedAt,
-      endTimeMs: endTimeMs,
-      durationMs: durationMs,
-      status: rootStatus,
-      endpointId: session.endpointId,
-      agentId: session.agentId,
-      conversationKey: session.conversationKey,
-      attributes: {
-        ...rootRunningAttributes,
-        ...systemTraceAttributes(turnContext.system, traceAttribute),
-        ...(waitingOn
-          ? { "task.state": rootStatus, "task.waiting_on": waitingOn }
-          : { "task.state": status }),
-        ...(openQuestions.length > 0
-          ? {
-              "task.questions": traceAttribute(
-                formatQuestionsText(openQuestions),
-              ),
-            }
-          : {}),
-        "agent.step_count": stepCount,
-        "agent.tool_call_count": toolCallCount,
-        "agent.model_provider": configuredModel.providerName,
-        "agent.model_id": agentConfig.model?.modelId,
-        "usage.input_tokens": taskTokens.inputTokens,
-        "usage.output_tokens": taskTokens.outputTokens,
-        "usage.reasoning_tokens": taskTokens.reasoningTokens,
-        "usage.cached_input_tokens": taskTokens.cachedInputTokens,
-        "usage.total_tokens": taskTokens.totalTokens,
-        ...sandboxCpuAttributes,
-      },
-      ...(sanitizedError ? { error: sanitizedError.message } : {}),
-    };
-
-    // End the root OTel span (durable Tempo export).
-    try {
-      otelRootSpan.setAttributes(
-        rootSpanRow.attributes as Record<
-          string,
-          string | number | boolean | undefined
-        >,
-      );
-      if (status === "failed") {
-        if (sanitizedError) otelRootSpan.recordException(sanitizedError);
-        otelRootSpan.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: sanitizedError?.message,
-        });
-      } else {
-        otelRootSpan.setStatus({ code: SpanStatusCode.OK });
-      }
-      otelRootSpan.end(endTimeMs);
-    } catch {
-      // Best-effort: never fail the agent path.
-    }
-
-    // Live publish via NATS, tracked with the usage write so shutdown drains the
-    // terminal span. Otherwise a fresh dashboard load can keep a stale "running"
-    // copy of an already-finished task.
-    const rootPublished = publishSpan(rootSpanRow);
-    try {
-      // Off the turn's tail: the stream closes, takeNext and the channel reply
-      // go out without waiting. Its own scope keeps this run's context, so a
-      // failed write still logs with the tenant scope. Shutdown drains it.
-      const usageRecorded = runWithObservabilityScope(
-        () =>
-          recordTaskUsage({
-            accountId: session.accountId ?? "",
-            endpointId: session.endpointId,
-            agentId: session.agentId ?? "unknown",
-            principalChain: session.principal?.chain,
-            conversationKey: session.conversationKey,
-            // One row per model pass: a continuation pass shares the eventId.
-            taskId: `${session.eventId}#${traceId}`,
-            modelProvider: configuredModel.providerName ?? "unknown",
-            modelId: agentConfig.model?.modelId ?? "unknown",
-            finishedAt: endTimeMs,
-            durationMs: durationMs,
-            status: status,
-            inputTokens: taskTokens.inputTokens,
-            outputTokens: taskTokens.outputTokens,
-            reasoningTokens: taskTokens.reasoningTokens,
-            cachedInputTokens: taskTokens.cachedInputTokens,
-            cacheWriteTokens: taskCacheWriteTokens,
-            totalTokens: taskTokens.totalTokens,
-            runtimeKind: "container",
-            runtimeWallMs: durationMs,
-            // The pod is shared by every run, so this is its resident size when the
-            // run ended, not memory the run owned.
-            runtimeMemoryMb: Math.round(
-              process.memoryUsage().rss / 1024 / 1024,
-            ),
-            sandboxUsage: sandboxCpu.usage(),
-            stepCount: stepCount,
-            toolCallCount: toolCallCount,
-            inputPreview: taskInput.slice(0, USAGE_INPUT_PREVIEW_CHARS),
-          }),
-        context,
-      );
-      waitUntil(Promise.allSettled([usageRecorded, rootPublished]));
-    } finally {
-      // The container process is reused, so never retain one task's tenant,
-      // trace, or secret values past the run.
-      setObservabilityContext(parentObservabilityContext);
-    }
-  };
+    },
+    rootAttributes: (): Record<string, string | number | boolean> => ({
+      ...rootRunningAttributes,
+      ...systemTraceAttributes(turnContext.system, traceAttribute),
+    }),
+    modelProvider: configuredModel.providerName,
+    modelId: agentConfig.model?.modelId,
+    taskInput: taskInput,
+    serialize: traceAttribute,
+    spans: spans,
+    stepTiming: stepTiming,
+    taskTotals: taskTotals,
+    sandboxCpu: sandboxCpu,
+    openWork: (): Promise<RunOpenWork> =>
+      openWorkAfterRun({
+        conversationKey: session.conversationKey,
+        awaitingApproval: approvalSummaries.length > 0,
+        detachedResultIds: detachedResultIds,
+        questionSummaries: questionSummaries,
+        pendingWork: options.pendingWork,
+      }),
+    publish: publishSpan,
+    recordUsage: recordTaskUsage,
+    release: (): void => {
+      options.abortSignal?.removeEventListener("abort", abortRun);
+      releaseSandboxOccupancy?.();
+    },
+    restoreObservabilityContext: (): void =>
+      setObservabilityContext(parentObservabilityContext),
+  });
 
   await lifecycle.emit("agent.started", {
     modelProvider: configuredModel.providerName,
@@ -1148,7 +822,6 @@ export async function runAgentLoop(
   }
 
   let activeHarnessSession: HarnessAgentSession | undefined;
-  let stopHarnessLeaseMonitor: (() => void) | undefined;
 
   logInfo(
     `Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`,
@@ -1188,39 +861,27 @@ export async function runAgentLoop(
 
   const attemptTrackedModel = wrapLanguageModel({
     model: configuredModel.model,
-    middleware: attemptRecordingMiddleware(
-      (attempt) => {
-        const step = activeStepNumber ?? 0;
-        stepAttempts.set(step, [...(stepAttempts.get(step) ?? []), attempt]);
-      },
-      (error) =>
-        redactSensitiveText(
-          toErrorMessage(error),
-          getObservabilityContext()?.secretValues,
-        ),
+    middleware: attemptRecordingMiddleware(stepTiming.recordAttempt, (error) =>
+      redactSensitiveText(
+        toErrorMessage(error),
+        getObservabilityContext()?.secretValues,
+      ),
     ),
   });
 
   const maxTurn = agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS;
-  // Decided once per step boundary, in stopWhen: near the deadline the run
-  // yields its slot, or, when it may not (last slot, or at its step cap, where
-  // a next pass would start a fresh count), winds down in its next step.
-  let windingDown = false;
-  let yielded = false;
-  const stopForDeadline = (stepCount: number): boolean => {
-    if (
-      options.deadlineMs === undefined ||
-      Date.now() < options.deadlineMs - DEADLINE_WIND_DOWN_MS ||
-      questionSummaries.length > 0
-    ) {
-      return false;
-    }
-    yielded =
-      options.canYield === true &&
-      (maxTurn === AGENT_MAX_TURN_UNLIMITED || stepCount < maxTurn);
-    windingDown = !yielded;
-
-    return yielded;
+  const deadline = createDeadlinePolicy({
+    deadlineMs: options.deadlineMs,
+    canYield: options.canYield === true,
+    windDownMs: DEADLINE_WIND_DOWN_MS,
+    maxTurn: maxTurn,
+    now: Date.now,
+  });
+  const aiRuntimeContext = {
+    traceName: rootSpanName,
+    properties: process.env.DEPLOYMENT_ENVIRONMENT
+      ? { environment: process.env.DEPLOYMENT_ENVIRONMENT }
+      : {},
   };
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
@@ -1239,11 +900,16 @@ export async function runAgentLoop(
     ...(enabledTools ? { tools: enabledTools } : {}),
     ...(toolApproval ? { toolApproval: toolApproval } : {}),
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
+    runtimeContext: aiRuntimeContext,
     // SDK-native OTel spans (via the @ai-sdk/otel integration registered in
     // initOtel). Inputs/outputs are off: the harness's own span rows already
     // carry redacted response/tool payloads for the dashboard.
     telemetry: {
       functionId: "harness.agent",
+      includeRuntimeContext: {
+        traceName: true,
+        properties: true,
+      },
       recordInputs: false,
       recordOutputs: false,
     },
@@ -1252,7 +918,8 @@ export async function runAgentLoop(
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
-      ({ steps }): boolean => stopForDeadline(steps.length),
+      ({ steps }): boolean =>
+        deadline.shouldStop(steps.length, questionSummaries.length),
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
@@ -1260,7 +927,7 @@ export async function runAgentLoop(
       // steer is never claimed by a turn whose step failed to store or stopped.
       const { renewal, steering } = await session.stepBoundary(
         responseMessages.slice(persistedResponseCount),
-        { claimSteering: !windingDown },
+        { claimSteering: !deadline.isWindingDown() },
       );
       if (renewal === "stopped") {
         throw new Error(stopMessage);
@@ -1271,7 +938,9 @@ export async function runAgentLoop(
         );
       }
       persistedResponseCount = responseMessages.length;
-      options.subagentWatch?.confirmDelivered();
+      // Started after the save, not waited for: the next step does not read
+      // the mark, and a failed one only logs.
+      void options.subagentWatch?.confirmDelivered();
       let stepMessages = messages;
       if (steering) {
         const steeringEvents = steering.events as ConversationIngressEvent[];
@@ -1323,7 +992,7 @@ export async function runAgentLoop(
       // (newly persisted rows, steering, skills a tool loaded), and the step and
       // root spans both trace off this.
       turnContext.system = refreshed.system;
-      if (windingDown) {
+      if (deadline.isWindingDown()) {
         logInfo("Run winding down before its deadline", {
           eventId: session.eventId,
           conversationKey: session.conversationKey,
@@ -1345,76 +1014,33 @@ export async function runAgentLoop(
       };
     },
     onChunk: ({ chunk }) => {
-      // Kept synchronous and cheap: onChunk pauses the stream until it returns.
-      if (!MODEL_CONTENT_CHUNK_TYPES.has(chunk.type)) return;
-      const step = activeStepNumber;
-      if (step === undefined) return;
-      const now = Date.now();
-      if (!firstChunkAt.has(step)) firstChunkAt.set(step, now);
-      lastModelChunkAt.set(step, now);
-      const bump = (windows: Map<number, StreamWindow>): void => {
-        const existing = windows.get(step);
-        if (existing) existing.last = now;
-        else windows.set(step, { first: now, last: now });
-      };
-      if (chunk.type === "text-delta") {
-        bump(textWindow);
-      } else if (chunk.type === "reasoning-delta") {
-        bump(reasoningWindow);
-      } else if (
-        chunk.type === "tool-input-start" ||
-        chunk.type === "tool-input-delta" ||
-        chunk.type === "tool-call"
-      ) {
-        bump(toolInputWindow);
-      }
+      stepTiming.recordChunk(chunk.type, Date.now());
     },
     onStepStart: async ({ stepNumber, messages }) => {
       startApprovalStep();
       const now = Date.now();
-      stepStartedAt.set(stepNumber, now);
-      activeStepNumber = stepNumber;
-      const attributes = {
+      stepTiming.startStep(stepNumber, now);
+      spans.open("model.step", stepNumber, now, undefined, {
         "agent.step_number": stepNumber,
         "step.state": "running",
         "model.input": traceAttribute(messagesWithoutMediaBytes(messages)),
         ...systemTraceAttributes(turnContext.system, traceAttribute),
-      };
-      const tracked = startTrackedSpan(
-        "model.step",
-        now,
-        rootOtelContext,
-        rootSpanId,
-        attributes,
-      );
-      stepSpans.set(stepNumber, tracked);
-      void publishSpan({
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: "model.step",
-        kind: "model.step",
-        startTimeMs: now,
-        endTimeMs: now,
-        durationMs: 0,
-        status: "running",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: attributes,
       });
     },
     onToolExecutionStart: async ({ toolCall }) => {
       // Before any await: the SDK gets here in the model's call order.
       reserveComputerTurn(toolCall);
-      const stepNumber = activeStepNumber;
+      const stepNumber = stepTiming.activeStep();
       const now = Date.now();
-      if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
-        stepStartedAt.set(stepNumber, now);
+      if (
+        stepNumber !== undefined &&
+        stepTiming.stepStartMs(stepNumber) === undefined
+      ) {
+        stepTiming.startStep(stepNumber, now);
       }
       const parent =
-        stepNumber !== undefined ? stepSpans.get(stepNumber) : undefined;
-      const attributes = {
+        stepNumber !== undefined ? spans.get(stepNumber) : undefined;
+      spans.open("tool.call", toolCall.toolCallId, now, parent, {
         "tool.name": toolCall.toolName,
         "tool.call_id": toolCall.toolCallId,
         "tool.state": "running",
@@ -1422,31 +1048,8 @@ export async function runAgentLoop(
         ...(stepNumber !== undefined
           ? { "agent.step_number": stepNumber }
           : {}),
-      };
-      const tracked = startTrackedSpan(
-        "tool.call",
-        now,
-        parent?.otelContext ?? rootOtelContext,
-        parent?.spanId ?? rootSpanId,
-        attributes,
-      );
-      toolSpans.set(toolCall.toolCallId, tracked);
-      toolStepNumbers.set(toolCall.toolCallId, stepNumber);
-      void publishSpan({
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: "tool.call",
-        kind: "tool.call",
-        startTimeMs: now,
-        endTimeMs: now,
-        durationMs: 0,
-        status: "running",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: attributes,
       });
+      toolStepNumbers.set(toolCall.toolCallId, stepNumber);
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber: stepNumber,
       });
@@ -1465,7 +1068,7 @@ export async function runAgentLoop(
       // Normalize the SDK's duration once, here: it is used as a timestamp and
       // reported on every surface, so a NaN or negative one must not get through.
       const toolEndMs = Date.now();
-      const openSpan = toolSpans.get(toolCall.toolCallId);
+      const openSpan = spans.get(toolCall.toolCallId);
       const toolDurationMs = toolSpanDurationMs(
         openSpan?.startTimeMs ?? toolEndMs,
         toolEndMs,
@@ -1473,16 +1076,10 @@ export async function runAgentLoop(
       );
       const tracked =
         openSpan ??
-        startTrackedSpan(
-          "tool.call",
-          toolEndMs - toolDurationMs,
-          rootOtelContext,
-          rootSpanId,
-          {
-            "tool.name": toolCall.toolName,
-            "tool.call_id": toolCall.toolCallId,
-          },
-        );
+        spans.late("tool.call", toolEndMs - toolDurationMs, {
+          "tool.name": toolCall.toolName,
+          "tool.call_id": toolCall.toolCallId,
+        });
       const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
       const toolInput =
         tracked.attributes["tool.input"] ?? traceAttribute(toolCall.input);
@@ -1507,40 +1104,11 @@ export async function runAgentLoop(
       const outputAttributes = toolSucceeded
         ? { "tool.output": traceAttribute(outputWithoutMediaBytes(output)) }
         : {};
-      tracked.otelSpan.setAttributes({
-        "tool.duration_ms": toolDurationMs,
-        "tool.success": toolSucceeded,
-        "tool.state": toolSucceeded ? "completed" : "failed",
-        "tool.input": toolInput,
-        ...computeAttributes,
-        ...outputAttributes,
-      });
-      if (toolSucceeded) {
-        tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
-      } else {
-        const spanError = new Error(errorText);
-        tracked.otelSpan.recordException(spanError);
-        tracked.otelSpan.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: errorText,
-        });
-      }
-      tracked.otelSpan.end(toolSpanEndMs);
-      const toolSpanRow: ObservabilitySpanRow = {
-        traceId: tracked.traceId,
-        spanId: tracked.spanId,
-        parentSpanId: tracked.parentSpanId,
-        name: "tool.call",
-        kind: "tool.call",
-        startTimeMs: tracked.startTimeMs,
-        endTimeMs: toolSpanEndMs,
-        durationMs: toolDurationMs,
-        status: toolSucceeded ? "ok" : "error",
-        endpointId: session.endpointId,
-        agentId: session.agentId,
-        conversationKey: session.conversationKey,
-        attributes: {
-          ...tracked.attributes,
+      spans.close(
+        tracked,
+        toolSpanEndMs,
+        toolSucceeded ? "ok" : "error",
+        {
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": toolInput,
           ...computeAttributes,
@@ -1549,10 +1117,8 @@ export async function runAgentLoop(
             ? { "agent.step_number": stepNumber }
             : {}),
         },
-        ...(errorText ? { error: errorText } : {}),
-      };
-      void publishSpan(toolSpanRow);
-      toolSpans.delete(toolCall.toolCallId);
+        errorText,
+      );
 
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber: stepNumber,
@@ -1606,10 +1172,9 @@ export async function runAgentLoop(
       text,
       reasoningText,
     }) => {
-      const startedAt = stepStartedAt.get(stepNumber);
+      const startedAt = stepTiming.stepStartMs(stepNumber);
       const durationMs =
         startedAt === undefined ? undefined : Date.now() - startedAt;
-      stepStartedAt.delete(stepNumber);
       const stepText = (text ?? "").trim();
       if (stepText) {
         lastStepText = stepText;
@@ -1621,29 +1186,11 @@ export async function runAgentLoop(
       }
 
       const stepTokens = usageTokenTotals(usage);
-      taskCacheWriteTokens +=
-        stepTokens.cacheWriteTokens ||
-        extractCacheWriteTokens(configuredModel.providerName, providerMetadata);
-      // An aborted run never reaches onEnd, and a stopped one gets an empty
-      // total there, so finished steps are summed here.
-      const soFar = usageTokenTotals(taskUsage);
-      taskUsage = {
-        inputTokens: soFar.inputTokens + stepTokens.inputTokens,
-        inputTokenDetails: {
-          noCacheTokens: undefined,
-          cacheReadTokens:
-            soFar.cachedInputTokens + stepTokens.cachedInputTokens,
-          cacheWriteTokens:
-            soFar.cacheWriteTokens + stepTokens.cacheWriteTokens,
-        },
-        outputTokens: soFar.outputTokens + stepTokens.outputTokens,
-        outputTokenDetails: {
-          textTokens: undefined,
-          reasoningTokens: soFar.reasoningTokens + stepTokens.reasoningTokens,
-        },
-        totalTokens: soFar.totalTokens + stepTokens.totalTokens,
-      };
-      taskStepCount = stepNumber + 1;
+      taskTotals.addStep(
+        stepNumber,
+        stepTokens,
+        extractCacheWriteTokens(configuredModel.providerName, providerMetadata),
+      );
 
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
       // dropped setting) are silent in the stream; surface them in Loki.
@@ -1718,63 +1265,18 @@ export async function runAgentLoop(
       // Publish the model.step span (tree: root -> model.step -> tool.call).
       // Tool spans reference this stepSpanId as their parent; without it they
       // would be orphaned in the trace view.
-      const tracked = stepSpans.get(stepNumber);
+      const tracked = spans.get(stepNumber);
       if (tracked) {
         const stepEndMs = Date.now();
-        // Non-overlapping segments that sum to the step duration; their windows
-        // are defined at firstChunkAt/lastModelChunkAt above.
-        const firstTokenMs = firstChunkAt.get(stepNumber);
-        const lastTokenMs = lastModelChunkAt.get(stepNumber) ?? firstTokenMs;
-        const ttftMs =
-          firstTokenMs !== undefined
-            ? Math.max(0, firstTokenMs - tracked.startTimeMs)
-            : undefined;
-        const streamMs =
-          firstTokenMs !== undefined && lastTokenMs !== undefined
-            ? Math.max(0, lastTokenMs - firstTokenMs)
-            : undefined;
-        const toolWaitMs =
-          lastTokenMs !== undefined
-            ? Math.max(0, stepEndMs - lastTokenMs)
-            : undefined;
-        const windowMs = (
-          window: StreamWindow | undefined,
-        ): number | undefined =>
-          window ? Math.max(0, window.last - window.first) : undefined;
-        const reasoningMs = windowMs(reasoningWindow.get(stepNumber));
-        const textMs = windowMs(textWindow.get(stepNumber));
-        const toolInputMs = windowMs(toolInputWindow.get(stepNumber));
-        const stepAttemptAttributes = attemptAttributes(
-          stepNumber,
-          tracked.startTimeMs,
-        );
-        firstChunkAt.delete(stepNumber);
-        lastModelChunkAt.delete(stepNumber);
-        reasoningWindow.delete(stepNumber);
-        textWindow.delete(stepNumber);
-        toolInputWindow.delete(stepNumber);
-        stepAttempts.delete(stepNumber);
-        // Per-step token usage on the span so the dashboard can accumulate live
-        // usage straight off the trace stream (no separate usage channel).
-        const attributes = {
-          ...tracked.attributes,
+        // Per-step timing and token usage on the span so the dashboard can
+        // accumulate live usage straight off the trace stream (no separate
+        // usage channel).
+        spans.close(tracked, stepEndMs, "ok", {
           "agent.step_number": stepNumber,
           "step.state": "completed",
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
-          ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
-          ...stepAttemptAttributes,
-          ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
-          ...(toolWaitMs !== undefined
-            ? { "model.tool_wait_ms": toolWaitMs }
-            : {}),
-          ...(reasoningMs !== undefined
-            ? { "model.reasoning_stream_ms": reasoningMs }
-            : {}),
-          ...(textMs !== undefined ? { "model.text_stream_ms": textMs } : {}),
-          ...(toolInputMs !== undefined
-            ? { "model.tool_input_stream_ms": toolInputMs }
-            : {}),
+          ...stepTiming.closeStep(stepNumber, stepEndMs),
           "model.input_tokens": stepTokens.inputTokens,
           "model.output_tokens": stepTokens.outputTokens,
           "model.reasoning_tokens": stepTokens.reasoningTokens,
@@ -1789,24 +1291,6 @@ export async function runAgentLoop(
               output: outputWithoutMediaBytes(result.output),
             })),
           ),
-        };
-        tracked.otelSpan.setAttributes(attributes);
-        tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
-        tracked.otelSpan.end(stepEndMs);
-        void publishSpan({
-          traceId: tracked.traceId,
-          spanId: tracked.spanId,
-          parentSpanId: tracked.parentSpanId,
-          name: "model.step",
-          kind: "model.step",
-          startTimeMs: tracked.startTimeMs,
-          endTimeMs: stepEndMs,
-          durationMs: stepEndMs - tracked.startTimeMs,
-          status: "ok",
-          endpointId: session.endpointId,
-          agentId: session.agentId,
-          conversationKey: session.conversationKey,
-          attributes: attributes,
         });
       }
       // Re-publish the running root span with the sandbox CPU accumulated so far so
@@ -1830,10 +1314,7 @@ export async function runAgentLoop(
           attributes: { ...rootRunningAttributes, ...liveRoleCpu },
         });
       }
-      stepSpans.delete(stepNumber);
-      if (activeStepNumber === stepNumber) {
-        activeStepNumber = undefined;
-      }
+      stepTiming.endActiveStep(stepNumber);
     },
     onError: async ({ error }) => {
       const errorText = errorMessage(error);
@@ -1855,13 +1336,8 @@ export async function runAgentLoop(
         },
       );
 
-      await lifecycle.emit("agent.failed", {
-        error: errorText,
-        toolsUsed: toLifecycleValue(tools.toolsUsed),
-        toolUsage: toLifecycleValue(tools.toolUsage),
-        toolCalls: toLifecycleValue(tools.toolCalls),
-      });
       await reply?.onErrorText(errorText).catch(() => {});
+      await announceFailure(errorText);
       if (isContextLengthError(errorText)) {
         await autoCompact(undefined, true);
       }
@@ -1884,12 +1360,7 @@ export async function runAgentLoop(
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       finishObserved = true;
-      // The turn total wins (a harness counts calls no step reported), unless
-      // a stop thrown from prepareStep left it empty: then the step sum stands.
-      if (Object.values(usageTokenTotals(usage)).some((tokens) => tokens > 0)) {
-        taskUsage = usage;
-      }
-      taskStepCount = stepCount;
+      taskTotals.finish(usage, stepCount);
       const approvalRequests = extractApprovalRequests(steps);
       // `isAutomatic` records a decision the SDK already answered this run, so
       // only a request still waiting on a human may gate the turn.
@@ -1908,7 +1379,7 @@ export async function runAgentLoop(
         toolsUsed: tools.toolsUsed,
         toolUsage: tools.toolUsage,
         toolCalls: tools.toolCalls,
-        usage: taskUsage,
+        usage: taskTotals.usage(),
       };
 
       try {
@@ -1919,13 +1390,13 @@ export async function runAgentLoop(
             : unpersisted,
         );
         persistedResponseCount = responseMessages.length;
-        options.subagentWatch?.confirmDelivered();
+        await options.subagentWatch?.confirmDelivered();
 
         // A run that gave up its slot ends on tool results; its next pass
         // answers from them, so nothing is delivered or failed here. A step
         // waiting on an approval stops for that instead.
-        yielded &&= approvals.length === 0;
-        if (yielded) {
+        if (approvals.length > 0) deadline.withdrawYield();
+        if (deadline.hasYielded()) {
           logInfo(
             `Run yielded its worker slot after ${stepCount} step(s)`,
             finishLog,
@@ -1975,19 +1446,15 @@ export async function runAgentLoop(
               toolsUsed: tools.toolsUsed,
               toolUsage: tools.toolUsage,
               toolCalls: tools.toolCalls,
-              usage: taskUsage,
+              usage: taskTotals.usage(),
             },
           );
-          await lifecycle.emit("agent.failed", {
-            error: errorText,
+          await reply?.onErrorText(errorText).catch(() => {});
+          await announceFailure(errorText, {
             finishReason: finishReason,
             stepCount: stepCount,
             toolCallCount: toolCallCount,
-            toolsUsed: toLifecycleValue(tools.toolsUsed),
-            toolUsage: toLifecycleValue(tools.toolUsage),
-            toolCalls: toLifecycleValue(tools.toolCalls),
           });
-          await reply?.onErrorText(errorText).catch(() => {});
 
           return;
         }
@@ -1996,7 +1463,7 @@ export async function runAgentLoop(
         // parsing or reply delivery below fails, so record the metric line once
         // here; a later failure adds its own model.invocation.failed line.
         logInfo(
-          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(taskUsage)}, ${formatDuration(finishLog.durationMs)}`,
+          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(taskTotals.usage())}, ${formatDuration(finishLog.durationMs)}`,
           finishLog,
         );
 
@@ -2082,22 +1549,11 @@ export async function runAgentLoop(
           errorDetails: serializeError(err),
         });
 
-        await lifecycle.emit("agent.failed", {
-          error: errorText,
-          toolsUsed: toLifecycleValue(tools.toolsUsed),
-          toolUsage: toLifecycleValue(tools.toolUsage),
-          toolCalls: toLifecycleValue(tools.toolCalls),
-        });
-        // agent.failed is observe-only for hooks (side effects, no mutation).
-        if (hooks.hasHooksFor("agent.failed")) {
-          await hooks.runMutation("agent.failed", { error: errorText });
-        }
         await reply?.onErrorText(errorText).catch(() => {});
+        await announceFailure(errorText);
       } finally {
-        await finalizeUsage(
+        await finalizer.finalize(
           didFail ? "failed" : "completed",
-          taskUsage,
-          taskStepCount,
           toolCallCount,
           Date.now() - runStartedAt,
           terminalError,
@@ -2105,13 +1561,8 @@ export async function runAgentLoop(
       }
     },
   };
-  let harnessRuntime:
-    | ReturnType<typeof createConfiguredHarnessAgent>
-    | undefined;
+  let harnessTurn: HarnessTurn | undefined;
   let stream: ReturnType<typeof streamText>;
-  const usesAiSdkHarness = agentConfig.harness !== undefined;
-  let harnessReservation: string | undefined;
-  let harnessEnvironment: string | undefined;
   try {
     if (usesAiSdkHarness) {
       if (policyToolApproval) {
@@ -2119,100 +1570,41 @@ export async function runAgentLoop(
           "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
         );
       }
-      // No step boundary carries the turn's input on this path: store it now.
-      await session.flushPendingStoredEvents();
-      await applyHarnessSteeringBeforeTurn(session, turnContext, agentConfig);
-      const harnessType = agentConfig.harness!.type;
-      const stored = await session.loadHarnessSession();
-      const reservationKey = harnessReservationKey({
-        agentReservationKey: agentMachineKey,
-        conversationKey: session.conversationKey,
-        isolated: options.isolatedSandbox === true,
-        stored: stored,
-        type: harnessType,
-      });
-      harnessReservation = reservationKey;
-      const shared = reservationKey !== session.conversationKey;
-      const compute = requireHarnessSandbox(sandboxes[0]?.sandbox);
-      let usage: SandboxUsage | undefined;
-      harnessRuntime = createConfiguredHarnessAgent({
+      harnessTurn = await prepareHarnessTurn({
+        abortController: runAbort,
         agentConfig: agentConfig,
-        compute:
-          shared || !compute.controlPlane
-            ? compute
-            : {
-                ...compute,
-                controlPlane: {
-                  ...compute.controlPlane,
-                  releaseAfterIdleSeconds: ISOLATED_SANDBOX_RELEASE_SECONDS,
-                },
-              },
-        id: session.agentId,
-        instructions: turnContext.system
-          .map((message) => message.content)
-          .join("\n\n"),
+        agentReservationKey: agentMachineKey,
+        applySteering: (): Promise<void> =>
+          applyHarnessSteeringBeforeTurn(session, turnContext, agentConfig),
+        configuredApprovals: configuredApprovals,
+        createAgent: createConfiguredHarnessAgent,
+        isolated: options.isolatedSandbox === true,
         metadata: sandboxMetadata,
-        onUsage: (reported): void => {
-          usage = reported;
+        onOccupied: (release): void => {
+          releaseSandboxOccupancy = release;
         },
-        reservationKey: reservationKey,
-        shared: shared,
-        skills: await session.loadHarnessSkills(),
-        toolApproval:
-          configuredApprovals.size > 0
-            ? Object.fromEntries(
-                [...configuredApprovals.keys()].map((name) => [
-                  name,
-                  "user-approval" as const,
-                ]),
-              )
-            : undefined,
+        openSession: openAiSdkHarnessSession,
+        sandbox: sandboxes[0],
+        session: session,
+        stopMessage: stopMessage,
         tools: tools,
+        turnContext: turnContext,
       });
-      releaseSandboxOccupancy = occupySandbox(
-        harnessRuntime.reservationKey,
-        session.eventId,
-        { agentId: session.agentId, conversationKey: session.conversationKey },
-      );
-      activeHarnessSession = await openAiSdkHarnessSession({
-        abortSignal: runAbort.signal,
-        agent: harnessRuntime.agent,
-        stored: stored,
-        type: harnessType,
-      });
-      stopHarnessLeaseMonitor = startHarnessLeaseMonitor(
-        session,
-        runAbort,
-        stopMessage,
-      );
-      harnessEnvironment = session.environmentText(
-        formatSandboxStatus({
-          name: sandboxes[0]!.name,
-          provider: compute.provider,
-          specs: configuredSandboxSpecs(compute),
-          state: "running",
-          shared: shared,
-          usage: usage,
-          neighbours: sandboxNeighbours(
-            harnessRuntime.reservationKey,
-            session.eventId,
-          ),
-        }),
-      );
+      activeHarnessSession = harnessTurn.nativeSession;
       // The trace carries the environment the model actually received.
       rootRunningAttributes = {
         ...rootRunningAttributes,
-        "agent.environment": traceAttribute(harnessEnvironment),
+        "agent.environment": traceAttribute(harnessTurn.environment),
       };
       otelRootSpan.setAttributes(rootRunningAttributes);
     }
-    stream = harnessRuntime
-      ? await harnessRuntime.agent.stream({
+    stream = harnessTurn
+      ? await harnessTurn.runtime.agent.stream({
           messages: harnessPromptMessages(
             turnContext.messages,
-            harnessEnvironment ?? environment,
+            harnessTurn.environment,
           ),
-          session: activeHarnessSession!,
+          session: harnessTurn.nativeSession,
           abortSignal: runAbort.signal,
           // The same step and tool hooks as streamText, so a harness run
           // traces every step. onEnd stays out: finalizeHarnessStream calls it
@@ -2239,18 +1631,15 @@ export async function runAgentLoop(
         })
       : streamText(streamOptions);
   } catch (error) {
-    stopHarnessLeaseMonitor?.();
-    await activeHarnessSession?.destroy().catch(() => {});
+    await harnessTurn?.dispose();
     didFail = true;
     const message = errorMessage(error);
     failureText = message;
     terminalError = error instanceof Error ? error : new Error(message);
-    await lifecycle.emit("agent.failed", { error: message });
     await reply?.onErrorText(message).catch(() => {});
-    await finalizeUsage(
+    await announceFailure(message);
+    await finalizer.finalize(
       "failed",
-      taskUsage,
-      taskStepCount,
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
@@ -2274,7 +1663,7 @@ export async function runAgentLoop(
       return;
     }
     harnessStreamFinalized = true;
-    stopHarnessLeaseMonitor?.();
+    harnessTurn?.stopLeaseMonitor();
     const abortError = runAbort.signal.aborted
       ? runAbort.signal.reason
       : undefined;
@@ -2283,7 +1672,7 @@ export async function runAgentLoop(
       await parkAiSdkHarnessSession({
         broodsSession: session,
         nativeSession: activeHarnessSession,
-        reservationKey: harnessReservation ?? session.conversationKey,
+        reservationKey: harnessTurn?.reservationKey ?? session.conversationKey,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });
@@ -2324,7 +1713,7 @@ export async function runAgentLoop(
       terminalError ??= new Error("Caller stopped reading the stream");
       runAbort.abort(terminalError);
     }
-    if (!drained && finishObserved && !usageFinalized) {
+    if (!drained && finishObserved && !finalizer.finalized()) {
       // onEnd is still persisting and will finalize the run as completed. The
       // SDK closes the stream only after onEnd returns, so draining waits for it.
       try {
@@ -2334,18 +1723,19 @@ export async function runAgentLoop(
       }
     }
     await finalizeHarnessStream();
-    if (usageFinalized) return;
+    // onEnd sets finishObserved before it finalizes; when it did, the call
+    // below only waits for that finalization.
     if (!finishObserved) {
       didFail = true;
       terminalError ??= new Error(
         "Model stream ended without a completion callback",
       );
       failureText ??= terminalError.message;
+      // A hard stream failure or an abandoned read never reached onError.
+      await announceFailure(failureText);
     }
-    await finalizeUsage(
+    await finalizer.finalize(
       "failed",
-      taskUsage,
-      taskStepCount,
       toolCallSummaries.size,
       Date.now() - runStartedAt,
       terminalError,
@@ -2353,7 +1743,7 @@ export async function runAgentLoop(
   };
 
   /**
-   * Wrap consumeStream so finalizeUsage fires in a finally block even when
+   * Wrap consumeStream so finalization fires in a finally block even when
    * streamText throws hard (e.g. network failure before any chunk arrives) and
    * onEnd / onError never run.
    */
@@ -2378,7 +1768,7 @@ export async function runAgentLoop(
     consumeStream: wrappedConsumeStream,
     ensureFinalized: ensureFinalized,
     didFail: (): boolean => didFail,
-    yielded: (): boolean => yielded && !didFail,
+    yielded: (): boolean => deadline.hasYielded() && !didFail,
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,
@@ -2644,37 +2034,6 @@ function withEnvironment(
 }
 
 /**
- * Marks the item at `index` (the last by default) as a prompt cache
- * breakpoint, at the ends of the stored system prompt and history the next run
- * reads back. Unchanged when the run's model takes no breakpoint.
- */
-function withCacheBreakpoint<T extends { providerOptions?: ProviderOptions }>(
-  items: T[],
-  breakpoint: ProviderOptions | undefined,
-  index: number = items.length - 1,
-): T[] {
-  const item = items[index];
-  if (breakpoint === undefined || item === undefined) {
-    return items;
-  }
-
-  return items.with(index, markedForCache(item, breakpoint));
-}
-
-/** `item` with the breakpoint's options merged into its own, per provider. */
-function markedForCache<T extends { providerOptions?: ProviderOptions }>(
-  item: T,
-  breakpoint: ProviderOptions,
-): T {
-  const providerOptions = { ...item.providerOptions };
-  for (const [provider, options] of Object.entries(breakpoint)) {
-    providerOptions[provider] = { ...providerOptions[provider], ...options };
-  }
-
-  return { ...item, providerOptions: providerOptions };
-}
-
-/**
  * The new turn an AI SDK Harness session receives. A tool continuation stays
  * assistant + tool as it is; a user turn carries the live environment.
  */
@@ -2810,19 +2169,6 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
 
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
-}
-
-/** The root's closing status: a clean run that left something open waits on it. */
-function rootSpanStatus(
-  status: "completed" | "failed",
-  waitingOn: TaskWaitingOn | undefined,
-): ObservabilitySpanRow["status"] {
-  if (status === "failed") return "error";
-  if (!waitingOn) return "ok";
-
-  return waitingOn === "question" || waitingOn === "approval"
-    ? "needs_input"
-    : "waiting";
 }
 
 /**

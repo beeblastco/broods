@@ -23,7 +23,7 @@ export interface Exception {
 }
 
 /** Reviewed, time-limited exceptions. Each one needs a reachability note. */
-const EXCEPTIONS: Exception[] = [
+export const EXCEPTIONS: Exception[] = [
   {
     package: "braces",
     advisory: "GHSA-vfj7-8cjw-p6xm",

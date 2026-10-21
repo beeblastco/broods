@@ -285,6 +285,10 @@ function fakeStorage(): Storage {
     agentPolicies: { getById: none },
     connections: { load: none, saveRefreshed: async () => false },
     roleSessions: { resolveByTokenHash: none },
+    accountApiKeys: {
+      resolveByKeyHash: none,
+      touchLastUsed: async () => undefined,
+    },
     taskUsage: { record: async () => undefined },
     auditLedger: { append: async () => undefined },
   };
