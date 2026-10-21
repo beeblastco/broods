@@ -98,11 +98,12 @@ export function AppSidebar(): React.JSX.Element {
                     // The whole route, on viewport entry, except the page we
                     // are on. The default prefetch stops at loading.tsx and
                     // expires at once, so a click still fetched the tree, then
-                    // its chunks, then data: three trips in a row.
+                    // its chunks, then data: three trips in a row. Home only
+                    // redirects to a project, so its links are never walked.
                     render={
                       <Link
                         href={itemHref(item)}
-                        prefetch={!isActive}
+                        prefetch={!isActive && pathname !== "/"}
                         draggable={false}
                       />
                     }

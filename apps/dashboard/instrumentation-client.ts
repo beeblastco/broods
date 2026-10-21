@@ -1,4 +1,5 @@
-import posthog, { type CaptureResult, type Properties } from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
+import type { CaptureResult, Properties } from "posthog-js";
 
 // Browser analytics and error tracking: anonymous behaviour only, never what
 // users type or see. A no-op when the key or host is unset.
@@ -24,7 +25,9 @@ interface CapturedException {
   value?: string;
 }
 
-if (posthogKey && posthogHost) {
+void analytics.then((posthog): void => {
+  if (!posthogKey || !posthogHost) return;
+
   posthog.init(posthogKey, {
     api_host: posthogHost,
     before_send: anonymized,
@@ -43,7 +46,7 @@ if (posthogKey && posthogHost) {
   // Browsers identified before analytics went anonymous still hold the email
   // and name the flags request would send.
   posthog.resetPersonPropertiesForFlags();
-}
+});
 
 // Runs on every event, so it holds after posthog.reset() clears registered
 // properties: no GeoIP lookup, URLs without typed params, and each exception

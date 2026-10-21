@@ -12,7 +12,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
 import { Check, Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
@@ -104,8 +104,10 @@ export function EnvironmentVariablesPanel({
         name: name.trim(),
         value: value,
       });
-      posthog.capture("environment_variable_added", {
-        has_value: Boolean(value),
+      void analytics.then((posthog): void => {
+        posthog.capture("environment_variable_added", {
+          has_value: Boolean(value),
+        });
       });
       setName("");
       setValue("");
@@ -122,7 +124,9 @@ export function EnvironmentVariablesPanel({
     setIsDeletingVar(true);
     try {
       await removeVariable({ variableId: deletingVar._id });
-      posthog.capture("environment_variable_removed");
+      void analytics.then((posthog): void => {
+        posthog.capture("environment_variable_removed");
+      });
       setDeletingVar(null);
     } finally {
       setIsDeletingVar(false);

@@ -1,10 +1,10 @@
 {
   "canvas": {
-    "jsRequests": 47,
-    "jsBytes": 734123
+    "jsRequests": 32,
+    "jsBytes": 470109
   },
   "projects": {
-    "jsRequests": 36,
-    "jsBytes": 581814
+    "jsRequests": 28,
+    "jsBytes": 364115
   }
 }
