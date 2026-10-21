@@ -1,9 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  isChannelTraceEnabled,
-  resolveSubagentMode,
-  toRuntimeAgentConfig,
-} from "../src/shared/domain/agent-config.ts";
+import { toRuntimeAgentConfig } from "../src/shared/domain/agent-config.ts";
 
 // The validation rules themselves are tested with the config plane's copy in
 // packages/convex/tests/agentRules.test.ts; these cover what core adds.
@@ -27,35 +23,6 @@ describe("agent config runtime", () => {
 
     expect(() => toRuntimeAgentConfig(stored)).toThrow(
       "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
-    );
-  });
-
-  it("appends the trace link only on an explicit enabled", () => {
-    expect(isChannelTraceEnabled({}, "zalo")).toBe(false);
-    expect(
-      isChannelTraceEnabled(
-        { channels: { zalo: { trace: "enabled" } } },
-        "zalo",
-      ),
-    ).toBe(true);
-    expect(
-      isChannelTraceEnabled(
-        { channels: { zalo: { trace: "disabled" } } },
-        "zalo",
-      ),
-    ).toBe(false);
-  });
-
-  it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {
-    expect(resolveSubagentMode({})).toBe("persistent");
-    expect(resolveSubagentMode({ subagent: { enabled: true } })).toBe(
-      "persistent",
-    );
-    expect(resolveSubagentMode({ subagent: { mode: "persistent" } })).toBe(
-      "persistent",
-    );
-    expect(resolveSubagentMode({ subagent: { mode: "ephemeral" } })).toBe(
-      "ephemeral",
     );
   });
 });

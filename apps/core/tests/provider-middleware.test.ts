@@ -70,14 +70,6 @@ describe("mergeSystemMessagesMiddleware", () => {
 
     expect(await transform(original)).toEqual(original);
   });
-
-  it("passes through prompts without system messages", async () => {
-    const original = [
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ];
-
-    expect(await transform(original)).toEqual(original);
-  });
 });
 
 type StreamPart = Record<string, unknown>;

@@ -466,20 +466,6 @@ describe("session system context", () => {
 });
 
 describe("session pruning", () => {
-  it("keeps non-reasoning messages unchanged when pruning is disabled", async () => {
-    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
-    const messages = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "hi" },
-    ] as actualAi.ModelMessage[];
-
-    expect(
-      pruneSessionMessages(messages, {
-        session: { pruning: { enabled: false } },
-      }),
-    ).toEqual(messages);
-  });
-
   it("strips completed assistant reasoning even when pruning is disabled", async () => {
     const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [

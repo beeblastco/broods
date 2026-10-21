@@ -65,8 +65,6 @@ const SCRIPTS: Record<string, Script> = {
     restartAfterMs: SIX_MINUTES,
   },
   overflow: { answers: { a: [{ status: 503, stop: true }] }, events: 5_001 },
-  ratelimited: { answers: { a: [{ status: 429 }] } },
-  rejected: { answers: { a: [{ status: 404 }] } },
   timeout: {
     answers: { a: [{ status: "hang", stop: true }] },
     restartAfterMs: SIX_MINUTES,

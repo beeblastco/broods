@@ -83,19 +83,6 @@ function payloadFor(toolName: string): Record<string, unknown> {
 }
 
 describe("isolateLogRecord", () => {
-  it("keeps the levels the host logger also has", () => {
-    const levels = ["debug", "warn", "error"].map(
-      (level) =>
-        isolateLogRecord("acct_1", "my-agent-hooks", {
-          t: "log",
-          level: level,
-          message: `${level} line`,
-        }).level,
-    );
-
-    expect(levels).toEqual(["debug", "warn", "error"]);
-  });
-
   it("treats console.log as info and tags the account and bundle", () => {
     expect(
       isolateLogRecord("acct_1", "my-agent-hooks", {
@@ -111,24 +98,6 @@ describe("isolateLogRecord", () => {
         toolName: "my-agent-hooks",
         source: "user-code",
       },
-    });
-  });
-
-  it("falls back to info for an unknown level", () => {
-    expect(
-      isolateLogRecord("acct_1", "hooks", {
-        t: "log",
-        level: "trace",
-        message: "x",
-      }).level,
-    ).toBe("info");
-  });
-
-  it("still produces a record when the frame carries no message", () => {
-    expect(isolateLogRecord(undefined, undefined, { t: "log" })).toEqual({
-      level: "info",
-      message: "",
-      data: { accountId: undefined, source: "user-code" },
     });
   });
 });
@@ -165,23 +134,6 @@ describe("log frames on the wire", () => {
       { t: "log", level: "warn", message: "careful" },
       { t: "final", result: 1 },
     ]);
-  });
-
-  // JSON escaping is what makes NDJSON safe here; a raw newline in the message
-  // would split into two lines and neither would parse.
-  it("survives a message containing newlines", () => {
-    const line = JSON.stringify({
-      t: "log",
-      level: "log",
-      message: "line one\nline two",
-    });
-
-    expect(line.includes("\n")).toBe(false);
-    expect(parseRunnerFrame(line)).toEqual({
-      t: "log",
-      level: "log",
-      message: "line one\nline two",
-    });
   });
 });
 

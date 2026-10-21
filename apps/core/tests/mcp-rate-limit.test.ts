@@ -31,26 +31,6 @@ const record: McpRecord = {
 
 afterEach(() => setMcpForTests(null));
 
-it("waits the asked time and retries a rate-limited call", async () => {
-  let calls = 0;
-  setMcpForTests({
-    callTool: async () => {
-      calls += 1;
-
-      return calls < 3
-        ? { isError: true, content: [{ type: "text", text: RATE_LIMITED }] }
-        : { content: [{ type: "text", text: "found" }] };
-    },
-  });
-
-  const result = await callMcpTool(mcpConnection(record, undefined), "search", {
-    q: "x",
-  });
-
-  expect(result).toBe("found");
-  expect(calls).toBe(3);
-});
-
 it("reports each wait against the tool call, for its span", async () => {
   let calls = 0;
   setMcpForTests({

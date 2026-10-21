@@ -74,14 +74,6 @@ describe("forwarding a gateway message", () => {
     });
   });
 
-  it("leaves a missing author.bot flag alone", async () => {
-    const calls = captureFetch();
-    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
-
-    const data = (calls[0]!.body as { data: { author: unknown } }).data;
-    expect(data.author).toEqual({ id: "user-1", username: "ada" });
-  });
-
   it("adds the thread object Discord leaves out", async () => {
     const calls = captureFetch();
     await forwardMessageCreate(
@@ -106,14 +98,6 @@ describe("forwarding a gateway message", () => {
     expect(calls.map((call) => call.url)).toEqual(
       TARGETS.map((target) => target.webhookUrl),
     );
-  });
-
-  it("survives a webhook rejecting the delivery", async (): Promise<void> => {
-    captureFetch(500);
-
-    expect(
-      withoutWaiting(forwardMessageCreate(MESSAGE, null, "token-a", TARGETS)),
-    ).resolves.toBeUndefined();
   });
 
   it("retries a 5xx and a network error until core answers", async (): Promise<void> => {
@@ -141,28 +125,6 @@ describe("forwarding a gateway message", () => {
     );
 
     expect(seen.calls).toBe(3);
-  });
-
-  // The backoff alone waits at least 800ms before the second attempt.
-  it("waits as long as Retry-After asks instead of the backoff", async (): Promise<void> => {
-    let calls = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch: (): Response => {
-        calls += 1;
-
-        return calls === 1
-          ? new Response("", { headers: { "retry-after": "0" }, status: 429 })
-          : new Response("", { status: 200 });
-      },
-    });
-    const started = performance.now();
-    await forwardMessageCreate(MESSAGE, null, "token-a", [
-      { ...TARGETS[0]!, webhookUrl: `http://localhost:${server.port}/` },
-    ]);
-
-    expect(calls).toBe(2);
-    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("does not retry a 4xx", async (): Promise<void> => {

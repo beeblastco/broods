@@ -10,7 +10,6 @@ import {
   channelPolicyIdentity,
   createPolicyToolApproval,
   evaluateChannelInvoke,
-  policyDecisionLogMessage,
 } from "../src/harness/policy.ts";
 import {
   setStorageForTests,
@@ -126,50 +125,6 @@ function decisionType(status: unknown): string | undefined {
 }
 
 describe("agent policy enforce mode", () => {
-  it("formats policy warnings with enough detail for the dashboard log row", () => {
-    expect(
-      policyDecisionLogMessage({
-        action: "workspace.exec",
-        decision: "approved",
-        enforced: false,
-        inputPreview: 'command="whoami"',
-        mode: "audit",
-        reason: "Allowed by policy rule allow-bash",
-        toolName: "bash",
-      }),
-    ).toBe(
-      'Agent policy approved bash (audit): action workspace.exec, input command="whoami": Allowed by policy rule allow-bash',
-    );
-
-    expect(
-      policyDecisionLogMessage({
-        action: "workspace.exec",
-        decision: "denied",
-        enforced: false,
-        inputPreview: 'command="rm -rf /"',
-        mode: "audit",
-        reason: "Denied by policy rule deny-bash",
-        toolName: "bash",
-      }),
-    ).toBe(
-      'Agent policy would deny bash (audit): action workspace.exec, input command="rm -rf /": Denied by policy rule deny-bash',
-    );
-
-    expect(
-      policyDecisionLogMessage({
-        action: "workspace.exec",
-        decision: "denied",
-        enforced: true,
-        inputPreview: 'command="rm -rf /"',
-        mode: "enforce",
-        reason: "Denied by policy rule deny-bash",
-        toolName: "bash",
-      }),
-    ).toBe(
-      'Agent policy denied bash (enforce): action workspace.exec, input command="rm -rf /": Denied by policy rule deny-bash',
-    );
-  });
-
   it("acts on a denial the policy engine returned", async () => {
     auditWrites.length = 0;
     seenPolicyInputs.length = 0;

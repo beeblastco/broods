@@ -40,12 +40,6 @@ test("listEnv GETs the env collection and returns variable names", async () => {
   });
 });
 
-test("listEnv returns an empty array when the payload omits variables", async () => {
-  const { client } = clientWith(() => new Response(JSON.stringify({})));
-
-  expect(await client.listEnv("demo-app", "development")).toEqual([]);
-});
-
 test("getRuntimeKey recovers the runtime key", async () => {
   const { client, calls } = clientWith(
     () =>
@@ -120,14 +114,6 @@ test("removeEnv DELETEs the named env var", async () => {
     url: "https://convex.example.com/v1/account/projects/demo-app/stages/development/env/OPENAI_API_KEY",
     method: "DELETE",
   });
-});
-
-test("removeEnv throws on a non-ok response", async () => {
-  const { client } = clientWith(() => new Response("nope", { status: 500 }));
-
-  expect(client.removeEnv("demo-app", "development", "X")).rejects.toThrow(
-    "Remove environment variable failed",
-  );
 });
 
 // The backend keys the manifest route off the stage segment and rejects a

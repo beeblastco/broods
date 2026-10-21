@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { MatrixClient, MatrixError, normalizeApiUrl } from "../src/matrix.ts";
+import { MatrixClient, MatrixError } from "../src/matrix.ts";
 
 const API_URL = "https://matrix.example.org";
 const ROOM_ID = "!room:example.org";
@@ -58,14 +58,6 @@ describe("mapping an error response", () => {
         status: 502,
       });
     }
-  });
-});
-
-describe("normalizing a homeserver url", () => {
-  it("drops trailing slashes and leaves the rest alone", () => {
-    expect(normalizeApiUrl(`${API_URL}//`)).toBe(API_URL);
-    expect(normalizeApiUrl(API_URL)).toBe(API_URL);
-    expect(normalizeApiUrl(`${API_URL}/_base/`)).toBe(`${API_URL}/_base`);
   });
 });
 

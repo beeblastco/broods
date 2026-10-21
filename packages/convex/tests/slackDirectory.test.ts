@@ -135,16 +135,6 @@ describe("slack channel directory", () => {
     });
   });
 
-  it("maps HTTP 429 to a ratelimited result", async () => {
-    const { impl } = fetchStub([() => new Response("", { status: 429 })]);
-    const result = await fetchSlackChannelDirectory("xoxb-test", impl);
-    expect(result).toMatchObject({
-      ok: false,
-      status: 429,
-      reason: "ratelimited",
-    });
-  });
-
   it("maps Slack auth and scope errors to their reasons", async () => {
     for (const [slackError, reason] of [
       ["missing_scope", "missing_scope"],

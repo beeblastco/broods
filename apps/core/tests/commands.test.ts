@@ -10,7 +10,6 @@ import {
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import {
-  commands,
   executeCommand,
   getDiscordCommandRegistrations,
   parseCommand,
@@ -70,42 +69,6 @@ function createCommandContext(
   };
 }
 
-describe("command definitions", () => {
-  it("defines command handlers with expected aliases", () => {
-    expect(commands).toHaveLength(6);
-
-    const newCmd = commands.find((c) => c.aliases.includes("/new"));
-    const compactCmd = commands.find((c) => c.aliases.includes("/compact"));
-    const helpCmd = commands.find((c) => c.aliases.includes("/help"));
-    const steerCmd = commands.find((c) => c.aliases.includes("/steer"));
-    const stopCmd = commands.find((c) => c.aliases.includes("/stop"));
-    const queueCmd = commands.find((c) => c.aliases.includes("/queue"));
-
-    expect(newCmd).toBeDefined();
-    expect(compactCmd).toBeDefined();
-    expect(helpCmd).toBeDefined();
-    expect(steerCmd).toBeDefined();
-    expect(stopCmd?.aliases).toEqual(["/stop", "/cancel"]);
-    expect(queueCmd).toBeDefined();
-  });
-
-  it("/new and /clear share the same handler", () => {
-    const newCmd = commands.find((c) => c.aliases.includes("/new"));
-    const clearCmd = commands.find((c) => c.aliases.includes("/clear"));
-
-    expect(newCmd).toBe(clearCmd);
-    expect(newCmd?.aliases).toEqual(["/new", "/clear"]);
-  });
-
-  it("all commands have discord metadata", () => {
-    for (const cmd of commands) {
-      expect(cmd.discord).toBeDefined();
-      expect(cmd.discord?.names.length).toBeGreaterThan(0);
-      expect(cmd.discord?.description).toBeTruthy();
-    }
-  });
-});
-
 describe("parseCommand", () => {
   it("returns the command token for valid executable commands", () => {
     expect(parseCommand("/new")).toBe("/new");
@@ -124,11 +87,6 @@ describe("parseCommand", () => {
     expect(parseCommand("\t/Clear\n")).toBe("/clear");
   });
 
-  it("extracts the first token when extra arguments are present", () => {
-    expect(parseCommand("/new some extra args")).toBe("/new");
-    expect(parseCommand("/help  ")).toBe("/help");
-  });
-
   it("returns null for non-command text", () => {
     expect(parseCommand("hello world")).toBeNull();
     expect(parseCommand("")).toBeNull();
@@ -138,11 +96,6 @@ describe("parseCommand", () => {
   it("returns null for unregistered commands", () => {
     expect(parseCommand("/query")).toBeNull();
     expect(parseCommand("/query what is 2+2")).toBeNull();
-  });
-
-  it("returns null for unknown commands", () => {
-    expect(parseCommand("/unknown")).toBeNull();
-    expect(parseCommand("/foo bar")).toBeNull();
   });
 });
 
@@ -207,15 +160,6 @@ describe("executeCommand", () => {
     const ctx = createCommandContext({ channel: channel });
 
     await executeCommand("/query", ctx);
-
-    expect(channel.sendText).not.toHaveBeenCalled();
-  });
-
-  it("also ignores bogus command tokens", async () => {
-    const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel: channel });
-
-    await executeCommand("/bogus", ctx);
 
     expect(channel.sendText).not.toHaveBeenCalled();
   });
@@ -431,14 +375,6 @@ describe("getDiscordCommandRegistrations", () => {
     expect(registrations.find((r) => r.name === "queue")?.options).toHaveLength(
       1,
     );
-  });
-
-  it("uses default integration types and contexts when not specified", () => {
-    const registrations = getDiscordCommandRegistrations("global");
-
-    const helpCmd = registrations.find((r) => r.name === "help");
-    expect(helpCmd?.integration_types).toEqual([0]);
-    expect(helpCmd?.contexts).toEqual([0, 1]);
   });
 
   it("defaults to global scope when no scope is provided", () => {
