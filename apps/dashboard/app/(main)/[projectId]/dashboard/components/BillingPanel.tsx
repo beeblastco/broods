@@ -1,7 +1,6 @@
 "use client";
 
 import { ConfirmDialog } from "@/app/components/ConfirmDialog";
-import { HelpMark } from "@/app/components/HelpMark";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -17,6 +16,9 @@ import {
 import { type OrgSeats, useOrgSeats } from "@/app/hooks/useOrgSeats";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import {
+  ALLOWANCE_ROWS,
+  type AllowanceRow,
+  BUDGET_LEVEL_TEXT,
   billingReset,
   type BudgetUsage,
   formatAmount,
@@ -25,12 +27,14 @@ import {
   poolNote,
 } from "@/app/lib/allowance";
 import { toErrorMessage } from "@/app/lib/errors";
+import { tabHref } from "@/app/lib/navigation";
 import type { PlanTier } from "@/app/lib/pricing";
 import {
   DEFAULT_PLAN,
   isMaxPlan,
   perMonth,
   PLAN_CONFIGS,
+  PLANS,
   seatCount,
 } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
@@ -51,7 +55,7 @@ import { ArrowRight, ArrowUpRight, CreditCard, Plus } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { ALLOWANCE_ROWS } from "./AllowanceUsage";
+import { ResourceLabel } from "./AllowanceUsage";
 
 // Stripe states where a payment is owed and the portal can fix it.
 const PAYMENT_DUE_STATUSES: ReadonlySet<string | null> = new Set([
@@ -60,40 +64,32 @@ const PAYMENT_DUE_STATUSES: ReadonlySet<string | null> = new Set([
   "incomplete",
 ]);
 
-// The plans side by side, cheapest first.
-const PLANS: PlanTier[] = Object.values(PLAN_CONFIGS)
-  .toSorted((a, b) => a.order - b.order)
-  .map((config) => config.key);
-
 // What each plan allows: the monthly caps the Usage tab measures, then the
 // plan's other limits.
 const LIMIT_ROWS: LimitRow[] = [
-  ...ALLOWANCE_ROWS.flatMap((row) => {
-    const share = row.share;
-    if (share === null) return [];
-
-    return [
-      {
-        key: row.key,
-        label: row.label,
-        color: row.color,
-        help: row.help,
-        limit: (plan: PlanTier) => PLAN_LIMITS[plan].caps[share],
-        format: (limit: number) => formatAmount(limit, row.unit),
-      },
-    ];
-  }),
+  ...ALLOWANCE_ROWS.flatMap(({ key, label, unit, share, color, help }) =>
+    share === null
+      ? []
+      : [
+          {
+            key: key,
+            label: label,
+            color: color,
+            help: help,
+            limit: (plan: PlanTier) => PLAN_LIMITS[plan].caps[share],
+            format: (limit: number) => formatAmount(limit, unit),
+          },
+        ],
+  ),
   {
     key: "runsPerMinute",
     label: "Runs per minute",
     limit: (plan) => PLAN_LIMITS[plan].runsPerMinute,
-    format: (limit) => limit.toLocaleString(),
   },
   {
     key: "maxOwnedOrgs",
     label: "Organizations you own",
     limit: (plan) => PLAN_LIMITS[plan].maxOwnedOrgs,
-    format: (limit) => limit.toLocaleString(),
   },
   {
     key: "developerSeats",
@@ -104,13 +100,12 @@ const LIMIT_ROWS: LimitRow[] = [
   },
 ];
 
-interface LimitRow {
+interface LimitRow extends Pick<AllowanceRow, "label" | "help"> {
   key: string;
-  label: string;
   color?: string;
-  help?: string;
   limit: (plan: PlanTier) => number;
-  format: (limit: number) => string;
+  /** How a limit reads; a plain count without one. */
+  format?: (limit: number) => string;
 }
 
 interface Notice {
@@ -131,15 +126,10 @@ const ACTIVATING_NOTICE: Notice = {
 };
 
 /**
- * Billing tab, in separate parts: the plan as a table of what each plan
- * allows, the current one marked, with the active org's closest cap and the
- * plan's actions under it, then a single notice when something needs
- * attention, then the owner's developer seats, then what they pay each
- * month. Pro belongs to the owner and covers every org they own, with one
- * seat pool across them. Every member sees the plan and their own seat; only
- * the owner pays, so only the owner gets Upgrade, Add seat, the portal and
- * the bill. The per-resource usage lives on the Usage tab, which the plan
- * links to.
+ * Billing tab: the plan table with its actions, one notice when something
+ * needs attention, then the owner's seats and bill. Pro covers every org the
+ * owner owns. Only the owner pays, so only the owner gets Upgrade, Add seat,
+ * the portal and the bill.
  */
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -148,13 +138,14 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const searchParams = useSearchParams();
 
   const seats = useOrgSeats();
-  // The plan and its notice always read this month; only MonthUsage follows
-  // the picker, so switching months never blanks the plan.
+  // Always this month: the Usage tab's month picker never moves the plan.
   const budget = useQuery(api.account.budget.getForActiveOrg, {});
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
   const plan: PlanTier = budget?.plan ?? DEFAULT_PLAN;
+  // A subscription waiting on a payment is still Pro, held back until paid.
+  const shown: PlanTier = seats?.status ? "pro" : plan;
   const isOwner = seats?.isOwner === true;
   // A live subscription in any state (even past_due) goes through the portal;
   // checkout refuses it. `undefined` is still loading, so no Upgrade yet.
@@ -163,11 +154,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const showUpgrade =
     seats?.status === null && !isMaxPlan(plan) && budget?.enforced === true;
   const canUpgrade = showUpgrade && isOwner;
-  // What a member of a free org hears instead of a checkout.
-  const ownerOnly =
-    showUpgrade && seats && !isOwner
-      ? `Only ${seats.ownerName}, the owner, can upgrade ${seats.org.name}. You are not charged.`
-      : null;
+  const ownerOnly = showUpgrade ? ownerOnlyNote(seats) : null;
   const notice = pickNotice(
     budget,
     seats,
@@ -217,12 +204,17 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         title={
           seats?.isOwner === false ? `Plan for ${seats.org.name}` : "Your plan"
         }
-        description={planSummary(budget, seats)}
+        description={planSummary(budget, seats, shown)}
       >
         <PlanCard
           budget={budget}
-          seats={seats}
-          projectId={projectId}
+          current={shown}
+          status={seats?.status}
+          usageHref={tabHref(
+            `/${projectId}/dashboard`,
+            "usage",
+            searchParams.toString(),
+          )}
           actions={
             <PlanActions
               seats={seats}
@@ -261,24 +253,26 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
  */
 function PlanCard({
   budget,
-  seats,
-  projectId,
+  current,
+  status,
+  usageHref,
   actions,
 }: {
   budget: BudgetUsage | null | undefined;
-  seats: OrgSeats | undefined;
-  projectId: Id<"projects">;
+  current: PlanTier;
+  /** The subscription's Stripe status; undefined while seats load. */
+  status: string | null | undefined;
+  usageHref: string;
   actions: React.ReactNode;
 }): React.JSX.Element | null {
   if (budget === undefined) return <Skeleton className="h-80 rounded-lg" />;
   if (budget?.enforced === false) return null;
-  const current = shownPlan(budget, seats);
 
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
-      <PlanTable current={current} status={seats?.status ?? null} />
+      <PlanTable current={current} status={status ?? null} />
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border px-4 py-2.5">
-        <ClosestCap budget={budget} projectId={projectId} />
+        <ClosestCap budget={budget} usageHref={usageHref} />
         {actions}
       </div>
     </div>
@@ -286,8 +280,8 @@ function PlanCard({
 }
 
 /**
- * Every plan's limits side by side, `current` marked with its status. On a
- * cheaper plan, each limit a better plan raises says by how much.
+ * Every plan's limits side by side, `current` marked with its status. Each
+ * limit a better plan raises says by how many times.
  */
 function PlanTable({
   current,
@@ -306,7 +300,7 @@ function PlanTable({
               <span className="inline-flex items-center gap-2">
                 {PLAN_CONFIGS[plan].label}
                 <span className="font-normal text-muted-foreground">
-                  {isMaxPlan(plan) ? perMonth(1) : "Free"}
+                  {PLAN_CONFIGS[plan].price}
                 </span>
                 {plan === current && <PlanBadge status={status} />}
               </span>
@@ -318,30 +312,31 @@ function PlanTable({
         {LIMIT_ROWS.map((row) => (
           <TableRow key={row.key}>
             <TableCell>
-              <span className="flex items-center gap-2">
-                {row.color && (
-                  <span
-                    className="size-2 rounded-sm bg-(--series-color)"
-                    style={{ "--series-color": row.color }}
-                  />
-                )}
-                {row.label}
-                {row.help && <HelpMark text={row.help} />}
-              </span>
+              <ResourceLabel row={row} />
             </TableCell>
-            {PLANS.map((plan) => (
-              <TableCell key={plan} className="text-right">
-                <span
-                  className={cn(
-                    "tabular-nums",
-                    plan !== current && "text-muted-foreground",
+            {PLANS.map((plan) => {
+              const limit = row.limit(plan);
+              const base = row.limit(current);
+              const gain = base > 0 ? limit / base : 0;
+
+              return (
+                <TableCell key={plan} className="text-right">
+                  <span
+                    className={cn(
+                      "tabular-nums",
+                      plan !== current && "text-muted-foreground",
+                    )}
+                  >
+                    {row.format?.(limit) ?? limit.toLocaleString()}
+                  </span>
+                  {gain > 1 && (
+                    <span className="ml-1.5 text-2xs text-success">
+                      {Math.round(gain)}×
+                    </span>
                   )}
-                >
-                  {row.format(row.limit(plan))}
-                </span>
-                <Gain row={row} plan={plan} current={current} />
-              </TableCell>
-            ))}
+                </TableCell>
+              );
+            })}
           </TableRow>
         ))}
       </TableBody>
@@ -461,13 +456,14 @@ function SeatsSection({
   const { billing, developers, extraSeats, paid } = seats;
   if (!billing && developers === 0) return null;
   const canAdd = paid && seats.seatsToAdd > 0;
+  const rows = holders ?? [];
 
   return (
     <>
       <Section title="Developer seats" description={seatsDescription(seats)}>
-        {((holders && holders.length > 0) || canAdd) && (
+        {(rows.length > 0 || canAdd) && (
           <div className="overflow-hidden rounded-lg border border-border bg-card">
-            {holders && holders.length > 0 && (
+            {rows.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -476,7 +472,7 @@ function SeatsSection({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {holders.map((holder) => (
+                  {rows.map((holder) => (
                     <TableRow key={holder.userId}>
                       <TableCell>{holder.name}</TableCell>
                       <TableCell>
@@ -575,35 +571,31 @@ function MonthlyBill({
   );
 }
 
-// How close the pool is to its closest cap, linking to the full allowance.
-// Nothing on an install with no caps.
+// How close the pool is to its closest cap, and a link to the Usage tab.
 function ClosestCap({
   budget,
-  projectId,
+  usageHref,
 }: {
   budget: BudgetUsage | null;
-  projectId: Id<"projects">;
+  usageHref: string;
 }): React.JSX.Element {
-  const searchParams = useSearchParams();
   const used = budget?.usedPercent;
 
   return (
     <div className="flex items-center gap-3">
-      {used != null && (
+      {budget && used != null && (
         <span
           className={cn(
             "text-xs tabular-nums",
-            budget?.level === "ok" && "text-muted-foreground",
-            budget?.level === "warning" && "text-warning",
-            budget?.level === "exhausted" && "text-destructive",
+            BUDGET_LEVEL_TEXT[budget.level],
           )}
         >
-          {formatPercent(used)} of the closest limit used
+          {formatPercent(used)} used
         </span>
       )}
       <Button
         nativeButton={false}
-        render={<Link href={usageHref(projectId, searchParams)} />}
+        render={<Link href={usageHref} />}
         size="xs"
         variant="ghost"
         className="cursor-pointer"
@@ -612,27 +604,6 @@ function ClosestCap({
         <ArrowRight data-icon="inline-end" />
       </Button>
     </div>
-  );
-}
-
-// How many times `current`'s limit `plan` gives, on the better plan's cell
-// only, when it is a raise.
-function Gain({
-  row,
-  plan,
-  current,
-}: {
-  row: LimitRow;
-  plan: PlanTier;
-  current: PlanTier;
-}): React.JSX.Element | null {
-  const base = row.limit(current);
-  const ratio = row.limit(plan) / base;
-  if (PLAN_CONFIGS[plan].order <= PLAN_CONFIGS[current].order) return null;
-  if (base === 0 || ratio <= 1) return null;
-
-  return (
-    <span className="ml-1.5 text-2xs text-success">{Math.round(ratio)}×</span>
   );
 }
 
@@ -773,6 +744,13 @@ function storageNotice(
   };
 }
 
+// What a member of a free org hears instead of a checkout; null for the owner.
+function ownerOnlyNote(seats: OrgSeats | undefined): string | null {
+  if (!seats || seats.isOwner) return null;
+
+  return `Only ${seats.ownerName}, the owner, can upgrade ${seats.org.name}. You are not charged.`;
+}
+
 // The plan's price and when it renews, or when a free one resets, for the
 // owner; for anyone else, whose plan it is and that they are not charged.
 function planDetail(
@@ -785,25 +763,23 @@ function planDetail(
   }
   const billing = seats?.billing;
   if (billing) {
-    if (!seats?.paid) {
-      return `${perMonth(1)}, on hold until Stripe has the payment.`;
-    }
+    if (!seats?.paid) return "On hold until Stripe has the payment.";
     const day = formatDay(billing.currentPeriodEnd * 1000);
     const when =
       billing.status === "trialing"
-        ? "trial ends"
+        ? "Trial ends"
         : billing.cancelAtPeriodEnd
-          ? "cancels"
-          : "renews";
+          ? "Cancels"
+          : "Renews";
 
-    return `${perMonth(1)}, ${when} ${day}.`;
+    return `${when} ${day}.`;
   }
   if (!budget) return null;
   const reset = `Resets ${billingReset(budget.month)}.`;
   if (!seats) return reset;
   const who = seats.members === 1 ? "Just you" : `${seats.members} members`;
 
-  return `${reset} ${who}, and you can join other people's orgs.`;
+  return `${reset} ${who} in this org.`;
 }
 
 // The line under the plan's heading: what it costs and when it renews or
@@ -812,12 +788,12 @@ function planDetail(
 function planSummary(
   budget: BudgetUsage | null | undefined,
   seats: OrgSeats | undefined,
+  plan: PlanTier,
 ): string | undefined {
   if (budget === undefined) return undefined;
   if (budget?.enforced === false) {
     return "Your own install. Every feature, no limits.";
   }
-  const plan = shownPlan(budget, seats);
   const note =
     (budget ? poolNote(budget) : null) ??
     (seats?.isOwner && seats.billing
@@ -840,29 +816,9 @@ function seatsDescription(seats: OrgSeats): string {
     return `${developers} of ${seats.seats} developer seats used across your orgs. ${PRO_INCLUDED_DEVELOPER_SEATS} included with Pro${extra}.`;
   }
   if (billing) {
-    return "Seats on hold. They come back once Stripe has the payment. Update the card in Manage subscription.";
+    return "Seats on hold until Stripe has the payment.";
   }
   const who = developers === 1 ? "developer" : "developers";
 
   return `${developers} ${who} kept from before seats counted. Upgrading charges ${perMonth(proQuantity(developers))} for all of them; no new invites until then.`;
-}
-
-// The plan to show: a subscription waiting on a payment is still Pro, held
-// back until paid.
-function shownPlan(
-  budget: BudgetUsage | null,
-  seats: OrgSeats | undefined,
-): PlanTier {
-  return seats?.status ? "pro" : (budget?.plan ?? DEFAULT_PLAN);
-}
-
-// The Usage tab, keeping the other params (the stage) the page carries.
-function usageHref(
-  projectId: Id<"projects">,
-  searchParams: URLSearchParams,
-): string {
-  const next = new URLSearchParams(searchParams);
-  next.set("tab", "usage");
-
-  return `/${projectId}/dashboard?${next.toString()}`;
 }

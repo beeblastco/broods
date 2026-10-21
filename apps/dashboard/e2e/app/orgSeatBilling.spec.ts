@@ -141,9 +141,7 @@ test("an owner on Hobby sees their plan next to what Pro raises, and no develope
   await expect(limitRow(page, "Developer seats")).toContainText("None");
   await expect(limitRow(page, "Developer seats")).toContainText("2 included");
   await expect(
-    page.getByText(
-      /^Resets .+\. Just you, and you can join other people's orgs\.$/,
-    ),
+    page.getByText(/^Resets .+\. Just you in this org\.$/),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Upgrade to Pro", exact: true }),
@@ -231,7 +229,7 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
   ).toThrow(/Every developer seat is taken/);
 
   await openBilling(page, readProjectId());
-  await expect(page.getByText(/^€20\/month, renews /)).toBeVisible();
+  await expect(page.getByText(/^Renews /)).toBeVisible();
   // Two orgs on one pool of caps: the note counts them for the owner.
   await expect(
     page.getByText("Limits are shared across 2 organizations."),
@@ -321,7 +319,7 @@ test("an owner whose payment failed sees Pro on hold, and is sent to Manage bill
     ).toContainText("Payment due");
     await expect(plan.getByText("Current", { exact: true })).toHaveCount(0);
     await expect(
-      plan.getByText("€20/month, on hold until Stripe has the payment."),
+      plan.getByText("On hold until Stripe has the payment."),
     ).toBeVisible();
     const seats = sectionNamed(page, "Developer seats");
     await expect(seats.getByText("Seats on hold")).toBeVisible();
