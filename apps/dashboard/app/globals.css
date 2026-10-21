@@ -256,7 +256,7 @@ body {
 
 /* A picked or linked run's first row in the trace waterfall rings once and
    fades, so it is easy to find in a chain; a ring that stayed would read as a
-   second selection. It animates back to the row's own colors. */
+   second selection. A color fade, so it stays under reduced motion. */
 @keyframes trace-flash {
   from {
     background-color: color-mix(in oklab, var(--color-info) 10%, transparent);
@@ -267,10 +267,6 @@ body {
 
 @utility animate-trace-flash {
   animation: trace-flash 1.5s ease-out;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
 }
 
 /* The trace waterfall rescales once a second while a run is live, so its bars,
