@@ -2,8 +2,10 @@
  * First-load budget. A cold load fetches every JS chunk the page needs before
  * its load event, all at once; on a lossy link that burst is the wait (a prod
  * load once took a minute on 40 chunks). This pins how many chunks and how
- * many bytes on the wire that burst may cost per page, against
+ * many bytes of JS that burst may cost per page, against
  * `first-load-budget.json`: more fails the run, fewer asks for a record.
+ * Bytes are counted decoded: Chrome's encoded size counts the response
+ * headers on a CDN's HTTP/2 responses, about 1 kB a chunk.
  * `E2E_RECORD_FIRST_LOAD=1` rewrites the budget from this run. A `next dev`
  * server ships unbundled dev chunks, so there the budget does not apply.
  */
@@ -95,8 +97,8 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     const responses = await Promise.all(
       firstLoad.map((request) => request.response()),
     );
-    const sizes = await Promise.all(
-      firstLoad.map((request) => request.sizes()),
+    const bodies = await Promise.all(
+      responses.flatMap((response) => (response ? [response.body()] : [])),
     );
     await context.close();
     test.skip(devServer, "next dev ships dev chunks; run against a build");
@@ -113,13 +115,13 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     ).toEqual([]);
     measured[probe.name] = {
       jsRequests: firstLoad.length,
-      jsBytes: sizes.reduce((sum, size) => sum + size.responseBodySize, 0),
+      jsBytes: bodies.reduce((sum, body) => sum + body.byteLength, 0),
     };
   }
 
   for (const [name, load] of Object.entries(measured)) {
     console.log(
-      `First load ${name}: ${load.jsRequests} JS requests, ${Math.round(load.jsBytes / 1024)} kB on the wire`,
+      `First load ${name}: ${load.jsRequests} JS requests, ${Math.round(load.jsBytes / 1024)} kB of JS`,
     );
   }
   if (RECORD) {
