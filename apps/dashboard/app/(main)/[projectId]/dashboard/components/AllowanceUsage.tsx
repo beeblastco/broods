@@ -20,8 +20,10 @@ import {
   TableRow,
 } from "@/app/components/ui/table";
 import {
+  ALLOWANCE_ROWS,
+  type AllowanceRow,
+  BUDGET_LEVEL_TEXT,
   billingReset,
-  type AmountUnit,
   type BudgetUsage,
   dailySeries,
   formatAmount,
@@ -30,7 +32,6 @@ import {
   otherOrgsSlice,
   poolNote,
   projectSlices,
-  type UsageAmounts,
   type UsageSlice,
   usageSlices,
 } from "@/app/lib/allowance";
@@ -57,62 +58,8 @@ const SCOPE_PARAM = parseAsStringLiteral(SCOPES.map((scope) => scope.id))
   .withDefault("project")
   .withOptions({ clearOnDefault: true });
 
-// One row per resource. `share` names the cap it counts toward; ingress is
-// free, so it has none. `help` says what the amount is counted from, where
-// the label alone does not.
-const ROWS: AllowanceRow[] = [
-  {
-    key: "sandboxHours",
-    label: "Sandbox time",
-    unit: "hours",
-    share: "sandboxHours",
-    color: "var(--color-usage-agent-sandbox)",
-    help: "Hours your sandboxes spent running, idle time until they stop included, at the default 1 vCPU / 2 GB size. A bigger sandbox, a resume or a kept snapshot uses hours faster. A V8 Worker counts only the seconds its commands ran, loading their stored files included. Sandboxes on your own provider account are free.",
-  },
-  {
-    key: "hostedMcpHours",
-    label: "Hosted MCP time",
-    unit: "hours",
-    share: "hostedMcpHours",
-    color: "var(--color-usage-mcp-sandbox)",
-    help: "Time your hosted MCP servers spent answering tool calls, at the runner's memory size, plus a small share per request. Idle servers cost nothing.",
-  },
-  {
-    key: "storageGb",
-    label: "Workspaces and files",
-    unit: "gb",
-    share: "storageGb",
-    color: "var(--color-usage-storage)",
-    help: "What the latest daily snapshot found stored in your workspaces, chat attachments, skills and bundles. A size, not a monthly total. A project counts its own workspaces; the rest is the organization's.",
-  },
-  {
-    key: "egressGb",
-    label: "Egress",
-    unit: "gb",
-    share: "egressGb",
-    color: "var(--color-usage-egress)",
-    help: "Data served out of Broods storage, such as media your agents sent to channels. Files on your own bucket are not counted.",
-  },
-  {
-    key: "ingressGb",
-    label: "Ingress",
-    unit: "gb",
-    share: null,
-    color: "var(--color-usage-ingress)",
-  },
-];
-
 const OTHER_USAGE_HELP =
   "Usage no single project made: account-wide sandboxes and workspaces, chat attachments, skills and bundles, deleted projects, and anything metered before usage was split by project.";
-
-interface AllowanceRow {
-  key: keyof UsageAmounts;
-  label: string;
-  unit: AmountUnit;
-  share: keyof BudgetUsage["shares"] | null;
-  color: string;
-  help?: string;
-}
 
 /**
  * The Usage tab's Allowance: the org's month per resource against its caps,
@@ -252,7 +199,7 @@ function ScopedAllowance({
   projectId: string;
   scope: AllowanceScope;
 }): React.JSX.Element {
-  const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
+  const [picked, setPicked] = useState<AllowanceRow>(ALLOWANCE_ROWS[0]);
   const projectCount = budget.projects?.length ?? 0;
   const slices = useMemo(
     () =>
@@ -316,7 +263,7 @@ function ScopedAllowance({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <AllowanceTableRow
                   key={row.key}
                   budget={budget}
@@ -391,14 +338,7 @@ function AllowanceTableRow({
       }}
     >
       <TableCell>
-        <span className="flex items-center gap-2">
-          <span
-            className="size-2 rounded-sm bg-(--series-color)"
-            style={{ "--series-color": row.color }}
-          />
-          {row.label}
-          {row.help && <HelpMark text={row.help} />}
-        </span>
+        <ResourceLabel row={row} />
       </TableCell>
       {own && (
         <TableCell className="text-right">
@@ -444,18 +384,36 @@ function AllowanceTableRow({
       <TableCell className="text-right">
         {share !== null && (
           <span
-            className={cn(
-              "tabular-nums",
-              level === "ok" && "text-muted-foreground",
-              level === "warning" && "text-warning",
-              level === "exhausted" && "text-destructive",
-            )}
+            className={cn("tabular-nums", level && BUDGET_LEVEL_TEXT[level])}
           >
             {formatPercent(share)}
           </span>
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+/**
+ * A row's color swatch, when it has one, name and help mark, as the first
+ * cell of the allowance and plan tables.
+ */
+export function ResourceLabel({
+  row,
+}: {
+  row: Pick<AllowanceRow, "label" | "help"> & { color?: string };
+}): React.JSX.Element {
+  return (
+    <span className="flex items-center gap-2">
+      {row.color && (
+        <span
+          className="size-2 rounded-sm bg-(--series-color)"
+          style={{ "--series-color": row.color }}
+        />
+      )}
+      {row.label}
+      {row.help && <HelpMark text={row.help} />}
+    </span>
   );
 }
 
@@ -598,7 +556,7 @@ function ProjectsTable({
           <TableHeader>
             <TableRow>
               <TableHead>Project</TableHead>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <TableHead key={row.key} className="text-right">
                   {row.label}
                 </TableHead>
@@ -647,7 +605,7 @@ function ProjectsTable({
                       )}
                     </span>
                   </TableCell>
-                  {ROWS.map((row) => (
+                  {ALLOWANCE_ROWS.map((row) => (
                     <TableCell key={row.key} className="text-right">
                       <span
                         className={cn(

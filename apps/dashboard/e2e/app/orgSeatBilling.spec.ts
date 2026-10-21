@@ -121,31 +121,40 @@ test.afterAll(async () => {
   if (failures.length > 0) throw failures[0];
 });
 
-test("an owner on Hobby sees their plan, no developer seats, and what Upgrade costs", async ({
+test("an owner on Hobby sees their plan next to what Pro raises, and no developer seats", async ({
   page,
 }) => {
   await openBilling(page, readProjectId());
 
   await expect(page.getByRole("heading", { name: "Your plan" })).toBeVisible();
-  // The plan name alone: Hobby wears no badge, like a paid plan in good standing.
   const plan = sectionNamed(page, "Your plan");
-  await expect(plan.getByText("Hobby", { exact: true })).toBeVisible();
-  await expect(plan.locator('[data-slot="badge"]')).toHaveCount(0);
   await expect(
-    page.getByText(/^Resets .+ · just you · you can join other people's orgs$/),
+    plan.getByRole("columnheader", { name: /^Hobby/ }),
+  ).toContainText("Current");
+  await expect(plan.getByRole("columnheader", { name: /^Pro/ })).toContainText(
+    "€20/month",
+  );
+  // Hobby's limit, then Pro's with how many times it raises Hobby's.
+  await expect(limitCells(page, "Sandbox time")).toHaveText([
+    /^Sandbox time/,
+    "9 h",
+    "18 h2×",
+  ]);
+  await expect(limitCells(page, "Developer seats")).toHaveText([
+    /^Developer seats/,
+    "None",
+    "2 included",
+  ]);
+  await expect(
+    page.getByText(/^Resets .+\. Just you in this org\.$/),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Upgrade to Pro · €20/month" }),
+    page.getByRole("button", { name: "Upgrade to Pro", exact: true }),
   ).toBeEnabled();
+  // Hobby has no seats, which the plan table already says.
   await expect(
     page.getByRole("heading", { name: "Developer seats" }),
-  ).toBeVisible();
-  await expect(page.getByText("No developer seats on Hobby")).toBeVisible();
-  await expect(
-    page.getByText(
-      "Pro is €20/month: it lets you create orgs and gives you 2 developer seats to use across all of them. Extra seats are €20/month each.",
-    ),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "What you pay each month" }),
   ).toHaveCount(0);
@@ -225,7 +234,7 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
   ).toThrow(/Every developer seat is taken/);
 
   await openBilling(page, readProjectId());
-  await expect(page.getByText(/^€20\/month · renews /)).toBeVisible();
+  await expect(page.getByText(/^Renews /)).toBeVisible();
   // Two orgs on one pool of caps: the note counts them for the owner.
   await expect(
     page.getByText("Limits are shared across 2 organizations."),
@@ -237,9 +246,7 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
   await expect(
     page.getByText("2 of 2 developer seats used across your orgs"),
   ).toBeVisible();
-  await expect(
-    page.getByText("2 included with Pro", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/2 included with Pro\.$/)).toBeVisible();
   const seats = sectionNamed(page, "Developer seats");
   // One row, and one seat, per developer, with every org they are in.
   await expect(
@@ -252,10 +259,11 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
       exact: true,
     }),
   ).toBeVisible();
-  await expect(seats.getByRole("listitem")).toHaveCount(2);
+  // The header row, then one per developer.
+  await expect(seats.getByRole("row")).toHaveCount(3);
   await expectBill(page, 0, "€20/month");
 
-  await page.getByRole("button", { name: "Add seat · €20/month" }).click();
+  await page.getByRole("button", { name: "Add seat for €20/month" }).click();
   const confirm = page.getByRole("dialog", { name: "Add a developer seat" });
   await expect(
     confirm.getByText(
@@ -293,7 +301,7 @@ test("an extra seat shows on the seat count and the monthly bill", async ({
       page.getByText("2 of 3 developer seats used across your orgs"),
     ).toBeVisible();
     await expect(
-      page.getByText("2 included with Pro and 1 extra", { exact: true }),
+      page.getByText(/2 included with Pro and 1 extra\.$/),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: /^Add seat/ })).toHaveCount(
       0,
@@ -311,15 +319,16 @@ test("an owner whose payment failed sees Pro on hold, and is sent to Manage bill
   try {
     await openBilling(page, readProjectId());
     const plan = sectionNamed(page, "Your plan");
-    await expect(plan.getByText("Pro", { exact: true })).toBeVisible();
-    await expect(plan.getByText("Payment due", { exact: true })).toBeVisible();
     await expect(
-      plan.getByText("€20/month · on hold until Stripe has the payment"),
+      plan.getByRole("columnheader", { name: /^Pro/ }),
+    ).toContainText("Payment due");
+    await expect(plan.getByText("Current", { exact: true })).toHaveCount(0);
+    await expect(
+      plan.getByText("On hold until Stripe has the payment."),
     ).toBeVisible();
-    await expect(plan.getByText("Hobby", { exact: true })).toHaveCount(0);
     const seats = sectionNamed(page, "Developer seats");
     await expect(seats.getByText("Seats on hold")).toBeVisible();
-    await expect(seats.getByRole("listitem")).toHaveCount(2);
+    await expect(seats.getByRole("row")).toHaveCount(3);
     await expect(seats.getByText(/kept from before seats counted/)).toHaveCount(
       0,
     );
@@ -374,7 +383,7 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
   try {
     await openBilling(page, acmeProjectId);
     await expect(
-      page.getByRole("heading", { name: `Plan · ${OWNER.org}` }),
+      page.getByRole("heading", { name: `Plan for ${OWNER.org}` }),
     ).toBeVisible();
     await expect(
       page.getByText(
@@ -450,7 +459,7 @@ async function openBilling(page: Page, projectId: string): Promise<void> {
   await page.goto(`/${projectId}/dashboard?tab=billing`);
   await page.locator(SIDEBAR_READY).waitFor();
   await expect(
-    page.getByRole("heading", { name: /^(Your plan|Plan · .+)$/ }),
+    page.getByRole("heading", { name: /^(Your plan|Plan for .+)$/ }),
   ).toBeVisible();
 }
 
@@ -465,18 +474,26 @@ async function expectBill(
     bill.getByText("Pro plan (includes 2 developer seats)"),
   ).toBeVisible();
   await expect(
-    bill.getByText(`Extra seats · ${extra} × €20/month`),
+    bill.getByText(`Extra seats (${extra} × €20/month)`),
   ).toBeVisible();
   await expect(
-    bill.getByText("Total", { exact: true }).locator("..").getByText(total),
+    bill.getByRole("row").filter({ hasText: "Total" }).getByText(total),
   ).toBeVisible();
 }
 
 /** A developer's row in the owner's seat list. */
 function seatRow(page: Page, name: string): ReturnType<Page["locator"]> {
   return page
-    .getByRole("listitem")
+    .getByRole("row")
     .filter({ has: page.getByText(name, { exact: true }) });
+}
+
+/** One limit's cells in the plan table: its label, then each plan's value. */
+function limitCells(page: Page, label: string): Locator {
+  return sectionNamed(page, "Your plan")
+    .getByRole("row")
+    .filter({ hasText: label })
+    .getByRole("cell");
 }
 
 async function openMembers(page: Page): Promise<void> {
