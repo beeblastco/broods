@@ -55,8 +55,8 @@ const nextConfig: NextConfig = {
   headers: async function () {
     return [
       {
-        // Pages only: these headers mean nothing on a script or stylesheet,
-        // and the asset CDN repeats them uncompressed on every chunk.
+        // Everything but build assets: these headers mean nothing on a script
+        // or stylesheet, and the asset CDN repeats them on every chunk.
         source: "/:path((?!_next/static/).*)",
         headers: [
           {
