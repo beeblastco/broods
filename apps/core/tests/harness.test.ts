@@ -1362,6 +1362,46 @@ describe("runAgentLoop", () => {
     expect(delivered[0]?.signature).toMatch(/^sha256=[0-9a-f]{64}$/);
   });
 
+  it.each([
+    ["an empty response", "empty"],
+    ["a provider error then empty text", "error-then-empty"],
+    ["a provider error with no finish", "error-no-finish"],
+    ["a hard stream failure", "hard-throw"],
+  ] as const)("runs the onError code hook once on %s", async (_, scenario) => {
+    const fired: Array<{ event: string; error: unknown }> = [];
+    const stream = await startTwoStepTurn(
+      undefined,
+      {
+        hooks: {
+          hasHooksFor: (event) => event === "agent.failed",
+          runMutation: async (event, payload) => {
+            fired.push({ event: event, error: payload.error });
+
+            return undefined;
+          },
+        },
+      },
+      undefined,
+      scenario,
+    );
+
+    const thrown = await Promise.resolve(stream.consumeStream()).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // Only the hard failure rethrows to the caller; the hook has fired by then.
+    expect(thrown).toEqual(
+      scenario === "hard-throw"
+        ? new Error("stream transport failed")
+        : undefined,
+    );
+
+    expect(stream.didFail()).toBe(true);
+    expect(fired).toEqual([
+      { event: "agent.failed", error: stream.failureText() },
+    ]);
+  });
+
   it("keeps the provider error when the stream also finishes with empty text", async () => {
     streamTextScenario = "error-then-empty";
     installHarnessEnv();

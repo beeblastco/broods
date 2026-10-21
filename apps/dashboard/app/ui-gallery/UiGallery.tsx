@@ -105,6 +105,7 @@ import { DataTableStandIn } from "./DataTableStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
 import { AllowanceStandIn } from "./AllowanceStandIn";
+import { WorkspaceFilesStandIn } from "./WorkspaceFilesStandIn";
 
 // The press-and-drag fixture's select, a level list like the side panel's.
 const LEVEL_OPTIONS = [
@@ -376,6 +377,22 @@ export function UiGallery(): React.JSX.Element {
     return (
       <main data-hydrated={hydrated ? "true" : undefined}>
         <RuntimeKeyView apiKey="clipboard fixture" />
+      </main>
+    );
+  }
+
+  if (dashboardTab === "workspace-files") {
+    return (
+      <main
+        className="flex gap-10 p-8"
+        data-hydrated={hydrated ? "true" : undefined}
+      >
+        <section data-fixture="files-writer">
+          <WorkspaceFilesStandIn canWrite={true} />
+        </section>
+        <section data-fixture="files-member">
+          <WorkspaceFilesStandIn canWrite={false} />
+        </section>
       </main>
     );
   }
