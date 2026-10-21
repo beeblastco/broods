@@ -20,6 +20,7 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
 // A pooled runner says ready right after Node loads the isolated-vm addon, about
 // 80 ms cold. Each hook fire spawns one up to 3 times, so waiting the full run
 // timeout on a hung one cost about 90 s of the run per fire and held a pool place.
+// ISOLATE_WORKER_READY_TIMEOUT_MS overrides it.
 const WORKER_READY_TIMEOUT_MS = 5_000;
 const RUNNER_ENV_KEYS = [
   "PATH",
@@ -333,7 +334,7 @@ class IsolateWorker {
   readonly #startup = setTimeout(() => {
     this.#ready.reject(new Error("isolate worker did not become ready"));
     this.kill();
-  }, WORKER_READY_TIMEOUT_MS);
+  }, workerReadyTimeoutMs());
 
   constructor() {
     // prewarmIsolatePool may drop a failed start; acquireWorker reads the reason.
@@ -459,6 +460,17 @@ function poolSize(): number {
 
 function workerIdleTtlMs(): number {
   return positiveIntegerEnv("ISOLATE_WORKER_IDLE_SECONDS", 120) * 1000;
+}
+
+// Never past the run timeout, which also keeps a huge override in setTimeout's range.
+function workerReadyTimeoutMs(): number {
+  return Math.min(
+    positiveIntegerEnv(
+      "ISOLATE_WORKER_READY_TIMEOUT_MS",
+      WORKER_READY_TIMEOUT_MS,
+    ),
+    runnerTimeoutMs(),
+  );
 }
 
 /** Pre-spawn one worker so the first real call skips Node startup. */

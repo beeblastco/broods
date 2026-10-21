@@ -11,6 +11,7 @@ import {
   type StageSessionTicket,
 } from "@broods/convex/model/stageSessionTicket";
 import {
+  isMachineConnected,
   MachineSandboxExecutor,
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
@@ -58,14 +59,17 @@ afterEach(async (): Promise<void> => {
 test("a stage ticket's daemon that sends no fresh one is closed at the ticket's expiry and gets no exec after it", async (): Promise<void> => {
   const writes: MachineConnectionWrite[] = [];
   setStorageForTests(machineStorage(writes));
+  jest.useFakeTimers();
   const expiresAt = Date.now() + 1500;
   const token = await ticket(expiresAt);
   const server = core();
   const received: MachineExecFrame[] = [];
+  const held = Promise.withResolvers<void>();
   // Answers the first exec, holds the second open across the expiry.
   const daemon = await connectDaemon(server, token, (frame, socket): void => {
     received.push(frame);
     if (received.length === 1) socket.send(JSON.stringify(result(frame.id)));
+    else held.resolve();
   });
   const closed = closeOf(daemon);
   const executor = new MachineSandboxExecutor(machineExecutorConfig());
@@ -83,13 +87,17 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
       (): string => "resolved",
       (error: Error): string => error.message,
     );
+  // The held exec must reach the daemon before the clock moves past the ticket.
+  // Awaited, not polled: the frame crosses a real socket, which only the event
+  // loop delivers, and an await leaves the test timeout free to fire.
+  await held.promise;
+  jest.advanceTimersByTime(expiresAt - 1 - Date.now());
+  expect(isMachineConnected(machineExecutorConfig())).toBe(true);
+  jest.advanceTimersByTime(1);
 
   const close = await closed;
-  const closedAt = Date.now();
   expect(close.code).toBe(MACHINE_CLOSE.expired.code);
   expect(close.reason).toBe(MACHINE_CLOSE.expired.reason);
-  expect(closedAt).toBeGreaterThanOrEqual(expiresAt);
-  expect(closedAt).toBeLessThan(expiresAt + 1000);
   expect(await inFlight).toBe(
     'machine sandbox "my-mac" disconnected while the command was running',
   );
@@ -123,6 +131,7 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
 
 test("a fresh ticket before the expiry keeps the daemon past it, and frames still flow", async (): Promise<void> => {
   setStorageForTests(machineStorage());
+  jest.useFakeTimers();
   const expiresAt = Date.now() + 1000;
   const daemon = await connectDaemon(
     core(),
@@ -142,7 +151,7 @@ test("a fresh ticket before the expiry keeps the daemon past it, and frames stil
     }),
   );
   expect((await acked).expiresInMs).toBeGreaterThan(55_000);
-  await Bun.sleep(expiresAt + 500 - Date.now());
+  jest.advanceTimersByTime(expiresAt + 500 - Date.now());
 
   const after = await new MachineSandboxExecutor(machineExecutorConfig()).run({
     code: "fixture-only-never-executed",
