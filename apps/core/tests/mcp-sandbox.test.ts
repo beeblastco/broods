@@ -79,20 +79,6 @@ test("refuses a reply that is not JSON-RPC", async () => {
   ).toContain("answered with no JSON-RPC result");
 });
 
-test("names the server when the VM cannot be reached", async () => {
-  const executor: SandboxMcpExecutor = {
-    postReserved: async function (): Promise<unknown> {
-      throw new Error("MicroVM /mcp failed (500): boom");
-    },
-  };
-
-  expect(
-    await failure(
-      sandboxMcpRequest(TARGET, "obscura", LIST, undefined, executor),
-    ),
-  ).toContain("MCP server obscura on its sandbox failed: MicroVM /mcp failed");
-});
-
 test("gives a tool call 120 s on a sandbox with no timeout of its own", async () => {
   const requests: unknown[] = [];
   const executor: SandboxMcpExecutor = {

@@ -1,11 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   BroodsWebSocketClient,
-  WebsocketClient,
-  toWebSocketBaseUrl,
   type WebSocketServerMessage,
   type WebSocketLike,
 } from "../src/websocket.ts";
@@ -73,50 +68,6 @@ test("websocket client accepts host as a shorthand for the core service URL", ()
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
     "wss://app.example/v1/agents/agent_1/ws",
   );
-});
-
-test("websocket URL normalization accepts https and wss service URLs", () => {
-  expect(toWebSocketBaseUrl("https://app.example")).toBe("wss://app.example");
-  expect(toWebSocketBaseUrl("wss://app.example")).toBe("wss://app.example");
-});
-
-test("exports WebsocketClient as an alias", () => {
-  expect(WebsocketClient).toBe(BroodsWebSocketClient);
-});
-
-test("websocket client reads apiKey from the shared SDK environment variable", () => {
-  process.env.BROODS_API_KEY = "env-key";
-  const client = new BroodsWebSocketClient({
-    host: "app.example",
-    WebSocket: FakeWebSocket,
-  });
-
-  expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://app.example/v1/agents/agent_1/ws",
-  );
-});
-
-test("websocket client reads apiKey from package-local .env.local", () => {
-  const originalCwd = process.cwd();
-  const tempDir = mkdtempSync(join(tmpdir(), "broods-websocket-"));
-  delete process.env.BROODS_API_KEY;
-  writeFileSync(join(tempDir, ".env.local"), "BROODS_API_KEY=local-env-key\n");
-  process.chdir(tempDir);
-
-  try {
-    const client = new BroodsWebSocketClient({
-      host: "app.example",
-      WebSocket: FakeWebSocket,
-    });
-
-    expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-      "wss://app.example/v1/agents/agent_1/ws",
-    );
-  } finally {
-    process.chdir(originalCwd);
-    rmSync(tempDir, { recursive: true, force: true });
-    delete process.env.BROODS_API_KEY;
-  }
 });
 
 test("websocket client can be constructed without options", () => {

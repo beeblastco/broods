@@ -13,6 +13,11 @@
  */
 
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import {
+  type ServeStdioOptions,
+  serveStdio,
+  type StdioServerHandle,
+} from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import {
   BroodsAccountClient,
@@ -261,6 +266,20 @@ export function createBroodsMcpServer(
   }
 
   return server;
+}
+
+/**
+ * Serves `server` the way `broods mcp` does: MCP 2026-07-28 only, so a
+ * 2025-era `initialize` gets -32022. On stdio unless a test passes `transport`.
+ */
+export function serveBroodsMcp(
+  server: McpServer,
+  transport?: ServeStdioOptions["transport"],
+): StdioServerHandle {
+  return serveStdio((): McpServer => server, {
+    legacy: "reject",
+    ...(transport ? { transport: transport } : {}),
+  });
 }
 
 /** The one gate every destructive tool passes; `consequence` names the blast radius. */

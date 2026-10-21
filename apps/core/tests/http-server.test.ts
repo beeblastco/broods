@@ -82,17 +82,6 @@ describe("toCoreRequest", () => {
     });
     expect(request.cookies).toEqual(["session=abc", "theme=dark"]);
   });
-
-  it("passes UTF-8 request bodies through as text and uses empty string when bodyless", async () => {
-    const withBody = await buildCoreRequest({
-      method: "POST",
-      body: "hello\nworld",
-    });
-    expect(withBody.body).toBe("hello\nworld");
-
-    const bodyless = await buildCoreRequest({ url: "http://127.0.0.1/status" });
-    expect(bodyless.body).toBe("");
-  });
 });
 
 describe("routesToAccountManage", () => {

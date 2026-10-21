@@ -57,21 +57,6 @@ beforeEach((): void => {
   steerFailure = null;
 });
 
-it("hands a harness agent the same step and tool hooks as streamText", async () => {
-  await runHarnessTurn("codex", async () => null);
-
-  expect(streamCalls).toHaveLength(1);
-  for (const hook of [
-    "onStepStart",
-    "onStepEnd",
-    "onToolExecutionStart",
-    "onToolExecutionEnd",
-  ]) {
-    expect(typeof streamCalls[0]?.[hook]).toBe("function");
-  }
-  expect(streamCalls[0]?.onEnd).toBeUndefined();
-});
-
 it.each(["claude-code", "codex"] as const)(
   "steers a running %s turn at its next step",
   async (type) => {

@@ -585,6 +585,38 @@ describe("hosted MCP tool listing", () => {
         .map((batch) => batch.tenantId),
     ).toEqual(["acct_test:agent_1", "acct_test:agent_2"]);
   });
+
+  it("refuses a server on a 2025-era revision without falling back to initialize", async () => {
+    const sent = stubBatches((request) => {
+      const message: { id?: number; method: string } = JSON.parse(
+        request.body ?? "{}",
+      );
+
+      // A 2025-era server knows no server/discover.
+      return {
+        status: 400,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id ?? null,
+          error: { code: -32601, message: "Method not found" },
+        }),
+      };
+    });
+
+    expect(
+      listMcpTools({
+        record: hostedRecord(),
+        headers: {},
+        agentId: "agent_legacy",
+      }),
+    ).rejects.toThrow(/2026-07-28/);
+    expect(
+      sent.some((batch) =>
+        batch.requests.some((r) => r.mcpRequest.body?.includes("initialize")),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("hosted MCP micro-batching", () => {

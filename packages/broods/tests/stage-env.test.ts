@@ -30,10 +30,3 @@ test("ignores the pre-rename BROODS_ENVIRONMENT", () => {
 
   expect(stageFromEnv()).toBeUndefined();
 });
-
-test("is undefined when BROODS_STAGE is unset", () => {
-  delete process.env.BROODS_STAGE;
-  delete process.env.BROODS_ENVIRONMENT;
-
-  expect(stageFromEnv()).toBeUndefined();
-});

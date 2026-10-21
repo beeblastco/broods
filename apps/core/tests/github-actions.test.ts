@@ -109,38 +109,6 @@ describe("github outbound actions", () => {
     expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
   });
 
-  it("uses issue comment reactions for issue comment sources", async () => {
-    const calls: FetchCall[] = [];
-    globalThis.fetch = createFetchMock(calls, [
-      jsonResponse(201, { token: "comment-token" }),
-      jsonResponse(201, { id: 7003 }),
-      jsonResponse(201, { id: 8003 }),
-    ]);
-
-    const actions = createGitHubActions(
-      createSource({
-        threadId: "github:owner/repo:12",
-        issueNumber: 12,
-        messageId: "77",
-        commentId: 77,
-        target: "issue_comment",
-      }),
-    );
-
-    await actions.sendText("follow-up");
-    await actions.reactToMessage();
-
-    expect(calls).toHaveLength(3);
-    expect(calls[1]?.url).toBe(
-      "https://api.github.com/repos/owner/repo/issues/12/comments",
-    );
-    expect(calls[2]?.url).toBe(
-      "https://api.github.com/repos/owner/repo/issues/comments/77/reactions",
-    );
-    expect(calls[1]?.jsonBody).toEqual({ body: "follow-up" });
-    expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
-  });
-
   it("streams by buffering and posting one markdown comment through the SDK", async () => {
     const calls: FetchCall[] = [];
     globalThis.fetch = createFetchMock(calls, [

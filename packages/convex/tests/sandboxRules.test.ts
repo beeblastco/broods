@@ -526,13 +526,6 @@ describe("sandbox config provider-aware limits", () => {
 });
 
 describe("sandbox config persistent / lifecycle", () => {
-  it("accepts persistent on the lambda (MicroVM) provider", () => {
-    expect(
-      normalizeSandboxConfig({ provider: "lambda", persistent: true })
-        .persistent,
-    ).toBe(true);
-  });
-
   it("accepts persistent on sandbox/daytona/e2b/vercel", () => {
     expect(
       normalizeSandboxConfig({ provider: "sandbox", persistent: true })

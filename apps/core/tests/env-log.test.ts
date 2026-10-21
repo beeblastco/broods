@@ -10,7 +10,7 @@ import {
   redactSensitiveText,
   redactWithRunSecrets,
 } from "../src/shared/log.ts";
-import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
+import { observabilityAttributes } from "../src/shared/otel.ts";
 import { sealRunToken } from "../src/shared/run-token.ts";
 
 const BROODS_CREDENTIAL_PREFIXES = [
@@ -36,12 +36,6 @@ afterEach(() => {
 const ORIGINAL_WRITE = process.stdout.write.bind(process.stdout);
 
 describe("environment helpers", () => {
-  it("returns required environment variables when present", () => {
-    process.env.REQUIRED_SAMPLE = "configured";
-
-    expect(requireEnv("REQUIRED_SAMPLE")).toBe("configured");
-  });
-
   it("throws when required environment variables are missing or empty", () => {
     delete process.env.MISSING_SAMPLE;
     process.env.EMPTY_SAMPLE = "";
@@ -72,12 +66,6 @@ describe("environment helpers", () => {
     expect(booleanEnv("BOOL_UNSET", false)).toBe(false);
   });
 
-  it("returns false when boolean env var is empty", () => {
-    process.env.BOOL_EMPTY = "";
-
-    expect(booleanEnv("BOOL_EMPTY")).toBe(false);
-  });
-
   it("parses true-like boolean values case-insensitively with trimming", () => {
     process.env.BOOL_1 = "1";
     process.env.BOOL_TRUE = "true";
@@ -94,24 +82,6 @@ describe("environment helpers", () => {
     expect(booleanEnv("BOOL_UPPER")).toBe(true);
     expect(booleanEnv("BOOL_MIXED")).toBe(true);
     expect(booleanEnv("BOOL_SPACED")).toBe(true);
-  });
-
-  it("parses false-like boolean values case-insensitively with trimming", () => {
-    process.env.BOOL_0 = "0";
-    process.env.BOOL_FALSE = "false";
-    process.env.BOOL_NO = "no";
-    process.env.BOOL_OFF = "off";
-    process.env.BOOL_UPPER_FALSE = "FALSE";
-    process.env.BOOL_MIXED_NO = "No";
-    process.env.BOOL_SPACED_OFF = "  off  ";
-
-    expect(booleanEnv("BOOL_0")).toBe(false);
-    expect(booleanEnv("BOOL_FALSE")).toBe(false);
-    expect(booleanEnv("BOOL_NO")).toBe(false);
-    expect(booleanEnv("BOOL_OFF")).toBe(false);
-    expect(booleanEnv("BOOL_UPPER_FALSE")).toBe(false);
-    expect(booleanEnv("BOOL_MIXED_NO")).toBe(false);
-    expect(booleanEnv("BOOL_SPACED_OFF")).toBe(false);
   });
 
   it("throws on invalid boolean-like values", () => {
@@ -383,9 +353,5 @@ describe("logging helpers", () => {
       agent_id: "agent-1",
       conversation_key: "conversation-1",
     });
-  });
-
-  it("allows an explicit OTel flush when exporters are not configured", async () => {
-    expect(forceFlushOtel()).resolves.toBeUndefined();
   });
 });

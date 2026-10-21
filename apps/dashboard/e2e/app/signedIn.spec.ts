@@ -91,10 +91,13 @@ test("a segment that is no project id is the not-found page", async ({
 test("the API access panel shows the gateway it reaches as the base URL @rollout", async ({
   page,
 }) => {
-  await page.goto("/settings/org?tab=api-access");
-  // A copy row named by the URL it shows, never the old "(not configured)".
+  // The account key's detail panel holds the Base URL copy row, never the
+  // warning shown when the stage has no gateway URL.
+  await page.goto("/settings/org?tab=api-access&sel=account");
   await expect(
-    page.getByRole("button", { name: /^https?:\/\/\S+$/ }),
+    page.getByRole("button", { name: /^Base URL\s*https?:\/\/\S+$/ }),
   ).toBeVisible();
-  await expect(page.getByText("(not configured)")).toHaveCount(0);
+  await expect(page.getByText(/Set NEXT_PUBLIC_BROODS_BASE_URL/)).toHaveCount(
+    0,
+  );
 });

@@ -1,5 +1,5 @@
 import { DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { deleteS3Prefix } from "../model/s3";
 
 const BUCKET = "cleanup-bucket";
@@ -66,6 +66,10 @@ beforeEach(() => {
   fake.failures.clear();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 function fill(count: number): void {
   for (let index = 0; index < count; index += 1) {
     fake.keys.add(`${PREFIX}${String(index).padStart(5, "0")}`);
@@ -105,21 +109,30 @@ test("a key the store refuses fails the cleanup and stops it", async () => {
   expect(fake.keys.has(`${PREFIX}00007`)).toBe(true);
 });
 
+// The retry tests check which keys go again, not how long the backoff is, so
+// they run its waits on a fake clock.
 test("retries only the keys that hit a transient error", async () => {
+  vi.useFakeTimers();
   fill(3);
   fake.failures.set(`${PREFIX}00001`, ["SlowDown", "InternalError"]);
 
-  expect(await deleteS3Prefix(BUCKET, PREFIX)).toBe(3);
+  const deleted = deleteS3Prefix(BUCKET, PREFIX);
+  await vi.runAllTimersAsync();
+  expect(await deleted).toBe(3);
   expect(fake.calls).toEqual(["list", "delete:3", "delete:1", "delete:1"]);
   expect(fake.keys).toEqual(new Set(["acct_cleanup/skill-neighbour/keep"]));
 });
 
 test("gives up on a key still failing after three attempts", async () => {
+  vi.useFakeTimers();
   fill(2);
   fake.failures.set(`${PREFIX}00000`, ["SlowDown", "SlowDown", "SlowDown"]);
 
-  await expect(deleteS3Prefix(BUCKET, PREFIX)).rejects.toThrow(
-    `${PREFIX}00000: SlowDown`,
-  );
+  await Promise.all([
+    expect(deleteS3Prefix(BUCKET, PREFIX)).rejects.toThrow(
+      `${PREFIX}00000: SlowDown`,
+    ),
+    vi.runAllTimersAsync(),
+  ]);
   expect(fake.calls).toEqual(["list", "delete:2", "delete:1", "delete:1"]);
 });
