@@ -20,10 +20,18 @@ test("a live run shows its failures and retries on the row and the time axis", a
   await expect(page.getByRole("button", { name: "1 failed" })).toBeVisible();
   await expect(page.getByRole("button", { name: "1 retried" })).toBeVisible();
 
-  // Each issue has a marker on the axis that opens its span.
+  // Each issue has a marker on the axis that opens its span, even folded
+  // away under its closed step.
+  await page.getByRole("button", { name: "Collapse spans" }).first().click();
+  await expect(
+    page.getByRole("button", { name: "run_checkout_tests", exact: true }),
+  ).toHaveCount(0);
   await page
     .getByRole("button", { name: "Failed: run_checkout_tests" })
     .click();
+  await expect(
+    page.getByRole("button", { name: "run_checkout_tests", exact: true }),
+  ).toBeInViewport();
   // The side panel opens on it, its error included.
   await expect(
     page.getByText("2 tests failed: coupon applied twice"),

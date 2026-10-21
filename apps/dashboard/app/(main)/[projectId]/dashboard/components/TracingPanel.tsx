@@ -492,9 +492,21 @@ export interface SpanIssue {
   text: string;
 }
 
-// The run's issues in time order, and per span id the issues under it.
+// A row that must be open for a row under it to render: its key, and
+// whether it starts open (a step) before `toggled` flips it.
+interface RowOnPath {
+  key: string;
+  startsOpen: boolean;
+}
+
+// The run's issues in time order, each with the rows above it, and per span
+// id the issues under it.
 export interface RunIssues {
-  all: Array<{ issue: SpanIssue; span: ObservabilitySpanRow }>;
+  all: Array<{
+    issue: SpanIssue;
+    path: RowOnPath[];
+    span: ObservabilitySpanRow;
+  }>;
   below: Map<string, SpanIssue[]>;
 }
 
@@ -1255,28 +1267,43 @@ export function axisTicks(spanMs: number): number[] {
 
 /**
  * Every issue in the run in time order, and the issues under each span, read
- * down the same tree the waterfall renders: a subagent is one leaf line.
+ * down the same tree the waterfall renders: steps folded, a subagent one leaf
+ * line. Each issue keeps the rows above it, so a click can open them.
  */
 export function runIssues(group: SpanGroup): RunIssues {
   const all: RunIssues["all"] = [];
   const below = new Map<string, SpanIssue[]>();
-  const walk = (
-    span: ObservabilitySpanRow,
-    isTaskRow: boolean,
-  ): SpanIssue[] => {
+  const walk = (span: ObservabilitySpanRow, path: RowOnPath[]): SpanIssue[] => {
+    const isTaskRow = span === group.root;
     const children =
       span.kind === "subtask" && !isTaskRow
         ? []
         : (group.childrenByParent.get(span.spanId) ?? []);
-    const under = children.flatMap((child) => walk(child, false));
+    // The task row is always open, so it is never on a path.
+    const inside = isTaskRow
+      ? path
+      : [
+          ...path,
+          { key: spanKey(span), startsOpen: span.kind === "model.step" },
+        ];
+    const under = foldSteps(children, group.childrenByParent).flatMap((item) =>
+      item.type === "span"
+        ? walk(item.span, inside)
+        : item.fold.steps.flatMap((step) =>
+            walk(step, [
+              ...inside,
+              { key: spanKey(item.fold.span), startsOpen: false },
+            ]),
+          ),
+    );
     below.set(span.spanId, under);
     const issue = spanIssue(span);
     if (!issue) return under;
-    all.push({ issue: issue, span: span });
+    all.push({ issue: issue, path: path, span: span });
 
     return [issue, ...under];
   };
-  walk(group.root, true);
+  walk(group.root, []);
   all.sort((left, right) => left.issue.atMs - right.issue.atMs);
 
   return { all: all, below: below };
@@ -2784,13 +2811,19 @@ function TaskWaterfall({
   };
   const failures = issues.all.filter(({ issue }) => issue.level === "error");
   const retries = issues.all.filter(({ issue }) => issue.level === "warn");
-  // Opens an issue's span in the side panel and scrolls its row into view.
-  const showSpan = (span: ObservabilitySpanRow): void => {
+  // Opens an issue's span in the side panel, opens the rows folded above it,
+  // and scrolls its row into view once they render.
+  const showSpan = ({ path, span }: RunIssues["all"][number]): void => {
     const key = spanKey(span);
     if (key !== view.selectedKey) view.onSelect(key);
-    document
-      .querySelector(`[data-span-key="${CSS.escape(key)}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+    for (const row of path) {
+      if (row.startsOpen === view.toggled.has(row.key)) view.toggle(row.key);
+    }
+    requestAnimationFrame(() =>
+      document
+        .querySelector(`[data-span-key="${CSS.escape(key)}"]`)
+        ?.scrollIntoView({ block: "nearest" }),
+    );
   };
   const { root } = group;
   const request = spanLabel(root);
@@ -2849,7 +2882,7 @@ function TaskWaterfall({
               <button
                 key={word}
                 type="button"
-                onClick={() => showSpan(found[0].span)}
+                onClick={() => showSpan(found[0])}
                 title={`Open the first ${word} span`}
                 className={cn(
                   "flex cursor-pointer items-center gap-1 font-mono tabular-nums hover:underline",
@@ -3042,7 +3075,7 @@ function TimelineAxis({
   scale,
 }: {
   issues: RunIssues["all"];
-  onPick: (span: ObservabilitySpanRow) => void;
+  onPick: (entry: RunIssues["all"][number]) => void;
   scale: TimelineScale;
 }): React.JSX.Element {
   return (
@@ -3069,11 +3102,11 @@ function TimelineAxis({
           style={{ "--now-left": `${timelinePct(scale.nowMs, scale)}%` }}
         />
       )}
-      {issues.map(({ issue, span }) => (
+      {issues.map(({ issue, path, span }) => (
         <button
           key={`${spanKey(span)}:${issue.atMs}`}
           type="button"
-          onClick={() => onPick(span)}
+          onClick={() => onPick({ issue: issue, path: path, span: span })}
           aria-label={`${issue.label}: ${spanLabel(span)}`}
           title={`${formatTime(issue.atMs)} · ${spanLabel(span)} · ${issue.label}${issue.text ? ` · ${issue.text}` : ""}`}
           className={cn(
