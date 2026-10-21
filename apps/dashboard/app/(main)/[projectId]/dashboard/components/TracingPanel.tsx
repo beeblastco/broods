@@ -2114,7 +2114,8 @@ function NoteRow({
 
 /**
  * A row across all five columns, indented like a Span cell at `depth`: a
- * step's note line, or an open line's payload. Selects a span, like a row.
+ * step's note line, or an open line's payload. With `onClick` it selects a
+ * span, like a row.
  */
 function WideRow({
   children,
@@ -2127,13 +2128,14 @@ function WideRow({
   depth: number;
   isSelected: boolean;
   label?: string;
-  onClick: () => void;
+  onClick?: () => void;
 }): React.JSX.Element {
   return (
     <tr
       onClick={onClick}
       className={cn(
-        "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
+        "border-b border-border/40 transition-colors",
+        onClick && "cursor-pointer hover:bg-accent/20",
         isSelected && "bg-accent",
       )}
     >
@@ -2199,12 +2201,13 @@ function FoldTrigger({
 /**
  * What an open line holds, as its own row under the line so the line keeps
  * its start, duration and bar on one short row and the text gets the whole
- * table width, pane open or not. Hangs off a rule under the line's icon.
+ * table width, pane open or not. Hangs off a rule under the line's icon. Not
+ * clickable, so a drag selects its text; the line above selects the span.
  */
 function PayloadRow({
   children,
   ...row
-}: React.ComponentProps<typeof WideRow>): React.JSX.Element {
+}: Omit<React.ComponentProps<typeof WideRow>, "onClick">): React.JSX.Element {
   return (
     <WideRow {...row}>
       <div className="ml-2 grid min-w-0 gap-2 border-l pr-1 pl-4 text-xs leading-relaxed text-muted-foreground">
@@ -3479,12 +3482,7 @@ function renderSpanRows(
   if (!isOpen) return rows;
   if (span.kind === "tool.call" || span.kind === "phase") {
     rows.push(
-      <PayloadRow
-        key={`payload:${key}`}
-        depth={depth}
-        isSelected={isSelected}
-        onClick={select}
-      >
+      <PayloadRow key={`payload:${key}`} depth={depth} isSelected={isSelected}>
         {spanPayload(span)}
       </PayloadRow>,
     );
@@ -3552,7 +3550,6 @@ function noteRows(
         key={`payload:${key}`}
         depth={row.depth}
         isSelected={row.isSelected}
-        onClick={row.onClick}
       >
         <PayloadText label={kind} value={text} />
       </PayloadRow>,

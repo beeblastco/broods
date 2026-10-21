@@ -20,6 +20,7 @@ import { formatNumber } from "@/app/lib/formatNumber";
 import {
   bucketStartsAcrossRange,
   formatAxisNumber,
+  knownRuns,
   perTaskAverages,
   SERIES_COLORS,
   tokenParts,
@@ -476,31 +477,40 @@ function ModelMenu({
   );
 }
 
-/** A small trend line for one number across the range, marking the clicked bin. */
+/**
+ * A small trend line for one number across the range, marking the clicked
+ * bin. A null bin is a gap, for an average over no tasks.
+ */
 function Sparkline({
   values,
   selected,
   color,
 }: {
-  values: number[];
+  values: Array<number | null>;
   selected: number | null;
   color: string;
 }): React.JSX.Element {
-  const max = Math.max(0, ...values) || 1;
+  const max = Math.max(0, ...values.map((v) => v ?? 0)) || 1;
   const step = values.length > 1 ? 100 / (values.length - 1) : 100;
-  const line = values
-    .map(
-      (v, i) =>
-        `${i === 0 ? "M" : "L"}${(i * step).toFixed(1)},${(26 - (v / max) * 23).toFixed(1)}`,
-    )
-    .join("");
+  // A lone bin repeats its point: the zero-length line's round cap draws a dot.
+  const lines = knownRuns(values).map((run) => ({
+    line: (run.length === 1 ? [run[0], run[0]] : run)
+      .map(
+        ([i, v], j) =>
+          `${j === 0 ? "M" : "L"}${(i * step).toFixed(1)},${(26 - (v / max) * 23).toFixed(1)}`,
+      )
+      .join(""),
+    lone: run.length === 1,
+    from: (run[0][0] * step).toFixed(1),
+    to: (run[run.length - 1][0] * step).toFixed(1),
+  }));
 
   return (
     <svg
       viewBox="0 0 100 28"
       preserveAspectRatio="none"
       aria-hidden="true"
-      className="block h-7 w-full"
+      className="block h-7 w-full overflow-visible"
       style={{ "--series-color": color }}
     >
       {selected !== null && (
@@ -515,18 +525,25 @@ function Sparkline({
           className="fill-foreground/10"
         />
       )}
-      <path
-        d={`${line}L100,28L0,28Z`}
-        fillOpacity={0.2}
-        className="fill-(--series-color)"
-      />
-      <path
-        d={line}
-        fill="none"
-        strokeWidth={1.5}
-        vectorEffect="non-scaling-stroke"
-        className="stroke-(--series-color)"
-      />
+      {lines.map(({ line, lone, from, to }) => (
+        <g key={from}>
+          {!lone && (
+            <path
+              d={`${line}L${to},28L${from},28Z`}
+              fillOpacity={0.2}
+              className="fill-(--series-color)"
+            />
+          )}
+          <path
+            d={line}
+            fill="none"
+            strokeWidth={lone ? 4 : 1.5}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+            className="stroke-(--series-color)"
+          />
+        </g>
+      ))}
     </svg>
   );
 }
@@ -678,10 +695,15 @@ function UsageStats({
               key={column.metric}
               className={cn(
                 "grid min-w-0 gap-1 border-l border-border px-4 py-3 transition-colors first:border-l-0",
-                active && "bg-accent/40",
+                active && "bg-accent",
               )}
             >
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div
+                className={cn(
+                  "flex items-center gap-2 text-xs",
+                  active ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
                 {series.label}
                 <HelpMark text={series.help} />
               </div>

@@ -2,6 +2,7 @@
 
 import { useTween } from "@/app/hooks/useTween";
 import {
+  knownRuns,
   monotonePath,
   niceTicks,
   resampleRows,
@@ -205,6 +206,7 @@ export function UsageChart({
             ) : kind === "line" ? (
               <LineLayers
                 rows={shown}
+                known={rows}
                 series={series}
                 scale={scale}
                 hover={hover}
@@ -436,57 +438,78 @@ function AxisLabels({
   );
 }
 
-/** One 2px line per series through the bin centres, plus the hover crosshair and dots. */
+/**
+ * One 2px straight line per series through the bin centres, broken where
+ * `known` is null and a dot for a lone bin, plus the hover crosshair and dots.
+ */
 function LineLayers({
   rows,
+  known,
   series,
   scale,
   hover,
 }: {
   rows: number[][];
+  known: Array<Array<number | null>>;
   series: UsageChartSeries[];
   scale: Scale;
   hover: number | null;
 }): React.JSX.Element {
   const { slot, y } = scale;
+  const isKnown = (i: number, k: number): boolean =>
+    known[i] !== undefined && known[i][k] !== null;
+  const x = (i: number): number => i * slot + slot / 2;
 
   return (
     <>
-      {series.map((s, k) => (
-        <path
-          key={s.key}
-          d={monotonePath(
-            rows.map((row, i): [number, number] => [
-              i * slot + slot / 2,
-              y(row[k]),
-            ]),
-          )}
-          fill="none"
-          strokeWidth={2}
-          strokeLinejoin="round"
-          className="stroke-(--series-color)"
-          style={{ "--series-color": s.color }}
-        />
-      ))}
+      {series.map((s, k) =>
+        knownRuns(rows.map((row, i) => (isKnown(i, k) ? row[k] : null))).map(
+          (run) =>
+            run.length === 1 ? (
+              <circle
+                key={`${s.key}-${run[0][0]}`}
+                cx={x(run[0][0])}
+                cy={y(run[0][1])}
+                r={4}
+                className="fill-(--series-color)"
+                style={{ "--series-color": s.color }}
+              />
+            ) : (
+              <path
+                key={`${s.key}-${run[0][0]}`}
+                d={run
+                  .map(([i, v], j) => `${j === 0 ? "M" : "L"}${x(i)},${y(v)}`)
+                  .join("")}
+                fill="none"
+                strokeWidth={2}
+                strokeLinejoin="round"
+                className="stroke-(--series-color)"
+                style={{ "--series-color": s.color }}
+              />
+            ),
+        ),
+      )}
       {hover !== null && hover < rows.length && (
         <>
           <line
-            x1={hover * slot + slot / 2}
-            x2={hover * slot + slot / 2}
+            x1={x(hover)}
+            x2={x(hover)}
             y1={y(0)}
             y2={PAD_TOP}
             className="stroke-foreground/30"
           />
-          {series.map((s, k) => (
-            <circle
-              key={s.key}
-              cx={hover * slot + slot / 2}
-              cy={y(rows[hover][k])}
-              r={3}
-              className="fill-(--series-color) stroke-card"
-              style={{ "--series-color": s.color }}
-            />
-          ))}
+          {series.map((s, k) =>
+            isKnown(hover, k) ? (
+              <circle
+                key={s.key}
+                cx={x(hover)}
+                cy={y(rows[hover][k])}
+                r={3}
+                className="fill-(--series-color) stroke-card"
+                style={{ "--series-color": s.color }}
+              />
+            ) : null,
+          )}
         </>
       )}
     </>
