@@ -460,6 +460,7 @@ describe("streamIsolatePayload cross-process abort", () => {
     "ISOLATE_POOL",
     "ISOLATE_WORKER_POOL_SIZE",
     "ISOLATE_RUNNER_TIMEOUT_SECONDS",
+    "ISOLATE_WORKER_READY_TIMEOUT_MS",
   ].map((key): [string, string | undefined] => [key, process.env[key]]);
 
   afterEach(async () => {
@@ -858,6 +859,7 @@ describe("streamIsolatePayload cross-process abort", () => {
     delete process.env.ISOLATE_POOL;
     process.env.ISOLATE_RUNNER_PATH = stubPath;
     process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS = "60";
+    process.env.ISOLATE_WORKER_READY_TIMEOUT_MS = "1000";
 
     const { shutdownIsolatePool, streamIsolatePayload } =
       await import("../src/harness/isolate/executor.ts");
@@ -882,13 +884,13 @@ describe("streamIsolatePayload cross-process abort", () => {
         "isolate worker failed to start: isolate worker did not become ready",
       );
       expect(await readFile(marker, "utf8")).toBe("xxx");
-      // Three 5 s start deadlines plus 300 ms of backoff, about 15 s. The bound
-      // leaves room for a loaded runner and still sits under one 60 s run timeout.
-      expect(performance.now() - started).toBeLessThan(30_000);
+      // Three 1 s start deadlines plus 300 ms of backoff, about 3.3 s. The bound
+      // leaves room for a loaded runner and still sits far under one 60 s run timeout.
+      expect(performance.now() - started).toBeLessThan(10_000);
     } finally {
       shutdownIsolatePool();
     }
-  }, 35_000);
+  }, 15_000);
 });
 
 // A fixed timer here raced the runner's startup: abort before the stub installs

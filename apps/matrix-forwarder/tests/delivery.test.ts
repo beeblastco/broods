@@ -74,7 +74,7 @@ describe("a message core does not take", () => {
       posted: ["$customer-0", "$customer-0"],
       token: "s3",
     });
-  }, 30_000);
+  });
 
   // An agent's webhook path can move while an event waits for it.
   it("follows its agent to a new webhook path", async () => {
