@@ -44,9 +44,9 @@ export const FREE_MONTHLY_BUDGET_EUR = 5;
 
 /**
  * Most EUR of real platform cost a Pro account can reach per month. Pro sells at
- * €20 a month per owner, one unit of Stripe price `STRIPE_SEAT_PRICE_ID` (not
- * in code) with two developer seats included, and each extra seat is one more
- * unit. It covers every org the owner owns, and those orgs share these caps as
+ * €20 a month per owner, Stripe price `STRIPE_PRO_PRICE_ID` (not in code)
+ * with two developer seats included, and each extra seat is one more €20 unit
+ * of `STRIPE_SEAT_PRICE_ID`. It covers every org the owner owns, and those orgs share these caps as
  * one pool (`usagePools`), however many orgs or seats the owner pays for. Half
  * of one unit: the rest covers VAT if the price includes it (€20 is €16.53 net
  * at 21%), Stripe's fee (about €0.55), the fixed Hetzner core and gateway, and

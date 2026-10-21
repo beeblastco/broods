@@ -1,9 +1,9 @@
 /**
  * Who pays and how many developers a Pro owner may seat. Pro belongs to the
- * owner, not to one org: one Stripe subscription per user to one €20 unit
- * price, filed under their authId. Pro is one unit and gives the owner
+ * owner, not to one org: one Stripe subscription per user, filed under their
+ * authId. Pro is one €20 unit and gives the owner
  * `PRO_INCLUDED_DEVELOPER_SEATS` developer seats; each seat past those is one
- * more unit (`proQuantity`). The seats are a pool across every org the owner
+ * more €20 unit on the seat line (`proQuantity`). The seats are a pool across every org the owner
  * owns: each distinct developer (a member who is not the owner) in any of
  * them takes one seat, however many of those orgs they are in. A Hobby
  * (free) owner has no developer seats and keeps one workspace; creating
@@ -26,7 +26,7 @@ import { isManagedService, PLAN_LIMITS, type Plan } from "./planLimits";
 /** Developer seats Pro includes, for its one unit. */
 export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
 
-/** One unit a month in euros: the price behind `STRIPE_SEAT_PRICE_ID`, Pro or one extra seat. */
+/** One unit a month in euros: Pro (`STRIPE_PRO_PRICE_ID`) or one extra seat (`STRIPE_SEAT_PRICE_ID`). */
 export const UNIT_PRICE_EUR = 20;
 
 // A subscription in one of these statuses is over: it no longer blocks a new
