@@ -112,6 +112,7 @@ OTel only has ok and error, so the state rides in `task.state` with `task.waitin
 - `tool.input` and `tool.output` hold at most 32,000 characters. Images and files show type and size, not bytes.
 - Each model step splits into time to first token, streaming and tool wait.
 - The Tracing tab shows one row per request: runs sharing its `task.id`, runs it resumed (`task.root_id`) and its subagents (`parent.trace_id`) nest under it. A failed `task` or `cron` root has a Continue button that posts `continue: true`.
+- The selected run's waterfall has a time axis. While the run is live, its clock ticks every second, so bars grow toward a now line. A failed span turns red, with its `error` on a line under it. A span with `model.attempts` above 1 or a `tool.retry.count` reads Retried, with its `model.retry_wait_ms` at the start of its bar. Each parent counts the issues under it, the header counts failed and retried spans, and the axis marks when each issue happened.
 - Config mutations and run completion go to the audit ledger; see [security](security.md#audit-ledger).
 
 ## Sandbox output

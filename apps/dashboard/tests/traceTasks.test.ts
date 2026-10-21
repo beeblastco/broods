@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { ObservabilitySpanRow } from "../app/hooks/useObservabilityStream";
 import {
+  axisTicks,
   failureCause,
   foldSteps,
   groupSpans,
   matchesTaskQuery,
+  runIssues,
+  spanIssue,
   TASK_QUERY_FIELDS,
   taskChannel,
   type TaskQuery,
@@ -334,6 +337,78 @@ describe("task list line", () => {
     expect(causeOf("boom")).toBe("boom");
     expect(failureCause(groupSpans([root("ok", 0, 1, "ok", {})])[0])).toBe(
       null,
+    );
+  });
+});
+
+describe("waterfall issues", () => {
+  test("reads a failure and a retried model call off their spans", () => {
+    const failed = { ...child("run", "bash", 2_000, "error"), error: "boom" };
+    const retried = {
+      ...step("run", 0, 1_000, 5_000),
+      attributes: {
+        "model.attempts": 3,
+        "model.retry_wait_ms": 1_500,
+        "model.attempt_errors": '["429 rate limited"]',
+      },
+    };
+
+    expect(spanIssue(failed)).toEqual({
+      atMs: 2_100,
+      level: "error",
+      label: "Failed",
+      text: "boom",
+    });
+    expect(spanIssue(retried)).toEqual({
+      atMs: 2_500,
+      level: "warn",
+      label: "Retried 2×",
+      text: '["429 rate limited"]',
+    });
+    expect(spanIssue(step("run", 1, 0, 1))).toBe(null);
+  });
+
+  test("counts a rate limited tool's retries", () => {
+    const tool = {
+      ...child("run", "search", 1_000, "ok"),
+      attributes: { "tool.retry.count": 2, "tool.retry.wait_ms": 400 },
+    };
+
+    expect(spanIssue(tool)).toMatchObject({
+      atMs: 1_400,
+      level: "warn",
+      label: "Retried 2×",
+    });
+  });
+
+  test("lists a run's issues in time order and what sits under each span", () => {
+    const task = root("run", 0, 10_000, "ok", {});
+    const first = step("run", 0, 1_000, 4_000);
+    const late = { ...toolOf(first, "bash"), status: "error" as const };
+    const early = {
+      ...child("run", "search", 500, "ok"),
+      attributes: { "tool.retry.count": 1, "tool.retry.wait_ms": 100 },
+    };
+
+    const [group] = groupSpans([task, first, late, early]);
+    const issues = runIssues(group);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-search",
+      "run-step-0-bash",
+    ]);
+    expect(issues.below.get("run")).toHaveLength(2);
+    expect(issues.below.get("run-step-0")).toHaveLength(1);
+    expect(issues.below.get("run-step-0-bash")).toEqual([]);
+  });
+
+  test("steps the time axis so it shows at most five ticks", () => {
+    expect(axisTicks(12_000)).toEqual([0, 5_000, 10_000]);
+    expect(axisTicks(82_000)).toEqual([0, 30_000, 60_000]);
+    expect(axisTicks(400)).toEqual([0, 100, 200, 300, 400]);
+    // A run that waited three days on a person steps in whole hours.
+    expect(axisTicks(72 * 3_600_000)).toEqual(
+      [0, 15, 30, 45, 60].map((hours) => hours * 3_600_000),
     );
   });
 });
