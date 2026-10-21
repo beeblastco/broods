@@ -412,7 +412,7 @@ export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
   return (agentConfig.policies?.length ?? 0) > 0;
 }
 
-function policyDecisionLogMessage(input: {
+export function policyDecisionLogMessage(input: {
   action?: string;
   decision: string;
   enforced: boolean;

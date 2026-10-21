@@ -80,6 +80,13 @@ test("deploy help names production even when another stage is selected", async (
   );
 });
 
+test("deploy help adds no note when no stage is selected", async () => {
+  const result = await runCli(["deploy", "--help"], "BROODS_PROJECT=my-app\n");
+
+  expect(result.stdout).toContain("my-app → production");
+  expect(result.stdout).not.toContain("ignores stage");
+});
+
 test("a grouped command with no subcommand leads its page with the target", async () => {
   const result = await runCli(
     ["env"],
@@ -100,7 +107,7 @@ test.each(["org", "stage", "env", "agent"])(
   },
 );
 
-test.each(["whoami"])(
+test.each(["deploy", "dev", "logs", "run", "update", "whoami"])(
   "`broods %s --help` prints its page without reaching the network",
   async (command) => {
     const result = await runCli([command, "--help"]);
