@@ -87,6 +87,7 @@ import {
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
 import { useObservabilityView } from "@/app/hooks/useObservabilityView";
+import { useIsMobile } from "@/app/hooks/useIsMobile";
 import { useRemembered } from "@/app/hooks/useRemembered";
 import { toErrorMessage } from "@/app/lib/errors";
 
@@ -589,7 +590,11 @@ export function TracingPanel({
   );
   const [toggled, setToggled] = useState<Set<string>>(new Set());
   // The task list folded to a rail of status dots, so one trace gets the width.
-  const [rail, setRail] = useRemembered(LIST_RAIL_KEY, false);
+  // Desktop only: on a phone the list stacks above the trace, so a rail of
+  // full-width dot rows saves nothing.
+  const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
+  const isMobile = useIsMobile();
+  const rail = railChosen && !isMobile;
   // Whether a request's subagent rows list, where the person chose; with no
   // choice they list while the selected run is that request or under it.
   const [stackChoices, setStackChoices] = useState<
@@ -1051,7 +1056,7 @@ export function TracingPanel({
         <div className="flex h-full min-h-0 flex-col md:flex-row">
           <TaskListPane
             rail={rail}
-            onToggleRail={() => setRail(!rail)}
+            onToggleRail={() => setRail(!railChosen)}
             rows={listRows}
             selectedGroup={selectedGroup}
             stackChoices={stackChoices}
@@ -2659,7 +2664,7 @@ function TaskListPane({
     >
       <div
         className={cn(
-          "sticky top-0 z-10 flex border-b border-border/60 bg-card",
+          "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
           rail ? "justify-center" : "justify-end",
         )}
       >
