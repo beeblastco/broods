@@ -515,27 +515,30 @@ async function imageContentOutput(
     content.filter(isImageLink).slice(0, MAX_RESULT_IMAGES),
   );
   const parts = await Promise.all(
-    content.map(async (block): Promise<ToolContentPart> => {
+    content.map(async (block): Promise<ToolContentPart[]> => {
       if (block.type === "image") {
-        return {
-          type: "image-data",
-          data: block.data,
-          mediaType: block.mimeType,
-        };
+        return [
+          { type: "image-data", data: block.data, mediaType: block.mimeType },
+        ];
       }
+      // A linked picture keeps its line, so the model still knows its source.
+      const text: ToolContentPart = {
+        type: "text",
+        text: renderContent([block]),
+      };
       const linked =
         isImageLink(block) && links.has(block)
           ? await linkedImage(block.uri, block.mimeType)
           : undefined;
 
-      return linked ?? { type: "text", text: renderContent([block]) };
+      return linked ? [text, linked] : [text];
     }),
   );
 
   return {
     type: "content",
     value: withImageLimits([
-      ...parts,
+      ...parts.flat(),
       ...(structured
         ? [{ type: "text" as const, text: JSON.stringify(structured) }]
         : []),
@@ -589,8 +592,9 @@ async function linkedImage(
       mediaType: mediaType,
     };
   } catch (err) {
+    // The host only: a signed link carries its token in the path or query.
     logInfo("MCP image link could not be read", {
-      uri: uri,
+      host: URL.canParse(uri) ? new URL(uri).host : undefined,
       error: err instanceof Error ? err.message : String(err),
     });
 

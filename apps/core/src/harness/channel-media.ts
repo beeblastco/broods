@@ -96,6 +96,10 @@ const MAX_REPLAY_BYTES_PER_TURN = 20 * 1024 * 1024;
 // once there are more than 20. Older ones become OMITTED_MEDIA_NOTE.
 const MAX_REPLAYED_MEDIA = 20;
 
+// Pictures past the cap are dropped this many at a time, so between
+// MAX_REPLAYED_MEDIA - REPLAY_OMIT_BATCH and MAX_REPLAYED_MEDIA replay.
+const REPLAY_OMIT_BATCH = 10;
+
 // What the model reads where a stored picture is not shown this turn.
 const OMITTED_MEDIA_NOTE = "[an earlier image is not shown here]";
 
@@ -369,12 +373,17 @@ export async function rehydrateStoredMedia(
     remainingBytes: MAX_REPLAY_BYTES_PER_TURN,
   };
 
-  return await Promise.all(
-    (await withOldMediaOmitted(messages)).map(
-      (message): Promise<ModelMessage> =>
+  // Newest first: a cached link is charged before its read starts, so when the
+  // budget runs out it is the oldest pictures that stay behind, not the latest.
+  const replayed = await Promise.all(
+    (await withOldMediaOmitted(messages))
+      .toReversed()
+      .map((message): Promise<ModelMessage> =>
         rehydrateMessage(message, agentConfig, replay),
-    ),
+      ),
   );
+
+  return replayed.toReversed();
 }
 
 /**
@@ -1102,7 +1111,9 @@ function sealedMediaLink(part: UserContentPart): string | null {
 
 /** The sealed media URL a tool result's content item points at, or null. */
 function sealedToolLink(item: ToolContentPart): string | null {
-  return item.type === "file-url" && item.url.includes(MEDIA_PATH_PREFIX)
+  return item.type === "file-url" &&
+    item.mediaType?.startsWith("image") === true &&
+    item.url.includes(MEDIA_PATH_PREFIX)
     ? item.url
     : null;
 }
@@ -1283,10 +1294,13 @@ function whereItLanded(
 async function withOldMediaOmitted(
   messages: ModelMessage[],
 ): Promise<ModelMessage[]> {
-  let toOmit = messages.flatMap(imageLinks).length - MAX_REPLAYED_MEDIA;
-  if (toOmit <= 0) {
+  const over = messages.flatMap(imageLinks).length - MAX_REPLAYED_MEDIA;
+  if (over <= 0) {
     return messages;
   }
+  // Whole batches, so the prompt's opening stays the same, and stays cached,
+  // for the next REPLAY_OMIT_BATCH pictures instead of changing every turn.
+  let toOmit = Math.ceil(over / REPLAY_OMIT_BATCH) * REPLAY_OMIT_BATCH;
   const omits = (link: string | null): boolean => {
     if (link === null || toOmit <= 0) {
       return false;

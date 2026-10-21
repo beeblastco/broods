@@ -509,6 +509,7 @@ describe("session pruning", () => {
               value: [
                 screenshot,
                 { type: "file-data", data: "AQ==", mediaType: "image/jpeg" },
+                // A link may expire, so it goes with its pruned call.
                 { type: "image-url", url: "https://cdn.example.com/a.png" },
               ],
             },
@@ -531,7 +532,6 @@ describe("session pruning", () => {
             mediaType: "image/png",
           },
           { type: "image", image: "AQ==", mediaType: "image/jpeg" },
-          { type: "image", image: "https://cdn.example.com/a.png" },
         ],
       },
       { role: "assistant", content: "OK" },

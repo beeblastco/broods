@@ -1080,11 +1080,53 @@ describe("sealConversationMedia", () => {
       await rehydrateStoredMedia(long, modelConfig("custom"), ACCOUNT),
     );
 
-    // 22 pictures: the two oldest become a line, the newest 20 are bytes.
+    // 22 pictures: a batch of the ten oldest become a line, the rest are bytes.
     expect(replay.split("[an earlier image is not shown here]")).toHaveLength(
-      3,
+      11,
     );
     expect(replay).not.toContain("/v1/media/");
+  });
+
+  it("spends the replay budget on the newest pictures", async (): Promise<void> => {
+    // Just over 4 MB each: the 20 MB budget holds four of the five.
+    const big = Buffer.concat([PNG_BYTES, Buffer.alloc(4 * 1024 * 1024)]);
+    const shot = (id: string): ModelMessage => ({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: id,
+          toolName: "screenshot",
+          output: {
+            type: "content",
+            value: [
+              {
+                type: "image-data",
+                data: big.toString("base64"),
+                mediaType: "image/png",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const sealed = await sealConversationMedia(
+      ["c1", "c2", "c3", "c4", "c5"].map(shot),
+      ACCOUNT,
+    );
+
+    const replay = await rehydrateStoredMedia(
+      sealed,
+      modelConfig("custom"),
+      ACCOUNT,
+    );
+
+    expect(JSON.stringify(replay[0])).toContain(
+      "[an earlier image is not shown here]",
+    );
+    expect(JSON.stringify(replay.slice(1))).not.toContain(
+      "[an earlier image is not shown here]",
+    );
   });
 
   // Bedrock refuses a URL inside a tool result before sending the request.

@@ -580,23 +580,20 @@ export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
 export function moveRefusedToolImagesMiddleware(
   endpoint: string,
 ): LanguageModelMiddleware {
-  const retrying = retryingMiddleware(
-    (error, params): LanguageModelV4CallOptions | undefined => {
-      const moved = withToolImagesMoved(error, params);
-      if (moved) {
-        toolImageRefusals.add(endpoint);
-      }
-
-      return moved;
-    },
-  );
+  const retrying = retryingMiddleware(withToolImagesMoved, (): void => {
+    toolImageRefusals.add(endpoint);
+  });
 
   return {
     ...retrying,
-    transformParams: async ({ params }) =>
-      toolImageRefusals.has(endpoint)
-        ? { ...params, prompt: toolImagesAsUserMessages(params.prompt) }
-        : params,
+    transformParams: async ({
+      params,
+    }): Promise<LanguageModelV4CallOptions> => ({
+      ...params,
+      prompt: toolImageRefusals.has(endpoint)
+        ? toolImagesAsUserMessages(params.prompt)
+        : withTextToolResultsAsText(params.prompt),
+    }),
   };
 }
 
@@ -624,13 +621,15 @@ export function withoutStoredItemId<
 /**
  * A middleware that runs the call again when `recover` recognises the failure
  * and can say what to send instead. `recover` returning undefined rethrows, so
- * a failure it does not know about is never paid for twice.
+ * a failure it does not know about is never paid for twice. `recovered` runs
+ * once the retry is accepted.
  */
 function retryingMiddleware(
   recover: (
     error: unknown,
     params: LanguageModelV4CallOptions,
   ) => LanguageModelV4CallOptions | undefined,
+  recovered?: () => void,
 ): LanguageModelMiddleware {
   return {
     wrapGenerate: async ({ doGenerate, model, params }) => {
@@ -641,8 +640,10 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
+        const result = await model.doGenerate(retry);
+        recovered?.();
 
-        return await model.doGenerate(retry);
+        return result;
       }
     },
     wrapStream: async ({ doStream, model, params }) => {
@@ -653,8 +654,10 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
+        const result = await model.doStream(retry);
+        recovered?.();
 
-        return await model.doStream(retry);
+        return result;
       }
     },
   };
@@ -795,10 +798,10 @@ function toolImagesAsUserMessages(
 
       return { ...part, output: { ...part.output, value: value } };
     });
-    if (images.length === 0) return [message];
+    if (images.length === 0) return withTextToolResultsAsText([message]);
 
     return [
-      { ...message, content: content },
+      ...withTextToolResultsAsText([{ ...message, content: content }]),
       {
         role: "user",
         content: [
@@ -807,6 +810,34 @@ function toolImagesAsUserMessages(
         ],
       },
     ];
+  });
+}
+
+// Each tool result left with only text sent as one string: some endpoints take
+// nothing else in a tool message, and every endpoint takes that.
+function withTextToolResultsAsText(
+  prompt: LanguageModelV4Message[],
+): LanguageModelV4Message[] {
+  return prompt.map((message): LanguageModelV4Message => {
+    if (message.role !== "tool") return message;
+
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (
+          part.type !== "tool-result" ||
+          part.output.type !== "content" ||
+          !part.output.value.every((item) => item.type === "text")
+        ) {
+          return part;
+        }
+        const text = part.output.value
+          .map((item) => (item.type === "text" ? item.text : ""))
+          .join("\n");
+
+        return { ...part, output: { type: "text", value: text } };
+      }),
+    };
   });
 }
 

@@ -78,33 +78,22 @@ export function hasPendingToolApprovalResponse(
 }
 
 /**
- * A tool result's content item as a picture a user message can carry. Shared
- * empty result, so the check for any picture allocates nothing per item.
+ * A tool result's picture as one a user message can carry, when the result
+ * holds its bytes. Replay already capped those; a URL is left to be pruned, so
+ * a link that expires never fails every later turn. Shared empty result, so the
+ * check for any picture allocates nothing per item.
  */
 function toolImage(item: ToolContentPart): readonly ImagePart[] {
   switch (item.type) {
     case "image-data":
       return [{ type: "image", image: item.data, mediaType: item.mediaType }];
-    case "image-url":
-      return [{ type: "image", image: item.url }];
     case "file-data":
       return item.mediaType.startsWith("image")
         ? [{ type: "image", image: item.data, mediaType: item.mediaType }]
         : NO_IMAGES;
-    case "file-url":
-      return item.mediaType?.startsWith("image")
-        ? [{ type: "image", image: item.url, mediaType: item.mediaType }]
-        : NO_IMAGES;
     case "file":
-      return item.mediaType.startsWith("image") &&
-        (item.data.type === "data" || item.data.type === "url")
-        ? [
-            {
-              type: "image",
-              image: item.data.type === "data" ? item.data.data : item.data.url,
-              mediaType: item.mediaType,
-            },
-          ]
+      return item.mediaType.startsWith("image") && item.data.type === "data"
+        ? [{ type: "image", image: item.data.data, mediaType: item.mediaType }]
         : NO_IMAGES;
     default:
       return NO_IMAGES;

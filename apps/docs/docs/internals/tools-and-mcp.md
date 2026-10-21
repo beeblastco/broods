@@ -131,7 +131,7 @@ flowchart LR
 - External URLs: the host is resolved first and private, loopback, link-local and metadata addresses are refused, as are redirects. The OAuth `tokenUrl` gets the same check (`oauth.ts` mints and caches refresh-grant tokens).
 - Headers: a credential-bearing header must be a `${NAME}` env ref. Inline secrets and URL userinfo are refused at registration.
 - Every remote request carries `X-Broods-Agent-Id` and, when the chain is known, `X-Broods-Principal`. See [security](security.md#agent-principal-and-run-tokens).
-- Results: `structuredContent`, or the text blocks. Images reach the model only within `withImageLimits` in `tools/utils.ts` (PNG, JPEG, GIF or WebP, at most 8000 px a side, 8 images and 6 MB per result). Stored history keeps the text only.
+- Results: `structuredContent`, or the text blocks. Images reach the model only within `withImageLimits` in `tools/utils.ts` (PNG, JPEG, GIF or WebP, at most 8000 px a side, 8 images and 6 MB per result). An image `resource_link` over http(s) is read by core with the same address checks and limits, and keeps its link line. Stored history keeps each picture in the attachment store behind a sealed link (`sealConversationMedia` in `channel-media.ts`); later turns read the newest 20 back as images, and older ones become a line of text.
 - Not supported: `subscriptions/listen`. MRTR `input_required` surfaces as a tool error.
 
 ### Server on a lambda sandbox

@@ -574,10 +574,7 @@ describe("tool result images on a custom endpoint", () => {
       {
         role: "tool",
         tool_call_id: "c1",
-        content: [
-          { type: "text", text: "captured" },
-          { type: "text", text: "[image 1 is in the next message]" },
-        ],
+        content: "captured\n[image 1 is in the next message]",
       },
       {
         role: "user",
@@ -600,6 +597,16 @@ describe("tool result images on a custom endpoint", () => {
         imageUrl,
       ],
     });
+  });
+
+  it("does not remember an endpoint whose retry failed too", async () => {
+    const bodies = await requests([400, 400, 200, 200], 2);
+
+    // Call 1: refused, moved and refused again, then dropped. Call 2 starts over
+    // with the image in the tool message.
+    expect(bodies).toHaveLength(4);
+    expect(JSON.stringify(bodies[3]?.messages.at(-1))).toContain("image_url");
+    expect(bodies[3]?.messages.at(-1)?.role).toBe("tool");
   });
 
   it("drops the image when a text-only model refuses it anywhere", async () => {
