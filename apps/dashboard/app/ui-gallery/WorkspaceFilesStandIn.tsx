@@ -2,9 +2,14 @@
 
 /**
  * The workspace file explorer over an in-memory file list, once as a writer
- * and once as a member. The view is the real one; uploads, renames and deletes
- * change the list here and are written to `[data-files-log]` for a spec.
+ * and once as a member. The view is the real one; uploads, renames, deletes
+ * and downloads change the list here and are written to `[data-files-log]`
+ * for a spec.
  */
+import {
+  isImageFile,
+  type FileContent,
+} from "@/app/components/side-panel/FilePreview";
 import {
   renamedPath,
   withoutPath,
@@ -12,7 +17,7 @@ import {
   WorkspaceFilesView,
   type FileRecord,
 } from "@/app/components/side-panel/WorkspaceFilesTab";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 const FILES: FileRecord[] = [
   { path: "docs", name: "docs", isFolder: true },
@@ -21,7 +26,29 @@ const FILES: FileRecord[] = [
   { path: "docs/api/openapi.yaml", name: "openapi.yaml", isFolder: false },
   { path: "README.md", name: "README.md", isFolder: false, sizeBytes: 512 },
   { path: "notes.txt", name: "notes.txt", isFolder: false, sizeBytes: 64 },
+  { path: "agent.ts", name: "agent.ts", isFolder: false, sizeBytes: 300 },
+  { path: "logo.svg", name: "logo.svg", isFolder: false, sizeBytes: 200 },
+  {
+    path: "build.log",
+    name: "build.log",
+    isFolder: false,
+    sizeBytes: 600 * 1024,
+  },
+  { path: "assets.zip", name: "assets.zip", isFolder: false, sizeBytes: 4096 },
 ];
+
+const CONTENTS: Record<string, string> = {
+  "docs/guide.md": "# Getting started\n\nRun `broods dev` in the project.\n",
+  "docs/api/openapi.yaml": "openapi: 3.1.0\ninfo:\n  title: Broods API\n",
+  "README.md": "# Support docs\n\nWhat the support agent reads.\n",
+  "notes.txt": "TODO: add the refund policy.\n",
+  "agent.ts":
+    'import { defineAgent } from "broods";\n\nexport default defineAgent({ model: "claude-haiku-5-5" });\n',
+};
+
+const LOGO_URL = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="28" fill="#e8b04b"/></svg>',
+)}`;
 
 // A Convex rename has no optimistic update: the new row arrives with the query.
 const RENAME_LATENCY_MS = 100;
@@ -33,17 +60,39 @@ export function WorkspaceFilesStandIn({
 }): React.JSX.Element {
   const [files, setFiles] = useState(FILES);
   const [log, setLog] = useState<string[]>([]);
-  const record = (entry: string): void => setLog((prev) => [...prev, entry]);
+  const record = useCallback(
+    (entry: string): void => setLog((prev) => [...prev, entry]),
+    [],
+  );
+  // Keyed by path, so a rename moves the text with its file.
+  const contents = useRef(new Map(Object.entries(CONTENTS)));
+  const loadFile = useCallback(
+    async (file: FileRecord): Promise<FileContent> =>
+      isImageFile(file.name)
+        ? { kind: "image", url: LOGO_URL }
+        : { kind: "text", text: contents.current.get(file.path) ?? "" },
+    [],
+  );
+  const fileUrl = useCallback(
+    async (file: FileRecord): Promise<string> => {
+      record(`download ${file.path}`);
+
+      return "about:blank";
+    },
+    [record],
+  );
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex h-80 w-72 flex-col border border-border">
+      <div className="flex h-120 w-80 flex-col border border-border">
         <WorkspaceFilesView
           files={files}
           uploading={new Set()}
           error={null}
           canWrite={canWrite}
           onDismissError={() => {}}
+          loadFile={loadFile}
+          fileUrl={fileUrl}
           onUpload={async (entries) => {
             setFiles((prev) => [
               ...prev,
@@ -71,6 +120,15 @@ export function WorkspaceFilesStandIn({
               return false;
             }
             setFiles((prev) => withRenamedPath(prev, node.path, newPath));
+            for (const [path, text] of Array.from(contents.current)) {
+              if (path !== node.path && !path.startsWith(`${node.path}/`))
+                continue;
+              contents.current.delete(path);
+              contents.current.set(
+                `${newPath}${path.slice(node.path.length)}`,
+                text,
+              );
+            }
             record(`rename ${node.path} ${newPath}`);
 
             return true;

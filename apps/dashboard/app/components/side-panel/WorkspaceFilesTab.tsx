@@ -3,12 +3,23 @@
 /** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
+import {
+  FilePreview,
+  isImageFile,
+  usePreviewTabs,
+  type FileContent,
+} from "@/app/components/side-panel/FilePreview";
 import { Button } from "@/app/components/ui/button";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/app/components/ui/resizable";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import {
   ChevronDown,
   ChevronRight,
@@ -21,6 +32,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDefaultLayout, type LayoutStorage } from "react-resizable-panels";
 import type { StyleProps } from "react-file-icon";
 import { FileIcon, defaultStyles } from "react-file-icon";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -51,6 +63,13 @@ type RuntimeFileCacheEntry = {
 type TreeKeyTarget = { focus: string } | { toggle: string };
 
 const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
+// The tree/preview split per browser. The library's default store reads
+// localStorage during the server render, which has none.
+const SPLIT_STORAGE: LayoutStorage = {
+  getItem: (key) =>
+    typeof window === "undefined" ? null : window.localStorage.getItem(key),
+  setItem: (key, value) => window.localStorage.setItem(key, value),
+};
 // How often the file list is re-read from core. Slow is fine: the focus and
 // visibility refreshes cover active use.
 const RUNTIME_FILES_POLL_MS = 15_000;
@@ -83,6 +102,9 @@ export function WorkspaceFilesTab({
   const uploadRuntimeFile = useAction(api.workspace.filesPublic.upload);
   const removeRuntimePath = useAction(api.workspace.filesPublic.remove);
   const renameRuntimePath = useAction(api.workspace.filesPublic.rename);
+  const readRuntimeFile = useAction(api.workspace.filesPublic.read);
+  const runtimeFileUrl = useAction(api.workspace.filesPublic.downloadUrl);
+  const convex = useConvex();
 
   const cacheKey = runtimeFileCacheKey(projectId, workspaceId);
   const [runtimeFiles, setRuntimeFiles] = useState<FileRecord[] | undefined>(
@@ -391,6 +413,52 @@ export function WorkspaceFilesTab({
     ],
   );
 
+  const fileUrl = useCallback(
+    async (file: FileRecord): Promise<string> => {
+      if (!projectId) throw new Error("Project not loaded");
+      if (workspaceId) {
+        return await runtimeFileUrl({
+          projectId: projectId,
+          workspaceId: workspaceId,
+          path: file.path,
+        });
+      }
+      const url = await convex.query(api.workspace.files.getFileDownloadUrl, {
+        projectId: projectId,
+        nodeId: nodeId,
+        path: file.path,
+      });
+      if (!url) throw new Error("File not found");
+
+      return url;
+    },
+    [convex, nodeId, projectId, runtimeFileUrl, workspaceId],
+  );
+
+  // Runtime files are read through Convex, so the bucket needs no CORS rule;
+  // Convex storage URLs already allow the dashboard to fetch them.
+  const loadFile = useCallback(
+    async (file: FileRecord): Promise<FileContent> => {
+      if (isImageFile(file.name)) {
+        return { kind: "image", url: await fileUrl(file) };
+      }
+      if (workspaceId && projectId) {
+        const text = await readRuntimeFile({
+          projectId: projectId,
+          workspaceId: workspaceId,
+          path: file.path,
+        });
+
+        return { kind: "text", text: text };
+      }
+      const response = await fetch(await fileUrl(file));
+      if (!response.ok) throw new Error(`Could not read ${file.name}`);
+
+      return { kind: "text", text: await response.text() };
+    },
+    [fileUrl, projectId, readRuntimeFile, workspaceId],
+  );
+
   return (
     <WorkspaceFilesView
       files={files}
@@ -411,6 +479,8 @@ export function WorkspaceFilesTab({
       onUpload={uploadFiles}
       onDelete={handleDelete}
       onRename={handleRename}
+      loadFile={loadFile}
+      fileUrl={fileUrl}
     />
   );
 }
@@ -431,6 +501,8 @@ export function WorkspaceFilesView({
   onUpload,
   onDelete,
   onRename,
+  loadFile,
+  fileUrl,
 }: {
   /** Undefined while loading. */
   files: FileRecord[] | undefined;
@@ -445,9 +517,22 @@ export function WorkspaceFilesView({
   onDelete: (node: FileRecord) => Promise<void>;
   /** Resolves whether the rename landed; the view keeps the old row when it did not. */
   onRename: (node: FileRecord, newName: string) => Promise<boolean>;
+  /** The preview's contents; keep it stable, a new function reloads the open file. */
+  loadFile: (file: FileRecord) => Promise<FileContent>;
+  /** A short-lived URL for Download. */
+  fileUrl: (file: FileRecord) => Promise<string>;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
+  const previewTabs = usePreviewTabs(files, selected);
+  const split = useDefaultLayout({
+    id: "workspace-files-split",
+    storage: SPLIT_STORAGE,
+    panelIds:
+      previewTabs.tabs.length > 0
+        ? ["files-tree", "files-preview"]
+        : ["files-tree"],
+  });
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingDeleteNode, setPendingDeleteNode] = useState<FileNode | null>(
@@ -590,15 +675,22 @@ export function WorkspaceFilesView({
     e.target.value = "";
   };
 
+  // Selecting a file previews it in the transient tab.
+  const select = (node: FileNode): void => {
+    setSelected(node.path);
+    if (!node.isFolder) previewTabs.show(node.path);
+  };
+
   const focusRow = (path: string): void => {
-    setSelected(path);
+    const node = visible.find((row) => row.path === path);
+    if (node) select(node);
     rowElement(treeRef.current, path)?.focus();
   };
 
   // Row clicks and keys are delegated here, so each row is a plain treeitem.
   // A row press, by click or Enter/Space: select it and toggle a folder.
   const activate = (node: FileNode): void => {
-    setSelected(node.path);
+    select(node);
     if (node.isFolder) toggleFolder(node.path);
   };
 
@@ -622,6 +714,8 @@ export function WorkspaceFilesView({
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       activate(node);
+      // Enter keeps the file open in its own tab; Space only previews it.
+      if (e.key === "Enter" && !node.isFolder) previewTabs.pin(node.path);
 
       return;
     }
@@ -654,7 +748,11 @@ export function WorkspaceFilesView({
     setSelected(newPath);
     endRename(newPath);
     void onRename(node, newName).then((renamed) => {
-      if (renamed) return;
+      if (renamed) {
+        previewTabs.rename(node.path, newPath);
+
+        return;
+      }
       setSelected(node.path);
       pendingFocusRef.current = node.path;
     });
@@ -744,77 +842,103 @@ export function WorkspaceFilesView({
         </div>
       )}
 
-      {/* File tree */}
-      <div className="flex-1 overflow-y-auto">
-        {files === undefined ? (
-          <div className="flex items-center justify-center py-10">
-            <span className="text-xs text-muted-foreground">Loading…</span>
-          </div>
-        ) : tree.length === 0 && uploading.size === 0 ? (
-          <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
-            <div className="flex size-10 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
-              <Upload className="size-4 text-muted-foreground" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <p className="text-xs font-medium text-foreground/70">
-                No files yet
-              </p>
-              <p className="text-2xs text-muted-foreground">
-                Drop files or folders here, or use the buttons above.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div
-            ref={treeRef}
-            role="tree"
-            aria-label="Workspace files"
-            className="min-h-full"
-            onClick={handleTreeClick}
-            onKeyDown={handleTreeKeyDown}
-          >
-            {tree.map((node, index) => (
-              <TreeRow
-                key={node.path}
-                node={node}
-                depth={0}
-                position={index + 1}
-                setSize={tree.length}
-                canWrite={canWrite}
-                expanded={expanded}
-                uploading={uploading}
-                selected={selected}
-                tabStop={tabStop}
-                renamingPath={renamingPath}
-                onDelete={setPendingDeleteNode}
-                onRenameStart={setRenamingPath}
-                onRenameCommit={handleRenameCommit}
-                onRenameCancel={endRename}
-              />
-            ))}
-            {/* In-flight uploads not yet reflected in DB */}
-            {Array.from(uploading).map((path) => {
-              const alreadyInTree = files.some((f) => f.path === path);
-              if (alreadyInTree) return null;
-              const name = path.split("/").pop() ?? path;
-
-              return (
-                <div
-                  key={`uploading-${path}`}
-                  role="treeitem"
-                  aria-selected={false}
-                  aria-disabled
-                  aria-busy
-                  className="flex h-5.5 items-center gap-1.5 pl-5 text-xs text-muted-foreground"
-                >
-                  <Upload className="size-3" />
-                  <span className="truncate font-mono">{name}</span>
+      {/* File tree, and the preview below it once a file is open. The group
+          is always rendered, so opening the first file keeps the tree's focus. */}
+      <ResizablePanelGroup
+        orientation="vertical"
+        className="min-h-0 flex-1"
+        defaultLayout={split.defaultLayout}
+        onLayoutChanged={split.onLayoutChanged}
+      >
+        <ResizablePanel id="files-tree" minSize={88}>
+          <div className="h-full overflow-y-auto">
+            {files === undefined ? (
+              <div className="flex items-center justify-center py-10">
+                <span className="text-xs text-muted-foreground">Loading…</span>
+              </div>
+            ) : tree.length === 0 && uploading.size === 0 ? (
+              <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+                <div className="flex size-10 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
+                  <Upload className="size-4 text-muted-foreground" />
                 </div>
-              );
-            })}
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs font-medium text-foreground/70">
+                    No files yet
+                  </p>
+                  <p className="text-2xs text-muted-foreground">
+                    Drop files or folders here, or use the buttons above.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div
+                ref={treeRef}
+                role="tree"
+                aria-label="Workspace files"
+                className="min-h-full"
+                onClick={handleTreeClick}
+                onKeyDown={handleTreeKeyDown}
+              >
+                {tree.map((node, index) => (
+                  <TreeRow
+                    key={node.path}
+                    node={node}
+                    depth={0}
+                    position={index + 1}
+                    setSize={tree.length}
+                    canWrite={canWrite}
+                    expanded={expanded}
+                    uploading={uploading}
+                    selected={selected}
+                    tabStop={tabStop}
+                    renamingPath={renamingPath}
+                    onDelete={setPendingDeleteNode}
+                    onRenameStart={setRenamingPath}
+                    onRenameCommit={handleRenameCommit}
+                    onRenameCancel={endRename}
+                  />
+                ))}
+                {/* In-flight uploads not yet reflected in DB */}
+                {Array.from(uploading).map((path) => {
+                  const alreadyInTree = files.some((f) => f.path === path);
+                  if (alreadyInTree) return null;
+                  const name = path.split("/").pop() ?? path;
+
+                  return (
+                    <div
+                      key={`uploading-${path}`}
+                      role="treeitem"
+                      aria-selected={false}
+                      aria-disabled
+                      aria-busy
+                      className="flex h-5.5 items-center gap-1.5 pl-5 text-xs text-muted-foreground"
+                    >
+                      <Upload className="size-3" />
+                      <span className="truncate font-mono">{name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
+        </ResizablePanel>
+        {previewTabs.tabs.length > 0 && (
+          <>
+            <ResizableHandle withHandle aria-label="Resize the file preview" />
+            <ResizablePanel id="files-preview" defaultSize="50%" minSize={120}>
+              <FilePreview
+                tabs={previewTabs.tabs}
+                activePath={previewTabs.activePath}
+                onActivate={previewTabs.show}
+                onPin={previewTabs.pin}
+                onClose={previewTabs.close}
+                loadFile={loadFile}
+                fileUrl={fileUrl}
+              />
+            </ResizablePanel>
+          </>
         )}
-      </div>
+      </ResizablePanelGroup>
 
       {/* Drag-over overlay */}
       {isDragOver && (
