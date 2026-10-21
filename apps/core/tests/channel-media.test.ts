@@ -119,6 +119,7 @@ const {
   readAttachmentBytes,
   rehydrateStoredMedia,
   resolveMediaType,
+  sealConversationMedia,
 } = await import("../src/harness/channel-media.ts");
 
 const ORIGINAL_ENV = { ...process.env };
@@ -989,6 +990,175 @@ function workspaceTicket(): MediaTicket {
 // the ones production opens, not an injected connection. The guard's own
 // behavior is covered in isolate-pinned-fetch.test.ts; these tests prove the
 // attachment path threads it correctly.
+describe("sealConversationMedia", () => {
+  const base64 = PNG_BYTES.toString("base64");
+  const conversation: ModelMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what does it say?" },
+        { type: "image", image: base64, mediaType: "image/png" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "screenshot",
+          output: {
+            type: "content",
+            value: [
+              { type: "text", text: "Screenshot taken." },
+              { type: "image-data", data: base64, mediaType: "image/png" },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+
+  // The row keeps a link, never the bytes, and every later turn reads the
+  // picture back: the model keeps seeing it for the life of the conversation.
+  it("stores a picture once and replays it on later turns", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+
+    expect(JSON.stringify(sealed)).not.toContain(base64);
+    // The same screenshot twice is one object, keyed by its hash.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
+    const keys = writeS3ObjectMock.mock.calls.map(([, key]) => key);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toMatch(/^attachments\/acct_1\/media\/[0-9a-f]{32}\.png$/);
+
+    const replay = await rehydrateStoredMedia(
+      sealed,
+      modelConfig("custom"),
+      ACCOUNT,
+    );
+
+    expect(replay).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what does it say?" },
+          { type: "image", image: PNG_BYTES, mediaType: "image/png" },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "screenshot",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "Screenshot taken." },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  data: { type: "data", data: PNG_BYTES },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("replays only the newest pictures of a long conversation", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+    const long = Array.from(
+      { length: 11 },
+      (): ModelMessage[] => sealed,
+    ).flat();
+
+    const replay = JSON.stringify(
+      await rehydrateStoredMedia(long, modelConfig("custom"), ACCOUNT),
+    );
+
+    // 22 pictures: a batch of the ten oldest become a line, the rest are bytes.
+    expect(replay.split("[an earlier image is not shown here]")).toHaveLength(
+      11,
+    );
+    expect(replay).not.toContain("/v1/media/");
+  });
+
+  it("spends the replay budget on the newest pictures", async (): Promise<void> => {
+    // Just over 4 MB each: the 20 MB budget holds four of the five.
+    const big = Buffer.concat([PNG_BYTES, Buffer.alloc(4 * 1024 * 1024)]);
+    const shot = (id: string): ModelMessage => ({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: id,
+          toolName: "screenshot",
+          output: {
+            type: "content",
+            value: [
+              {
+                type: "image-data",
+                data: big.toString("base64"),
+                mediaType: "image/png",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const sealed = await sealConversationMedia(
+      ["c1", "c2", "c3", "c4", "c5"].map(shot),
+      ACCOUNT,
+    );
+
+    const replay = await rehydrateStoredMedia(
+      sealed,
+      modelConfig("custom"),
+      ACCOUNT,
+    );
+
+    expect(JSON.stringify(replay[0])).toContain(
+      "[an earlier image is not shown here]",
+    );
+    expect(JSON.stringify(replay.slice(1))).not.toContain(
+      "[an earlier image is not shown here]",
+    );
+  });
+
+  // Bedrock refuses a URL inside a tool result before sending the request.
+  it("never leaves a tool result's link for the provider", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+
+    const replay = await rehydrateStoredMedia(
+      sealed.slice(1),
+      modelConfig("custom"),
+      "acct_2",
+    );
+
+    expect(JSON.stringify(replay)).not.toContain("/v1/media/");
+    expect(JSON.stringify(replay)).toContain(
+      "[an earlier image is not shown here]",
+    );
+  });
+
+  it("leaves a picture it could not store as it was", async (): Promise<void> => {
+    writeS3ObjectMock.mockImplementationOnce(async (): Promise<never> => {
+      throw new Error("bucket down");
+    });
+
+    const sealed = await sealConversationMedia(
+      conversation.slice(0, 1),
+      ACCOUNT,
+    );
+
+    expect(sealed).toEqual(conversation.slice(0, 1));
+  });
+});
+
 describe("readAttachmentBytes URL guard", () => {
   it("refuses a host that resolves to a private address", async (): Promise<void> => {
     // The URL comes out of the webhook body, so the sender picks the host. A
