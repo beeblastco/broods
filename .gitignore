@@ -22,6 +22,7 @@ build/
 .docusaurus.d
 .next/
 .wrangler/
+wrangler.deploy.json
 .dev.vars*
 
 .claude/*
@@ -32,3 +33,5 @@ build/
 resource.enc
 # apps/matrix-forwarder local crypto stores: device keys, never commit them.
 .matrix-store/
+.env.local
+.env

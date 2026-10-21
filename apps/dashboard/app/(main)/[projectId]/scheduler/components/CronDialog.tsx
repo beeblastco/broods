@@ -27,6 +27,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
+import { analytics } from "@/app/lib/analytics";
 import { useRef, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
@@ -128,6 +129,16 @@ export function CronDialog({
           description: description.trim() || undefined,
         });
       }
+      void analytics.then((posthog): void => {
+        posthog.capture(
+          mode === "create" ? "scheduler_created" : "scheduler_updated",
+          {
+            schedule_type: scheduleExpression.trim().split("(", 1)[0],
+            status: status,
+            has_conversation_key: Boolean(conversationKey.trim()),
+          },
+        );
+      });
       onClose();
     } catch (err) {
       setError(toErrorMessage(err));

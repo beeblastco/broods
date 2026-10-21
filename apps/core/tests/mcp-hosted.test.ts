@@ -12,12 +12,17 @@ import {
   LambdaClient,
   type InvokeWithResponseStreamResponseEvent,
 } from "@aws-sdk/client-lambda";
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import {
-  resetStorageForTests,
-  setStorageForTests,
-} from "../src/shared/storage.ts";
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  spyOn,
+} from "bun:test";
+import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import { getStorage } from "../src/shared/storage.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
 import { listMcpTools, setMcpForTests } from "../src/harness/mcp/client.ts";
 import {
@@ -38,13 +43,25 @@ interface SentBatch {
 }
 
 const savedEnv = { ...process.env };
+const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
+// Every invoke meters usage, so the meter is stubbed for the whole file: the
+// real Convex one retries for 36 s on the shared waitUntil set and stalls any
+// later test file's drain.
+const meter = spyOn(getStorage().budgets, "record");
 beforeEach(() => {
   process.env.MCP_BATCH_WINDOW_MS = "10";
   process.env.MCP_BATCH_MAX = "8";
+  recorded.length = 0;
+  meter.mockImplementation(async (accountId, usage, source): Promise<void> => {
+    recorded.push({ accountId: accountId, usage: usage, source: source });
+  });
 });
 afterEach(() => {
   setHostedMcpSendBatchForTests(null);
   process.env = { ...savedEnv };
+});
+afterAll(() => {
+  meter.mockRestore();
 });
 
 describe("hosted MCP fetch adapter", () => {
@@ -175,29 +192,12 @@ describe("hosted MCP invoke", () => {
 });
 
 describe("hosted MCP metering", () => {
-  const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
-
   beforeEach(() => {
-    recorded.length = 0;
     delete process.env.AWS_PROFILE;
     process.env.AWS_REGION = "eu-west-1";
     process.env.AWS_ACCESS_KEY_ID = "test";
     process.env.AWS_SECRET_ACCESS_KEY = "test";
     process.env.TOOL_BUNDLES_BUCKET_NAME = "bundles";
-    setStorageForTests({
-      budgets: {
-        record: async (
-          accountId: string,
-          usage: unknown,
-          source: unknown,
-        ): Promise<void> => {
-          recorded.push({ accountId: accountId, usage: usage, source: source });
-        },
-      },
-    } as never);
-  });
-  afterEach(() => {
-    resetStorageForTests();
   });
 
   it("charges one request for an invoke Lambda accepted", async () => {
@@ -584,6 +584,38 @@ describe("hosted MCP tool listing", () => {
         )
         .map((batch) => batch.tenantId),
     ).toEqual(["acct_test:agent_1", "acct_test:agent_2"]);
+  });
+
+  it("refuses a server on a 2025-era revision without falling back to initialize", async () => {
+    const sent = stubBatches((request) => {
+      const message: { id?: number; method: string } = JSON.parse(
+        request.body ?? "{}",
+      );
+
+      // A 2025-era server knows no server/discover.
+      return {
+        status: 400,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id ?? null,
+          error: { code: -32601, message: "Method not found" },
+        }),
+      };
+    });
+
+    expect(
+      listMcpTools({
+        record: hostedRecord(),
+        headers: {},
+        agentId: "agent_legacy",
+      }),
+    ).rejects.toThrow(/2026-07-28/);
+    expect(
+      sent.some((batch) =>
+        batch.requests.some((r) => r.mcpRequest.body?.includes("initialize")),
+      ),
+    ).toBe(false);
   });
 });
 

@@ -36,7 +36,8 @@ const DEFAULT_SOURCE = [
   'import { z } from "zod";',
   "",
   "// The factory runs once per request (stateless hosting). Register as many",
-  "// tools as you want; agents see each as <node-name>__<tool-name>.",
+  "// tools as you want; agents see each as <node-name>__<tool-name>. Broods",
+  "// speaks MCP 2026-07-28 only, so the 2025-era handshake is refused.",
   "export default createMcpHandler(() => {",
   '  const server = new McpServer({ name: "my-server", version: "1.0.0" });',
   "",
@@ -52,7 +53,7 @@ const DEFAULT_SOURCE = [
   "  );",
   "",
   "  return server;",
-  "});",
+  '}, { legacy: "reject" });',
   "",
 ].join("\n");
 

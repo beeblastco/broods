@@ -46,6 +46,7 @@ import {
   ingestInboundAttachments,
   MEDIA_REFERENCE_SCHEME,
   rehydrateStoredMedia,
+  sealConversationMedia,
 } from "./channel-media.ts";
 import {
   COMPACTION_MARKER,
@@ -483,7 +484,7 @@ export class Session {
     messages: ModelMessage[],
     options: { claimSteering: boolean } = { claimSteering: true },
   ): Promise<StepBoundary> {
-    const events = this.storedEvents(messages);
+    const events = await this.storedEvents(messages);
     if (this.ownerGeneration === undefined) {
       await this.appendStoredEvents(events);
 
@@ -653,7 +654,7 @@ export class Session {
     onSaved?: (saved: number) => void,
     dedupeKeys?: string[],
   ): Promise<string[]> {
-    const events = this.storedEvents(messages, dedupeKeys);
+    const events = await this.storedEvents(messages, dedupeKeys);
     await this.appendStoredEvents(events, onSaved);
 
     return events.map((entry): string => entry.cursor);
@@ -754,7 +755,15 @@ export class Session {
     const prepareStartedMs = Date.now();
     const input = splitIngressEvents(ingress);
     const ephemeralSystem = [...input.ephemeralSystem, ...extraEphemeralSystem];
-    const appended = this.storedEvents(input.persisted);
+    // Minted per message so each user message keys its full content by cursor.
+    const appended: AppendedConversationEvent[] = [];
+    const turnContent = new Map<string, UserContent>();
+    for (const message of input.persisted) {
+      const [row] = await this.storedEvents([message]);
+      if (!row) continue;
+      appended.push(row);
+      if (message.role === "user") turnContent.set(row.cursor, message.content);
+    }
     // The turn's own rows merge into the history read by cursor either way. A
     // fenced turn writes them with its first step boundary, one mutation
     // fewer; an unfenced one appends them now.
@@ -773,7 +782,7 @@ export class Session {
     // Every load behind the turn starts at once; buildSystemPromptParts below
     // reads the memoized results.
     const [history] = await Promise.all([
-      this.loadTurnHistory(phases, unwritten),
+      this.loadTurnHistory(phases, unwritten, turnContent),
       fenced ? undefined : this.appendStoredEvents(appended),
       timePhase(phases, "runtimeMs", () => this.ensureResolvedRuntime()),
       timePhase(phases, "memoryMs", () => this.loadMemoryFiles()),
@@ -1325,9 +1334,12 @@ export class Session {
   // Media the rows only point at is read back here, before anything else looks
   // at the history: compaction, the system prompt and the model all see the
   // same messages, and none of them should have to know how it got there.
+  // `turnContent` is this turn's own user input by cursor, put back over its
+  // rows so media its rows could not hold still reaches this turn.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
-    appended: { cursor: string; event: StoredConversationEvent }[] = [],
+    appended: { cursor: string; event: StoredConversationEvent }[],
+    turnContent: ReadonlyMap<string, UserContent>,
   ): Promise<TurnHistory> {
     const entries = await timePhase(phases, "historyMs", () =>
       this.loadConversationEntries(),
@@ -1348,10 +1360,23 @@ export class Session {
       );
     }
     phases.historyRows = entries.length;
+    const turnEntries = entries.map((entry): StoredConversationEntry => {
+      const content = turnContent.get(entry.createdAt);
+
+      return content !== undefined && entry.event.message.role === "user"
+        ? {
+            ...entry,
+            event: {
+              ...entry.event,
+              message: { ...entry.event.message, content: content },
+            },
+          }
+        : entry;
+    });
     const messages = await timePhase(phases, "mediaMs", () =>
       rehydrateStoredMedia(
         projectEntriesToMessages(
-          projectActiveConversationEntries(entries),
+          projectActiveConversationEntries(turnEntries),
           modelIdentityFromModelConfig(this.agentConfig),
         ),
         this.agentConfig,
@@ -1369,18 +1394,25 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
-  /** The rows a persisting session writes for these messages, cursors minted here. */
-  private storedEvents(
+  /**
+   * The rows a persisting session writes for these messages, cursors minted
+   * here. Media carried as bytes is stored first, so the row keeps its link.
+   */
+  private async storedEvents(
     messages: ModelMessage[],
     dedupeKeys?: string[],
-  ): AppendedConversationEvent[] {
+  ): Promise<AppendedConversationEvent[]> {
     if (!this.persist) return [];
     const producer: MessageProducer = {
       model: modelIdentityFromModelConfig(this.agentConfig),
       retainsReasoning: retainsReasoningParts(this.agentConfig),
     };
+    const sealed =
+      this.accountId === undefined
+        ? messages
+        : await sealConversationMedia(messages, this.accountId);
 
-    return messages.flatMap((message, index): AppendedConversationEvent[] => {
+    return sealed.flatMap((message, index): AppendedConversationEvent[] => {
       const event = createStoredEventFromModelMessage(
         message,
         this.eventId,
@@ -1961,9 +1993,10 @@ function sanitizeToolMessage(
  *
  * Text and media named by URL keep their part: a sealed media link is a short
  * string that still resolves on every later turn, which is the whole reason
- * inbound attachments are stored and linked rather than inlined. Media carrying
- * its own bytes is dropped. A base64 picture is megabytes of row per turn, and
- * the model already saw it in the turn it arrived.
+ * inbound attachments are stored and linked rather than inlined, and why
+ * `storedEvents` seals any other bytes first. Media still carrying its own bytes
+ * could not be stored and is dropped: a base64 picture is megabytes of row per
+ * turn, and the model already saw it in the turn it arrived.
  *
  * A message left with nothing keeps a note rather than becoming null: dropping
  * the row entirely would leave the assistant's reply in history answering a user
@@ -2021,9 +2054,9 @@ function splitIngressEvents(events: ConversationIngressEvent[]): {
 
 /**
  * A tool result as a stored row can hold it. Media follows the rule in
- * `sanitizeUserMessage`: bytes are dropped, a URL stays. Whatever is still over
- * `limit` is stored as truncated text, so one oversized result can not fail the
- * write and end the run.
+ * `sanitizeUserMessage`: unsealed bytes are dropped, a URL stays. Whatever is
+ * still over `limit` is stored as truncated text, so one oversized result can
+ * not fail the write and end the run.
  */
 function storableToolResultOutput(
   output: ToolResultPart["output"],

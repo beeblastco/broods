@@ -11,26 +11,23 @@ import { adminMutation, internal } from "./client.ts";
 export const auditLedger: Storage["auditLedger"] = {
   append: async function (input): Promise<void> {
     try {
-      await adminMutation(
-        internal.audit.ledger.record,
-        {
-          accountId: input.accountId,
-          traceId: input.traceId,
-          actor: {
-            kind: "agent",
-            agentId: input.agentId,
-            chain: input.chain,
-          },
-          action: input.action,
-          resource: input.resource,
-          summary: input.summary,
-          detailsJson:
-            input.details === undefined
-              ? undefined
-              : JSON.stringify(input.details),
+      // Denials and finished runs update the same account audit head.
+      await adminMutation(internal.audit.ledger.record, {
+        accountId: input.accountId,
+        traceId: input.traceId,
+        actor: {
+          kind: "agent",
+          agentId: input.agentId,
+          chain: input.chain,
         },
-        { skipQueue: true },
-      );
+        action: input.action,
+        resource: input.resource,
+        summary: input.summary,
+        detailsJson:
+          input.details === undefined
+            ? undefined
+            : JSON.stringify(input.details),
+      });
     } catch (err) {
       logError("Audit ledger write failed (convex)", {
         action: input.action,

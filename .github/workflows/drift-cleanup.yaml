@@ -148,6 +148,9 @@ jobs:
       # Same as deploy.yaml: without it the plan omits the sandbox log forwarder
       # and drift would delete the deployed one.
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+      # Same as deploy.yaml: a reconcile that redeploys a Cloudflare Worker runs wrangler.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       # Same flags as deploy.yaml, resolved per stage below. The flag only
       # tells sst.config.ts to import the sandbox ECR repo (the mirror step
       # stays in deploy.yaml). Without it the plan evaluates a different

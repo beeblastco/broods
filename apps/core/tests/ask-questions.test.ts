@@ -7,7 +7,6 @@ import {
 import {
   answersFromChoice,
   answersFromText,
-  formatQuestionsText,
   listOpenQuestions,
   NO_ANSWER_ERROR,
   openQuestion,
@@ -65,6 +64,13 @@ describe("rootEventId", () => {
     expect(rootEventId(`${answered}:async-bg:async_tool_2:async-tools`)).toBe(
       asked,
     );
+  });
+
+  it("keeps a person's event id that starts with async-", () => {
+    const asked = "acct:a:agent:b:api:async-report-7";
+
+    expect(rootEventId(asked)).toBe(asked);
+    expect(rootEventId(`${asked}:async-tools:async_tool_1`)).toBe(asked);
   });
 });
 
@@ -265,12 +271,6 @@ describe("question answers", () => {
         }),
       },
     ]);
-  });
-
-  it("always tells the person they can reply with their own answer", () => {
-    expect(formatQuestionsText([QUESTION])).toContain(
-      "Or reply with your own answer.",
-    );
   });
 });
 

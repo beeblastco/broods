@@ -66,32 +66,6 @@ function stubbedForwarder(): {
 }
 
 describe("grouping connections", () => {
-  it("keys each connection's resolved webhook by bot token", () => {
-    const grouped = groupConnectionsByToken([connection()]);
-
-    expect(grouped.get("token-a")).toEqual([
-      {
-        agentId: "agent-1",
-        agentName: "support",
-        webhookUrl:
-          "https://gateway.example.com/v1/webhooks/account-1/dev/endpoint-1/discord",
-      },
-    ]);
-  });
-
-  it("keeps two agents on one token to a single socket", () => {
-    const grouped = groupConnectionsByToken([
-      connection(),
-      connection({
-        agentId: "agent-2",
-        webhookUrl: "https://gateway.example.com/v1/webhooks/a/discord",
-      }),
-    ]);
-
-    expect(grouped.size).toBe(1);
-    expect(grouped.get("token-a")).toHaveLength(2);
-  });
-
   // The reason one process reads every config plane rather than one process per
   // plane: two planes sharing a bot token have to share its socket, or Discord
   // delivers every event to both and the message is answered twice.

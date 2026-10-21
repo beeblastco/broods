@@ -180,7 +180,8 @@ function parseTicket(decoded: unknown): StageSessionTicket | null {
 
 // The key is derived, not the raw secret, so a ticket can never stand in for
 // the secret's own use, and the context keeps each ticket kind's key apart.
-async function ticketKey(
+// The dashboard's analytics id signs with its own context the same way.
+export async function ticketKey(
   keyContext: string,
   secret: string,
 ): Promise<CryptoKey> {

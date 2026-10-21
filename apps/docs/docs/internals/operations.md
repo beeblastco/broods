@@ -41,6 +41,7 @@ flowchart TB
   subgraph CF["Cloudflare"]
     McpWorker["cloudflare-mcp Worker<br/>dev stages only"]
     SbxWorker["cloudflare-sandbox<br/>bridge Worker"]
+    IsoWorker["cloudflare-worker<br/>Worker + R2"]
   end
 
   Users -->|HTTPS| Traefik
@@ -61,6 +62,7 @@ flowchart TB
   Core --> MicroVM
   Core --> McpWorker
   Core --> SbxWorker
+  Core --> IsoWorker
   Convex --> S3
   MicroVM -->|CloudWatch| LogFwd
   LogFwd -->|OTLP| Obs
@@ -168,6 +170,7 @@ Each secret has one job and none falls back to another. Core refuses to boot wit
 | `MEDIA_TICKET_SECRET`              | Seals `/v1/media/:ticket` links                                                   | core                      | list         |
 | `ACCOUNT_CONFIG_ENCRYPTION_SECRET` | Wraps each account's data key                                                     | core, Convex              | list         |
 | `ADMIN_ACCOUNT_SECRET`             | Admin bearer for the account admin routes                                         | core, Convex, dashboard   | single value |
+| `ANALYTICS_ID_SECRET`              | Keys the PostHog user and AI session ids; optional                                | core, Convex              | single value |
 
 A list is comma-separated: the first entry seals, every entry opens.
 
@@ -179,6 +182,7 @@ flowchart LR
 - `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`: the steps above. A media link never expires, so dropping a value is what revokes the links it sealed.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: follow the [rotation runbook](security.md#rotation-runbook). It adds a `rewrapAllKeys` step; dropping a value before the rewrap finishes makes every config it wrapped unreadable.
 - `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`: change core and Convex together. Rotating the stage secret logs out open dashboard log streams and `broods logs` until they mint a new ticket.
+- `ANALYTICS_ID_SECRET`: never rotate it for security; it guards nothing. A new value makes every user and AI session look new in PostHog.
 
 ## Service token rules
 
@@ -197,6 +201,7 @@ flowchart LR
   Core -->|Matrix access token| MFwd[matrix-forwarder]
   Core -->|CLOUDFLARE_MCP_API_KEY| MCP[cloudflare-mcp]
   Core -->|CLOUDFLARE_SANDBOX_API_KEY| SBX[cloudflare-sandbox]
+  Core -->|CLOUDFLARE_WORKER_API_KEY| ISO[cloudflare-worker]
   Gateway -->|sealed terminal ticket| SBX
 ```
 

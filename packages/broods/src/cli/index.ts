@@ -3324,10 +3324,7 @@ async function mcp(): Promise<void> {
   const auth = readStoredAuth();
   // A stored login adds the org, project and stage tools; those routes live
   // behind the CLI router, which rejects an account key or role session.
-  const [{ createBroodsMcpServer }, { serveStdio }] = await Promise.all([
-    import("../mcp.ts"),
-    import("@modelcontextprotocol/server/stdio"),
-  ]);
+  const { createBroodsMcpServer, serveBroodsMcp } = await import("../mcp.ts");
   const cli = auth
     ? new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
     : null;
@@ -3341,7 +3338,7 @@ async function mcp(): Promise<void> {
     cli: cli,
     scope: { project: runtime.project, stage: runtime.stage },
   });
-  serveStdio(() => server);
+  serveBroodsMcp(server);
   await new Promise<void>((resolve) => {
     process.stdin.on("close", resolve);
   });

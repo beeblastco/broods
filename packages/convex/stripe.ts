@@ -1,11 +1,12 @@
 /**
  * Stripe billing per owner: checkout, seats and the portal for the user who
- * pays, and storing what Stripe returns. Each owner has one subscription to
- * `STRIPE_SEAT_PRICE_ID`, filed under their authId: one unit for Pro with
- * its included developer seats, one more per extra seat, shared by every org
- * they own (model/orgBilling.ts). The webhook (http.ts) and the seat actions
- * store a subscription only as read back from Stripe, then recompute the
- * plan of the owner who pays and of every org they own.
+ * pays, and storing what Stripe returns. Each owner has one subscription,
+ * filed under their authId: one `STRIPE_PRO_PRICE_ID` unit for Pro with its
+ * included developer seats, plus one `STRIPE_SEAT_PRICE_ID` unit per extra
+ * seat, shared by every org they own (model/orgBilling.ts). Its units are
+ * the two lines added up. The webhook (http.ts) and the seat actions store a
+ * subscription only as read back from Stripe, then recompute the plan of the
+ * owner who pays and of every org they own.
  */
 
 import { StripeSubscriptions } from "@convex-dev/stripe";
@@ -68,8 +69,7 @@ export const createCheckoutSession = action({
       authId: authUser.id,
     });
     // Stops a second click or tab. It reads webhook-synced rows, so a checkout
-    // paid seconds ago can still slip through; the seat resync reports such a
-    // duplicate (seatMigration.ts).
+    // paid seconds ago can still slip through.
     if (billing.subscription) {
       throw new ClientError(
         "Already subscribed; use Manage Billing to change plan",
@@ -77,20 +77,28 @@ export const createCheckoutSession = action({
       );
     }
 
-    const { customerId } = await stripeClient.getOrCreateCustomer(ctx, {
-      userId: authUser.id,
-      email: authUser.email ?? undefined,
-    });
+    const extraSeats = proQuantity(billing.developers) - 1;
     const session = await stripeClient.createCheckoutSession(ctx, {
-      priceId: seatPriceId(),
-      customerId: customerId,
+      // The component requires one price; `line_items` below replaces its line.
+      priceId: priceId("STRIPE_PRO_PRICE_ID"),
+      customerId: await customerFor(ctx, authUser),
       mode: "subscription",
-      quantity: proQuantity(billing.developers),
       successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
       cancelUrl: safeDashboardUrl(args.cancelUrl, "cancelUrl"),
       // The component files a subscription under `metadata.userId`: who pays,
       // and whose orgs it covers.
       subscriptionMetadata: { userId: authUser.id },
+      // Pro, then any extra seats on their own line. A promotion code made in
+      // Stripe can discount it; Checkout still takes a card for later seats.
+      params: {
+        line_items: [
+          { price: priceId("STRIPE_PRO_PRICE_ID"), quantity: 1 },
+          ...(extraSeats > 0
+            ? [{ price: priceId("STRIPE_SEAT_PRICE_ID"), quantity: extraSeats }]
+            : []),
+        ],
+        allow_promotion_codes: true,
+      },
     });
 
     if (!session.url) throw new Error("No checkout URL returned");
@@ -135,9 +143,12 @@ export const addSeat = action({
 
       return { seats: seatsForQuantity(quantity) };
     } catch (error) {
-      if (!(error instanceof Stripe.errors.StripeCardError)) throw error;
+      // Stripe answers 402 when the seat's payment fails: a declined card or
+      // none on file.
+      if (!(error instanceof Stripe.errors.StripeError)) throw error;
+      if (error.statusCode !== 402) throw error;
       throw new ClientError(
-        `The seat was not added: ${error.message}`,
+        `The seat was not added: ${error.message} Add a card in Manage billing, then try again.`,
         "payment_required",
       );
     }
@@ -152,13 +163,8 @@ export const createPortalSession = action({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("Not authenticated");
 
-    const { customerId } = await stripeClient.getOrCreateCustomer(ctx, {
-      userId: authUser.id,
-      email: authUser.email ?? undefined,
-    });
-
     return await stripeClient.createCustomerPortalSession(ctx, {
-      customerId: customerId,
+      customerId: await customerFor(ctx, authUser),
       returnUrl: safeDashboardUrl(args.returnUrl, "returnUrl"),
     });
   },
@@ -494,7 +500,7 @@ async function applyLive(
       currentPeriodEnd: item?.current_period_end ?? 0,
       cancelAtPeriodEnd: live.cancel_at_period_end,
       cancelAt: live.cancel_at ?? undefined,
-      quantity: item?.quantity ?? 1,
+      quantity: unitsOf(live),
       priceId: item?.price.id ?? "",
       metadata: live.metadata,
     },
@@ -502,12 +508,11 @@ async function applyLive(
 }
 
 /**
- * Set a subscription's quantity from what Stripe holds now, on the seat price
- * (which also moves a migrated flat Pro item onto it), and store the result:
- * the read when nothing changes, else the update under a ticket claimed once
- * Stripe answered it, so a webhook read that started before cannot land over
- * the new quantity.
- * @returns the quantity the owner now pays for
+ * Set a subscription's units from what Stripe holds now, as one Pro line and
+ * the rest on the seat line, and store the result: the read when nothing
+ * changes, else the update under a ticket claimed once Stripe answered it, so
+ * a webhook read that started before cannot land over the new units.
+ * @returns the units the owner now pays for
  */
 async function changeSeats(
   ctx: ActionCtx,
@@ -521,9 +526,7 @@ async function changeSeats(
     { stripeSubscriptionId: subscriptionId },
   );
   const live = await stripe.subscriptions.retrieve(subscriptionId);
-  const item = live.items.data[0];
-  if (!item) throw new Error(`Subscription ${subscriptionId} has no items`);
-  const paid = item.quantity ?? 1;
+  const paid = unitsOf(live);
   // An ended subscription takes no changes; store it as it is.
   const quantity = isEnded(live.status) ? paid : quantityFor(paid);
   if (quantity === paid) {
@@ -533,7 +536,7 @@ async function changeSeats(
   }
 
   const updated = await stripe.subscriptions.update(subscriptionId, {
-    items: [{ id: item.id, price: seatPriceId(), quantity: quantity }],
+    items: itemsFor(live.items.data, quantity),
     proration_behavior: proration,
     // A seat that needs a payment is added only once that payment succeeds.
     payment_behavior: "error_if_incomplete",
@@ -547,11 +550,102 @@ async function changeSeats(
   return quantity;
 }
 
-function seatPriceId(): string {
-  const priceId = process.env.STRIPE_SEAT_PRICE_ID;
-  if (!priceId) throw new Error("STRIPE_SEAT_PRICE_ID is not configured");
+/**
+ * The caller's Stripe customer while Stripe still has it: the one behind
+ * their subscription billing acts on, else the one filed under them, else a
+ * new one. A filed customer deleted in Stripe, or made under another secret
+ * key, is unfiled first: the component keeps its row, and
+ * `createOrUpdateCustomer` can only rename the row's userId, not clear it.
+ */
+async function customerFor(
+  ctx: ActionCtx,
+  authUser: { id: string; email?: string | null },
+): Promise<string> {
+  const stripe = stripeApi();
+  const subs = await ctx.runQuery(
+    components.stripe.public.listSubscriptionsByUserId,
+    { userId: authUser.id },
+  );
+  const billed = currentOf(subs)?.stripeCustomerId;
+  if (billed && (await stripeHasCustomer(stripe, billed))) return billed;
+  let gone: string | null = null;
+  let filed = await filedCustomer(ctx, authUser.id);
+  while (filed) {
+    if (await stripeHasCustomer(stripe, filed.stripeCustomerId)) {
+      return filed.stripeCustomerId;
+    }
+    gone = filed.stripeCustomerId;
+    await ctx.runMutation(components.stripe.public.createOrUpdateCustomer, {
+      stripeCustomerId: gone,
+      metadata: { userId: `unfiled:${authUser.id}` },
+    });
+    filed = await filedCustomer(ctx, authUser.id);
+  }
+  const { customerId } = await stripeClient.createCustomer(ctx, {
+    email: authUser.email ?? undefined,
+    metadata: { userId: authUser.id },
+    // A double click makes one customer; replacing a gone one makes a new one.
+    idempotencyKey: gone ? `${authUser.id}_after_${gone}` : authUser.id,
+  });
 
-  return priceId;
+  return customerId;
+}
+
+/** The customer the component files under a user, if any. */
+async function filedCustomer(
+  ctx: ActionCtx,
+  userId: string,
+): Promise<{ stripeCustomerId: string } | null> {
+  return await ctx.runQuery(components.stripe.public.getCustomerByUserId, {
+    userId: userId,
+  });
+}
+
+/** The seat line change that makes a subscription's `lines` bill `units`: Pro is one, the rest are seats. */
+function itemsFor(
+  lines: Stripe.SubscriptionItem[],
+  units: number,
+): Stripe.SubscriptionUpdateParams.Item[] {
+  const seat = priceId("STRIPE_SEAT_PRICE_ID");
+  const seats = lines.find((line) => line.price.id === seat);
+  const extra = units - 1;
+  if (extra > 0) return [{ id: seats?.id, price: seat, quantity: extra }];
+
+  return seats ? [{ id: seats.id, deleted: true }] : [];
+}
+
+/** The Stripe price an env var names: Pro, or one extra seat. */
+function priceId(name: "STRIPE_PRO_PRICE_ID" | "STRIPE_SEAT_PRICE_ID"): string {
+  const id = process.env[name];
+  if (!id) throw new Error(`${name} is not configured`);
+
+  return id;
+}
+
+/** Whether Stripe still has a customer under this deployment's secret key. */
+async function stripeHasCustomer(
+  stripe: Stripe,
+  customerId: string,
+): Promise<boolean> {
+  try {
+    return !(await stripe.customers.retrieve(customerId)).deleted;
+  } catch (error) {
+    if (
+      error instanceof Stripe.errors.StripeInvalidRequestError &&
+      error.code === "resource_missing"
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** The units a subscription bills: its Pro line and its seat line added up. */
+function unitsOf(live: Stripe.Subscription): number {
+  return live.items.data.reduce(
+    (units, item) => units + (item.quantity ?? 1),
+    0,
+  );
 }
 
 /** The configured dashboard origin, or null when neither env var is set. */

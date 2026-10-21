@@ -1,9 +1,15 @@
-/** Async tool result, callback, delivery, and observed state in Convex. */
+/** Async tool result, callback, delivery, and hand-back state in Convex. */
 
+import type { Handback } from "@broods/convex/model/subagentResults";
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
-import { redactWithRunSecrets, runSecretValues } from "../shared/log.ts";
+import { toErrorMessage } from "../shared/errors.ts";
+import {
+  logError,
+  redactWithRunSecrets,
+  runSecretValues,
+} from "../shared/log.ts";
 import type { ReservedSandbox } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
@@ -33,7 +39,13 @@ export interface AsyncToolResultRecord {
   response?: JSONValue;
   error?: string;
   delivery?: AsyncToolDelivery;
+  // True once the model read the result with async_status. Written by the
+  // release before `handback`; read beside it for one release.
   observed?: boolean;
+  // Where a finished result stands with the run that started it: `pending`
+  // until that run stores it, `detached` once it gave up and the recovery
+  // sweep owns it, `stored` once the conversation has it.
+  handback?: Handback;
   // The machine a detached job launched on; Convex fails the settle if the
   // reservation stops naming it. Vercel's id is a name shared by every
   // replacement, so the fence never trips there.
@@ -120,19 +132,62 @@ export async function markAsyncToolResultFailed(options: {
     onlyWhenProcessing: true,
   });
 }
-/** Marks a finished row observed so it is not delivered again; `async_status` calls it. */
-export async function markAsyncToolResultObserved(
-  resultId: string,
-): Promise<void> {
-  await runtime.mutate("observeAsyncToolResult", { resultId: resultId });
+/**
+ * One page of async tool results in `status` whose hand-back is `handback`,
+ * written in the window, from `cursor`. The recovery sweep walks every page.
+ */
+export function listUnobservedAsyncToolResults(options: {
+  handback: Exclude<Handback, "stored">;
+  status: AsyncToolStatus;
+  updatedAfter: string;
+  updatedBefore: string;
+  cursor: string | null;
+}): Promise<{
+  page: AsyncToolResultRecord[];
+  cursor: string;
+  isDone: boolean;
+}> {
+  return runtime.query("listUnobservedAsyncToolResults", options);
 }
 /**
+ * Moves a finished result's hand-back: `detached` when the run that started it
+ * gives up delivering it, `stored` when the model reads it with async_status.
+ * A stored row stays stored. The row already holds the result, so a failed
+ * write is only logged: a pending row reaches the recovery sweep later.
+ * @returns true when a continuation of the result waits in the conversation's
+ * queue: the row stays unstored and the caller must not hand the result over
+ */
+export async function markAsyncToolHandback(
+  resultId: string,
+  handback: Exclude<Handback, "pending">,
+): Promise<boolean> {
+  try {
+    return await runtime.mutate("observeAsyncToolResult", {
+      resultId: resultId,
+      handback: handback,
+    });
+  } catch (error) {
+    logError("Failed to record an async tool result's hand-back", {
+      resultId: resultId,
+      handback: handback,
+      error: toErrorMessage(error),
+    });
+
+    return false;
+  }
+}
+// The segments the runtime appends to the event a person started: a question
+// or background job row, a subagent task, a continuation. A person's own event
+// id can start with `async-` too, so only these tags end the root.
+const CONTINUATION_TAG = /:async-(?:bg|question|subagent|tools)(?::|$)/;
+
+/**
  * The event a person started, for a run that continues it: everything before the
- * first `:async-` segment of a detached or continuation event id. Traces use it to
+ * first runtime tag of a detached or continuation event id. Traces use it to
  * group an answer's run with the run that asked.
  */
 export function rootEventId(eventId: string): string {
-  const index = eventId.indexOf(":async-");
+  const index = eventId.search(CONTINUATION_TAG);
 
   return index === -1 ? eventId : eventId.slice(0, index);
 }

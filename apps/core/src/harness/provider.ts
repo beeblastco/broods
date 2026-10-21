@@ -28,10 +28,12 @@ import { createPerplexity } from "@ai-sdk/perplexity";
 import {
   APICallError,
   UnsupportedFunctionalityError,
+  type JSONValue,
   type LanguageModelV4CallOptions,
   type LanguageModelV4FilePart,
   type LanguageModelV4Message,
   type LanguageModelV4StreamPart,
+  type LanguageModelV4ToolResultOutput,
   type SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import { createTogetherAI } from "@ai-sdk/togetherai";
@@ -50,6 +52,7 @@ import {
 } from "ai";
 import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
 import { createWorkersAI } from "workers-ai-provider";
+import { isContextLengthError } from "../shared/errors.ts";
 import { publicHostFetch } from "../shared/http.ts";
 import {
   PROVIDER_ENDPOINT_SETTING,
@@ -61,7 +64,7 @@ import type {
   AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
-import { logInfo } from "../shared/log.ts";
+import { logInfo, logWarn } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
 
@@ -86,6 +89,17 @@ const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 // An OpenAI model id's GPT major and minor version, like `gpt-6-luna`,
 // `gpt-5.6` or the fine-tune `ft:gpt-6-luna:org::id`.
 const GPT_VERSION_PATTERN = /^(?:ft:)?gpt-(\d+)(?:\.(\d+))?(?:[-:]|$)/i;
+
+// A Claude model id after any router prefix like `cc/`, Bedrock-style
+// `us.anthropic.claude-` ones included.
+const CLAUDE_MODEL_PATTERN = /(?:^|\.)claude-/i;
+
+// Where a custom endpoint's Claude cache mark lives: Anthropic's `cache_control`
+// on a chat message or content part, the convention Claude proxies such as
+// LiteLLM follow. The compatible provider puts `openaiCompatible` options on
+// the message or part they came with, and sends none of them as a body field.
+const CUSTOM_CACHE_PROVIDER = "openaiCompatible";
+const CUSTOM_CACHE_FIELD = "cache_control";
 
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
@@ -122,6 +136,10 @@ const PROVIDER_TRANSCRIPTION: Partial<
 const STALE_STORED_ITEM_PATTERN =
   /without its required (?:'reasoning' item|following item)|Item with id .{0,80}not found|encrypted[_ ]content/i;
 
+// Custom endpoints that refused a tool result's image, by base URL and model id.
+// Their later calls move tool images up front instead of paying a 400 a step.
+const toolImageRefusals = new Set<string>();
+
 // What every AI SDK provider factory has in common: settings in, callable
 // provider out. The settings each one accepts are read off it, never restated.
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
@@ -135,6 +153,12 @@ type CloudflareProviderSettings = Extract<
   gatewayId?: string;
   headers?: Record<string, string>;
 };
+
+// One part of a user message as the provider receives it.
+type UserPromptPart = Extract<
+  LanguageModelV4Message,
+  { role: "user" }
+>["content"][number];
 
 interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
@@ -302,6 +326,9 @@ export function modelSettingsFromModelConfig(
  * on the ends of the system prompt and the history), OpenAI (and ChatGPT,
  * where a cached prefix spends less of the plan) a promptCacheKey
  * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
+ * A custom endpoint serving a GPT model, like a proxy's `cx/gpt-6-luna`, gets
+ * that key as `prompt_cache_key` in the request body; without it a long run
+ * lands on a server holding only the shared system prompt every few steps.
  * A call without a conversation, like compaction, gets neither: a one-shot
  * request pays the cache write and never reads it back. Explicit account
  * config wins over both defaults.
@@ -316,37 +343,23 @@ export function providerOptionsFromModelConfig(
     return configured;
   }
   if (providerName === "anthropic") {
-    if (configured?.anthropic?.cacheControl !== undefined) {
-      return configured;
-    }
-
-    return {
-      ...configured,
-      anthropic: {
-        ...configured?.anthropic,
-        cacheControl: { type: "ephemeral" },
-      },
-    };
+    return withDefaultOption(configured, "anthropic", "cacheControl", {
+      type: "ephemeral",
+    });
+  }
+  if (providerName === "custom") {
+    return customCacheOptions(agentConfig, conversationKey);
   }
   if (!STORED_ITEM_PROVIDERS.has(providerName) && providerName !== "chatgpt") {
     return configured;
   }
 
-  const openaiOptions = configured?.openai;
-  if (openaiOptions?.promptCacheKey !== undefined) {
-    return configured;
-  }
-
-  return {
-    ...configured,
-    openai: {
-      ...openaiOptions,
-      promptCacheKey: createHash("sha256")
-        .update(conversationKey)
-        .digest("hex")
-        .slice(0, 32),
-    },
-  };
+  return withDefaultOption(
+    configured,
+    "openai",
+    "promptCacheKey",
+    promptCacheKey(conversationKey),
+  );
 }
 
 /**
@@ -358,11 +371,20 @@ export function providerOptionsFromModelConfig(
  * started with nothing cached to read. Anthropic's is the run's cacheControl.
  * Only `openai` gets the OpenAI mark: Azure reads its options under its own
  * name and a deployment name, and ChatGPT plan usage documents no such field.
+ * Claude behind a custom endpoint gets the run's `cache_control`.
  */
 export function cacheBreakpointFromProviderOptions(
   agentConfig: AgentConfig,
   providerOptions: AgentModelProviderOptions | undefined,
 ): AgentModelProviderOptions | undefined {
+  const customCacheControl =
+    providerOptions?.[CUSTOM_CACHE_PROVIDER]?.[CUSTOM_CACHE_FIELD];
+  if (
+    agentConfig.model?.provider === "custom" &&
+    customCacheControl !== undefined
+  ) {
+    return customCacheBreakpoint(customCacheControl);
+  }
   if (
     agentConfig.model?.provider === "openai" &&
     providerOptions?.openai?.promptCacheKey !== undefined &&
@@ -423,25 +445,91 @@ export function modelOutputFromModelConfig(
 // stream (`data: [DONE]`), which surfaces as "Model returned empty response".
 // The harness legitimately sends two (the base prompt + the dynamic context
 // snapshot), so fold every system message into one before the request leaves.
+// A cache mark (Claude only) ends the stored system prompt: the run's own
+// system text after it stays a second message, so the stored prefix still reads
+// from cache when that text changes.
 export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
-  transformParams: async ({ params }) => {
+  transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
     const systems = params.prompt.filter(
       (message) => message.role === "system",
     );
     if (systems.length <= 1) return params;
+    const storedEnd =
+      systems.findLastIndex(
+        (message) => message.providerOptions !== undefined,
+      ) + 1;
+    const groups =
+      storedEnd > 0 && storedEnd < systems.length
+        ? [systems.slice(0, storedEnd), systems.slice(storedEnd)]
+        : [systems];
 
     return {
       ...params,
       prompt: [
-        {
-          role: "system",
-          content: systems.map((message) => message.content).join("\n\n"),
-        },
+        ...groups.map(mergedSystemMessage),
         ...params.prompt.filter((message) => message.role !== "system"),
       ],
     };
   },
 };
+
+/**
+ * Claude behind a custom endpoint caches only the blocks a request marks, and
+ * nothing marks the latest one the way Anthropic's own API does. So when the
+ * run carries a cache mark, its latest message gets it too, and each step of a
+ * run reads the step before it from cache. A call without one, like
+ * compaction, stays unmarked.
+ */
+export const cacheLatestMessageMiddleware: LanguageModelMiddleware = {
+  transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
+    const cacheControl =
+      params.providerOptions?.[CUSTOM_CACHE_PROVIDER]?.[CUSTOM_CACHE_FIELD];
+    const latest = params.prompt.at(-1);
+    if (cacheControl === undefined || latest === undefined) {
+      return params;
+    }
+
+    return {
+      ...params,
+      prompt: params.prompt.with(
+        -1,
+        withLatestPartMarked(latest, customCacheBreakpoint(cacheControl)),
+      ),
+    };
+  },
+};
+
+/** `item` with the breakpoint's options merged into its own, per provider. */
+export function markedForCache<
+  T extends { providerOptions?: SharedV4ProviderOptions },
+>(item: T, breakpoint: SharedV4ProviderOptions): T {
+  const providerOptions = { ...item.providerOptions };
+  for (const [provider, options] of Object.entries(breakpoint)) {
+    providerOptions[provider] = { ...providerOptions[provider], ...options };
+  }
+
+  return { ...item, providerOptions: providerOptions };
+}
+
+/**
+ * Marks the item at `index` (the last by default) as a prompt cache
+ * breakpoint. Unchanged when the run's model takes no breakpoint or the index
+ * names no item.
+ */
+export function withCacheBreakpoint<
+  T extends { providerOptions?: SharedV4ProviderOptions },
+>(
+  items: T[],
+  breakpoint: SharedV4ProviderOptions | undefined,
+  index: number = items.length - 1,
+): T[] {
+  const item = items[index];
+  if (breakpoint === undefined || item === undefined) {
+    return items;
+  }
+
+  return items.with(index, markedForCache(item, breakpoint));
+}
 
 // The same endpoints have two streaming quirks the custom-provider path must
 // absorb. First, `reasoning`/`reasoning_content` chunks may carry a growing
@@ -544,6 +632,13 @@ export function attemptRecordingMiddleware(
 export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutUnsupportedMedia);
 
+// A text-only model behind a custom endpoint answers a picture with a 400, so a
+// screenshot from an MCP tool would fail every turn after it. Retry once with
+// each picture replaced by a line naming it: the turn loses its images, not the
+// answer.
+export const dropRefusedImagesMiddleware: LanguageModelMiddleware =
+  retryingMiddleware(withoutRefusedImages);
+
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or
 // the agent's model changes and the old reasoning can no longer be decrypted.
@@ -551,6 +646,39 @@ export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
 // its history and nothing else, instead of failing in the user's chat.
 export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutStaleStoredItems);
+
+/**
+ * A custom endpoint gets a tool result's image inside the tool message, where
+ * vLLM-style servers read it. OpenAI's own chat API answers that with a 400, so
+ * the call is retried with each image in a user message after its tool message,
+ * and `endpoint` sends them there from then on.
+ */
+export function moveRefusedToolImagesMiddleware(
+  endpoint: string,
+): LanguageModelMiddleware {
+  // Remembered once the move is accepted, or refused the same way: a model
+  // that takes no images at all then pays its drop retry, not a move as well.
+  const retrying = retryingMiddleware(
+    withToolImagesMoved,
+    (retryError): void => {
+      if (retryError === undefined || isRefusedRequest(retryError)) {
+        toolImageRefusals.add(endpoint);
+      }
+    },
+  );
+
+  return {
+    ...retrying,
+    transformParams: async ({
+      params,
+    }): Promise<LanguageModelV4CallOptions> => ({
+      ...params,
+      prompt: toolImageRefusals.has(endpoint)
+        ? toolImagesAsUserMessages(params.prompt)
+        : withTextToolResultsAsText(params.prompt),
+    }),
+  };
+}
 
 /**
  * Strips the id an assistant part is replayed by, leaving the part to be sent
@@ -576,13 +704,15 @@ export function withoutStoredItemId<
 /**
  * A middleware that runs the call again when `recover` recognises the failure
  * and can say what to send instead. `recover` returning undefined rethrows, so
- * a failure it does not know about is never paid for twice.
+ * a failure it does not know about is never paid for twice. `retried` hears
+ * how the retry went: undefined once accepted, else its error.
  */
 function retryingMiddleware(
   recover: (
     error: unknown,
     params: LanguageModelV4CallOptions,
   ) => LanguageModelV4CallOptions | undefined,
+  retried?: (retryError: unknown) => void,
 ): LanguageModelMiddleware {
   return {
     wrapGenerate: async ({ doGenerate, model, params }) => {
@@ -593,8 +723,15 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
+        try {
+          const result = await model.doGenerate(retry);
+          retried?.(undefined);
 
-        return await model.doGenerate(retry);
+          return result;
+        } catch (retryError) {
+          retried?.(retryError);
+          throw retryError;
+        }
       }
     },
     wrapStream: async ({ doStream, model, params }) => {
@@ -605,8 +742,15 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
+        try {
+          const result = await model.doStream(retry);
+          retried?.(undefined);
 
-        return await model.doStream(retry);
+          return result;
+        } catch (retryError) {
+          retried?.(retryError);
+          throw retryError;
+        }
       }
     },
   };
@@ -621,10 +765,7 @@ function withoutUnsupportedMedia(
 ): LanguageModelV4CallOptions | undefined {
   if (
     !UnsupportedFunctionalityError.isInstance(error) ||
-    !params.prompt.some(
-      (message) =>
-        message.role === "user" && message.content.some(isDroppableMedia),
-    )
+    !carriesUserMedia(params, isDroppableMedia)
   ) {
     return undefined;
   }
@@ -632,6 +773,172 @@ function withoutUnsupportedMedia(
     error: error.message,
   });
 
+  return withoutUserMedia(params, isDroppableMedia);
+}
+
+// The same call with every picture, a tool result's too, replaced by a line
+// naming it, or undefined when the endpoint did not refuse the request or there
+// was no picture to drop.
+function withoutRefusedImages(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
+  if (!isRefusedRequest(error)) {
+    return undefined;
+  }
+  const moved = { ...params, prompt: toolImagesAsUserMessages(params.prompt) };
+  if (!carriesUserMedia(moved, isImage)) {
+    return undefined;
+  }
+  logWarn("Retrying model call without images the provider refused", {
+    url: error.url,
+    error: error.message,
+  });
+
+  return withoutUserMedia(moved, isImage);
+}
+
+// The same call with tool result images moved into user messages, or undefined
+// when the endpoint did not refuse the request or no tool result carries an
+// image.
+function withToolImagesMoved(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
+  if (!isRefusedRequest(error)) {
+    return undefined;
+  }
+  const prompt = toolImagesAsUserMessages(params.prompt);
+  if (prompt.length === params.prompt.length) {
+    return undefined;
+  }
+  logWarn("Retrying model call with tool images in a user message", {
+    url: error.url,
+    error: error.message,
+  });
+
+  return { ...params, prompt: prompt };
+}
+
+// Whether any user message carries a part `matches` picks out.
+function carriesUserMedia(
+  params: LanguageModelV4CallOptions,
+  matches: (part: UserPromptPart) => part is LanguageModelV4FilePart,
+): boolean {
+  return params.prompt.some(
+    (message) => message.role === "user" && message.content.some(matches),
+  );
+}
+
+// Images are the one media kind every provider reads, so a converter that
+// refused something refused something else.
+function isDroppableMedia(
+  part: UserPromptPart,
+): part is LanguageModelV4FilePart {
+  return part.type === "file" && !part.mediaType.startsWith("image/");
+}
+
+function isImage(part: UserPromptPart): part is LanguageModelV4FilePart {
+  return part.type === "file" && part.mediaType.startsWith("image/");
+}
+
+// An image a user message can carry: bytes or a URL. A provider reference or
+// inline text stays in the tool result it came in.
+function isMovableImage(
+  item: Extract<
+    LanguageModelV4ToolResultOutput,
+    { type: "content" }
+  >["value"][number],
+): item is LanguageModelV4FilePart {
+  return (
+    item.type === "file" &&
+    item.mediaType.startsWith("image/") &&
+    (item.data.type === "data" || item.data.type === "url")
+  );
+}
+
+// A 400 a picture may have caused. A context overflow is a 400 too, and must
+// reach compaction rather than pass once its images are dropped.
+function isRefusedRequest(error: unknown): error is APICallError {
+  return (
+    APICallError.isInstance(error) &&
+    error.statusCode === 400 &&
+    !isContextLengthError(error.message)
+  );
+}
+
+// Each tool message followed by one user message holding the images its results
+// carried; the result keeps a line pointing at each one.
+function toolImagesAsUserMessages(
+  prompt: LanguageModelV4Message[],
+): LanguageModelV4Message[] {
+  return prompt.flatMap((message): LanguageModelV4Message[] => {
+    if (message.role !== "tool") return [message];
+    const images: LanguageModelV4FilePart[] = [];
+    const content = message.content.map((part) => {
+      if (part.type !== "tool-result" || part.output.type !== "content") {
+        return part;
+      }
+      const value = part.output.value.map((item) => {
+        if (!isMovableImage(item)) return item;
+        images.push(item);
+
+        return {
+          type: "text" as const,
+          text: `[image ${images.length} is in the next message]`,
+        };
+      });
+
+      return { ...part, output: { ...part.output, value: value } };
+    });
+    if (images.length === 0) return withTextToolResultsAsText([message]);
+
+    return [
+      ...withTextToolResultsAsText([{ ...message, content: content }]),
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images from the tool results above:" },
+          ...images,
+        ],
+      },
+    ];
+  });
+}
+
+// Each tool result left with only text sent as one string: some endpoints take
+// nothing else in a tool message, and every endpoint takes that.
+function withTextToolResultsAsText(
+  prompt: LanguageModelV4Message[],
+): LanguageModelV4Message[] {
+  return prompt.map((message): LanguageModelV4Message => {
+    if (message.role !== "tool") return message;
+
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (
+          part.type !== "tool-result" ||
+          part.output.type !== "content" ||
+          !part.output.value.every((item) => item.type === "text")
+        ) {
+          return part;
+        }
+        const text = part.output.value
+          .map((item) => (item.type === "text" ? item.text : ""))
+          .join("\n");
+
+        return { ...part, output: { type: "text", value: text } };
+      }),
+    };
+  });
+}
+
+// The call with every user part `drop` picks out replaced by a line naming it.
+function withoutUserMedia(
+  params: LanguageModelV4CallOptions,
+  drop: (part: UserPromptPart) => part is LanguageModelV4FilePart,
+): LanguageModelV4CallOptions {
   return {
     ...params,
     prompt: params.prompt.map((message) =>
@@ -640,7 +947,7 @@ function withoutUnsupportedMedia(
         : {
             ...message,
             content: message.content.map((part) =>
-              isDroppableMedia(part)
+              drop(part)
                 ? {
                     type: "text" as const,
                     text: unreadableMediaNote(part.filename, part.mediaType),
@@ -650,14 +957,6 @@ function withoutUnsupportedMedia(
           },
     ),
   };
-}
-
-// Images are the one media kind every provider reads, so a converter that
-// refused something refused something else.
-function isDroppableMedia(
-  part: Extract<LanguageModelV4Message, { role: "user" }>["content"][number],
-): part is LanguageModelV4FilePart {
-  return part.type === "file" && !part.mediaType.startsWith("image/");
 }
 
 function withoutStaleStoredItems(
@@ -713,13 +1012,14 @@ function resolveOpenAICompatibleModel(
   // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
   // return thinking text in `reasoning`/`reasoning_content` fields, which only
   // the compatible provider parses into reasoning parts (#115).
+  const baseURL = customProviderBaseURL(providerConfig) ?? "";
   const provider = createOpenAICompatible({
+    // A tool result keeps its images, as the tool returned them, unless the
+    // endpoint refuses them there (`moveRefusedToolImagesMiddleware`).
+    supportsMultiPartToolContent: true,
     ...openAIConfig,
-    baseURL: customProviderBaseURL(providerConfig) ?? "",
-    name:
-      typeof providerConfig.name === "string"
-        ? providerConfig.name
-        : providerName,
+    baseURL: baseURL,
+    name: customProviderName(providerConfig),
     includeUsage: true,
   });
 
@@ -728,10 +1028,16 @@ function resolveOpenAICompatibleModel(
     provider: provider,
     model: wrapLanguageModel({
       model: provider(modelId),
+      // Each entry wraps the ones after it: a 400 tries moving tool images first,
+      // and only drops images when that is refused too. The cache mark comes
+      // last, so a retry above marks its own latest message.
       middleware: [
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
+        dropRefusedImagesMiddleware,
+        moveRefusedToolImagesMiddleware(`${baseURL} ${modelId}`),
         dropUnsupportedMediaMiddleware,
+        cacheLatestMessageMiddleware,
       ],
     }),
   };
@@ -888,6 +1194,44 @@ function requireProviderSettings(
   return providerConfig;
 }
 
+// A custom endpoint's Claude breakpoint carrying `cacheControl`.
+function customCacheBreakpoint(
+  cacheControl: JSONValue,
+): SharedV4ProviderOptions {
+  return { [CUSTOM_CACHE_PROVIDER]: { [CUSTOM_CACHE_FIELD]: cacheControl } };
+}
+
+// A custom endpoint's cache defaults by the model family it serves. GPT gets
+// its key in the request body, where the compatible provider copies the options
+// under its name. Claude gets the cache_control its breakpoints carry, under
+// `openaiCompatible`, which reaches no body. Anything else gets neither, since a
+// strict endpoint refuses a field it does not know.
+function customCacheOptions(
+  agentConfig: AgentConfig,
+  conversationKey: string,
+): AgentModelProviderOptions | undefined {
+  const configured = agentConfig.model?.providerOptions;
+  const modelId = servedModelId(agentConfig.model?.modelId);
+  if (GPT_VERSION_PATTERN.test(modelId)) {
+    return withDefaultOption(
+      configured,
+      customProviderName(agentConfig.provider?.custom),
+      "prompt_cache_key",
+      promptCacheKey(conversationKey),
+    );
+  }
+  if (CLAUDE_MODEL_PATTERN.test(modelId)) {
+    return withDefaultOption(
+      configured,
+      CUSTOM_CACHE_PROVIDER,
+      CUSTOM_CACHE_FIELD,
+      { type: "ephemeral" },
+    );
+  }
+
+  return configured;
+}
+
 function customProviderBaseURL(
   providerConfig: AgentProviderSettings,
 ): string | undefined {
@@ -901,6 +1245,85 @@ function customProviderBaseURL(
   const trimmed = raw.trim();
 
   return trimmed || undefined;
+}
+
+// The name a custom endpoint's compatible provider reads its options under.
+function customProviderName(
+  providerConfig: AgentProviderSettings | undefined,
+): string {
+  return typeof providerConfig?.name === "string"
+    ? providerConfig.name
+    : "custom";
+}
+
+// One system message holding `systems` in order, with the last one's options.
+function mergedSystemMessage(
+  systems: Extract<LanguageModelV4Message, { role: "system" }>[],
+): LanguageModelV4Message {
+  const providerOptions = systems.at(-1)?.providerOptions;
+
+  return {
+    role: "system",
+    content: systems.map((message) => message.content).join("\n\n"),
+    ...(providerOptions ? { providerOptions: providerOptions } : {}),
+  };
+}
+
+// One conversation's prompt cache key, the same on every call it makes.
+function promptCacheKey(conversationKey: string): string {
+  return createHash("sha256")
+    .update(conversationKey)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+// The model id the endpoint serves, without a router prefix like `cx/`.
+function servedModelId(modelId: string | undefined): string {
+  return modelId?.split("/").at(-1) ?? "";
+}
+
+// `configured` with `value` as `provider`'s `field`, unless the account set it.
+function withDefaultOption(
+  configured: AgentModelProviderOptions | undefined,
+  provider: string,
+  field: string,
+  value: JSONValue,
+): AgentModelProviderOptions {
+  if (configured?.[provider]?.[field] !== undefined) {
+    return configured;
+  }
+
+  return {
+    ...configured,
+    [provider]: { ...configured?.[provider], [field]: value },
+  };
+}
+
+// The message with its last block marked where the compatible provider reads
+// it: a user message's last part, a tool message's last result, and the
+// message itself for the rest.
+function withLatestPartMarked(
+  message: LanguageModelV4Message,
+  breakpoint: SharedV4ProviderOptions,
+): LanguageModelV4Message {
+  if (message.role === "user") {
+    return {
+      ...message,
+      content: withCacheBreakpoint(message.content, breakpoint),
+    };
+  }
+  if (message.role === "tool") {
+    return {
+      ...message,
+      content: withCacheBreakpoint(
+        message.content,
+        breakpoint,
+        message.content.findLastIndex((part) => part.type === "tool-result"),
+      ),
+    };
+  }
+
+  return markedForCache(message, breakpoint);
 }
 
 function createModelOutput(

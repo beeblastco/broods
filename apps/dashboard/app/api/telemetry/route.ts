@@ -9,14 +9,16 @@ import {
   parseBeaconEvents,
   parseOtlpHeaders,
 } from "@/app/lib/otlpLogs";
+import {
+  emitPostHogDashboardLog,
+  flushPostHogDashboardLogs,
+} from "@/instrumentation";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const OTLP_TIMEOUT_MS = 5000;
 
 export async function POST(request: Request): Promise<Response> {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-  // Same contract as core's otel.ts: no endpoint configured, no exporter.
-  if (!endpoint) return new Response(null, { status: 204 });
 
   // Checked before reading so an oversized body is refused rather than
   // buffered, then again on the real bytes because the header can lie.
@@ -38,6 +40,19 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (events.length === 0) return new Response(null, { status: 204 });
 
+  emitPostHogDashboardLog("Dashboard performance beacon received", {
+    event_count: events.length,
+    telemetry: "performance_beacon",
+  });
+
+  // Preserve the legacy collector's no-op behavior independently of the
+  // dedicated PostHog logger above.
+  if (!endpoint) {
+    await flushPostHogDashboardLogs();
+
+    return new Response(null, { status: 204 });
+  }
+
   try {
     await fetch(`${endpoint}/v1/logs`, {
       method: "POST",
@@ -53,6 +68,8 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     // Best-effort, exactly like the harness exporter: telemetry must never
     // surface as an error in the app the user is using.
+  } finally {
+    await flushPostHogDashboardLogs();
   }
 
   return new Response(null, { status: 204 });

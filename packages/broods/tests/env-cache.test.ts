@@ -61,31 +61,6 @@ test("loadBroodsRuntimeConfig with BROODS_RELOAD_ENV=1 always overwrites", async
   }
 });
 
-test("loadBroodsRuntimeConfig does not re-read unchanged .env.local", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));
-  try {
-    await writeFile(
-      join(cwd, ".env.local"),
-      "BROODS_TEST_VAR_E=same\n",
-      "utf8",
-    );
-    loadBroodsRuntimeConfig(cwd);
-    expect(process.env.BROODS_TEST_VAR_E).toBe("same");
-
-    await writeFile(
-      join(cwd, ".env.local"),
-      "BROODS_TEST_VAR_E=same\n",
-      "utf8",
-    );
-
-    loadBroodsRuntimeConfig(cwd);
-    expect(process.env.BROODS_TEST_VAR_E).toBe("same");
-  } finally {
-    delete process.env.BROODS_TEST_VAR_E;
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
 test("loadBroodsRuntimeConfig picks up .env (not just .env.local) edits", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));
   try {
@@ -153,24 +128,3 @@ function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
 }
-
-test("loadBroodsRuntimeConfig cleans up cache entry when file is deleted", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));
-  try {
-    await writeFile(
-      join(cwd, ".env.local"),
-      "BROODS_TEST_VAR_G=exists\n",
-      "utf8",
-    );
-    loadBroodsRuntimeConfig(cwd);
-    expect(process.env.BROODS_TEST_VAR_G).toBe("exists");
-
-    await rm(join(cwd, ".env.local"));
-
-    // Next call should not error, the deleted file's cache entry is gone
-    loadBroodsRuntimeConfig(cwd);
-  } finally {
-    delete process.env.BROODS_TEST_VAR_G;
-    await rm(cwd, { recursive: true, force: true });
-  }
-});

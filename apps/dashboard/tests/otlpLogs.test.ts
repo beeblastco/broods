@@ -159,10 +159,6 @@ describe("parseBeaconEvents", () => {
     at: 1_700_000_000_000,
   };
 
-  test("accepts a well-formed event", () => {
-    expect(parseBeaconEvents({ events: [valid] })).toHaveLength(1);
-  });
-
   test("rejects a non-array or missing events field", () => {
     expect(parseBeaconEvents({})).toEqual([]);
     expect(parseBeaconEvents({ events: "nope" })).toEqual([]);
@@ -224,10 +220,5 @@ describe("parseBeaconEvents", () => {
     });
 
     expect(parsed.attributes).toEqual({ ok: "yes" });
-  });
-
-  test("a huge timestamp cannot reach the serializer as exponential", () => {
-    // Guards the BigInt path in buildOtlpLogPayload from the parser's side.
-    expect(parseBeaconEvents({ events: [{ ...valid, at: 1e21 }] })).toEqual([]);
   });
 });

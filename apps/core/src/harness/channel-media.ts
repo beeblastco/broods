@@ -18,7 +18,13 @@ import {
   getTopLevelMediaType,
   mediaTypeToExtension,
 } from "@ai-sdk/provider-utils";
-import type { ModelMessage, UserContent } from "ai";
+import type {
+  FilePart,
+  ImagePart,
+  ModelMessage,
+  ToolModelMessage,
+  UserContent,
+} from "ai";
 import type { Attachment } from "chat";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { channelAdapterFromConfig } from "./integrations.ts";
@@ -59,6 +65,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import { toolContentItems, type ToolContentPart } from "./tools/utils.ts";
 
 /** Where an inbound attachment lands, relative to the workspace root. */
 const MEDIA_DIRECTORY = "media";
@@ -79,9 +86,22 @@ const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 // Sealed-link bytes one turn inlines into the prompt. Every replayed picture
 // rides each model request as base64, and providers cap a request (Anthropic at
 // 32 MB, after base64's third), while the pod holds them all at once. Past it a
-// link stays a link and the provider fetches it, as it did before replay read.
-// One file inlines only up to the picture cap, so a big PDF stays a link too.
+// user part's link stays a link and the provider fetches it, as it did before
+// replay read; a tool result's becomes OMITTED_MEDIA_NOTE. One file inlines
+// only up to the picture cap, so a big PDF stays a link too.
 const MAX_REPLAY_BYTES_PER_TURN = 20 * 1024 * 1024;
+
+// Stored pictures one turn replays, the newest. Each rides every model request,
+// and Anthropic refuses more than 100 images in one, or any side over 2000 px
+// once there are more than 20. Older ones become OMITTED_MEDIA_NOTE.
+const MAX_REPLAYED_MEDIA = 20;
+
+// Pictures past the cap are dropped this many at a time, so between
+// MAX_REPLAYED_MEDIA - REPLAY_OMIT_BATCH and MAX_REPLAYED_MEDIA replay.
+const REPLAY_OMIT_BATCH = 10;
+
+// What the model reads where a stored picture is not shown this turn.
+const OMITTED_MEDIA_NOTE = "[an earlier image is not shown here]";
 
 // A bound on one message, not on the conversation. Every attachment past it is
 // still named for the agent; only the bytes are left with the provider.
@@ -338,10 +358,11 @@ export async function rehydrateStoredMedia(
   accountId: string | undefined,
 ): Promise<ModelMessage[]> {
   const carriesMedia = messages.some(
-    (message) =>
-      message.role === "user" &&
-      typeof message.content !== "string" &&
-      message.content.some(isStoredMediaPart),
+    (message): boolean =>
+      (message.role === "user" &&
+        typeof message.content !== "string" &&
+        message.content.some(isStoredMediaPart)) ||
+      (message.role === "tool" && imageLinks(message).length > 0),
   );
   if (!carriesMedia) {
     return messages;
@@ -352,9 +373,15 @@ export async function rehydrateStoredMedia(
     remainingBytes: MAX_REPLAY_BYTES_PER_TURN,
   };
 
-  return await Promise.all(
-    messages.map((message) => rehydrateMessage(message, agentConfig, replay)),
-  );
+  // One message at a time, newest first: each read is charged before an older
+  // one starts, so when the budget runs out the oldest pictures stay behind.
+  // A cached link waits on nothing, so only a cold cache pays the sequence.
+  const replayed: ModelMessage[] = [];
+  for (const message of (await withOldMediaOmitted(messages)).toReversed()) {
+    replayed.push(await rehydrateMessage(message, agentConfig, replay));
+  }
+
+  return replayed.toReversed();
 }
 
 /**
@@ -377,6 +404,38 @@ export function resolveMediaType(
   }
 
   return sniffed ?? claimed ?? "application/octet-stream";
+}
+
+/**
+ * Moves the media a message carries as bytes into the attachment store, so its
+ * row keeps a sealed link `rehydrateStoredMedia` reads back on every later turn
+ * instead of dropping the picture. A part that cannot be stored stays as it
+ * was, and the row drops it as before.
+ */
+export async function sealConversationMedia(
+  messages: ModelMessage[],
+  accountId: string,
+): Promise<ModelMessage[]> {
+  const carriesMedia = messages.some(
+    (message): boolean =>
+      (message.role === "user" &&
+        typeof message.content !== "string" &&
+        message.content.some(
+          (part): boolean => part.type === "image" || part.type === "file",
+        )) ||
+      (message.role === "tool" &&
+        toolContentItems(message).some(isToolImageBytes)),
+  );
+  // With no public base URL there is no link to keep, so nothing is stored.
+  if (!carriesMedia || !getHarnessPublicUrl()) {
+    return messages;
+  }
+
+  return await Promise.all(
+    messages.map((message): Promise<ModelMessage> =>
+      sealMessageMedia(message, accountId),
+    ),
+  );
 }
 
 /** Throws the size failure `storeAttachment` turns into the agent's note. */
@@ -520,6 +579,18 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+/** The sealed picture links a message carries, in order. */
+function imageLinks(message: ModelMessage): string[] {
+  const links =
+    message.role === "user" && typeof message.content !== "string"
+      ? message.content.map(sealedImageLink)
+      : message.role === "tool"
+        ? toolContentItems(message).map(sealedToolLink)
+        : [];
+
+  return links.filter((link): link is string => link !== null);
+}
+
 /**
  * A part this module stored: a channel reference or a sealed media link. Tool
  * results and subagent output are file parts too, and must not be re-gated.
@@ -528,11 +599,82 @@ function isStoredMediaPart(part: UserContentPart): boolean {
   return mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null;
 }
 
+/** A tool result's picture that may carry its own bytes, the one tool media a row keeps. */
+function isToolImageBytes(
+  item: ToolContentPart,
+): item is Extract<
+  ToolContentPart,
+  { type: "image-data" | "file-data" | "file" }
+> {
+  return (
+    (item.type === "image-data" ||
+      item.type === "file-data" ||
+      item.type === "file") &&
+    item.mediaType.startsWith("image")
+  );
+}
+
 /** The byte cap for one attachment: smaller for pictures, which go inline. */
 function limitForMediaType(mediaType: string | undefined): number {
   return mediaType?.startsWith("image/")
     ? MAX_IMAGE_BYTES
     : MAX_ATTACHMENT_BYTES;
+}
+
+/**
+ * A tool message with `map` applied to every content item of its results. Each
+ * `map` call starts in item order, so its code before an await may count.
+ */
+async function mapToolItems(
+  message: ToolModelMessage,
+  map: (item: ToolContentPart) => Promise<ToolContentPart>,
+): Promise<ToolModelMessage> {
+  const content = await Promise.all(
+    message.content.map(
+      async (part): Promise<ToolModelMessage["content"][number]> =>
+        part.type === "tool-result" && part.output.type === "content"
+          ? {
+              ...part,
+              output: {
+                ...part.output,
+                value: await Promise.all(part.output.value.map(map)),
+              },
+            }
+          : part,
+    ),
+  );
+
+  return { ...message, content: content };
+}
+
+/**
+ * The bytes a part carries itself. Null for anything that already points
+ * elsewhere: a URL, a sealed link, a channel reference, a provider reference.
+ */
+function mediaBytes(
+  value: ImagePart["image"] | FilePart["data"],
+): Buffer | null {
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value);
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value);
+  }
+  if (typeof value === "string") {
+    const dataUrl = /^data:[^,]*;base64,/i.exec(value);
+    if (dataUrl) {
+      return Buffer.from(value.slice(dataUrl[0].length), "base64");
+    }
+
+    return /^[a-z][a-z0-9+.-]*:/i.test(value)
+      ? null
+      : Buffer.from(value, "base64");
+  }
+  if (!(value instanceof URL) && "type" in value && value.type === "data") {
+    return mediaBytes(value.data);
+  }
+
+  return null;
 }
 
 /**
@@ -676,17 +818,17 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * The bytes behind a sealed link, read once per turn and kept in the media
  * cache. A link left for the provider is fetched by it again on every model
  * step, and a file the agent deleted would 404 there and fail the whole turn.
- * Null keeps the link: not a sealed link, another account's link, a file over
+ * Null keeps a user part's link (a tool result's becomes a note): not a sealed
+ * link, another account's link, a file over
  * the picture cap or past the turn's budget, or a read error (a file over the media cap among them),
  * which is not proof of a deletion. The account check matters because this
  * read runs on core's own credentials and meters the ticket's account, and
  * nothing else ties a link pasted into a conversation to the account running it.
  */
 async function readSealedMedia(
-  part: UserContentPart,
+  link: string | null,
   replay: SealedReplay,
 ): Promise<SealedMedia | null> {
-  const link = sealedMediaLink(part);
   const ticket = link
     ? openMediaTicket(
         link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
@@ -745,6 +887,9 @@ async function rehydrateMessage(
   agentConfig: AgentConfig,
   replay: SealedReplay,
 ): Promise<ModelMessage> {
+  if (message.role === "tool") {
+    return rehydrateToolMessage(message, replay);
+  }
   if (message.role !== "user" || typeof message.content === "string") {
     return message;
   }
@@ -770,7 +915,7 @@ async function rehydrateMessage(
       }
       const reference = mediaReferenceOf(part);
       if (!reference) {
-        const sealed = await readSealedMedia(part, replay);
+        const sealed = await readSealedMedia(sealedMediaLink(part), replay);
         if (!sealed) {
           return part;
         }
@@ -800,6 +945,39 @@ async function rehydrateMessage(
   );
 
   return { ...message, content: content };
+}
+
+/**
+ * A tool message with its sealed links read back into bytes, or into a line
+ * when they cannot be. A link is never left for the provider: Bedrock refuses
+ * a URL in a tool result before the request is sent.
+ */
+async function rehydrateToolMessage(
+  message: ToolModelMessage,
+  replay: SealedReplay,
+): Promise<ToolModelMessage> {
+  if (imageLinks(message).length === 0) {
+    return message;
+  }
+
+  return mapToolItems(message, async (item): Promise<ToolContentPart> => {
+    const link = sealedToolLink(item);
+    if (item.type !== "file-url" || !link) {
+      return item;
+    }
+    const sealed = await readSealedMedia(link, replay);
+    if (!sealed) {
+      return { type: "text", text: OMITTED_MEDIA_NOTE };
+    }
+
+    return "gone" in sealed
+      ? { type: "text", text: `[${sealed.gone} is no longer available]` }
+      : {
+          type: "file",
+          mediaType: item.mediaType ?? "application/octet-stream",
+          data: { type: "data", data: sealed.bytes },
+        };
+  });
 }
 
 /**
@@ -846,6 +1024,77 @@ async function resolveMediaReference(
   }
 }
 
+/**
+ * Stores bytes in the attachment store under their hash, so a screenshot sent
+ * twice is kept once, and returns the sealed link with the type the bytes name.
+ * Undefined for a part that carries no bytes, with no public base URL, or when
+ * the bytes are over the attachment cap or cannot be stored: the caller keeps
+ * the part as it was.
+ */
+async function sealBytes(
+  value: ImagePart["image"] | FilePart["data"],
+  claimed: string | undefined,
+  accountId: string,
+): Promise<{ link: string; mediaType: string } | undefined> {
+  const bytes = mediaBytes(value);
+  if (!bytes || bytes.byteLength === 0) {
+    return undefined;
+  }
+  const mediaType = resolveMediaType(bytes, claimed);
+  try {
+    assertWithinLimit(bytes.byteLength, mediaType);
+    const extension = mediaTypeToExtension(mediaType);
+    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+    const ticket: AttachmentMediaTicket = {
+      accountId: accountId,
+      path: `${MEDIA_DIRECTORY}/${hash}${extension ? `.${extension}` : ""}`,
+    };
+    const link = sealedLinkFor(ticket);
+    if (!link) {
+      return undefined;
+    }
+    await writeS3Object(
+      requireEnv("FILESYSTEM_BUCKET_NAME"),
+      attachmentStoreKey(ticket),
+      bytes,
+      { contentType: mediaType },
+    );
+    cacheMedia(link, bytes);
+
+    return { link: link, mediaType: mediaType };
+  } catch (err) {
+    logWarn("Conversation media could not be stored", {
+      accountId: accountId,
+      mediaType: mediaType,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return undefined;
+  }
+}
+
+/** The sealed media URL a picture points at, or null; a PDF is not one. */
+function sealedImageLink(part: UserContentPart): string | null {
+  return part.type === "image" ||
+    (part.type === "file" && part.mediaType.startsWith("image"))
+    ? sealedMediaLink(part)
+    : null;
+}
+
+/** The public link that opens a ticket; undefined with no public base URL. */
+function sealedLinkFor(ticket: AttachmentMediaTicket): string | undefined {
+  const baseUrl = getHarnessPublicUrl();
+  if (!baseUrl) {
+    return undefined;
+  }
+  const token = sealMediaTicket(
+    ticket,
+    requireSecretsEnv("MEDIA_TICKET_SECRET")[0],
+  );
+
+  return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
+}
+
 /** The sealed media URL an image or file part points at, or null. */
 function sealedMediaLink(part: UserContentPart): string | null {
   if (part.type !== "image" && part.type !== "file") {
@@ -856,6 +1105,59 @@ function sealedMediaLink(part: UserContentPart): string | null {
   return typeof value === "string" && value.includes(MEDIA_PATH_PREFIX)
     ? value
     : null;
+}
+
+/** The sealed media URL a tool result's content item points at, or null. */
+function sealedToolLink(item: ToolContentPart): string | null {
+  return item.type === "file-url" &&
+    item.mediaType?.startsWith("image") === true &&
+    item.url.includes(MEDIA_PATH_PREFIX)
+    ? item.url
+    : null;
+}
+
+/** One message with each picture or file it carries as bytes swapped for a sealed link. */
+async function sealMessageMedia(
+  message: ModelMessage,
+  accountId: string,
+): Promise<ModelMessage> {
+  if (message.role === "user" && typeof message.content !== "string") {
+    const content = await Promise.all(
+      message.content.map(async (part): Promise<UserContentPart> => {
+        if (part.type !== "image" && part.type !== "file") {
+          return part;
+        }
+        const sealed = await sealBytes(
+          part.type === "image" ? part.image : part.data,
+          part.mediaType,
+          accountId,
+        );
+        if (!sealed) {
+          return part;
+        }
+
+        return part.type === "image"
+          ? { ...part, image: sealed.link, mediaType: sealed.mediaType }
+          : { ...part, data: sealed.link, mediaType: sealed.mediaType };
+      }),
+    );
+
+    return { ...message, content: content };
+  }
+  if (message.role !== "tool") {
+    return message;
+  }
+
+  // Only a tool's pictures: another file it returns is dropped from the row.
+  return mapToolItems(message, async (item): Promise<ToolContentPart> => {
+    const sealed = isToolImageBytes(item)
+      ? await sealBytes(item.data, item.mediaType, accountId)
+      : undefined;
+
+    return sealed
+      ? { type: "file-url", url: sealed.link, mediaType: sealed.mediaType }
+      : item;
+  });
 }
 
 /**
@@ -983,6 +1285,51 @@ function whereItLanded(
 }
 
 /**
+ * The messages with every sealed picture before the newest MAX_REPLAYED_MEDIA as
+ * a line of text, so a long conversation replays its recent pictures, not all.
+ * Other files are not counted: the cap is the providers' limit on images.
+ */
+async function withOldMediaOmitted(
+  messages: ModelMessage[],
+): Promise<ModelMessage[]> {
+  const over = messages.flatMap(imageLinks).length - MAX_REPLAYED_MEDIA;
+  if (over <= 0) {
+    return messages;
+  }
+  // Whole batches, so the prompt's opening stays the same, and stays cached,
+  // for the next REPLAY_OMIT_BATCH pictures instead of changing every turn.
+  let toOmit = Math.ceil(over / REPLAY_OMIT_BATCH) * REPLAY_OMIT_BATCH;
+  const omits = (link: string | null): boolean => {
+    if (link === null || toOmit <= 0) {
+      return false;
+    }
+    toOmit -= 1;
+
+    return true;
+  };
+  const note = { type: "text" as const, text: OMITTED_MEDIA_NOTE };
+
+  return await Promise.all(
+    messages.map(async (message): Promise<ModelMessage> => {
+      if (message.role === "user" && typeof message.content !== "string") {
+        return {
+          ...message,
+          content: message.content.map((part): UserContentPart =>
+            omits(sealedImageLink(part)) ? note : part,
+          ),
+        };
+      }
+
+      return message.role === "tool"
+        ? mapToolItems(message, async (item): Promise<ToolContentPart> =>
+            omits(sealedToolLink(item)) ? note : item,
+          )
+        : message;
+    }),
+  );
+}
+
+/**
  * Writes the workspace copy straight to S3 on the mount's credentials (the
  * assumed role for a bring-your-own bucket) and the attachment store copy on
  * the harness's own role, so no sandbox has to boot, then returns the sealed
@@ -1012,14 +1359,6 @@ async function writeMediaObject(
       { contentType: mediaType },
     ),
   ]);
-  const baseUrl = getHarnessPublicUrl();
-  if (!baseUrl) {
-    return undefined;
-  }
-  const token = sealMediaTicket(
-    ticket,
-    requireSecretsEnv("MEDIA_TICKET_SECRET")[0],
-  );
 
-  return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
+  return sealedLinkFor(ticket);
 }

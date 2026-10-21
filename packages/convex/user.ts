@@ -8,9 +8,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { components, internal } from "./_generated/api";
 import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { hexFromBytes } from "./model/accountSecrets";
 import { SELF_HOST_ADMIN, SELF_HOST_ISSUER } from "./model/selfHostAuth";
+import { ticketKey } from "./model/stageSessionTicket";
 import { usersFields } from "./schema";
 
+// Keeps the user id key apart from the session ids core tags with the same secret.
+const ANALYTICS_ID_KEY_CONTEXT = "broods-analytics-user:";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const userDoc = v.object({
@@ -62,6 +66,29 @@ export const ensureSynced = action({
     });
 
     return null;
+  },
+});
+
+/**
+ * The caller's PostHog id: an HMAC of their auth id under ANALYTICS_ID_SECRET,
+ * the same on every device yet unreadable without the secret, so analytics
+ * counts one person once and never learns who they are. Null when signed out
+ * or the secret is unset; the dashboard then stays anonymous per browser.
+ */
+export const analyticsId = query({
+  args: {},
+  returns: v.union(v.null(), v.string()),
+  handler: async (ctx): Promise<string | null> => {
+    const user = await authKit.getAuthUser(ctx);
+    const secret = process.env.ANALYTICS_ID_SECRET;
+    if (!user || !secret) return null;
+    const mac = await crypto.subtle.sign(
+      "HMAC",
+      await ticketKey(ANALYTICS_ID_KEY_CONTEXT, secret),
+      new TextEncoder().encode(user.id),
+    );
+
+    return hexFromBytes(new Uint8Array(mac));
   },
 });
 

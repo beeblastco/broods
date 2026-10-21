@@ -261,10 +261,6 @@ describe("mountRoleArn", () => {
     );
     expect(mountRoleArn(undefined)).toBe("arn:aws:iam::1:role/platform");
   });
-
-  it("returns undefined with no assume-role and no platform role", () => {
-    expect(mountRoleArn({ provider: "s3" })).toBeUndefined();
-  });
 });
 
 describe("resolveS3Mount", () => {

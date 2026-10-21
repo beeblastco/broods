@@ -1,0 +1,27 @@
+{
+  "name": "@broods/cloudflare-worker",
+  "version": "0.1.0",
+  "private": true,
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "scripts": {
+    "build": "bun scripts/build-runtime.ts",
+    "check": "bun run build && tsc --noEmit && tsc --noEmit -p tests",
+    "test": "bun test",
+    "dev": "bun run build && wrangler dev",
+    "deploy": "bun run build && (wrangler r2 bucket create broods-worker-state 2>/dev/null || wrangler r2 bucket info broods-worker-state >/dev/null) && wrangler deploy --name \"$WORKER_NAME\""
+  },
+  "dependencies": {
+    "just-bash": "^3.6.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/bun": "^1.3.14",
+    "miniflare": "5.20261006.1-alpha",
+    "wrangler": "^4.149.0"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

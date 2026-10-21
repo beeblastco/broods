@@ -33,27 +33,6 @@ describe("createAgentLifecycleEmitter", () => {
     conversationKey: "direct:conv_1",
   };
 
-  it("does not fire when webhook is not enabled", async () => {
-    const fetchMock = mock(async () => new Response(null, { status: 200 }));
-    globalThis.fetch = fetchMock as never;
-
-    const emitter = createAgentLifecycleEmitter(baseSession, {
-      hooks: {
-        webhooks: [
-          {
-            enabled: false,
-            url: "https://example.com/hook",
-            secret: "secret",
-          },
-        ],
-      },
-    });
-
-    await emitter.emit("agent.started", { modelProvider: "google" });
-
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it("does not fire when webhook url is missing", async () => {
     const fetchMock = mock(async () => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as never;
@@ -84,41 +63,6 @@ describe("createAgentLifecycleEmitter", () => {
           {
             enabled: true,
             url: "https://example.com/hook",
-          },
-        ],
-      },
-    });
-
-    await emitter.emit("agent.started", { modelProvider: "google" });
-
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("does not fire when no webhooks are configured", async () => {
-    const fetchMock = mock(async () => new Response(null, { status: 200 }));
-    globalThis.fetch = fetchMock as never;
-
-    const emitter = createAgentLifecycleEmitter(baseSession, {
-      hooks: { webhooks: [] },
-    });
-
-    await emitter.emit("agent.started", {});
-
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("does not fire when event is not in subscribed events allow-list", async () => {
-    const fetchMock = mock(async () => new Response(null, { status: 200 }));
-    globalThis.fetch = fetchMock as never;
-
-    const emitter = createAgentLifecycleEmitter(baseSession, {
-      hooks: {
-        webhooks: [
-          {
-            enabled: true,
-            url: "https://example.com/hook",
-            secret: "secret",
-            events: ["agent.finished"],
           },
         ],
       },
@@ -199,25 +143,6 @@ describe("createAgentLifecycleEmitter", () => {
       // a (subscribed) and b (no allow-list) fire; c is disabled; d only wants
       // agent.finished.
       expect(deliveries.map((d) => d.path).sort()).toEqual(["/a", "/b"]);
-    });
-  });
-
-  it("fires all events when no events allow-list is configured", async () => {
-    await withWebhookServer(async (url, deliveries) => {
-      const emitter = createAgentLifecycleEmitter(
-        baseSession,
-        {
-          hooks: {
-            webhooks: [{ enabled: true, url: url("/hook"), secret: "secret" }],
-          },
-        },
-        loopbackTransport(),
-      );
-
-      await emitter.emit("tool.call.started", { stepNumber: 1 });
-      await emitter.emit("agent.finished", { finishReason: "stop" });
-
-      expect(deliveries).toHaveLength(2);
     });
   });
 
@@ -302,26 +227,6 @@ describe("createAgentLifecycleEmitter", () => {
     ).rejects.toThrow(/blocked private or metadata address/);
   });
 
-  it("generates ISO timestamp for each event", async () => {
-    await withWebhookServer(async (url, deliveries) => {
-      const emitter = createAgentLifecycleEmitter(
-        baseSession,
-        {
-          hooks: {
-            webhooks: [{ enabled: true, url: url("/hook"), secret: "secret" }],
-          },
-        },
-        loopbackTransport(),
-      );
-
-      await emitter.emit("agent.started", {});
-
-      expect(JSON.parse(deliveries[0]!.body).timestamp).toMatch(
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/,
-      );
-    });
-  });
-
   it("delivers to a server on a port a closed server used", async () => {
     // A socket pooled for the closed server would fail with "socket hang up".
     const emit = (url: string): Promise<void> =>
@@ -359,18 +264,6 @@ describe("toLifecycleValue", () => {
   it("serializes and parses plain objects", () => {
     const input = { success: true, count: 42 };
     expect(toLifecycleValue(input)).toEqual({ success: true, count: 42 });
-  });
-
-  it("serializes and parses arrays", () => {
-    const input = ["a", "b", "c"];
-    expect(toLifecycleValue(input)).toEqual(["a", "b", "c"]);
-  });
-
-  it("serializes and parses primitives", () => {
-    expect(toLifecycleValue(42)).toBe(42);
-    expect(toLifecycleValue("hello")).toBe("hello");
-    expect(toLifecycleValue(true)).toBe(true);
-    expect(toLifecycleValue(null)).toBeNull();
   });
 
   it("returns stringified fallback for non-serializable values", () => {

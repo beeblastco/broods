@@ -13,13 +13,10 @@
 
 import {
   assertNoRetiredImageOptions,
+  PLATFORM_WORKER_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
 } from "@broods/convex/model/sandboxRules";
-import type {
-  ChannelPartition,
-  AgentConfig,
-  AgentWorkspaceRef,
-} from "./domain/agent-config.ts";
+import type { ChannelPartition, AgentConfig } from "./domain/agent-config.ts";
 import type {
   SandboxConfig,
   SandboxConfigRecord,
@@ -369,12 +366,6 @@ export async function resolveAgentRuntime(
   };
 }
 
-export function resolveWorkspaceRefs(
-  agentConfig: AgentConfig,
-): AgentWorkspaceRef[] {
-  return agentConfig.workspaces ?? [];
-}
-
 /**
  * True when the account's own provider account pays for this sandbox, so the
  * platform must not meter it or hold it to the plan's budget. Mirrors where
@@ -402,6 +393,7 @@ export function runsOnOwnCredentials(config: SandboxConfig): boolean {
     case "custom":
       return true;
     case "cloudflare":
+    case "worker":
     case "lambda":
       return false;
   }
@@ -416,19 +408,6 @@ export function workspaceNamespace(
   return normalizeFilesystemNamespace(scope);
 }
 
-/**
- * Namespaces for an account's workspace records, used by cleanup to purge the
- * S3 data for shared workspaces. Pass the account's workspace ids.
- */
-export function workspaceNamespacesForAccount(
-  accountId: string,
-  workspaceIds: string[],
-): string[] {
-  return workspaceIds.map((workspaceId) =>
-    workspaceNamespace(accountId, workspaceId),
-  );
-}
-
 // The file tools need the workspace's S3 mount. A stateless provider has none (a
 // machine's would act on the daemon's own disk, a custom server is never handed
 // mount credentials), and a MicroVM network other than allow-all only routes to
@@ -438,13 +417,14 @@ function assertSandboxReachesWorkspace(
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
 ): void {
-  // The file tools need an S3 mount. A machine, a custom server and a
-  // Cloudflare Container have none, so they would act on their own disk. A
+  // The file tools need an S3 mount. A machine, a custom server and the
+  // Cloudflare Workers have none, so they would act on their own disk. A
   // fallback runs the same workspace, so it is held to the same rule.
   const unmountable = [sandbox?.provider, sandbox?.fallbackProvider].find(
     (provider): boolean =>
-      provider === "cloudflare" ||
-      (provider !== undefined && STATELESS_SANDBOX_PROVIDERS.has(provider)),
+      provider !== undefined &&
+      (PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider) ||
+        STATELESS_SANDBOX_PROVIDERS.has(provider)),
   );
   if (unmountable) {
     throw new Error(

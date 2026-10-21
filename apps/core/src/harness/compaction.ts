@@ -89,8 +89,18 @@ export async function summarizeConversation(
       ...modelSettingsFromModelConfig(input.agentConfig),
       model: configuredModel.model,
       instructions: DEFAULT_COMPACTION_PROMPT,
+      runtimeContext: {
+        traceName: "harness.compaction",
+        properties: process.env.DEPLOYMENT_ENVIRONMENT
+          ? { environment: process.env.DEPLOYMENT_ENVIRONMENT }
+          : {},
+      },
       telemetry: {
         functionId: "harness.compaction",
+        includeRuntimeContext: {
+          traceName: true,
+          properties: true,
+        },
         recordInputs: false,
         recordOutputs: false,
       },

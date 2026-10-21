@@ -5,7 +5,12 @@
 
 import type { JSONValue } from "@ai-sdk/provider";
 import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
-import type { JSONSchema7, UserContent, UserModelMessage } from "ai";
+import type {
+  JSONSchema7,
+  ToolModelMessage,
+  UserContent,
+  UserModelMessage,
+} from "ai";
 import {
   applyRunOverrides,
   type AgentConfig,
@@ -36,7 +41,7 @@ export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
 export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
 // Images one tool result may show the model; together they share MAX_IMAGE_BYTES.
-const MAX_RESULT_IMAGES = 8;
+export const MAX_RESULT_IMAGES = 8;
 // The longest side a model provider takes for an inline image.
 const MAX_IMAGE_SIDE = 8000;
 // What every model provider reads inline.
@@ -76,7 +81,7 @@ export interface SubagentWatch {
   markDelivered(eventId: string): void;
   answerQuestion(taskId: string, answer: string): boolean;
   takeParentMessages(): Promise<UserModelMessage[]>;
-  confirmDelivered(): void;
+  confirmDelivered(): Promise<void>;
 }
 
 export interface SubagentToolInput {
@@ -221,6 +226,15 @@ export function subagentConfig(
 
 export function subagentNotFound(taskId: string): string {
   return `Error: no subagent task found for ${taskId}`;
+}
+
+/** Every content item of a tool message's results, in order. */
+export function toolContentItems(message: ToolModelMessage): ToolContentPart[] {
+  return message.content.flatMap((part): ToolContentPart[] =>
+    part.type === "tool-result" && part.output.type === "content"
+      ? part.output.value
+      : [],
+  );
 }
 
 /** Throw native errors from execute so the AI SDK selects its error result path. */

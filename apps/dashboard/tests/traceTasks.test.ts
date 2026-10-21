@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { ObservabilitySpanRow } from "../app/hooks/useObservabilityStream";
 import {
+  axisTicks,
   failureCause,
-  foldSteps,
   groupSpans,
   matchesTaskQuery,
+  runIssues,
+  spanIssue,
   TASK_QUERY_FIELDS,
   taskChannel,
   type TaskQuery,
@@ -34,7 +36,6 @@ describe("groupSpans", () => {
     expect(rest).toHaveLength(0);
     expect(group.root.spanId).toBe("asked");
     expect(group.status).toBe("ok");
-    expect(group.issueCount).toBe(1);
     const nested = group.childrenByParent.get("asked") ?? [];
     expect(nested.map((span) => span.spanId)).toEqual([
       "asked-bash",
@@ -159,96 +160,6 @@ describe("groupSpans", () => {
   });
 });
 
-describe("foldSteps", () => {
-  test("folds consecutive steps that each call the same one tool", () => {
-    const steps = [3, 4, 5].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 400),
-    );
-    const other = step("run", 6, 7_000, 7_500);
-    const children = new Map([
-      ...steps.map((s): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [toolOf(s, "get_subagent_status")],
-      ]),
-      [other.spanId, [toolOf(other, "bash")]],
-    ]);
-
-    const items = foldSteps([...steps, other], children);
-
-    expect(items).toHaveLength(2);
-    const [fold, rest] = items;
-    if (fold.type !== "fold") throw new Error("expected a fold");
-    expect(fold.fold.label).toBe("step 4-6 get_subagent_status ×3");
-    expect(fold.fold.steps).toEqual(steps);
-    expect(fold.fold.span).toMatchObject({
-      startTimeMs: 3_000,
-      endTimeMs: 5_400,
-      durationMs: 1_200,
-      status: "ok",
-    });
-    expect(rest).toEqual({ type: "span", span: other });
-  });
-
-  test("marks a fold failed when one of its tool calls failed", () => {
-    const steps = [0, 1].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 100),
-    );
-    const children = new Map(
-      steps.map((s, index): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [
-          {
-            ...toolOf(s, "bash"),
-            status: index === 1 ? "error" : "ok",
-          },
-        ],
-      ]),
-    );
-
-    const [fold] = foldSteps(steps, children);
-    if (fold.type !== "fold") throw new Error("expected a fold");
-    expect(fold.fold.span.status).toBe("error");
-  });
-
-  test("does not fold steps whose tool calls carry no tool name", () => {
-    const steps = [0, 1].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 100),
-    );
-    const children = new Map(
-      steps.map((s): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [{ ...toolOf(s, "unnamed"), attributes: {} }],
-      ]),
-    );
-
-    expect(foldSteps(steps, children).map((item) => item.type)).toEqual([
-      "span",
-      "span",
-    ]);
-  });
-
-  test("leaves a lone step, mixed tools and interleaved spans unfolded", () => {
-    const first = step("run", 0, 1_000, 1_100);
-    const mixed = step("run", 1, 2_000, 2_100);
-    const phase = { ...step("run", 2, 3_000, 3_100), kind: "phase" as const };
-    const last = step("run", 3, 4_000, 4_100);
-    const children = new Map<string, ObservabilitySpanRow[]>([
-      [first.spanId, [toolOf(first, "bash")]],
-      [mixed.spanId, [toolOf(mixed, "bash"), toolOf(mixed, "read")]],
-      [last.spanId, [toolOf(last, "bash")]],
-    ]);
-
-    const items = foldSteps([first, mixed, phase, last], children);
-
-    expect(items.map((item) => item.type)).toEqual([
-      "span",
-      "span",
-      "span",
-      "span",
-    ]);
-  });
-});
-
 describe("task search", () => {
   test("splits field tokens from free words, ignoring unknown and empty fields", () => {
     expect(
@@ -334,6 +245,127 @@ describe("task list line", () => {
     expect(causeOf("boom")).toBe("boom");
     expect(failureCause(groupSpans([root("ok", 0, 1, "ok", {})])[0])).toBe(
       null,
+    );
+  });
+});
+
+describe("waterfall issues", () => {
+  test("reads a failure and a retried model call off their spans", () => {
+    const failed = { ...child("run", "bash", 2_000, "error"), error: "boom" };
+    const retried = {
+      ...step("run", 0, 1_000, 5_000),
+      attributes: {
+        "model.attempts": 3,
+        "model.retry_wait_ms": 1_500,
+        "model.attempt_errors": '["429 rate limited"]',
+      },
+    };
+
+    expect(spanIssue(failed)).toEqual({
+      atMs: 2_100,
+      level: "error",
+      label: "Failed",
+      text: "boom",
+    });
+    expect(spanIssue(retried)).toEqual({
+      atMs: 2_500,
+      level: "warn",
+      label: "Retried 2×",
+      text: "429 rate limited",
+    });
+    expect(spanIssue(step("run", 1, 0, 1))).toBe(null);
+  });
+
+  test("counts a rate limited tool's retries", () => {
+    const tool = {
+      ...child("run", "search", 1_000, "ok"),
+      attributes: { "tool.retry.count": 2, "tool.retry.wait_ms": 400 },
+    };
+
+    expect(spanIssue(tool)).toMatchObject({
+      atMs: 1_000,
+      level: "warn",
+      label: "Retried 2×",
+    });
+  });
+
+  test("lists a run's issues in time order and what sits under each span", () => {
+    const task = root("run", 0, 10_000, "ok", {});
+    const first = step("run", 0, 1_000, 4_000);
+    const late = { ...toolOf(first, "bash"), status: "error" as const };
+    const early = {
+      ...child("run", "search", 500, "ok"),
+      attributes: { "tool.retry.count": 1, "tool.retry.wait_ms": 100 },
+    };
+
+    const [group] = groupSpans([task, first, late, early]);
+    const issues = runIssues(group);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-search",
+      "run-step-0-bash",
+    ]);
+    // The failed tool sits under its step, which a click must open.
+    expect(
+      issues.all.map(({ path }) => path.map((span) => span.spanId)),
+    ).toEqual([[], ["run-step-0"]]);
+    expect(issues.below.get("run")).toHaveLength(2);
+    expect(issues.below.get("run-step-0")).toHaveLength(1);
+    expect(issues.below.get("run-step-0-bash")).toEqual([]);
+  });
+
+  test("a first pass that failed is not an issue once a continued pass went through", () => {
+    const failed = {
+      ...root("first", 0, 1_000, "error", { "task.id": TASK_ID }),
+      error: "rate limited",
+    };
+    const continued = root("again", 5_000, 6_000, "ok", {
+      "task.id": `${TASK_ID}:continue`,
+      "task.root_id": TASK_ID,
+    });
+
+    const [recovered] = groupSpans([failed, continued]);
+    const [stillFailed] = groupSpans([failed]);
+
+    expect(runIssues(recovered).all).toEqual([]);
+    expect(runIssues(stillFailed).own.get("first")?.label).toBe("Failed");
+  });
+
+  test("a run that failed mid tool call is one failure, at the tool", () => {
+    // Core closes the open step and tool with the run's error when it fails.
+    const failed = (span: ObservabilitySpanRow): ObservabilitySpanRow => ({
+      ...span,
+      status: "error",
+      error: "invalid x-api-key",
+    });
+    const task = failed(root("run", 0, 5_000, "error", {}));
+    const open = failed(step("run", 0, 1_000, 5_000));
+    const tool = failed(toolOf(open, "bash"));
+
+    const issues = runIssues(groupSpans([task, open, tool])[0]);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+    ]);
+    expect(issues.own.has("run")).toBe(false);
+    expect(issues.below.get("run")).toHaveLength(1);
+
+    // A tool that failed on its own, earlier, leaves the run's later failure standing.
+    const earlier = { ...tool, error: "file not found" };
+    const both = runIssues(groupSpans([task, open, earlier])[0]);
+    expect(both.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+      "run-step-0",
+    ]);
+  });
+
+  test("steps the time axis so it shows at most four ticks", () => {
+    expect(axisTicks(12_000)).toEqual([0, 5_000, 10_000]);
+    expect(axisTicks(82_000)).toEqual([0, 30_000, 60_000]);
+    expect(axisTicks(400)).toEqual([0, 200, 400]);
+    // A run that waited three days on a person steps in whole hours.
+    expect(axisTicks(72 * 3_600_000)).toEqual(
+      [0, 24, 48, 72].map((hours) => hours * 3_600_000),
     );
   });
 });

@@ -389,6 +389,56 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
+  it("isolate takes on/off networking, no hooks, no lifecycle and a 60 s timeout", () => {
+    expect(
+      normalizeSandboxConfig({ provider: "worker", persistent: true }),
+    ).toMatchObject({ provider: "worker", network: { mode: "deny-all" } });
+    expect(
+      normalizeSandboxConfig({
+        provider: "worker",
+        network: { mode: "allow-all" },
+        timeout: 60,
+        persistent: true,
+      }),
+    ).toMatchObject({ timeout: 60, network: { mode: "allow-all" } });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 3600 },
+      }),
+    ).toThrow("config.lifecycle is not supported by the worker provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        network: { mode: "restricted", allowDomains: ["pypi.org"] },
+      }),
+    ).toThrow("deny-all or allow-all");
+    // Like lambda, one fixed size: a `size` is kept and ignored.
+    expect(
+      normalizeSandboxConfig({ provider: "worker", size: "large" }).size,
+    ).toBe("large");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "worker", snapshot: "img" }),
+    ).toThrow("config.snapshot does not apply to the worker provider");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "worker", timeout: 61 }),
+    ).toThrow("config.timeout");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        options: { baseURL: "https://isolate.example.com" },
+      }),
+    ).toThrow("config.options.baseURL is not supported");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        persistent: true,
+        onCreate: ["npm install"],
+      }),
+    ).toThrow("config.onCreate is not supported by the worker provider");
+  });
+
   it("machine sandbox takes only allow-all network, envVars and options.cwd", () => {
     expect(
       normalizeSandboxConfig({
@@ -476,13 +526,6 @@ describe("sandbox config provider-aware limits", () => {
 });
 
 describe("sandbox config persistent / lifecycle", () => {
-  it("accepts persistent on the lambda (MicroVM) provider", () => {
-    expect(
-      normalizeSandboxConfig({ provider: "lambda", persistent: true })
-        .persistent,
-    ).toBe(true);
-  });
-
   it("accepts persistent on sandbox/daytona/e2b/vercel", () => {
     expect(
       normalizeSandboxConfig({ provider: "sandbox", persistent: true })

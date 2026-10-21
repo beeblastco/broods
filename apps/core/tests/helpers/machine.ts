@@ -197,6 +197,10 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
             }
           : null,
     },
+    accountApiKeys: {
+      resolveByKeyHash: async () => null,
+      touchLastUsed: async (): Promise<void> => {},
+    },
     accounts: {
       getById: async (accountId: string) =>
         accountId === MACHINE_ACCOUNT_ID ? account : null,

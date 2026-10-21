@@ -110,6 +110,8 @@ Deployment environment variables:
   core refuses the service token there.
 - `STAGE_TICKET_SECRET`: signs dashboard stage session tickets; same value as
   core's.
+- `ANALYTICS_ID_SECRET`: optional, keys the dashboard's PostHog user id (`user.analyticsId`);
+  same value as core's. Never rotate it: a new value makes every user look new.
 
 ## Workflow
 

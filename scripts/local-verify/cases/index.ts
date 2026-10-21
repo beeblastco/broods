@@ -1,5 +1,6 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
+import { asyncToolHandback } from "./async-tool-handback.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { authFailures } from "./auth-failures.ts";
 import { autoCompaction } from "./auto-compaction.ts";
@@ -10,6 +11,7 @@ import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
+import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
@@ -25,6 +27,7 @@ import { queuedFollowup } from "./queued-followup.ts";
 import { r2Workspace } from "./r2-workspace.ts";
 import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
+import { scopedAccountKey } from "./scoped-account-key.ts";
 import { sdkClient } from "./sdk-client.ts";
 import { skillLimit } from "./skill-limit.ts";
 import { snapshotStage } from "./snapshot-stage.ts";
@@ -58,6 +61,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentStop,
   subagentModel,
   subagentResume,
+  asyncToolHandback,
   autoCompaction,
   machineSandbox,
   bashTimeout,
@@ -71,9 +75,11 @@ export const verifyCases: readonly VerifyCase[] = [
   mcpCommand,
   customSandbox,
   cloudflareSandbox,
+  workerSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,
+  scopedAccountKey,
   manifestSync,
   productionRegion,
   projectUsage,
