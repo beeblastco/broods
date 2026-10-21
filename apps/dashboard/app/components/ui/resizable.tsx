@@ -7,8 +7,8 @@ import * as ResizablePrimitive from "react-resizable-panels";
 /**
  * Resizable split. The library's own cursor is off: it sets a page-wide
  * `*, *:hover { cursor }` rule on every handle hover, which restyles the whole
- * document. The handle carries the cursor instead, and the group keeps it
- * while a drag is active so it holds when the pointer leaves the handle.
+ * document. The handle carries the cursor instead, and the group and its
+ * children take it while a drag is active so it holds off the handle.
  */
 function ResizablePanelGroup({
   className,
@@ -19,7 +19,7 @@ function ResizablePanelGroup({
       data-slot="resizable-panel-group"
       disableCursor
       className={cn(
-        "flex h-full w-full aria-[orientation=vertical]:flex-col has-[>[data-separator=active][aria-orientation=horizontal]]:cursor-row-resize has-[>[data-separator=active][aria-orientation=vertical]]:cursor-col-resize",
+        "flex h-full w-full aria-[orientation=vertical]:flex-col has-[>[data-separator=active][aria-orientation=horizontal]]:cursor-row-resize has-[>[data-separator=active][aria-orientation=horizontal]]:**:cursor-row-resize has-[>[data-separator=active][aria-orientation=vertical]]:cursor-col-resize has-[>[data-separator=active][aria-orientation=vertical]]:**:cursor-col-resize",
         className,
       )}
       {...props}

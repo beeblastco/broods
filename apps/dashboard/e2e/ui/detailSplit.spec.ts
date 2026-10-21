@@ -81,14 +81,19 @@ test("the handle owns the resize cursor, the group holds it through a drag, and 
   expect(await cursor(group)).toBe("auto");
   expect(await pageWideRules(page)).toBe(0);
 
-  // Off the handle mid-drag, the group still shows the resize cursor.
+  // Off the handle mid-drag, the group shows the resize cursor, even over a
+  // child with its own.
+  const close = group.getByRole("button", { name: "Close details" });
+  expect(await cursor(close)).toBe("pointer");
   await page.mouse.down();
   await page.mouse.move(x - DRAG, y + DRAG, { steps: 5 });
   expect(await cursor(group)).toBe("col-resize");
+  expect(await cursor(close)).toBe("col-resize");
   expect(await pageWideRules(page)).toBe(0);
 
   await page.mouse.up();
   expect(await cursor(group)).toBe("auto");
+  expect(await cursor(close)).toBe("pointer");
 });
 
 test("on a phone the open detail takes the table's place, and closing it brings the table back", async ({
