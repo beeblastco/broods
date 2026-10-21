@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "deploy": "wrangler deploy --name \"$WORKER_NAME\""
   },
   "dependencies": {
     "zod": "^4.4.3"
