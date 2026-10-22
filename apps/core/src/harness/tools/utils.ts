@@ -73,15 +73,8 @@ export type AskParent = (
 
 /** This turn's live subagents, as the parent's loop and subagent tools see them. */
 export interface SubagentWatch {
-  waitForSettled(
-    taskId: string,
-    timeoutMs: number,
-    abortSignal?: AbortSignal,
-  ): Promise<void>;
-  markDelivered(eventId: string): void;
   answerQuestion(taskId: string, answer: string): boolean;
   takeParentMessages(): Promise<UserModelMessage[]>;
-  confirmDelivered(): Promise<void>;
 }
 
 export interface SubagentToolInput {
@@ -94,7 +87,7 @@ export type UserContentPart = Exclude<UserContent, string>[number];
 /**
  * The subagent tools' ownership check: the task's status row, when a run of
  * this conversation started it. A child can outlive the run that started it,
- * so a later turn of the same conversation can still read, steer or stop it.
+ * so a later turn of the same conversation can still steer or stop it.
  */
 export async function getOwnedSubagent(
   context: SubagentToolContext,

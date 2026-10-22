@@ -704,12 +704,7 @@ describe("createTools", () => {
           subagent: { enabled: true, mode: "persistent" },
         }),
       ),
-    ).toEqual([
-      "run_subagent",
-      "get_subagent_status",
-      "update_subagent",
-      "stop_subagent",
-    ]);
+    ).toEqual(["run_subagent", "update_subagent", "stop_subagent"]);
     expect(
       Object.keys(
         await createTools(context as never, {

@@ -105,7 +105,8 @@ export default function runSubagentTool(context: {
     run_subagent: tool({
       description: [
         "Dispatch one or more subagents for independent parallel work.",
-        "Returns task ids immediately so you can continue working while results are injected into the parent conversation later.",
+        "Returns task ids immediately, and each result arrives in this conversation on its own when the subagent finishes, even after your turn ends.",
+        "Keep going with your other steps while subagents run; end your turn only when you have nothing else to do.",
         "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual subagent, which runs on your own config.",
         ...(context.mode === "persistent"
           ? [

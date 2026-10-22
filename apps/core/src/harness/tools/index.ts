@@ -69,7 +69,6 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
-import getSubagentStatusTool from "./get-subagent-status.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import memoryTool from "./memory.tool.ts";
@@ -313,12 +312,6 @@ export async function createTools(
     ) {
       Object.assign(
         tools,
-        getSubagentStatusTool({
-          accountId: context.accountId,
-          eventId: context.session.eventId,
-          conversationKey: context.session.conversationKey,
-          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
-        }),
         updateSubagentTool({
           accountId: context.accountId,
           agentConfig: agentConfig,

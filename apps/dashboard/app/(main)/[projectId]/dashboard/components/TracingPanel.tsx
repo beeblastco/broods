@@ -993,9 +993,6 @@ export function TracingPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ObservabilityToolbar
-        leading={
-          <TaskListFold rail={rail} onToggle={() => setRail(!railChosen)} />
-        }
         search={filter}
         onSearchChange={narrowSearch}
         searchPlaceholder="Search tasks · status: channel: agent: tool: error: trace: conv:"
@@ -1067,7 +1064,9 @@ export function TracingPanel({
       >
         <div className="flex h-full min-h-0 flex-col md:flex-row">
           <TaskListPane
-            rail={rail}
+            // An empty list opens with its message: with no trace selected
+            // there is no header holding the fold to open it again.
+            rail={rail && listRows.length > 0}
             rows={listRows}
             selectedGroup={selectedGroup}
             stackChoices={stackChoices}
@@ -1097,6 +1096,12 @@ export function TracingPanel({
                 stageSlug={stageSlug}
                 onContinue={() => void continueTask(selectedGroup.root)}
                 onPickRun={pickTask}
+                fold={
+                  <TaskListFold
+                    rail={rail}
+                    onToggle={() => setRail(!railChosen)}
+                  />
+                }
                 view={{
                   focusTraceId: focusTraceId,
                   group: selectedGroup,
@@ -2767,7 +2772,7 @@ function SpanTimings({
   );
 }
 
-/** The toolbar's first button: folds the task list to its rail and back. Desktop only. */
+/** The selected trace's first button: folds the task list to its rail and back. Desktop only. */
 function TaskListFold({
   rail,
   onToggle,
@@ -2780,7 +2785,7 @@ function TaskListFold({
       <Button
         type="button"
         variant="outline"
-        size="icon-sm"
+        size="icon-xs"
         tone="muted"
         onClick={onToggle}
         className="hidden cursor-pointer md:inline-flex"
@@ -2799,8 +2804,8 @@ function TaskListFold({
 /**
  * The task list, or its rail: one row or one dot per task. The rail keeps the
  * order, the status and the selection of the list in 36px, so one trace gets
- * the width without losing where you are. The toolbar's first button folds
- * it, and the pane slides between the two widths.
+ * the width without losing where you are. The selected trace's first button
+ * folds it, and the pane slides between the two widths.
  */
 function TaskListPane({
   rail,
@@ -3002,11 +3007,13 @@ function TaskRailDot({
  * The selected run on the right: its request, or its chain for a subagent,
  * its conversation and trace, the copy actions for the user's own coding
  * agent, Continue when a request failed, the count of what went wrong, then
- * its waterfall scaled to that run alone.
+ * its waterfall scaled to that run alone. The header opens with the task
+ * list's fold, next to the list it folds.
  */
 function TaskWaterfall({
   attempt,
   chain,
+  fold,
   onContinue,
   onPickRun,
   projectSlug,
@@ -3015,6 +3022,8 @@ function TaskWaterfall({
 }: {
   attempt: ContinueAttempt | undefined;
   chain: SpanGroup[];
+  /** The task list's fold button, first in the header. */
+  fold: React.ReactNode;
   onContinue: () => void;
   onPickRun: (root: ObservabilitySpanRow) => void;
   projectSlug: string | undefined;
@@ -3068,6 +3077,7 @@ function TaskWaterfall({
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2 text-xs">
+        {fold}
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
           {ancestors.map((ancestor) => (
             <span
