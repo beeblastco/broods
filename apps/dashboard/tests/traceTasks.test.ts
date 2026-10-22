@@ -181,15 +181,15 @@ describe("task search", () => {
     failed.conversationKey = "tg:42";
     failed.agentId = "support-bot";
     failed.error = "Provider returned 429 Too Many Requests";
-    const tool = child("run", "get_subagent_status", 1_200, "ok");
+    const tool = child("run", "stop_subagent", 1_200, "ok");
     const [group] = groupSpans([failed, tool]);
     const matches = (input: string): boolean =>
       matchesTaskQuery(group, parseTaskQuery(input));
 
     expect(matches("status:failed channel:telegram")).toBe(true);
     expect(matches("status:done")).toBe(false);
-    expect(matches("tool:get_subagent_status")).toBe(true);
-    expect(matches("tool:get_subagent")).toBe(false);
+    expect(matches("tool:stop_subagent")).toBe(true);
+    expect(matches("tool:stop_sub")).toBe(false);
     expect(matches("error:rate_limit")).toBe(true);
     expect(matches("error:timeout")).toBe(false);
     expect(matches("error:too")).toBe(true);

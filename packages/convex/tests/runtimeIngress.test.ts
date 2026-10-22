@@ -1349,7 +1349,7 @@ describe("runtime ingress", () => {
       resultEventId: resultEventId,
     });
 
-    // get_subagent_status read it first: the resume admits nothing.
+    // The row was marked stored first: the resume admits nothing.
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "read-first",
       handback: "stored",

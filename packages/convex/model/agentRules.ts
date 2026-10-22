@@ -136,7 +136,6 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "browse",
   "cancel_schedule",
   "edit",
-  "get_subagent_status",
   "glob",
   "grep",
   "list_schedules",
