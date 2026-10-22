@@ -13,6 +13,7 @@ import {
   StatusDot,
   type StatusTone,
 } from "@/app/components/StatusDot";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -2775,24 +2776,23 @@ function TaskListFold({
   onToggle: () => void;
 }): React.JSX.Element {
   return (
-    <Button
-      type="button"
-      variant="outline"
-      size="icon-sm"
-      tone="muted"
-      onClick={onToggle}
-      aria-pressed={rail}
-      aria-label={rail ? "Show the task list" : "Fold the task list"}
-      title={rail ? "Show the task list" : "Fold the task list to its dots"}
-      className="hidden cursor-pointer md:inline-flex"
-    >
-      <ChevronsLeft
-        className={cn(
-          "transition-transform duration-200 motion-reduce:transition-none",
-          rail && "rotate-180",
-        )}
-      />
-    </Button>
+    <IconTooltip label={rail ? "Show the task list" : "Fold the task list"}>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-sm"
+        tone="muted"
+        onClick={onToggle}
+        className="hidden cursor-pointer md:inline-flex"
+      >
+        <ChevronsLeft
+          className={cn(
+            "transition-transform duration-200 motion-reduce:transition-none",
+            rail && "rotate-180",
+          )}
+        />
+      </Button>
+    </IconTooltip>
   );
 }
 

@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Shared by the logs and tracing panels, so a filter added here shows up on
- * both: the token search, the range presets, Refresh, and the
- * volume strip whose drag narrows the range to a custom window.
+ * Shared by the Monitoring and Tracing panels, so a filter added here shows up
+ * on both: an optional leading control, the token search, the range presets,
+ * Refresh, and the volume strip whose drag narrows the range to a custom window.
  */
 import { SearchInput } from "@/app/components/SearchInput";
 import { SegmentedControl } from "@/app/components/SegmentedControl";
