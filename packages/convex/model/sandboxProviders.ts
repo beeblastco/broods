@@ -52,29 +52,3 @@ export const SUSPEND_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 // Cloudflare bridge in its Container. The rest keep the bounded `exec` runner.
 export const LIVE_TERMINAL_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda", "cloudflare"]);
-
-/** The sandbox fields `browserSandboxProblem` reads, typed or straight from a manifest. */
-export interface BrowserSandboxShape {
-  provider?: string;
-  image?: unknown;
-  network?: { mode?: unknown };
-}
-
-/**
- * Why a sandbox cannot run the `browse` tool, or null when it can. CLI sync
- * checks an agent's first sandbox with it before storing anything, and core
- * again before a run, for a sandbox the manifest does not declare.
- */
-export function browserSandboxProblem(
-  sandbox: BrowserSandboxShape | undefined,
-): string | null {
-  if (sandbox?.provider === "machine") return null;
-  if (sandbox?.provider !== "lambda" || sandbox.image !== "obscura") {
-    return 'config.browser needs the agent\'s first sandbox on provider lambda with image: "obscura", or a machine sandbox with obscura installed';
-  }
-  if (sandbox.network?.mode !== "allow-all") {
-    return "config.browser needs the agent's first sandbox to set network.mode to allow-all";
-  }
-
-  return null;
-}

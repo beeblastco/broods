@@ -383,8 +383,8 @@ let typeScriptLoaderRegistered = false;
  * `broods` run on plain `node`. A load hook keeps each module's own URL, so a
  * resource that reads a file relative to `import.meta.url` still resolves
  * against its source directory. The resolve hook gives a relative import node
- * cannot find the `.ts` file Bun would: `./prompts` as `./prompts.ts` or
- * `./prompts/index.ts`, and `./prompts.js` as `./prompts.ts`.
+ * cannot find the `.ts` file Bun would: `./prompts` or `./auth.config` with
+ * `.ts` or `/index.ts` added, and `./prompts.js` as `./prompts.ts`.
  * No-op under Bun, which loads TypeScript natively and ships no
  * `registerHooks`.
  */
@@ -393,18 +393,15 @@ function registerTypeScriptLoader(): void {
   typeScriptLoaderRegistered = true;
   if (typeof module.registerHooks !== "function") return;
   module.registerHooks({
-    resolve: (specifier, context, nextResolve) => {
+    resolve: (specifier, context, nextResolve): module.ResolveFnOutput => {
       try {
         return nextResolve(specifier, context);
       } catch (error) {
         if (!/^\.{1,2}\//.test(specifier)) throw error;
-        const extension = extname(specifier);
         const candidates =
-          extension === ".js"
+          extname(specifier) === ".js"
             ? [`${specifier.slice(0, -3)}.ts`]
-            : extension === ""
-              ? [`${specifier}.ts`, `${specifier}/index.ts`]
-              : [];
+            : [`${specifier}.ts`, `${specifier}/index.ts`];
         for (const candidate of candidates) {
           try {
             return nextResolve(candidate, context);
@@ -415,7 +412,7 @@ function registerTypeScriptLoader(): void {
         throw error;
       }
     },
-    load: (url, context, nextLoad) => {
+    load: (url, context, nextLoad): module.LoadFnOutput => {
       // `loadExports` appends a cache-busting query the file system cannot see.
       const [href] = url.split("?");
       if (

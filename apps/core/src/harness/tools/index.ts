@@ -10,7 +10,7 @@
 
 import type { ToolSet } from "ai";
 import { isProviderToolName } from "@broods/convex/model/agentRules";
-import { browserSandboxProblem } from "@broods/convex/model/sandboxProviders";
+import { browserSandboxRefusal } from "@broods/convex/model/sandboxRules";
 import {
   resolveSubagentMode,
   type AccountModelProviderName,
@@ -224,7 +224,7 @@ export async function createTools(
   // browse: opt-in, on the agent's first sandbox. A sandbox without Obscura fails
   // the run here rather than handing the model a tool that cannot work.
   if (agentConfig.browser?.enabled === true) {
-    const problem = browserSandboxProblem(defaultSandbox);
+    const problem = browserSandboxRefusal(defaultSandbox);
     if (problem) throw new Error(problem);
     Object.assign(sandboxTools, browseTool(sandboxContext));
   }

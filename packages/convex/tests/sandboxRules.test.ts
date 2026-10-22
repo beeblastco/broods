@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { toPublicSandboxConfigResponse } from "../model/responses";
 import {
+  browserSandboxRefusal,
   normalizeCreateSandboxConfigInput,
   normalizeSandboxConfig,
   normalizeUpdateSandboxConfigInput,
@@ -839,5 +840,25 @@ describe("sandbox config host boundary", () => {
         network: { mode: "restricted", allowDomains: ["api.example.com"] },
       }).network,
     ).toEqual({ mode: "restricted", allowDomains: ["api.example.com"] });
+  });
+});
+
+describe("browser sandbox", () => {
+  it("accepts only a first sandbox that can run Obscura", () => {
+    const obscura = {
+      provider: "lambda",
+      image: "obscura",
+      network: { mode: "allow-all" },
+    };
+
+    expect(browserSandboxRefusal(obscura)).toBeNull();
+    expect(browserSandboxRefusal({ provider: "machine" })).toBeNull();
+    expect(browserSandboxRefusal({ ...obscura, image: undefined })).toContain(
+      'image: "obscura"',
+    );
+    expect(
+      browserSandboxRefusal({ ...obscura, network: { mode: "deny-all" } }),
+    ).toContain("network.mode to allow-all");
+    expect(browserSandboxRefusal(undefined)).toContain('image: "obscura"');
   });
 });

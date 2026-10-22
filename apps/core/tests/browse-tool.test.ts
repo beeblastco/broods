@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { browserSandboxProblem } from "@broods/convex/model/sandboxProviders";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,24 +14,6 @@ const OBSCURA_SANDBOX: SandboxExecutorConfig = {
 };
 
 describe("browse tool", () => {
-  it("accepts only a first sandbox that can run Obscura", () => {
-    expect(browserSandboxProblem(OBSCURA_SANDBOX)).toBeNull();
-    expect(browserSandboxProblem({ provider: "machine" })).toBeNull();
-    expect(
-      browserSandboxProblem({
-        provider: "lambda",
-        network: { mode: "allow-all" },
-      }),
-    ).toContain('image: "obscura"');
-    expect(
-      browserSandboxProblem({
-        ...OBSCURA_SANDBOX,
-        network: { mode: "deny-all" },
-      }),
-    ).toContain("network.mode to allow-all");
-    expect(browserSandboxProblem(undefined)).toContain('image: "obscura"');
-  });
-
   it("asks before eval runs the model's JavaScript, unless the sandbox bypasses", () => {
     const approval = (
       mode: string,

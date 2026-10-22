@@ -6,8 +6,8 @@ import { pathToFileURL } from "node:url";
 
 /**
  * The CLI ships for Node as well as Bun, and Node only erases type syntax: an
- * `enum` in a `broods/` file throws there unless the compiler hooks esbuild in.
- * These run the real compile path in a `node` child, because a `bun` runner
+ * `enum` in a `broods/` file throws there unless the compiler hooks esbuild in,
+ * and it resolves no `.ts` file for `./prompts` or `./prompts.js`. These run the real compile path in a `node` child, because a `bun` runner
  * loads TypeScript natively and would pass either way.
  */
 
@@ -114,6 +114,7 @@ test.each([
   ["./prompts/support", "support.ts"],
   ["./prompts/support.js", "support.ts"],
   ["./prompts", "index.ts"],
+  ["./prompts/support.en", "support.en.ts"],
 ])("node resolves %s to the .ts file Bun would", async (specifier, file) => {
   const cwd = await fixtureProject(`
 import { defineAgent } from "${RESOURCES_MODULE}";

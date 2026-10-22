@@ -78,7 +78,11 @@ export interface AgentConfig {
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
   scheduler?: AgentSchedulerConfig;
-  /** Registers the `browse` tool, which runs Obscura on the first sandbox. */
+  /**
+   * Registers the `browse` tool, which runs Obscura on the first sandbox. That
+   * sandbox must be lambda with image "obscura" and network allow-all, or a
+   * machine; manifest sync refuses anything else it can see.
+   */
   browser?: { enabled?: boolean };
   /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
