@@ -2,11 +2,10 @@
 
 import {
   AllowanceView,
-  type AllowanceScope,
+  type UsageScope,
 } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import type { BudgetUsage, UsageAmounts } from "@/app/lib/allowance";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useState } from "react";
 
 const MONTH = "2026-10";
 const DAYS_SO_FAR = 16;
@@ -80,19 +79,19 @@ const CAPS = {
 };
 
 /**
- * The Usage tab's Allowance on fixed data: one org's month across four
- * projects, seen from "Support bot", with the scope switch working.
+ * Resources on fixed data: one org's month across four projects, as the
+ * "Support bot" Usage tab or the organization's Usage page shows it.
  */
-export function AllowanceStandIn(): React.JSX.Element {
-  const [scope, setScope] = useState<AllowanceScope>("project");
-
+export function AllowanceStandIn({
+  view,
+}: {
+  view: UsageScope;
+}): React.JSX.Element {
   return (
-    <div className="w-full max-w-5xl">
+    <div className="w-full max-w-6xl">
       <AllowanceView
         budget={BUDGET}
-        projectId="support-bot"
-        scope={scope}
-        onScopeChange={setScope}
+        view={view}
         month={undefined}
         onMonthChange={() => {}}
       />

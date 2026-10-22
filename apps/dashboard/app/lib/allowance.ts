@@ -64,7 +64,7 @@ export const BUDGET_LEVEL_TEXT: Record<BudgetLevel, string> = {
 };
 
 /**
- * One row per billed resource, for the Usage tab's allowance and the Billing
+ * One row per billed resource, for the Resources tables and the Billing
  * tab's plan table. `share` names the cap it counts toward; ingress is free,
  * so it has none. `help` says what the amount is counted from, where the
  * label alone does not.

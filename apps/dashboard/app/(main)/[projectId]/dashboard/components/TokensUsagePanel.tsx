@@ -184,7 +184,7 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
 const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
 /**
- * The dashboard Usage tab: the org's monthly allowance per resource, then the
+ * The dashboard Usage tab: the project's Resources against the org's caps, then the
  * stage's tokens: range and model filter, the numbers row, and the token
  * chart that splits to list a clicked bin's traces. Everything below the
  * toolbar follows the clicked bin.
@@ -350,7 +350,7 @@ export function TokensUsagePanel({
 
   return (
     <div className="grid gap-8">
-      <AllowanceUsage projectId={projectId} />
+      <AllowanceUsage view={{ scope: "project", projectId: projectId }} />
       <section className="grid gap-4">
         <h2 className="text-sm font-semibold text-foreground">Tokens</h2>
         <UsageToolbar
