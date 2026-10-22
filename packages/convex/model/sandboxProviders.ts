@@ -53,17 +53,17 @@ export const SUSPEND_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 export const LIVE_TERMINAL_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda", "cloudflare"]);
 
-/** The sandbox fields `browserSandboxProblem` reads. */
+/** The sandbox fields `browserSandboxProblem` reads, typed or straight from a manifest. */
 export interface BrowserSandboxShape {
   provider?: string;
-  image?: string;
-  network?: { mode?: string };
+  image?: unknown;
+  network?: { mode?: unknown };
 }
 
 /**
- * Why a sandbox cannot run the `browse` tool, or null when it can. Core checks
- * an agent's first sandbox with it before a run, and the CLI before a deploy,
- * so a wrong pairing is refused at sync instead of failing every run.
+ * Why a sandbox cannot run the `browse` tool, or null when it can. CLI sync
+ * checks an agent's first sandbox with it before storing anything, and core
+ * again before a run, for a sandbox the manifest does not declare.
  */
 export function browserSandboxProblem(
   sandbox: BrowserSandboxShape | undefined,

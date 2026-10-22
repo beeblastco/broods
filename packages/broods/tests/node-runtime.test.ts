@@ -110,10 +110,14 @@ export const support = defineAgent({
   expect(result.stdout).toContain(join(cwd, "broods"));
 });
 
-test("node resolves an extensionless relative import to its .ts file", async () => {
+test.each([
+  ["./prompts/support", "support.ts"],
+  ["./prompts/support.js", "support.ts"],
+  ["./prompts", "index.ts"],
+])("node resolves %s to the .ts file Bun would", async (specifier, file) => {
   const cwd = await fixtureProject(`
 import { defineAgent } from "${RESOURCES_MODULE}";
-import { SYSTEM } from "./prompts/support";
+import { SYSTEM } from "${specifier}";
 
 export const support = defineAgent({
   name: "support",
@@ -123,7 +127,7 @@ export const support = defineAgent({
 `);
   await mkdir(join(cwd, "broods", "prompts"), { recursive: true });
   await writeFile(
-    join(cwd, "broods", "prompts", "support.ts"),
+    join(cwd, "broods", "prompts", file),
     'export const SYSTEM: string = "be brief";\n',
     "utf8",
   );

@@ -1,13 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { browserSandboxProblem } from "@broods/convex/model/sandboxProviders";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
-import {
-  assertBrowseSandbox,
-  obscuraCommand,
-} from "../src/harness/tools/browse.tool.ts";
+import { obscuraCommand } from "../src/harness/tools/browse.tool.ts";
 
 const OBSCURA_SANDBOX: SandboxExecutorConfig = {
   provider: "lambda",
@@ -18,21 +16,21 @@ const OBSCURA_SANDBOX: SandboxExecutorConfig = {
 
 describe("browse tool", () => {
   it("accepts only a first sandbox that can run Obscura", () => {
-    expect(() => assertBrowseSandbox(OBSCURA_SANDBOX)).not.toThrow();
-    expect(() => assertBrowseSandbox({ provider: "machine" })).not.toThrow();
-    expect(() =>
-      assertBrowseSandbox({
+    expect(browserSandboxProblem(OBSCURA_SANDBOX)).toBeNull();
+    expect(browserSandboxProblem({ provider: "machine" })).toBeNull();
+    expect(
+      browserSandboxProblem({
         provider: "lambda",
         network: { mode: "allow-all" },
       }),
-    ).toThrow('image: "obscura"');
-    expect(() =>
-      assertBrowseSandbox({
+    ).toContain('image: "obscura"');
+    expect(
+      browserSandboxProblem({
         ...OBSCURA_SANDBOX,
         network: { mode: "deny-all" },
       }),
-    ).toThrow("network.mode to allow-all");
-    expect(() => assertBrowseSandbox(undefined)).toThrow('image: "obscura"');
+    ).toContain("network.mode to allow-all");
+    expect(browserSandboxProblem(undefined)).toContain('image: "obscura"');
   });
 
   it("asks before eval runs the model's JavaScript, unless the sandbox bypasses", () => {

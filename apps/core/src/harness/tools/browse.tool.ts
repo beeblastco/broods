@@ -8,7 +8,6 @@
  */
 
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
-import { browserSandboxProblem } from "@broods/convex/model/sandboxProviders";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { toErrorMessage } from "../../shared/errors.ts";
@@ -56,14 +55,6 @@ const browseInput = z.object({
 });
 
 type BrowseInput = z.infer<typeof browseInput>;
-
-/** Throws when `browser` is on but the agent's first sandbox cannot run Obscura. */
-export function assertBrowseSandbox(
-  sandbox: SandboxExecutorConfig | undefined,
-): void {
-  const problem = browserSandboxProblem(sandbox);
-  if (problem) throw new Error(problem);
-}
 
 export default function browseTool(context: SandboxToolContext): ToolSet {
   return {

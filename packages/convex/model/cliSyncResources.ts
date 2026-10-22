@@ -28,6 +28,7 @@ import {
 } from "./agentSync";
 import {
   asObject,
+  assertBrowserSandboxes,
   assertEnvRefsResolved,
   assertNoAccountScopedResourceConflict,
   assertSupportedWorkspaceSandboxMounts,
@@ -282,6 +283,7 @@ export function assertManifestResources(
   mcpIds: Record<string, string>,
   stage: string,
 ): void {
+  assertBrowserSandboxes(resources);
   assertSupportedWorkspaceSandboxMounts(resources);
   assertEnvRefsResolved(resources, envValues, stage);
   const ids = {
