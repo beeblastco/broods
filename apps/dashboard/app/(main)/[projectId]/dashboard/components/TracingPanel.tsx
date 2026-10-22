@@ -53,12 +53,11 @@ import {
   ArrowUpRight,
   Brain,
   ChevronRight,
+  ChevronsLeft,
   FileText,
   GitPullRequestArrow,
   MessageCircleQuestionMark,
   MessageSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
   Terminal,
   TriangleAlert,
   Wrench,
@@ -399,9 +398,10 @@ const AXIS_MAX_STEPS = 3;
 // A tick this close to the axis end would overflow the column, so it is left out.
 const AXIS_LAST_TICK_PCT = 94;
 
-// The Timeline column's share of the waterfall table, for its colgroup and the
-// lines drawn over it.
-const TIMELINE_COLUMN_PCT = 22;
+// The Timeline column's width, for its colgroup and the lines over it: up to
+// 40% of the waterfall while Span keeps 18rem beside Started, Status and
+// Duration (15.25rem), never under 22%.
+const TIMELINE_WIDTH = "clamp(22cqw, 100cqw - 33.25rem, 40cqw)";
 
 // One matcher per `field:value` search token. Values arrive lowercased. A task
 // matches on its own runs and on its subagents'.
@@ -530,6 +530,7 @@ interface TimelineScale {
 
 // What every waterfall row of the selected run reads and calls.
 interface WaterfallView {
+  /** The run a pick or a link landed on, ringed for a moment. */
   focusTraceId: string | null;
   group: SpanGroup;
   issues: RunIssues;
@@ -2614,7 +2615,7 @@ function SpanRow({
         "cursor-pointer border-b border-border/40 transition hover:bg-accent/20",
         isSelected && "bg-accent",
         !isRootSpanKind(span.kind) && "text-foreground/80",
-        highlighted && "bg-info/10 ring-1 ring-inset ring-info/40",
+        highlighted && "animate-trace-flash",
         // A span that arrives while the run is live fades in once.
         live && "starting:opacity-0",
       )}
@@ -2768,6 +2769,7 @@ function SpanTimings({
  * The task list, or its rail: the toggle at the top, then one row or one dot
  * per task. The rail keeps the order, the status and the selection of the
  * list in 36px, so one trace gets the width without losing where you are.
+ * The pane slides between the two widths.
  */
 function TaskListPane({
   rail,
@@ -2787,76 +2789,81 @@ function TaskListPane({
     <div
       data-scroll-pane
       className={cn(
-        "max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:border-r md:border-b-0",
+        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border transition-box duration-200 ease-out motion-reduce:transition-none md:max-h-none md:border-r md:border-b-0",
         rail ? "md:w-9" : "md:w-80",
       )}
     >
-      <div
-        className={cn(
-          "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
-          rail ? "justify-center" : "justify-end",
-        )}
-      >
-        <button
-          type="button"
-          onClick={onToggleRail}
-          aria-pressed={rail}
-          aria-label={rail ? "Show the task list" : "Fold the task list"}
-          title={rail ? "Show the task list" : "Fold the task list to its dots"}
-          className="cursor-pointer p-2 text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {rail ? (
-            <PanelLeftOpen className="size-4" />
-          ) : (
-            <PanelLeftClose className="size-4" />
+      <div className="min-h-full">
+        <div
+          className={cn(
+            "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
+            rail ? "justify-center" : "justify-end",
           )}
-        </button>
+        >
+          <button
+            type="button"
+            onClick={onToggleRail}
+            aria-pressed={rail}
+            aria-label={rail ? "Show the task list" : "Fold the task list"}
+            title={
+              rail ? "Show the task list" : "Fold the task list to its dots"
+            }
+            className="cursor-pointer p-2 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronsLeft
+              className={cn(
+                "size-4 transition-transform duration-200 motion-reduce:transition-none",
+                rail && "rotate-180",
+              )}
+            />
+          </button>
+        </div>
+        {rows.map(({ group, parent }) =>
+          rail ? (
+            <TaskRailDot
+              key={spanKey(group.root)}
+              root={group.root}
+              status={group.status}
+              tone={groupTone(group)}
+              isSubagent={parent !== null}
+              isSelected={group === selectedGroup}
+              onSelect={onSelect}
+            />
+          ) : (
+            <TaskListRow
+              key={spanKey(group.root)}
+              root={group.root}
+              status={group.status}
+              tone={groupTone(group)}
+              taskDurationMs={group.taskDurationMs}
+              cause={failureCause(group)}
+              isSubagent={parent !== null}
+              subagentNames={group.subagents
+                .map((subagent) => subagentName(subagent.root))
+                .join("\n")}
+              isSelected={group === selectedGroup}
+              stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
+              onSelect={onSelect}
+              onToggleStack={onToggleStack}
+            />
+          ),
+        )}
+        {!rail && rows.length === 0 && (
+          <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+            {emptyMessage}
+          </p>
+        )}
+        {!rail && (
+          <LoadMore
+            shown={shown}
+            total={total}
+            noun={["task", "tasks"]}
+            pageSize={PAGE_SIZE}
+            remaining={remaining}
+            onLoad={onLoadMore}
+          />
+        )}
       </div>
-      {rows.map(({ group, parent }) =>
-        rail ? (
-          <TaskRailDot
-            key={spanKey(group.root)}
-            root={group.root}
-            status={group.status}
-            tone={groupTone(group)}
-            isSubagent={parent !== null}
-            isSelected={group === selectedGroup}
-            onSelect={onSelect}
-          />
-        ) : (
-          <TaskListRow
-            key={spanKey(group.root)}
-            root={group.root}
-            status={group.status}
-            tone={groupTone(group)}
-            taskDurationMs={group.taskDurationMs}
-            cause={failureCause(group)}
-            isSubagent={parent !== null}
-            subagentNames={group.subagents
-              .map((subagent) => subagentName(subagent.root))
-              .join("\n")}
-            isSelected={group === selectedGroup}
-            stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
-            onSelect={onSelect}
-            onToggleStack={onToggleStack}
-          />
-        ),
-      )}
-      {!rail && rows.length === 0 && (
-        <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-          {emptyMessage}
-        </p>
-      )}
-      {!rail && (
-        <LoadMore
-          shown={shown}
-          total={total}
-          noun={["task", "tasks"]}
-          pageSize={PAGE_SIZE}
-          remaining={remaining}
-          onLoad={onLoadMore}
-        />
-      )}
     </div>
   );
 }
@@ -3135,17 +3142,17 @@ function TaskWaterfall({
         )}
       </div>
       <TimelineClock group={group} live={live}>
-        <div className="relative min-w-xl">
+        <div
+          className="@container relative min-w-xl"
+          style={{ "--timeline-width": TIMELINE_WIDTH }}
+        >
           <table className="w-full table-fixed text-xs">
             <colgroup>
               <col className="w-22" />
               <col />
               <col className="w-20" />
               <col className="w-19" />
-              <col
-                className="w-(--timeline-width)"
-                style={{ "--timeline-width": `${TIMELINE_COLUMN_PCT}%` }}
-              />
+              <col className="w-(--timeline-width)" />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
               <tr className="text-left text-muted-foreground">
@@ -3377,7 +3384,7 @@ function TimelineLines({
       aria-hidden="true"
       className="pointer-events-none absolute inset-y-0 right-3 left-(--timeline-left)"
       style={{
-        "--timeline-left": `calc(${100 - TIMELINE_COLUMN_PCT}% + 0.75rem)`,
+        "--timeline-left": "calc(100cqw - var(--timeline-width) + 0.75rem)",
       }}
     >
       {issues.map(({ issue, span }) => (
