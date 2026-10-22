@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// The fixture: one org's October across four projects, seen from Support bot.
+// The fixtures: one org's October across four projects, as Support bot's
+// Usage tab and as the organization's Usage page show it.
 const ALLOWANCE = '[data-fixture="allowance"]';
+const ORG = '[data-fixture="allowance-org"]';
 
 test("this project leads each resource, and its piece of the bar is its share of the org's", async ({
   page,
@@ -11,10 +13,6 @@ test("this project leads each resource, and its piece of the bar is its share of
   const allowance = page.locator(ALLOWANCE);
   const sandbox = allowance.getByRole("row", { name: /Sandbox time/ });
 
-  await expect(allowance.locator("[data-allowance-scope]")).toHaveAttribute(
-    "data-allowance-scope",
-    "project",
-  );
   await expect(
     allowance.getByRole("columnheader", { name: "This project" }),
   ).toBeVisible();
@@ -35,21 +33,28 @@ test("this project leads each resource, and its piece of the bar is its share of
   expect(own.width / used.width).toBeCloseTo(28.9 / 129.8, 1);
 });
 
-test("all projects lists every project, busiest first on the picked resource", async ({
+test("a project's Resources links to the organization's Usage page", async ({
   page,
 }) => {
   await openGallery(page);
   const allowance = page.locator(ALLOWANCE);
-  await allowance.getByRole("button", { name: "All projects" }).click();
 
-  await expect(allowance.locator("[data-allowance-scope]")).toHaveAttribute(
-    "data-allowance-scope",
-    "all",
-  );
+  await expect(
+    // A Button rendering a Link, like Billing's View usage: an <a> with the button role.
+    allowance.getByRole("button", { name: "All projects" }),
+  ).toHaveAttribute("href", "/settings/org?tab=usage");
+});
+
+test("the organization's page lists every project, busiest first on the picked resource", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const allowance = page.locator(ORG);
+
   const byProject = allowance.locator("section:has(> h3)").getByRole("row");
   const names = async (): Promise<string[]> =>
     (await byProject.locator("td:first-child").allTextContents()).map((name) =>
-      name.replace("This project", "").replace("?", "").trim(),
+      name.replace("?", "").trim(),
     );
 
   await expect(
@@ -80,8 +85,8 @@ test("on a phone the tables scroll inside their card, not the page", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openGallery(page);
-  const allowance = page.locator(ALLOWANCE);
-  await allowance.getByRole("button", { name: "All projects" }).click();
+  const allowance = page.locator(ORG);
+  await allowance.scrollIntoViewIfNeeded();
 
   const box = (await allowance.boundingBox())!;
   expect(box.x + box.width).toBeLessThanOrEqual(390);

@@ -13,6 +13,7 @@ import {
   StatusDot,
   type StatusTone,
 } from "@/app/components/StatusDot";
+import { IconTooltip } from "@/app/components/IconTooltip";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -553,7 +554,6 @@ interface ListRow {
 // The task list on the left: its rows, or a rail of their status dots.
 interface TaskListPaneProps {
   rail: boolean;
-  onToggleRail: () => void;
   rows: ListRow[];
   selectedGroup: SpanGroup | null;
   stackChoices: ReadonlyMap<string, boolean>;
@@ -993,6 +993,9 @@ export function TracingPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ObservabilityToolbar
+        leading={
+          <TaskListFold rail={rail} onToggle={() => setRail(!railChosen)} />
+        }
         search={filter}
         onSearchChange={narrowSearch}
         searchPlaceholder="Search tasks · status: channel: agent: tool: error: trace: conv:"
@@ -1065,7 +1068,6 @@ export function TracingPanel({
         <div className="flex h-full min-h-0 flex-col md:flex-row">
           <TaskListPane
             rail={rail}
-            onToggleRail={() => setRail(!railChosen)}
             rows={listRows}
             selectedGroup={selectedGroup}
             stackChoices={stackChoices}
@@ -2765,15 +2767,43 @@ function SpanTimings({
   );
 }
 
+/** The toolbar's first button: folds the task list to its rail and back. Desktop only. */
+function TaskListFold({
+  rail,
+  onToggle,
+}: {
+  rail: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  return (
+    <IconTooltip label={rail ? "Show the task list" : "Fold the task list"}>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-sm"
+        tone="muted"
+        onClick={onToggle}
+        className="hidden cursor-pointer md:inline-flex"
+      >
+        <ChevronsLeft
+          className={cn(
+            "transition-transform duration-200 motion-reduce:transition-none",
+            rail && "rotate-180",
+          )}
+        />
+      </Button>
+    </IconTooltip>
+  );
+}
+
 /**
- * The task list, or its rail: the toggle at the top, then one row or one dot
- * per task. The rail keeps the order, the status and the selection of the
- * list in 36px, so one trace gets the width without losing where you are.
- * The pane slides between the two widths.
+ * The task list, or its rail: one row or one dot per task. The rail keeps the
+ * order, the status and the selection of the list in 36px, so one trace gets
+ * the width without losing where you are. The toolbar's first button folds
+ * it, and the pane slides between the two widths.
  */
 function TaskListPane({
   rail,
-  onToggleRail,
   rows,
   selectedGroup,
   stackChoices,
@@ -2793,77 +2823,51 @@ function TaskListPane({
         rail ? "md:w-9" : "md:w-80",
       )}
     >
-      <div className="min-h-full">
-        <div
-          className={cn(
-            "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
-            rail ? "justify-center" : "justify-end",
-          )}
-        >
-          <button
-            type="button"
-            onClick={onToggleRail}
-            aria-pressed={rail}
-            aria-label={rail ? "Show the task list" : "Fold the task list"}
-            title={
-              rail ? "Show the task list" : "Fold the task list to its dots"
-            }
-            className="cursor-pointer p-2 text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <ChevronsLeft
-              className={cn(
-                "size-4 transition-transform duration-200 motion-reduce:transition-none",
-                rail && "rotate-180",
-              )}
-            />
-          </button>
-        </div>
-        {rows.map(({ group, parent }) =>
-          rail ? (
-            <TaskRailDot
-              key={spanKey(group.root)}
-              root={group.root}
-              status={group.status}
-              tone={groupTone(group)}
-              isSubagent={parent !== null}
-              isSelected={group === selectedGroup}
-              onSelect={onSelect}
-            />
-          ) : (
-            <TaskListRow
-              key={spanKey(group.root)}
-              root={group.root}
-              status={group.status}
-              tone={groupTone(group)}
-              taskDurationMs={group.taskDurationMs}
-              cause={failureCause(group)}
-              isSubagent={parent !== null}
-              subagentNames={group.subagents
-                .map((subagent) => subagentName(subagent.root))
-                .join("\n")}
-              isSelected={group === selectedGroup}
-              stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
-              onSelect={onSelect}
-              onToggleStack={onToggleStack}
-            />
-          ),
-        )}
-        {!rail && rows.length === 0 && (
-          <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-            {emptyMessage}
-          </p>
-        )}
-        {!rail && (
-          <LoadMore
-            shown={shown}
-            total={total}
-            noun={["task", "tasks"]}
-            pageSize={PAGE_SIZE}
-            remaining={remaining}
-            onLoad={onLoadMore}
+      {rows.map(({ group, parent }) =>
+        rail ? (
+          <TaskRailDot
+            key={spanKey(group.root)}
+            root={group.root}
+            status={group.status}
+            tone={groupTone(group)}
+            isSubagent={parent !== null}
+            isSelected={group === selectedGroup}
+            onSelect={onSelect}
           />
-        )}
-      </div>
+        ) : (
+          <TaskListRow
+            key={spanKey(group.root)}
+            root={group.root}
+            status={group.status}
+            tone={groupTone(group)}
+            taskDurationMs={group.taskDurationMs}
+            cause={failureCause(group)}
+            isSubagent={parent !== null}
+            subagentNames={group.subagents
+              .map((subagent) => subagentName(subagent.root))
+              .join("\n")}
+            isSelected={group === selectedGroup}
+            stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
+            onSelect={onSelect}
+            onToggleStack={onToggleStack}
+          />
+        ),
+      )}
+      {!rail && rows.length === 0 && (
+        <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+          {emptyMessage}
+        </p>
+      )}
+      {!rail && (
+        <LoadMore
+          shown={shown}
+          total={total}
+          noun={["task", "tasks"]}
+          pageSize={PAGE_SIZE}
+          remaining={remaining}
+          onLoad={onLoadMore}
+        />
+      )}
     </div>
   );
 }

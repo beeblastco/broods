@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Shared by the logs and tracing panels, so a filter added here shows up on
- * both: the token search, the range presets, Refresh, and the
- * volume strip whose drag narrows the range to a custom window.
+ * Shared by the Monitoring and Tracing panels, so a filter added here shows up
+ * on both: an optional leading control, the token search, the range presets,
+ * Refresh, and the volume strip whose drag narrows the range to a custom window.
  */
 import { SearchInput } from "@/app/components/SearchInput";
 import { SegmentedControl } from "@/app/components/SegmentedControl";
@@ -26,6 +26,8 @@ export interface VolumePoint {
 }
 
 interface Props {
+  /** A control before the search box, such as Tracing's task list fold. */
+  leading?: React.ReactNode;
   search: string;
   onSearchChange: (value: string) => void;
   searchPlaceholder: string;
@@ -67,6 +69,7 @@ export function emptyStreamMessage(
 }
 
 export function ObservabilityToolbar({
+  leading,
   search,
   onSearchChange,
   searchPlaceholder,
@@ -119,6 +122,7 @@ export function ObservabilityToolbar({
   return (
     <>
       <Toolbar>
+        {leading}
         <SearchInput
           value={search}
           onChange={onSearchChange}
