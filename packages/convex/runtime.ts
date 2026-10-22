@@ -529,7 +529,7 @@ export const listOwedAsyncAgentResults = internalQuery({
 
 /**
  * Moves a subagent result's hand-back: `detached` when the parent's run gives
- * up delivering it, `stored` when the parent reads it or is never told. A
+ * up delivering it, `stored` when the parent is never told. A
  * stored row stays stored, and a running row is never marked stored. The
  * parent's own append and a late result's admission mark `stored` inside
  * their own transactions instead. A row whose resume waits in the parent's
@@ -638,8 +638,9 @@ export async function markResultStored(
 
 /**
  * Whether a resume carrying this result waits, unexpired, in
- * `conversationKey`'s queue. A status read then leaves the result to it, so
- * the parent is told once and a read whose step is never saved loses nothing.
+ * `conversationKey`'s queue. A stored mark then leaves the result to it, so
+ * the parent is told once and a status read whose step is never saved loses
+ * nothing.
  */
 async function isResumeQueued(
   ctx: QueryCtx,

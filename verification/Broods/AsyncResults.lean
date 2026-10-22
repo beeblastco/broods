@@ -22,8 +22,8 @@ own append of the result (`insertConversationEvents`) and a late result's resume
 its owner (`runtimeIngress.accept` with `resultEventId` as owner, or the apply of the
 envelope it queued) all store it, and the resume is admitted only while it is not stored
 and no resume of it is queued, so the parent is told a result once. A stored mark gives
-way to a resume already queued: it stores nothing, so the resume tells it. A queued resume that expires leaves the row as it was, for the sweep to resume
-again. Only the sweep reads `pending`, which the row carries from its creation, past the
+way to a resume already queued: it stores nothing, so the resume tells it. A queued
+resume that expires leaves the row as it was, for the sweep to resume again. Only the sweep reads `pending`, which the row carries from its creation, past the
 parent's hold. A tool row's `handback` moves the same way: its settle writes `pending`,
 the parent's append, `async_status` and the continuation reaching its owner (`accept`
 with `toolResultId`) store it, and `markHandback` here stands for either move of

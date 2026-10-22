@@ -307,10 +307,7 @@ it("stops a task an earlier turn of this conversation started", async () => {
       updatedAt: "2026-08-13T00:00:00.000Z",
       expiresAt: Date.now() + 1_000,
     } as never);
-  spyOn(runtime, "mutate").mockResolvedValue({
-    stopped: true,
-    queuedCount: 0,
-  } as never);
+  spyOn(runtime, "mutate").mockResolvedValue({ queuedCount: 0, stopped: true });
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   expect(

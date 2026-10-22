@@ -2671,8 +2671,9 @@ interface LateResultKind {
     id: string,
   ) => Promise<string | undefined>;
   listed: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
-  // The parent's status tool read of the row, which stores it.
-  // True when a queued resume keeps the result from it.
+  // A stored mark of the row: the parent's status read of a tool result, or
+  // a subagent result the parent is never told. True when a queued resume
+  // keeps the result from it.
   read: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
   // The owner `busy` taking the queued resume, as its run does.
   apply: (
@@ -2878,13 +2879,13 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
-  test("leaves a queued result to its resume when a status read finds it, so a turn that never saves the read loses nothing", async (): Promise<void> => {
+  test("leaves a queued result to its resume when a stored mark finds it", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();
     const before = await kind.handback(t, "late");
     expect(await resume()).toMatchObject({ outcome: "queued" });
 
-    // The read hands nothing over, and its turn then ends without saving.
+    // The mark stores nothing, so the resume tells it.
     expect(await kind.read(t, "late")).toBe(true);
     expect(await kind.handback(t, "late")).toBe(before);
     expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(

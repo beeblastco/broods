@@ -87,7 +87,7 @@ export type UserContentPart = Exclude<UserContent, string>[number];
 /**
  * The subagent tools' ownership check: the task's status row, when a run of
  * this conversation started it. A child can outlive the run that started it,
- * so a later turn of the same conversation can still read, steer or stop it.
+ * so a later turn of the same conversation can still steer or stop it.
  */
 export async function getOwnedSubagent(
   context: SubagentToolContext,
