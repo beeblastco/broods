@@ -2772,7 +2772,11 @@ function SpanTimings({
   );
 }
 
-/** The selected trace's first button: folds the task list to its rail and back. Desktop only. */
+/**
+ * A bare chevron before the selected trace's title: folds the task list to its
+ * rail and back. Padded for a 22px hit area, pulled back so it takes no room.
+ * Desktop only.
+ */
 function TaskListFold({
   rail,
   onToggle,
@@ -2782,21 +2786,18 @@ function TaskListFold({
 }): React.JSX.Element {
   return (
     <IconTooltip label={rail ? "Show the task list" : "Fold the task list"}>
-      <Button
+      <button
         type="button"
-        variant="outline"
-        size="icon-xs"
-        tone="muted"
         onClick={onToggle}
-        className="hidden cursor-pointer md:inline-flex"
+        className="-m-1 hidden shrink-0 cursor-pointer rounded-sm p-1 text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring md:block"
       >
         <ChevronsLeft
           className={cn(
-            "transition-transform duration-200 motion-reduce:transition-none",
+            "size-3.5 transition-transform duration-200 motion-reduce:transition-none",
             rail && "rotate-180",
           )}
         />
-      </Button>
+      </button>
     </IconTooltip>
   );
 }
