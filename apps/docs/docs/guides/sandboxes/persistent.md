@@ -89,7 +89,7 @@ stateDiagram-v2
 
 Idle scale-down never pauses a machine while a background job runs.
 
-On the managed service, sandbox time counts from each use until `idleTimeoutSeconds` scales the machine down, because the provider bills that idle stretch too. A suspended `lambda` MicroVM keeps counting a little for its stored snapshot until it resumes or is released. A `lambda` MicroVM that bursts above its 1 vCPU / 2 GB baseline also counts the extra vCPU and memory while it is used, the way AWS bills it. A shorter idle timeout uses less of the plan's monthly sandbox time. An `worker` sandbox has no idle stretch: it counts only the milliseconds its commands ran, plus one request each. The dashboard shows it under Usage, Allowance, for the project you are in or for all of the org's projects.
+On the managed service, sandbox time counts from each use until `idleTimeoutSeconds` scales the machine down, because the provider bills that idle stretch too. A suspended `lambda` MicroVM keeps counting a little for its stored snapshot until it resumes or is released. A `lambda` MicroVM that bursts above its 1 vCPU / 2 GB baseline also counts the extra vCPU and memory while it is used, the way AWS bills it. A shorter idle timeout uses less of the plan's monthly sandbox time. An `worker` sandbox has no idle stretch: it counts only the milliseconds its commands ran, plus one request each. The dashboard shows it under Resources on a project's Usage tab, and for all of the org's projects under Settings → Organization → Usage.
 
 ## Setup commands
 

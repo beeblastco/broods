@@ -1,5 +1,6 @@
 "use client";
 
+import { AllowanceUsage } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import { ORG_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -24,6 +25,9 @@ const FLUSH_TABS = new Set<string>([
   "permissions",
 ]);
 
+// The usage tables need more than the form column, and still scroll with the page.
+const WIDE_TABS = new Set<string>(["usage"]);
+
 export default function OrgSettingsPage(): React.JSX.Element {
   const org = useQuery(api.org.orgs.getActive, {});
   const searchParams = useSearchParams();
@@ -34,6 +38,8 @@ export default function OrgSettingsPage(): React.JSX.Element {
     switch (tab.id) {
       case "general":
         return <OrgGeneralPanel org={org} />;
+      case "usage":
+        return <AllowanceUsage view={{ scope: "all" }} />;
       case "api-access":
         return <ApiAccessPanel org={org} />;
       case "members":
@@ -79,7 +85,12 @@ export default function OrgSettingsPage(): React.JSX.Element {
       <div
         className={cn(
           "mx-auto w-full",
-          flush ? "flex min-h-0 flex-1 flex-col" : "max-w-2xl px-6 pt-6 pb-12",
+          flush
+            ? "flex min-h-0 flex-1 flex-col"
+            : cn(
+                "px-6 pt-6 pb-12",
+                WIDE_TABS.has(tab.id) ? "max-w-6xl" : "max-w-2xl",
+              ),
         )}
       >
         {renderPanel()}
