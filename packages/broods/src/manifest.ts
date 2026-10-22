@@ -821,6 +821,11 @@ function assertAgentSandboxes(resources: AnyResource[]): void {
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const value: unknown = resource.config.sandboxes;
+    assertBrowserSandbox(
+      resource,
+      Array.isArray(value) ? value[0] : undefined,
+      resources,
+    );
     if (value === undefined) continue;
     if (!Array.isArray(value)) {
       throw new Error(
@@ -842,7 +847,6 @@ function assertAgentSandboxes(resources: AnyResource[]): void {
         );
       }
     }
-    assertBrowserSandbox(resource, sandboxes[0], resources);
   }
 }
 
@@ -861,7 +865,9 @@ function assertBrowserSandbox(
       resource.kind === "sandbox" && resource.name === name,
   );
   if (first !== undefined && sandbox === undefined) return;
-  const problem = browserSandboxProblem(sandbox?.config);
+  const problem = browserSandboxProblem(
+    sandbox && { ...sandbox.config, provider: sandboxProvider(sandbox) },
+  );
   if (problem) throw new Error(`Agent "${agent.name}": ${problem}`);
 }
 

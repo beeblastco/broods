@@ -386,13 +386,32 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject accepts a browser agent on an Obscura lambda sandbox", async () => {
+test("compileProject rejects a browser agent with no sandbox", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  browser: { enabled: true },
+});
+`,
+  );
+
+  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support": config.browser needs the agent\'s first sandbox on provider lambda',
+  );
+});
+
+test("compileProject accepts a browser agent on an Obscura sandbox that leaves provider to the lambda default", async () => {
   const cwd = await fixtureProject(
     "",
     `
 import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
 
-export const web = defineSandbox({ name: "web", provider: "lambda", image: "obscura", network: { mode: "allow-all" } });
+export const web = defineSandbox({ name: "web", image: "obscura", network: { mode: "allow-all" } });
 
 export const support = defineAgent({
   name: "support",
