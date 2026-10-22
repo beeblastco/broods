@@ -26,6 +26,8 @@ export interface VolumePoint {
 }
 
 interface Props {
+  /** A control before the search box, such as Tracing's task list fold. */
+  leading?: React.ReactNode;
   search: string;
   onSearchChange: (value: string) => void;
   searchPlaceholder: string;
@@ -67,6 +69,7 @@ export function emptyStreamMessage(
 }
 
 export function ObservabilityToolbar({
+  leading,
   search,
   onSearchChange,
   searchPlaceholder,
@@ -119,6 +122,7 @@ export function ObservabilityToolbar({
   return (
     <>
       <Toolbar>
+        {leading}
         <SearchInput
           value={search}
           onChange={onSearchChange}
