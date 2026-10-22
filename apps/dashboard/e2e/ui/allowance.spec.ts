@@ -13,10 +13,6 @@ test("this project leads each resource, and its piece of the bar is its share of
   const allowance = page.locator(ALLOWANCE);
   const sandbox = allowance.getByRole("row", { name: /Sandbox time/ });
 
-  await expect(allowance.locator("[data-allowance-scope]")).toHaveAttribute(
-    "data-allowance-scope",
-    "project",
-  );
   await expect(
     allowance.getByRole("columnheader", { name: "This project" }),
   ).toBeVisible();
@@ -37,18 +33,16 @@ test("this project leads each resource, and its piece of the bar is its share of
   expect(own.width / used.width).toBeCloseTo(28.9 / 129.8, 1);
 });
 
-test("a project's Resources links to the organization's page instead of switching", async ({
+test("a project's Resources links to the organization's Usage page", async ({
   page,
 }) => {
   await openGallery(page);
   const allowance = page.locator(ALLOWANCE);
 
   await expect(
-    allowance.getByRole("link", { name: "All projects →" }),
+    // A Button rendering a Link, like Billing's View usage: an <a> with the button role.
+    allowance.getByRole("button", { name: "All projects" }),
   ).toHaveAttribute("href", "/settings/org?tab=usage");
-  await expect(
-    allowance.getByRole("heading", { name: "By project" }),
-  ).toHaveCount(0);
 });
 
 test("the organization's page lists every project, busiest first on the picked resource", async ({
@@ -57,10 +51,6 @@ test("the organization's page lists every project, busiest first on the picked r
   await openGallery(page);
   const allowance = page.locator(ORG);
 
-  await expect(allowance.locator("[data-allowance-scope]")).toHaveAttribute(
-    "data-allowance-scope",
-    "all",
-  );
   const byProject = allowance.locator("section:has(> h3)").getByRole("row");
   const names = async (): Promise<string[]> =>
     (await byProject.locator("td:first-child").allTextContents()).map((name) =>

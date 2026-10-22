@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { HelpMark } from "@/app/components/HelpMark";
+import { Button } from "@/app/components/ui/button";
 import { Separator } from "@/app/components/ui/separator";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import {
@@ -34,10 +35,12 @@ import {
   type UsageSlice,
   usageSlices,
 } from "@/app/lib/allowance";
+import { tabHref } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { budgetLevel } from "@broods/convex/model/planLimits";
 import { useQuery } from "convex/react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { UsageChart, UsageLegend } from "./UsageChart";
@@ -45,7 +48,7 @@ import { UsageChart, UsageLegend } from "./UsageChart";
 const DAY_SECONDS = 24 * 60 * 60;
 
 /** Whose month the Resources show: one project's part of the org's, or every project's. */
-export type AllowanceViewOf =
+export type UsageScope =
   | { scope: "project"; projectId: string }
   | { scope: "all" };
 
@@ -62,7 +65,7 @@ const OTHER_USAGE_HELP =
 export function AllowanceUsage({
   view,
 }: {
-  view: AllowanceViewOf;
+  view: UsageScope;
 }): React.JSX.Element {
   const [month, setMonth] = useState<string | undefined>(undefined);
   const usage = useQuery(api.account.budget.getForActiveOrg, {
@@ -102,15 +105,12 @@ export function AllowanceView({
   onMonthChange,
 }: {
   budget: BudgetUsage | null | undefined;
-  view: AllowanceViewOf;
+  view: UsageScope;
   month: string | undefined;
   onMonthChange: (month: string) => void;
 }): React.JSX.Element {
   return (
-    <section
-      className="grid min-w-0 gap-3 *:min-w-0"
-      data-allowance-scope={view.scope}
-    >
+    <section className="grid min-w-0 gap-3 *:min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-semibold text-foreground">Resources</h2>
@@ -121,13 +121,17 @@ export function AllowanceView({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {view.scope === "project" && (
-            <Link
-              href="/settings/org?tab=usage"
-              className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+          {view.scope === "project" && (budget?.projects?.length ?? 0) > 1 && (
+            <Button
+              nativeButton={false}
+              render={<Link href={tabHref("/settings/org", "usage", "")} />}
+              size="xs"
+              variant="ghost"
+              className="cursor-pointer"
             >
-              All projects →
-            </Link>
+              All projects
+              <ArrowRight data-icon="inline-end" />
+            </Button>
           )}
           {budget && (
             <Select
@@ -161,7 +165,7 @@ export function AllowanceView({
           No account in this organization yet.
         </p>
       ) : (
-        <ScopedAllowance budget={budget} view={view} />
+        <ResourcesTable budget={budget} view={view} />
       )}
     </section>
   );
@@ -175,21 +179,23 @@ export function AllowanceView({
  * every project: the bar is split by project, and a table of the projects
  * follows. The chart and the table stay this org's own.
  */
-function ScopedAllowance({
+function ResourcesTable({
   budget,
   view,
 }: {
   budget: BudgetUsage;
-  view: AllowanceViewOf;
+  view: UsageScope;
 }): React.JSX.Element {
   const [picked, setPicked] = useState<AllowanceRow>(ALLOWANCE_ROWS[0]);
   const projectCount = budget.projects?.length ?? 0;
+  // Primitives, since callers pass a fresh `view` object every render.
+  const projectId = view.scope === "project" ? view.projectId : null;
   const slices = useMemo(
     () =>
-      view.scope === "all"
+      projectId === null
         ? usageSlices(budget)
-        : projectSlices(budget, view.projectId),
-    [budget, view],
+        : projectSlices(budget, projectId),
+    [budget, projectId],
   );
   const pool = useMemo(() => otherOrgsSlice(budget), [budget]);
   // What each bar is cut into: this org's slices, then the other organizations'.
@@ -376,7 +382,7 @@ function AllowanceTableRow({
 
 /**
  * A row's color swatch, when it has one, name and help mark, as the first
- * cell of the allowance and plan tables.
+ * cell of the Resources and plan tables.
  */
 export function ResourceLabel({
   row,

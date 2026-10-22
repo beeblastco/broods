@@ -25,9 +25,6 @@ const FLUSH_TABS = new Set<string>([
   "permissions",
 ]);
 
-// The usage tables need more than the form column, and still scroll with the page.
-const WIDE_TABS = new Set<string>(["usage"]);
-
 export default function OrgSettingsPage(): React.JSX.Element {
   const org = useQuery(api.org.orgs.getActive, {});
   const searchParams = useSearchParams();
@@ -85,12 +82,8 @@ export default function OrgSettingsPage(): React.JSX.Element {
       <div
         className={cn(
           "mx-auto w-full",
-          flush
-            ? "flex min-h-0 flex-1 flex-col"
-            : cn(
-                "px-6 pt-6 pb-12",
-                WIDE_TABS.has(tab.id) ? "max-w-6xl" : "max-w-2xl",
-              ),
+          flush ? "flex min-h-0 flex-1 flex-col" : "px-6 pt-6 pb-12",
+          !flush && (tab.id === "usage" ? "max-w-6xl" : "max-w-2xl"),
         )}
       >
         {renderPanel()}

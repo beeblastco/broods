@@ -2,7 +2,7 @@
 
 import {
   AllowanceView,
-  type AllowanceViewOf,
+  type UsageScope,
 } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import type { BudgetUsage, UsageAmounts } from "@/app/lib/allowance";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -85,10 +85,10 @@ const CAPS = {
 export function AllowanceStandIn({
   view,
 }: {
-  view: AllowanceViewOf;
+  view: UsageScope;
 }): React.JSX.Element {
   return (
-    <div className="w-full max-w-5xl">
+    <div className="w-full max-w-6xl">
       <AllowanceView
         budget={BUDGET}
         view={view}
