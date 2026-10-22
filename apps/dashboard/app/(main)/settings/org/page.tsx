@@ -36,7 +36,8 @@ export default function OrgSettingsPage(): React.JSX.Element {
       case "general":
         return <OrgGeneralPanel org={org} />;
       case "usage":
-        return <AllowanceUsage view={{ scope: "all" }} />;
+        // Keyed by org, so a switch never shows the last org's held month.
+        return <AllowanceUsage key={org._id} view={{ scope: "all" }} />;
       case "api-access":
         return <ApiAccessPanel org={org} />;
       case "members":
