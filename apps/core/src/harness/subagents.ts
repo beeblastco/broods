@@ -228,10 +228,8 @@ export class SubagentCoordinator {
   private readonly waiters = new Set<() => void>();
   // Child runs whose outcome is recorded; a later failure never overwrites it.
   private readonly recorded = new Set<string>();
-  // Result rows the model already read through get_subagent_status.
-  private readonly delivered = new Set<string>();
-  // Result rows this pass already decided for the parent: queued for it, read
-  // by it, or kept from it. A child still in `pendingMetadata` after its result
+  // Result rows this pass already decided for the parent: queued for it or
+  // kept from it. A child still in `pendingMetadata` after its result
   // is one draining a follow-up, and the parent stopping is no news of that row.
   private readonly handled = new Set<string>();
   // Questions children asked, queued for the parent's next step.
@@ -247,8 +245,6 @@ export class SubagentCoordinator {
     string,
     (answer: string | null) => void
   >();
-  // Read, but that tool result is not saved to the parent yet.
-  private readonly readUnsaved = new Set<string>();
   // The parent's user stop, which every child run listens to.
   private readonly childStop = new AbortController();
   private hooksPromise?: Promise<HookDispatcher>;
@@ -402,94 +398,6 @@ export class SubagentCoordinator {
     if (this.questions.length > 0) return "question";
 
     return this.pending.size === 0 ? "idle" : "timeout";
-  }
-
-  /**
-   * Waits until one of this turn's subagents records its outcome or settles, up
-   * to `timeoutMs` or the parent's wait budget. get_subagent_status uses it, so a
-   * status check spends one model step per change instead of one per instant
-   * "processing". It returns before the child's queued follow-ups drain.
-   */
-  async waitForSettled(
-    taskId: string,
-    timeoutMs: number,
-    abortSignal?: AbortSignal,
-  ): Promise<void> {
-    const pending = this.pending.get(taskId);
-    if (!pending || abortSignal?.aborted) {
-      return;
-    }
-    let onAbort: (() => void) | undefined;
-    const aborted = new Promise<boolean>((resolve): void => {
-      onAbort = (): void => resolve(true);
-      abortSignal?.addEventListener("abort", onAbort, { once: true });
-    });
-    const eventId = this.pendingMetadata.get(taskId)?.eventId;
-    const deadline = Math.min(Date.now() + timeoutMs, this.waitUntilMs);
-    const settled = pending.then((): boolean => true);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = new Promise<boolean>((resolve): void => {
-      timer = setTimeout((): void => resolve(true), deadline - Date.now());
-    });
-    try {
-      while (
-        this.questions.length === 0 &&
-        !(eventId !== undefined && this.recorded.has(eventId))
-      ) {
-        const done = await Promise.race([
-          settled,
-          aborted,
-          timedOut,
-          this.nextStateChange().then((): boolean => false),
-        ]);
-        if (done) {
-          return;
-        }
-      }
-    } finally {
-      clearTimeout(timer);
-      if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
-    }
-  }
-
-  /**
-   * Records that get_subagent_status showed the model this run's outcome, by
-   * the result row's event id. It counts once `confirmDelivered` runs after
-   * that tool result is saved, so a failed save still gets this turn's
-   * injection, and the row is only then marked `stored`, so a pod that dies
-   * between the read and the save leaves the result to the recovery sweep.
-   */
-  markDelivered(eventId: string): void {
-    this.readUnsaved.add(eventId);
-  }
-
-  /**
-   * Called once the parent's step output is saved. Each result read by then
-   * never starts another pass: a queued injection is dropped now, one that is
-   * enqueued later is skipped, and the row's hand-back is marked `stored`, so
-   * no late resume or sweep tells it again. A stored row stays stored and a
-   * failed mark only logs: the sweep then delivers the result once more.
-   */
-  async confirmDelivered(): Promise<void> {
-    const read = [...this.readUnsaved];
-    this.readUnsaved.clear();
-    for (const eventId of read) {
-      this.delivered.add(eventId);
-      // A finish hook's rewrite never reached the model through the tool.
-      const index = this.completions.findIndex(
-        (completion): boolean =>
-          completion.eventId === eventId &&
-          completion.visibleResult === undefined,
-      );
-      if (index !== -1) {
-        this.completions.splice(index, 1);
-      }
-    }
-    await Promise.all(
-      read.map((eventId): Promise<boolean> =>
-        markAsyncAgentHandback(eventId, "stored"),
-      ),
-    );
   }
 
   /**
@@ -663,11 +571,8 @@ export class SubagentCoordinator {
     }
 
     for (const metadata of await this.detachPending()) {
-      // Queued like a result, so it rides the same write. A child whose
-      // result the model already read is not still working news.
-      if (!this.delivered.has(metadata.eventId)) {
-        this.completions.push({ ...metadata, status: "running" });
-      }
+      // Queued like a result, so it rides the same write.
+      this.completions.push({ ...metadata, status: "running" });
     }
 
     return this.drainCompletionsToParent();
@@ -1343,11 +1248,7 @@ export class SubagentCoordinator {
     );
     // Read after the hook: the parent may have stopped waiting meanwhile.
     const detached = this.detached.has(completion.taskId);
-    if (
-      visible &&
-      (visible.visibleResult !== undefined ||
-        !this.delivered.has(visible.eventId))
-    ) {
+    if (visible) {
       if (detached) {
         await this.resumeParentWith(visible);
       } else {

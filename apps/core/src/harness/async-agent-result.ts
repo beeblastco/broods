@@ -83,7 +83,7 @@ export function listOwedAsyncAgentResults(options: {
 }
 /**
  * Moves a subagent result's hand-back: `detached` when this run gives up
- * delivering it, `stored` when the parent reads it or is never told. A
+ * delivering it, `stored` when the parent is never told. A
  * stored row stays stored. The row already holds the result, so a failed
  * write is only logged: a pending row reaches the recovery sweep later.
  * @returns true when a resume of the result waits in the parent's queue: the

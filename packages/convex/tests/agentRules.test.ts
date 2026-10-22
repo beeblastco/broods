@@ -1172,7 +1172,6 @@ describe("isProviderToolName", () => {
   it("keeps the subagent tool names for the harness", () => {
     for (const name of [
       "ask_parent",
-      "get_subagent_status",
       "run_subagent",
       "stop_subagent",
       "update_subagent",
