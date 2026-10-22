@@ -4,10 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
-import {
-  assertBrowseSandbox,
-  obscuraCommand,
-} from "../src/harness/tools/browse.tool.ts";
+import { obscuraCommand } from "../src/harness/tools/browse.tool.ts";
 
 const OBSCURA_SANDBOX: SandboxExecutorConfig = {
   provider: "lambda",
@@ -17,24 +14,6 @@ const OBSCURA_SANDBOX: SandboxExecutorConfig = {
 };
 
 describe("browse tool", () => {
-  it("accepts only a first sandbox that can run Obscura", () => {
-    expect(() => assertBrowseSandbox(OBSCURA_SANDBOX)).not.toThrow();
-    expect(() => assertBrowseSandbox({ provider: "machine" })).not.toThrow();
-    expect(() =>
-      assertBrowseSandbox({
-        provider: "lambda",
-        network: { mode: "allow-all" },
-      }),
-    ).toThrow('image: "obscura"');
-    expect(() =>
-      assertBrowseSandbox({
-        ...OBSCURA_SANDBOX,
-        network: { mode: "deny-all" },
-      }),
-    ).toThrow("network.mode to allow-all");
-    expect(() => assertBrowseSandbox(undefined)).toThrow('image: "obscura"');
-  });
-
   it("asks before eval runs the model's JavaScript, unless the sandbox bypasses", () => {
     const approval = (
       mode: string,

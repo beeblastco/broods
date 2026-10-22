@@ -324,6 +324,28 @@ export function sandboxScope<P extends string, S extends string>(row: {
 }
 
 /**
+ * Why a sandbox cannot run the `browse` tool, or null when it can. CLI sync
+ * refuses a declared first sandbox that cannot; core checks every run's first
+ * sandbox at tool assembly.
+ * @param sandbox the agent's first sandbox, typed or straight from a manifest
+ */
+export function browserSandboxRefusal(
+  sandbox:
+    | { provider?: string; image?: unknown; network?: { mode?: unknown } }
+    | undefined,
+): string | null {
+  if (sandbox?.provider === "machine") return null;
+  if (sandbox?.provider !== "lambda" || sandbox.image !== "obscura") {
+    return 'config.browser needs the agent\'s first sandbox on provider lambda with image: "obscura", or a machine sandbox with obscura installed';
+  }
+  if (sandbox.network?.mode !== "allow-all") {
+    return "config.browser needs the agent's first sandbox to set network.mode to allow-all";
+  }
+
+  return null;
+}
+
+/**
  * Why a sandbox may not boot a registered snapshot, or null when it may. A
  * snapshot is a copy of another sandbox's disk, so it boots only in the
  * account and stage it was taken from, whoever asks. One taken before

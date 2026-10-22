@@ -56,23 +56,6 @@ const browseInput = z.object({
 
 type BrowseInput = z.infer<typeof browseInput>;
 
-/** Throws when `browser` is on but the agent's first sandbox cannot run Obscura. */
-export function assertBrowseSandbox(
-  sandbox: SandboxExecutorConfig | undefined,
-): void {
-  if (sandbox?.provider === "machine") return;
-  if (sandbox?.provider !== "lambda" || sandbox.image !== "obscura") {
-    throw new Error(
-      'config.browser needs the agent\'s first sandbox on provider lambda with image: "obscura", or a machine sandbox with obscura installed',
-    );
-  }
-  if (sandbox.network?.mode !== "allow-all") {
-    throw new Error(
-      "config.browser needs the agent's first sandbox to set network.mode to allow-all",
-    );
-  }
-}
-
 export default function browseTool(context: SandboxToolContext): ToolSet {
   return {
     browse: tool({

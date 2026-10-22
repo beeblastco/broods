@@ -4804,7 +4804,7 @@ components:
           type: object
           properties:
             enabled: { type: boolean }
-          description: 'Registers the `browse` tool, which opens public web pages with Obscura on the first sandbox. That sandbox must be lambda with image "obscura" and network.mode allow-all, or a machine with obscura installed; otherwise the run fails.'
+          description: 'Registers the `browse` tool, which opens public web pages with Obscura on the first sandbox. That sandbox must be lambda with image "obscura" and network.mode allow-all, or a machine with obscura installed; otherwise manifest sync refuses the agent (when the manifest declares that sandbox) and the run fails.'
         policies:
           type: array
           items: { type: string }

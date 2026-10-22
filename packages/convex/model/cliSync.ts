@@ -23,7 +23,10 @@ import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
-import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
+import {
+  browserSandboxRefusal,
+  DEFAULT_SANDBOX_PROVIDER,
+} from "./sandboxRules";
 import { ClientError } from "./clientError";
 
 // Exceeds Convex's 30-minute HTTP action limit plus a 10-minute child Node action.
@@ -58,6 +61,34 @@ export function asObject(value: unknown): Record<string, unknown> {
     throw new ClientError("Resource config must be an object");
 
   return value;
+}
+
+/**
+ * Refuse a browser agent whose first sandbox cannot run Obscura. A sandbox name
+ * this manifest does not declare is left to core, which checks it at run start.
+ */
+export function assertBrowserSandboxes(resources: CliResource[]): void {
+  const sandboxes = new Map(
+    resources
+      .filter((entry) => entry.kind === "sandbox")
+      .map((entry) => [entry.name, entry]),
+  );
+  for (const agent of resources.filter((entry) => entry.kind === "agent")) {
+    const config = plainRecord(agent.config);
+    if (plainRecord(config.browser).enabled !== true) continue;
+    const name = defaultSandboxOf(config);
+    const sandbox = name === undefined ? undefined : sandboxes.get(name);
+    if (name !== undefined && sandbox === undefined) continue;
+    const sandboxConfig = plainRecord(sandbox?.config);
+    const problem = browserSandboxRefusal(
+      sandbox && {
+        provider: sandboxProvider(sandbox),
+        image: sandboxConfig.image,
+        network: plainRecord(sandboxConfig.network),
+      },
+    );
+    if (problem) throw new ClientError(`Agent "${agent.name}": ${problem}`);
+  }
 }
 
 /**

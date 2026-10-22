@@ -10,6 +10,7 @@
 
 import type { ToolSet } from "ai";
 import { isProviderToolName } from "@broods/convex/model/agentRules";
+import { browserSandboxRefusal } from "@broods/convex/model/sandboxRules";
 import {
   resolveSubagentMode,
   type AccountModelProviderName,
@@ -48,7 +49,7 @@ import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
-import browseTool, { assertBrowseSandbox } from "./browse.tool.ts";
+import browseTool from "./browse.tool.ts";
 import computerTool from "./computer.tool.ts";
 import {
   sendFilesTool,
@@ -223,7 +224,8 @@ export async function createTools(
   // browse: opt-in, on the agent's first sandbox. A sandbox without Obscura fails
   // the run here rather than handing the model a tool that cannot work.
   if (agentConfig.browser?.enabled === true) {
-    assertBrowseSandbox(defaultSandbox);
+    const problem = browserSandboxRefusal(defaultSandbox);
+    if (problem) throw new Error(problem);
     Object.assign(sandboxTools, browseTool(sandboxContext));
   }
   // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).

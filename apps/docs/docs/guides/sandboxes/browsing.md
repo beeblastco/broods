@@ -54,7 +54,7 @@ export const researcher = defineAgent({
 | `eval`               | The result of a JavaScript expression run in the page, passed as `script`               |
 | `screenshot`         | An image of the viewport, saved under `.broods/browse/` so `send-images` can send it on |
 
-- The first sandbox must be `lambda` with `image: "obscura"` and `network.mode: "allow-all"`, or a [machine](machine.md) with `obscura` installed. Anything else fails the run with a message saying what to change.
+- The first sandbox must be `lambda` with `image: "obscura"` and `network.mode: "allow-all"`, or a [machine](machine.md) with `obscura` installed. `broods dev` and `deploy` refuse anything else when the project declares that sandbox; otherwise the run fails with a message saying what to change.
 - `screenshot` needs a workspace on that sandbox. The image reaches the model on the turn it was taken, when it is 6 MB or less. Later turns keep the file path.
 - Private and internal addresses are refused, even when the sandbox sets `OBSCURA_ALLOW_PRIVATE_NETWORK`. Layout can differ from Chrome on JavaScript-heavy pages.
 - Reading needs no approval. `eval` runs the model's own JavaScript in the page, so it asks like `bash` unless the sandbox uses `permissionMode: "bypass"`.
