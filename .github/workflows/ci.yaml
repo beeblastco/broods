@@ -57,6 +57,11 @@ jobs:
         # promises, awaiting a non-promise) fails here, not only the plain rules.
         run: bun run check
 
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
+
       - name: Read the Node version
         id: node
         run: echo "version=$(node -v)" >> "$GITHUB_OUTPUT"
@@ -175,6 +180,11 @@ jobs:
         # The gate's own grading rules. A gate that silently stops failing is
         # worse than no gate, so it is tested before it is trusted.
         run: bun run bench:test
+
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
 
       - name: Read the Node version
         id: node
@@ -303,29 +313,8 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
-      # Types and lint for every workspace run once, in validate's `bun run
-      # check`, and the convex tests in its `bun run test`.
-      - name: Test gateway
-        run: bun run --filter @broods/gateway test
-
-      - name: Test edge routes
-        run: bun run --filter @broods/edge test
-
-      - name: Test discord forwarder
-        run: bun run --filter @broods/discord-forwarder test
-
-      - name: Test matrix forwarder
-        run: bun run --filter @broods/matrix-forwarder test
-
-      - name: Test Cloudflare MCP runtime
-        run: bun run --filter @broods/cloudflare-mcp test
-
-      - name: Test the Cloudflare V8 Worker sandbox
-        run: bun run --filter @broods/cloudflare-worker test
-
-      - name: Test dashboard
-        run: bun run --filter @broods/dashboard test
-
+      # validate runs every workspace's types, lint and unit tests. This job
+      # builds the dashboard and runs its browser suites.
       - name: Require the dashboard probe account
         # Pull requests from this repo only: a fork gets no secrets, and a
         # Dependabot pull request gets only Dependabot's own. A silent
@@ -396,9 +385,10 @@ jobs:
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
           cp -r public .next/standalone/apps/dashboard/public
           # @rollout tests need Convex functions this build calls that the dev
-          # backend only has after the merge; e2e-dashboard.yaml runs them
-          # after the rollout.
-          bunx playwright test --project=app --project=perf --grep-invert @rollout
+          # backend only has after the merge; @post-rollout tests time the
+          # shared dev backend or a CSS transition and flaked here.
+          # e2e-dashboard.yaml runs both after the rollout.
+          bunx playwright test --project=app --project=perf --grep-invert "@rollout|@post-rollout"
 
       - name: Upload traces of a failed signed-in run
         if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}

@@ -286,7 +286,7 @@ sequenceDiagram
   S->>S: job writes .log and .exit
   S->>Core: POST /v1/sandbox-jobs/:resultId/complete, x-job-token
   Core->>CVX: verify token, settle completed or failed
-  alt model already observed it through async_status
+  alt row already stored: async_status read it or the turn wrote it
     Note over Core: skip the continuation
   else
     Core->>CVX: admit continuation as a followup
@@ -295,7 +295,7 @@ sequenceDiagram
   opt model polls
     M->>Core: async_status status, logs or stop
     Core->>S: jobStatus, jobLogs or stopJob
-    Core->>CVX: settle if terminal, mark observed
+    Core->>CVX: settle if terminal, mark handback stored
   end
 ```
 
@@ -319,8 +319,8 @@ stateDiagram-v2
   [*] --> processing: created before launch
   processing --> completed: callback or poll reads exit 0
   processing --> failed: callback, poll, or launch error
-  completed --> observed: async_status read it
-  failed --> observed: async_status read it
+  completed --> stored: async_status read it, or the conversation holds it
+  failed --> stored: async_status read it, or the conversation holds it
 ```
 
 - `lambda`, workdir, Daytona and Vercel keep markers under `<workspace root>/.fp-jobs/<reservation key>`, at most 10 running (`MAX_CONCURRENT_BACKGROUND_JOBS`). E2B uses its native `background: true` command, so it has callback delivery but no logs or stop.
@@ -540,7 +540,7 @@ stateDiagram-v2
 - `network.mode: "allow-all"` starts with `enableInternet: true`, anything else without; `restricted` is rejected. `size` maps to the nearest instance type, `standard-1` to `standard-4` (`CLOUDFLARE_INSTANCE_TYPES` in `apps/core/src/shared/sandbox-sizes.ts`).
 - Limits are in `apps/cloudflare-sandbox/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 15 minute timeout, 6 hour idle (the `setInactivityTimeout` ceiling). An ephemeral Container idles only a minute past its command, so one whose `DELETE` failed stops soon.
 - Exit 124 or 137 counts as a timeout only once the deadline passed; earlier it is the command's own exit or an OOM kill.
-- `deploy.yaml` does not deploy the bridge. A deployment that offers the provider runs `wrangler deploy` and sets `SANDBOX_API_KEY` on the Worker equal to core's `CLOUDFLARE_SANDBOX_API_KEY`, with `CLOUDFLARE_SANDBOX_URL` pointing at it.
+- `sst deploy` ships the bridge per stage with wrangler, as `cloudflareWorkers.sandbox`, when the deploy has `CLOUDFLARE_API_TOKEN`. Its Container image is built only when the registry lacks `broods-sandbox:<Dockerfile hash>` (the first deploy to an account, or a `Dockerfile` change), shared by every stage, so only that deploy needs Docker. The infra repo generates `SANDBOX_API_KEY`, puts it on the Worker and in core's `CLOUDFLARE_SANDBOX_API_KEY`, and points `CLOUDFLARE_SANDBOX_URL` at it. Each stage's bridge has its own Containers.
 
 ## Worker
 

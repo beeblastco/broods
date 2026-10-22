@@ -32,6 +32,13 @@ export interface TokenParts {
   reasoning: number;
 }
 
+/** One value per bin for each per-task average the Usage tab charts; null for a bin with no tasks. */
+export interface PerTaskAverages {
+  cost: Array<number | null>;
+  calls: Array<number | null>;
+  tokens: Array<number | null>;
+}
+
 /**
  * Start of every bin in the range ending at `now`, floored to whole bins the
  * way the server floors `bucketStart`, so filled bins meet the data bins even
@@ -49,9 +56,51 @@ export function bucketStartsAcrossRange(
   return Array.from({ length: count }, (_, i) => endMs - (count - i) * binMs);
 }
 
+/**
+ * Each bin's cost, model calls and tokens per task: the bin's total divided by
+ * the tasks that finished in it, null for a bin with none so a chart leaves a
+ * gap there. The window's average is the window's totals over its tasks, not
+ * the mean of these.
+ */
+export function perTaskAverages(
+  bins: Array<{ invocations: number; modelCalls: number; totalTokens: number }>,
+  binCosts: number[],
+): PerTaskAverages {
+  const per = (bin: (typeof bins)[number], total: number): number | null =>
+    bin.invocations > 0 ? total / bin.invocations : null;
+
+  return {
+    cost: bins.map((bin, i) => per(bin, binCosts[i] ?? 0)),
+    calls: bins.map((bin) => per(bin, bin.modelCalls)),
+    tokens: bins.map((bin) => per(bin, bin.totalTokens)),
+  };
+}
+
 /** Axis label for a round tick: formatNumber without the trailing ".0". */
 export function formatAxisNumber(n: number): string {
   return formatNumber(n).replace(".0", "");
+}
+
+/**
+ * The runs of known values, each point as its index and value, so a line
+ * chart draws one segment per run and leaves a gap at every null.
+ */
+export function knownRuns(
+  values: Array<number | null>,
+): Array<Array<[number, number]>> {
+  const runs: Array<Array<[number, number]>> = [];
+  let run: Array<[number, number]> = [];
+  values.forEach((value, i) => {
+    if (value === null) {
+      if (run.length > 0) runs.push(run);
+      run = [];
+    } else {
+      run.push([i, value]);
+    }
+  });
+  if (run.length > 0) runs.push(run);
+
+  return runs;
 }
 
 /**

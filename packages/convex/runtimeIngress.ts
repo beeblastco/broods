@@ -19,10 +19,7 @@ import {
   asyncToolResultRow,
   conversationEventsValidator,
   insertConversationEvents,
-  handbackPatch,
-  isResultStored,
-  markAsyncAgentResultSeen,
-  markAsyncToolResultSeen,
+  markResultStored,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -347,7 +344,11 @@ export const acquireClear = internalMutation({
         now: now,
       }));
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) return null;
+    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) {
+      await patchQueueCounters(ctx, coordinator, queue, now);
+
+      return null;
+    }
     const generation = coordinator.ownerGeneration + 1;
     await ctx.db.patch(coordinator._id, {
       ownerGeneration: generation,
@@ -1205,13 +1206,12 @@ async function checkDuplicateAdmission(
 
 /**
  * The duplicate `checkDuplicateAdmission` answers for a continuation whose
- * result the conversation already has, or null when it does not. `observed`
- * is the flag the release before `handback` wrote. A write that stored the
- * result but lost its reply has it in the conversation already, under the key
- * core wrote it with (`dedupeKeyFor`). Both finished keys are tried: the row
- * can still read `processing` while the conversation holds the result its run
- * saw. The conversation has it, so it is marked stored and the recovery sweep
- * stops retrying it.
+ * result the conversation already has, or null when it does not. A write that
+ * stored the result but lost its reply has it in the conversation already,
+ * under the key core wrote it with (`dedupeKeyFor`). Both finished keys are
+ * tried: the row can still read `processing` while the conversation holds the
+ * result its run saw. The conversation has it, so it is marked stored and the
+ * recovery sweep stops retrying it.
  */
 async function storedResultAdmission(
   ctx: MutationCtx,
@@ -1219,7 +1219,7 @@ async function storedResultAdmission(
   result: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">,
   dedupeKeyFor: (status: "completed" | "failed") => string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
-  if (isResultStored(result)) {
+  if (result.handback === "stored") {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
   for (const status of ["completed", "failed"] as const) {
@@ -1232,7 +1232,7 @@ async function storedResultAdmission(
       )
       .first();
     if (stored) {
-      await ctx.db.patch(result._id, handbackPatch("stored"));
+      await markResultStored(ctx, result.accountId, result);
 
       return { outcome: "duplicate" as const, eventId: args.eventId };
     }
@@ -1258,7 +1258,7 @@ async function expiredUndeliveredResume(
 
   return rows.some(
     (row): boolean =>
-      row?.accountId === envelope.accountId && !isResultStored(row),
+      row?.accountId === envelope.accountId && row.handback !== "stored",
   );
 }
 
@@ -1587,12 +1587,16 @@ async function markDeliveredResultsStored(
     "accountId" | "resultEventId" | "toolResultId"
   >,
 ): Promise<void> {
-  await markAsyncAgentResultSeen(
+  await markResultStored(
     ctx,
     envelope.accountId,
-    envelope.resultEventId,
+    await asyncAgentResultRow(ctx, envelope.resultEventId),
   );
-  await markAsyncToolResultSeen(ctx, envelope.accountId, envelope.toolResultId);
+  await markResultStored(
+    ctx,
+    envelope.accountId,
+    await asyncToolResultRow(ctx, envelope.toolResultId),
+  );
 }
 
 /**

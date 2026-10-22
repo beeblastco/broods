@@ -9,8 +9,31 @@ import {
   providerOptionsFromModelConfig,
 } from "../src/harness/provider.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
+import {
+  compatibleEndpoint,
+  type ChatRequest,
+} from "./helpers/compatible-endpoint.ts";
 
 const CONVERSATION_KEY = "channel:acct:chat";
+
+// The body a custom endpoint receives for one unmarked call with the
+// conversation run's options for `modelId`.
+async function requestBody(modelId: string): Promise<ChatRequest | undefined> {
+  const config: AgentConfig = {
+    model: { provider: "custom", modelId: modelId },
+  };
+  const { bodies, chat } = compatibleEndpoint(modelId);
+  const providerOptions = providerOptionsFromModelConfig(
+    config,
+    CONVERSATION_KEY,
+  );
+  await chat.doGenerate({
+    prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    ...(providerOptions ? { providerOptions: providerOptions } : {}),
+  });
+
+  return bodies[0];
+}
 
 describe("providerOptionsFromModelConfig", () => {
   test("defaults anthropic cacheControl to ephemeral", () => {
@@ -61,6 +84,63 @@ describe("providerOptionsFromModelConfig", () => {
     const options = providerOptionsFromModelConfig(config, CONVERSATION_KEY);
     expect(options?.anthropic).toBeUndefined();
     expect(options?.openai?.promptCacheKey).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("a custom endpoint serving GPT gets prompt_cache_key under its name", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cx/gpt-6-luna" },
+      provider: {
+        custom: { apiKey: "k", base_url: "https://proxy.test/v1", name: "cx" },
+      },
+    };
+
+    const options = providerOptionsFromModelConfig(config, CONVERSATION_KEY);
+    expect(options?.["cx"]?.["prompt_cache_key"]).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("a custom endpoint serving Claude gets cache_control, no key", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cc/claude-sonnet-5" },
+    };
+
+    expect(providerOptionsFromModelConfig(config, CONVERSATION_KEY)).toEqual({
+      openaiCompatible: { cache_control: { type: "ephemeral" } },
+    });
+  });
+
+  test("a Bedrock-style Claude id behind a proxy is Claude too", () => {
+    const config: AgentConfig = {
+      model: {
+        provider: "custom",
+        modelId: "bedrock/us.anthropic.claude-sonnet-5-v1:0",
+      },
+    };
+
+    expect(providerOptionsFromModelConfig(config, CONVERSATION_KEY)).toEqual({
+      openaiCompatible: { cache_control: { type: "ephemeral" } },
+    });
+  });
+
+  test("a custom endpoint serving anything else gets nothing", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "qwen3-coder" },
+    };
+
+    expect(
+      providerOptionsFromModelConfig(config, CONVERSATION_KEY),
+    ).toBeUndefined();
+  });
+
+  test("the custom cache key reaches the request body", async () => {
+    const body = await requestBody("gpt-6-luna");
+
+    expect(body?.["prompt_cache_key"]).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("the Claude cache mark adds no field to the request body", async () => {
+    const body = await requestBody("cc/claude-sonnet-5");
+
+    expect(JSON.stringify(body)).not.toContain("cache_control");
   });
 
   test("leaves other providers untouched", () => {
@@ -130,6 +210,34 @@ describe("cacheBreakpointFromProviderOptions", () => {
         providerOptionsFromModelConfig(config, CONVERSATION_KEY),
       ),
     ).toEqual({ openai: { promptCacheBreakpoint: { mode: "explicit" } } });
+  });
+
+  test("Claude behind a custom endpoint gets cache_control", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cc/claude-sonnet-5" },
+    };
+
+    expect(
+      cacheBreakpointFromProviderOptions(
+        config,
+        providerOptionsFromModelConfig(config, CONVERSATION_KEY),
+      ),
+    ).toEqual({
+      openaiCompatible: { cache_control: { type: "ephemeral" } },
+    });
+  });
+
+  test("GPT behind a custom endpoint gets no mark, only its key", () => {
+    const config: AgentConfig = {
+      model: { provider: "custom", modelId: "cx/gpt-6-luna" },
+    };
+
+    expect(
+      cacheBreakpointFromProviderOptions(
+        config,
+        providerOptionsFromModelConfig(config, CONVERSATION_KEY),
+      ),
+    ).toBeUndefined();
   });
 
   test("a call without a conversation gets none", () => {

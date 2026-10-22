@@ -3,6 +3,7 @@ import {
   type AuditEvent,
   type AuditPage,
 } from "../../../packages/broods/src/account.ts";
+import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   OK_AGENT,
   assertStep,
@@ -12,7 +13,7 @@ import {
 } from "../harness.ts";
 
 /**
- * The audit ledger records a config write and a finished run, verifies, and
+ * The audit ledger records a config write and concurrent runs, verifies, and
  * refuses a non-public sink. A run that fails at the provider call (no model
  * key) still finishes through the usage write, so its row lands either way.
  */
@@ -25,13 +26,18 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
       agent: OK_AGENT,
     },
   });
-  await context.measure("audit run", () =>
-    runToTerminal(context, {
-      agentId: agentId,
-      conversationKey: name,
-      eventId: name,
-      text: "Say OK.",
-    }),
+  const eventIds = [0, 1, 2].map((index): string => `${name}-${index}`);
+  await context.measure("concurrent audit runs", (): Promise<AsyncStatus[]> =>
+    Promise.all(
+      eventIds.map((eventId): Promise<AsyncStatus> =>
+        runToTerminal(context, {
+          agentId: agentId,
+          conversationKey: eventId,
+          eventId: eventId,
+          text: "Say OK.",
+        }),
+      ),
+    ),
   );
 
   // The usage write that appends the row lands just after the run's status.
@@ -41,11 +47,19 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
       async (): Promise<AuditPage | null> => {
         const listed = await context.account.audit.list({ limit: 500 });
 
-        return listed.events.some(finishedRunOf(agentId)) ? listed : null;
+        return listed.events.filter(finishedRunOf(agentId)).length ===
+          eventIds.length
+          ? listed
+          : null;
       },
     ),
   );
   const events = page?.events ?? [];
+  assertStep(
+    "the audit ledger retains every concurrent run",
+    events.filter(finishedRunOf(agentId)).length === eventIds.length,
+    `${events.filter(finishedRunOf(agentId)).length}/${eventIds.length} run rows`,
+  );
   const run = events.find(finishedRunOf(agentId));
   const details: { startedAt?: number; durationMs?: number } = JSON.parse(
     run?.detailsJson ?? "{}",

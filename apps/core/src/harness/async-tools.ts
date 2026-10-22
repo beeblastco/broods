@@ -5,13 +5,16 @@
  * individual tool files.
  */
 
-import { asyncToolResultDedupeKey } from "@broods/convex/model/subagentResults";
+import {
+  asyncToolResultDedupeKey,
+  SWEPT_HANDBACKS,
+} from "@broods/convex/model/subagentResults";
 import type { JSONValue, ToolSet, UserModelMessage } from "ai";
 import { toErrorMessage } from "../shared/errors.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
   createPendingAsyncToolResult,
-  listUnobservedAsyncToolResults,
+  listOwedAsyncToolResults,
   markAsyncToolHandback,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
@@ -29,8 +32,6 @@ import {
 
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
-// The hand-back states the sweep lists, each with its own window.
-const SWEPT_HANDBACKS = ["detached", "pending"] as const;
 
 /** Resumes a conversation with a settled row; the handler's `continueAfterAsyncToolSettlement`. */
 export type AsyncToolSettlementResumer = (
@@ -214,7 +215,7 @@ export class AsyncToolCoordinator {
       );
     } catch (error) {
       await Promise.all(
-        batch.map(({ resultId }): Promise<void> =>
+        batch.map(({ resultId }): Promise<boolean> =>
           markAsyncToolHandback(resultId, "detached"),
         ),
       );
@@ -388,7 +389,7 @@ export async function resumeLostAsyncToolResults(
       let cursor: string | null = null;
       let isDone = false;
       while (!isDone) {
-        const result = await listUnobservedAsyncToolResults({
+        const result = await listOwedAsyncToolResults({
           handback: handback,
           status: status,
           updatedAfter: updatedAfter,

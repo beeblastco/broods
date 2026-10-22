@@ -422,7 +422,7 @@ describe("AsyncToolCoordinator", () => {
       "convex down",
     );
     // The row holds the result; detached hands it to the recovery sweep.
-    expect(mutationMock).toHaveBeenCalledWith("observeAsyncToolResult", {
+    expect(mutationMock).toHaveBeenCalledWith("markAsyncToolHandback", {
       resultId: resultId,
       handback: "detached",
     });
@@ -466,7 +466,7 @@ describe("resumeLostAsyncToolResults", () => {
     }> = [];
     const pages = spyOn(
       asyncToolResults,
-      "listUnobservedAsyncToolResults",
+      "listOwedAsyncToolResults",
     ).mockImplementation(
       async (options: {
         handback: string;
@@ -497,7 +497,7 @@ describe("resumeLostAsyncToolResults", () => {
     const marked = spyOn(
       asyncToolResults,
       "markAsyncToolHandback",
-    ).mockResolvedValue();
+    ).mockResolvedValue(false);
     const info = spyOn(log, "logInfo");
     const outcomes: Record<string, ContinuationOutcome> = {
       async_tool_resumed: {
@@ -576,6 +576,63 @@ describe("resumeLostAsyncToolResults", () => {
       pages.mockRestore();
       marked.mockRestore();
       info.mockRestore();
+    }
+  });
+});
+
+describe("async_status", () => {
+  it("hands a settled result over unless its continuation already waits in the queue", async (): Promise<void> => {
+    const conversationKey = "acct:account_1:agent:agent_1:api:chat";
+    const row: AsyncToolResultRecord = {
+      resultId: "async_tool_read",
+      parentEventId: "acct:account_1:agent:agent_1:api:event_parent",
+      conversationKey: conversationKey,
+      toolName: "lookup",
+      toolCallId: "call-read",
+      input: {},
+      status: "completed",
+      response: "the answer",
+      handback: "pending",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      expiresAt: Date.now() + 60_000,
+    };
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue(row);
+    // Queued first, so the read leaves it to the continuation; then not.
+    const marked = spyOn(asyncToolResults, "markAsyncToolHandback")
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const { default: asyncStatusTool } =
+      await import("../src/harness/tools/async-status.tool.ts");
+    const tools = asyncStatusTool({
+      conversationKey: conversationKey,
+      supportsJobs: false,
+    });
+    const check = (): Promise<unknown> =>
+      (tools.async_status as unknown as TestToolExecute).execute(
+        { statusId: row.resultId },
+        { toolCallId: "tool-call-read", messages: [], context: undefined },
+      );
+
+    try {
+      expect(await check()).toEqual({
+        status: "completed",
+        delivery: "automatic",
+      });
+      expect(await check()).toEqual({
+        status: "completed",
+        response: "the answer",
+      });
+      expect(marked.mock.calls).toEqual([
+        [row.resultId, "stored"],
+        [row.resultId, "stored"],
+      ]);
+    } finally {
+      read.mockRestore();
+      marked.mockRestore();
     }
   });
 });

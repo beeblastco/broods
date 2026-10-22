@@ -13,9 +13,11 @@ import { authKit, type AuthUser } from "../auth";
 import {
   deleteWorkspacePath,
   listWorkspaceFiles,
+  readWorkspaceFile,
   renameWorkspacePath,
   uploadWorkspaceFile,
   withStorageAccess,
+  workspaceFileDownloadUrl,
   type WorkspaceFileEntry,
   type WorkspaceFsRef,
 } from "../model/workspaceFs";
@@ -33,6 +35,21 @@ type RuntimeWorkspace = WorkspaceFsRef & {
   workspaceId: Id<"workspaceConfigs">;
 };
 
+/** A short-lived presigned URL to one file, for the dashboard's Download and image preview. */
+export const downloadUrl = action({
+  args: {
+    projectId: v.id("projects"),
+    workspaceId: v.string(),
+    path: v.string(),
+  },
+  returns: v.string(),
+  handler: async (ctx, args): Promise<string> => {
+    const workspace = await resolveWorkspace(ctx, args);
+
+    return await workspaceFileDownloadUrl(workspace, args.path);
+  },
+});
+
 /** Lists files from the S3 namespace mounted by the selected runtime workspace. */
 export const list = action({
   args: { projectId: v.id("projects"), workspaceId: v.string() },
@@ -41,6 +58,21 @@ export const list = action({
     const workspace = await resolveWorkspace(ctx, args);
 
     return await listWorkspaceFiles(workspace);
+  },
+});
+
+/** One file's contents as text, for the dashboard preview. Capped at the upload limit. */
+export const read = action({
+  args: {
+    projectId: v.id("projects"),
+    workspaceId: v.string(),
+    path: v.string(),
+  },
+  returns: v.string(),
+  handler: async (ctx, args): Promise<string> => {
+    const workspace = await resolveWorkspace(ctx, args);
+
+    return await readWorkspaceFile(workspace, args.path);
   },
 });
 

@@ -2,8 +2,10 @@
  * First-load budget. A cold load fetches every JS chunk the page needs before
  * its load event, all at once; on a lossy link that burst is the wait (a prod
  * load once took a minute on 40 chunks). This pins how many chunks and how
- * many bytes on the wire that burst may cost per page, against
+ * many bytes of JS that burst may cost per page, against
  * `first-load-budget.json`: more fails the run, fewer asks for a record.
+ * Bytes are counted decoded: Chrome's encoded size counts the response
+ * headers on a CDN's HTTP/2 responses, about 1 kB a chunk.
  * `E2E_RECORD_FIRST_LOAD=1` rewrites the budget from this run. A `next dev`
  * server ships unbundled dev chunks, so there the budget does not apply.
  */
@@ -71,10 +73,14 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
       }
     });
     page.on("websocket", (socket) => {
-      if (socket.url().includes("/_next/webpack-hmr")) devServer = true;
+      if (socket.url().includes("/_next/hmr")) devServer = true;
     });
 
     await page.goto(probe.path(), { waitUntil: "load" });
+    // The HMR socket opens as the page boots, before any wait below can time
+    // out on a cold `next dev` compile.
+    if (devServer) await context.close();
+    test.skip(devServer, "next dev ships dev chunks; run against a build");
     await waitForReady(probe.ready(page));
     await waitForReady(page.locator('[data-hydrated="true"]'));
     // Only the chunks asked for before the load event: what loads after it
@@ -95,12 +101,18 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     const responses = await Promise.all(
       firstLoad.map((request) => request.response()),
     );
-    const sizes = await Promise.all(
-      firstLoad.map((request) => request.sizes()),
+    const bodies = await Promise.all(
+      responses.flatMap((response) => (response ? [response.body()] : [])),
     );
     await context.close();
-    test.skip(devServer, "next dev ships dev chunks; run against a build");
 
+    // A chunk that failed or errored must not pass as a lighter page.
+    expect(
+      firstLoad
+        .filter((_, index) => !responses[index]?.ok())
+        .map((request) => request.url()),
+      `every ${probe.name} chunk loads`,
+    ).toEqual([]);
     expect(
       responses
         .filter(
@@ -113,13 +125,13 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     ).toEqual([]);
     measured[probe.name] = {
       jsRequests: firstLoad.length,
-      jsBytes: sizes.reduce((sum, size) => sum + size.responseBodySize, 0),
+      jsBytes: bodies.reduce((sum, body) => sum + body.byteLength, 0),
     };
   }
 
   for (const [name, load] of Object.entries(measured)) {
     console.log(
-      `First load ${name}: ${load.jsRequests} JS requests, ${Math.round(load.jsBytes / 1024)} kB on the wire`,
+      `First load ${name}: ${load.jsRequests} JS requests, ${Math.round(load.jsBytes / 1024)} kB of JS`,
     );
   }
   if (RECORD) {
@@ -137,21 +149,27 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     return;
   }
 
-  const budget: Record<string, FirstLoad> = JSON.parse(
+  const budget: Partial<Record<string, FirstLoad>> = JSON.parse(
     readFileSync(BUDGET_FILE, "utf8"),
   );
   for (const [name, load] of Object.entries(measured)) {
+    const allowed = budget[name];
+    if (!allowed) {
+      throw new Error(
+        `${name}: no first-load budget; record one with E2E_RECORD_FIRST_LOAD=1`,
+      );
+    }
     expect(
       load.jsRequests,
       `${name}: JS requests before the load event`,
-    ).toBeLessThanOrEqual(budget[name].jsRequests);
+    ).toBeLessThanOrEqual(allowed.jsRequests);
     expect(
       load.jsBytes,
       `${name}: JS bytes before the load event`,
-    ).toBeLessThanOrEqual(budget[name].jsBytes);
-    if (load.jsRequests < budget[name].jsRequests) {
+    ).toBeLessThanOrEqual(allowed.jsBytes);
+    if (load.jsRequests < allowed.jsRequests) {
       console.log(
-        `${name}: fewer JS requests than the budget (${budget[name].jsRequests}); record with E2E_RECORD_FIRST_LOAD=1 to lock the gain in`,
+        `${name}: fewer JS requests than the budget (${allowed.jsRequests}); record with E2E_RECORD_FIRST_LOAD=1 to lock the gain in`,
       );
     }
   }

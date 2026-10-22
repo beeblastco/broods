@@ -1390,7 +1390,7 @@ describe("runtime ingress", () => {
       await t.query(internal.runtime.getAsyncAgentResult, {
         eventId: "resumed-first",
       }),
-    ).toMatchObject({ handback: "stored", observed: true });
+    ).toMatchObject({ handback: "stored" });
   });
 
   test("admits no late resume of a result its parent's conversation already stores, whatever status its row recorded", async (): Promise<void> => {
@@ -1453,7 +1453,6 @@ describe("runtime ingress", () => {
     // Stored now, so the recovery sweep stops retrying it.
     expect(await row("stored")).toMatchObject({
       handback: "stored",
-      observed: true,
     });
     expect(await resume("resume-lagging", "lagging")).toMatchObject({
       outcome: "duplicate",
@@ -1513,14 +1512,13 @@ describe("runtime ingress", () => {
     });
     expect(await row("resumed")).toMatchObject({
       handback: "stored",
-      observed: true,
     });
     expect(await resume("resume-again", "resumed")).toMatchObject({
       outcome: "duplicate",
     });
 
     // async_status read it first: the continuation admits nothing.
-    await t.mutation(internal.runtime.observeAsyncToolResult, {
+    await t.mutation(internal.runtime.markAsyncToolHandback, {
       resultId: "read-first",
       handback: "stored",
     });
@@ -1544,7 +1542,6 @@ describe("runtime ingress", () => {
     });
     expect(await row("written")).toMatchObject({
       handback: "stored",
-      observed: true,
     });
   });
 
@@ -1583,7 +1580,7 @@ describe("runtime ingress", () => {
       await t.query(internal.runtime.getAsyncAgentResult, {
         eventId: "owner-result",
       }),
-    ).toMatchObject({ handback: "detached", observed: false });
+    ).toMatchObject({ handback: "detached" });
     // ...nor is refused once its owner has stored it.
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "owner-result",
@@ -2207,6 +2204,51 @@ describe("runtime ingress", () => {
     ).toBe(2);
   });
 
+  test("a clear refused by a live owner still writes down the queued work it expired", async (): Promise<void> => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const conversationKey = conversationKeyFor(accountId);
+      for (const role of ["owner", "queued"]) {
+        await t.mutation(internal.runtimeIngress.accept, {
+          ...admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: `clear-${role}`,
+            mode: "followup",
+          }),
+          envelopeTtlMs: 1_000,
+        });
+      }
+      // The queued envelope expires while the owner's lease still runs.
+      vi.setSystemTime(Date.now() + 1_001);
+
+      expect(
+        await t.mutation(internal.runtimeIngress.acquireClear, {
+          accountId: accountId,
+          agentId: "test-agent",
+          conversationKey: conversationKey,
+          ownerEventId: "clear",
+          leaseTtlMs: 60_000,
+        }),
+      ).toBeNull();
+      expect(
+        await t.run(
+          async (ctx) =>
+            await ctx.db
+              .query("runtimeConversationCoordinators")
+              .withIndex("by_conversationKey", (q) =>
+                q.eq("conversationKey", conversationKey),
+              )
+              .unique(),
+        ),
+      ).toMatchObject({ queuedCount: 0, queuedBytes: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("recovery promotes queued work the counter lost and reconciles the counter", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -2629,6 +2671,9 @@ interface LateResultKind {
     id: string,
   ) => Promise<string | undefined>;
   listed: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
+  // The parent's status tool read of the row, which stores it.
+  // True when a queued resume keeps the result from it.
+  read: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
   // The owner `busy` taking the queued resume, as its run does.
   apply: (
     t: TestConvex<typeof schema>,
@@ -2669,12 +2714,17 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         ?.handback,
     listed: async (t, id): Promise<boolean> =>
       (
-        await t.query(internal.runtime.listUnobservedAsyncAgentResults, {
+        await t.query(internal.runtime.listOwedAsyncAgentResults, {
           ...SWEEP_WINDOW,
           handback: "detached",
           status: "completed",
         })
       ).page.some((row): boolean => row.eventId === id),
+    read: async (t, id): Promise<boolean> =>
+      await t.mutation(internal.runtime.markAsyncAgentHandback, {
+        eventId: id,
+        handback: "stored",
+      }),
     apply: async (
       t,
       conversationKey,
@@ -2713,12 +2763,17 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
         ?.handback,
     listed: async (t, id): Promise<boolean> =>
       (
-        await t.query(internal.runtime.listUnobservedAsyncToolResults, {
+        await t.query(internal.runtime.listOwedAsyncToolResults, {
           ...SWEEP_WINDOW,
           handback: "pending",
           status: "completed",
         })
       ).page.some((row): boolean => row.resultId === id),
+    read: async (t, id): Promise<boolean> =>
+      await t.mutation(internal.runtime.markAsyncToolHandback, {
+        resultId: id,
+        handback: "stored",
+      }),
     apply: async (
       t,
       conversationKey,
@@ -2817,6 +2872,21 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await resume()).toMatchObject({ outcome: "queued" });
     expect(await kind.handback(t, "late")).toBe(before);
     expect(await kind.listed(t, "late")).toBe(true);
+    expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
+      { contributingEventIds: ["resume"] },
+    );
+    expect(await kind.handback(t, "late")).toBe("stored");
+  });
+
+  test("leaves a queued result to its resume when a status read finds it, so a turn that never saves the read loses nothing", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+    const before = await kind.handback(t, "late");
+    expect(await resume()).toMatchObject({ outcome: "queued" });
+
+    // The read hands nothing over, and its turn then ends without saving.
+    expect(await kind.read(t, "late")).toBe(true);
+    expect(await kind.handback(t, "late")).toBe(before);
     expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
       { contributingEventIds: ["resume"] },
     );

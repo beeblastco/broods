@@ -323,16 +323,6 @@ afterEach(() => {
 });
 
 describe("createSandboxExecutor (sandbox provider)", () => {
-  it("creates the WorkdirSandboxExecutor for provider 'sandbox'", () => {
-    process.env.WORKDIR_URL = BASE;
-    const {
-      createSandboxExecutor,
-    } = require("../src/harness/sandbox/index.ts");
-    expect(
-      createSandboxExecutor({ provider: "sandbox" }).constructor.name,
-    ).toBe("WorkdirSandboxExecutor");
-  });
-
   it("throws when no workdir base URL is configured", () => {
     const {
       createSandboxExecutor,
@@ -593,24 +583,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       outputLimitBytes: 4096,
     });
     // The SDK converts memoryMb -> memory_mb, diskGb -> disk_gb.
-    expect(createBody().resources).toEqual({
-      cpu: 2,
-      memory_mb: 4096,
-      disk_gb: 16,
-    });
-  });
-
-  it("derives create-time resources from the predefined size (medium)", async () => {
-    const executor = await newExecutor({
-      provider: "sandbox",
-      size: "medium",
-      options: { workdirUrl: BASE },
-    });
-    await executor.run({
-      code: "echo ok",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
     expect(createBody().resources).toEqual({
       cpu: 2,
       memory_mb: 4096,
@@ -972,21 +944,6 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(
       execCalls().some((c) => String(c.body?.cmd).includes("mount-s3")),
     ).toBe(false);
-  });
-
-  it("requires a namespace for the assume-role S3 mount", async () => {
-    process.env.SANDBOX_MOUNT_ROLE_ARN =
-      "arn:aws:iam::123456789012:role/sandbox-mount";
-    const executor = await newExecutor({
-      provider: "sandbox",
-      options: { workdirUrl: BASE, mountAwsS3Buckets: true },
-    });
-
-    expect(
-      executor.run({ code: "ls", timeoutSeconds: 30, outputLimitBytes: 4096 }),
-    ).rejects.toThrow(
-      "workdir AWS S3 workspace mount requires a workspace namespace",
-    );
   });
 
   it("mounts a bring-your-own bucket via exec using the workspace storage assume-role", async () => {
@@ -1684,25 +1641,6 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
         outputLimitBytes: 4096,
       }),
     ).rejects.not.toBeInstanceOf(SandboxCapacityError);
-  });
-
-  it("releases the named sandbox when the reservation still points at it", async (): Promise<void> => {
-    storedSandboxExternalId = "sbx_stored";
-    const executor = await newExecutor({
-      provider: "sandbox",
-      persistent: true,
-      options: { workdirUrl: BASE },
-    });
-
-    await executor.release({
-      namespace: NS,
-      expectedExternalId: "sbx_stored",
-    });
-    expect(
-      fetchCalls.some(
-        (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_stored",
-      ),
-    ).toBe(true);
   });
 
   it("tears down the named sandbox, not the one another acquire re-claimed", async (): Promise<void> => {

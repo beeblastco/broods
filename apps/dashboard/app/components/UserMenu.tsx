@@ -50,7 +50,7 @@ export function UserMenu(): React.JSX.Element | null {
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
-  // The plan is the active org's: each org pays for its own.
+  // The active org inherits its owner's plan.
   const activeOrg = useQuery(
     api.org.orgs.getActive,
     useSignedIn() ? {} : "skip",

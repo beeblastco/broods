@@ -99,7 +99,11 @@ import {
 } from "./sandbox/live-status.ts";
 import { configString } from "./sandbox/utils.ts";
 import { shouldAutoCompact } from "./compaction.ts";
-import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import {
+  createAgentLifecycleEmitter,
+  toLifecycleValue,
+  type AgentLifecycleEventPayload,
+} from "./lifecycle.ts";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import {
   channelPolicyIdentity,
@@ -109,10 +113,12 @@ import {
 import {
   attemptRecordingMiddleware,
   cacheBreakpointFromProviderOptions,
+  markedForCache,
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
+  withCacheBreakpoint,
 } from "./provider.ts";
 import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
@@ -350,7 +356,6 @@ export async function runAgentLoop(
   const hooks =
     options.hooks ??
     (await createAgentHookDispatcher(session.accountId, agentConfig));
-
   // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   const taskTotals = createTaskTotals();
   const sandboxCpu = createSandboxCpuLedger();
@@ -675,6 +680,29 @@ export async function runAgentLoop(
   // span closes.
   const stepTiming = createStepTimingTracker(traceAttribute);
   const toolCallSummaries = new Map<string, ToolCallSummary>();
+  // A run fails once: its first failure fires the lifecycle webhook and the
+  // observe-only onError code hook, and later errors of the same run do not.
+  let failureAnnounced = false;
+  const announceFailure = async (
+    error: string,
+    extra: AgentLifecycleEventPayload = {},
+  ): Promise<void> => {
+    if (failureAnnounced) return;
+    failureAnnounced = true;
+    const tools = summarizeToolsUsed(toolCallSummaries);
+    await Promise.all([
+      lifecycle.emit("agent.failed", {
+        error: error,
+        ...extra,
+        toolsUsed: toLifecycleValue(tools.toolsUsed),
+        toolUsage: toLifecycleValue(tools.toolUsage),
+        toolCalls: toLifecycleValue(tools.toolCalls),
+      }),
+      hooks.hasHooksFor("agent.failed")
+        ? hooks.runMutation("agent.failed", { error: error })
+        : undefined,
+    ]);
+  };
   const logContext = {
     accountId: session.accountId,
     agentId: session.agentId,
@@ -1308,13 +1336,8 @@ export async function runAgentLoop(
         },
       );
 
-      await lifecycle.emit("agent.failed", {
-        error: errorText,
-        toolsUsed: toLifecycleValue(tools.toolsUsed),
-        toolUsage: toLifecycleValue(tools.toolUsage),
-        toolCalls: toLifecycleValue(tools.toolCalls),
-      });
       await reply?.onErrorText(errorText).catch(() => {});
+      await announceFailure(errorText);
       if (isContextLengthError(errorText)) {
         await autoCompact(undefined, true);
       }
@@ -1426,16 +1449,12 @@ export async function runAgentLoop(
               usage: taskTotals.usage(),
             },
           );
-          await lifecycle.emit("agent.failed", {
-            error: errorText,
+          await reply?.onErrorText(errorText).catch(() => {});
+          await announceFailure(errorText, {
             finishReason: finishReason,
             stepCount: stepCount,
             toolCallCount: toolCallCount,
-            toolsUsed: toLifecycleValue(tools.toolsUsed),
-            toolUsage: toLifecycleValue(tools.toolUsage),
-            toolCalls: toLifecycleValue(tools.toolCalls),
           });
-          await reply?.onErrorText(errorText).catch(() => {});
 
           return;
         }
@@ -1530,17 +1549,8 @@ export async function runAgentLoop(
           errorDetails: serializeError(err),
         });
 
-        await lifecycle.emit("agent.failed", {
-          error: errorText,
-          toolsUsed: toLifecycleValue(tools.toolsUsed),
-          toolUsage: toLifecycleValue(tools.toolUsage),
-          toolCalls: toLifecycleValue(tools.toolCalls),
-        });
-        // agent.failed is observe-only for hooks (side effects, no mutation).
-        if (hooks.hasHooksFor("agent.failed")) {
-          await hooks.runMutation("agent.failed", { error: errorText });
-        }
         await reply?.onErrorText(errorText).catch(() => {});
+        await announceFailure(errorText);
       } finally {
         await finalizer.finalize(
           didFail ? "failed" : "completed",
@@ -1626,8 +1636,8 @@ export async function runAgentLoop(
     const message = errorMessage(error);
     failureText = message;
     terminalError = error instanceof Error ? error : new Error(message);
-    await lifecycle.emit("agent.failed", { error: message });
     await reply?.onErrorText(message).catch(() => {});
+    await announceFailure(message);
     await finalizer.finalize(
       "failed",
       toolCallSummaries.size,
@@ -1721,6 +1731,8 @@ export async function runAgentLoop(
         "Model stream ended without a completion callback",
       );
       failureText ??= terminalError.message;
+      // A hard stream failure or an abandoned read never reached onError.
+      await announceFailure(failureText);
     }
     await finalizer.finalize(
       "failed",
@@ -2019,37 +2031,6 @@ function withEnvironment(
       ],
     },
   ];
-}
-
-/**
- * Marks the item at `index` (the last by default) as a prompt cache
- * breakpoint, at the ends of the stored system prompt and history the next run
- * reads back. Unchanged when the run's model takes no breakpoint.
- */
-function withCacheBreakpoint<T extends { providerOptions?: ProviderOptions }>(
-  items: T[],
-  breakpoint: ProviderOptions | undefined,
-  index: number = items.length - 1,
-): T[] {
-  const item = items[index];
-  if (breakpoint === undefined || item === undefined) {
-    return items;
-  }
-
-  return items.with(index, markedForCache(item, breakpoint));
-}
-
-/** `item` with the breakpoint's options merged into its own, per provider. */
-function markedForCache<T extends { providerOptions?: ProviderOptions }>(
-  item: T,
-  breakpoint: ProviderOptions,
-): T {
-  const providerOptions = { ...item.providerOptions };
-  for (const [provider, options] of Object.entries(breakpoint)) {
-    providerOptions[provider] = { ...providerOptions[provider], ...options };
-  }
-
-  return { ...item, providerOptions: providerOptions };
 }
 
 /**

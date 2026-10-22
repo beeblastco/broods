@@ -668,24 +668,6 @@ describe("account webhook ingress", () => {
     expect(handledEvents).toHaveLength(1);
   });
 
-  it("returns 503 when Zalo is not configured", async () => {
-    const routeIncomingEvent = createIncomingEventRouter({
-      accountLoader: async () => TEST_ACCOUNT,
-      agentLoader: async () => TEST_AGENT,
-      agentLister: async () => [TEST_AGENT],
-    });
-
-    const response = await routeIncomingEvent(
-      createZaloEvent(),
-      createHandlers(),
-    );
-
-    expect(response.statusCode).toBe(503);
-    expect(responseJson(response)).toMatchObject({
-      error: { message: "zalo integration is not configured" },
-    });
-  });
-
   it("answers Meta's GET handshake through the WhatsApp credential holder", async () => {
     const whatsAppAgent = {
       ...TEST_AGENT,

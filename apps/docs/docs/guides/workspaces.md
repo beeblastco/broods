@@ -243,7 +243,7 @@ These rules are checked when you save and again whenever the storage is used, so
 
 ## Files and sharing
 
-The dashboard Files tab lists, uploads, renames and deletes the same files the agent mounts. Uploads there are capped at 512 KiB per file; agents can write larger files through the mount.
+The dashboard Files tab lists, previews, uploads, renames and deletes the same files the agent mounts. Selecting a file previews it below the tree, and Enter keeps it open as a tab so several files can be reviewed side by side. Uploads and previews are capped at 512 KiB per file; agents can write larger files through the mount, and those offer Download instead of a preview.
 
 To hand a file to a person, mint a download link:
 

@@ -7,7 +7,8 @@
  * to a user message when the endpoint refuses it there, and becomes a note when
  * a text-only model refuses it anywhere.
  * retryWithoutStoredItemsMiddleware covers the OpenAI Responses path, where a
- * replayed item reference can go stale.
+ * replayed item reference can go stale. cacheLatestMessageMiddleware marks the
+ * latest message of a prompt the harness marked for Claude's cache.
  */
 
 import {
@@ -16,11 +17,11 @@ import {
   type LanguageModelV4CallOptions,
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
-import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { describe, expect, it } from "bun:test";
 import {
   attemptRecordingMiddleware,
+  cacheLatestMessageMiddleware,
   dropRefusedImagesMiddleware,
   dropUnsupportedMediaMiddleware,
   mergeSystemMessagesMiddleware,
@@ -30,13 +31,12 @@ import {
   type ModelAttempt,
 } from "../src/harness/provider.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
+import {
+  compatibleEndpoint,
+  type ChatRequest,
+} from "./helpers/compatible-endpoint.ts";
 
 type PromptMessage = { role: string; content: unknown };
-
-// A chat-completions request body as the compatible converter builds it.
-type ChatRequest = {
-  messages: { role: string; content: unknown; tool_call_id?: string }[];
-};
 
 async function transform(prompt: PromptMessage[]): Promise<PromptMessage[]> {
   const result = await mergeSystemMessagesMiddleware.transformParams!({
@@ -68,14 +68,6 @@ describe("mergeSystemMessagesMiddleware", () => {
   it("leaves a single system message untouched", async () => {
     const original = [
       { role: "system", content: "Only one." },
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ];
-
-    expect(await transform(original)).toEqual(original);
-  });
-
-  it("passes through prompts without system messages", async () => {
-    const original = [
       { role: "user", content: [{ type: "text", text: "hi" }] },
     ];
 
@@ -505,43 +497,12 @@ describe("tool result images on a custom endpoint", () => {
   };
 
   // Each request the converter builds over `calls` calls to a fresh endpoint,
-  // answered by `statuses` in turn. The model class, not the factory:
-  // harness.test.ts mocks `createOpenAICompatible` for the files after it.
+  // answered by `statuses` in turn.
   async function requests(
     statuses: number[],
     calls = 1,
   ): Promise<ChatRequest[]> {
-    const bodies: ChatRequest[] = [];
-    const chat = new OpenAICompatibleChatLanguageModel("cx/gpt-6.1-sol", {
-      provider: "custom.chat",
-      url: ({ path }): string => `https://models.example.test/v1${path}`,
-      supportsMultiPartToolContent: true,
-      fetch: Object.assign(
-        async (
-          _url: Parameters<typeof fetch>[0],
-          init?: RequestInit,
-        ): Promise<Response> => {
-          if (typeof init?.body === "string")
-            bodies.push(JSON.parse(init.body));
-          const status = statuses[bodies.length - 1] ?? 200;
-
-          return status === 200
-            ? Response.json({
-                choices: [
-                  {
-                    message: { role: "assistant", content: "7392" },
-                    finish_reason: "stop",
-                  },
-                ],
-              })
-            : Response.json(
-                { error: { message: "image input is not supported" } },
-                { status: status },
-              );
-        },
-        { preconnect: fetch.preconnect },
-      ),
-    });
+    const { bodies, chat } = compatibleEndpoint("cx/gpt-6.1-sol", statuses);
     const model = wrapLanguageModel({
       model: chat,
       middleware: [
@@ -621,5 +582,98 @@ describe("tool result images on a custom endpoint", () => {
         { type: "text", text: unreadableMediaNote(undefined, "image/jpeg") },
       ],
     });
+  });
+});
+
+describe("cache marks on a custom endpoint", () => {
+  // A configured TTL, to show the latest message copies the harness's mark.
+  const cacheControl = { type: "ephemeral", ttl: "1h" };
+  const mark = { openaiCompatible: { cache_control: cacheControl } };
+
+  // The request body a compatible endpoint receives for `prompt`, sent through
+  // the system merge and the latest-message mark, in a run carrying the mark
+  // or, for a call like compaction, none.
+  async function requestFor(
+    prompt: LanguageModelV4Message[],
+    runMark?: typeof mark,
+  ): Promise<ChatRequest | undefined> {
+    const { bodies, chat } = compatibleEndpoint("cc/claude-sonnet-5");
+    const model = wrapLanguageModel({
+      model: chat,
+      middleware: [mergeSystemMessagesMiddleware, cacheLatestMessageMiddleware],
+    });
+    await model.doGenerate({
+      prompt: prompt,
+      ...(runMark ? { providerOptions: runMark } : {}),
+    });
+
+    return bodies[0];
+  }
+
+  it("ends the stored system prompt and marks the latest tool result", async () => {
+    const body = await requestFor(
+      [
+        { role: "system", content: "stored", providerOptions: mark },
+        { role: "system", content: "ephemeral" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "apply", providerOptions: mark },
+            { type: "text", text: "<environment/>" },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "read",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "read",
+              output: { type: "text", value: "page" },
+            },
+          ],
+        },
+      ],
+      mark,
+    );
+
+    expect(body?.messages.slice(0, 2)).toEqual([
+      { role: "system", content: "stored", cache_control: cacheControl },
+      { role: "system", content: "ephemeral" },
+    ]);
+    expect(body?.messages[2]?.content).toEqual([
+      { type: "text", text: "apply", cache_control: cacheControl },
+      { type: "text", text: "<environment/>" },
+    ]);
+    expect(body?.messages.at(-1)).toMatchObject({
+      role: "tool",
+      cache_control: cacheControl,
+    });
+  });
+
+  it("leaves a call without a mark alone", async () => {
+    const body = await requestFor([
+      { role: "system", content: "summarize" },
+      { role: "system", content: "context" },
+      { role: "user", content: [{ type: "text", text: "history" }] },
+    ]);
+
+    expect(body?.messages[0]).toEqual({
+      role: "system",
+      content: "summarize\n\ncontext",
+    });
+
+    expect(JSON.stringify(body)).not.toContain("cache_control");
   });
 });

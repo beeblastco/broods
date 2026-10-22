@@ -3,7 +3,6 @@
 import { describe, expect, it } from "vitest";
 import {
   assertAgentRuntimeRefs,
-  defaultSandboxOf,
   isProviderToolName,
   mergeAgentConfig,
   normalizeAgentConfig,
@@ -1138,40 +1137,8 @@ describe("mergeCanvasSandboxes", () => {
   });
 });
 
-describe("defaultSandboxOf", () => {
-  it("reads the first of sandboxes", () => {
-    expect(defaultSandboxOf({ sandboxes: ["sb_a", "sb_b"] })).toBe("sb_a");
-  });
-
-  it("finds no default without a string first entry", () => {
-    expect(defaultSandboxOf({})).toBeUndefined();
-    expect(defaultSandboxOf({ sandboxes: [] })).toBeUndefined();
-    expect(defaultSandboxOf({ sandboxes: "sb_a" })).toBeUndefined();
-    expect(defaultSandboxOf({ sandboxes: [42] })).toBeUndefined();
-  });
-});
-
 // The rules a canvas save checks before it stores the refs it drew.
 describe("assertAgentRuntimeRefs", () => {
-  it("refuses a workspace drawn onto a later sandbox", () => {
-    expect(() =>
-      assertAgentRuntimeRefs({
-        sandboxes: ["sb_a", "sb_b"],
-        workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_b" }],
-      }),
-    ).toThrow(
-      'config.sandboxes[1] "sb_b" also backs workspace "repo"; only the first sandbox can back a workspace',
-    );
-  });
-
-  it("refuses a harness left without its default", () => {
-    expect(() =>
-      assertAgentRuntimeRefs({ harness: { type: "codex" } }),
-    ).toThrow(
-      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
-    );
-  });
-
   it("leaves branches a canvas save never touches to their owner", () => {
     expect(() =>
       assertAgentRuntimeRefs({

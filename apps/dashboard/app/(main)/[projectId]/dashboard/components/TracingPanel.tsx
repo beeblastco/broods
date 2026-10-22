@@ -4,15 +4,19 @@ import {
   DetailFields,
   DetailPayload,
   type DetailRow,
+  PayloadBody,
 } from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
-import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
+import {
+  STATUS_TONE_BG,
+  StatusDot,
+  type StatusTone,
+} from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import {
   TraceCollapsible,
-  TraceCollapsibleContent,
   TraceCollapsibleTrigger,
   TraceDescription,
   TraceIcon,
@@ -49,19 +53,23 @@ import {
   ArrowUpRight,
   Brain,
   ChevronRight,
+  ChevronsLeft,
   FileText,
   GitPullRequestArrow,
   MessageCircleQuestionMark,
   MessageSquare,
   Terminal,
+  TriangleAlert,
   Wrench,
   Zap,
   type LucideIcon,
 } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -78,6 +86,8 @@ import {
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
 import { useObservabilityView } from "@/app/hooks/useObservabilityView";
+import { useIsMobile } from "@/app/hooks/useIsMobile";
+import { useRemembered } from "@/app/hooks/useRemembered";
 import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
@@ -301,11 +311,15 @@ const TOOL_ICONS: ReadonlyArray<{ icon: LucideIcon; test: RegExp }> = [
   { icon: MessageCircleQuestionMark, test: /approv|question|ask/i },
 ];
 
+// The icon a step's note line opens with; the line's title is the kind itself.
+const NOTE_ICONS: Record<NoteKind, LucideIcon> = {
+  thought: Brain,
+  answer: MessageSquare,
+  question: MessageCircleQuestionMark,
+};
+
 // Avatars a task row stacks before "+N" for the rest of its subagents.
 const STACK_AVATARS = 4;
-
-// How much of a payload a line shows inline; the detail pane has it whole.
-const INLINE_PAYLOAD_CHARS = 2_000;
 
 // How many characters of a tool's first string argument its line shows.
 const TOOL_SUMMARY_CHARS = 80;
@@ -356,6 +370,38 @@ const STATUS_ALIASES: Readonly<Record<string, SpanStatus>> = {
 // The task list (w-80) plus the waterfall's min-w-xl, so dragging the detail
 // divider never pushes the waterfall's columns out of view.
 const TRACE_TABLE_MIN_WIDTH = 896;
+
+// Where the browser remembers that the task list is folded to its rail.
+const LIST_RAIL_KEY = "tracing:list-rail";
+
+// A live run's clock: its now line, running bars and durations move once a second.
+const LIVE_TICK_MS = 1000;
+
+// Room past the now line on a live run, so the newest bars are not pinned to the edge.
+const LIVE_HEADROOM = 1.1;
+
+// The selected run's time scale, from TimelineClock to the parts that move on its tick.
+const TimelineScaleContext = createContext<TimelineScale>({
+  nowMs: null,
+  spanMs: 1,
+  startMs: 0,
+});
+
+// Time axis steps, smallest first; the axis takes the first that spans the run
+// in AXIS_MAX_STEPS or fewer, so at most four labels share a narrow column.
+const AXIS_STEPS_MS = [
+  100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000,
+  300_000, 600_000, 900_000, 1_800_000, 3_600_000, 7_200_000,
+];
+const AXIS_MAX_STEPS = 3;
+
+// A tick this close to the axis end would overflow the column, so it is left out.
+const AXIS_LAST_TICK_PCT = 94;
+
+// The Timeline column's width, for its colgroup and the lines over it: up to
+// 40% of the waterfall while Span keeps 18rem beside Started, Status and
+// Duration (15.25rem), never under 22%.
+const TIMELINE_WIDTH = "clamp(22cqw, 100cqw - 33.25rem, 40cqw)";
 
 // One matcher per `field:value` search token. Values arrive lowercased. A task
 // matches on its own runs and on its subagents'.
@@ -408,10 +454,9 @@ export interface SpanGroup {
   // The run's status: its latest pass decides, and a finished request with a
   // subagent still running is waiting on it.
   status: SpanStatus;
-  // Whether the latest pass is still live, so a stale "running" reads as ended.
-  live: boolean;
-  // Tool calls that failed, even when the run recovered.
-  issueCount: number;
+  // The latest pass. It is live while isTaskRunning holds, judged when read
+  // so a pass past its limit ends without waiting for the stream.
+  latest: ObservabilitySpanRow;
   childrenByParent: Map<string, ObservabilitySpanRow[]>;
   // Root first, then every child, for search and selection.
   spans: ObservabilitySpanRow[];
@@ -450,29 +495,52 @@ type TaskQueryField = (typeof TASK_QUERY_FIELDS)[number];
 // words, rejoined, must appear in one span's search text.
 export type TaskQuery = Query<TaskQueryField>;
 
-// Consecutive model steps that all called one tool, shown as one row. `span`
-// is the synthetic row: first start to last end, summed duration.
-export interface StepFold {
+// Something that went wrong on one span: a failure, or retries it got past.
+export interface SpanIssue {
+  atMs: number;
+  level: Extract<StatusTone, "error" | "warn">;
   label: string;
-  span: ObservabilitySpanRow;
-  steps: ObservabilitySpanRow[];
+  text: string;
 }
 
-// One sibling row in the waterfall: a span, or a fold of steps.
-export type WaterfallItem =
-  | { type: "span"; span: ObservabilitySpanRow }
-  | { type: "fold"; fold: StepFold };
+// A step's text lines: its reasoning, and its response, which is the question
+// when the run stopped on it to ask the person.
+type NoteKind = "thought" | "answer" | "question";
+
+// The run's issues in time order, each with the rows above it that must be
+// open for it to render; per span id the issues under it; and per span id
+// its own.
+export interface RunIssues {
+  all: Array<{
+    issue: SpanIssue;
+    path: ObservabilitySpanRow[];
+    span: ObservabilitySpanRow;
+  }>;
+  below: Map<string, SpanIssue[]>;
+  own: Map<string, SpanIssue>;
+}
+
+// The time scale every bar, axis tick and line of the selected run reads.
+// `nowMs` is set while the run is live.
+interface TimelineScale {
+  nowMs: number | null;
+  spanMs: number;
+  startMs: number;
+}
 
 // What every waterfall row of the selected run reads and calls.
 interface WaterfallView {
+  /** The run a pick or a link landed on, ringed for a moment. */
   focusTraceId: string | null;
   group: SpanGroup;
+  issues: RunIssues;
+  live: boolean;
   onFocusTrace: (traceId: string) => void;
   onSelect: (key: string) => void;
   selectedKey: string | null;
   toggle: (key: string) => void;
-  // Rows whose fold the person flipped from its default: a step starts open,
-  // a fold of steps closed.
+  // Rows the person flipped from their default: a step starts open, anything
+  // else closed.
   toggled: Set<string>;
 }
 
@@ -480,6 +548,24 @@ interface WaterfallView {
 interface ListRow {
   group: SpanGroup;
   parent: SpanGroup | null;
+}
+
+// The task list on the left: its rows, or a rail of their status dots.
+interface TaskListPaneProps {
+  rail: boolean;
+  onToggleRail: () => void;
+  rows: ListRow[];
+  selectedGroup: SpanGroup | null;
+  stackChoices: ReadonlyMap<string, boolean>;
+  onSelect: (root: ObservabilitySpanRow) => void;
+  onToggleStack: (root: ObservabilitySpanRow, open: boolean) => void;
+  // What the list says when it has no rows.
+  emptyMessage: string;
+  // Tasks loaded and in all, counted by request; subagent rows are extra.
+  shown: number;
+  total: number;
+  remaining: number;
+  onLoadMore: () => void;
 }
 
 // The list row's props, primitives and stable callbacks so the memoized row
@@ -512,6 +598,12 @@ export function TracingPanel({
     parseAsTraceId,
   );
   const [toggled, setToggled] = useState<Set<string>>(new Set());
+  // The task list folded to a rail of status dots, so one trace gets the width.
+  // Desktop only: on a phone the list stacks above the trace, so a rail of
+  // full-width dot rows saves nothing.
+  const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
+  const isMobile = useIsMobile();
+  const rail = railChosen && !isMobile;
   // Whether a request's subagent rows list, where the person chose; with no
   // choice they list while the selected run is that request or under it.
   const [stackChoices, setStackChoices] = useState<
@@ -971,44 +1063,24 @@ export function TracingPanel({
         }
       >
         <div className="flex h-full min-h-0 flex-col md:flex-row">
-          <div
-            data-scroll-pane
-            className="max-h-72 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-80 md:border-r md:border-b-0"
-          >
-            {listRows.map(({ group, parent }) => (
-              <TaskListRow
-                key={spanKey(group.root)}
-                root={group.root}
-                status={group.status}
-                tone={groupTone(group)}
-                taskDurationMs={group.taskDurationMs}
-                cause={failureCause(group)}
-                isSubagent={parent !== null}
-                subagentNames={group.subagents
-                  .map((subagent) => subagentName(subagent.root))
-                  .join("\n")}
-                isSelected={group === selectedGroup}
-                stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
-                onSelect={pickTask}
-                onToggleStack={toggleStack}
-              />
-            ))}
-            {groups.length === 0 && (
-              <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                {entries.length === 0
-                  ? emptyStreamMessage(history, error, "traces", "7 days")
-                  : "No tasks match the current filters."}
-              </p>
-            )}
-            <LoadMore
-              shown={groups.length}
-              total={allGroups.length}
-              noun={["task", "tasks"]}
-              pageSize={PAGE_SIZE}
-              remaining={remaining}
-              onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
-            />
-          </div>
+          <TaskListPane
+            rail={rail}
+            onToggleRail={() => setRail(!railChosen)}
+            rows={listRows}
+            selectedGroup={selectedGroup}
+            stackChoices={stackChoices}
+            onSelect={pickTask}
+            onToggleStack={toggleStack}
+            emptyMessage={
+              entries.length === 0
+                ? emptyStreamMessage(history, error, "traces", "7 days")
+                : "No tasks match the current filters."
+            }
+            shown={groups.length}
+            total={allGroups.length}
+            remaining={remaining}
+            onLoadMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
+          />
 
           <div
             data-scroll-pane
@@ -1016,6 +1088,7 @@ export function TracingPanel({
           >
             {selectedGroup && (
               <TaskWaterfall
+                key={spanKey(selectedGroup.root)}
                 attempt={continueAttempts.get(selectedGroup.root.traceId)}
                 chain={chain}
                 projectSlug={projectSlug}
@@ -1138,33 +1211,6 @@ export function failureCause(group: SpanGroup): string | null {
     : error;
 }
 
-/**
- * The waterfall's sibling rows: runs of two or more model steps whose tool
- * calls all go to one tool fold into one row, everything else stays a span.
- */
-export function foldSteps(
-  siblings: ObservabilitySpanRow[],
-  childrenByParent: Map<string, ObservabilitySpanRow[]>,
-): WaterfallItem[] {
-  const runs: Array<{ tool: string | null; spans: ObservabilitySpanRow[] }> =
-    [];
-  for (const span of siblings) {
-    const tool = soleToolName(span, childrenByParent);
-    const last = runs.at(-1);
-    if (tool !== null && last?.tool === tool) {
-      last.spans.push(span);
-    } else {
-      runs.push({ tool: tool, spans: [span] });
-    }
-  }
-
-  return runs.flatMap(({ tool, spans }): WaterfallItem[] =>
-    tool !== null && spans.length > 1
-      ? [{ type: "fold", fold: stepFold(tool, spans, childrenByParent) }]
-      : spans.map((span): WaterfallItem => ({ type: "span", span: span })),
-  );
-}
-
 /** Whether a request passes the search box: every field token, then the free text. */
 export function matchesTaskQuery(group: SpanGroup, query: TaskQuery): boolean {
   if (
@@ -1192,6 +1238,91 @@ export function taskChannel(root: ObservabilitySpanRow): string {
   );
 }
 
+/**
+ * The time axis ticks for a window `spanMs` long, as offsets from its start.
+ * A window past the longest step (a run that waited days on a person) steps
+ * in whole hours.
+ */
+export function axisTicks(spanMs: number): number[] {
+  const step =
+    AXIS_STEPS_MS.find((candidate) => spanMs / candidate <= AXIS_MAX_STEPS) ??
+    Math.ceil(spanMs / AXIS_MAX_STEPS / 3_600_000) * 3_600_000;
+
+  return Array.from(
+    { length: Math.floor(spanMs / step) + 1 },
+    (_, index) => index * step,
+  );
+}
+
+/**
+ * Every issue in the run in time order, and the issues under each span, read
+ * down the same tree the waterfall renders: a subagent is one leaf line.
+ * Each issue keeps the rows above it, so a click can open them.
+ */
+export function runIssues(group: SpanGroup): RunIssues {
+  const all: RunIssues["all"] = [];
+  const below = new Map<string, SpanIssue[]>();
+  const own = new Map<string, SpanIssue>();
+  const walk = (
+    span: ObservabilitySpanRow,
+    path: ObservabilitySpanRow[],
+  ): SpanIssue[] => {
+    const isTaskRow = span === group.root;
+    const children = rowChildren(span, isTaskRow, group);
+    // The task row is always open, so it is never on a path.
+    const inside = isTaskRow ? path : [...path, span];
+    const under = children.flatMap((child) => walk(child, inside));
+    below.set(span.spanId, under);
+    // A failure counts once, where it happened: core closes the open step and
+    // tool with the run's error, so a span that failed with a failure under it
+    // passed that one up. The task row stands for the whole request, so a
+    // first pass that failed and was continued is not its issue either.
+    const found = spanIssue(span);
+    const passedUp =
+      found?.level === "error" &&
+      under.some((item) => item.level === "error" && item.text === found.text);
+    const issue =
+      passedUp || (isTaskRow && group.status !== "error") ? null : found;
+    if (!issue) return under;
+    own.set(span.spanId, issue);
+    all.push({ issue: issue, path: path, span: span });
+
+    return [issue, ...under];
+  };
+  walk(group.root, []);
+  all.sort((left, right) => left.issue.atMs - right.issue.atMs);
+
+  return { all: all, below: below, own: own };
+}
+
+/**
+ * What went wrong on a span: it failed, or it retried a model call or a rate
+ * limited tool before it went through.
+ */
+export function spanIssue(span: ObservabilitySpanRow): SpanIssue | null {
+  if (span.status === "error") {
+    return {
+      atMs: span.endTimeMs,
+      level: "error",
+      label: "Failed",
+      text: span.error ?? "",
+    };
+  }
+  const retries = Math.max(
+    (numericAttribute(span, "model.attempts") ?? 1) - 1,
+    numericAttribute(span, "tool.retry.count") ?? 0,
+  );
+  if (retries <= 0) return null;
+
+  return {
+    atMs:
+      span.startTimeMs + (numericAttribute(span, "model.retry_wait_ms") ?? 0),
+    level: "warn",
+    label: `Retried ${retries}×`,
+    text: attemptErrors(span),
+  };
+}
+
 /** A request's spans and its subagents', for search. */
 function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   return [
@@ -1200,11 +1331,49 @@ function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   ];
 }
 
+/** The step whose response is the question a run stopped on, when it stopped on one. */
+function askedStepId(
+  run: ObservabilitySpanRow,
+  childrenByParent: Map<string, ObservabilitySpanRow[]>,
+): string | undefined {
+  if (run.attributes?.["task.waiting_on"] !== "question") return undefined;
+
+  return (childrenByParent.get(run.spanId) ?? []).findLast(
+    (child) => child.kind === "model.step",
+  )?.spanId;
+}
+
+/** A retried model call's failed attempts on one line; core sends them as a JSON array. */
+function attemptErrors(span: ObservabilitySpanRow): string {
+  const raw = attributeText(span.attributes?.["model.attempt_errors"]);
+  if (!raw) return "";
+  try {
+    const parsed: unknown = JSON.parse(raw);
+
+    return Array.isArray(parsed) ? parsed.map(String).join(" · ") : raw;
+  } catch {
+    return raw;
+  }
+}
+
 function attributeText(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "number") return value.toLocaleString();
 
   return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+/** A time axis tick, short enough to sit five to a column: `0`, `500ms`, `15s`, `1m 30s`, `15h`. */
+function axisLabel(ms: number): string {
+  if (ms === 0) return "0";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${ms / 1000}s`;
+  const [major, unit, minor, minorUnit] =
+    ms < 3_600_000
+      ? [Math.floor(ms / 60_000), "m", (ms % 60_000) / 1000, "s"]
+      : [Math.floor(ms / 3_600_000), "h", (ms % 3_600_000) / 60_000, "m"];
+
+  return minor > 0 ? `${major}${unit} ${minor}${minorUnit}` : `${major}${unit}`;
 }
 
 // Only a failed top-level task can be continued: a subtask belongs to its
@@ -1308,7 +1477,7 @@ function flipped(current: Set<string>, key: string): Set<string> {
 
 /** A task's dot: a stale "running" reads as ended. */
 function groupTone(group: SpanGroup): StatusTone {
-  return group.status === "running" && !group.live
+  return group.status === "running" && !isTaskRunning(group.latest)
     ? "ended"
     : STATUS_TONE[group.status];
 }
@@ -1320,13 +1489,9 @@ function hasTrace(group: SpanGroup, traceId: string): boolean {
   );
 }
 
-/** The start of a payload for its line; the detail pane has it whole. */
-function inlinePayload(value: unknown): string {
-  const text = displayAttribute(value);
-
-  return text.length > INLINE_PAYLOAD_CHARS
-    ? `${text.slice(0, INLINE_PAYLOAD_CHARS)}…`
-    : text;
+/** Whether a waterfall row is open: a step starts open, anything else closed, and `toggled` flips that. */
+function isRowOpen(span: ObservabilitySpanRow, toggled: Set<string>): boolean {
+  return (span.kind === "model.step") !== toggled.has(spanKey(span));
 }
 
 /**
@@ -1439,27 +1604,25 @@ function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
   );
 }
 
-/** A row's name. A later run nested under its task reads as resumed. */
-function rowLabel(span: ObservabilitySpanRow, isTaskRow: boolean): string {
-  return !isTaskRow && (span.kind === "task" || span.kind === "cron")
-    ? "resumed"
-    : spanLabel(span);
+/**
+ * The spans listed under a row, for the waterfall and its issues alike. A
+ * subagent is one leaf line: its own run lists on its own.
+ */
+function rowChildren(
+  span: ObservabilitySpanRow,
+  isTaskRow: boolean,
+  group: SpanGroup,
+): ObservabilitySpanRow[] {
+  return span.kind === "subtask" && !isTaskRow
+    ? []
+    : (group.childrenByParent.get(span.spanId) ?? []);
 }
 
-/** The one named tool every tool call of a model step went to, or null. */
-function soleToolName(
-  span: ObservabilitySpanRow,
-  childrenByParent: Map<string, ObservabilitySpanRow[]>,
-): string | null {
-  if (span.kind !== "model.step") return null;
-  const names = new Set(
-    (childrenByParent.get(span.spanId) ?? [])
-      .filter((child) => child.kind === "tool.call")
-      .map((child) => child.attributes?.["tool.name"]),
-  );
-  const [name] = names;
-
-  return names.size === 1 && typeof name === "string" ? name : null;
+/** A row's name. A later run nested under its task reads as resumed. */
+function rowLabel(span: ObservabilitySpanRow): string {
+  return span.kind === "task" || span.kind === "cron"
+    ? "resumed"
+    : spanLabel(span);
 }
 
 function spanKey(span: ObservabilitySpanRow): string {
@@ -1528,6 +1691,19 @@ function spanSearchText(span: ObservabilitySpanRow): string {
   return text;
 }
 
+/** A model step's reasoning and response texts, when it has them; nothing for any other span. */
+function stepNotes(span: ObservabilitySpanRow): {
+  reasoning: string | undefined;
+  response: string | undefined;
+} {
+  const isStep = span.kind === "model.step";
+
+  return {
+    reasoning: isStep ? noteText(span, "model.reasoning") : undefined,
+    response: isStep ? noteText(span, "model.response") : undefined,
+  };
+}
+
 /** Total tokens, in the root's spelling or a model step's. */
 function spanTokens(span: ObservabilitySpanRow): number | undefined {
   return (
@@ -1553,57 +1729,6 @@ function runTraceIds(group: SpanGroup): string[] {
 /** Keeps a click inside a line's own control from selecting the row. */
 function stopRowClick(event: MouseEvent): void {
   event.stopPropagation();
-}
-
-/** The folded row for steps that all called `tool`, spanning first start to last end. */
-function stepFold(
-  tool: string,
-  steps: ObservabilitySpanRow[],
-  childrenByParent: Map<string, ObservabilitySpanRow[]>,
-): StepFold {
-  const first = steps[0];
-  const firstNumber = numericAttribute(first, "agent.step_number");
-  const lastNumber = numericAttribute(
-    steps[steps.length - 1],
-    "agent.step_number",
-  );
-  const range =
-    firstNumber !== undefined && lastNumber !== undefined
-      ? `step ${firstNumber + 1}-${lastNumber + 1}`
-      : "steps";
-  const calls = steps.reduce(
-    (count, step) =>
-      count +
-      (childrenByParent.get(step.spanId) ?? []).filter(
-        (child) => child.kind === "tool.call",
-      ).length,
-    0,
-  );
-  const endTimeMs = Math.max(...steps.map((step) => step.endTimeMs));
-
-  return {
-    label: `${range} ${tool} ×${calls}`,
-    steps: steps,
-    span: {
-      ...first,
-      spanId: `${first.spanId}:fold`,
-      endTimeMs: endTimeMs,
-      durationMs: steps.reduce((sum, step) => sum + step.durationMs, 0),
-      // A failed tool call leaves its step ok, so the fold looks at both.
-      status: steps.some(
-        (step) =>
-          step.status === "error" ||
-          (childrenByParent.get(step.spanId) ?? []).some(
-            (child) => child.status === "error",
-          ),
-      )
-        ? "error"
-        : steps.some((step) => step.status === "running")
-          ? "running"
-          : "ok",
-      attributes: {},
-    },
-  };
 }
 
 /** The agent a subagent run is, for its avatar and name. */
@@ -1686,10 +1811,7 @@ function taskGroup(
   return {
     root: root,
     status: last.status,
-    live: live,
-    issueCount: children.filter(
-      (span) => span.kind === "tool.call" && span.status === "error",
-    ).length,
+    latest: last,
     childrenByParent: childrenByParent,
     spans: [root, ...members],
     windowStart: windowStart,
@@ -1718,6 +1840,11 @@ function taskKey(root: ObservabilitySpanRow): string {
     root.attributes?.["task.root_id"] ?? root.attributes?.["task.id"];
 
   return typeof taskId === "string" && taskId ? taskId : root.traceId;
+}
+
+/** Where a moment falls on the timeline, as a percent of its width. */
+function timelinePct(ms: number, scale: TimelineScale): number {
+  return ((ms - scale.startMs) / scale.spanMs) * 100;
 }
 
 /** The icon a tool call's line opens with. */
@@ -1901,27 +2028,20 @@ function ContinueAction({
 }
 
 /**
- * A row under a step that is not a span of its own: the step's reasoning or
- * its answer, read off the step's attributes. Opens on the text, selects the
- * step.
+ * A failed span's error, on its own line right under the span's row, so it
+ * reads without opening anything. Selects the span.
  */
-function NoteRow({
+function ErrorRow({
   depth,
-  icon,
   isSelected,
   onClick,
   text,
-  title,
 }: {
   depth: number;
-  icon: LucideIcon;
   isSelected: boolean;
   onClick: () => void;
   text: string;
-  title: string;
 }): React.JSX.Element {
-  const Icon = icon;
-
   return (
     <tr
       onClick={onClick}
@@ -1933,25 +2053,192 @@ function NoteRow({
       {/* Past the Started column (w-22), then the row's own indent. */}
       <td
         colSpan={5}
-        aria-label={title}
+        className="relative pt-0 pr-3 pb-1.5 pl-(--row-indent) text-destructive"
+        style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
+        title={text}
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute inset-y-0 left-0 w-0.5",
+            STATUS_TONE_BG.error,
+          )}
+        />
+        <span className="line-clamp-2 wrap-anywhere">{text}</span>
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * A row under a step that is not a span of its own: the step's reasoning or
+ * its answer, read off the step's attributes. Opens on the text, selects the
+ * step.
+ */
+function NoteRow({
+  depth,
+  icon,
+  isOpen,
+  isSelected,
+  onClick,
+  onToggle,
+  title,
+}: {
+  depth: number;
+  icon: LucideIcon;
+  isOpen: boolean;
+  isSelected: boolean;
+  onClick: () => void;
+  onToggle: () => void;
+  title: string;
+}): React.JSX.Element {
+  const Icon = icon;
+
+  return (
+    <WideRow
+      depth={depth}
+      isSelected={isSelected}
+      label={title}
+      onClick={onClick}
+    >
+      <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
+        <TraceLine size="xs">
+          <TraceIcon>
+            <Icon />
+          </TraceIcon>
+          <TraceTitle>{title}</TraceTitle>
+        </TraceLine>
+      </FoldTrigger>
+    </WideRow>
+  );
+}
+
+/**
+ * A row across all five columns, indented like a Span cell at `depth`: a
+ * step's note line, or an open line's payload. With `onClick` it selects a
+ * span, like a row.
+ */
+function WideRow({
+  children,
+  depth,
+  isSelected,
+  label,
+  onClick,
+}: {
+  children: ReactNode;
+  depth: number;
+  isSelected: boolean;
+  label?: string;
+  onClick?: () => void;
+}): React.JSX.Element {
+  return (
+    <tr
+      onClick={onClick}
+      className={cn(
+        "border-b border-border/40 transition-colors",
+        onClick && "cursor-pointer hover:bg-accent/20",
+        isSelected && "bg-accent",
+      )}
+    >
+      {/* Past the Started column (w-22), then the row's own indent. */}
+      <td
+        colSpan={5}
+        aria-label={label}
         className="py-1.5 pr-3 pl-(--row-indent)"
         style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
       >
-        <TraceCollapsible>
-          <TraceCollapsibleTrigger onClick={(event) => event.stopPropagation()}>
-            <TraceLine size="xs">
-              <TraceIcon>
-                <Icon />
-              </TraceIcon>
-              <TraceTitle>{title}</TraceTitle>
-            </TraceLine>
-          </TraceCollapsibleTrigger>
-          <TraceCollapsibleContent size="xs">
-            <pre className="whitespace-pre-wrap wrap-anywhere">{text}</pre>
-          </TraceCollapsibleContent>
-        </TraceCollapsible>
+        {children}
       </td>
     </tr>
+  );
+}
+
+/** A row's duration cell; a span that runs to now counts up on the clock's tick. */
+function RowDuration({
+  durationMs,
+  runsToNow,
+  startMs,
+}: {
+  durationMs: number;
+  runsToNow: boolean;
+  startMs: number;
+}): React.JSX.Element {
+  const { nowMs } = useContext(TimelineScaleContext);
+  const shownMs =
+    runsToNow && nowMs !== null
+      ? Math.max(durationMs, nowMs - startMs)
+      : durationMs;
+
+  return (
+    <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
+      {shownMs > 0 ? formatDuration(shownMs) : "—"}
+    </td>
+  );
+}
+
+/**
+ * A line's chevron trigger. The open state lives in the waterfall, not here,
+ * because what it opens is the `PayloadRow` under the line, not a panel
+ * inside the cell: the payload then reads at the table's full width.
+ */
+function FoldTrigger({
+  children,
+  isOpen,
+  onToggle,
+}: {
+  children: ReactNode;
+  isOpen: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  return (
+    <TraceCollapsible open={isOpen} onOpenChange={onToggle}>
+      <TraceCollapsibleTrigger onClick={stopRowClick}>
+        {children}
+      </TraceCollapsibleTrigger>
+    </TraceCollapsible>
+  );
+}
+
+/**
+ * What an open line holds, as its own row under the line so the line keeps
+ * its start, duration and bar on one short row and the text gets the whole
+ * table width, pane open or not. Hangs off a rule under the line's icon. Not
+ * clickable, so a drag selects its text; the line above selects the span.
+ */
+function PayloadRow({
+  children,
+  ...row
+}: Omit<React.ComponentProps<typeof WideRow>, "onClick">): React.JSX.Element {
+  return (
+    <WideRow {...row}>
+      <div className="ml-2 grid min-w-0 gap-2 border-l pr-1 pl-4 text-xs leading-relaxed text-muted-foreground">
+        {children}
+      </div>
+    </WideRow>
+  );
+}
+
+/** One payload of an open line, capped in height and scrolling inside itself. */
+function PayloadText({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}): React.JSX.Element {
+  return (
+    <div className="grid min-w-0 gap-1">
+      <span className="flex items-center gap-2 text-2xs text-muted-foreground">
+        {label}
+        <span className="font-mono tabular-nums">
+          {formatNumber(value.length)} chars
+        </span>
+      </span>
+      <PayloadBody
+        value={value}
+        className="max-h-48 rounded-md border border-border/60 px-2"
+      />
+    </div>
   );
 }
 
@@ -1962,13 +2249,29 @@ function NoteRow({
 function RowStatus({
   span,
   group,
+  issue,
   taskRunning,
 }: {
   span: ObservabilitySpanRow;
   group: SpanGroup | undefined;
+  issue: SpanIssue | null;
   taskRunning: boolean;
 }): React.JSX.Element | null {
   if (!group) {
+    if (issue) {
+      return (
+        <span
+          className={cn(
+            "flex items-center gap-1.5 whitespace-nowrap",
+            issue.level === "error" ? "text-destructive" : "text-warning",
+          )}
+          title={issue.text || undefined}
+        >
+          <StatusDot tone={issue.level} />
+          {issue.label}
+        </span>
+      );
+    }
     if (span.status === "ok") return null;
 
     return (
@@ -2041,14 +2344,17 @@ function SpanDetails({
 
 /** A context prepare, cold start or wait: its name, the messages it loaded, the questions it asked. */
 function PhaseLine({
+  isOpen,
+  onToggle,
   span,
 }: {
+  isOpen: boolean;
+  onToggle: () => void;
   span: ObservabilitySpanRow;
 }): React.JSX.Element {
   const name = spanLabel(span);
   const Icon = span.name === WAIT_SPAN_NAME ? MessageCircleQuestionMark : Zap;
   const historyRows = numericAttribute(span, "prepare.history_rows");
-  const questions = span.attributes?.["task.questions"];
   const line = (
     <TraceLine size="xs">
       <TraceIcon>
@@ -2062,19 +2368,12 @@ function PhaseLine({
       )}
     </TraceLine>
   );
-  if (questions === undefined) return line;
+  if (span.attributes?.["task.questions"] === undefined) return line;
 
   return (
-    <TraceCollapsible>
-      <TraceCollapsibleTrigger onClick={stopRowClick}>
-        {line}
-      </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent size="xs">
-        <pre className="whitespace-pre-wrap wrap-anywhere">
-          {inlinePayload(questions)}
-        </pre>
-      </TraceCollapsibleContent>
-    </TraceCollapsible>
+    <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
+      {line}
+    </FoldTrigger>
   );
 }
 
@@ -2088,7 +2387,6 @@ function SpanLine({
   hasChildren,
   isOpen,
   isTaskRow,
-  label,
   onFocusTrace,
   onToggle,
   span,
@@ -2096,7 +2394,6 @@ function SpanLine({
   hasChildren: boolean;
   isOpen: boolean;
   isTaskRow: boolean;
-  label: string | undefined;
   onFocusTrace: (traceId: string) => void;
   onToggle: () => void;
   span: ObservabilitySpanRow;
@@ -2113,21 +2410,25 @@ function SpanLine({
   if (span.kind === "subtask") {
     return <SubagentLine span={span} onFocusTrace={onFocusTrace} />;
   }
-  if (span.kind === "tool.call") return <ToolLine span={span} />;
-  if (span.kind === "phase") return <PhaseLine span={span} />;
+  if (span.kind === "tool.call") {
+    return <ToolLine isOpen={isOpen} onToggle={onToggle} span={span} />;
+  }
+  if (span.kind === "phase") {
+    return <PhaseLine isOpen={isOpen} onToggle={onToggle} span={span} />;
+  }
 
   return (
     <StepLine
       hasChildren={hasChildren}
       isOpen={isOpen}
-      name={label ?? rowLabel(span, false)}
+      name={rowLabel(span)}
       onToggle={onToggle}
       span={span}
     />
   );
 }
 
-/** A model step, a fold of steps or a resumed pass: the name, the tokens, and the chevron that folds what ran under it. */
+/** A model step or a resumed pass: the name, the tokens, and the chevron that folds what ran under it. */
 function StepLine({
   hasChildren,
   isOpen,
@@ -2204,62 +2505,73 @@ function SubagentLine({
   );
 }
 
-/** A tool call: its icon, name and first argument; opens on its input, output and error. */
-function ToolLine({ span }: { span: ObservabilitySpanRow }): React.JSX.Element {
+/** A tool call: its icon, name and first argument; opens its input and output under the row. Its error has its own row. */
+function ToolLine({
+  isOpen,
+  onToggle,
+  span,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  span: ObservabilitySpanRow;
+}): React.JSX.Element {
   const name = spanLabel(span);
   const Icon = toolIcon(span);
   const summary = toolSummary(span);
-  const input = span.attributes?.["tool.input"];
-  const output = span.attributes?.["tool.output"];
 
   return (
-    <TraceCollapsible>
-      <TraceCollapsibleTrigger onClick={stopRowClick}>
-        <TraceLine
-          size="xs"
-          status={span.status === "error" ? "error" : undefined}
-        >
-          <TraceIcon>
-            <Icon />
-          </TraceIcon>
-          <TraceTitle title={summary ? `${name} ${summary}` : name}>
-            {name}
-            {summary && (
-              <>
-                {" "}
-                <span className="text-muted-foreground/70">{summary}</span>
-              </>
-            )}
-          </TraceTitle>
-        </TraceLine>
-      </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent size="xs">
-        <div className="grid gap-2">
-          {span.error && <span className="text-destructive">{span.error}</span>}
-          {input !== undefined && (
-            <pre className="whitespace-pre-wrap wrap-anywhere">
-              {inlinePayload(input)}
-            </pre>
+    <FoldTrigger isOpen={isOpen} onToggle={onToggle}>
+      <TraceLine
+        size="xs"
+        status={span.status === "error" ? "error" : undefined}
+      >
+        <TraceIcon>
+          <Icon />
+        </TraceIcon>
+        <TraceTitle title={summary ? `${name} ${summary}` : name}>
+          {name}
+          {summary && (
+            <>
+              {" "}
+              <span className="text-muted-foreground/70">{summary}</span>
+            </>
           )}
-          {output !== undefined && (
-            <pre className="whitespace-pre-wrap wrap-anywhere text-foreground/80">
-              {inlinePayload(output)}
-            </pre>
-          )}
-        </div>
-      </TraceCollapsibleContent>
-    </TraceCollapsible>
+        </TraceTitle>
+      </TraceLine>
+    </FoldTrigger>
+  );
+}
+
+/** What an open tool call or wait row shows under its line: the tool's input and output, or the wait's questions. */
+function spanPayload(span: ObservabilitySpanRow): ReactNode {
+  const input = span.attributes?.["tool.input"];
+  const output = span.attributes?.["tool.output"];
+  const questions = span.attributes?.["task.questions"];
+
+  return (
+    <>
+      {input !== undefined && (
+        <PayloadText label="input" value={displayAttribute(input)} />
+      )}
+      {output !== undefined && (
+        <PayloadText label="output" value={displayAttribute(output)} />
+      )}
+      {questions !== undefined && (
+        <PayloadText label="questions" value={displayAttribute(questions)} />
+      )}
+    </>
   );
 }
 
 /**
  * One waterfall row. The task row (depth 0) is always open and reads the whole
- * request's status and duration. `label` names a folded run of steps.
+ * request's status and duration. An issue on the row marks its edge;
+ * `below` counts the issues under it and, while it is closed, marks them on
+ * its bar.
  */
 function SpanRow({
   span,
   depth,
-  label,
   isOpen,
   hasChildren,
   onToggle,
@@ -2269,10 +2581,12 @@ function SpanRow({
   taskRunning,
   highlighted,
   onFocusTrace,
+  issue,
+  below,
+  live,
 }: {
   span: ObservabilitySpanRow;
   depth: number;
-  label?: string;
   isOpen: boolean;
   hasChildren: boolean;
   onToggle: () => void;
@@ -2282,50 +2596,87 @@ function SpanRow({
   taskRunning: boolean;
   highlighted: boolean;
   onFocusTrace: (traceId: string) => void;
+  issue: SpanIssue | null;
+  below: SpanIssue[];
+  live: boolean;
 }): React.JSX.Element {
   const isTaskRow = depth === 0;
+  // A running span runs to now. The task row reads the whole request, which
+  // is live while its latest pass is, so it runs to now too.
+  const runsToNow = isTaskRow ? live : span.status === "running" && taskRunning;
   const durationMs = isTaskRow ? group.taskDurationMs : span.durationMs;
+  const belowErrors = below.filter((item) => item.level === "error").length;
 
   return (
     <tr
       onClick={onClick}
+      data-span-key={spanKey(span)}
       className={cn(
-        "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
+        "cursor-pointer border-b border-border/40 transition hover:bg-accent/20",
         isSelected && "bg-accent",
         !isRootSpanKind(span.kind) && "text-foreground/80",
-        highlighted && "bg-info/10 ring-1 ring-inset ring-info/40",
+        highlighted && "animate-trace-flash",
+        // A span that arrives while the run is live fades in once.
+        live && "starting:opacity-0",
       )}
     >
       <td
-        className="px-3 py-1.5 font-mono whitespace-nowrap tabular-nums text-muted-foreground"
+        className="relative px-3 py-1.5 font-mono whitespace-nowrap tabular-nums text-muted-foreground"
         title={new Date(span.startTimeMs).toLocaleString()}
       >
+        {issue && (
+          <span
+            aria-hidden="true"
+            className={cn(
+              "absolute inset-y-0 left-0 w-0.5",
+              STATUS_TONE_BG[issue.level],
+            )}
+          />
+        )}
         {formatTime(span.startTimeMs)}
       </td>
       <td
         className="py-1.5 pr-3 pl-(--row-indent)"
         style={{ "--row-indent": `${depth * 18 + 12}px` }}
       >
-        <SpanLine
-          hasChildren={hasChildren}
-          isOpen={isOpen}
-          isTaskRow={isTaskRow}
-          label={label}
-          onFocusTrace={onFocusTrace}
-          onToggle={onToggle}
-          span={span}
-        />
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0">
+            <SpanLine
+              hasChildren={hasChildren}
+              isOpen={isOpen}
+              isTaskRow={isTaskRow}
+              onFocusTrace={onFocusTrace}
+              onToggle={onToggle}
+              span={span}
+            />
+          </span>
+          {below.length > 0 && (
+            <span
+              className={cn(
+                "flex shrink-0 cursor-help items-center gap-0.5 font-mono tabular-nums",
+                belowErrors > 0 ? "text-destructive" : "text-warning",
+              )}
+              title={`${belowErrors} failed, ${below.length - belowErrors} retried under this span`}
+            >
+              <TriangleAlert className="size-3" />
+              {below.length}
+            </span>
+          )}
+        </span>
       </td>
       <td className="px-3 py-1.5">
         <RowStatus
           span={span}
           group={isTaskRow ? group : undefined}
+          issue={issue}
           taskRunning={taskRunning}
         />
       </td>
-      <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
-        {durationMs > 0 ? formatDuration(durationMs) : "—"}
-      </td>
+      <RowDuration
+        durationMs={durationMs}
+        runsToNow={runsToNow}
+        startMs={span.startTimeMs}
+      />
       <td className="px-3 py-1.5">
         <TimelineBar
           span={
@@ -2337,9 +2688,10 @@ function SpanRow({
                 }
               : span
           }
-          windowStart={group.windowStart}
-          windowSpan={group.windowSpan}
+          runsToNow={runsToNow}
           taskRunning={taskRunning}
+          failed={issue?.level === "error"}
+          marks={hasChildren && !isOpen ? below : []}
         />
       </td>
     </tr>
@@ -2409,6 +2761,109 @@ function SpanTimings({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The task list, or its rail: the toggle at the top, then one row or one dot
+ * per task. The rail keeps the order, the status and the selection of the
+ * list in 36px, so one trace gets the width without losing where you are.
+ * The pane slides between the two widths.
+ */
+function TaskListPane({
+  rail,
+  onToggleRail,
+  rows,
+  selectedGroup,
+  stackChoices,
+  onSelect,
+  onToggleStack,
+  emptyMessage,
+  shown,
+  total,
+  remaining,
+  onLoadMore,
+}: TaskListPaneProps): React.JSX.Element {
+  return (
+    <div
+      data-scroll-pane
+      className={cn(
+        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border transition-box duration-200 ease-out motion-reduce:transition-none md:max-h-none md:border-r md:border-b-0",
+        rail ? "md:w-9" : "md:w-80",
+      )}
+    >
+      <div className="min-h-full">
+        <div
+          className={cn(
+            "sticky top-0 z-10 hidden border-b border-border/60 bg-card md:flex",
+            rail ? "justify-center" : "justify-end",
+          )}
+        >
+          <button
+            type="button"
+            onClick={onToggleRail}
+            aria-pressed={rail}
+            aria-label={rail ? "Show the task list" : "Fold the task list"}
+            title={
+              rail ? "Show the task list" : "Fold the task list to its dots"
+            }
+            className="cursor-pointer p-2 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronsLeft
+              className={cn(
+                "size-4 transition-transform duration-200 motion-reduce:transition-none",
+                rail && "rotate-180",
+              )}
+            />
+          </button>
+        </div>
+        {rows.map(({ group, parent }) =>
+          rail ? (
+            <TaskRailDot
+              key={spanKey(group.root)}
+              root={group.root}
+              status={group.status}
+              tone={groupTone(group)}
+              isSubagent={parent !== null}
+              isSelected={group === selectedGroup}
+              onSelect={onSelect}
+            />
+          ) : (
+            <TaskListRow
+              key={spanKey(group.root)}
+              root={group.root}
+              status={group.status}
+              tone={groupTone(group)}
+              taskDurationMs={group.taskDurationMs}
+              cause={failureCause(group)}
+              isSubagent={parent !== null}
+              subagentNames={group.subagents
+                .map((subagent) => subagentName(subagent.root))
+                .join("\n")}
+              isSelected={group === selectedGroup}
+              stackOpen={isStackOpen(group, selectedGroup, stackChoices)}
+              onSelect={onSelect}
+              onToggleStack={onToggleStack}
+            />
+          ),
+        )}
+        {!rail && rows.length === 0 && (
+          <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+            {emptyMessage}
+          </p>
+        )}
+        {!rail && (
+          <LoadMore
+            shown={shown}
+            total={total}
+            noun={["task", "tasks"]}
+            pageSize={PAGE_SIZE}
+            remaining={remaining}
+            onLoad={onLoadMore}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -2493,10 +2948,57 @@ const TaskListRow = memo(function TaskListRow({
 });
 
 /**
+ * One task on the rail: its status dot, ringed when selected, indented for a
+ * subagent. Hover names the task and its time; the id is the same focus
+ * target as the list row, so j/k and a trace link still scroll to it.
+ */
+function TaskRailDot({
+  root,
+  status,
+  tone,
+  isSubagent,
+  isSelected,
+  onSelect,
+}: {
+  root: ObservabilitySpanRow;
+  status: SpanStatus;
+  tone: StatusTone;
+  isSubagent: boolean;
+  isSelected: boolean;
+  onSelect: (root: ObservabilitySpanRow) => void;
+}): React.JSX.Element {
+  const request = spanLabel(root);
+
+  return (
+    <button
+      type="button"
+      id={`task-${root.traceId}`}
+      onClick={() => onSelect(root)}
+      aria-current={isSelected || undefined}
+      aria-label={request}
+      title={`${request}\n${formatDateTime(root.startTimeMs)} · ${status}`}
+      className={cn(
+        "flex w-full cursor-pointer justify-center border-b border-border/40 py-2 transition-colors hover:bg-accent/20",
+        isSelected && "bg-accent",
+        isSubagent && "pl-2",
+      )}
+    >
+      <StatusDot
+        tone={tone}
+        label={status}
+        className={cn(
+          isSelected && "ring-2 ring-foreground ring-offset-1 ring-offset-card",
+        )}
+      />
+    </button>
+  );
+}
+
+/**
  * The selected run on the right: its request, or its chain for a subagent,
  * its conversation and trace, the copy actions for the user's own coding
- * agent, Continue when a request failed, then its waterfall scaled to that
- * run alone.
+ * agent, Continue when a request failed, the count of what went wrong, then
+ * its waterfall scaled to that run alone.
  */
 function TaskWaterfall({
   attempt,
@@ -2505,7 +3007,7 @@ function TaskWaterfall({
   onPickRun,
   projectSlug,
   stageSlug,
-  view,
+  view: panelView,
 }: {
   attempt: ContinueAttempt | undefined;
   chain: SpanGroup[];
@@ -2513,12 +3015,32 @@ function TaskWaterfall({
   onPickRun: (root: ObservabilitySpanRow) => void;
   projectSlug: string | undefined;
   stageSlug: string | undefined;
-  view: WaterfallView;
+  view: Omit<WaterfallView, "issues" | "live">;
 }): React.JSX.Element {
-  const { root } = view.group;
+  const { group } = panelView;
+  const { root } = group;
+  const runs = group.spans.filter((span) => isRootSpanKind(span.kind));
+  const live = isTaskRunning(group.latest);
+  const issues = useMemo(() => runIssues(group), [group]);
+  const view: WaterfallView = { ...panelView, issues: issues, live: live };
+  const failures = issues.all.filter(({ issue }) => issue.level === "error");
+  const retries = issues.all.filter(({ issue }) => issue.level === "warn");
+  // Opens an issue's span in the side panel, opens the rows folded above it,
+  // and scrolls its row into view once they render.
+  const showSpan = ({ path, span }: RunIssues["all"][number]): void => {
+    const key = spanKey(span);
+    if (key !== view.selectedKey) view.onSelect(key);
+    for (const row of path) {
+      if (!isRowOpen(row, view.toggled)) view.toggle(spanKey(row));
+    }
+    requestAnimationFrame(() =>
+      document
+        .querySelector(`[data-span-key="${CSS.escape(key)}"]`)
+        ?.scrollIntoView({ block: "nearest" }),
+    );
+  };
   const request = spanLabel(root);
   const ancestors = chain.slice(0, -1);
-  const runs = view.group.spans.filter((span) => isRootSpanKind(span.kind));
   const failedRun = runs.findLast((span) => span.error);
   const run = failedRun ?? runs.at(-1) ?? root;
   const prompt =
@@ -2563,6 +3085,27 @@ function TaskWaterfall({
             {request}
           </span>
         </span>
+        {[
+          { found: failures, word: "failed", tone: "text-destructive" },
+          { found: retries, word: "retried", tone: "text-warning" },
+        ].map(
+          ({ found, word, tone }) =>
+            found.length > 0 && (
+              <button
+                key={word}
+                type="button"
+                onClick={() => showSpan(found[0])}
+                title={`Open the first ${word} span`}
+                className={cn(
+                  "flex cursor-pointer items-center gap-1 font-mono tabular-nums hover:underline",
+                  tone,
+                )}
+              >
+                <TriangleAlert className="size-3" />
+                {found.length} {word}
+              </button>
+            ),
+        )}
         {root.conversationKey && (
           <Badge
             variant="outline"
@@ -2598,25 +3141,35 @@ function TaskWaterfall({
           />
         )}
       </div>
-      <table className="w-full min-w-xl table-fixed text-xs">
-        <colgroup>
-          <col className="w-22" />
-          <col />
-          <col className="w-20" />
-          <col className="w-19" />
-          <col className="w-[22%]" />
-        </colgroup>
-        <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
-          <tr className="text-left text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Started</th>
-            <th className="px-3 py-2 font-medium">Span</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 text-right font-medium">Duration</th>
-            <th className="px-3 py-2 font-medium">Timeline</th>
-          </tr>
-        </thead>
-        <tbody>{renderSpanRows(root, 0, view.group.live, view)}</tbody>
-      </table>
+      <TimelineClock group={group} live={live}>
+        <div
+          className="@container relative min-w-xl"
+          style={{ "--timeline-width": TIMELINE_WIDTH }}
+        >
+          <table className="w-full table-fixed text-xs">
+            <colgroup>
+              <col className="w-22" />
+              <col />
+              <col className="w-20" />
+              <col className="w-19" />
+              <col className="w-(--timeline-width)" />
+            </colgroup>
+            <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
+              <tr className="text-left text-muted-foreground">
+                <th className="px-3 py-2 font-medium">Started</th>
+                <th className="px-3 py-2 font-medium">Span</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 text-right font-medium">Duration</th>
+                <th className="px-3 py-2">
+                  <TimelineAxis issues={issues.all} onPick={showSpan} />
+                </th>
+              </tr>
+            </thead>
+            <tbody>{renderSpanRows(root, 0, live, view, undefined)}</tbody>
+          </table>
+          <TimelineLines issues={issues.all} />
+        </div>
+      </TimelineClock>
     </>
   );
 }
@@ -2629,38 +3182,49 @@ function TaskWaterfall({
  */
 function TimelineBar({
   span,
-  windowStart,
-  windowSpan,
+  runsToNow,
   taskRunning,
+  failed,
+  marks,
 }: {
   span: ObservabilitySpanRow;
-  windowStart: number;
-  windowSpan: number;
+  runsToNow: boolean;
   taskRunning: boolean;
+  failed: boolean;
+  marks: SpanIssue[];
 }): React.JSX.Element {
+  const scale = useContext(TimelineScaleContext);
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
-  const barColor =
-    (span.name === WAIT_SPAN_NAME ? WAIT_BAR[span.status] : undefined) ??
-    kindBar(span.kind);
-  const end = live
-    ? windowStart + windowSpan
+  const barColor = failed
+    ? "bg-destructive/70"
+    : ((span.name === WAIT_SPAN_NAME ? WAIT_BAR[span.status] : undefined) ??
+      kindBar(span.kind));
+  const end = runsToNow
+    ? (scale.nowMs ?? scale.startMs + scale.spanMs)
     : Math.max(span.endTimeMs, span.startTimeMs);
+  const shownMs = Math.max(1, end - span.startTimeMs);
   const leftPct = Math.min(
     100,
-    Math.max(0, ((span.startTimeMs - windowStart) / windowSpan) * 100),
+    Math.max(0, timelinePct(span.startTimeMs, scale)),
   );
   const widthPct = Math.max(
     0.75,
-    Math.min(((end - span.startTimeMs) / windowSpan) * 100, 100 - leftPct),
+    Math.min((shownMs / scale.spanMs) * 100, 100 - leftPct),
   );
 
+  // A retried model call waits before its first token, so the retry wait
+  // leads the bar and the rest of the time to first token follows it.
+  const retryMs = numericAttribute(span, "model.retry_wait_ms") ?? 0;
   const ttftMs = numericAttribute(span, "model.ttft_ms");
+  const retryFrac = Math.min(1, retryMs / shownMs);
   const ttftFrac =
-    ttftMs !== undefined && span.durationMs > 0
-      ? Math.min(1, ttftMs / span.durationMs)
+    ttftMs !== undefined
+      ? Math.min(1 - retryFrac, Math.max(0, ttftMs - retryMs) / shownMs)
       : 0;
   const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${
+    retryMs > 0 ? ` · retry wait ${formatDuration(retryMs)}` : ""
+  }${
     ttftMs !== undefined
       ? ` · time to first token ${formatDuration(ttftMs)}`
       : ""
@@ -2670,10 +3234,16 @@ function TimelineBar({
     <div className="relative h-4 w-full">
       <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60" />
       <div
-        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm"
+        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm transition-timeline"
         style={{ "--bar-left": `${leftPct}%`, "--bar-width": `${widthPct}%` }}
         title={title}
       >
+        {retryFrac > 0 && (
+          <div
+            className="h-full w-(--retry-width) shrink-0 bg-warning/50"
+            style={{ "--retry-width": `${retryFrac * 100}%` }}
+          />
+        )}
         {ttftFrac > 0 && (
           <div
             className="h-full w-(--ttft-width) shrink-0 bg-info/25"
@@ -2688,7 +3258,151 @@ function TimelineBar({
               "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
           )}
         />
+        {marks.map((mark, index) => (
+          <span
+            key={index}
+            className={cn(
+              "absolute inset-y-0 left-(--mark-left) w-0.5",
+              STATUS_TONE_BG[mark.level],
+            )}
+            style={{
+              "--mark-left": `${Math.min(100, Math.max(0, ((mark.atMs - span.startTimeMs) / shownMs) * 100))}%`,
+            }}
+          />
+        ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The selected run's time axis, in the Timeline header: ticks that rescale as
+ * a live run grows, the now dot, and a marker where each issue happened that
+ * opens its span.
+ */
+function TimelineAxis({
+  issues,
+  onPick,
+}: {
+  issues: RunIssues["all"];
+  onPick: (entry: RunIssues["all"][number]) => void;
+}): React.JSX.Element {
+  const scale = useContext(TimelineScaleContext);
+
+  return (
+    <div className="relative h-4 w-full font-normal">
+      <span className="sr-only">Timeline</span>
+      {axisTicks(scale.spanMs)
+        .map((offset) => ({
+          offset: offset,
+          pct: timelinePct(scale.startMs + offset, scale),
+        }))
+        .filter(({ pct }) => pct <= AXIS_LAST_TICK_PCT)
+        .map(({ offset, pct }) => (
+          <span
+            key={offset}
+            className={cn(
+              "absolute top-0 left-(--tick-left) font-mono tabular-nums transition-timeline",
+              offset > 0 && "-translate-x-1/2",
+            )}
+            style={{ "--tick-left": `${pct}%` }}
+          >
+            {axisLabel(offset)}
+          </span>
+        ))}
+      {scale.nowMs !== null && (
+        <span
+          aria-hidden="true"
+          className="absolute -bottom-2 left-(--now-left) size-1.5 -translate-x-1/2 rounded-full bg-info transition-timeline"
+          style={{ "--now-left": `${timelinePct(scale.nowMs, scale)}%` }}
+        />
+      )}
+      {issues.map((entry) => {
+        const { issue, span } = entry;
+
+        return (
+          <button
+            key={`${spanKey(span)}:${issue.atMs}`}
+            type="button"
+            onClick={() => onPick(entry)}
+            aria-label={`${issue.label}: ${spanLabel(span)}`}
+            title={`${formatTime(issue.atMs)} · ${spanLabel(span)} · ${issue.label}${issue.text ? ` · ${issue.text}` : ""}`}
+            className={cn(
+              "absolute -bottom-2.5 left-(--mark-left) size-2 -translate-x-1/2 rotate-45 cursor-pointer rounded-xs transition-timeline",
+              STATUS_TONE_BG[issue.level],
+            )}
+            style={{ "--mark-left": `${timelinePct(issue.atMs, scale)}%` }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Holds the selected run's time scale for the bars, durations, axis and lines
+ * inside it. While the run is live it ticks once a second, so bars grow
+ * toward the now line and only those parts re-render, not the rows.
+ */
+function TimelineClock({
+  children,
+  group,
+  live,
+}: {
+  children: ReactNode;
+  group: SpanGroup;
+  live: boolean;
+}): React.JSX.Element {
+  const now = useNow(live ? LIVE_TICK_MS : null);
+  // The clock can trail the stream by a tick, so now is never earlier than
+  // the newest span. Keyed per run, a switch to a live run starts it fresh.
+  const nowMs = Math.max(group.windowStart + group.windowSpan, now);
+  const scale: TimelineScale = live
+    ? {
+        startMs: group.windowStart,
+        spanMs: (nowMs - group.windowStart) * LIVE_HEADROOM,
+        nowMs: nowMs,
+      }
+    : { startMs: group.windowStart, spanMs: group.windowSpan, nowMs: null };
+
+  return <TimelineScaleContext value={scale}>{children}</TimelineScaleContext>;
+}
+
+/**
+ * The now line and a faint line at each issue, drawn once over the timeline
+ * column of every row. `--timeline-left` is where that column's bars start.
+ */
+function TimelineLines({
+  issues,
+}: {
+  issues: RunIssues["all"];
+}): React.JSX.Element {
+  const scale = useContext(TimelineScaleContext);
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-y-0 right-3 left-(--timeline-left)"
+      style={{
+        "--timeline-left": "calc(100cqw - var(--timeline-width) + 0.75rem)",
+      }}
+    >
+      {issues.map(({ issue, span }) => (
+        <span
+          key={`${spanKey(span)}:${issue.atMs}`}
+          className={cn(
+            "absolute inset-y-0 left-(--line-left) w-px transition-timeline",
+            issue.level === "error" ? "bg-destructive/30" : "bg-warning/30",
+          )}
+          style={{ "--line-left": `${timelinePct(issue.atMs, scale)}%` }}
+        />
+      ))}
+      {scale.nowMs !== null && (
+        <span
+          className="absolute inset-y-0 left-(--now-left) w-px bg-info/60 transition-timeline"
+          style={{ "--now-left": `${timelinePct(scale.nowMs, scale)}%` }}
+        />
+      )}
     </div>
   );
 }
@@ -2712,69 +3426,36 @@ function TimingChip({
   );
 }
 
-/** A folded run of steps: one row that opens onto the individual steps. */
-function renderFoldRows(
-  fold: StepFold,
-  depth: number,
-  enclosingRootLive: boolean,
-  view: WaterfallView,
-): ReactNode[] {
-  const key = spanKey(fold.span);
-  const isOpen = view.toggled.has(key);
-  const rows: ReactNode[] = [
-    <SpanRow
-      key={`row:${key}`}
-      span={fold.span}
-      depth={depth}
-      label={fold.label}
-      isOpen={isOpen}
-      hasChildren
-      onToggle={() => view.toggle(key)}
-      isSelected={false}
-      onClick={() => view.toggle(key)}
-      group={view.group}
-      taskRunning={enclosingRootLive}
-      highlighted={false}
-      onFocusTrace={view.onFocusTrace}
-    />,
-  ];
-  if (!isOpen) return rows;
-  for (const step of fold.steps) {
-    rows.push(...renderSpanRows(step, depth + 1, enclosingRootLive, view));
-  }
-
-  return rows;
-}
-
 /**
  * A span's row, then what ran under it when open: a step's reasoning, its
- * tool calls (steps folded) and its answer. A step starts open, anything
- * else closed, and `view.toggled` flips that. `enclosingRootLive` is whether
- * the nearest enclosing root run is live; a resumed pass is itself a root
- * and judged on its own freshness. A subagent is one leaf line here: its own
- * run lists on its own.
+ * tool calls and its answer. A step starts open, anything else closed, and
+ * `view.toggled` flips that. `enclosingRootLive` is whether the nearest
+ * enclosing root run is live; a resumed pass is itself a root and judged on
+ * its own freshness. A subagent is one leaf line here: its own run lists on
+ * its own.
  */
 function renderSpanRows(
   span: ObservabilitySpanRow,
   depth: number,
   enclosingRootLive: boolean,
   view: WaterfallView,
+  askingStepId: string | undefined,
 ): ReactNode[] {
   const key = spanKey(span);
   const isTaskRow = depth === 0;
-  const isStep = span.kind === "model.step";
-  const isOpen = isTaskRow || isStep !== view.toggled.has(key);
+  const isOpen = isTaskRow || isRowOpen(span, view.toggled);
   const isSelected = key === view.selectedKey;
-  const children =
-    span.kind === "subtask" && !isTaskRow
-      ? []
-      : (view.group.childrenByParent.get(span.spanId) ?? []);
-  const reasoning = isStep ? noteText(span, "model.reasoning") : undefined;
-  const response = isStep ? noteText(span, "model.response") : undefined;
+  const select = (): void => view.onSelect(key);
+  const children = rowChildren(span, isTaskRow, view.group);
+  const { reasoning, response } = stepNotes(span);
   const hasNotes = reasoning !== undefined || response !== undefined;
   const isRoot = isRootSpanKind(span.kind);
   // A root is judged on its own freshness; a child on its enclosing root's liveness.
   const rootLive = isRoot ? isTaskRunning(span) : enclosingRootLive;
+  const asking = isRoot
+    ? askedStepId(span, view.group.childrenByParent)
+    : askingStepId;
+  const issue = view.issues.own.get(span.spanId) ?? null;
   const rows: ReactNode[] = [
     <SpanRow
       key={`row:${key}`}
@@ -2784,45 +3465,101 @@ function renderSpanRows(
       hasChildren={!isTaskRow && (children.length > 0 || hasNotes)}
       onToggle={() => view.toggle(key)}
       isSelected={isSelected}
-      onClick={() => view.onSelect(key)}
+      onClick={select}
       group={view.group}
       taskRunning={rootLive}
       highlighted={isRoot && span.traceId === view.focusTraceId}
       onFocusTrace={view.onFocusTrace}
+      issue={issue}
+      below={view.issues.below.get(span.spanId) ?? []}
+      live={view.live}
     />,
   ];
-  if (!isOpen) return rows;
-  if (reasoning !== undefined) {
+  if (issue?.level === "error" && issue.text) {
     rows.push(
-      <NoteRow
-        key={`reasoning:${key}`}
-        depth={depth + 1}
-        icon={Brain}
+      <ErrorRow
+        key={`error:${key}`}
+        depth={depth}
         isSelected={isSelected}
-        onClick={() => view.onSelect(key)}
-        text={inlinePayload(reasoning)}
-        title="thought"
+        onClick={select}
+        text={issue.text}
       />,
     );
   }
-  for (const item of foldSteps(children, view.group.childrenByParent)) {
+  if (!isOpen) return rows;
+  if (span.kind === "tool.call" || span.kind === "phase") {
     rows.push(
-      ...(item.type === "span"
-        ? renderSpanRows(item.span, depth + 1, rootLive, view)
-        : renderFoldRows(item.fold, depth + 1, rootLive, view)),
+      <PayloadRow key={`payload:${key}`} depth={depth} isSelected={isSelected}>
+        {spanPayload(span)}
+      </PayloadRow>,
     );
+  }
+  if (reasoning !== undefined) {
+    rows.push(
+      ...noteRows(`reasoning:${key}`, "thought", reasoning, {
+        depth: depth + 1,
+        isSelected: isSelected,
+        onClick: select,
+        view: view,
+      }),
+    );
+  }
+  for (const child of children) {
+    rows.push(...renderSpanRows(child, depth + 1, rootLive, view, asking));
   }
   if (response !== undefined) {
     rows.push(
-      <NoteRow
-        key={`response:${key}`}
-        depth={depth + 1}
-        icon={MessageSquare}
-        isSelected={isSelected}
-        onClick={() => view.onSelect(key)}
-        text={inlinePayload(response)}
-        title="answer"
-      />,
+      ...noteRows(
+        `response:${key}`,
+        span.spanId === asking ? "question" : "answer",
+        response,
+        {
+          depth: depth + 1,
+          isSelected: isSelected,
+          onClick: select,
+          view: view,
+        },
+      ),
+    );
+  }
+
+  return rows;
+}
+
+/** A step's thought, answer or question line, then its text as a payload row when open. */
+function noteRows(
+  key: string,
+  kind: NoteKind,
+  text: string,
+  row: {
+    depth: number;
+    isSelected: boolean;
+    onClick: () => void;
+    view: WaterfallView;
+  },
+): ReactNode[] {
+  const isOpen = row.view.toggled.has(key);
+  const rows: ReactNode[] = [
+    <NoteRow
+      key={key}
+      depth={row.depth}
+      icon={NOTE_ICONS[kind]}
+      isOpen={isOpen}
+      isSelected={row.isSelected}
+      onClick={row.onClick}
+      onToggle={() => row.view.toggle(key)}
+      title={kind}
+    />,
+  ];
+  if (isOpen) {
+    rows.push(
+      <PayloadRow
+        key={`payload:${key}`}
+        depth={row.depth}
+        isSelected={row.isSelected}
+      >
+        <PayloadText label={kind} value={text} />
+      </PayloadRow>,
     );
   }
 

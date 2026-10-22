@@ -1,6 +1,10 @@
 /** Async tool result, callback, delivery, and hand-back state in Convex. */
 
-import type { Handback } from "@broods/convex/model/subagentResults";
+import type {
+  Handback,
+  HandbackMove,
+  SweptHandback,
+} from "@broods/convex/model/subagentResults";
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
@@ -39,9 +43,6 @@ export interface AsyncToolResultRecord {
   response?: JSONValue;
   error?: string;
   delivery?: AsyncToolDelivery;
-  // True once the model read the result with async_status. Written by the
-  // release before `handback`; read beside it for one release.
-  observed?: boolean;
   // Where a finished result stands with the run that started it: `pending`
   // until that run stores it, `detached` once it gave up and the recovery
   // sweep owns it, `stored` once the conversation has it.
@@ -136,8 +137,8 @@ export async function markAsyncToolResultFailed(options: {
  * One page of async tool results in `status` whose hand-back is `handback`,
  * written in the window, from `cursor`. The recovery sweep walks every page.
  */
-export function listUnobservedAsyncToolResults(options: {
-  handback: Exclude<Handback, "stored">;
+export function listOwedAsyncToolResults(options: {
+  handback: SweptHandback;
   status: AsyncToolStatus;
   updatedAfter: string;
   updatedBefore: string;
@@ -147,20 +148,22 @@ export function listUnobservedAsyncToolResults(options: {
   cursor: string;
   isDone: boolean;
 }> {
-  return runtime.query("listUnobservedAsyncToolResults", options);
+  return runtime.query("listOwedAsyncToolResults", options);
 }
 /**
  * Moves a finished result's hand-back: `detached` when the run that started it
  * gives up delivering it, `stored` when the model reads it with async_status.
  * A stored row stays stored. The row already holds the result, so a failed
  * write is only logged: a pending row reaches the recovery sweep later.
+ * @returns true when a continuation of the result waits in the conversation's
+ * queue: the row stays unstored and the caller must not hand the result over
  */
 export async function markAsyncToolHandback(
   resultId: string,
-  handback: Exclude<Handback, "pending">,
-): Promise<void> {
+  handback: HandbackMove,
+): Promise<boolean> {
   try {
-    await runtime.mutate("observeAsyncToolResult", {
+    return await runtime.mutate("markAsyncToolHandback", {
       resultId: resultId,
       handback: handback,
     });
@@ -170,6 +173,8 @@ export async function markAsyncToolHandback(
       handback: handback,
       error: toErrorMessage(error),
     });
+
+    return false;
   }
 }
 // The segments the runtime appends to the event a person started: a question
