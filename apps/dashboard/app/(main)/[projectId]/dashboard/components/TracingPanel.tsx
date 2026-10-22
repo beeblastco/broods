@@ -1064,7 +1064,9 @@ export function TracingPanel({
       >
         <div className="flex h-full min-h-0 flex-col md:flex-row">
           <TaskListPane
-            rail={rail}
+            // An empty list opens with its message: with no trace selected
+            // there is no header holding the fold to open it again.
+            rail={rail && listRows.length > 0}
             rows={listRows}
             selectedGroup={selectedGroup}
             stackChoices={stackChoices}
@@ -1094,8 +1096,12 @@ export function TracingPanel({
                 stageSlug={stageSlug}
                 onContinue={() => void continueTask(selectedGroup.root)}
                 onPickRun={pickTask}
-                rail={rail}
-                onToggleRail={() => setRail(!railChosen)}
+                fold={
+                  <TaskListFold
+                    rail={rail}
+                    onToggle={() => setRail(!railChosen)}
+                  />
+                }
                 view={{
                   focusTraceId: focusTraceId,
                   group: selectedGroup,
@@ -3007,21 +3013,20 @@ function TaskRailDot({
 function TaskWaterfall({
   attempt,
   chain,
+  fold,
   onContinue,
   onPickRun,
-  onToggleRail,
   projectSlug,
-  rail,
   stageSlug,
   view: panelView,
 }: {
   attempt: ContinueAttempt | undefined;
   chain: SpanGroup[];
+  /** The task list's fold button, first in the header. */
+  fold: React.ReactNode;
   onContinue: () => void;
   onPickRun: (root: ObservabilitySpanRow) => void;
-  onToggleRail: () => void;
   projectSlug: string | undefined;
-  rail: boolean;
   stageSlug: string | undefined;
   view: Omit<WaterfallView, "issues" | "live">;
 }): React.JSX.Element {
@@ -3072,7 +3077,7 @@ function TaskWaterfall({
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2 text-xs">
-        <TaskListFold rail={rail} onToggle={onToggleRail} />
+        {fold}
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
           {ancestors.map((ancestor) => (
             <span
