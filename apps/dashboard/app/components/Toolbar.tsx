@@ -21,9 +21,8 @@ export interface FilterColumn {
 }
 
 /**
- * The bar above every list. Slots read left to right: a leading control (such
- * as Tracing's list fold), search, facets, range, then Filter, Refresh and the
- * page's one primary action. Pages compose the
+ * The bar above every list. Slots read left to right: search, facets, range,
+ * then Filter, Refresh and the page's one primary action. Pages compose the
  * slots they need and keep the order; the count sits under the table.
  */
 export function Toolbar({
