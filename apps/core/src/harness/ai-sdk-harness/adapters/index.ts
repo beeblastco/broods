@@ -89,6 +89,16 @@ const HARNESS_MID_TURN_STEERING: Record<AiSdkHarnessType, boolean> = {
   pi: true,
 };
 
+// Adapters that refuse a user message with text after an image. Pi hands the
+// text and the images over apart, so its turn carries every text part first.
+const HARNESS_TEXT_BEFORE_IMAGES: Record<AiSdkHarnessType, boolean> = {
+  "claude-code": false,
+  codex: false,
+  deepagents: false,
+  opencode: false,
+  pi: true,
+};
+
 /** Builds an adapter from raw harness settings; the Workdir and MicroVM agent factories use it, mostly in tests. */
 export function createAiSdkHarnessAdapter(
   type: AiSdkHarnessType,
@@ -160,4 +170,9 @@ export function harnessSessionParking(
 /** Whether conversations can share one machine; `harnessReservationKey` reads it. */
 export function harnessSharesSandbox(type: AiSdkHarnessType): boolean {
   return HARNESS_SHARES_SANDBOX[type];
+}
+
+/** Whether a turn's text must come before its images; `harnessPromptMessages` reads it. */
+export function harnessTextBeforeImages(type: AiSdkHarnessType): boolean {
+  return HARNESS_TEXT_BEFORE_IMAGES[type];
 }

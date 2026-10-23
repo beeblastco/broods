@@ -92,6 +92,7 @@ import {
 } from "./ai-sdk-harness/index.ts";
 // Straight from the module, not the entrypoint: tests mock the entrypoint as a
 // whole, and this is run-loop plumbing they keep real.
+import { harnessTextBeforeImages } from "./ai-sdk-harness/adapters/index.ts";
 import {
   MID_TURN_STEERING_UNSUPPORTED,
   prepareHarnessTurn,
@@ -1603,8 +1604,9 @@ export async function runAgentLoop(
     stream = harnessTurn
       ? await harnessTurn.runtime.agent.stream({
           messages: harnessPromptMessages(
-            turnContext.messages,
+            stripEnvelopeFieldsFromMessages(turnContext.messages),
             harnessTurn.environment,
+            harnessTextBeforeImages(agentConfig.harness!.type),
           ),
           session: harnessTurn.nativeSession,
           abortSignal: runAbort.signal,
@@ -2037,11 +2039,13 @@ function withEnvironment(
 
 /**
  * The new turn an AI SDK Harness session receives. A tool continuation stays
- * assistant + tool as it is; a user turn carries the live environment.
+ * assistant + tool as it is; a user turn keeps its part order and carries the
+ * live environment last. `textBeforeImages` moves every text part ahead.
  */
 function harnessPromptMessages(
   messages: ModelMessage[],
   environment: string,
+  textBeforeImages: boolean,
 ): ModelMessage[] {
   const lastMessage = messages.at(-1);
   if (lastMessage?.role === "tool") {
@@ -2067,35 +2071,34 @@ function harnessPromptMessages(
     );
   }
   // A part the adapter would refuse goes in as the note that points at its
-  // workspace copy. Text leads and media trails: pi refuses text after an image.
-  const text: TextPart[] = [];
-  const media: Array<ImagePart | FilePart> = [];
-  for (const message of userMessages) {
-    if (typeof message.content === "string") {
-      text.push({ type: "text", text: message.content });
-      continue;
-    }
-    for (const part of message.content) {
-      if (part.type === "text") {
-        text.push(part);
-      } else if (harnessReadsMedia(part)) {
-        media.push(part);
-      } else {
-        text.push({
-          type: "text",
-          text: unreadableMediaNote(
-            part.type === "file" ? part.filename : undefined,
-            part.mediaType ?? "image",
+  // workspace copy. The environment goes last, as on the streamText path.
+  const content = userMessages.flatMap(
+    (message): Array<TextPart | ImagePart | FilePart> =>
+      typeof message.content === "string"
+        ? [{ type: "text", text: message.content }]
+        : message.content.map((part): TextPart | ImagePart | FilePart =>
+            part.type === "text" || harnessReadsMedia(part)
+              ? part
+              : {
+                  type: "text",
+                  text: unreadableMediaNote(
+                    part.type === "file" ? part.filename : undefined,
+                    part.mediaType ?? "image",
+                  ),
+                },
           ),
-        });
-      }
-    }
-  }
+  );
+  content.push({ type: "text", text: environment });
 
   return [
     {
       role: "user",
-      content: [...text, { type: "text", text: environment }, ...media],
+      content: textBeforeImages
+        ? [
+            ...content.filter((part): boolean => part.type === "text"),
+            ...content.filter((part): boolean => part.type !== "text"),
+          ]
+        : content,
     },
   ];
 }
