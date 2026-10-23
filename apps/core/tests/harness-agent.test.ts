@@ -9,12 +9,20 @@ import * as harnessIndex from "../src/harness/ai-sdk-harness/index.ts";
 // The part of the harness stream options these tests read.
 interface HarnessStreamCall {
   abortSignal?: AbortSignal;
+  messages?: ModelMessage[];
   onEnd?: unknown;
   onStepStart?: (event: {
     stepNumber: number;
     messages: ModelMessage[];
   }) => Promise<void>;
   [hook: string]: unknown;
+}
+
+// What a test may change about the turn runHarnessTurn starts.
+interface HarnessTurnOptions {
+  appended?: unknown[];
+  appendIngressEvents?: (events: unknown) => Promise<[]>;
+  messages?: ModelMessage[];
 }
 
 // Copied before the mock below rewrites the module, so afterAll can put it back.
@@ -72,7 +80,7 @@ it.each(["claude-code", "codex"] as const)(
         appliedMode: "steer",
       };
     });
-    await runHarnessTurn(type, applySteeringIngress, appended);
+    await runHarnessTurn(type, applySteeringIngress, { appended: appended });
 
     queued = true;
     await streamCalls[0]?.onStepStart?.({ stepNumber: 1, messages: [] });
@@ -108,9 +116,10 @@ it("fails the run when a claimed steer cannot be saved", async () => {
             appliedMode: "steer",
           }
         : null,
-    [],
-    async (): Promise<never> => {
-      throw new Error("convex down");
+    {
+      appendIngressEvents: async (): Promise<never> => {
+        throw new Error("convex down");
+      },
     },
   );
 
@@ -134,7 +143,7 @@ it("fails the run but keeps a steer the turn did not take", async () => {
             appliedMode: "steer",
           }
         : null,
-    appended,
+    { appended: appended },
   );
 
   queued = true;
@@ -145,18 +154,51 @@ it("fails the run but keeps a steer the turn did not take", async () => {
   expect(appended).toEqual([[{ role: "user", content: "focus" }]]);
 });
 
+it("hands a harness a picture natively, after the text, and other files as a note", async () => {
+  await runHarnessTurn("pi", async () => null, {
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image", image: new Uint8Array([1]), mediaType: "image/png" },
+          { type: "text", text: "what is this?" },
+          {
+            type: "file",
+            data: new Uint8Array([2]),
+            mediaType: "application/pdf",
+            filename: "brief.pdf",
+          },
+        ],
+      },
+    ],
+  });
+
+  const content = streamCalls[0]?.messages?.at(-1)?.content;
+  expect(Array.isArray(content) && content.map((part) => part.type)).toEqual([
+    "text",
+    "text",
+    "text",
+    "image",
+  ]);
+  expect(JSON.stringify(content)).toContain(
+    "[brief.pdf (application/pdf) was not shown to you",
+  );
+});
+
 async function runHarnessTurn(
   type: AiSdkHarnessType,
   applySteeringIngress: () => Promise<unknown>,
-  appended: unknown[] = [],
-  appendIngressEvents: (events: unknown) => Promise<[]> = async (
-    events,
-  ): Promise<[]> => {
-    appended.push(events);
-
-    return [];
-  },
+  options: HarnessTurnOptions = {},
 ): Promise<void> {
+  const appended = options.appended ?? [];
+  const appendIngressEvents =
+    options.appendIngressEvents ??
+    (async (events: unknown): Promise<[]> => {
+      appended.push(events);
+
+      return [];
+    });
+  const messages = options.messages ?? [{ role: "user", content: "hello" }];
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   const { runAgentLoop } = await import("../src/harness/harness.ts");
 
@@ -184,7 +226,7 @@ async function runHarnessTurn(
         }),
       } as never,
       {
-        messages: [{ role: "user", content: "hello" }],
+        messages: messages,
         system: [],
         ephemeralSystem: [],
         systemContextSnapshot: { cursor: null, messages: [] },

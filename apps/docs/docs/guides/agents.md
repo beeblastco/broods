@@ -179,6 +179,7 @@ export const codingAgent = defineAgent({
 - Broods MCP servers and account skills still reach the harness. Filter tools with `activeTools` or `inactiveTools` on `defineHarness`.
 - The harness's own "ask the user" tool is off. The agent asks through [`ask_questions`](tools.md#asking-the-user).
 - Steering sent before a turn starts is folded into its prompt. Steering sent during a turn runs as the next turn.
+- Images reach the harness as images, so send them only to a model that reads images. Any other attachment arrives as a note pointing at its copy in the workspace.
 - Policies and structured output are not supported yet.
 
 Each harness supports different model providers, tool approval and tool filtering. The table is in [Configuration](../reference/configuration.md).
