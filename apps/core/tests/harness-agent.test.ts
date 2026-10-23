@@ -154,36 +154,43 @@ it("fails the run but keeps a steer the turn did not take", async () => {
   expect(appended).toEqual([[{ role: "user", content: "focus" }]]);
 });
 
-it("hands a harness a picture natively, after the text, and other files as a note", async () => {
-  await runHarnessTurn("pi", async () => null, {
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "image", image: new Uint8Array([1]), mediaType: "image/png" },
-          { type: "text", text: "what is this?" },
-          {
-            type: "file",
-            data: new Uint8Array([2]),
-            mediaType: "application/pdf",
-            filename: "brief.pdf",
-          },
-        ],
-      },
-    ],
-  });
+it.each([
+  ["pi", ["text", "text", "text", "image"]],
+  ["codex", ["image", "text", "text", "text"]],
+] as const)(
+  "hands %s a picture natively, in the order it takes, and other files as a note",
+  async (type, order) => {
+    await runHarnessTurn(type, async () => null, {
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              image: new Uint8Array([1]),
+              mediaType: "image/png",
+            },
+            { type: "text", text: "what is this?" },
+            {
+              type: "file",
+              data: new Uint8Array([2]),
+              mediaType: "application/pdf",
+              filename: "brief.pdf",
+            },
+          ],
+        },
+      ],
+    });
 
-  const content = streamCalls[0]?.messages?.at(-1)?.content;
-  expect(Array.isArray(content) && content.map((part) => part.type)).toEqual([
-    "text",
-    "text",
-    "text",
-    "image",
-  ]);
-  expect(JSON.stringify(content)).toContain(
-    "[brief.pdf (application/pdf) was not shown to you",
-  );
-});
+    const content = streamCalls[0]?.messages?.at(-1)?.content;
+    expect(Array.isArray(content) && content.map((part) => part.type)).toEqual([
+      ...order,
+    ]);
+    expect(JSON.stringify(content)).toContain(
+      "[brief.pdf (application/pdf) was not shown to you",
+    );
+  },
+);
 
 async function runHarnessTurn(
   type: AiSdkHarnessType,
