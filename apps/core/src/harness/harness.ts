@@ -19,11 +19,14 @@ import {
   streamText,
   wrapLanguageModel,
   type AssistantModelMessage,
+  type FilePart,
+  type ImagePart,
   type JSONValue,
   type LanguageModelUsage,
   type ModelMessage,
   type StepResult,
   type SystemModelMessage,
+  type TextPart,
   type TextStreamPart,
   type ToolApprovalRequestOutput,
   type ToolCallPart,
@@ -31,7 +34,9 @@ import {
   type TypedToolCall,
   type UserModelMessage,
 } from "ai";
+import { HarnessCapabilityUnsupportedError } from "@ai-sdk/harness";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
+import { extractHarnessPromptContent } from "@ai-sdk/harness/utils";
 import type {
   ObservabilitySpanRow,
   TaskWaitingOn,
@@ -45,6 +50,7 @@ import {
 import { principalChainLabel } from "../shared/domain/principal.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
 import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
+import { unreadableMediaNote } from "../shared/media-types.ts";
 import {
   collectSecretValues,
   logError,
@@ -2060,18 +2066,55 @@ function harnessPromptMessages(
       "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
     );
   }
-  const content = userMessages.flatMap((message) =>
-    typeof message.content === "string"
-      ? [{ type: "text" as const, text: message.content }]
-      : message.content,
-  );
+  // A part the adapter would refuse goes in as the note that points at its
+  // workspace copy. Text leads and media trails: pi refuses text after an image.
+  const text: TextPart[] = [];
+  const media: Array<ImagePart | FilePart> = [];
+  for (const message of userMessages) {
+    if (typeof message.content === "string") {
+      text.push({ type: "text", text: message.content });
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type === "text") {
+        text.push(part);
+      } else if (harnessReadsMedia(part)) {
+        media.push(part);
+      } else {
+        text.push({
+          type: "text",
+          text: unreadableMediaNote(
+            part.type === "file" ? part.filename : undefined,
+            part.mediaType ?? "image",
+          ),
+        });
+      }
+    }
+  }
 
-  return withEnvironment(
-    userMessages.length === 1
-      ? userMessages
-      : [{ role: "user", content: content }],
-    environment,
-  );
+  return [
+    {
+      role: "user",
+      content: [...text, { type: "text", text: environment }, ...media],
+    },
+  ];
+}
+
+/**
+ * Whether a harness adapter takes this part natively. Asks the rule every
+ * adapter applies to its prompt, so a harness bump that widens it widens this.
+ */
+function harnessReadsMedia(part: ImagePart | FilePart): boolean {
+  try {
+    extractHarnessPromptContent({ prompt: { role: "user", content: [part] } });
+
+    return true;
+  } catch (error) {
+    if (HarnessCapabilityUnsupportedError.isInstance(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 /**
