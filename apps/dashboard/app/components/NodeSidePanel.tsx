@@ -809,7 +809,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 nameChanged={!!nameChanged}
                 isSavingName={isSaving}
               />
-            ) : nodeType === "workspace" && node ? (
+            ) : isWorkspace && node ? (
               <WorkspaceResourceDetailsTab
                 data={nodeData}
                 editName={editName}
@@ -819,7 +819,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   onUpdateNodeData(node.id, patch)
                 }
               />
-            ) : nodeType === "sandbox" && node ? (
+            ) : isSandbox && node ? (
               <SandboxResourceDetailsTab
                 data={nodeData}
                 editName={editName}

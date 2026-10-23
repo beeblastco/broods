@@ -206,7 +206,7 @@ export function DetailsTab({
   // Follow a budget saved elsewhere (a deploy, another tab) during render.
   const [syncedReasoningBudget, setSyncedReasoningBudget] =
     useState(reasoningBudget);
-  if (reasoningBudget !== syncedReasoningBudget) {
+  if (!Object.is(reasoningBudget, syncedReasoningBudget)) {
     setSyncedReasoningBudget(reasoningBudget);
     setReasoningBudgetText(
       reasoningBudget !== undefined ? String(reasoningBudget) : "",
@@ -696,7 +696,7 @@ export function DetailsTab({
                     onClick={() => setRotateOpen(true)}
                   >
                     <RefreshCw className="size-3" />
-                    Rotate
+                    {isSavingKey ? "Rotating…" : "Rotate"}
                   </Button>
                 )}
               </div>

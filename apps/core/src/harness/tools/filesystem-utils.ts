@@ -39,7 +39,7 @@ import type {
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import { isMachineConnected } from "../sandbox/machine-executor.ts";
-import { SandboxCapacityError } from "../sandbox/utils.ts";
+import { configString, SandboxCapacityError } from "../sandbox/utils.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -970,12 +970,7 @@ function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
 export function statelessReservationKeyFor(
   config: SandboxExecutorConfig,
 ): string | undefined {
-  const options = isPlainObject(config.options) ? config.options : {};
-  const reservationKey = options.reservationKey;
-
-  return typeof reservationKey === "string" && reservationKey.trim()
-    ? reservationKey.trim()
-    : undefined;
+  return configString(config.options?.reservationKey);
 }
 
 function stripHereDocBodies(command: string): string {
