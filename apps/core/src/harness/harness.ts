@@ -26,6 +26,7 @@ import {
   type ModelMessage,
   type StepResult,
   type SystemModelMessage,
+  type TextPart,
   type TextStreamPart,
   type ToolApprovalRequestOutput,
   type ToolCallPart,
@@ -34,6 +35,7 @@ import {
   type UserModelMessage,
 } from "ai";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
+import { extractHarnessPromptContent } from "@ai-sdk/harness/utils";
 import type {
   ObservabilitySpanRow,
   TaskWaitingOn,
@@ -2063,50 +2065,52 @@ function harnessPromptMessages(
       "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
     );
   }
-  // Harness adapters read text and inline images. A part they would refuse
-  // goes in as the note that points at its workspace copy.
-  const content = userMessages.flatMap((message) =>
-    typeof message.content === "string"
-      ? [{ type: "text" as const, text: message.content }]
-      : message.content.map((part) =>
-          part.type === "text" || harnessReadsMedia(part)
-            ? part
-            : {
-                type: "text" as const,
-                text: unreadableMediaNote(
-                  part.type === "file" ? part.filename : undefined,
-                  part.mediaType ?? "image",
-                ),
-              },
-        ),
-  );
+  // A part the adapter would refuse goes in as the note that points at its
+  // workspace copy. Text leads and media trails: pi refuses text after an image.
+  const text: TextPart[] = [];
+  const media: Array<ImagePart | FilePart> = [];
+  for (const message of userMessages) {
+    if (typeof message.content === "string") {
+      text.push({ type: "text", text: message.content });
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type === "text") {
+        text.push(part);
+      } else if (harnessReadsMedia(part)) {
+        media.push(part);
+      } else {
+        text.push({
+          type: "text",
+          text: unreadableMediaNote(
+            part.type === "file" ? part.filename : undefined,
+            part.mediaType ?? "image",
+          ),
+        });
+      }
+    }
+  }
 
-  // Text leads and images trail: pi refuses a turn with text after an image.
   return [
     {
       role: "user",
-      content: [
-        ...content.filter((part) => part.type === "text"),
-        { type: "text", text: environment },
-        ...content.filter((part) => part.type !== "text"),
-      ],
+      content: [...text, { type: "text", text: environment }, ...media],
     },
   ];
 }
 
 /**
- * Whether a harness adapter takes this part natively: an image, or an image
- * file, carried inline. A remote link or any other file type it refuses.
+ * Whether a harness adapter takes this part natively. Asks the rule every
+ * adapter applies to its prompt, so a harness bump that widens it widens this.
  */
 function harnessReadsMedia(part: ImagePart | FilePart): boolean {
-  const data = part.type === "image" ? part.image : part.data;
-  const remote =
-    data instanceof URL ||
-    (typeof data === "string" && /^https?:\/\//.test(data));
+  try {
+    extractHarnessPromptContent({ prompt: { role: "user", content: [part] } });
 
-  return (
-    !remote && (part.type === "image" || part.mediaType.startsWith("image/"))
-  );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
