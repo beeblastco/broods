@@ -19,6 +19,8 @@ import {
   streamText,
   wrapLanguageModel,
   type AssistantModelMessage,
+  type FilePart,
+  type ImagePart,
   type JSONValue,
   type LanguageModelUsage,
   type ModelMessage,
@@ -2061,13 +2063,13 @@ function harnessPromptMessages(
       "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
     );
   }
-  // The harness adapters take text only and throw on any other part, so a
-  // picture or file goes in as the note that points at its workspace copy.
+  // Harness adapters read text and inline images. A part they would refuse
+  // goes in as the note that points at its workspace copy.
   const content = userMessages.flatMap((message) =>
     typeof message.content === "string"
       ? [{ type: "text" as const, text: message.content }]
       : message.content.map((part) =>
-          part.type === "text"
+          part.type === "text" || harnessReadsMedia(part)
             ? part
             : {
                 type: "text" as const,
@@ -2079,13 +2081,31 @@ function harnessPromptMessages(
         ),
   );
 
-  return withEnvironment(
-    [
-      userMessages.length === 1
-        ? { ...userMessages[0]!, content: content }
-        : { role: "user", content: content },
-    ],
-    environment,
+  // Text leads and images trail: pi refuses a turn with text after an image.
+  return [
+    {
+      role: "user",
+      content: [
+        ...content.filter((part) => part.type === "text"),
+        { type: "text", text: environment },
+        ...content.filter((part) => part.type !== "text"),
+      ],
+    },
+  ];
+}
+
+/**
+ * Whether a harness adapter takes this part natively: an image, or an image
+ * file, carried inline. A remote link or any other file type it refuses.
+ */
+function harnessReadsMedia(part: ImagePart | FilePart): boolean {
+  const data = part.type === "image" ? part.image : part.data;
+  const remote =
+    data instanceof URL ||
+    (typeof data === "string" && /^https?:\/\//.test(data));
+
+  return (
+    !remote && (part.type === "image" || part.mediaType.startsWith("image/"))
   );
 }
 

@@ -60,7 +60,7 @@
     "esbuild": "^0.28.2"
   },
   "devDependencies": {
-    "@ai-sdk/tui": "1.0.138",
+    "@ai-sdk/tui": "1.0.151",
     "@arethetypeswrong/cli": "^0.18.5",
     "@chat-adapter/discord": "^4.38.1",
     "@chat-adapter/github": "^4.38.1",

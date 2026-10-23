@@ -146,13 +146,19 @@ it("fails the run but keeps a steer the turn did not take", async () => {
   expect(appended).toEqual([[{ role: "user", content: "focus" }]]);
 });
 
-it("hands a harness a picture as a note it can open, not an image part", async () => {
+it("hands a harness a picture natively, after the text, and other files as a note", async () => {
   await runHarnessTurn("pi", async () => null, [], undefined, [
     {
       role: "user",
       content: [
-        { type: "text", text: "what is this?" },
         { type: "image", image: new Uint8Array([1]), mediaType: "image/png" },
+        { type: "text", text: "what is this?" },
+        {
+          type: "file",
+          data: new Uint8Array([2]),
+          mediaType: "application/pdf",
+          filename: "brief.pdf",
+        },
       ],
     },
   ]);
@@ -162,9 +168,10 @@ it("hands a harness a picture as a note it can open, not an image part", async (
     "text",
     "text",
     "text",
+    "image",
   ]);
   expect(JSON.stringify(content)).toContain(
-    "[attachment (image/png) was not shown to you",
+    "[brief.pdf (application/pdf) was not shown to you",
   );
 });
 
