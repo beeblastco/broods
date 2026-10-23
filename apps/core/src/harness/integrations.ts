@@ -890,97 +890,51 @@ async function handleHttpRequest(
   // /v1/projects/{project}/stages/{stage}/agents/{endpointId} URL. When the
   // scoped path is present it must match the key's stage; the agent itself is
   // chosen by the request body's agentId and loaded against the key's account.
-  if (auth?.kind === "deployment") {
-    if (publicEndpoint && !deploymentMatchesPath(auth, publicEndpoint)) {
-      return unauthorizedResponse();
-    }
-
-    try {
-      const parsed = {
-        ...(await parseDirectPayload(
-          request.body,
-          request.headers,
-          auth.account,
-          context,
-          auth,
-        )),
-        principalChain: [{ kind: "api", keyKind: "deployment" } as const],
-      };
-      if (parsed.background) {
-        if (!handlers.handleAsyncRequest) {
-          return notFoundResponse();
-        }
-
-        const statusUrl = buildStatusUrl(parsed.runId);
-        if (!statusUrl) {
-          return errorResponse(
-            503,
-            "Async API is unavailable: PUBLIC_BASE_URL is not configured",
-          );
-        }
-
-        return handlers.handleAsyncRequest({
-          ...parsed,
-          endpointId: auth.endpointId,
-          projectSlug: auth.projectSlug,
-          stageSlug: auth.stageSlug,
-          publicDeploymentIngress: publicDeploymentIngress(auth),
-          statusUrl: statusUrl,
-        });
-      }
-
-      return handlers.handleDirectRequest({
-        ...parsed,
-        endpointId: auth.endpointId,
-        projectSlug: auth.projectSlug,
-        stageSlug: auth.stageSlug,
-        publicDeploymentIngress: publicDeploymentIngress(auth),
-      });
-    } catch (err) {
-      return badRequestResponse(err);
-    }
-  }
-
-  // The scoped public URL only accepts a runtime key.
-  if (publicEndpoint) {
+  // The scoped URL takes no other credential.
+  if (
+    publicEndpoint &&
+    (auth?.kind !== "deployment" ||
+      !deploymentMatchesPath(auth, publicEndpoint))
+  ) {
     return unauthorizedResponse();
   }
-
-  const account = auth?.kind === "account" ? auth.account : null;
-  if (!account) {
+  if (auth?.kind !== "deployment" && auth?.kind !== "account") {
     return unauthorizedResponse();
   }
+  const deployment = auth.kind === "deployment" ? auth : undefined;
 
+  // A handler's own failure is returned, not awaited: it is no bad request,
+  // so it reaches the server's 500.
   try {
     const parsed = {
       ...(await parseDirectPayload(
         request.body,
         request.headers,
-        account,
+        auth.account,
         context,
+        deployment,
       )),
-      principalChain: [{ kind: "api", keyKind: "account" } as const],
+      principalChain: [{ kind: "api", keyKind: auth.kind } as const],
+      ...(deployment
+        ? {
+            endpointId: deployment.endpointId,
+            projectSlug: deployment.projectSlug,
+            stageSlug: deployment.stageSlug,
+            publicDeploymentIngress: publicDeploymentIngress(deployment),
+          }
+        : {}),
     };
-    if (parsed.background) {
-      if (!handlers.handleAsyncRequest) {
-        return notFoundResponse();
-      }
-
-      const statusUrl = buildStatusUrl(parsed.runId);
-      if (!statusUrl) {
-        return errorResponse(
-          503,
-          "Async API is unavailable: PUBLIC_BASE_URL is not configured",
-        );
-      }
-
-      return handlers.handleAsyncRequest({
-        ...parsed,
-        statusUrl: statusUrl,
-      });
+    if (!parsed.background) {
+      return handlers.handleDirectRequest(parsed);
+    }
+    if (!handlers.handleAsyncRequest) {
+      return notFoundResponse();
     }
 
-    return handlers.handleDirectRequest(parsed);
+    return handlers.handleAsyncRequest({
+      ...parsed,
+      statusUrl: buildStatusUrl(parsed.runId),
+    });
   } catch (err) {
     return badRequestResponse(err);
   }
@@ -2911,7 +2865,7 @@ function notFoundResponse(): Response {
   return errorResponse(404, "Not found");
 }
 
-function buildStatusUrl(runId: string): string | null {
+function buildStatusUrl(runId: string): string {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
     throw new StatusUrlConfigError("PUBLIC_BASE_URL is not configured");

@@ -66,6 +66,7 @@ import {
   machineSandboxes,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  statelessReservationKeyFor,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
@@ -154,14 +155,9 @@ export async function createTools(
     principal: (): SandboxRunPrincipal | undefined =>
       context.session?.sandboxPrincipal(),
   };
-  const sandboxOptions =
-    typeof defaultSandbox?.options === "object" &&
-    defaultSandbox.options !== null
-      ? (defaultSandbox.options as Record<string, unknown>)
-      : {};
   const hasSandboxReservation =
-    typeof sandboxOptions.reservationKey === "string" &&
-    sandboxOptions.reservationKey.trim().length > 0;
+    defaultSandbox !== undefined &&
+    statelessReservationKeyFor(defaultSandbox) !== undefined;
   // Persistence keys on the workspace namespace, or without one on the key
   // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
   const runsWithoutNamespace = hasStandaloneSandbox(sandboxContext);

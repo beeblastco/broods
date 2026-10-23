@@ -514,10 +514,7 @@ const MessageBubble = memo(function MessageBubble({
             );
           }
 
-          if (
-            type === "dynamic-tool" ||
-            (type.startsWith("tool-") && type !== "text")
-          ) {
+          if (type === "dynamic-tool" || type.startsWith("tool-")) {
             const state = typeof p.state === "string" ? p.state : "";
             const toolName = getToolName(p);
             const hasOutput = isToolOutputState(state);

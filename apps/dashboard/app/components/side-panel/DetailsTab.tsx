@@ -203,6 +203,15 @@ export function DetailsTab({
   const [reasoningBudgetText, setReasoningBudgetText] = useState(() =>
     reasoningBudget !== undefined ? String(reasoningBudget) : "",
   );
+  // Follow a budget saved elsewhere (a deploy, another tab) during render.
+  const [syncedReasoningBudget, setSyncedReasoningBudget] =
+    useState(reasoningBudget);
+  if (!Object.is(reasoningBudget, syncedReasoningBudget)) {
+    setSyncedReasoningBudget(reasoningBudget);
+    setReasoningBudgetText(
+      reasoningBudget !== undefined ? String(reasoningBudget) : "",
+    );
+  }
 
   const coreEndpoint = resolveCoreEndpoint();
   const scopePrefix =
@@ -686,10 +695,8 @@ export function DetailsTab({
                     disabled={isSavingKey}
                     onClick={() => setRotateOpen(true)}
                   >
-                    <RefreshCw
-                      className={`size-3 ${isSavingKey ? "animate-spin" : ""}`}
-                    />
-                    Rotate
+                    <RefreshCw className="size-3" />
+                    {isSavingKey ? "Rotating…" : "Rotate"}
                   </Button>
                 )}
               </div>

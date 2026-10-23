@@ -32,9 +32,7 @@ import { McpTab } from "@/app/components/side-panel/McpTab";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
-import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import {
   Tabs,
   TabsContent,
@@ -334,26 +332,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       };
     }
 
-    if (isWorkspace) {
-      const workspaceStatus = nodeData?.status ?? "idle";
-
-      return {
-        text: statusConfig[workspaceStatus].text,
-        color: statusConfig[workspaceStatus].color,
-        variant: nodeStatusBadgeVariant[workspaceStatus],
-      };
-    }
-
-    if (isSandbox) {
-      const sandboxStatus = nodeData?.status ?? "idle";
-
-      return {
-        text: statusConfig[sandboxStatus].text,
-        color: statusConfig[sandboxStatus].color,
-        variant: nodeStatusBadgeVariant[sandboxStatus],
-      };
-    }
-
     if (isSkill) {
       const skills = readAgentBranch<{ enabled?: boolean; allowed?: string[] }>(
         connectedAgentConfig as FlatAgentConfig | undefined,
@@ -384,8 +362,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     canQueryMcpStatus,
     mcpServer,
     isConnectedToAgent,
-    isWorkspace,
-    isSandbox,
     isSkill,
     connectedAgentConfig,
     nodeData?.status,
@@ -833,7 +809,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 nameChanged={!!nameChanged}
                 isSavingName={isSaving}
               />
-            ) : nodeType === "workspace" && node ? (
+            ) : isWorkspace && node ? (
               <WorkspaceResourceDetailsTab
                 data={nodeData}
                 editName={editName}
@@ -843,7 +819,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   onUpdateNodeData(node.id, patch)
                 }
               />
-            ) : nodeType === "sandbox" && node ? (
+            ) : isSandbox && node ? (
               <SandboxResourceDetailsTab
                 data={nodeData}
                 editName={editName}
@@ -854,7 +830,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   onUpdateNodeData(node.id, patch)
                 }
               />
-            ) : nodeType === "skill" && node ? (
+            ) : isSkill && node ? (
               <SkillDetailsTab
                 nodeId={node.id}
                 nodeConfig={nodeData?.config}
@@ -871,15 +847,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   onUpdateNodeLabel(node.id, p);
                 }}
               />
-            ) : (
-              <ServiceDetailsTab
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                nameChanged={!!nameChanged}
-                isSaving={isSaving}
-              />
-            )}
+            ) : null}
           </TabsContent>
 
           {/* Files tab for workspace nodes */}
@@ -1040,48 +1008,4 @@ function inferProviderFromModelId(modelId: string): AgentProvider {
   }
 
   return "openai";
-}
-
-/** Simple details tab for non-agent nodes showing only an editable name. */
-function ServiceDetailsTab({
-  editName,
-  setEditName,
-  onSaveName,
-  nameChanged,
-  isSaving,
-}: {
-  editName: string;
-  setEditName: (name: string) => void;
-  onSaveName: () => void;
-  nameChanged: boolean;
-  isSaving: boolean;
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-1 flex-col gap-5 p-4">
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Name</SectionHeader>
-        <div className="flex items-center gap-2">
-          <Input
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            className="h-8 text-sm"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onSaveName();
-            }}
-          />
-          {nameChanged && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 shrink-0 text-xs"
-              disabled={!editName.trim() || isSaving}
-              onClick={onSaveName}
-            >
-              Save
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }

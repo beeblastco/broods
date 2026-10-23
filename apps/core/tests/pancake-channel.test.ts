@@ -166,6 +166,16 @@ describe("pancake channel adapter", () => {
         ),
       ),
     ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createPancakeRequest(validPayload({ message: { is_hidden: true } })),
+      ),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createPancakeRequest(validPayload({ message: { is_removed: true } })),
+      ),
+    ).toEqual({ kind: "ignore" });
   });
 
   it("surfaces conversation tag ids on the parsed source so hooks can filter", async () => {
