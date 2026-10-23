@@ -534,6 +534,8 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
+  const fromName = message.from?.name ?? conversation.from?.name;
+  const tagIds = normalizePancakeTagIds(conversation.tags);
   logInfo("Pancake webhook accepted", {
     pageId: pageId,
     conversationId: conversation.id,
@@ -541,7 +543,7 @@ function parsePancakeWebhook(
     messageType: message.type,
     textLength: text?.length ?? 0,
     attachmentCount: attachments.length,
-    tagIds: normalizePancakeTagIds(conversation.tags),
+    tagIds: tagIds,
   });
 
   const source: PancakeSource = {
@@ -550,10 +552,10 @@ function parsePancakeWebhook(
     messageId: message.id,
     messageType: message.type,
     postId: payload.data?.post?.id,
-    fromId: message.from?.id ?? conversation.from?.id,
-    fromName: message.from?.name ?? conversation.from?.name,
+    fromId: fromId,
+    fromName: fromName,
     pageCustomerId: message.from?.page_customer_id,
-    tagIds: normalizePancakeTagIds(conversation.tags),
+    tagIds: tagIds,
   };
 
   return {
@@ -568,12 +570,8 @@ function parsePancakeWebhook(
       identity: {
         workspaceRef: pageId,
         channelId: conversation.id,
-        ...((message.from?.id ?? conversation.from?.id)
-          ? { userId: message.from?.id ?? conversation.from?.id }
-          : {}),
-        ...((message.from?.name ?? conversation.from?.name)
-          ? { userName: message.from?.name ?? conversation.from?.name }
-          : {}),
+        ...(fromId ? { userId: fromId } : {}),
+        ...(fromName ? { userName: fromName } : {}),
       },
       // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },

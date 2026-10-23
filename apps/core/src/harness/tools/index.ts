@@ -37,6 +37,7 @@ import type {
   SandboxCpuSample,
   SandboxRunPrincipal,
 } from "../sandbox/types.ts";
+import { configString } from "../sandbox/utils.ts";
 import type { Session } from "../session.ts";
 import {
   listMcpTools,
@@ -154,14 +155,8 @@ export async function createTools(
     principal: (): SandboxRunPrincipal | undefined =>
       context.session?.sandboxPrincipal(),
   };
-  const sandboxOptions =
-    typeof defaultSandbox?.options === "object" &&
-    defaultSandbox.options !== null
-      ? (defaultSandbox.options as Record<string, unknown>)
-      : {};
   const hasSandboxReservation =
-    typeof sandboxOptions.reservationKey === "string" &&
-    sandboxOptions.reservationKey.trim().length > 0;
+    configString(defaultSandbox?.options?.reservationKey) !== undefined;
   // Persistence keys on the workspace namespace, or without one on the key
   // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
   const runsWithoutNamespace = hasStandaloneSandbox(sandboxContext);
