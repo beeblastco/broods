@@ -29,8 +29,11 @@ export const STORAGE_STATE = join(AUTH_DIR, "session.json");
 export const PROJECT_FILE = join(AUTH_DIR, "project.txt");
 export const MISSING_PROBE =
   "E2E_EMAIL and E2E_PASSWORD pick the probe account, or E2E_ADMIN_KEY a self-hosted stack's admin; E2E_BASE_URL the server (default http://localhost:3000)";
-/** ReactFlow's viewport: on the page once the canvas has mounted. */
-export const CANVAS_READY = ".react-flow__viewport";
+/**
+ * ReactFlow's viewport: on the page once the canvas has mounted. The first
+ * shown one, since CI runners sometimes catch a second canvas in the DOM.
+ */
+export const CANVAS_READY = ".react-flow__viewport >> visible=true >> nth=0";
 /** A fresh browser context that is already signed in. */
 export const SIGNED_IN_CONTEXT = {
   baseURL: BASE_URL,
