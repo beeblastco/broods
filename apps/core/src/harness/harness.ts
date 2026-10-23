@@ -34,6 +34,7 @@ import {
   type TypedToolCall,
   type UserModelMessage,
 } from "ai";
+import { HarnessCapabilityUnsupportedError } from "@ai-sdk/harness";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import { extractHarnessPromptContent } from "@ai-sdk/harness/utils";
 import type {
@@ -2108,8 +2109,11 @@ function harnessReadsMedia(part: ImagePart | FilePart): boolean {
     extractHarnessPromptContent({ prompt: { role: "user", content: [part] } });
 
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (HarnessCapabilityUnsupportedError.isInstance(error)) {
+      return false;
+    }
+    throw error;
   }
 }
 
