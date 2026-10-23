@@ -1604,7 +1604,7 @@ export async function runAgentLoop(
     stream = harnessTurn
       ? await harnessTurn.runtime.agent.stream({
           messages: harnessPromptMessages(
-            turnContext.messages,
+            stripEnvelopeFieldsFromMessages(turnContext.messages),
             harnessTurn.environment,
             harnessTextBeforeImages(agentConfig.harness!.type),
           ),
