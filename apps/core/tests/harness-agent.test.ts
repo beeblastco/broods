@@ -159,7 +159,7 @@ it.each([
   ["codex", ["image", "text", "text", "text"]],
 ] as const)(
   "hands %s a picture natively, in the order it takes, and other files as a note",
-  async (type, order) => {
+  async (type, order): Promise<void> => {
     await runHarnessTurn(type, async () => null, {
       messages: [
         {
@@ -183,9 +183,9 @@ it.each([
     });
 
     const content = streamCalls[0]?.messages?.at(-1)?.content;
-    expect(Array.isArray(content) && content.map((part) => part.type)).toEqual([
-      ...order,
-    ]);
+    expect(
+      Array.isArray(content) && content.map((part): string => part.type),
+    ).toEqual([...order]);
     expect(JSON.stringify(content)).toContain(
       "[brief.pdf (application/pdf) was not shown to you",
     );

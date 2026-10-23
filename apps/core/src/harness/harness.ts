@@ -2039,8 +2039,8 @@ function withEnvironment(
 
 /**
  * The new turn an AI SDK Harness session receives. A tool continuation stays
- * assistant + tool as it is; a user turn carries the live environment, after
- * its images on every harness but one that takes `textBeforeImages`.
+ * assistant + tool as it is; a user turn keeps its part order and carries the
+ * live environment last. `textBeforeImages` moves every text part ahead.
  */
 function harnessPromptMessages(
   messages: ModelMessage[],
@@ -2071,7 +2071,7 @@ function harnessPromptMessages(
     );
   }
   // A part the adapter would refuse goes in as the note that points at its
-  // workspace copy. Everything else keeps the order the Broods loop sends.
+  // workspace copy. The environment goes last, as on the streamText path.
   const content = userMessages.flatMap(
     (message): Array<TextPart | ImagePart | FilePart> =>
       typeof message.content === "string"
@@ -2088,27 +2088,19 @@ function harnessPromptMessages(
                 },
           ),
   );
-  if (textBeforeImages) {
-    return [
-      {
-        role: "user",
-        content: [
-          ...content.filter((part): boolean => part.type === "text"),
-          { type: "text", text: environment },
-          ...content.filter((part): boolean => part.type !== "text"),
-        ],
-      },
-    ];
-  }
+  content.push({ type: "text", text: environment });
 
-  return withEnvironment(
-    [
-      userMessages.length === 1
-        ? { ...userMessages[0]!, content: content }
-        : { role: "user", content: content },
-    ],
-    environment,
-  );
+  return [
+    {
+      role: "user",
+      content: textBeforeImages
+        ? [
+            ...content.filter((part): boolean => part.type === "text"),
+            ...content.filter((part): boolean => part.type !== "text"),
+          ]
+        : content,
+    },
+  ];
 }
 
 /**
