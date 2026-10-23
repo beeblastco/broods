@@ -186,9 +186,18 @@ it.each([
     expect(
       Array.isArray(content) && content.map((part): string => part.type),
     ).toEqual([...order]);
-    expect(JSON.stringify(content)).toContain(
-      "[brief.pdf (application/pdf) was not shown to you",
-    );
+    expect(
+      Array.isArray(content) &&
+        content.flatMap((part): string[] =>
+          part.type === "text" ? [part.text] : [],
+        ),
+    ).toEqual([
+      "what is this?",
+      expect.stringContaining(
+        "[brief.pdf (application/pdf) was not shown to you",
+      ),
+      expect.any(String),
+    ]);
   },
 );
 
