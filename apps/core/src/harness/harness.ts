@@ -45,6 +45,7 @@ import {
 import { principalChainLabel } from "../shared/domain/principal.ts";
 import { positiveIntegerEnv } from "../shared/env.ts";
 import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
+import { unreadableMediaNote } from "../shared/media-types.ts";
 import {
   collectSecretValues,
   logError,
@@ -2060,16 +2061,30 @@ function harnessPromptMessages(
       "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
     );
   }
+  // The harness adapters take text only and throw on any other part, so a
+  // picture or file goes in as the note that points at its workspace copy.
   const content = userMessages.flatMap((message) =>
     typeof message.content === "string"
       ? [{ type: "text" as const, text: message.content }]
-      : message.content,
+      : message.content.map((part) =>
+          part.type === "text"
+            ? part
+            : {
+                type: "text" as const,
+                text: unreadableMediaNote(
+                  part.type === "file" ? part.filename : undefined,
+                  part.mediaType ?? "image",
+                ),
+              },
+        ),
   );
 
   return withEnvironment(
-    userMessages.length === 1
-      ? userMessages
-      : [{ role: "user", content: content }],
+    [
+      userMessages.length === 1
+        ? { ...userMessages[0]!, content: content }
+        : { role: "user", content: content },
+    ],
     environment,
   );
 }

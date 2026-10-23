@@ -9,6 +9,7 @@ import * as harnessIndex from "../src/harness/ai-sdk-harness/index.ts";
 // The part of the harness stream options these tests read.
 interface HarnessStreamCall {
   abortSignal?: AbortSignal;
+  messages?: ModelMessage[];
   onEnd?: unknown;
   onStepStart?: (event: {
     stepNumber: number;
@@ -145,6 +146,28 @@ it("fails the run but keeps a steer the turn did not take", async () => {
   expect(appended).toEqual([[{ role: "user", content: "focus" }]]);
 });
 
+it("hands a harness a picture as a note it can open, not an image part", async () => {
+  await runHarnessTurn("pi", async () => null, [], undefined, [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what is this?" },
+        { type: "image", image: new Uint8Array([1]), mediaType: "image/png" },
+      ],
+    },
+  ]);
+
+  const content = streamCalls[0]?.messages?.at(-1)?.content;
+  expect(Array.isArray(content) && content.map((part) => part.type)).toEqual([
+    "text",
+    "text",
+    "text",
+  ]);
+  expect(JSON.stringify(content)).toContain(
+    "[attachment (image/png) was not shown to you",
+  );
+});
+
 async function runHarnessTurn(
   type: AiSdkHarnessType,
   applySteeringIngress: () => Promise<unknown>,
@@ -156,6 +179,7 @@ async function runHarnessTurn(
 
     return [];
   },
+  messages: ModelMessage[] = [{ role: "user", content: "hello" }],
 ): Promise<void> {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   const { runAgentLoop } = await import("../src/harness/harness.ts");
@@ -184,7 +208,7 @@ async function runHarnessTurn(
         }),
       } as never,
       {
-        messages: [{ role: "user", content: "hello" }],
+        messages: messages,
         system: [],
         ephemeralSystem: [],
         systemContextSnapshot: { cursor: null, messages: [] },
