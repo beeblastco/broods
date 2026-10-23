@@ -36,6 +36,10 @@ COPY apps/cloudflare-worker/src/limits.ts ./apps/cloudflare-worker/src/
 RUN cd apps/core && bun run scripts/compaction-prompt.ts \
     && bun build --compile --target=bun-linux-x64 --minify src/server.ts --outfile /out/core-server
 
+# Pi resizes every prompt image with Photon, whose WASM a compiled binary reads
+# from beside itself. Without it, pi drops each image the user sends.
+RUN cd apps/core && bun -e 'const pi = Bun.resolveSync("@ai-sdk/harness-pi", process.cwd()); const agent = Bun.resolveSync("@earendil-works/pi-coding-agent", pi); await Bun.write("/out/photon_rs_bg.wasm", Bun.file(Bun.resolveSync("@silvia-odwyer/photon-node/photon_rs_bg.wasm", agent)));'
+
 # Reuse the server's PORT parser in the image probe.
 RUN bun build apps/core/src/shared/env.ts --target=node --outfile /out/health-env.mjs
 
@@ -61,7 +65,7 @@ ENV NODE_ENV=production \
 RUN apk add --no-cache ca-certificates libgcc libstdc++ \
     && addgroup --system --gid 1001 core \
     && adduser --system --uid 1001 core
-COPY --from=builder --chown=1001:1001 /out/core-server ./core-server
+COPY --from=builder --chown=1001:1001 /out/core-server /out/photon_rs_bg.wasm ./
 COPY --from=isolate-deps --chown=1001:1001 /out/node_modules ./isolate-runner/node_modules
 COPY --chown=1001:1001 apps/core/src/harness/isolate/runner/ ./isolate-runner/
 COPY --from=builder --chown=1001:1001 /out/health-env.mjs ./health-env.mjs
