@@ -1290,18 +1290,11 @@ function CanvasInner({
     scheduleSave();
   }, [scheduleSave]);
 
-  /** Select a card and open its side panel; a click, the menu's Open and `?node=` all land here. */
+  /** Select a card and open its side panel; a click and the menu's Open both land here. */
   const openNode = useCallback((nodeId: string): void => {
     // The flat node, so the panel and the re-centre read absolute positions.
     const node = nodesRef.current.find((item) => item.id === nodeId);
     if (!node) return;
-    // A frame focuses its members like a selected node, with no panel and no Delete.
-    if (node.type === "frame") {
-      setSelectedNode(null);
-      setFocusedFrameId(node.id);
-
-      return;
-    }
     setFocusedFrameId(null);
     // Stamped here so the panel can report how long it took to appear. Most of
     // that window is its own dynamic import, not React.
@@ -1320,6 +1313,13 @@ function CanvasInner({
   const onNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
       clearRefusal();
+      // A frame focuses its members like a selected node, with no panel and no Delete.
+      if (node.type === "frame") {
+        setSelectedNode(null);
+        setFocusedFrameId(node.id);
+
+        return;
+      }
       openNode(node.id);
     },
     [clearRefusal, openNode],
