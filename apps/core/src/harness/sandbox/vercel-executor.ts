@@ -5,8 +5,8 @@
  * an idle timer, so each call extends the session to one idle window past its
  * own end, and `maxLifetimeSeconds` retires the sandbox at acquire.
  * With `options.mountAwsS3Buckets`, a workspace run mounts its S3 prefix with
- * mount-s3 before each call, on short-lived credentials handed to the mount
- * process alone. `config.snapshot` names the image or snapshot it boots, and
+ * mount-s3 before each call, on credentials scoped to that prefix for an hour
+ * and kept out of the sandbox env. `config.snapshot` names the image or snapshot it boots, and
  * the Snapshot action captures a reserved sandbox into a new snapshot.
  */
 
@@ -782,8 +782,9 @@ function vercelSpecs(sandbox: VercelSandbox): SandboxSpecs | undefined {
 }
 
 // Installs mount-s3 when the image lacks it, then replaces any stale mount with
-// one on the credentials in this command's env. Only the mount daemon keeps
-// them; `sudo -E` hands them over and the sandbox env never sees them.
+// one on the credentials in this command's env. They stay out of the sandbox
+// env and every later command's, but the daemon holds them and the agent has
+// sudo, which is why they are scoped to the prefix and last an hour.
 function mountScript(
   mount: ResolvedS3Mount,
   mountPath: string,
