@@ -25,11 +25,11 @@ export interface Exception {
 /** Reviewed, time-limited exceptions. Each one needs a reachability note. */
 export const EXCEPTIONS: Exception[] = [
   {
-    package: "braces",
-    advisory: "GHSA-vfj7-8cjw-p6xm",
-    expires: "2027-01-11",
+    package: "@azure/msal-node",
+    advisory: "GHSA-xcx6-jx8p-x3h5",
+    expires: "2027-01-24",
     reason:
-      "No patched release exists (3.0.3 is latest). Reached only through micromatch in build/dev tooling (docs, shadcn CLI) and Daytona's Image.fromDockerfile, which core never calls; no runtime path expands untrusted patterns.",
+      "No patched 5.x exists and @microsoft/teams.apps (2.1.1 is latest) requires ^5.6.0. The advisory is the authorization code flow; teams.apps only acquires tokens by client credential, managed identity or federated credential, and core never imports MSAL. Drop once teams.apps allows ^7.1.",
   },
 ];
 

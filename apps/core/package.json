@@ -96,12 +96,12 @@
     "ai-sdk-ollama": "^4.3.0",
     "chat": "^4.38.1",
     "convex": "^1.44.0",
-    "e2b": "^2.55.0",
+    "e2b": "^2.59.0",
     "nats": "^2.29.3",
     "nats.ws": "^1.30.3",
     "sst": "4.17.1",
     "workers-ai-provider": "^4.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/aws-lambda": "8.10.163",
