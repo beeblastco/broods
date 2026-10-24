@@ -319,6 +319,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         "vercel S3 workspace mounts need SANDBOX_MOUNT_ROLE_ARN in the harness runtime, or a workspace bucket with assumeRole or R2 auth",
       );
     }
+    // A first mount installs mount-s3, so a reserved session near its end
+    // gets its window before the install, not only after.
+    if (this.#persistent(request)) {
+      await this.#keepAlive(sandbox, request.timeoutSeconds);
+    }
     await this.#shell(sandbox, mountScript(mount, mountPath, now), {
       cwd: "/",
       env: {
@@ -615,6 +620,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const script = [
       "set -e",
       `mkdir -p ${shellQuote(workDir)} ${shellQuote(this.#jobsDir(key))}`,
+      // Parallel calls on one reservation take turns, so onCreate runs once.
+      `exec 9>${shellQuote(`${this.#jobsDir(key)}/.fp-lifecycle.lock`)}`,
+      "flock 9",
       `cd ${shellQuote(workDir)}`,
       `if [ ! -f ${shellQuote(marker)} ]; then`,
       ...createCommands.map((cmd) => `  ${cmd}`),
