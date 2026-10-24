@@ -143,15 +143,7 @@ const config: Config = {
     },
   ],
 
-  themes: ["@docusaurus/theme-mermaid"],
-
   themeConfig: {
-    mermaid: {
-      theme: {
-        light: "neutral",
-        dark: "dark",
-      },
-    },
     navbar: {
       title: "Docs",
       logo: {
