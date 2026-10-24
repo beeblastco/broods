@@ -32,16 +32,19 @@ export const forModels = query({
       throw new Error("User not found or not authenticated");
     }
 
+    // Several providers can share a source (`openai` and `chatgpt`), so each
+    // lowercased id keeps every model that names it.
     const sources = new Map<
       string,
-      Map<string, (typeof args.models)[number]>
+      Map<string, Array<(typeof args.models)[number]>>
     >();
     for (const model of args.models) {
       if (!isAccountModelProviderName(model.modelProvider)) continue;
       const source = MODELS_DEV_SOURCES[model.modelProvider];
       if (source === null) continue;
       const wanted = sources.get(source) ?? new Map();
-      wanted.set(model.modelId.toLowerCase(), model);
+      const modelId = model.modelId.toLowerCase();
+      wanted.set(modelId, [...(wanted.get(modelId) ?? []), model]);
       sources.set(source, wanted);
     }
     const priced = await Promise.all(
@@ -51,11 +54,9 @@ export const forModels = query({
           .withIndex("by_source", (q) => q.eq("source", source))
           .unique();
 
-        return (doc?.models ?? []).flatMap(({ modelId, ...rates }) => {
-          const model = wanted.get(modelId);
-
-          return model ? [{ ...model, ...rates }] : [];
-        });
+        return (doc?.models ?? []).flatMap(({ modelId, ...rates }) =>
+          (wanted.get(modelId) ?? []).map((model) => ({ ...model, ...rates })),
+        );
       }),
     );
 
