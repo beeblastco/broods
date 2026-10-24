@@ -10,69 +10,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
 import { createMicrovmHarnessAgent } from "../src/harness/ai-sdk-harness/index.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import { createMicrovmHarnessDriver } from "../src/harness/sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
-import { runtime } from "../src/shared/convex/runtime.ts";
+import { useLiveReservations } from "./helpers/live-reservations.ts";
 
 const ENABLED = process.env.MICROVM_HARNESS_TEST === "1";
-const originalMutation = runtime.mutate.bind(runtime);
-const originalQuery = runtime.query.bind(runtime);
-const reservations = new Map<string, string>();
-const mutationMock = mock(
-  async (name: string, args: Record<string, unknown>): Promise<unknown> => {
-    const reservationKey = String(args.reservationKey);
-    if (name === "claimSandboxReservation") {
-      if (reservations.has(reservationKey)) return false;
-      reservations.set(reservationKey, String(args.externalId));
-
-      return true;
-    }
-    if (name === "deleteSandboxReservation") {
-      const expected = args.expectedExternalId;
-      if (
-        expected === undefined ||
-        reservations.get(reservationKey) === expected
-      ) {
-        reservations.delete(reservationKey);
-      }
-
-      return null;
-    }
-    if (name === "saveSandboxReservation") {
-      reservations.set(reservationKey, String(args.externalId));
-
-      return null;
-    }
-    throw new Error(`Unexpected live-test runtime mutation: ${name}`);
-  },
-);
-const queryMock = mock(
-  async (name: string, args: Record<string, unknown>): Promise<unknown> => {
-    if (name !== "getSandboxReservation") {
-      throw new Error(`Unexpected live-test runtime query: ${name}`);
-    }
-
-    return reservations.get(String(args.reservationKey)) ?? null;
-  },
-);
-
-beforeEach(() => {
-  reservations.clear();
-  runtime.mutate = mutationMock as never;
-  runtime.query = queryMock as never;
-});
-
-afterEach(() => {
-  runtime.mutate = originalMutation;
-  runtime.query = originalQuery;
-  mutationMock.mockClear();
-  queryMock.mockClear();
-  reservations.clear();
-});
+const reservations = useLiveReservations();
 
 describe.skipIf(!ENABLED)(
   "Broods Lambda MicroVM Harness integration (live)",
@@ -188,5 +135,12 @@ function liveCompute(): SandboxExecutorConfig & {
     snapshot: snapshot,
     network: { mode: "allow-all" },
     timeout: 180,
+    // Without an account the reservation claim is skipped, which reads as a
+    // lost create race.
+    controlPlane: {
+      accountId: "microvm-live-test",
+      name: "MicroVM Harness live test",
+      specs: { vcpu: 1, memoryMb: 2_048, storageGb: 8 },
+    },
   };
 }
