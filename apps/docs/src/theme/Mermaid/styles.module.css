@@ -1,0 +1,15 @@
+.container {
+  max-width: 100%;
+  min-width: 0;
+  --pele-bg: var(--ifm-background-color);
+  --pele-fg: var(--ifm-font-color-base);
+  --pele-muted: var(--ifm-color-emphasis-700);
+  --pele-line: var(--ifm-color-emphasis-700);
+  --pele-surface: var(--ifm-color-emphasis-100);
+  --pele-surface-alt: var(--ifm-color-emphasis-200);
+  --pele-border: var(--ifm-color-emphasis-500);
+  --pele-accent: var(--ifm-color-primary);
+  --pele-font: var(--ifm-font-family-base);
+  --pele-font-mono: var(--ifm-font-family-monospace);
+  --pele-zoom-cursor: pointer;
+}
