@@ -40,6 +40,7 @@ import { subagentStop } from "./subagent-stop.ts";
 import { traceFetch } from "./trace-fetch.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { userToken } from "./user-token.ts";
+import { vercelSandbox } from "./vercel-sandbox.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { websocketAttachAbort } from "./websocket-attach-abort.ts";
 import { websocketRuntimeKey } from "./websocket-runtime-key.ts";
@@ -76,6 +77,7 @@ export const verifyCases: readonly VerifyCase[] = [
   customSandbox,
   cloudflareSandbox,
   workerSandbox,
+  vercelSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,
