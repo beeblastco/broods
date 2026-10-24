@@ -74,7 +74,7 @@
     "rollup": "^4.62.4",
     "rollup-plugin-dts": "^6.5.1",
     "typescript": "^7.0.2",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "ai": "^7.0.150"
