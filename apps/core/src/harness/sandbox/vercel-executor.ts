@@ -125,8 +125,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`, { cwd: "/" });
       }
       if (persistent && cwd) {
-        await this.#keepAlive(sandbox, request.timeoutSeconds);
         await this.#runLifecycle(sandbox, sandboxReservationKey(request)!);
+        // After the hooks, so however long they took the command gets its window.
+        await this.#keepAlive(sandbox, request.timeoutSeconds);
       }
       const result = await sandbox.runCommand({
         cmd: "bash",
@@ -170,9 +171,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const workDir = this.#workDir(ns);
     await this.#ensureS3Mount(sandbox, request);
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`, { cwd: "/" });
-    await this.#keepAlive(sandbox, request.timeoutSeconds);
     const jobId = request.jobId ?? generateJobId();
     await this.#runLifecycle(sandbox, ns);
+    await this.#keepAlive(sandbox, request.timeoutSeconds);
     const script = launchScript(
       this.#jobsDir(ns),
       jobId,
@@ -207,7 +208,8 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       sandbox,
       statusScript(jobsDir, request.jobId),
     );
-    // A polled job is activity: it holds the session open like a command does.
+    // A polled job (status or logs) is activity: it holds the session open
+    // like a command does.
     await this.#keepAlive(sandbox, 0);
 
     return parseJobStatus(request.jobId, status);
@@ -220,6 +222,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
     );
+    await this.#keepAlive(sandbox, 0);
 
     return {
       jobId: request.jobId,
