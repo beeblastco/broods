@@ -664,8 +664,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// The @vercel/sandbox SDK surfaces auth failures as a bare "Status code 403 is not
-// ok". Translate 401/403 into an actionable message so the agent sees what to fix.
+// The @vercel/sandbox SDK surfaces auth failures as "Status code 403 is not ok",
+// followed by the API's reason when it gives one. Keep that reason (a Secure
+// Compute network the team cannot use answers 401 too); a bare status means
+// the token, so say what to check.
 export function classifyVercelError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   const numericStatus = [
@@ -679,9 +681,13 @@ export function classifyVercelError(err: unknown): Error {
   const matched = /status code (401|403)\b/i.exec(message);
   const status = numericStatus ?? (matched ? Number(matched[1]) : undefined);
   if (status === 401 || status === 403) {
+    const reason = /status code \d+ is not ok:\s*(.+)/is.exec(message)?.[1];
+
     return new Error(
-      `Vercel Sandbox rejected the request (HTTP ${status}): the VERCEL_TOKEN is invalid or lacks access to the ` +
-        `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
+      `Vercel Sandbox rejected the request (HTTP ${status}): ` +
+        (reason ??
+          "the VERCEL_TOKEN is invalid or lacks access to the configured team/project. " +
+            "Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID."),
     );
   }
 

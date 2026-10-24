@@ -3878,6 +3878,20 @@ describe("classifyVercelError", () => {
     );
   });
 
+  it("keeps the reason Vercel gives instead of blaming the token", async () => {
+    const { classifyVercelError } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const network = classifyVercelError(
+      new Error(
+        "Status code 401 is not ok: The network was not found or is not accessible to this team. Secure Compute requires an Enterprise plan with a configured network.",
+      ),
+    );
+
+    expect(network.message).toBe(
+      "Vercel Sandbox rejected the request (HTTP 401): The network was not found or is not accessible to this team. Secure Compute requires an Enterprise plan with a configured network.",
+    );
+  });
+
   it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {
     const { classifyVercelError } =
       await import("../src/harness/sandbox/vercel-executor.ts");
