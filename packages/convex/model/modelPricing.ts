@@ -1,61 +1,53 @@
 /**
  * Shared token pricing and provider metadata conventions for usage metering.
- * Rates are standard USD prices per million text tokens, reviewed 2026-06-20.
+ * Rates are standard USD prices per million text tokens, crawled hourly from
+ * models.dev into the `modelPrices` table (`modelPrices/crawl.ts`).
  */
 
-const ANTHROPIC_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [
-    /claude-(?:sonnet-4(?:-|$)|sonnet-4-[56])/,
-    { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 },
-  ],
-  [
-    /claude-haiku-4-5/,
-    { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5 },
-  ],
-  [
-    /claude-opus-4-[56]/,
-    { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 25 },
-  ],
-];
+import type { AccountModelProviderName } from "./modelProviders";
 
-const BEDROCK_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  ...ANTHROPIC_RATES,
-  [
-    /amazon\.nova-lite-v1(?::0)?$/,
-    { input: 0.06, cacheRead: 0.015, cacheWrite: 0.075, output: 0.24 },
-  ],
-];
+/** Where models.dev publishes every provider's models and rates. */
+export const MODELS_DEV_API_URL = "https://models.dev/api.json";
 
-const GOOGLE_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [
-    /^gemini-2\.5-flash-lite(?:-|$)/,
-    { input: 0.1, cacheRead: 0.01, cacheWrite: 0.1, output: 0.4 },
-  ],
-  [
-    /^gemini-2\.5-flash(?:-|$)/,
-    { input: 0.3, cacheRead: 0.03, cacheWrite: 0.3, output: 2.5 },
-  ],
-];
-
-const OPENAI_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [/^gpt-5\.5(?:-|$)/, { input: 5, cacheRead: 0.5, cacheWrite: 5, output: 30 }],
-  [
-    /^gpt-5\.4-mini(?:-|$)/,
-    { input: 0.75, cacheRead: 0.075, cacheWrite: 0.75, output: 4.5 },
-  ],
-  [
-    /^gpt-5\.4(?:-|$)/,
-    { input: 2.5, cacheRead: 0.25, cacheWrite: 2.5, output: 15 },
-  ],
-  [
-    /^gpt-5-mini(?:-|$)/,
-    { input: 0.25, cacheRead: 0.025, cacheWrite: 0.25, output: 2 },
-  ],
-  [
-    /^gpt-4\.1-mini(?:-|$)/,
-    { input: 0.4, cacheRead: 0.1, cacheWrite: 0.4, output: 1.6 },
-  ],
-];
+/**
+ * The models.dev provider that prices each agent provider's model ids, or
+ * null when nothing public does: `custom` endpoints and self-hosted `ollama`
+ * set their own price, and models.dev has no `v0` rates.
+ */
+export const MODELS_DEV_SOURCES: Readonly<
+  Record<AccountModelProviderName, string | null>
+> = {
+  alibaba: "alibaba",
+  anthropic: "anthropic",
+  azure: "azure",
+  baseten: "baseten",
+  bedrock: "amazon-bedrock",
+  cerebras: "cerebras",
+  chatgpt: "openai",
+  cloudflare: "cloudflare-workers-ai",
+  cohere: "cohere",
+  custom: null,
+  deepinfra: "deepinfra",
+  deepseek: "deepseek",
+  fireworks: "fireworks-ai",
+  google: "google",
+  groq: "groq",
+  huggingface: "huggingface",
+  llmgateway: "llmgateway",
+  minimax: "minimax",
+  mistral: "mistral",
+  moonshotai: "moonshotai",
+  ollama: null,
+  openai: "openai",
+  openrouter: "openrouter",
+  perplexity: "perplexity",
+  togetherai: "togetherai",
+  v0: null,
+  vercel: "vercel",
+  vertex: "google-vertex",
+  xai: "xai",
+  zai: "zai",
+};
 
 /** Provider metadata fields that report cache creation tokens. */
 export const PROVIDER_CACHE_WRITE_FIELDS: Readonly<Record<string, string>> = {
@@ -72,6 +64,11 @@ export interface ModelCostEstimate {
   cacheRead: number;
   cacheWrite: number;
   total: number;
+}
+
+/** One model's rates as the `modelPrices` table stores them. */
+export interface ModelRateRow extends ModelTokenRates {
+  modelId: string;
 }
 
 /** Standard token rates in USD per million tokens. */
@@ -93,6 +90,24 @@ export interface ModelTokenUsage {
   cacheWriteTokens: number;
 }
 
+/** The slice of models.dev's `api.json` the crawl reads. */
+export type ModelsDevApi = Record<
+  string,
+  {
+    models?: Record<
+      string,
+      {
+        cost?: {
+          input?: number;
+          output?: number;
+          cache_read?: number;
+          cache_write?: number;
+        };
+      }
+    >;
+  }
+>;
+
 export function canonicalModelProvider(provider: string): string {
   const normalized = provider.toLowerCase();
   if (normalized.includes("bedrock")) return "bedrock";
@@ -109,13 +124,11 @@ export function canonicalModelProvider(provider: string): string {
   return normalized;
 }
 
-/** Estimate standard token cost; returns null when the configured model is unpriced. */
+/** Estimate standard token cost; returns null when the model is unpriced. */
 export function estimateModelTokenCost(
-  provider: string,
-  modelId: string,
+  rates: ModelTokenRates | undefined,
   usage: ModelTokenUsage,
 ): ModelCostEstimate | null {
-  const rates = resolveModelTokenRates(provider, modelId);
   if (!rates) return null;
 
   const uncachedInput = Math.max(
@@ -136,31 +149,40 @@ export function estimateModelTokenCost(
   };
 }
 
-export function resolveModelTokenRates(
-  provider: string,
-  modelId: string,
-): ModelTokenRates | null {
-  let normalizedProvider = canonicalModelProvider(provider);
-  let normalizedModel = modelId.toLowerCase();
-  if (normalizedProvider === "vercel" && normalizedModel.includes("/")) {
-    const separator = normalizedModel.indexOf("/");
-    normalizedProvider = canonicalModelProvider(
-      normalizedModel.slice(0, separator),
-    );
-    normalizedModel = normalizedModel.slice(separator + 1);
-  }
-
-  const tables: Readonly<
-    Record<string, ReadonlyArray<[RegExp, ModelTokenRates]>>
-  > = {
-    openai: OPENAI_RATES,
-    anthropic: ANTHROPIC_RATES,
-    google: GOOGLE_RATES,
-    bedrock: BEDROCK_RATES,
-  };
-  const match = tables[normalizedProvider]?.find(([pattern]) =>
-    pattern.test(normalizedModel),
+/**
+ * The rate rows of every source in `MODELS_DEV_SOURCES`, ids lowercased.
+ * A model without an input and output price is skipped; a missing cache rate
+ * falls back to the input rate, since the provider gives no discount for it.
+ */
+export function parseModelsDevRates(
+  body: ModelsDevApi,
+): Array<{ source: string; models: ModelRateRow[] }> {
+  const sources = new Set(
+    Object.values(MODELS_DEV_SOURCES).filter((source) => source !== null),
   );
 
-  return match?.[1] ?? null;
+  return [...sources].flatMap((source) => {
+    const rows = new Map<string, ModelRateRow>();
+    for (const [id, model] of Object.entries(body[source]?.models ?? {})) {
+      const cost = model.cost;
+      const modelId = id.toLowerCase();
+      if (
+        typeof cost?.input !== "number" ||
+        typeof cost.output !== "number" ||
+        rows.has(modelId)
+      )
+        continue;
+      rows.set(modelId, {
+        modelId: modelId,
+        input: cost.input,
+        output: cost.output,
+        cacheRead: cost.cache_read ?? cost.input,
+        cacheWrite: cost.cache_write ?? cost.input,
+      });
+    }
+
+    return rows.size > 0
+      ? [{ source: source, models: [...rows.values()] }]
+      : [];
+  });
 }

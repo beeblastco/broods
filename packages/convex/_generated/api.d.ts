@@ -1227,6 +1227,23 @@ export declare const api: {
       { serverId: Id<"mcp">; tools: Array<any>; verified: boolean }
     >;
   };
+  modelPrices: {
+    rates: {
+      forModels: FunctionReference<
+        "query",
+        "public",
+        { models: Array<{ modelId: string; modelProvider: string }> },
+        Array<{
+          cacheRead: number;
+          cacheWrite: number;
+          input: number;
+          modelId: string;
+          modelProvider: string;
+          output: number;
+        }>
+      >;
+    };
+  };
   org: {
     lifecycle: {
       provision: FunctionReference<
@@ -5437,6 +5454,30 @@ export declare const internal: {
         };
       }
     >;
+  };
+  modelPrices: {
+    crawl: {
+      run: FunctionReference<"action", "internal", {}, null>;
+    };
+    rates: {
+      store: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          sources: Array<{
+            models: Array<{
+              cacheRead: number;
+              cacheWrite: number;
+              input: number;
+              modelId: string;
+              output: number;
+            }>;
+            source: string;
+          }>;
+        },
+        null
+      >;
+    };
   };
   org: {
     orgs: {

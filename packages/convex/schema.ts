@@ -1649,6 +1649,27 @@ export const usageWritesFields = {
   createdAt: v.number(),
 };
 
+/**
+ * Token rates in USD per million tokens for one models.dev provider, crawled
+ * hourly by `modelPrices/crawl.ts`. The dashboard prices usage from these.
+ */
+export const modelPricesFields = {
+  /** models.dev provider id, e.g. `amazon-bedrock`. */
+  source: v.string(),
+  models: v.array(
+    v.object({
+      /** Lowercased model id, as usage rows name it. */
+      modelId: v.string(),
+      input: v.number(),
+      output: v.number(),
+      cacheRead: v.number(),
+      cacheWrite: v.number(),
+    }),
+  ),
+  /** When the crawl last found these rates changed. */
+  updatedAt: v.number(),
+};
+
 export const usageRollupsFields = {
   accountId: v.id("accounts"),
   endpointId: v.string(),
@@ -1989,6 +2010,7 @@ export default defineSchema({
   usageWrites: defineTable(usageWritesFields)
     .index("by_writeId", ["writeId"])
     .index("by_createdAt", ["createdAt"]),
+  modelPrices: defineTable(modelPricesFields).index("by_source", ["source"]),
   stripeSubscriptionSyncs: defineTable(stripeSubscriptionSyncsFields).index(
     "by_stripeSubscriptionId",
     ["stripeSubscriptionId"],
