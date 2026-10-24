@@ -5,6 +5,7 @@ ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36ae
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
@@ -23,6 +24,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/apps/gateway/node_modules ./apps/gateway/node_modules
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY packages/broods ./packages/broods
 COPY apps/core/src/shared/env.ts ./apps/core/src/shared/env.ts
 COPY apps/core/src/shared/machine-socket.ts ./apps/core/src/shared/machine-socket.ts

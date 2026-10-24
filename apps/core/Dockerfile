@@ -7,6 +7,7 @@ ARG NODE_IMAGE=node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859a
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/

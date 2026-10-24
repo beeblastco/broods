@@ -23,15 +23,7 @@ export interface Exception {
 }
 
 /** Reviewed, time-limited exceptions. Each one needs a reachability note. */
-export const EXCEPTIONS: Exception[] = [
-  {
-    package: "@azure/msal-node",
-    advisory: "GHSA-xcx6-jx8p-x3h5",
-    expires: "2027-01-24",
-    reason:
-      "No patched 5.x exists and @microsoft/teams.apps (2.1.1 is latest) requires ^5.6.0. The advisory is the authorization code flow; teams.apps only acquires tokens by client credential, managed identity or federated credential, and core never imports MSAL. Drop once teams.apps allows ^7.1.",
-  },
-];
+export const EXCEPTIONS: Exception[] = [];
 
 /**
  * Judges one `bun audit --json` run. bun audit exits 0 when clean and 1 when it
