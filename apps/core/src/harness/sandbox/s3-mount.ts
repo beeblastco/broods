@@ -1,6 +1,6 @@
 /**
  * Workspace S3 mount resolution, shared by the runtime-mount providers (workdir,
- * and later daytona). Turns a workspace's storage config (bucket / region /
+ * daytona, vercel). Turns a workspace's storage config (bucket / region /
  * endpoint / prefix / auth) plus the managed defaults into a concrete mount
  * target with credentials. Platform credentials only ever reach the managed
  * bucket (`workspaceStorageOwnAuth`). Four credential sources, in precedence:
@@ -37,7 +37,8 @@ import type { S3Access } from "../../shared/s3.ts";
 import type { SandboxControlPlane } from "../../shared/sandbox-sizes.ts";
 import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 import { getStorage } from "../../shared/storage.ts";
-import type { SandboxRunRequest } from "./types.ts";
+import type { SandboxExecutorConfig, SandboxRunRequest } from "./types.ts";
+import { configString, shellQuote } from "./utils.ts";
 
 // A cached bring-your-own read target is reused until its credentials are this
 // close to expiry: longer than the 300s presign a read target can back, plus
@@ -46,6 +47,10 @@ const READ_TARGET_REFRESH_MARGIN_MS = 10 * 60 * 1000;
 // R2 temporary credentials die the moment their parent token is revoked, so a
 // rotated token reaches harness reads within this long, not near expiry.
 const R2_READ_TARGET_REUSE_MS = 60 * 1000;
+// The mount's assume-role session lasts an hour and mount-s3 takes its credentials as
+// process env, so the only way to hand it new ones is to replace the daemon. Remount
+// with this much of the session left, rather than letting it expire into I/O errors.
+const MOUNT_MAX_AGE_SECONDS = 45 * 60;
 const MOUNT_SESSION_NAME = "fp-sandbox-mount";
 // STS caps RoleSessionName and SourceIdentity at 64 characters; the session
 // name is `${MOUNT_SESSION_NAME}-${identity}`, so the identity gets the rest.
@@ -189,6 +194,49 @@ export async function assumeScopedMountCredentials(params: {
       ? { AWS_CREDENTIAL_EXPIRATION: credentials.Expiration.toISOString() }
       : {}),
   };
+}
+
+// The mount context an executor resolves a run's workspace against: the config's
+// storage, else the managed bucket, with `options` overriding the env defaults.
+export function executorS3Context(
+  config: SandboxExecutorConfig,
+  request: Pick<SandboxRunRequest, "namespace" | "metadata">,
+): S3MountContext {
+  if (!request.namespace) {
+    throw new Error("an AWS S3 workspace mount requires a workspace namespace");
+  }
+  const options = config.options ?? {};
+  const endpoint = configString(options.s3Endpoint);
+
+  return {
+    storage: config.storage,
+    namespace: request.namespace,
+    managedBucket:
+      configString(options.workspaceBucketName) ??
+      optionalEnv("FILESYSTEM_BUCKET_NAME"),
+    region:
+      configString(options.awsRegion) ??
+      optionalEnv("AWS_REGION") ??
+      optionalEnv("AWS_DEFAULT_REGION"),
+    ...(endpoint ? { endpoint: endpoint } : {}),
+    attribution: mountAttribution(config, request),
+  };
+}
+
+// Exits 0 when the workspace is mounted on credentials younger than
+// MOUNT_MAX_AGE_SECONDS, and leaves `$stamp_file` set for the remount that writes it.
+// Age comes from a stamp written with the harness's clock, not the guest's, which a
+// Firecracker pause freezes. The stamp sits on agent-writable disk, so anything that
+// is not a plain epoch (non-digits, a leading zero that dash refuses as octal, more
+// than ten digits, a future time) reads as "unknown age" and fails the check.
+export function freshMountScript(mountPath: string, now: number): string {
+  return [
+    `stamp_file=${shellQuote(`${mountPath}.mounted-at`)};`,
+    `stamp=$(cat "$stamp_file" 2>/dev/null || echo 0);`,
+    `case "$stamp" in '' | *[!0-9]* | 0?* | ???????????*) stamp=0 ;; esac;`,
+    `age=$((${now} - stamp));`,
+    `mountpoint -q ${shellQuote(mountPath)} && [ "$age" -ge 0 ] && [ "$age" -lt ${MOUNT_MAX_AGE_SECONDS} ]`,
+  ].join("\n");
 }
 
 // The attribution an executor attaches to a sandbox mount: the account, plus the

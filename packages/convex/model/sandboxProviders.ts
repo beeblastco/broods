@@ -40,7 +40,7 @@ export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 
 // Providers whose workspace is a mount-s3 FUSE mount, which has no rename or append.
 export const S3_MOUNT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
-  new Set<SandboxProvider>(["daytona", "lambda", "sandbox"]);
+  new Set<SandboxProvider>(["daytona", "lambda", "sandbox", "vercel"]);
 
 // Providers core can suspend and resume: their executors implement `suspend()`
 // and `resume()`. The rest stop after their idle window or on Terminate.

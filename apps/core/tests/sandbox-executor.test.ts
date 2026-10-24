@@ -2977,7 +2977,9 @@ describe("createSandboxExecutor", () => {
         timeoutSeconds: 30,
         outputLimitBytes: 4096,
       }),
-    ).rejects.toThrow("Daytona AWS S3 mounts require a workspace namespace");
+    ).rejects.toThrow(
+      "an AWS S3 workspace mount requires a workspace namespace",
+    );
 
     expect(stsSendMock.mock.calls.length).toBe(stsCallCount);
   });
@@ -3092,6 +3094,112 @@ describe("createSandboxExecutor", () => {
       }),
     );
     expect(vercelStopMock).toHaveBeenCalledTimes(1);
+  });
+
+  function vercelMountConfig(): SandboxExecutorConfig {
+    return {
+      provider: "vercel",
+      network: { mode: "deny-all" },
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        mountAwsS3Buckets: true,
+      },
+    };
+  }
+
+  function vercelMountCommand():
+    | { args: string[]; env: Record<string, string> }
+    | undefined {
+    return vercelRunCommandMock.mock.calls
+      .map((call) => call[0] as { args: string[]; env: Record<string, string> })
+      .find((params) => params.args[1]?.includes("sudo -E mount-s3"));
+  }
+
+  it("mounts a Vercel workspace on scoped credentials only the mount command sees", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(vercelMountConfig());
+    // The freshness check finds no mount.
+    vercelRunCommandMock.mockImplementationOnce(async () => ({
+      exitCode: 1,
+      stdout: async () => "",
+      stderr: async () => "",
+    }));
+
+    await executor.run({
+      code: "cat notes.md",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    // A deny-all sandbox reaches the workspace bucket and nothing else.
+    const create = vercelCreateMock.mock.calls[0]?.[0] as {
+      networkPolicy: unknown;
+      env: Record<string, string>;
+    };
+    expect(create.networkPolicy).toEqual({
+      allow: [
+        "s3.us-east-1.amazonaws.com",
+        "workspace-bucket.s3.us-east-1.amazonaws.com",
+      ],
+    });
+    expect(create.env.AWS_SESSION_TOKEN).toBeUndefined();
+    const mount = vercelMountCommand();
+    expect(mount?.args[1]).toContain(
+      `'--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
+    );
+    expect(mount?.env).toMatchObject({
+      AWS_ACCESS_KEY_ID: "scoped-access-key",
+      AWS_SESSION_TOKEN: "scoped-session-token",
+    });
+    const assumeRole = (
+      stsSendMock.mock.calls.at(-1)?.[0] as { input: { Policy?: string } }
+    ).input;
+    expect(assumeRole.Policy).toContain(`workspace-bucket/${NS}/`);
+    // The agent's own command never carries them.
+    const command = vercelRunCommandMock.mock.calls.at(-1)?.[0] as {
+      env: Record<string, string>;
+    };
+    expect(command.env.AWS_SESSION_TOKEN).not.toBe("scoped-session-token");
+  });
+
+  it("keeps a fresh Vercel mount without calling STS", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(vercelMountConfig());
+    stsSendMock.mockClear();
+
+    await executor.run({
+      code: "ls",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(vercelMountCommand()).toBeUndefined();
+    expect(stsSendMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps Vercel job markers off the workspace mount", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      onCreate: ["npm install"],
+    });
+
+    await executor.run(persistentVercelRun());
+
+    expect(
+      vercelCommandIncludes(
+        `'/mnt/workspaces/.fp-jobs/${NS}/.fp-lifecycle-created'`,
+      ),
+    ).toBe(true);
   });
 
   it("boots a Vercel snapshot id as a snapshot and anything else as an image", async () => {

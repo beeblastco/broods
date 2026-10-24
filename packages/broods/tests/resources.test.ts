@@ -558,6 +558,38 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject accepts S3 workspaces on a vercel sandbox that mounts them", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({
+  name: "repo",
+  storage: { provider: "s3" },
+});
+
+export const runner = defineSandbox({
+  name: "runner",
+  provider: "vercel", persistent: true,
+  options: { mountAwsS3Buckets: true },
+});
+
+export const support = defineAgent({
+  name: "support",
+  sandboxes: [runner],
+  workspaces: [repo],
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources.map((resource) => resource.name)).toContain(
+    "support",
+  );
+});
+
 test("compileProject rejects S3 workspaces on an incompatible workspace sandbox override", async () => {
   const cwd = await fixtureProject(
     "",

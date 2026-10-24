@@ -195,7 +195,7 @@ export function assertSupportedWorkspaceSandboxMounts(
             : "<unknown>";
       throw new ClientError(
         `Agent "${agent.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" ` +
-          `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with ` +
+          `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona or vercel with ` +
           `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
       );
     }
@@ -788,7 +788,7 @@ async function stageSyncRow(
 function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
   const provider = sandboxProvider(sandbox);
   if (provider === "lambda" || provider === "sandbox") return true;
-  if (provider !== "daytona") return false;
+  if (provider !== "daytona" && provider !== "vercel") return false;
 
   return (
     plainRecord(plainRecord(sandbox.config).options).mountAwsS3Buckets === true
