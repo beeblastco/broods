@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render } from "pele";
 
-const DOCS_DIRECTORY = fileURLToPath(new URL("../docs/", import.meta.url));
+const SITE_DIRECTORY = fileURLToPath(new URL("../", import.meta.url));
 const WIDTHS = [320, 768, 1280];
 
 interface Diagram {
@@ -46,15 +46,19 @@ describe("docs diagrams", (): void => {
 /** Reads the real diagram sources so new docs are covered without a fixture copy. */
 function readDiagrams(): Diagram[] {
   const diagrams: Diagram[] = [];
-  const files = new Glob("**/*.md").scanSync({
-    cwd: DOCS_DIRECTORY,
-    onlyFiles: true,
-  });
+  const files = ["docs/**/*.{md,mdx}", "src/pages/**/*.{md,mdx}"].flatMap(
+    (pattern): string[] => [
+      ...new Glob(pattern).scanSync({
+        cwd: SITE_DIRECTORY,
+        onlyFiles: true,
+      }),
+    ],
+  );
 
-  for (const file of [...files].sort()) {
-    const content = readFileSync(join(DOCS_DIRECTORY, file), "utf8");
+  for (const file of files.sort()) {
+    const content = readFileSync(join(SITE_DIRECTORY, file), "utf8");
     const fences = content.matchAll(
-      /^```mermaid[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm,
+      /^```mermaid[ \t]*\r?\n([\s\S]*?)^```[ \t]*\r?$/gm,
     );
 
     for (const fence of fences) {

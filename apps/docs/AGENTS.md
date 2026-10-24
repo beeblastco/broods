@@ -14,6 +14,6 @@ Docusaurus site at docs.broods.app. two sidebars in `sidebar.ts`, two audiences.
 - new page = add it to `sidebar.ts` too. `onBrokenLinks: "throw"`, so a dead relative link fails the build.
 - the isolated linker gives a package one copy per distinct peer set. two versions of any peer in the Docusaurus tree in `bun.lock` (it was `@types/react` and `postcss`) split `@docusaurus/core` and `@docusaurus/theme-common` into two copies and can break SSG with `ReactContextError`. pin the duplicated peer in root `overrides`; after a bump, `ls node_modules/.bun | grep theme-common` must show one entry.
 - Mermaid fences render through Pele in `src/theme/Mermaid`. keep `markdown.mermaid` enabled so Docusaurus passes their source to that component. Pele's automatic zoom keeps dense diagrams readable on small screens; theme colors come from Infima variables in its CSS module.
-- `bun run check` checks the config, components and tests. `bun run test` renders every Mermaid fence in the docs at mobile, tablet and desktop widths. both run in the root CI checks; `bun run build` also checks links and static generation.
+- `bun run check` checks the config, components and tests. `bun run test` renders Mermaid fences from Markdown and MDX docs and static pages at mobile, tablet and desktop widths. both run in the root CI checks; `bun run build` also checks links and static generation.
 - `{param}` inside a mermaid label breaks MDX. write `:param`.
 - style: no em dashes, sentence case headings, plain words. check facts against the code, not the old page.

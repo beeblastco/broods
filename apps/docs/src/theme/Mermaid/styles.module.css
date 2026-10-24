@@ -1,7 +1,8 @@
 .container {
   max-width: 100%;
   min-width: 0;
-  --pele-bg: var(--ifm-background-color);
+  /* Pele needs an opaque fill behind labels and hollow markers. */
+  --pele-bg: var(--ifm-color-white);
   --pele-fg: var(--ifm-font-color-base);
   --pele-muted: var(--ifm-color-emphasis-700);
   --pele-line: var(--ifm-color-emphasis-700);
@@ -12,4 +13,8 @@
   --pele-font: var(--ifm-font-family-base);
   --pele-font-mono: var(--ifm-font-family-monospace);
   --pele-zoom-cursor: pointer;
+}
+
+:global(html[data-theme="dark"]) .container {
+  --pele-bg: var(--ifm-background-color);
 }
