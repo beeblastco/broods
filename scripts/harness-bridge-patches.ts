@@ -39,7 +39,7 @@ for (const [key, path] of Object.entries(root.patchedDependencies ?? {})) {
 for (const name of ADAPTERS) {
   const version = core.dependencies[name];
   if (!version) throw new Error(`apps/core does not depend on ${name}`);
-  const path = `patches/${name.replace("/", "%2F")}@${version}.patch`;
+  const path = `patches/${name.replaceAll("/", "%2F")}@${version}.patch`;
   await Bun.write(join(ROOT, path), await adapterPatch(name, version));
   patched[`${name}@${version}`] = path;
   console.log(`${name}@${version}: ${path}`);
