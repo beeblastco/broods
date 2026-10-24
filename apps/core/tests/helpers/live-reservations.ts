@@ -6,42 +6,121 @@
  */
 
 import { afterEach, beforeEach } from "bun:test";
-import type { SandboxReleaseTarget } from "../../src/harness/sandbox/types.ts";
 import { resetConvexClientForTests } from "../../src/shared/convex/client.ts";
 import { runtime } from "../../src/shared/convex/runtime.ts";
 
 const CONVEX_ENV = ["CONVEX_URL", "CONVEX_DEPLOY_KEY"] as const;
 const DEFAULT_TTL_SECONDS = 3_600;
 
-interface LiveReservation {
-  externalId: string;
-  claimedAt: number;
-  expiresAt: number;
-}
+type ReservationQuery =
+  | "getSandboxReleaseTarget"
+  | "getSandboxReservation"
+  | "getSandboxReservationRecord";
+type ReservationMutation =
+  | "claimSandboxReservation"
+  | "deleteSandboxReservation"
+  | "saveSandboxReservation";
+type QueryArgs<Name extends ReservationQuery> = Parameters<
+  typeof runtime.query<Name>
+>[1];
+type QueryResult<Name extends ReservationQuery> = Awaited<
+  ReturnType<typeof runtime.query<Name>>
+>;
+type MutationArgs<Name extends ReservationMutation> = Parameters<
+  typeof runtime.mutate<Name>
+>[1];
+type MutationResult<Name extends ReservationMutation> = Awaited<
+  ReturnType<typeof runtime.mutate<Name>>
+>;
+type LiveReservation = NonNullable<QueryResult<"getSandboxReservationRecord">>;
+type ReservationTable = Map<string, LiveReservation>;
 
-type ReservationArgs = Record<string, unknown>;
+const queries: {
+  [Name in ReservationQuery]: (
+    table: ReservationTable,
+    args: QueryArgs<Name>,
+  ) => QueryResult<Name>;
+} = {
+  getSandboxReleaseTarget: (table, args) => ({
+    externalId:
+      args.externalId ?? table.get(args.reservationKey)?.externalId ?? null,
+    instance: null,
+  }),
+  getSandboxReservation: (table, args) =>
+    table.get(args.reservationKey)?.externalId ?? null,
+  getSandboxReservationRecord: (table, args) =>
+    table.get(args.reservationKey) ?? null,
+};
+
+const mutations: {
+  [Name in ReservationMutation]: (
+    table: ReservationTable,
+    args: MutationArgs<Name>,
+  ) => MutationResult<Name>;
+} = {
+  claimSandboxReservation: (table, args) => {
+    if (table.has(args.reservationKey)) return false;
+    table.set(
+      args.reservationKey,
+      reservation(args.externalId, args.ttlSeconds),
+    );
+
+    return true;
+  },
+  // True hands the caller the teardown, as the real mutation does.
+  deleteSandboxReservation: (table, args) => {
+    const current = table.get(args.reservationKey);
+    if (!current) return false;
+    if (
+      args.expectedExternalId !== undefined &&
+      current.externalId !== args.expectedExternalId
+    ) {
+      return false;
+    }
+    if (args.onlyExpired === true && current.expiresAt > nowSeconds()) {
+      return false;
+    }
+    table.delete(args.reservationKey);
+
+    return true;
+  },
+  // Refreshes the deadline only; never creates or repoints a row.
+  saveSandboxReservation: (table, args) => {
+    const current = table.get(args.reservationKey);
+    if (current && current.externalId === args.externalId) {
+      table.set(args.reservationKey, {
+        ...reservation(current.externalId, args.ttlSeconds),
+        claimedAt: current.claimedAt,
+      });
+    }
+
+    return null;
+  },
+};
 
 /** Swaps `runtime` onto a fresh table around each test; returns that table. */
-export function useLiveReservations(): Map<string, LiveReservation> {
-  const reservations = new Map<string, LiveReservation>();
+export function useLiveReservations(): ReservationTable {
+  const table: ReservationTable = new Map();
   const originalMutation = runtime.mutate.bind(runtime);
   const originalQuery = runtime.query.bind(runtime);
   const originalEnv = CONVEX_ENV.map((name) => process.env[name]);
 
   beforeEach(() => {
-    reservations.clear();
+    table.clear();
     for (const name of CONVEX_ENV) delete process.env[name];
     resetConvexClientForTests();
-    runtime.mutate = ((name: string, args: ReservationArgs) =>
-      Promise.resolve(mutate(reservations, name, args))) as never;
-    runtime.query = ((name: string, args: ReservationArgs) =>
-      Promise.resolve(query(reservations, name, args))) as never;
+    // The one untyped seam: the generic runtime dispatches by name, and these
+    // maps answer only the reservation calls.
+    runtime.query = ((name: ReservationQuery, args: never) =>
+      Promise.resolve(callHandler(queries, name, table, args))) as never;
+    runtime.mutate = ((name: ReservationMutation, args: never) =>
+      Promise.resolve(callHandler(mutations, name, table, args))) as never;
   });
 
   afterEach(() => {
     runtime.mutate = originalMutation;
     runtime.query = originalQuery;
-    reservations.clear();
+    table.clear();
     CONVEX_ENV.forEach((name, index) => {
       const value = originalEnv[index];
       if (value === undefined) delete process.env[name];
@@ -50,77 +129,34 @@ export function useLiveReservations(): Map<string, LiveReservation> {
     resetConvexClientForTests();
   });
 
-  return reservations;
+  return table;
 }
 
-function mutate(
-  reservations: Map<string, LiveReservation>,
+function callHandler(
+  handlers: Record<string, (table: ReservationTable, args: never) => unknown>,
   name: string,
-  args: ReservationArgs,
-): boolean | null {
-  const key = String(args.reservationKey);
-  const current = reservations.get(key);
-  if (name === "claimSandboxReservation") {
-    if (current) return false;
-    reservations.set(key, reservation(String(args.externalId), args));
+  table: ReservationTable,
+  args: never,
+): unknown {
+  const handler = handlers[name];
+  if (!handler) throw new Error(`Unexpected live-test runtime call: ${name}`);
 
-    return true;
-  }
-  if (name === "deleteSandboxReservation") {
-    const expected = args.expectedExternalId;
-    if (!current) return false;
-    if (expected !== undefined && current.externalId !== expected) return false;
-    if (args.onlyExpired === true && current.expiresAt > nowSeconds()) {
-      return false;
-    }
-    reservations.delete(key);
-
-    return true;
-  }
-  if (name === "saveSandboxReservation") {
-    if (current && current.externalId === args.externalId) {
-      reservations.set(key, {
-        ...reservation(current.externalId, args),
-        claimedAt: current.claimedAt,
-      });
-    }
-
-    return null;
-  }
-  throw new Error(`Unexpected live-test runtime mutation: ${name}`);
+  return handler(table, args);
 }
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1_000);
 }
 
-function query(
-  reservations: Map<string, LiveReservation>,
-  name: string,
-  args: ReservationArgs,
-): string | LiveReservation | SandboxReleaseTarget | null {
-  const current = reservations.get(String(args.reservationKey));
-  if (name === "getSandboxReservation") return current?.externalId ?? null;
-  if (name === "getSandboxReservationRecord") return current ?? null;
-  if (name === "getSandboxReleaseTarget") {
-    const pinned =
-      typeof args.externalId === "string" ? args.externalId : undefined;
-
-    return {
-      externalId: pinned ?? current?.externalId ?? null,
-      instance: null,
-    };
-  }
-  throw new Error(`Unexpected live-test runtime query: ${name}`);
-}
-
 function reservation(
   externalId: string,
-  args: ReservationArgs,
+  ttlSeconds: number | undefined,
 ): LiveReservation {
   const now = nowSeconds();
-  const ttl =
-    typeof args.ttlSeconds === "number" ? args.ttlSeconds : DEFAULT_TTL_SECONDS;
 
-  return { externalId: externalId, claimedAt: now, expiresAt: now + ttl };
+  return {
+    externalId: externalId,
+    claimedAt: now,
+    expiresAt: now + (ttlSeconds ?? DEFAULT_TTL_SECONDS),
+  };
 }
