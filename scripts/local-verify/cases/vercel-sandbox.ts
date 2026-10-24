@@ -65,7 +65,7 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     agentId,
     key,
     "vercel write",
-    `Run: echo ${marker} > /tmp/marker`,
+    `Run: echo ${marker} > /tmp/marker && echo written`,
   );
   const read = await turn(
     context,
