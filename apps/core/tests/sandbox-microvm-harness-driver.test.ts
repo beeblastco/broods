@@ -43,6 +43,9 @@ describe("MicrovmHarnessDriver", () => {
     expect(executor.launchEnvs).toEqual([
       { CONFIGURED: "base", OVERRIDDEN: "configured" },
     ]);
+    expect([...executor.commandReservationKeys]).toEqual([
+      "acct:agent:harness",
+    ]);
 
     await created.session.writeFile({
       path: "/workspace/data.bin",
@@ -197,6 +200,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
   const releases: unknown[] = [];
   const authRequests: unknown[] = [];
   const launchEnvs: Array<Record<string, string> | undefined> = [];
+  const commandReservationKeys = new Set<string>();
   const chunkReads: string[] = [];
   const files = new Map<string, Uint8Array>();
   // Bumped on every write, standing in for the inode and change time in a stamp.
@@ -214,6 +218,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
     releases: releases,
     authRequests: authRequests,
     launchEnvs: launchEnvs,
+    commandReservationKeys: commandReservationKeys,
     chunkReads: chunkReads,
     files: files,
     onChunkRead: function (callback: () => void): void {
@@ -239,9 +244,11 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         };
       },
       runHarnessCommand: async function (request: {
+        reservationKey: string;
         code: string;
         env?: Record<string, string>;
       }) {
+        commandReservationKeys.add(request.reservationKey);
         const processRoot = request.code.match(
           /(\/tmp\/broods-harness-process-[0-9a-f-]+)/,
         )?.[1];

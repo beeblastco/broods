@@ -28,6 +28,28 @@ const MICROVM_COMPUTE = {
 const MODULE_URL = pathToFileURL(
   resolve(import.meta.dir, "../src/harness/ai-sdk-harness/index.ts"),
 ).href;
+const ADAPTERS_URL = pathToFileURL(
+  resolve(import.meta.dir, "../src/harness/ai-sdk-harness/adapters/index.ts"),
+).href;
+
+// Upstream has dropped bridge files the bootstrap still reads, which only failed
+// inside the sandbox; root `patches/` restore them.
+describe("createAiSdkHarnessAdapter", () => {
+  it.each(["claude-code", "codex", "deepagents", "opencode"] as const)(
+    "builds the %s bridge bootstrap with its lockfile",
+    async (type) => {
+      const result = await runProbe(`
+        const adapters = await import(${JSON.stringify(ADAPTERS_URL)});
+        const recipe = await adapters
+          .createAiSdkHarnessAdapter(${JSON.stringify(type)})
+          .getBootstrap();
+        console.log(JSON.stringify(recipe.files.map((file) => file.path.split("/").at(-1))));
+      `);
+
+      expect(JSON.parse(result)).toContain("pnpm-lock.yaml");
+    },
+  );
+});
 
 describe("createWorkdirHarnessAgent", () => {
   it.each(["claude-code", "codex", "deepagents", "opencode", "pi"] as const)(

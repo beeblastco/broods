@@ -80,7 +80,9 @@
   },
   "patchedDependencies": {
     "@ai-sdk/harness-claude-code@1.0.168": "patches/@ai-sdk%2Fharness-claude-code@1.0.168.patch",
-    "@ai-sdk/harness-codex@1.0.166": "patches/@ai-sdk%2Fharness-codex@1.0.166.patch"
+    "@ai-sdk/harness-codex@1.0.166": "patches/@ai-sdk%2Fharness-codex@1.0.166.patch",
+    "@ai-sdk/harness-deepagents@1.0.164": "patches/@ai-sdk%2Fharness-deepagents@1.0.164.patch",
+    "@ai-sdk/harness-opencode@1.0.166": "patches/@ai-sdk%2Fharness-opencode@1.0.166.patch"
   },
   "trustedDependencies": [
     "@matrix-org/matrix-sdk-crypto-nodejs",
