@@ -23,15 +23,7 @@ export interface Exception {
 }
 
 /** Reviewed, time-limited exceptions. Each one needs a reachability note. */
-export const EXCEPTIONS: Exception[] = [
-  {
-    package: "braces",
-    advisory: "GHSA-vfj7-8cjw-p6xm",
-    expires: "2027-01-11",
-    reason:
-      "No patched release exists (3.0.3 is latest). Reached only through micromatch in build/dev tooling (docs, shadcn CLI) and Daytona's Image.fromDockerfile, which core never calls; no runtime path expands untrusted patterns.",
-  },
-];
+export const EXCEPTIONS: Exception[] = [];
 
 /**
  * Judges one `bun audit --json` run. bun audit exits 0 when clean and 1 when it

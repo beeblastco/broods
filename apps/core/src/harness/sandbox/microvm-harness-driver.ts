@@ -63,6 +63,7 @@ interface MicrovmHarnessExecutor {
   runHarnessCommand(request: {
     microvmId: string;
     endpoint: string;
+    reservationKey: string;
     code: string;
     env?: Record<string, string>;
     abortSignal?: AbortSignal;
@@ -238,6 +239,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
         this.#executor.runHarnessCommand({
           microvmId: this.#reservation.microvmId,
           endpoint: this.#reservation.endpoint,
+          reservationKey: this.#reservationKey,
           code: command,
           ...(shellOptions?.env ? { env: shellOptions.env } : {}),
           ...(shellOptions?.abortSignal
