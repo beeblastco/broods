@@ -8,6 +8,7 @@
  * mount-s3 before each call, on short-lived credentials handed to the mount
  * process alone. `config.snapshot` names the image or snapshot it boots, and
  * the Snapshot action captures a reserved sandbox into a new snapshot.
+ * `options.networkId` attaches the sandbox to a Secure Compute network.
  */
 
 import { randomUUID } from "node:crypto";
@@ -372,6 +373,15 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     );
   }
 
+  // A reserved sandbox whose config names another Secure Compute network moves
+  // to it. Vercel applies the change on the next session, so the running one
+  // keeps its network until the sandbox idles out.
+  async #moveNetwork(sandbox: VercelSandbox): Promise<void> {
+    const networkId = configString(this.#config.options?.networkId);
+    if (sandbox.networkId === networkId) return;
+    await sandbox.update({ networkId: networkId ?? null });
+  }
+
   #persistent(request: {
     namespace?: string;
     reservationKey?: string;
@@ -453,6 +463,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
           return await this.#acquireSandbox(request);
         }
+        await this.#moveNetwork(sandbox);
         await saveSandboxInstance(
           "vercel",
           key,
@@ -724,10 +735,12 @@ function vercelCreateOptions(
     : snapshot
       ? { image: snapshot }
       : {};
+  const networkId = configString(config.options?.networkId);
 
   return {
     ...vercelAuthOptions(config),
     ...source,
+    ...(networkId ? { networkId: networkId } : {}),
     persistent: persistent,
     timeout:
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *

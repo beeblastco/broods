@@ -103,6 +103,9 @@ const vercelRunCommandMock = mock(async (_params: Record<string, unknown>) => ({
 const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
 const vercelExtendTimeoutMock = mock(async (_duration: number) => {});
+const vercelUpdateMock = mock(async (_params: Record<string, unknown>) => {});
+// The Secure Compute network the next sandbox the mocks hand out reports.
+let vercelNetworkId: string | undefined;
 const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
   snapshotId: "snap_captured",
   status: "created",
@@ -121,6 +124,8 @@ function vercelSandbox(name = "vercel-sandbox") {
     stop: vercelStopMock,
     delete: vercelDeleteMock,
     snapshot: vercelSnapshotMock,
+    update: vercelUpdateMock,
+    networkId: vercelNetworkId,
   };
 }
 const vercelCreateMock = mock(
@@ -478,6 +483,8 @@ beforeEach(() => {
   vercelDeleteMock.mockClear();
   vercelExtendTimeoutMock.mockClear();
   vercelSession = { createdAt: new Date() };
+  vercelUpdateMock.mockClear();
+  vercelNetworkId = undefined;
   vercelCreateMock.mockClear();
   vercelGetMock.mockClear();
   storedSandboxExternalId = null;
@@ -3474,6 +3481,51 @@ describe("createSandboxExecutor", () => {
     expect(String(vercelCreateMock.mock.calls[0]?.[0]?.name)).not.toBe(
       "fp-p-old-abc123",
     );
+  });
+
+  it("attaches a Vercel sandbox to its Secure Compute network", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        networkId: "net_1",
+      },
+    });
+
+    await executor.run(persistentVercelRun());
+
+    expect(vercelCreateMock.mock.calls[0]?.[0]).toMatchObject({
+      networkId: "net_1",
+    });
+  });
+
+  it("moves a reserved Vercel sandbox to a changed network", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    storedSandboxExternalId = "fp-p-stored-abc123";
+    vercelNetworkId = "net_old";
+
+    await new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        networkId: "net_new",
+      },
+    }).run(persistentVercelRun());
+    await new VercelSandboxExecutor(persistentVercelConfig()).run(
+      persistentVercelRun(),
+    );
+
+    expect(vercelUpdateMock.mock.calls.map((call) => call[0])).toEqual([
+      { networkId: "net_new" },
+      { networkId: null },
+    ]);
   });
 
   it("releases a reserved sandbox without resuming it", async () => {

@@ -91,7 +91,7 @@
     "@pulumi/aws": "7.47.0",
     "@pulumi/command": "1.2.1",
     "@pulumi/pulumi": "3.263.0",
-    "@vercel/sandbox": "^3.0.0",
+    "@vercel/sandbox": "^3.6.1",
     "ai": "7.0.153",
     "ai-sdk-ollama": "^4.3.0",
     "chat": "^4.38.1",

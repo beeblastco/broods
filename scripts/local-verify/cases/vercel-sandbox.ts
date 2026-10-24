@@ -39,6 +39,15 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     refused.includes("must be at most 86400 on the vercel provider"),
     refused,
   );
+  const secure = await context.account.createSandbox({
+    name: `${key}-secure`,
+    config: { provider: "vercel", options: { networkId: "net_verify" } },
+  });
+  assertStep(
+    "a vercel sandbox keeps its Secure Compute networkId",
+    secure.config.options?.networkId === "net_verify",
+    JSON.stringify(secure.config),
+  );
 
   const missing = VERCEL_ENV.filter((name): boolean => !process.env[name]);
   if (missing.length > 0 || !context.hasModelKey) {
