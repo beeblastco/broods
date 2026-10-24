@@ -17,9 +17,11 @@ import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import { createMicrovmHarnessDriver } from "../src/harness/sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import { useLiveReservations } from "./helpers/live-reservations.ts";
+import { allowNetwork } from "./helpers/no-network.ts";
 
 const ENABLED = process.env.MICROVM_HARNESS_TEST === "1";
 const reservations = useLiveReservations();
+if (ENABLED) allowNetwork();
 
 describe.skipIf(!ENABLED)(
   "Broods Lambda MicroVM Harness integration (live)",

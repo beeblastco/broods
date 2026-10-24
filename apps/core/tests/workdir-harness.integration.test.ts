@@ -12,12 +12,14 @@ import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import { createWorkdirHarnessDriver } from "../src/harness/sandbox/workdir-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import { useLiveReservations } from "./helpers/live-reservations.ts";
+import { allowNetwork } from "./helpers/no-network.ts";
 
 const KEY = process.env.WORKDIR_TEST_KEY ?? "";
 const URL = process.env.WORKDIR_TEST_URL;
 const originalWorkdirApiKey = process.env.WORKDIR_API_KEY;
 const originalWorkdirUrl = process.env.WORKDIR_URL;
 const reservations = useLiveReservations();
+if (URL) allowNetwork();
 
 beforeEach(() => {
   if (URL?.startsWith("http://")) {

@@ -64,6 +64,15 @@ net.Socket.prototype.connect = function (
   return Reflect.apply(realConnect, this, args) as net.Socket;
 } as typeof realConnect;
 
+/**
+ * Lifts the guard for the whole process. Only the opt-in live suites call it,
+ * when enabled, because they must reach a real provider; run them on their own.
+ */
+export function allowNetwork(): void {
+  globalThis.fetch = realFetch;
+  net.Socket.prototype.connect = realConnect;
+}
+
 // Work a test hands to waitUntil and leaves running (a real Convex write
 // retrying for half a minute) stalls a later file's drain, so the test that
 // started it fails here instead. Each task fails one test, never a cascade.
