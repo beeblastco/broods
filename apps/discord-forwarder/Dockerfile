@@ -23,7 +23,6 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/discord-forwarder/node_modules ./apps/discord-forwarder/node_modules
 COPY package.json bun.lock ./
-COPY patches ./patches
 # The one core module the forwarder imports by relative path. It has no imports
 # of its own. Rename it and this build breaks. `packages/convex` is only ever a
 # type import here, so the bundle needs none of it.

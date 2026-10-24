@@ -28,7 +28,6 @@ FROM ${BUN_IMAGE} AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bun.lock ./
-COPY patches ./patches
 COPY packages/convex ./packages/convex
 # Imported by relative path: core's env helpers and Matrix wire contract, and the
 # Discord forwarder's config, connection watch, backoff and log helpers. Rename

@@ -24,7 +24,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/apps/gateway/node_modules ./apps/gateway/node_modules
 COPY package.json bun.lock ./
-COPY patches ./patches
 COPY packages/broods ./packages/broods
 COPY apps/core/src/shared/env.ts ./apps/core/src/shared/env.ts
 COPY apps/core/src/shared/machine-socket.ts ./apps/core/src/shared/machine-socket.ts
