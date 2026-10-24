@@ -83,6 +83,7 @@ const GENERATION_LENGTH = 8;
 const EPHEMERAL_SETUP_SECONDS = 5 * 60;
 // Mountpoint for S3's release package. The images ship without it, so a sandbox
 // whose snapshot lacks it fetches it once, which needs egress to these hosts.
+const MOUNT_LOCK = "/tmp/.fp-s3-mount.lock";
 const MOUNT_S3_PACKAGE =
   "https://s3.amazonaws.com/mountpoint-s3-release/latest/${arch}/mount-s3.deb";
 // Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
@@ -782,7 +783,9 @@ function vercelSpecs(sandbox: VercelSandbox): SandboxSpecs | undefined {
 }
 
 // Installs mount-s3 when the image lacks it, then replaces any stale mount with
-// one on the credentials in this command's env. They stay out of the sandbox
+// one on the credentials in this command's env. One lock serializes it: a
+// model's parallel tool calls on a fresh sandbox would otherwise both run apt
+// and both mount, and the one that waits finds the mount fresh and skips. They stay out of the sandbox
 // env and every later command's, but the daemon holds them and the agent has
 // sudo, which is why they are scoped to the prefix and last an hour.
 function mountScript(
@@ -806,6 +809,8 @@ function mountScript(
 
   return [
     "set -e",
+    `exec 9>${MOUNT_LOCK}`,
+    "flock 9",
     "if ! command -v mount-s3 >/dev/null; then",
     '  arch="$(dpkg --print-architecture | sed s/amd64/x86_64/)"',
     `  curl -fsSL -o /tmp/mount-s3.deb "${MOUNT_S3_PACKAGE}" || { echo "mount-s3 is not installed and could not be fetched; boot a snapshot that has it, or allow egress to s3.amazonaws.com and the Ubuntu mirrors" >&2; exit 1; }`,
