@@ -130,7 +130,7 @@ async function workspaceCrossesSandboxes(
     ),
     `${key}-writer`,
     "vercel workspace write",
-    `Run: echo ${marker} > notes.txt && sync`,
+    `Run: echo ${marker} > notes.txt && sync && echo written`,
   );
   const read = await turn(
     context,
