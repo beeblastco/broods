@@ -1,9 +1,8 @@
-import type { SandboxConfig } from "../../../packages/convex/model/sandboxRules.ts";
+import { createHash } from "node:crypto";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   MODEL_KEY_HINT,
   assertStep,
-  persistentSandboxKeepsFile,
   runToTerminal,
   type VerifyContext,
 } from "../harness.ts";
@@ -14,10 +13,12 @@ const VERCEL_ENV = ["VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_PROJECT_ID"];
  * The vercel provider through the config plane: an idle window past Vercel's
  * 24 hour session cap is refused. With VERCEL_TOKEN, VERCEL_TEAM_ID and
  * VERCEL_PROJECT_ID on core and a model key, an agent writes a file in one turn
- * and reads it back in the next on the same reserved Vercel sandbox. With
- * FILESYSTEM_BUCKET_NAME and SANDBOX_MOUNT_ROLE_ARN too, an agent on a reserved
- * sandbox writes a workspace file that another agent reads from a fresh one,
- * which only the S3 mount can carry across.
+ * and hashes it in the next on the same reserved Vercel sandbox. A hash is
+ * something the model cannot make up from the conversation, and the Vercel
+ * images ship `sha256sum` but not `rev`. With FILESYSTEM_BUCKET_NAME and
+ * SANDBOX_MOUNT_ROLE_ARN too, an agent on a reserved sandbox writes a
+ * workspace file that another agent hashes from a fresh one, which only the
+ * S3 mount can carry across.
  */
 export async function vercelSandbox(context: VerifyContext): Promise<void> {
   const key = `vercel-${context.runId}`;
@@ -57,12 +58,29 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
       lifecycle: { idleTimeoutSeconds: 600 },
     },
   });
-  await persistentSandboxKeepsFile(context, {
-    key: key,
-    label: "vercel",
-    path: "/tmp/marker",
-    sandboxId: sandbox.sandboxId,
-  });
+  const agentId = await commandAgent(context, key, sandbox.sandboxId);
+  const marker = `vercel-${context.runId}`;
+  const wrote = await turn(
+    context,
+    agentId,
+    key,
+    "vercel write",
+    `Run: echo ${marker} > /tmp/marker`,
+  );
+  const read = await turn(
+    context,
+    agentId,
+    key,
+    "vercel read",
+    "Run: sha256sum /tmp/marker",
+  );
+  assertStep(
+    "a persistent vercel sandbox keeps a file between turns",
+    wrote.status === "completed" &&
+      read.status === "completed" &&
+      JSON.stringify(read.response ?? "").includes(sha256(`${marker}\n`)),
+    `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
+  );
 
   if (
     !process.env.FILESYSTEM_BUCKET_NAME ||
@@ -76,8 +94,8 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
   await workspaceCrossesSandboxes(context, `${key}-ws`);
 }
 
-// A file one agent writes in the workspace on a reserved sandbox, read by
-// another agent from an ephemeral sandbox that boots fresh for that call.
+// A file one agent writes in the workspace on a reserved sandbox, hashed by
+// another agent on an ephemeral sandbox that boots fresh for that call.
 async function workspaceCrossesSandboxes(
   context: VerifyContext,
   key: string,
@@ -86,67 +104,97 @@ async function workspaceCrossesSandboxes(
     name: key,
     config: { storage: { provider: "s3" } },
   });
-  const sandboxConfig = (persistent: boolean): SandboxConfig => ({
-    provider: "vercel",
-    persistent: persistent,
-    permissionMode: "bypass",
-    network: { mode: "allow-all" },
-    options: { mountAwsS3Buckets: true },
-  });
-  const writer = await context.account.createSandbox({
-    name: `${key}-writer`,
-    config: sandboxConfig(true),
-  });
-  const reader = await context.account.createSandbox({
-    name: `${key}-reader`,
-    config: sandboxConfig(false),
-  });
-  const agentOn = async (sandboxId: string, name: string): Promise<string> => {
-    const { agentId } = await context.account.createAgent({
-      name: name,
-      config: {
-        ...context.model,
-        agent: {
-          system:
-            "Use the bash tool to run exactly the command the user gives in the workspace, then reply with exactly its output and nothing else.",
+  const [writer, reader] = await Promise.all(
+    [true, false].map((persistent) =>
+      context.account.createSandbox({
+        name: `${key}-${persistent ? "writer" : "reader"}`,
+        config: {
+          provider: "vercel",
+          persistent: persistent,
+          permissionMode: "bypass",
+          // The first mount installs mount-s3 from the Ubuntu mirrors.
+          network: { mode: "allow-all" },
+          options: { mountAwsS3Buckets: true },
         },
-        sandboxes: [sandboxId],
-        workspaces: [{ name: "notes", workspaceId: workspace.workspaceId }],
-      },
-    });
-
-    return agentId;
-  };
-  const turn = async (
-    agentId: string,
-    step: string,
-    text: string,
-  ): Promise<AsyncStatus> =>
-    await context.measure(step, (): Promise<AsyncStatus> =>
-      runToTerminal(context, {
-        agentId: agentId,
-        conversationKey: `${key}-${step}`,
-        eventId: `${key}-${step}`,
-        text: text,
       }),
-    );
+    ),
+  );
   const marker = `vercel-s3-${context.runId}`;
-  const reversed = marker.split("").reverse().join("");
   const wrote = await turn(
-    await agentOn(writer.sandboxId, `${key}-writer`),
+    context,
+    await commandAgent(
+      context,
+      `${key}-writer`,
+      writer!.sandboxId,
+      workspace.workspaceId,
+    ),
+    `${key}-writer`,
     "vercel workspace write",
-    `Run: echo ${marker} > notes.txt && sync && echo written`,
+    `Run: echo ${marker} > notes.txt && sync`,
   );
   const read = await turn(
-    await agentOn(reader.sandboxId, `${key}-reader`),
+    context,
+    await commandAgent(
+      context,
+      `${key}-reader`,
+      reader!.sandboxId,
+      workspace.workspaceId,
+    ),
+    `${key}-reader`,
     "vercel workspace read",
-    "Run: rev notes.txt",
+    "Run: sha256sum notes.txt",
   );
   assertStep(
     "a vercel workspace file written on one sandbox is read from a fresh one",
     wrote.status === "completed" &&
       read.status === "completed" &&
-      JSON.stringify(read.response ?? "").includes(reversed),
+      JSON.stringify(read.response ?? "").includes(sha256(`${marker}\n`)),
     `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
+  );
+}
+
+// An agent that runs exactly the command it is given on one sandbox.
+async function commandAgent(
+  context: VerifyContext,
+  name: string,
+  sandboxId: string,
+  workspaceId?: string,
+): Promise<string> {
+  const { agentId } = await context.account.createAgent({
+    name: name,
+    config: {
+      ...context.model,
+      agent: {
+        system:
+          "Use the bash tool to run exactly the command the user gives, then reply with exactly its output and nothing else.",
+      },
+      sandboxes: [sandboxId],
+      ...(workspaceId
+        ? { workspaces: [{ name: "notes", workspaceId: workspaceId }] }
+        : {}),
+    },
+  });
+
+  return agentId;
+}
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+async function turn(
+  context: VerifyContext,
+  agentId: string,
+  conversationKey: string,
+  step: string,
+  text: string,
+): Promise<AsyncStatus> {
+  return await context.measure(step, (): Promise<AsyncStatus> =>
+    runToTerminal(context, {
+      agentId: agentId,
+      conversationKey: conversationKey,
+      eventId: `${conversationKey}-${step}`,
+      text: text,
+    }),
   );
 }
