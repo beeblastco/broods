@@ -3427,17 +3427,19 @@ describe("createSandboxExecutor", () => {
     const { VercelSandboxExecutor } =
       await import("../src/harness/sandbox/vercel-executor.ts");
     const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    const startedAt = Date.now();
     vercelSession = {
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(startedAt),
+      expiresAt: new Date(startedAt + 60_000),
     };
 
     await executor.run(persistentVercelRun());
 
-    // Default idle 900 s plus the call's 30 s, less the 60 s left.
+    // Default idle 900 s plus the call's 30 s, less the 60 s left, plus the
+    // time the run took to reach the extension.
     const extension = Number(vercelExtendTimeoutMock.mock.calls[0]?.[0]);
-    expect(extension).toBeGreaterThan(869_000);
-    expect(extension).toBeLessThanOrEqual(870_000);
+    expect(extension).toBeGreaterThanOrEqual(870_000);
+    expect(extension).toBeLessThanOrEqual(870_000 + Date.now() - startedAt);
   });
 
   it("leaves a session alone when it outlasts the idle window", async () => {
