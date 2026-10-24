@@ -46,16 +46,25 @@
     "typescript": "^7.0.2"
   },
   "overrides": {
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.12.3"
+    },
+    "@microsoft/teams.apps": {
+      "@azure/msal-node": "7.1.1"
+    },
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
     "dompurify": "^3.4.17",
     "follow-redirects": "^1.16.1",
     "guarded-fetch": {
-      "undici": "7.30.0"
+      "undici": "7.30.1"
     },
     "katex": "^0.18.2",
     "launch-editor": "^2.14.2",
+    "miniflare": {
+      "undici": "7.30.1"
+    },
     "pi-mcp-adapter": {
       "@modelcontextprotocol/client": "2.2.0"
     },
@@ -68,6 +77,10 @@
   },
   "engines": {
     "bun": ">=1.4.2"
+  },
+  "patchedDependencies": {
+    "@ai-sdk/harness-claude-code@1.0.168": "patches/@ai-sdk%2Fharness-claude-code@1.0.168.patch",
+    "@ai-sdk/harness-codex@1.0.166": "patches/@ai-sdk%2Fharness-codex@1.0.166.patch"
   },
   "trustedDependencies": [
     "@matrix-org/matrix-sdk-crypto-nodejs",

@@ -1035,6 +1035,7 @@ describe("createSandboxExecutor", () => {
       executor.runHarnessCommand({
         microvmId: created.microvmId,
         endpoint: created.endpoint,
+        reservationKey: "acct:agent:harness",
         code: "base64 < large.bin",
       }),
     ).rejects.toThrow("passed the exec cap");
@@ -1075,6 +1076,7 @@ describe("createSandboxExecutor", () => {
       await executor.runHarnessCommand({
         microvmId: created.microvmId,
         endpoint: created.endpoint,
+        reservationKey: "acct:agent:harness",
         code: "echo harness command",
         env: { COMMAND_ONLY: "value" },
         timeoutSeconds: 45,
@@ -1091,7 +1093,12 @@ describe("createSandboxExecutor", () => {
       runtime: "bash",
       code: "echo harness command",
       timeout_ms: 45_000,
-      env: { CONFIGURED: "base", COMMAND_ONLY: "value" },
+      env: {
+        CONFIGURED: "base",
+        COMMAND_ONLY: "value",
+        HOME: "/mnt/workspaces/acct:agent:harness",
+        TMPDIR: "/tmp",
+      },
     });
 
     expect(await executor.createHarnessAuthToken("microvm-1", 4_321)).toBe(

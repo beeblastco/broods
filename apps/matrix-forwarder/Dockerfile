@@ -5,6 +5,7 @@ ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36ae
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
@@ -27,6 +28,7 @@ FROM ${BUN_IMAGE} AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY packages/convex ./packages/convex
 # Imported by relative path: core's env helpers and Matrix wire contract, and the
 # Discord forwarder's config, connection watch, backoff and log helpers. Rename
