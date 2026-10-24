@@ -3161,6 +3161,8 @@ describe("createSandboxExecutor", () => {
     expect(mount?.args[1]).toContain(
       `'--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );
+    // Parallel tool calls on a fresh sandbox take turns at the install and mount.
+    expect(mount?.args[1]).toContain("flock 9");
     expect(mount?.env).toMatchObject({
       AWS_ACCESS_KEY_ID: "scoped-access-key",
       AWS_SESSION_TOKEN: "scoped-session-token",
