@@ -13,7 +13,7 @@ import {
   MODELS_DEV_API_URL,
   parseModelsDevRates,
   type ModelsDevApi,
-} from "../model/modelPricing";
+} from "../model/modelsDev";
 
 const FETCH_TIMEOUT_MS = 30_000;
 
@@ -30,12 +30,12 @@ export const run = internalAction({
       throw new Error(`models.dev answered ${response.status}`);
     }
     const body: ModelsDevApi = await response.json();
-    const sources = parseModelsDevRates(body);
-    if (sources.length === 0) {
+    const providers = parseModelsDevRates(body);
+    if (providers.length === 0) {
       throw new Error("models.dev returned no priced models");
     }
-    await ctx.runMutation(internal.modelPrices.rates.store, {
-      sources: sources,
+    await ctx.runMutation(internal.modelPrices.store.store, {
+      providers: providers,
     });
 
     return null;

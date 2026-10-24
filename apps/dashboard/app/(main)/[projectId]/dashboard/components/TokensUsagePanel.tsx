@@ -85,6 +85,7 @@ interface LiveOverlay {
   invocations: number;
   modelCalls: number;
   // Each step's tokens under its root's model, priced like a usage row.
+  // A model with no usage row in range yet reads as unpriced until one lands.
   modelUsage: ModelUsage[];
 }
 
@@ -244,32 +245,13 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
-  // Rates crawled hourly from models.dev, for every model this view prices.
-  const pricedModels = useMemo(() => {
-    const models = new Map<
-      string,
-      { modelProvider: string; modelId: string }
-    >();
-    for (const m of [...(stats?.buckets ?? []), ...liveOverlay.modelUsage]) {
-      models.set(modelKey(m), {
-        modelProvider: m.modelProvider,
-        modelId: m.modelId,
-      });
-    }
-
-    return [...models.values()];
-  }, [stats, liveOverlay]);
-  const rateRows = useQuery(api.modelPrices.rates.forModels, {
-    models: pricedModels,
-  });
+  // Rates crawled hourly from models.dev, for the models in the buckets.
   const rates = useMemo(
     () =>
-      rateRows === undefined
-        ? undefined
-        : new Map<string, ModelTokenRates>(
-            rateRows.map((row) => [modelKey(row), row]),
-          ),
-    [rateRows],
+      new Map<string, ModelTokenRates>(
+        (stats?.rates ?? []).map((row) => [modelKey(row), row]),
+      ),
+    [stats],
   );
 
   const shownRange = stats?.range ?? range;
@@ -320,13 +302,12 @@ export function TokensUsagePanel({
   // Priced per model, since each model has its own rates, then summed per
   // bin so the cost trend line lines up with the chart. The live overlay's
   // cost joins the newest bin whenever the tokens include it.
-  // Until the rates load, no model counts as unpriced.
   const { binCosts, estimatedCost, unpriced } = useMemo(() => {
     const byStart = new Map<number, number>();
     const unpricedModels = new Set<string>();
     const priceOf = (m: ModelUsage): number => {
-      const cost = estimateModelTokenCost(rates?.get(modelKey(m)), m);
-      if (cost === null && rates !== undefined) unpricedModels.add(modelKey(m));
+      const cost = estimateModelTokenCost(rates.get(modelKey(m)), m);
+      if (cost === null) unpricedModels.add(modelKey(m));
 
       return cost?.total ?? 0;
     };
@@ -912,7 +893,7 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   );
   const totals = { ...EMPTY_LIVE_OVERLAY };
   totals.invocations = runningRoots.length;
-  const usageByModel = new Map<string, ModelUsage>();
+  const modelUsage: ModelUsage[] = [];
   for (const span of spans) {
     const root = span.parentSpanId
       ? runningRootsById.get(span.parentSpanId)
@@ -932,21 +913,10 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
     totals.cachedInputTokens += usage.cachedInputTokens;
     if (typeof provider === "string" && typeof modelId === "string") {
-      const model = { modelProvider: provider, modelId: modelId };
-      const sum = usageByModel.get(modelKey(model)) ?? {
-        ...model,
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedInputTokens: 0,
-        cacheWriteTokens: 0,
-      };
-      sum.inputTokens += usage.inputTokens;
-      sum.outputTokens += usage.outputTokens;
-      sum.cachedInputTokens += usage.cachedInputTokens;
-      usageByModel.set(modelKey(model), sum);
+      modelUsage.push({ modelProvider: provider, modelId: modelId, ...usage });
     }
   }
-  totals.modelUsage = [...usageByModel.values()];
+  totals.modelUsage = modelUsage;
 
   return totals;
 }

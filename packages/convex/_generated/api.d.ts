@@ -1086,6 +1086,14 @@ export declare const api: {
         }>;
         endTimeMs: number;
         range: "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
+        rates: Array<{
+          cacheRead: number;
+          cacheWrite: number;
+          input: number;
+          modelId: string;
+          modelProvider: string;
+          output: number;
+        }>;
         startTimeMs: number;
         totals: {
           agentSandboxCpuUsec: number;
@@ -1226,23 +1234,6 @@ export declare const api: {
       },
       { serverId: Id<"mcp">; tools: Array<any>; verified: boolean }
     >;
-  };
-  modelPrices: {
-    rates: {
-      forModels: FunctionReference<
-        "query",
-        "public",
-        { models: Array<{ modelId: string; modelProvider: string }> },
-        Array<{
-          cacheRead: number;
-          cacheWrite: number;
-          input: number;
-          modelId: string;
-          modelProvider: string;
-          output: number;
-        }>
-      >;
-    };
   };
   org: {
     lifecycle: {
@@ -5459,12 +5450,12 @@ export declare const internal: {
     crawl: {
       run: FunctionReference<"action", "internal", {}, null>;
     };
-    rates: {
+    store: {
       store: FunctionReference<
         "mutation",
         "internal",
         {
-          sources: Array<{
+          providers: Array<{
             models: Array<{
               cacheRead: number;
               cacheWrite: number;
@@ -5472,7 +5463,7 @@ export declare const internal: {
               modelId: string;
               output: number;
             }>;
-            source: string;
+            provider: string;
           }>;
         },
         null

@@ -1650,15 +1650,16 @@ export const usageWritesFields = {
 };
 
 /**
- * Token rates in USD per million tokens for one models.dev provider, crawled
- * hourly by `modelPrices/crawl.ts`. The dashboard prices usage from these.
+ * Token rates in USD per million tokens for one agent provider's models,
+ * crawled hourly from models.dev by `modelPrices/crawl.ts`. `fetchUsageStats`
+ * hands the dashboard the ones its usage names.
  */
 export const modelPricesFields = {
-  /** models.dev provider id, e.g. `amazon-bedrock`. */
-  source: v.string(),
+  /** Agent provider name, as usage rows name it, e.g. `bedrock`. */
+  provider: v.string(),
   models: v.array(
     v.object({
-      /** Lowercased model id, as usage rows name it. */
+      /** `normalizeModelId` of the model id. */
       modelId: v.string(),
       input: v.number(),
       output: v.number(),
@@ -1666,8 +1667,6 @@ export const modelPricesFields = {
       cacheWrite: v.number(),
     }),
   ),
-  /** When the crawl last found these rates changed. */
-  updatedAt: v.number(),
 };
 
 export const usageRollupsFields = {
@@ -2010,7 +2009,9 @@ export default defineSchema({
   usageWrites: defineTable(usageWritesFields)
     .index("by_writeId", ["writeId"])
     .index("by_createdAt", ["createdAt"]),
-  modelPrices: defineTable(modelPricesFields).index("by_source", ["source"]),
+  modelPrices: defineTable(modelPricesFields).index("by_provider", [
+    "provider",
+  ]),
   stripeSubscriptionSyncs: defineTable(stripeSubscriptionSyncsFields).index(
     "by_stripeSubscriptionId",
     ["stripeSubscriptionId"],

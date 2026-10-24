@@ -4,51 +4,6 @@
  * models.dev into the `modelPrices` table (`modelPrices/crawl.ts`).
  */
 
-import type { AccountModelProviderName } from "./modelProviders";
-
-/** Where models.dev publishes every provider's models and rates. */
-export const MODELS_DEV_API_URL = "https://models.dev/api.json";
-
-/**
- * The models.dev provider that prices each agent provider's model ids, or
- * null when nothing public does: `custom` endpoints and self-hosted `ollama`
- * set their own price, and models.dev has no `v0` rates.
- */
-export const MODELS_DEV_SOURCES: Readonly<
-  Record<AccountModelProviderName, string | null>
-> = {
-  alibaba: "alibaba",
-  anthropic: "anthropic",
-  azure: "azure",
-  baseten: "baseten",
-  bedrock: "amazon-bedrock",
-  cerebras: "cerebras",
-  chatgpt: "openai",
-  cloudflare: "cloudflare-workers-ai",
-  cohere: "cohere",
-  custom: null,
-  deepinfra: "deepinfra",
-  deepseek: "deepseek",
-  fireworks: "fireworks-ai",
-  google: "google",
-  groq: "groq",
-  huggingface: "huggingface",
-  llmgateway: "llmgateway",
-  minimax: "minimax",
-  mistral: "mistral",
-  moonshotai: "moonshotai",
-  ollama: null,
-  openai: "openai",
-  openrouter: "openrouter",
-  perplexity: "perplexity",
-  togetherai: "togetherai",
-  v0: null,
-  vercel: "vercel",
-  vertex: "google-vertex",
-  xai: "xai",
-  zai: "zai",
-};
-
 /** Provider metadata fields that report cache creation tokens. */
 export const PROVIDER_CACHE_WRITE_FIELDS: Readonly<Record<string, string>> = {
   anthropic: "cacheCreationInputTokens",
@@ -64,11 +19,6 @@ export interface ModelCostEstimate {
   cacheRead: number;
   cacheWrite: number;
   total: number;
-}
-
-/** One model's rates as the `modelPrices` table stores them. */
-export interface ModelRateRow extends ModelTokenRates {
-  modelId: string;
 }
 
 /** Standard token rates in USD per million tokens. */
@@ -89,24 +39,6 @@ export interface ModelTokenUsage {
   cachedInputTokens: number;
   cacheWriteTokens: number;
 }
-
-/** The slice of models.dev's `api.json` the crawl reads. */
-export type ModelsDevApi = Record<
-  string,
-  {
-    models?: Record<
-      string,
-      {
-        cost?: {
-          input?: number;
-          output?: number;
-          cache_read?: number;
-          cache_write?: number;
-        };
-      }
-    >;
-  }
->;
 
 export function canonicalModelProvider(provider: string): string {
   const normalized = provider.toLowerCase();
@@ -149,40 +81,7 @@ export function estimateModelTokenCost(
   };
 }
 
-/**
- * The rate rows of every source in `MODELS_DEV_SOURCES`, ids lowercased.
- * A model without an input and output price is skipped; a missing cache rate
- * falls back to the input rate, since the provider gives no discount for it.
- */
-export function parseModelsDevRates(
-  body: ModelsDevApi,
-): Array<{ source: string; models: ModelRateRow[] }> {
-  const sources = new Set(
-    Object.values(MODELS_DEV_SOURCES).filter((source) => source !== null),
-  );
-
-  return [...sources].flatMap((source) => {
-    const rows = new Map<string, ModelRateRow>();
-    for (const [id, model] of Object.entries(body[source]?.models ?? {})) {
-      const cost = model.cost;
-      const modelId = id.toLowerCase();
-      if (
-        typeof cost?.input !== "number" ||
-        typeof cost.output !== "number" ||
-        rows.has(modelId)
-      )
-        continue;
-      rows.set(modelId, {
-        modelId: modelId,
-        input: cost.input,
-        output: cost.output,
-        cacheRead: cost.cache_read ?? cost.input,
-        cacheWrite: cost.cache_write ?? cost.input,
-      });
-    }
-
-    return rows.size > 0
-      ? [{ source: source, models: [...rows.values()] }]
-      : [];
-  });
+/** The model id rates are stored and looked up by, so `GPT-5.5` finds `gpt-5.5`. */
+export function normalizeModelId(modelId: string): string {
+  return modelId.toLowerCase();
 }

@@ -1,9 +1,16 @@
+/// <reference types="vite/client" />
+import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
+import { internal } from "../_generated/api";
+import { modelRates } from "../logs";
 import {
   canonicalModelProvider,
   estimateModelTokenCost,
-  parseModelsDevRates,
 } from "../model/modelPricing";
+import { parseModelsDevRates } from "../model/modelsDev";
+import schema from "../schema";
+
+const modules = import.meta.glob("../**/*.ts");
 
 describe("model pricing", () => {
   it("normalizes SDK providers", () => {
@@ -43,8 +50,9 @@ describe("model pricing", () => {
     ).toBeNull();
   });
 
-  it("keeps mapped models.dev sources, lowercases ids and fills cache rates", () => {
-    const sources = parseModelsDevRates({
+  it("files models.dev rates under each agent provider that reads them", () => {
+    const gpt = { modelId: "gpt-5.5", input: 5, output: 30, cacheRead: 0.5 };
+    const providers = parseModelsDevRates({
       "amazon-bedrock": {
         models: {
           "us.anthropic.claude-sonnet-5-5": {
@@ -64,9 +72,10 @@ describe("model pricing", () => {
       },
     });
 
-    expect(sources).toEqual([
+    // chatgpt reads OpenAI's rates; a missing cache-write rate is the input rate.
+    expect(providers).toEqual([
       {
-        source: "amazon-bedrock",
+        provider: "bedrock",
         models: [
           {
             modelId: "us.anthropic.claude-sonnet-5-5",
@@ -77,18 +86,38 @@ describe("model pricing", () => {
           },
         ],
       },
-      {
-        source: "openai",
-        models: [
-          {
-            modelId: "gpt-5.5",
-            input: 5,
-            output: 30,
-            cacheRead: 0.5,
-            cacheWrite: 5,
-          },
-        ],
-      },
+      { provider: "chatgpt", models: [{ ...gpt, cacheWrite: 5 }] },
+      { provider: "openai", models: [{ ...gpt, cacheWrite: 5 }] },
     ]);
+  });
+
+  it("hands usage the stored rates under the names its buckets use", async () => {
+    const tt = convexTest(schema, modules);
+    const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
+    const stored = { models: [{ modelId: "gpt-5.5", ...rates }] };
+    const store = { providers: [{ provider: "openai", ...stored }] };
+    await tt.mutation(internal.modelPrices.store.store, store);
+    // A second crawl with the same rates writes nothing.
+    await tt.mutation(internal.modelPrices.store.store, store);
+    await tt.mutation(internal.modelPrices.store.store, {
+      providers: [{ provider: "chatgpt", ...stored }],
+    });
+
+    const priced = await tt.run(
+      async (ctx) =>
+        await modelRates(ctx, [
+          { modelProvider: "openai", modelId: "GPT-5.5" },
+          { modelProvider: "chatgpt", modelId: "gpt-5.5" },
+          { modelProvider: "custom", modelId: "gpt-5.5" },
+        ]),
+    );
+
+    expect(priced).toEqual([
+      { modelProvider: "openai", modelId: "GPT-5.5", ...rates },
+      { modelProvider: "chatgpt", modelId: "gpt-5.5", ...rates },
+    ]);
+    expect(
+      await tt.run(async (ctx) => await ctx.db.query("modelPrices").collect()),
+    ).toHaveLength(2);
   });
 });

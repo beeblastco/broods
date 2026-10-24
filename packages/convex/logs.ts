@@ -5,11 +5,13 @@
  * live in Loki and are streamed via the gateway (NATS + Loki backfill).
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
+import { normalizeModelId } from "./model/modelPricing";
 import { projectEndpointIds } from "./model/usageEndpoints";
+import { modelPricesFields } from "./schema";
 import { taskIdParts, type UsageGrain } from "./usage";
 
 const usageRange = v.union(
@@ -39,12 +41,20 @@ const usageBucket = v.object({
   toolSandboxCpuUsec: v.number(),
 });
 
+/** One model's token rates, named the way its usage buckets name it. */
+const usageModelRates = v.object({
+  ...modelPricesFields.models.element.fields,
+  modelProvider: v.string(),
+});
+
 const usageStats = v.object({
   range: usageRange,
   binSeconds: v.number(),
   startTimeMs: v.number(),
   endTimeMs: v.number(),
   buckets: v.array(usageBucket),
+  /** Rates for each model in `buckets` that has a public price. */
+  rates: v.array(usageModelRates),
   totals: v.object({
     inputTokens: v.number(),
     outputTokens: v.number(),
@@ -165,6 +175,7 @@ export const fetchUsageStats = query({
       return {
         ...base,
         buckets: [],
+        rates: [],
         totals: {
           inputTokens: 0,
           outputTokens: 0,
@@ -189,8 +200,9 @@ export const fetchUsageStats = query({
     );
 
     const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
+    const rates = await modelRates(ctx, buckets);
 
-    return { ...base, buckets: buckets, totals: totals };
+    return { ...base, buckets: buckets, rates: rates, totals: totals };
   },
 });
 
@@ -343,6 +355,39 @@ export async function collectUsageTasks(
         .lt("finishedAt", endMs),
     )
     .take(limit);
+}
+
+/** The crawled rates of every priced model in `buckets`, named as the buckets name it. */
+export async function modelRates(
+  ctx: QueryCtx,
+  buckets: Array<Pick<UsageBucketRow, "modelProvider" | "modelId">>,
+): Promise<Array<Infer<typeof usageModelRates>>> {
+  const modelIds = new Map<string, Set<string>>();
+  for (const { modelProvider, modelId } of buckets) {
+    modelIds.set(
+      modelProvider,
+      (modelIds.get(modelProvider) ?? new Set()).add(modelId),
+    );
+  }
+  const priced = await Promise.all(
+    [...modelIds].map(async ([provider, ids]) => {
+      const doc = await ctx.db
+        .query("modelPrices")
+        .withIndex("by_provider", (q) => q.eq("provider", provider))
+        .unique();
+      const rows = new Map(doc?.models.map((row) => [row.modelId, row]));
+
+      return [...ids].flatMap((modelId) => {
+        const row = rows.get(normalizeModelId(modelId));
+
+        return row
+          ? [{ ...row, modelProvider: provider, modelId: modelId }]
+          : [];
+      });
+    }),
+  );
+
+  return priced.flat();
 }
 
 /**
