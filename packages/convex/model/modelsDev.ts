@@ -68,8 +68,10 @@ export function parseModelsDevRates(body: ModelsDevApi): Array<{
         modelId: modelId,
         input: cost.input,
         output: cost.output,
-        cacheRead: cost.cache_read ?? cost.input,
-        cacheWrite: cost.cache_write ?? cost.input,
+        cacheRead:
+          typeof cost.cache_read === "number" ? cost.cache_read : cost.input,
+        cacheWrite:
+          typeof cost.cache_write === "number" ? cost.cache_write : cost.input,
       });
     }
 

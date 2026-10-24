@@ -107,13 +107,16 @@ describe("model pricing", () => {
       async (ctx) =>
         await modelRates(ctx, [
           { modelProvider: "openai", modelId: "GPT-5.5" },
+          { modelProvider: "openai", modelId: "gpt-5.5-2026-04-23" },
           { modelProvider: "chatgpt", modelId: "gpt-5.5" },
           { modelProvider: "custom", modelId: "gpt-5.5" },
         ]),
     );
 
+    // A dated snapshot falls back to its alias's rates.
     expect(priced).toEqual([
       { modelProvider: "openai", modelId: "GPT-5.5", ...rates },
+      { modelProvider: "openai", modelId: "gpt-5.5-2026-04-23", ...rates },
       { modelProvider: "chatgpt", modelId: "gpt-5.5", ...rates },
     ]);
     expect(

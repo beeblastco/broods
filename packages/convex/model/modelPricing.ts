@@ -85,3 +85,15 @@ export function estimateModelTokenCost(
 export function normalizeModelId(modelId: string): string {
   return modelId.toLowerCase();
 }
+
+/**
+ * The stored ids a usage model id is priced under, most exact first: then
+ * without a release date (`-20250514`, `-2025-08-07`), since models.dev often
+ * lists a dated snapshot only under its alias.
+ */
+export function priceLookupIds(modelId: string): string[] {
+  const exact = normalizeModelId(modelId);
+  const undated = exact.replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, "");
+
+  return undated === exact ? [exact] : [exact, undated];
+}

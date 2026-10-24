@@ -11,7 +11,7 @@ import { modelPricesFields } from "../schema";
 export const store = internalMutation({
   args: { providers: v.array(v.object(modelPricesFields)) },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     for (const { provider, models } of args.providers) {
       const existing = await ctx.db
         .query("modelPrices")

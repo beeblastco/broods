@@ -1473,8 +1473,8 @@ export const cronRunsFields = {
  * Per-finished-task usage row. Written once per agent task at completion, giving
  * the dashboard a line-item token/compute cost per task. Indexes allow scoping to
  * a specific deployment (`endpointId`) or to the whole account. Pricing is
- * computed at render from a hardcoded shared pricing table. Only raw counts are
- * stored here.
+ * computed at render from the `modelPrices` rates crawled from models.dev.
+ * Only raw counts are stored here.
  */
 export const taskUsageFields = {
   accountId: v.id("accounts"),

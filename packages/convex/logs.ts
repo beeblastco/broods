@@ -9,7 +9,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { normalizeModelId } from "./model/modelPricing";
+import { priceLookupIds } from "./model/modelPricing";
 import { projectEndpointIds } from "./model/usageEndpoints";
 import { modelPricesFields } from "./schema";
 import { taskIdParts, type UsageGrain } from "./usage";
@@ -378,7 +378,9 @@ export async function modelRates(
       const rows = new Map(doc?.models.map((row) => [row.modelId, row]));
 
       return [...ids].flatMap((modelId) => {
-        const row = rows.get(normalizeModelId(modelId));
+        const row = priceLookupIds(modelId)
+          .map((id) => rows.get(id))
+          .find((match) => match !== undefined);
 
         return row
           ? [{ ...row, modelProvider: provider, modelId: modelId }]
