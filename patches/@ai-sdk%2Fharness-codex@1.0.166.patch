@@ -1,4 +1,4 @@
-diff --git a/node_modules/@ai-sdk/harness-codex/dist/bridge/pnpm-lock.yaml b/dist/bridge/pnpm-lock.yaml
+diff --git a/dist/bridge/pnpm-lock.yaml b/dist/bridge/pnpm-lock.yaml
 new file mode 100644
 index 0000000000000000000000000000000000000000..f8083899a3482a6b5c2a2b94a452522e95febf4d
 --- /dev/null
@@ -106,3 +106,27 @@ index 0000000000000000000000000000000000000000..f8083899a3482a6b5c2a2b94a452522e
 +    optional: true
 +
 +  ws@8.21.0: {}
+diff --git a/dist/index.js b/dist/index.js
+index 25d5cba921ad07b22bbedd75560daeb5676666ba..29632b036a1fe5f3517494d55ff9ccc8a4c14d80 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,3 +1,6 @@
++import bridgeAsset0 from "./bridge/package.json" with { type: "file" };
++import bridgeAsset1 from "./bridge/pnpm-lock.yaml" with { type: "file" };
++import bridgeAsset2 from "./bridge/index.mjs" with { type: "file" };
+ import { createHash } from "node:crypto";
+ import path, { dirname, join, resolve } from "node:path";
+ import { HarnessCapabilityUnsupportedError, commonTool, harnessSessionDataDirectoryPath, harnessStateDirectoryPath, harnessV1BridgeInboundCommandSchemas, harnessV1BridgeOutboundMessageSchema, harnessV1BridgeStartBaseSchema, harnessV1DiagnosticFromBridgeFrame } from "@ai-sdk/harness";
+@@ -10,9 +13,9 @@ import { chmod, mkdir, readFile, realpath, rename, writeFile } from "node:fs/pro
+ import { homedir } from "node:os";
+ //#region src/codex-bootstrap.ts
+ const readBridgeAsset = createReadBridgeAsset({
+-	"package.json": new URL("./bridge/package.json", import.meta.url),
+-	"pnpm-lock.yaml": new URL("./bridge/pnpm-lock.yaml", import.meta.url),
+-	"index.mjs": new URL("./bridge/index.mjs", import.meta.url)
++	"package.json": bridgeAsset0,
++	"pnpm-lock.yaml": bridgeAsset1,
++	"index.mjs": bridgeAsset2
+ });
+ const CODEX_BOOTSTRAP_DIR = ".harness-bootstrap/codex";
+ let cachedBootstrap;
