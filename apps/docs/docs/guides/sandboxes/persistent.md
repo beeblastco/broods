@@ -85,7 +85,7 @@ stateDiagram-v2
 | `vercel`  | stopped, filesystem kept                   | on the next call | the timeout counts from start, not from last activity |
 | `worker`  | nothing to stop; files kept in storage     | on the next call | no idle time: nothing runs between commands           |
 
-`idleTimeoutSeconds` defaults to 900 and can be at most 7 days. `maxLifetimeSeconds` is an optional ceiling on age since creation, at most 30 days. It is checked when a call acquires the machine, so it never interrupts a running command; the call that trips it boots a fresh machine. Vercel does not enforce `maxLifetimeSeconds`, and its idle timeout stops the sandbox that many seconds after each wake, even mid-activity.
+`idleTimeoutSeconds` defaults to 900 and can be at most 7 days. `maxLifetimeSeconds` is an optional ceiling on age since creation, at most 30 days. It is checked when a call acquires the machine, so it never interrupts a running command; the call that trips it boots a fresh machine. On Vercel the idle window is at most 24 hours, the longest session Vercel allows on Pro and Enterprise (45 minutes on Hobby). Each call keeps the session open one idle window past its own end, so a busy sandbox is never stopped mid-command until it reaches that session cap.
 
 Idle scale-down never pauses a machine while a background job runs.
 

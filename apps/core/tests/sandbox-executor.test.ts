@@ -102,14 +102,21 @@ const vercelRunCommandMock = mock(async (_params: Record<string, unknown>) => ({
 }));
 const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
+const vercelExtendTimeoutMock = mock(async (_duration: number) => {});
 const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
   snapshotId: "snap_captured",
   status: "created",
 }));
+// What the next sandbox the mocks hand out reports for its session.
+let vercelSession: { createdAt: Date; expiresAt?: Date } = {
+  createdAt: new Date(),
+};
 function vercelSandbox(name = "vercel-sandbox") {
   return {
     name: name,
     ...VERCEL_SIZE,
+    ...vercelSession,
+    extendTimeout: vercelExtendTimeoutMock,
     runCommand: vercelRunCommandMock,
     stop: vercelStopMock,
     delete: vercelDeleteMock,
@@ -469,6 +476,8 @@ beforeEach(() => {
   vercelRunCommandMock.mockClear();
   vercelStopMock.mockClear();
   vercelDeleteMock.mockClear();
+  vercelExtendTimeoutMock.mockClear();
+  vercelSession = { createdAt: new Date() };
   vercelCreateMock.mockClear();
   vercelGetMock.mockClear();
   storedSandboxExternalId = null;
@@ -3291,6 +3300,72 @@ describe("createSandboxExecutor", () => {
     expect(created).not.toBe("fp-p-winner");
     expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
     expect(vercelGetMock.mock.calls.at(-1)?.[0]?.name).toBe("fp-p-winner");
+  });
+
+  // Vercel's session timeout is a hard stop, so a busy sandbox would be cut
+  // mid-command one idle window after it woke.
+  it("extends the session to one idle window past each call", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    vercelSession = {
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+
+    await executor.run(persistentVercelRun());
+
+    // Default idle 900 s plus the call's 30 s, less the 60 s left.
+    const extension = Number(vercelExtendTimeoutMock.mock.calls[0]?.[0]);
+    expect(extension).toBeGreaterThan(869_000);
+    expect(extension).toBeLessThanOrEqual(870_000);
+  });
+
+  it("leaves a session alone when it outlasts the idle window", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    vercelSession = {
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 3_600_000),
+    };
+
+    await executor.run(persistentVercelRun());
+
+    expect(vercelExtendTimeoutMock).not.toHaveBeenCalled();
+  });
+
+  it("still runs when Vercel refuses an extension past the plan cap", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    vercelSession = { createdAt: new Date(), expiresAt: new Date() };
+    vercelExtendTimeoutMock.mockImplementationOnce(async () => {
+      throw new Error("Status code 400 is not ok");
+    });
+
+    const result = await executor.run(persistentVercelRun());
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("retires a reserved sandbox past maxLifetimeSeconds and boots a fresh one", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      lifecycle: { maxLifetimeSeconds: 3600 },
+    });
+    storedSandboxExternalId = "fp-p-old-abc123";
+    vercelSession = { createdAt: new Date(Date.now() - 7_200_000) };
+
+    await executor.run(persistentVercelRun());
+
+    expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
+    expect(vercelCreateMock).toHaveBeenCalledTimes(1);
+    expect(String(vercelCreateMock.mock.calls[0]?.[0]?.name)).not.toBe(
+      "fp-p-old-abc123",
+    );
   });
 
   it("releases a reserved sandbox without resuming it", async () => {

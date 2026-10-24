@@ -57,8 +57,17 @@ export const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
-// Cloudflare refuses a Container inactivity timeout over six hours.
-export const CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60;
+// Providers whose own idle window stops short of MAX_IDLE_TIMEOUT_SECONDS.
+// Cloudflare refuses a Container inactivity timeout over six hours. Vercel holds
+// a session to 24 hours on Pro and Enterprise (45 minutes on Hobby, which its
+// API refuses itself), and core keeps the session open one idle window past
+// each call.
+const PROVIDER_MAX_IDLE_TIMEOUT_SECONDS: Partial<
+  Record<SandboxProvider, number>
+> = {
+  cloudflare: 6 * 60 * 60,
+  vercel: 24 * 60 * 60,
+};
 // A V8 Worker's CPU limit is its call's timeout plus a few seconds to load and
 // store its files, so one command may run this long at most: `MAX_TIMEOUT_MS`
 // in `apps/cloudflare-worker/src/limits.ts`.
@@ -735,8 +744,8 @@ function normalizeOptionalStringList(
   return entries;
 }
 
-// The platform Workers set the machine themselves, so no hook runs on them; a
-// Container's idle window is capped by Cloudflare and it has no lifetime cap.
+// The platform Workers set the machine themselves, so no hook runs on them,
+// and a Container has no lifetime cap.
 function assertWorkerLifecycle(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -760,12 +769,6 @@ function assertWorkerLifecycle(
   if (lifecycle?.maxLifetimeSeconds !== undefined)
     throw new ClientError(
       "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
-    );
-  if (
-    (lifecycle?.idleTimeoutSeconds ?? 0) > CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS
-  )
-    throw new ClientError(
-      `config.lifecycle.idleTimeoutSeconds must be at most ${CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS} on the cloudflare provider`,
     );
 }
 
@@ -796,6 +799,12 @@ function normalizePersistentFields(
     );
   }
   assertWorkerLifecycle(config, provider, lifecycle);
+  const maxIdle = PROVIDER_MAX_IDLE_TIMEOUT_SECONDS[provider];
+  if (maxIdle !== undefined && (lifecycle?.idleTimeoutSeconds ?? 0) > maxIdle) {
+    throw new ClientError(
+      `config.lifecycle.idleTimeoutSeconds must be at most ${maxIdle} on the ${provider} provider`,
+    );
+  }
   if (provider === "e2b" && (onCreate || onResume)) {
     throw new ClientError(
       "config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly",

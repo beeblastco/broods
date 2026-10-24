@@ -463,8 +463,8 @@ Credentials fall back to deployment env: `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATIO
 
 | Topic             | Daytona                                                | E2B                                       | Vercel                                                 |
 | ----------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------ |
-| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | timeout counts from start, reset each wake             |
-| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | not enforced                                           |
+| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | session extended to idle past each call, 24 h cap      |
+| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | checked at acquire, retires and recreates              |
 | `config.snapshot` | `snapshot`                                             | `template`                                | `source` snapshot for `snap_`, else image              |
 | Snapshot verb     | `sandbox.createSnapshot`, `broods-<uuid>` name         | `Sandbox.createSnapshot`                  | `sandbox.snapshot({ expiration: 0 })`                  |
 | Network           | `networkBlockAll`, domain lists ignored with a warning | `allow-all` only                          | `allow-all`, `deny-all`, or domain and CIDR allowlists |
