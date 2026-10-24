@@ -3077,6 +3077,8 @@ describe("createSandboxExecutor", () => {
         teamId: "team_1",
         projectId: "prj_1",
         persistent: false,
+        // The 30 s call plus room for its setup.
+        timeout: 330_000,
         networkPolicy: {
           allow: ["api.example.com"],
           subnets: { allow: ["10.0.0.0/8"] },

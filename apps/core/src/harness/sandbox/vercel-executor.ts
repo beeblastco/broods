@@ -67,6 +67,10 @@ import {
 } from "./utils.ts";
 
 const GENERATION_LENGTH = 8;
+// An ephemeral session runs its setup (the workdir, a workspace mount) before
+// the command and is stopped when the call ends, so it gets this long past the
+// command's own timeout rather than being cut off mid-command.
+const EPHEMERAL_SETUP_SECONDS = 5 * 60;
 // Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
 const SNAPSHOT_ID_PREFIX = "snap_";
 
@@ -646,8 +650,9 @@ function vercelCreateOptions(
     ...source,
     persistent: persistent,
     timeout:
-      (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
-      1000,
+      (persistent
+        ? lifecycle.idleTimeoutSeconds
+        : request.timeoutSeconds + EPHEMERAL_SETUP_SECONDS) * 1000,
     networkPolicy: vercelNetworkPolicy(config),
     // No run identity here: a sandbox outlives the run that created it, and
     // every exec lays its own over this env.
