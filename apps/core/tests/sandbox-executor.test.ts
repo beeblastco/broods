@@ -3115,12 +3115,12 @@ describe("createSandboxExecutor", () => {
     };
   }
 
-  function vercelMountCommand():
-    | { args: string[]; env: Record<string, string> }
-    | undefined {
+  function vercelMountCommand(): Record<string, unknown> | undefined {
     return vercelRunCommandMock.mock.calls
-      .map((call) => call[0] as { args: string[]; env: Record<string, string> })
-      .find((params) => params.args[1]?.includes("sudo -E mount-s3"));
+      .map((call): Record<string, unknown> => call[0])
+      .find((params): boolean =>
+        JSON.stringify(params.args).includes("sudo -E mount-s3"),
+      );
   }
 
   it("mounts a Vercel workspace on scoped credentials only the mount command sees", async () => {
@@ -3143,36 +3143,42 @@ describe("createSandboxExecutor", () => {
     });
 
     // A deny-all sandbox reaches the workspace bucket and nothing else.
-    const create = vercelCreateMock.mock.calls[0]?.[0] as {
-      networkPolicy: unknown;
-      env: Record<string, string>;
-    };
-    expect(create.networkPolicy).toEqual({
+    const create = vercelCreateMock.mock.calls[0]?.[0];
+    expect(create).toHaveProperty("networkPolicy", {
       allow: [
         "s3.us-east-1.amazonaws.com",
         "workspace-bucket.s3.us-east-1.amazonaws.com",
       ],
     });
-    expect(create.env.AWS_SESSION_TOKEN).toBeUndefined();
+    expect(create).not.toHaveProperty("env.AWS_SESSION_TOKEN");
     const mount = vercelMountCommand();
-    expect(mount?.args[1]).toContain(
-      `'--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
+    expect(mount).toHaveProperty(
+      ["args", 1],
+      expect.stringContaining(
+        `'--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
+      ),
     );
     // Parallel tool calls on a fresh sandbox take turns at the install and mount.
-    expect(mount?.args[1]).toContain("flock 9");
-    expect(mount?.env).toMatchObject({
-      AWS_ACCESS_KEY_ID: "scoped-access-key",
-      AWS_SESSION_TOKEN: "scoped-session-token",
-    });
-    const assumeRole = (
-      stsSendMock.mock.calls.at(-1)?.[0] as { input: { Policy?: string } }
-    ).input;
-    expect(assumeRole.Policy).toContain(`workspace-bucket/${NS}/`);
+    expect(mount).toHaveProperty(
+      ["args", 1],
+      expect.stringContaining("flock 9"),
+    );
+    expect(mount).toHaveProperty(
+      "env",
+      expect.objectContaining({
+        AWS_ACCESS_KEY_ID: "scoped-access-key",
+        AWS_SESSION_TOKEN: "scoped-session-token",
+      }),
+    );
+    expect(stsSendMock.mock.calls.at(-1)?.[0]).toHaveProperty(
+      "input.Policy",
+      expect.stringContaining(`workspace-bucket/${NS}/`),
+    );
     // The agent's own command never carries them.
-    const command = vercelRunCommandMock.mock.calls.at(-1)?.[0] as {
-      env: Record<string, string>;
-    };
-    expect(command.env.AWS_SESSION_TOKEN).not.toBe("scoped-session-token");
+    expect(vercelRunCommandMock.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      "env.AWS_SESSION_TOKEN",
+      "scoped-session-token",
+    );
   });
 
   it("keeps a fresh Vercel mount without calling STS", async () => {

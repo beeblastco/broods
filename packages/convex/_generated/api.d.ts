@@ -1086,6 +1086,14 @@ export declare const api: {
         }>;
         endTimeMs: number;
         range: "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
+        rates: Array<{
+          cacheRead: number;
+          cacheWrite: number;
+          input: number;
+          modelId: string;
+          modelProvider: string;
+          output: number;
+        }>;
         startTimeMs: number;
         totals: {
           agentSandboxCpuUsec: number;
@@ -5437,6 +5445,30 @@ export declare const internal: {
         };
       }
     >;
+  };
+  modelPrices: {
+    crawl: {
+      run: FunctionReference<"action", "internal", {}, null>;
+    };
+    store: {
+      store: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          providers: Array<{
+            models: Array<{
+              cacheRead: number;
+              cacheWrite: number;
+              input: number;
+              modelId: string;
+              output: number;
+            }>;
+            provider: string;
+          }>;
+        },
+        null
+      >;
+    };
   };
   org: {
     orgs: {
