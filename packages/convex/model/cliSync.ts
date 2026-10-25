@@ -194,7 +194,7 @@ export function assertSupportedWorkspaceSandboxMounts(
         !sandbox ||
         supportsS3WorkspaceMount(
           sandboxProvider(sandbox),
-          plainRecord(sandbox.config).options,
+          plainRecord(plainRecord(sandbox.config).options),
         )
       )
         continue;

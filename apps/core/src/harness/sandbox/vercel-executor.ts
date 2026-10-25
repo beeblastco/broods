@@ -330,6 +330,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       cwd: "/",
       env: {
         ...mount.credentials,
+        // No EC2 metadata service here; without this mount-s3 probes it and
+        // stalls on the connect timeout, as workdir's mount notes.
+        AWS_EC2_METADATA_DISABLED: "true",
         ...(mount.region
           ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
           : {}),
@@ -599,12 +602,16 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       `exec 9>${shellQuote(`${jobsDir}/.fp-lifecycle.lock`)}`,
       "flock 9",
       `cd ${shellQuote(workDir)}`,
+      // The hooks run without fd 9, so a process they leave running cannot
+      // hold the lock after this script ends.
+      "{",
       `if [ ! -f ${shellQuote(marker)} ]; then`,
       ...createCommands.map((cmd) => `  ${cmd}`),
       `  touch ${shellQuote(marker)}`,
       "else",
       ...resumeCommands.map((cmd) => `  ${cmd}`),
       "fi",
+      "} 9>&-",
     ].join("\n");
     await this.#shell(sandbox, script, { cwd: "/" });
   }
@@ -674,6 +681,69 @@ async function commandError(
   ]);
 
   return [stderr, stdout].filter(Boolean).join("\n") || fallback;
+}
+
+// Installs mount-s3 when the image lacks it, then replaces any stale mount with
+// one on the credentials in this command's env. A lock makes parallel calls on
+// a fresh sandbox take turns at apt and the mount. The credentials stay out of
+// the sandbox env and later commands, but the daemon holds them and the agent
+// has sudo, so they are scoped to the prefix and last an hour.
+function mountScript(
+  mount: ResolvedS3Mount,
+  mountPath: string,
+  now: number,
+): string {
+  const quotedPath = shellQuote(mountPath);
+  const mountArgs = [
+    "--allow-delete",
+    "--allow-overwrite",
+    "--allow-other",
+    ...(mount.prefix ? ["--prefix", mount.prefix] : []),
+    ...(mount.region ? ["--region", mount.region] : []),
+    ...(mount.endpoint ? ["--endpoint-url", mount.endpoint] : []),
+    mount.bucket,
+    mountPath,
+  ]
+    .map(shellQuote)
+    .join(" ");
+
+  return [
+    "set -e",
+    `exec 9>${MOUNT_LOCK}`,
+    "flock 9",
+    "if ! command -v mount-s3 >/dev/null; then",
+    '  arch="$(dpkg --print-architecture | sed s/amd64/x86_64/)"',
+    `  curl -fsSL -o /tmp/mount-s3.deb "${MOUNT_S3_PACKAGE}" || { echo "mount-s3 is not installed and could not be fetched; boot a snapshot that has it, or allow egress to s3.amazonaws.com and the Ubuntu mirrors" >&2; exit 1; }`,
+    "  sudo apt-get update -qq",
+    "  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/mount-s3.deb",
+    "  rm -f /tmp/mount-s3.deb",
+    "fi",
+    `if ! { ${freshMountScript(mountPath, now)}; }; then`,
+    `  sudo umount -l ${quotedPath} 2>/dev/null || true`,
+    `  sudo mkdir -p ${quotedPath}`,
+    `  sudo chown "$(id -u)":"$(id -g)" ${quotedPath}`,
+    `  sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
+    `  echo ${now} | sudo tee "$stamp_file" >/dev/null`,
+    "fi",
+  ].join("\n");
+}
+
+// A workspace run on a sandbox that opted into S3 mounts.
+function mountsWorkspace(
+  config: SandboxExecutorConfig,
+  request: { namespace?: string },
+): boolean {
+  return config.options?.mountAwsS3Buckets === true && !!request.namespace;
+}
+
+// The hosts mount-s3 talks to: the bucket's virtual host and the regional
+// endpoint on AWS, or the endpoint and its bucket subdomain elsewhere (R2).
+function s3Hosts(mount: S3MountIdentity): string[] {
+  const host = mount.endpoint
+    ? new URL(mount.endpoint).hostname
+    : `s3.${mount.region ? `${mount.region}.` : ""}amazonaws.com`;
+
+  return [host, `${mount.bucket}.${host}`];
 }
 
 function vercelAuthOptions(config: SandboxExecutorConfig): {
@@ -769,68 +839,4 @@ function vercelSpecs(sandbox: VercelSandbox): SandboxSpecs | undefined {
   if (vcpus === undefined || memory === undefined) return undefined;
 
   return { vcpu: vcpus, memoryMb: memory };
-}
-
-// Installs mount-s3 when the image lacks it, then replaces any stale mount with
-// one on the credentials in this command's env. One lock serializes it: a
-// model's parallel tool calls on a fresh sandbox would otherwise both run apt
-// and both mount, and the one that waits finds the mount fresh and skips. They stay out of the sandbox
-// env and every later command's, but the daemon holds them and the agent has
-// sudo, which is why they are scoped to the prefix and last an hour.
-function mountScript(
-  mount: ResolvedS3Mount,
-  mountPath: string,
-  now: number,
-): string {
-  const quotedPath = shellQuote(mountPath);
-  const mountArgs = [
-    "--allow-delete",
-    "--allow-overwrite",
-    "--allow-other",
-    ...(mount.prefix ? ["--prefix", mount.prefix] : []),
-    ...(mount.region ? ["--region", mount.region] : []),
-    ...(mount.endpoint ? ["--endpoint-url", mount.endpoint] : []),
-    mount.bucket,
-    mountPath,
-  ]
-    .map(shellQuote)
-    .join(" ");
-
-  return [
-    "set -e",
-    `exec 9>${MOUNT_LOCK}`,
-    "flock 9",
-    "if ! command -v mount-s3 >/dev/null; then",
-    '  arch="$(dpkg --print-architecture | sed s/amd64/x86_64/)"',
-    `  curl -fsSL -o /tmp/mount-s3.deb "${MOUNT_S3_PACKAGE}" || { echo "mount-s3 is not installed and could not be fetched; boot a snapshot that has it, or allow egress to s3.amazonaws.com and the Ubuntu mirrors" >&2; exit 1; }`,
-    "  sudo apt-get update -qq",
-    "  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/mount-s3.deb",
-    "  rm -f /tmp/mount-s3.deb",
-    "fi",
-    `if ! { ${freshMountScript(mountPath, now)}; }; then`,
-    `  sudo umount -l ${quotedPath} 2>/dev/null || true`,
-    `  sudo mkdir -p ${quotedPath}`,
-    `  sudo chown "$(id -u)":"$(id -g)" ${quotedPath}`,
-    `  sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
-    `  echo ${now} | sudo tee "$stamp_file" >/dev/null`,
-    "fi",
-  ].join("\n");
-}
-
-// A workspace run on a sandbox that opted into S3 mounts.
-function mountsWorkspace(
-  config: SandboxExecutorConfig,
-  request: { namespace?: string },
-): boolean {
-  return config.options?.mountAwsS3Buckets === true && !!request.namespace;
-}
-
-// The hosts mount-s3 talks to: the bucket's virtual host and the regional
-// endpoint on AWS, or the endpoint and its bucket subdomain elsewhere (R2).
-function s3Hosts(mount: S3MountIdentity): string[] {
-  const host = mount.endpoint
-    ? new URL(mount.endpoint).hostname
-    : `s3.${mount.region ? `${mount.region}.` : ""}amazonaws.com`;
-
-  return [host, `${mount.bucket}.${host}`];
 }

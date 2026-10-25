@@ -57,16 +57,13 @@ export const S3_MOUNT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 /** Whether a sandbox of `provider` with these `options` mounts its workspace. */
 export function supportsS3WorkspaceMount(
   provider: string,
-  options: unknown,
+  options: Readonly<Record<string, unknown>> | undefined,
 ): boolean {
   if (ALWAYS_S3_MOUNT_PROVIDERS.has(provider)) return true;
 
   return (
     OPT_IN_S3_MOUNT_PROVIDERS.has(provider) &&
-    typeof options === "object" &&
-    options !== null &&
-    "mountAwsS3Buckets" in options &&
-    options.mountAwsS3Buckets === true
+    options?.mountAwsS3Buckets === true
   );
 }
 
