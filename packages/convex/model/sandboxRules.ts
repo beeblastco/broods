@@ -879,6 +879,14 @@ function validateProviderOptions(
       }
     }
   }
+  if ("networkId" in options) {
+    requireString(options.networkId, "config.options.networkId");
+    if (provider !== "vercel") {
+      throw new ClientError(
+        "config.options.networkId is only supported by the vercel provider",
+      );
+    }
+  }
   if ("mountAwsS3Buckets" in options) {
     if (typeof options.mountAwsS3Buckets !== "boolean") {
       throw new ClientError(

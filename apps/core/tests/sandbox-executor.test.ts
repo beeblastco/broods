@@ -103,12 +103,14 @@ const vercelRunCommandMock = mock(async (_params: Record<string, unknown>) => ({
 const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
 const vercelExtendTimeoutMock = mock(async (_duration: number) => {});
+const vercelUpdateMock = mock(async (_params: Record<string, unknown>) => {});
 const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
   snapshotId: "snap_captured",
   status: "created",
 }));
-// What the next sandbox the mocks hand out reports for its session.
-let vercelSession: { createdAt: Date; expiresAt?: Date } = {
+// What the next sandbox the mocks hand out reports: its session and its
+// Secure Compute network.
+let vercelSession: { createdAt: Date; expiresAt?: Date; networkId?: string } = {
   createdAt: new Date(),
 };
 function vercelSandbox(name = "vercel-sandbox") {
@@ -121,6 +123,7 @@ function vercelSandbox(name = "vercel-sandbox") {
     stop: vercelStopMock,
     delete: vercelDeleteMock,
     snapshot: vercelSnapshotMock,
+    update: vercelUpdateMock,
   };
 }
 const vercelCreateMock = mock(
@@ -478,6 +481,7 @@ beforeEach(() => {
   vercelDeleteMock.mockClear();
   vercelExtendTimeoutMock.mockClear();
   vercelSession = { createdAt: new Date() };
+  vercelUpdateMock.mockClear();
   vercelCreateMock.mockClear();
   vercelGetMock.mockClear();
   storedSandboxExternalId = null;
@@ -3519,6 +3523,51 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("attaches a Vercel sandbox to its Secure Compute network", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        networkId: "net_1",
+      },
+    });
+
+    await executor.run(persistentVercelRun());
+
+    expect(vercelCreateMock.mock.calls[0]?.[0]).toMatchObject({
+      networkId: "net_1",
+    });
+  });
+
+  it("moves a reserved Vercel sandbox to a changed network", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    storedSandboxExternalId = "fp-p-stored-abc123";
+    vercelSession = { createdAt: new Date(), networkId: "net_old" };
+
+    await new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        networkId: "net_new",
+      },
+    }).run(persistentVercelRun());
+    await new VercelSandboxExecutor(persistentVercelConfig()).run(
+      persistentVercelRun(),
+    );
+
+    expect(vercelUpdateMock.mock.calls.map((call) => call[0])).toEqual([
+      { networkId: "net_new" },
+      { networkId: null },
+    ]);
+  });
+
   it("releases a reserved sandbox without resuming it", async () => {
     const { VercelSandboxExecutor } =
       await import("../src/harness/sandbox/vercel-executor.ts");
@@ -3865,6 +3914,26 @@ describe("classifyVercelError", () => {
     expect(classifyVercelError({ statusCode: 401 }).message).toContain(
       "HTTP 401",
     );
+  });
+
+  it("keeps the reason Vercel gives beside what to check", async () => {
+    const { classifyVercelError } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const network = classifyVercelError(
+      new Error(
+        "Status code 401 is not ok: The network was not found or is not accessible to this team. Secure Compute requires an Enterprise plan with a configured network.",
+      ),
+    );
+    // A bad token answers with a bare reason, so the hint stays either way.
+    const token = classifyVercelError(
+      new Error("Status code 403 is not ok: Not authorized"),
+    );
+
+    expect(network.message).toContain(
+      "(HTTP 401): The network was not found or is not accessible to this team.",
+    );
+    expect(token.message).toContain("(HTTP 403): Not authorized");
+    expect(token.message).toContain("Verify VERCEL_TOKEN");
   });
 
   it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {

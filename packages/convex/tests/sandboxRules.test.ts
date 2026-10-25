@@ -435,6 +435,26 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 86400 on the vercel provider");
   });
 
+  it("takes a Secure Compute networkId on vercel only", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { networkId: "net_1" },
+      }).options,
+    ).toEqual({ networkId: "net_1" });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { networkId: "net_1" },
+      }),
+    ).toThrow(
+      "config.options.networkId is only supported by the vercel provider",
+    );
+    expect(() =>
+      normalizeSandboxConfig({ provider: "vercel", options: { networkId: 7 } }),
+    ).toThrow("config.options.networkId must be a non-empty string");
+  });
+
   it("isolate takes on/off networking, no hooks, no lifecycle and a 60 s timeout", () => {
     expect(
       normalizeSandboxConfig({ provider: "worker", persistent: true }),

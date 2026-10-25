@@ -8,6 +8,7 @@
  * credentials scoped to that prefix for an hour and kept out of the sandbox
  * env. `config.snapshot` names the image or snapshot it boots, and the
  * Snapshot action captures a reserved sandbox into a new snapshot.
+ * `options.networkId` attaches the sandbox to a Secure Compute network.
  */
 
 import { randomUUID } from "node:crypto";
@@ -364,6 +365,15 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
+  // A reserved sandbox whose config names another Secure Compute network moves
+  // to it. Vercel applies the change on the next session, so the running one
+  // keeps its network until the sandbox idles out.
+  async #moveNetwork(sandbox: VercelSandbox): Promise<void> {
+    const networkId = configString(this.#config.options?.networkId);
+    if (sandbox.networkId === networkId) return;
+    await sandbox.update({ networkId: networkId ?? null });
+  }
+
   #persistent(request: {
     namespace?: string;
     reservationKey?: string;
@@ -436,6 +446,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         if (
           !outlivedMaxLifetime(this.#lifecycle, sandbox.createdAt.getTime())
         ) {
+          await this.#moveNetwork(sandbox);
           await saveSandboxInstance(
             "vercel",
             key,
@@ -650,8 +661,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// The @vercel/sandbox SDK surfaces auth failures as a bare "Status code 403 is not
-// ok". Translate 401/403 into an actionable message so the agent sees what to fix.
+// The @vercel/sandbox SDK surfaces auth failures as "Status code 403 is not ok",
+// followed by the API's reason when it gives one. Keep that reason (a Secure
+// Compute network the team cannot use answers 401 too); a bare status means
+// the token, so say what to check.
 export function classifyVercelError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   const numericStatus = [
@@ -665,9 +678,12 @@ export function classifyVercelError(err: unknown): Error {
   const matched = /status code (401|403)\b/i.exec(message);
   const status = numericStatus ?? (matched ? Number(matched[1]) : undefined);
   if (status === 401 || status === 403) {
+    const reason = /status code \d+ is not ok:\s*(.+)/is.exec(message)?.[1];
+
     return new Error(
-      `Vercel Sandbox rejected the request (HTTP ${status}): the VERCEL_TOKEN is invalid or lacks access to the ` +
-        `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
+      `Vercel Sandbox rejected the request (HTTP ${status}): ` +
+        `${reason ?? "the VERCEL_TOKEN is invalid or lacks access to the configured team/project."} ` +
+        "Verify VERCEL_TOKEN, VERCEL_TEAM_ID, VERCEL_PROJECT_ID, and options.networkId when set.",
     );
   }
 
@@ -784,10 +800,12 @@ function vercelCreateOptions(
     : snapshot
       ? { image: snapshot }
       : {};
+  const networkId = configString(config.options?.networkId);
 
   return {
     ...vercelAuthOptions(config),
     ...source,
+    ...(networkId ? { networkId: networkId } : {}),
     persistent: persistent,
     timeout:
       (persistent
