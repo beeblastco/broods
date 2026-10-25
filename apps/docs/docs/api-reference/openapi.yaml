@@ -6037,13 +6037,11 @@ components:
         it exposes on its `tools` namespace. Accepts either the descriptor a
         provider tool serializes to (`type`/`id`/`args`, as produced by
         `google.tools.googleSearch({...})`) or a flat object whose keys other
-        than `enabled`, `needsApproval`, and `async` are the tool's arguments.
+        than `enabled` and `needsApproval` are the tool's arguments.
       properties:
         enabled:
           type: boolean
         needsApproval:
-          type: boolean
-        async:
           type: boolean
         type:
           type: string

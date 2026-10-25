@@ -956,7 +956,6 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     config.needsApproval,
     `config.tools.${toolName}.needsApproval`,
   );
-  assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
   if (config.config !== undefined && !isPlainObject(config.config))
     throw new ClientError(`config.tools.${toolName}.config must be an object`);
 }
