@@ -4,8 +4,10 @@
  * sandbox per reservation key. Vercel's session `timeout` is a hard limit, not
  * an idle timer, so each call extends the session to one idle window past its
  * own end, and `maxLifetimeSeconds` retires the sandbox at acquire.
- * `config.snapshot` names the image or snapshot it boots, and the Snapshot
- * action captures a reserved sandbox into a new snapshot.
+ * A workspace run mounts its S3 prefix with mount-s3 before each call, on
+ * credentials scoped to that prefix for an hour and kept out of the sandbox
+ * env. `config.snapshot` names the image or snapshot it boots, and the
+ * Snapshot action captures a reserved sandbox into a new snapshot.
  */
 
 import { randomUUID } from "node:crypto";
@@ -41,6 +43,14 @@ import {
   statusScript,
   stopScript,
 } from "./jobs.ts";
+import {
+  type ResolvedS3Mount,
+  type S3MountIdentity,
+  executorS3Context,
+  freshMountScript,
+  resolveS3Mount,
+  resolveS3MountIdentity,
+} from "./s3-mount.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -76,6 +86,11 @@ const KEEP_ALIVE_SLACK_MS = 60_000;
 // the command and is stopped when the call ends, so it gets this long past the
 // command's own timeout rather than being cut off mid-command.
 const EPHEMERAL_SETUP_SECONDS = 5 * 60;
+const MOUNT_LOCK = "/tmp/.fp-s3-mount.lock";
+// Mountpoint for S3's release package. The images ship without it, so a sandbox
+// whose snapshot lacks it fetches it once, which needs egress to these hosts.
+const MOUNT_S3_PACKAGE =
+  "https://s3.amazonaws.com/mountpoint-s3-release/latest/${arch}/mount-s3.deb";
 // Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
 const SNAPSHOT_ID_PREFIX = "snap_";
 
@@ -112,6 +127,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       : workspacePath(request);
 
     try {
+      await this.#ensureS3Mount(sandbox, request);
       if (cwd) {
         await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`, { cwd: "/" });
       }
@@ -119,7 +135,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         // Before the hooks so they cannot outlast the session, and after them
         // so the command still gets its full window.
         await this.#keepAlive(sandbox, request.timeoutSeconds);
-        await this.#runLifecycle(sandbox, cwd);
+        await this.#runLifecycle(sandbox, sandboxReservationKey(request)!);
         await this.#keepAlive(sandbox, request.timeoutSeconds);
       }
       const result = await sandbox.runCommand({
@@ -162,10 +178,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const ns = this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
     const workDir = this.#workDir(ns);
+    await this.#ensureS3Mount(sandbox, request);
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`, { cwd: "/" });
     const jobId = request.jobId ?? generateJobId();
     await this.#keepAlive(sandbox, request.timeoutSeconds);
-    await this.#runLifecycle(sandbox, workDir);
+    await this.#runLifecycle(sandbox, ns);
     await this.#keepAlive(sandbox, request.timeoutSeconds);
     const script = launchScript(
       this.#jobsDir(ns),
@@ -283,6 +300,49 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     }
   }
 
+  // Mounts the run's workspace prefix unless a live mount on fresh credentials
+  // is already there. A resumed session lost its FUSE mount, and mount-s3 takes
+  // credentials only at start, so either case replaces the daemon. The check
+  // needs no credentials; STS is only called when a remount is due.
+  async #ensureS3Mount(
+    sandbox: VercelSandbox,
+    request: SandboxRunRequest,
+  ): Promise<void> {
+    if (!mountsWorkspace(request)) return;
+    const mountPath = workspacePath(request, this.#workspaceRoot())!;
+    const now = Math.floor(Date.now() / 1000);
+    const check = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", freshMountScript(mountPath, now)],
+    });
+    if (check.exitCode === 0) return;
+    const mount = await resolveS3Mount(
+      executorS3Context(this.#config, request),
+    );
+    if (!mount.credentials) {
+      throw new Error(
+        "vercel S3 workspace mounts need SANDBOX_MOUNT_ROLE_ARN in the harness runtime, or a workspace bucket with assumeRole or R2 auth",
+      );
+    }
+    // A first mount installs mount-s3, so a reserved session near its end
+    // gets its window before the install, not only after.
+    if (this.#persistent(request)) {
+      await this.#keepAlive(sandbox, request.timeoutSeconds);
+    }
+    await this.#shell(sandbox, mountScript(mount, mountPath, now), {
+      cwd: "/",
+      env: {
+        ...mount.credentials,
+        // No EC2 metadata service here; without this mount-s3 probes it and
+        // stalls on the connect timeout, as workdir's mount notes.
+        AWS_EC2_METADATA_DISABLED: "true",
+        ...(mount.region
+          ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
+          : {}),
+      },
+    });
+  }
+
   // Extends the running session to last one idle window past a call of
   // `callSeconds`. Vercel refuses to extend past the plan's session cap; the
   // session then stops at the cap and the next call resumes it, so a refusal
@@ -339,8 +399,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${namespace}`;
   }
 
+  // Job and lifecycle markers stay on the sandbox's own disk beside the
+  // workspace, never under its S3 mount: the mount has no append, and a marker
+  // in the bucket would outlive the sandbox and skip onCreate on the next one.
   #jobsDir(namespace: string): string {
-    return `${this.#workDir(namespace)}/.fp-jobs`;
+    return `${this.#workspaceRoot()}/.fp-jobs/${namespace}`;
   }
 
   async #acquire(request: SandboxRunRequest): Promise<VercelSandbox> {
@@ -510,13 +573,13 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async #shell(
     sandbox: VercelSandbox,
     code: string,
-    opts: { cwd?: string } = {},
+    opts: { cwd?: string; env?: Record<string, string> } = {},
   ): Promise<string> {
     const result = await sandbox.runCommand({
       cmd: "bash",
       args: ["-lc", code],
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
-      env: { ...stringRecord(this.#config.envVars) },
+      env: { ...stringRecord(this.#config.envVars), ...opts.env },
     });
     if (result.exitCode !== 0) {
       throw new Error(
@@ -527,22 +590,31 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     return await result.stdout();
   }
 
-  async #runLifecycle(sandbox: VercelSandbox, workDir: string): Promise<void> {
+  async #runLifecycle(sandbox: VercelSandbox, key: string): Promise<void> {
     if (!this.#config.onCreate?.length && !this.#config.onResume?.length)
       return;
-    const marker = `${workDir}/.fp-lifecycle-created`;
+    const workDir = this.#workDir(key);
+    const jobsDir = this.#jobsDir(key);
+    const marker = `${jobsDir}/.fp-lifecycle-created`;
     const createCommands = this.#config.onCreate ?? [];
     const resumeCommands = this.#config.onResume ?? [];
     const script = [
       "set -e",
-      `mkdir -p ${shellQuote(workDir)}`,
+      `mkdir -p ${shellQuote(workDir)} ${shellQuote(jobsDir)}`,
+      // Parallel calls on one reservation take turns, so onCreate runs once.
+      `exec 9>${shellQuote(`${jobsDir}/.fp-lifecycle.lock`)}`,
+      "flock 9",
       `cd ${shellQuote(workDir)}`,
+      // The hooks run without fd 9, so a process they leave running cannot
+      // hold the lock after this script ends.
+      "{",
       `if [ ! -f ${shellQuote(marker)} ]; then`,
       ...createCommands.map((cmd) => `  ${cmd}`),
       `  touch ${shellQuote(marker)}`,
       "else",
       ...resumeCommands.map((cmd) => `  ${cmd}`),
       "fi",
+      "} 9>&-",
     ].join("\n");
     await this.#shell(sandbox, script, { cwd: "/" });
   }
@@ -614,6 +686,66 @@ async function commandError(
   return [stderr, stdout].filter(Boolean).join("\n") || fallback;
 }
 
+// Installs mount-s3 when the image lacks it, then replaces any stale mount with
+// one on the credentials in this command's env. A lock makes parallel calls on
+// a fresh sandbox take turns at apt and the mount. The credentials stay out of
+// the sandbox env and later commands, but the daemon holds them and the agent
+// has sudo, so they are scoped to the prefix and last an hour.
+function mountScript(
+  mount: ResolvedS3Mount,
+  mountPath: string,
+  now: number,
+): string {
+  const quotedPath = shellQuote(mountPath);
+  const mountArgs = [
+    "--allow-delete",
+    "--allow-overwrite",
+    "--allow-other",
+    ...(mount.prefix ? ["--prefix", mount.prefix] : []),
+    ...(mount.region ? ["--region", mount.region] : []),
+    ...(mount.endpoint ? ["--endpoint-url", mount.endpoint] : []),
+    mount.bucket,
+    mountPath,
+  ]
+    .map(shellQuote)
+    .join(" ");
+
+  return [
+    "set -e",
+    `exec 9>${MOUNT_LOCK}`,
+    "flock 9",
+    "if ! command -v mount-s3 >/dev/null; then",
+    '  arch="$(dpkg --print-architecture | sed s/amd64/x86_64/)"',
+    `  curl -fsSL -o /tmp/mount-s3.deb "${MOUNT_S3_PACKAGE}" || { echo "mount-s3 is not installed and could not be fetched; boot a snapshot that has it, or allow egress to s3.amazonaws.com and the Ubuntu mirrors" >&2; exit 1; }`,
+    "  sudo apt-get update -qq",
+    "  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/mount-s3.deb",
+    "  rm -f /tmp/mount-s3.deb",
+    "fi",
+    `if ! { ${freshMountScript(mountPath, now)}; }; then`,
+    `  sudo umount -l ${quotedPath} 2>/dev/null || true`,
+    `  sudo mkdir -p ${quotedPath}`,
+    `  sudo chown "$(id -u)":"$(id -g)" ${quotedPath}`,
+    `  sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
+    `  echo ${now} | sudo tee "$stamp_file" >/dev/null`,
+    "fi",
+  ].join("\n");
+}
+
+// A workspace run: a vercel sandbox mounts every workspace attached to it.
+function mountsWorkspace(request: { namespace?: string }): boolean {
+  return !!request.namespace;
+}
+
+// The hosts mount-s3 talks to: the bucket's virtual host and the regional
+// endpoint on AWS, or the endpoint and its bucket subdomain elsewhere (R2).
+function s3Hosts(mount: S3MountIdentity): string[] {
+  const host = mount.endpoint
+    ? new URL(mount.endpoint).hostname
+    : `s3.${mount.region ? `${mount.region}.` : ""}amazonaws.com`;
+
+  return [host, `${mount.bucket}.${host}`];
+}
+
 function vercelAuthOptions(config: SandboxExecutorConfig): {
   token: string;
   teamId: string;
@@ -642,7 +774,7 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
 
 function vercelCreateOptions(
   config: SandboxExecutorConfig,
-  request: { envVars?: Record<string, string>; timeoutSeconds: number },
+  request: SandboxRunRequest,
   persistent: boolean,
 ): VercelCreateOptions {
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
@@ -661,7 +793,7 @@ function vercelCreateOptions(
       (persistent
         ? lifecycle.idleTimeoutSeconds
         : request.timeoutSeconds + EPHEMERAL_SETUP_SECONDS) * 1000,
-    networkPolicy: vercelNetworkPolicy(config),
+    networkPolicy: vercelNetworkPolicy(config, request),
     // No run identity here: a sandbox outlives the run that created it, and
     // every exec lays its own over this env.
     env: mergeSandboxEnv(config.envVars, request.envVars),
@@ -669,13 +801,23 @@ function vercelCreateOptions(
   };
 }
 
-function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
+// A mounted workspace's S3 hosts join whatever the config allows, the way a
+// lambda sandbox always reaches its managed bucket.
+function vercelNetworkPolicy(
+  config: SandboxExecutorConfig,
+  request: SandboxRunRequest,
+): NetworkPolicy {
   const network = config.network ?? { mode: "deny-all" as const };
   if (network.mode === "allow-all") return "allow-all";
-  if (network.mode === "deny-all") return "deny-all";
+  // Identity only: no STS call.
+  const mountHosts = mountsWorkspace(request)
+    ? s3Hosts(resolveS3MountIdentity(executorS3Context(config, request)))
+    : [];
+  if (network.mode === "deny-all" && mountHosts.length === 0) return "deny-all";
+  const allow = [...(network.allowDomains ?? []), ...mountHosts];
 
   return {
-    ...(network.allowDomains?.length ? { allow: network.allowDomains } : {}),
+    ...(allow.length ? { allow: allow } : {}),
     ...(network.allowCidrs?.length
       ? { subnets: { allow: network.allowCidrs } }
       : {}),

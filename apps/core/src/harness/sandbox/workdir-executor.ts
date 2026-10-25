@@ -51,8 +51,8 @@ import {
 } from "./jobs.ts";
 import {
   type ResolvedS3Mount,
-  type S3MountContext,
-  mountAttribution,
+  executorS3Context,
+  freshMountScript,
   mountRoleArn,
   resolveS3Mount,
   resolveS3MountIdentity,
@@ -96,11 +96,6 @@ const DEFAULT_S3_SECRET_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
 // where forwarding it verbatim would fail every create the sandbox ever attempts.
 const AUTO_STOP_MIN_SECONDS = 30;
 const AUTO_STOP_MAX_SECONDS = 60 * 60;
-
-// The mount's assume-role session lasts an hour and mount-s3 takes its credentials as
-// process env, so the only way to hand it new ones is to replace the daemon. Remount
-// with this much of the session left, rather than letting it expire into I/O errors.
-const MOUNT_MAX_AGE_SECONDS = 45 * 60;
 
 export interface WorkdirHarnessReservation {
   readonly sandbox: Sandbox;
@@ -200,7 +195,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     // it boots. The catch only keeps a failed create from orphaning the rejection.
     const ephemeralMount =
       execMount && !persistent
-        ? resolveS3Mount(this.#s3Context(request))
+        ? resolveS3Mount(executorS3Context(this.#config, request))
         : undefined;
     void ephemeralMount?.catch((): void => {});
     const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
@@ -505,32 +500,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       : "declarative";
   }
 
-  // Throws when the run carries no workspace namespace.
-  #s3Context(
-    request: Pick<SandboxRunRequest, "namespace" | "metadata">,
-  ): S3MountContext {
-    if (!request.namespace) {
-      throw new Error(
-        "workdir AWS S3 workspace mount requires a workspace namespace.",
-      );
-    }
-    const options = this.#options();
-
-    return {
-      storage: this.#config.storage,
-      namespace: request.namespace,
-      managedBucket:
-        configString(options.workspaceBucketName) ??
-        optionalEnv("FILESYSTEM_BUCKET_NAME"),
-      region:
-        configString(options.awsRegion) ??
-        optionalEnv("AWS_REGION") ??
-        optionalEnv("AWS_DEFAULT_REGION"),
-      endpoint: configString(options.s3Endpoint),
-      attribution: mountAttribution(this.#config, request),
-    };
-  }
-
   // Guest filesystem path the workspace mounts at.
   #mountPath(request: { namespace?: string; workspaceRoot?: string }): string {
     const root = (request.workspaceRoot ?? this.#workspaceRoot()).replace(
@@ -551,7 +520,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }): CreateOptions["mounts"] | undefined {
     if (this.#s3MountStrategy(request) !== "declarative") return undefined;
     const { bucket, prefix, region, endpoint } = resolveS3MountIdentity(
-      this.#s3Context(request),
+      executorS3Context(this.#config, request),
     );
 
     return [
@@ -855,7 +824,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     minted?: Promise<ResolvedS3Mount>,
   ): Promise<void> {
     // Resolved first so a run with no namespace is refused before any exec.
-    const context = this.#s3Context(request);
+    const context = executorS3Context(this.#config, request);
     if (!isFirstCreate) {
       const check = await sandbox.exec(
         freshMountScript(
@@ -1032,20 +1001,4 @@ function s3SecretNames(options: Record<string, unknown>): string[] {
   }
 
   return DEFAULT_S3_SECRET_NAMES;
-}
-
-// Exits 0 when the workspace is mounted on credentials younger than
-// MOUNT_MAX_AGE_SECONDS, and leaves `$stamp_file` set for the remount that writes it.
-// Age comes from a stamp written with the harness's clock, not the guest's, which a
-// Firecracker pause freezes. The stamp sits on agent-writable disk, so anything that
-// is not a plain epoch (non-digits, a leading zero that dash refuses as octal, more
-// than ten digits, a future time) reads as "unknown age" and fails the check.
-function freshMountScript(mountPath: string, now: number): string {
-  return [
-    `stamp_file=${shellQuote(`${mountPath}.mounted-at`)};`,
-    `stamp=$(cat "$stamp_file" 2>/dev/null || echo 0);`,
-    `case "$stamp" in '' | *[!0-9]* | 0?* | ???????????*) stamp=0 ;; esac;`,
-    `age=$((${now} - stamp));`,
-    `mountpoint -q ${shellQuote(mountPath)} && [ "$age" -ge 0 ] && [ "$age" -lt ${MOUNT_MAX_AGE_SECONDS} ]`,
-  ].join("\n");
 }

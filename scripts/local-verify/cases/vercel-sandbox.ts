@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AccountSandbox } from "../../../packages/broods/src/account.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   MODEL_KEY_HINT,
@@ -15,7 +16,10 @@ const VERCEL_ENV = ["VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_PROJECT_ID"];
  * VERCEL_PROJECT_ID on core and a model key, an agent writes a file in one turn
  * and hashes it in the next on the same reserved Vercel sandbox. A hash is
  * something the model cannot make up from the conversation, and the Vercel
- * images ship `sha256sum` but not `rev`.
+ * images ship `sha256sum` but not `rev`. With FILESYSTEM_BUCKET_NAME and
+ * SANDBOX_MOUNT_ROLE_ARN too, an agent on a reserved sandbox writes a
+ * workspace file that another agent hashes from a fresh one, which only the
+ * S3 mount can carry across.
  */
 export async function vercelSandbox(context: VerifyContext): Promise<void> {
   const key = `vercel-${context.runId}`;
@@ -75,6 +79,79 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     wrote.status === "completed" &&
       read.status === "completed" &&
       JSON.stringify(read.response ?? "").includes(sha256(`${key}\n`)),
+    `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
+  );
+
+  if (
+    !process.env.FILESYSTEM_BUCKET_NAME ||
+    !process.env.SANDBOX_MOUNT_ROLE_ARN
+  ) {
+    console.log(
+      "  skip the vercel workspace mount (set FILESYSTEM_BUCKET_NAME and SANDBOX_MOUNT_ROLE_ARN)",
+    );
+    return;
+  }
+  await workspaceCrossesSandboxes(context, `${key}-ws`);
+}
+
+// A file one agent writes in the workspace on a reserved sandbox, hashed by
+// another agent on an ephemeral sandbox that boots fresh for that call.
+async function workspaceCrossesSandboxes(
+  context: VerifyContext,
+  key: string,
+): Promise<void> {
+  const workspace = await context.account.createWorkspace({
+    name: key,
+    config: { storage: { provider: "s3" } },
+  });
+  const sandbox = (
+    name: string,
+    persistent: boolean,
+  ): Promise<AccountSandbox> =>
+    context.account.createSandbox({
+      name: name,
+      config: {
+        provider: "vercel",
+        persistent: persistent,
+        permissionMode: "bypass",
+        // The first mount installs mount-s3 from the Ubuntu mirrors.
+        network: { mode: "allow-all" },
+      },
+    });
+  const [writer, reader] = await Promise.all([
+    sandbox(`${key}-writer`, true),
+    sandbox(`${key}-reader`, false),
+  ]);
+  const marker = `vercel-s3-${context.runId}`;
+  const wrote = await turn(
+    context,
+    await commandAgent(
+      context,
+      `${key}-writer`,
+      writer.sandboxId,
+      workspace.workspaceId,
+    ),
+    `${key}-writer`,
+    "vercel workspace write",
+    `Run: echo ${marker} > notes.txt && sync && echo written`,
+  );
+  const read = await turn(
+    context,
+    await commandAgent(
+      context,
+      `${key}-reader`,
+      reader.sandboxId,
+      workspace.workspaceId,
+    ),
+    `${key}-reader`,
+    "vercel workspace read",
+    "Run: sha256sum notes.txt",
+  );
+  assertStep(
+    "a vercel workspace file written on one sandbox is read from a fresh one",
+    wrote.status === "completed" &&
+      read.status === "completed" &&
+      JSON.stringify(read.response ?? "").includes(sha256(`${marker}\n`)),
     `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
   );
 }

@@ -9,6 +9,7 @@ import { mergeConfigObjects } from "./configValues";
 import { normalizeHeaders } from "./mcp";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
+  MOUNT_FLAG_SANDBOX_PROVIDERS,
   PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
   SNAPSHOT_SANDBOX_PROVIDERS,
@@ -876,6 +877,18 @@ function validateProviderOptions(
           `config.options.${key} is not supported in account sandbox config`,
         );
       }
+    }
+  }
+  if ("mountAwsS3Buckets" in options) {
+    if (typeof options.mountAwsS3Buckets !== "boolean") {
+      throw new ClientError(
+        "config.options.mountAwsS3Buckets must be a boolean",
+      );
+    }
+    if (!MOUNT_FLAG_SANDBOX_PROVIDERS.has(provider)) {
+      throw new ClientError(
+        `config.options.mountAwsS3Buckets is only read by the daytona and sandbox providers, not ${provider}; lambda and vercel mount any attached workspace without it`,
+      );
     }
   }
   if (provider === "machine" && "cwd" in options) {

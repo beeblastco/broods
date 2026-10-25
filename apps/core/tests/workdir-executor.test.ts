@@ -810,7 +810,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(
       executor.run({ code: "ls", timeoutSeconds: 30, outputLimitBytes: 4096 }),
     ).rejects.toThrow(
-      "workdir AWS S3 workspace mount requires a workspace namespace",
+      "an AWS S3 workspace mount requires a workspace namespace",
     );
   });
 

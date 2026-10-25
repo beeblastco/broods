@@ -117,7 +117,7 @@ export const box = defineSandbox({
 
 ## `vercel`
 
-Runs on [Vercel Sandbox](https://vercel.com/docs/sandbox). Use it for compute without a workspace.
+Runs on [Vercel Sandbox](https://vercel.com/docs/sandbox) and mounts any workspace attached to it.
 
 ```ts
 export const box = defineSandbox({
@@ -128,7 +128,9 @@ export const box = defineSandbox({
   permissionMode: "bypass",
   onCreate: ["npm install"],
   onResume: ["test -d node_modules"],
-  snapshot: "vercel/sandbox/universal:latest",
+  // A snapshot with mount-s3 already installed, so a restricted network can
+  // mount a workspace. See the install note below.
+  snapshot: "snap_with_mount_s3",
 });
 ```
 
@@ -145,7 +147,9 @@ export const box = defineSandbox({
 - The Snapshot action captures a reserved sandbox as a Vercel snapshot that does not expire. Vercel stops the sandbox to capture it, and its next call resumes it.
 - All three network modes are enforced natively.
 - `size` does nothing here. The dashboard shows the vCPU and memory once Vercel reports them, and `?` for disk, which Vercel does not report.
-- Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.
+- A workspace attached to the sandbox is mounted, with no option to set. Each call mounts the workspace's S3 prefix at `/mnt/workspaces/<namespace>` with Mountpoint for S3, on hour-long credentials scoped to that prefix. They stay out of the sandbox env and the agent's commands, but code with `sudo` can read them from the mount process, as on Daytona. The mount is replaced after 45 minutes or when a resumed session lost it. The harness needs `SANDBOX_MOUNT_ROLE_ARN`, or the workspace names its own bucket with `assumeRole` or R2 auth.
+- The images ship without `mount-s3`, so the first mount installs it, which takes about 10 seconds and needs egress to `s3.amazonaws.com` and the Ubuntu mirrors. Under `restricted` or `deny-all`, or to skip the install, install it once in a reserved sandbox, capture it with the Snapshot action, and boot that `snap_` id. The workspace bucket's S3 hosts are always allowed, as on `lambda`.
+- `storage.provider: "vercel"` (Vercel Drives) is rejected.
 - `lifecycle.idleTimeoutSeconds` is at most 24 hours. Vercel holds one session to 24 hours on Pro and Enterprise and to 45 minutes on Hobby, so a longer idle window is refused. Each call extends the session to one idle window past its own end. A session that reaches the plan cap stops, and the next call resumes it.
 - A background job holds the session open only while it is polled. One left unpolled for longer than `idleTimeoutSeconds` stops with the session, so set the idle window above the job's run time.
 - `maxLifetimeSeconds` is checked when a call takes the sandbox. The call that trips it boots a fresh one.

@@ -390,6 +390,34 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
+  it("takes mountAwsS3Buckets as a boolean, on the providers that read it", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { mountAwsS3Buckets: true },
+      }).options,
+    ).toEqual({ mountAwsS3Buckets: true });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { mountAwsS3Buckets: "true" },
+      }),
+    ).toThrow("config.options.mountAwsS3Buckets must be a boolean");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { mountAwsS3Buckets: true },
+      }),
+    ).toThrow("not vercel; lambda and vercel mount any attached workspace");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "e2b",
+        network: { mode: "allow-all" },
+        options: { mountAwsS3Buckets: true },
+      }),
+    ).toThrow("only read by the daytona and sandbox providers, not e2b");
+  });
+
   it("caps a vercel idle window at Vercel's 24 hour session limit", () => {
     expect(
       normalizeSandboxConfig({
