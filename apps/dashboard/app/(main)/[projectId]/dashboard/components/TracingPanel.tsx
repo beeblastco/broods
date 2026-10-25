@@ -756,10 +756,12 @@ export function TracingPanel({
       ]),
     [visibleGroups, selectedGroup, stackChoices],
   );
-  const { rates } = useModelRates(listedModels(visibleGroups));
+  const { rates, loading: ratesLoading } = useModelRates(
+    listedModels(visibleGroups),
+  );
   const costs = useMemo(
-    () => taskCosts(visibleGroups, rates),
-    [visibleGroups, rates],
+    () => taskCosts(visibleGroups, rates, ratesLoading),
+    [visibleGroups, rates, ratesLoading],
   );
   // The span open in the side panel, resolved against the selected run so
   // it tracks live updates and closes when its run leaves the view.
@@ -1241,11 +1243,13 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
  * Each listed task's price by `spanKey(root)`: its model steps at their run's
  * rates, a request with its subagents. `partial` when some step's model has
  * no price, so the sum is a floor; null when none has one; absent before any
- * step ran or while the rates load.
+ * step ran or before the first rates arrive. While a new model set `loading`,
+ * a step without a rate yet is left out instead of counted as unpriced.
  */
 export function taskCosts(
   groups: SpanGroup[],
   rates: Array<ModelRef & ModelTokenRates> | undefined,
+  loading = false,
 ): Map<string, TaskCost | null> {
   const costs = new Map<string, TaskCost | null>();
   if (!rates) return costs;
@@ -1260,10 +1264,9 @@ export function taskCosts(
     for (const step of group.spans) {
       if (step.kind !== "model.step") continue;
       const model = runModels.get(step.traceId);
-      const priced = estimateModelTokenCost(
-        model ? rateByModel.get(modelKey(model)) : undefined,
-        stepTokens(step),
-      );
+      const rate = model ? rateByModel.get(modelKey(model)) : undefined;
+      if (!rate && loading) continue;
+      const priced = estimateModelTokenCost(rate, stepTokens(step));
       cost = addCost(
         cost,
         priced ? { usd: priced.total, partial: false } : null,
@@ -1511,8 +1514,9 @@ function costLabel(cost: TaskCost | null | undefined): string | undefined {
 
 /**
  * The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before
- * any is priced. A paged list adds "shown", since the count covers every task
- * held and the price only the ones listed; a partial price adds "+".
+ * any is priced. With more pages to load it adds "shown", since the count
+ * covers every matching task and the price only the loaded ones; a partial
+ * price adds "+".
  */
 function costTotal(
   rows: ListRow[],
@@ -3007,7 +3011,7 @@ function TaskListPane({
           shown={shown}
           total={total}
           noun={["task", "tasks"]}
-          detail={costTotal(rows, costs, shown < total)}
+          detail={costTotal(rows, costs, remaining > 0)}
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={onLoadMore}

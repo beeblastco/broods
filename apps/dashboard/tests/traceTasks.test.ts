@@ -457,6 +457,10 @@ describe("taskCosts", () => {
     expect(costs.get("trace-unknown:unknown")).toBeNull();
     expect(costs.has("trace-idle:idle")).toBe(false);
     expect(taskCosts(groups, undefined).size).toBe(0);
+    // A rate still loading leaves the step pending, not unpriced.
+    expect(taskCosts(groups, rates, true).has("trace-unknown:unknown")).toBe(
+      false,
+    );
   });
 });
 
