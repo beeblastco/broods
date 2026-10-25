@@ -3886,7 +3886,7 @@ describe("classifyVercelError", () => {
     );
   });
 
-  it("keeps the reason Vercel gives instead of blaming the token", async () => {
+  it("keeps the reason Vercel gives beside what to check", async () => {
     const { classifyVercelError } =
       await import("../src/harness/sandbox/vercel-executor.ts");
     const network = classifyVercelError(
@@ -3894,10 +3894,16 @@ describe("classifyVercelError", () => {
         "Status code 401 is not ok: The network was not found or is not accessible to this team. Secure Compute requires an Enterprise plan with a configured network.",
       ),
     );
-
-    expect(network.message).toBe(
-      "Vercel Sandbox rejected the request (HTTP 401): The network was not found or is not accessible to this team. Secure Compute requires an Enterprise plan with a configured network.",
+    // A bad token answers with a bare reason, so the hint stays either way.
+    const token = classifyVercelError(
+      new Error("Status code 403 is not ok: Not authorized"),
     );
+
+    expect(network.message).toContain(
+      "(HTTP 401): The network was not found or is not accessible to this team.",
+    );
+    expect(token.message).toContain("(HTTP 403): Not authorized");
+    expect(token.message).toContain("Verify VERCEL_TOKEN");
   });
 
   it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {

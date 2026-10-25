@@ -679,9 +679,8 @@ export function classifyVercelError(err: unknown): Error {
 
     return new Error(
       `Vercel Sandbox rejected the request (HTTP ${status}): ` +
-        (reason ??
-          "the VERCEL_TOKEN is invalid or lacks access to the configured team/project. " +
-            "Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID."),
+        `${reason ?? "the VERCEL_TOKEN is invalid or lacks access to the configured team/project."} ` +
+        "Verify VERCEL_TOKEN, VERCEL_TEAM_ID, VERCEL_PROJECT_ID, and options.networkId when set.",
     );
   }
 
