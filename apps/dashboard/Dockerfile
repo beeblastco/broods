@@ -44,7 +44,6 @@ COPY --from=deps /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
 COPY --from=deps /app/packages/broods/node_modules ./packages/broods/node_modules
 COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
 COPY package.json bun.lock ./
-COPY patches ./patches
 COPY packages/convex/ ./packages/convex/
 COPY packages/broods/ ./packages/broods/
 COPY apps/dashboard/ ./apps/dashboard/

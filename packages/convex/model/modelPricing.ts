@@ -1,61 +1,8 @@
 /**
  * Shared token pricing and provider metadata conventions for usage metering.
- * Rates are standard USD prices per million text tokens, reviewed 2026-06-20.
+ * Rates are standard USD prices per million text tokens, crawled hourly from
+ * models.dev into the `modelPrices` table (`modelPrices/crawl.ts`).
  */
-
-const ANTHROPIC_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [
-    /claude-(?:sonnet-4(?:-|$)|sonnet-4-[56])/,
-    { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 },
-  ],
-  [
-    /claude-haiku-4-5/,
-    { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5 },
-  ],
-  [
-    /claude-opus-4-[56]/,
-    { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 25 },
-  ],
-];
-
-const BEDROCK_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  ...ANTHROPIC_RATES,
-  [
-    /amazon\.nova-lite-v1(?::0)?$/,
-    { input: 0.06, cacheRead: 0.015, cacheWrite: 0.075, output: 0.24 },
-  ],
-];
-
-const GOOGLE_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [
-    /^gemini-2\.5-flash-lite(?:-|$)/,
-    { input: 0.1, cacheRead: 0.01, cacheWrite: 0.1, output: 0.4 },
-  ],
-  [
-    /^gemini-2\.5-flash(?:-|$)/,
-    { input: 0.3, cacheRead: 0.03, cacheWrite: 0.3, output: 2.5 },
-  ],
-];
-
-const OPENAI_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [/^gpt-5\.5(?:-|$)/, { input: 5, cacheRead: 0.5, cacheWrite: 5, output: 30 }],
-  [
-    /^gpt-5\.4-mini(?:-|$)/,
-    { input: 0.75, cacheRead: 0.075, cacheWrite: 0.75, output: 4.5 },
-  ],
-  [
-    /^gpt-5\.4(?:-|$)/,
-    { input: 2.5, cacheRead: 0.25, cacheWrite: 2.5, output: 15 },
-  ],
-  [
-    /^gpt-5-mini(?:-|$)/,
-    { input: 0.25, cacheRead: 0.025, cacheWrite: 0.25, output: 2 },
-  ],
-  [
-    /^gpt-4\.1-mini(?:-|$)/,
-    { input: 0.4, cacheRead: 0.1, cacheWrite: 0.4, output: 1.6 },
-  ],
-];
 
 /** Provider metadata fields that report cache creation tokens. */
 export const PROVIDER_CACHE_WRITE_FIELDS: Readonly<Record<string, string>> = {
@@ -109,13 +56,11 @@ export function canonicalModelProvider(provider: string): string {
   return normalized;
 }
 
-/** Estimate standard token cost; returns null when the configured model is unpriced. */
+/** Estimate standard token cost; returns null when the model is unpriced. */
 export function estimateModelTokenCost(
-  provider: string,
-  modelId: string,
+  rates: ModelTokenRates | undefined,
   usage: ModelTokenUsage,
 ): ModelCostEstimate | null {
-  const rates = resolveModelTokenRates(provider, modelId);
   if (!rates) return null;
 
   const uncachedInput = Math.max(
@@ -136,31 +81,19 @@ export function estimateModelTokenCost(
   };
 }
 
-export function resolveModelTokenRates(
-  provider: string,
-  modelId: string,
-): ModelTokenRates | null {
-  let normalizedProvider = canonicalModelProvider(provider);
-  let normalizedModel = modelId.toLowerCase();
-  if (normalizedProvider === "vercel" && normalizedModel.includes("/")) {
-    const separator = normalizedModel.indexOf("/");
-    normalizedProvider = canonicalModelProvider(
-      normalizedModel.slice(0, separator),
-    );
-    normalizedModel = normalizedModel.slice(separator + 1);
-  }
+/** The model id rates are stored and looked up by, so `GPT-5.5` finds `gpt-5.5`. */
+export function normalizeModelId(modelId: string): string {
+  return modelId.toLowerCase();
+}
 
-  const tables: Readonly<
-    Record<string, ReadonlyArray<[RegExp, ModelTokenRates]>>
-  > = {
-    openai: OPENAI_RATES,
-    anthropic: ANTHROPIC_RATES,
-    google: GOOGLE_RATES,
-    bedrock: BEDROCK_RATES,
-  };
-  const match = tables[normalizedProvider]?.find(([pattern]) =>
-    pattern.test(normalizedModel),
-  );
+/**
+ * The stored ids a usage model id is priced under, most exact first: then
+ * without a release date (`-20250514`, `-2025-08-07`), since models.dev often
+ * lists a dated snapshot only under its alias.
+ */
+export function priceLookupIds(modelId: string): string[] {
+  const exact = normalizeModelId(modelId);
+  const undated = exact.replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, "");
 
-  return match?.[1] ?? null;
+  return undated === exact ? [exact] : [exact, undated];
 }

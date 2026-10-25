@@ -3,7 +3,8 @@
  * counts into the matching 5-minute, hour, and day rollup buckets. Called by
  * core via the deploy-key admin client at task completion; never blocks the
  * agent reply. Pricing is intentionally absent, only raw counts are stored;
- * the dashboard computes cost at render from the shared hardcoded pricing table.
+ * the dashboard computes cost at render from the rates `modelPrices/crawl.ts`
+ * crawls hourly from models.dev.
  */
 
 import { v } from "convex/values";
