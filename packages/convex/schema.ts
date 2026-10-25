@@ -1473,8 +1473,8 @@ export const cronRunsFields = {
  * Per-finished-task usage row. Written once per agent task at completion, giving
  * the dashboard a line-item token/compute cost per task. Indexes allow scoping to
  * a specific deployment (`endpointId`) or to the whole account. Pricing is
- * computed at render from a hardcoded shared pricing table. Only raw counts are
- * stored here.
+ * computed at render from the `modelPrices` rates crawled from models.dev.
+ * Only raw counts are stored here.
  */
 export const taskUsageFields = {
   accountId: v.id("accounts"),
@@ -1647,6 +1647,26 @@ export const usageProjectDaysFields = {
 export const usageWritesFields = {
   writeId: v.string(),
   createdAt: v.number(),
+};
+
+/**
+ * Token rates in USD per million tokens for one agent provider's models,
+ * crawled hourly from models.dev by `modelPrices/crawl.ts`. `fetchUsageStats`
+ * hands the dashboard the ones its usage names.
+ */
+export const modelPricesFields = {
+  /** Agent provider name, as usage rows name it, e.g. `bedrock`. */
+  provider: v.string(),
+  models: v.array(
+    v.object({
+      /** `normalizeModelId` of the model id. */
+      modelId: v.string(),
+      input: v.number(),
+      output: v.number(),
+      cacheRead: v.number(),
+      cacheWrite: v.number(),
+    }),
+  ),
 };
 
 export const usageRollupsFields = {
@@ -1989,6 +2009,9 @@ export default defineSchema({
   usageWrites: defineTable(usageWritesFields)
     .index("by_writeId", ["writeId"])
     .index("by_createdAt", ["createdAt"]),
+  modelPrices: defineTable(modelPricesFields).index("by_provider", [
+    "provider",
+  ]),
   stripeSubscriptionSyncs: defineTable(stripeSubscriptionSyncsFields).index(
     "by_stripeSubscriptionId",
     ["stripeSubscriptionId"],

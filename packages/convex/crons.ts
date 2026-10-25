@@ -98,5 +98,13 @@ crons.interval(
   internal.channel.endpointReconcile.reconcile,
   {},
 );
+// models.dev changes rates a few times a week; an hour keeps the dashboard's
+// costs current without refetching its catalogue on every view.
+crons.interval(
+  "crawl model prices",
+  { hours: 1 },
+  internal.modelPrices.crawl.run,
+  {},
+);
 
 export default crons;

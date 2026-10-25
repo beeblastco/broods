@@ -360,9 +360,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return reservation;
   }
 
+  // Harness state lives under `~/.ai-sdk-harness`, so every command gets the
+  // reservation's HOME, the same one its lifecycle hooks run in.
   async runHarnessCommand(request: {
     microvmId: string;
     endpoint: string;
+    reservationKey: string;
     code: string;
     env?: Record<string, string>;
     timeoutSeconds?: number;
@@ -374,7 +377,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       code: request.code,
       timeout_ms:
         (request.timeoutSeconds ?? this.#config.timeout ?? 120) * 1000,
-      env: this.#sandboxEnvVars(request.env),
+      env: {
+        ...this.#sandboxEnvVars(request.env),
+        ...homeEnv(this.#workDir(request.reservationKey)),
+      },
     });
     request.abortSignal?.throwIfAborted();
     // Cut output ends in the server's truncation marker, which harness callers

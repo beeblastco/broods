@@ -7,6 +7,7 @@ WORKDIR /app
 # The lockfile spans every workspace, so each workspace package.json must be
 # present for --frozen-lockfile to resolve.
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/

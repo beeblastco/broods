@@ -4,7 +4,9 @@
  * Live bridge bootstrap and connectivity are covered by the opt-in integration test.
  */
 
-import { resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "bun:test";
 
@@ -28,6 +30,49 @@ const MICROVM_COMPUTE = {
 const MODULE_URL = pathToFileURL(
   resolve(import.meta.dir, "../src/harness/ai-sdk-harness/index.ts"),
 ).href;
+const ADAPTERS_PATH = resolve(
+  import.meta.dir,
+  "../src/harness/ai-sdk-harness/adapters/index.ts",
+);
+const BRIDGE_TYPES = ["claude-code", "codex", "deepagents", "opencode"];
+
+// Core ships as a `bun build --compile` binary, which only carries the bridge
+// files root `patches/` turn into embedded imports, lockfiles included.
+describe("createAiSdkHarnessAdapter", () => {
+  it("builds every bridge bootstrap inside a compiled binary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "harness-bootstrap-"));
+    try {
+      await Bun.write(
+        join(dir, "probe.ts"),
+        `import { createAiSdkHarnessAdapter } from ${JSON.stringify(ADAPTERS_PATH)};
+        const files = {};
+        for (const type of ${JSON.stringify(BRIDGE_TYPES)}) {
+          const recipe = await createAiSdkHarnessAdapter(type).getBootstrap();
+          files[type] = recipe.files.map((file) => file.path.split("/").at(-1));
+        }
+        console.log(JSON.stringify(files));`,
+      );
+      const build = Bun.spawnSync([
+        process.execPath,
+        "build",
+        "--compile",
+        join(dir, "probe.ts"),
+        "--outfile",
+        join(dir, "probe"),
+      ]);
+      if (build.exitCode !== 0) throw new Error(build.stderr.toString());
+      const run = Bun.spawnSync([join(dir, "probe")], { cwd: dir });
+      if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+      const files: Record<string, string[]> = JSON.parse(run.stdout.toString());
+
+      for (const type of BRIDGE_TYPES) {
+        expect(files[type]).toContain("pnpm-lock.yaml");
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
 
 describe("createWorkdirHarnessAgent", () => {
   it.each(["claude-code", "codex", "deepagents", "opencode", "pi"] as const)(

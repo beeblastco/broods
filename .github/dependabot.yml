@@ -1,12 +1,7 @@
 # Dependabot version updates.
 #
-# Known limitation (npm ecosystem): Dependabot does not regenerate `bun.lock`
-# in a workspaces repo. See https://github.com/dependabot/dependabot-core/issues/14223.
-# CI installs with `--frozen-lockfile`, so every npm PR arrives RED with
-# "lockfile had changes, but lockfile is frozen". Treat those PRs as "a release
-# exists": apply the bumps on a branch, run `bun install`, commit the lockfile,
-# and close the Dependabot PRs. `bun run deps:check` is the authoritative
-# picture for the AI SDK family.
+# Use the Bun ecosystem so updates include `bun.lock` for frozen CI installs.
+# `bun run deps:check` checks version alignment across the AI SDK family.
 #
 # Everything is grouped. The AI SDK packages pin `ai` at an exact version inside
 # their own manifests, so one PR per package would each install a second copy of
@@ -37,7 +32,7 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory: "/"
     schedule:
       interval: weekly
@@ -46,13 +41,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: chore(deps)
-    ignore:
-      # layout-elk 1.x peers on mermaid 12. @docusaurus/theme-mermaid 3.10 runs
-      # mermaid 11 and peers on the 0.x line. Its client bundle still imports the
-      # package, so removing it breaks the docs build. Lift this when Docusaurus
-      # moves to mermaid 12.
-      - dependency-name: "@mermaid-js/layout-elk"
-        update-types: ["version-update:semver-major"]
     groups:
       ai-sdk:
         patterns:
