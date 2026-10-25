@@ -121,19 +121,14 @@ async function selectedText(page: Page): Promise<string> {
 }
 
 /**
- * Drag across the element the way a selection starts. `fromX` is where the
- * press lands: 1px for a strip, so it starts in the gap before the first
- * control, and further in for a field whose left padding holds an icon.
+ * Drag across the element the way a selection starts. The press lands 1px in,
+ * so on a strip it starts in the gap before the first control.
  */
-async function sweep(
-  page: Page,
-  element: Locator,
-  fromX: number = 1,
-): Promise<void> {
+async function sweep(page: Page, element: Locator): Promise<void> {
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
   const box = await viewportBox(element);
 
-  await page.mouse.move(box.x + fromX, box.y + box.height / 2);
+  await page.mouse.move(box.x + 1, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, {
     steps: 12,

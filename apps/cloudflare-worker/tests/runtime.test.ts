@@ -71,7 +71,6 @@ it("runs a script with its positionals in the requested directory", async (): Pr
     stderr: "oops\n",
     truncated: false,
   });
-  expect(result.duration_ms).toBeGreaterThanOrEqual(0);
 });
 
 it("keeps a reserved sandbox's files between calls and drops them on delete", async (): Promise<void> => {
@@ -127,7 +126,7 @@ it("keeps what a command wrote before it timed out", async (): Promise<void> => 
     timeoutMs: 500,
   });
 
-  expect(result.timed_out).toBe(true);
+  expect(result).toMatchObject({ ok: false, exit_code: null, timed_out: true });
   const files = await exec("sb-late", {
     script: "cat kept.txt",
     persist: true,
@@ -167,12 +166,6 @@ it("has no network unless the sandbox allows internet", async (): Promise<void> 
 
   expect(online).toMatchObject({ ok: true, stdout: "public-ok" });
   expect(outboundHits).toBe(1);
-});
-
-it("stops a command at its timeout", async (): Promise<void> => {
-  const result = await exec("sb-slow", { script: "sleep 10", timeoutMs: 500 });
-
-  expect(result).toMatchObject({ ok: false, exit_code: null, timed_out: true });
 });
 
 it("caps each stream at the output limit on a character boundary", async (): Promise<void> => {

@@ -374,6 +374,9 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
         env:
           E2E_SERVER_COMMAND: bun .next/standalone/apps/dashboard/server.js
+          # A failure's page snapshot records form values, the typed probe
+          # password included, and the uploaded artifact is public.
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
           WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
           WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID }}
           WORKOS_COOKIE_PASSWORD: ${{ secrets.WORKOS_COOKIE_PASSWORD }}

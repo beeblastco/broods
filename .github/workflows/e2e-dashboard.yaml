@@ -118,6 +118,10 @@ jobs:
         run: cd apps/dashboard && bunx playwright install chromium
 
       - name: Run the signed-in suites against the deployment
+        env:
+          # A failure's page snapshot records form values, the typed probe
+          # password included, and the artifact below is public.
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
         run: cd apps/dashboard && bunx playwright test --project=app --project=perf
 
       - name: Upload traces of a failed run

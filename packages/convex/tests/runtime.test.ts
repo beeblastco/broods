@@ -564,7 +564,7 @@ describe("runtime persistence", () => {
         subagent: { parentConversationKey: conversationKey },
       });
     }
-    // A result the parent already read stays stored, whatever the sweep says.
+    // A result already handed back as stored stays stored, whatever the sweep says.
     await t.mutation(internal.runtime.updateAsyncAgentResult, {
       eventId: "told",
       status: "completed",

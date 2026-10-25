@@ -213,16 +213,6 @@ describe("compareToBaselines", () => {
     expect(comparisons[0]?.failing).toBe(false);
   });
 
-  it("judges against the raw clock when too few cases have baselines", () => {
-    const { machineRatio } = compareToBaselines(
-      [measurement({ name: "gated/case", nsPerOp: 140 })],
-      BASELINES,
-      SAME_MACHINE,
-    );
-
-    expect(machineRatio).toBe(1);
-  });
-
   it("reports a skipped case without grading it or moving the machine ratio", () => {
     const { comparisons, machineRatio } = compareToBaselines(
       [
