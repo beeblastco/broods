@@ -1934,7 +1934,7 @@ paths:
                         idleTimeoutSeconds:
                           {
                             type: integer,
-                            description: "scale down / stop after this idle (default 900)",
+                            description: "scale down / stop after this idle (default 900). At most 7 days; 6 hours on cloudflare, 24 hours on vercel",
                           }
                         maxLifetimeSeconds:
                           {

@@ -1,9 +1,9 @@
-diff --git a/node_modules/@ai-sdk/harness-claude-code/dist/bridge/pnpm-lock.yaml b/dist/bridge/pnpm-lock.yaml
+diff --git a/dist/bridge/pnpm-lock.yaml b/dist/bridge/pnpm-lock.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce6023d9e9d7
+index 0000000000000000000000000000000000000000..1c21762f957b501a0385996ee54265ad7009d3d0
 --- /dev/null
 +++ b/dist/bridge/pnpm-lock.yaml
-@@ -0,0 +1,1036 @@
+@@ -0,0 +1,1048 @@
 +lockfileVersion: '9.0'
 +
 +settings:
@@ -16,7 +16,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    dependencies:
 +      '@anthropic-ai/claude-agent-sdk':
 +        specifier: 0.3.290
-+        version: 0.3.290(@anthropic-ai/sdk@0.97.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(zod@4.4.3)
++        version: 0.3.290(@anthropic-ai/sdk@1.3.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(zod@4.4.3)
 +      '@anthropic-ai/claude-code':
 +        specifier: 2.1.290
 +        version: 2.1.290
@@ -133,8 +133,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    engines: {node: '>=22.0.0'}
 +    hasBin: true
 +
-+  '@anthropic-ai/sdk@0.97.1':
-+    resolution: {integrity: sha512-wOf7AUeJPitcVpvKO4UMu63mWH5SaVipkGd7OOQJt/G6VYGlV8D2Gp9dLxOrttDJh/9gqPqdaBwDGcBevumeAg==}
++  '@anthropic-ai/sdk@1.3.0':
++    resolution: {integrity: sha512-k7z9BlLLPxfZH+ov7dS6EnaN/wiZeV8YNT1LZfrpAHIy7oY7pHr4UzirF9f2OlHtFEnRBOX+AZQ91Y5fK+TPTw==}
 +    hasBin: true
 +    peerDependencies:
 +      zod: ^3.25.0 || ^4.0.0
@@ -142,15 +142,15 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      zod:
 +        optional: true
 +
-+  '@babel/runtime@7.29.7':
-+    resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
++  '@babel/runtime@7.29.10':
++    resolution: {integrity: sha512-NpugTzbKgGrNe45Ui32cN8vCFFMxVtP/9rtfwv0nP5FRDAjvYBxJcLVpYA9mr1jxP6cnIT7x9LUzuDTbWYYNRA==}
 +    engines: {node: '>=6.9.0'}
 +
-+  '@hono/node-server@2.1.1':
-+    resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
++  '@hono/node-server@2.1.5':
++    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
 +    engines: {node: '>=20'}
 +    peerDependencies:
-+      hono: ^4
++      hono: ^4 || ^5.0.0-0
 +
 +  '@modelcontextprotocol/sdk@1.32.1':
 +    resolution: {integrity: sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw==}
@@ -162,6 +162,10 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      '@cfworker/json-schema':
 +        optional: true
 +
++  '@opentelemetry/api@1.10.0':
++    resolution: {integrity: sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ==}
++    engines: {node: '>=8.0.0'}
++
 +  '@stablelib/base64@1.0.1':
 +    resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 +
@@ -171,12 +175,17 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +
 +  ajv-formats@3.0.1:
 +    resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
++    peerDependencies:
++      ajv: ^8.0.0
++    peerDependenciesMeta:
++      ajv:
++        optional: true
 +
 +  ajv@8.20.0:
 +    resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
 +
-+  body-parser@2.3.0:
-+    resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
++  body-parser@2.4.0:
++    resolution: {integrity: sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==}
 +    engines: {node: '>=18'}
 +
 +  bytes@3.1.2:
@@ -191,8 +200,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    resolution: {integrity: sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==}
 +    engines: {node: '>= 0.4'}
 +
-+  content-disposition@1.1.0:
-+    resolution: {integrity: sha512-5jRCH9Z/+DRP7rkvY83B+yGIGX96OYdJmzngqnw2SBSxqCFPd0w2km3s5iawpGX8krnwSGmF0FW5Nhr0Hfai3g==}
++  content-disposition@2.0.1:
++    resolution: {integrity: sha512-e+H0ZXHSWYrENhQzw1LPuP4oF5MzVKmDU6d3hxlvaPEYLLg62MxtQNPRx4SYSuYJSBUgnQIG4HIN2tEtNv7Dog==}
 +    engines: {node: '>=18'}
 +
 +  content-type@1.0.5:
@@ -270,14 +279,14 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    resolution: {integrity: sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==}
 +    engines: {node: '>=18.0.0'}
 +
-+  express-rate-limit@8.7.0:
-+    resolution: {integrity: sha512-hOwV7WOxXfjRpAM1DSJWZDXx3GhplwD8IfwuwvogD8i1Qnkgosw/H45s4ZnFAUHDAhPjlY9hLBvJhKmGMyY26g==}
++  express-rate-limit@8.7.1:
++    resolution: {integrity: sha512-2FXbqkygil3mZiXzEtM0IjE/UBmBNot0J1GEVrJT4JbrvwOSoEtqtO+wHbiMQELWe1eNvHoYRg2dkjOid+6JkA==}
 +    engines: {node: '>= 16'}
 +    peerDependencies:
 +      express: '>= 4.11'
 +
-+  express@5.2.1:
-+    resolution: {integrity: sha512-hIS4idWWai69NezIdRt2xFVofaF4j+6INOpJlVOLDO8zXGpUVEVzIYk12UUi2JzjEzWL3IOAxcTubgz9Po0yXw==}
++  express@5.3.0:
++    resolution: {integrity: sha512-qCqy1xSoaugxOD4IVHb1ZWdkvCF2W3aE2okKouWj8VwJ+ztskSiXoBnCSJqfKT+cVPJhuJqe9YLbY425+Zh00g==}
 +    engines: {node: '>= 18'}
 +
 +  fast-deep-equal@3.1.3:
@@ -286,8 +295,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +  fast-sha256@1.3.0:
 +    resolution: {integrity: sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==}
 +
-+  fast-uri@3.1.8:
-+    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
++  fast-uri@3.1.9:
++    resolution: {integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==}
 +
 +  finalhandler@2.1.1:
 +    resolution: {integrity: sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA==}
@@ -324,8 +333,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
 +    engines: {node: '>= 0.4'}
 +
-+  hono@4.13.8:
-+    resolution: {integrity: sha512-/Gng7NfoykZl2pjukW5Z6+8Yxm3BPRf86GTbQnt0SbySkvax4fyL4H3HhY1cCpBGmiW9XDRFzRV+CXK2W8QudQ==}
++  hono@4.13.13:
++    resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
 +    engines: {node: '>=16.9.0'}
 +
 +  http-errors@2.0.1:
@@ -339,8 +348,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +  inherits@2.0.4:
 +    resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 +
-+  ip-address@10.7.2:
-+    resolution: {integrity: sha512-7H/2gFSIitxc0hG3nOI1glS8QLo/EHBFFLk8vEUjXY/xu0AdL8jZ9U1IzO2PUm0d2D/ofQcAifb0g6OBkt8U7w==}
++  ip-address@10.7.4:
++    resolution: {integrity: sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==}
 +    engines: {node: '>= 12'}
 +
 +  ipaddr.js@1.9.1:
@@ -353,8 +362,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +  isexe@2.0.0:
 +    resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 +
-+  jose@6.2.12:
-+    resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
++  jose@6.2.13:
++    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 +
 +  json-schema-to-ts@3.1.1:
 +    resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
@@ -401,8 +410,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    resolution: {integrity: sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==}
 +    engines: {node: '>= 0.4'}
 +
-+  on-finished@2.4.1:
-+    resolution: {integrity: sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==}
++  on-finished@2.4.2:
++    resolution: {integrity: sha512-ATWUv387i+nLD49EiDoOft5scf32Vsdz3ktrQJG9bi7jRFmaXTssvyvj1EmeKVVgvesbqUtvQQvaS2TpTukAZQ==}
 +    engines: {node: '>= 0.8'}
 +
 +  once@1.4.0:
@@ -427,8 +436,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    resolution: {integrity: sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==}
 +    engines: {node: '>= 0.10'}
 +
-+  qs@6.16.0:
-+    resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
++  qs@6.16.1:
++    resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
 +    engines: {node: '>=0.6'}
 +
 +  range-parser@1.3.0:
@@ -485,8 +494,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    resolution: {integrity: sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==}
 +    engines: {node: '>= 0.4'}
 +
-+  standardwebhooks@1.0.0:
-+    resolution: {integrity: sha512-BbHGOQK9olHPMvQNHWul6MYlrRTAOKn03rOe4A8O3CLWhNf4YHBqq2HJKKC+sfqpxiBY52pNeesD6jIiLDz8jg==}
++  standardwebhooks@1.1.1:
++    resolution: {integrity: sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==}
 +
 +  statuses@2.0.2:
 +    resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
@@ -565,9 +574,9 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.290':
 +    optional: true
 +
-+  '@anthropic-ai/claude-agent-sdk@0.3.290(@anthropic-ai/sdk@0.97.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(zod@4.4.3)':
++  '@anthropic-ai/claude-agent-sdk@0.3.290(@anthropic-ai/sdk@1.3.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(zod@4.4.3)':
 +    dependencies:
-+      '@anthropic-ai/sdk': 0.97.1(zod@4.4.3)
++      '@anthropic-ai/sdk': 1.3.0(zod@4.4.3)
 +      '@modelcontextprotocol/sdk': 1.32.1(zod@4.4.3)
 +      zod: 4.4.3
 +    optionalDependencies:
@@ -615,33 +624,34 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      '@anthropic-ai/claude-code-win32-arm64': 2.1.290
 +      '@anthropic-ai/claude-code-win32-x64': 2.1.290
 +
-+  '@anthropic-ai/sdk@0.97.1(zod@4.4.3)':
++  '@anthropic-ai/sdk@1.3.0(zod@4.4.3)':
 +    dependencies:
++      '@opentelemetry/api': 1.10.0
 +      json-schema-to-ts: 3.1.1
-+      standardwebhooks: 1.0.0
++      standardwebhooks: 1.1.1
 +    optionalDependencies:
 +      zod: 4.4.3
 +
-+  '@babel/runtime@7.29.7': {}
++  '@babel/runtime@7.29.10': {}
 +
-+  '@hono/node-server@2.1.1(hono@4.13.8)':
++  '@hono/node-server@2.1.5(hono@4.13.13)':
 +    dependencies:
-+      hono: 4.13.8
++      hono: 4.13.13
 +
 +  '@modelcontextprotocol/sdk@1.32.1(zod@4.4.3)':
 +    dependencies:
-+      '@hono/node-server': 2.1.1(hono@4.13.8)
++      '@hono/node-server': 2.1.5(hono@4.13.13)
 +      ajv: 8.20.0
-+      ajv-formats: 3.0.1
++      ajv-formats: 3.0.1(ajv@8.20.0)
 +      content-type: 1.0.5
 +      cors: 2.8.6
 +      cross-spawn: 7.0.6
 +      eventsource: 3.0.7
 +      eventsource-parser: 3.1.1
-+      express: 5.2.1
-+      express-rate-limit: 8.7.0(express@5.2.1)
-+      hono: 4.13.8
-+      jose: 6.2.12
++      express: 5.3.0
++      express-rate-limit: 8.7.1(express@5.3.0)
++      hono: 4.13.13
++      jose: 6.2.13
 +      json-schema-typed: 8.0.2
 +      pkce-challenge: 5.0.1
 +      raw-body: 3.0.2
@@ -650,6 +660,8 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    transitivePeerDependencies:
 +      - supports-color
 +
++  '@opentelemetry/api@1.10.0': {}
++
 +  '@stablelib/base64@1.0.1': {}
 +
 +  accepts@2.0.0:
@@ -657,26 +669,26 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      mime-types: 3.0.2
 +      negotiator: 1.1.0
 +
-+  ajv-formats@3.0.1:
-+    dependencies:
++  ajv-formats@3.0.1(ajv@8.20.0):
++    optionalDependencies:
 +      ajv: 8.20.0
 +
 +  ajv@8.20.0:
 +    dependencies:
 +      fast-deep-equal: 3.1.3
-+      fast-uri: 3.1.8
++      fast-uri: 3.1.9
 +      json-schema-traverse: 1.0.0
 +      require-from-string: 2.0.2
 +
-+  body-parser@2.3.0:
++  body-parser@2.4.0:
 +    dependencies:
 +      bytes: 3.1.2
 +      content-type: 2.1.0
 +      debug: 4.4.3
 +      http-errors: 2.0.1
 +      iconv-lite: 0.7.3
-+      on-finished: 2.4.1
-+      qs: 6.16.0
++      on-finished: 2.4.2
++      qs: 6.16.1
 +      raw-body: 3.0.2
 +      type-is: 2.1.0
 +    transitivePeerDependencies:
@@ -694,7 +706,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      call-bind-apply-helpers: 1.0.2
 +      get-intrinsic: 1.3.0
 +
-+  content-disposition@1.1.0: {}
++  content-disposition@2.0.1: {}
 +
 +  content-type@1.0.5: {}
 +
@@ -749,20 +761,20 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    dependencies:
 +      eventsource-parser: 3.1.1
 +
-+  express-rate-limit@8.7.0(express@5.2.1):
++  express-rate-limit@8.7.1(express@5.3.0):
 +    dependencies:
 +      debug: 4.4.3
-+      express: 5.2.1
-+      ip-address: 10.7.2
++      express: 5.3.0
++      ip-address: 10.7.4
 +    transitivePeerDependencies:
 +      - supports-color
 +
-+  express@5.2.1:
++  express@5.3.0:
 +    dependencies:
 +      accepts: 2.0.0
-+      body-parser: 2.3.0
-+      content-disposition: 1.1.0
-+      content-type: 1.0.5
++      body-parser: 2.4.0
++      content-disposition: 2.0.1
++      content-type: 2.1.0
 +      cookie: 0.7.2
 +      cookie-signature: 1.2.2
 +      debug: 4.4.3
@@ -775,11 +787,11 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      http-errors: 2.0.1
 +      merge-descriptors: 2.0.0
 +      mime-types: 3.0.2
-+      on-finished: 2.4.1
++      on-finished: 2.4.2
 +      once: 1.4.0
 +      parseurl: 1.3.3
 +      proxy-addr: 2.0.8
-+      qs: 6.16.0
++      qs: 6.16.1
 +      range-parser: 1.3.0
 +      router: 2.2.0
 +      send: 1.2.1
@@ -794,14 +806,14 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +
 +  fast-sha256@1.3.0: {}
 +
-+  fast-uri@3.1.8: {}
++  fast-uri@3.1.9: {}
 +
 +  finalhandler@2.1.1:
 +    dependencies:
 +      debug: 4.4.3
 +      encodeurl: 2.0.0
 +      escape-html: 1.0.3
-+      on-finished: 2.4.1
++      on-finished: 2.4.2
 +      parseurl: 1.3.3
 +      statuses: 2.0.2
 +    transitivePeerDependencies:
@@ -839,7 +851,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +    dependencies:
 +      function-bind: 1.1.2
 +
-+  hono@4.13.8: {}
++  hono@4.13.13: {}
 +
 +  http-errors@2.0.1:
 +    dependencies:
@@ -855,7 +867,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +
 +  inherits@2.0.4: {}
 +
-+  ip-address@10.7.2: {}
++  ip-address@10.7.4: {}
 +
 +  ipaddr.js@1.9.1: {}
 +
@@ -863,11 +875,11 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +
 +  isexe@2.0.0: {}
 +
-+  jose@6.2.12: {}
++  jose@6.2.13: {}
 +
 +  json-schema-to-ts@3.1.1:
 +    dependencies:
-+      '@babel/runtime': 7.29.7
++      '@babel/runtime': 7.29.10
 +      ts-algebra: 2.0.0
 +
 +  json-schema-traverse@1.0.0: {}
@@ -896,7 +908,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +
 +  object-inspect@1.13.4: {}
 +
-+  on-finished@2.4.1:
++  on-finished@2.4.2:
 +    dependencies:
 +      ee-first: 1.1.1
 +
@@ -917,7 +929,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      forwarded: 0.2.0
 +      ipaddr.js: 1.9.1
 +
-+  qs@6.16.0:
++  qs@6.16.1:
 +    dependencies:
 +      es-define-property: 1.0.1
 +      side-channel: 1.1.1
@@ -955,7 +967,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      http-errors: 2.0.1
 +      mime-types: 3.0.2
 +      ms: 2.1.3
-+      on-finished: 2.4.1
++      on-finished: 2.4.2
 +      range-parser: 1.3.0
 +      statuses: 2.0.2
 +    transitivePeerDependencies:
@@ -1006,7 +1018,7 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      side-channel-map: 1.0.1
 +      side-channel-weakmap: 1.0.2
 +
-+  standardwebhooks@1.0.0:
++  standardwebhooks@1.1.1:
 +    dependencies:
 +      '@stablelib/base64': 1.0.1
 +      fast-sha256: 1.3.0
@@ -1040,3 +1052,30 @@ index 0000000000000000000000000000000000000000..719cf20d9b12324f7244c4e0d715ce60
 +      zod: 4.4.3
 +
 +  zod@4.4.3: {}
+diff --git a/dist/index.js b/dist/index.js
+index f9fd78f35c6551c4b52b4a4ed6f8fed6e5c9d814..92a87d2295db87465a97d86f49a493d475d09e6e 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,3 +1,7 @@
++import bridgeAsset0 from "./bridge/package.json" with { type: "file" };
++import bridgeAsset1 from "./bridge/pnpm-lock.yaml" with { type: "file" };
++import bridgeAsset2 from "./bridge/pnpm-workspace.yaml" with { type: "file" };
++import bridgeAsset3 from "./bridge/index.mjs" with { type: "file" };
+ import { dirname, join, posix, resolve } from "node:path";
+ import { HARNESS_V1_BUILTIN_TOOLS, HarnessCapabilityUnsupportedError, commonTool, harnessSessionDataDirectoryPath, harnessStateDirectoryPath, harnessV1BridgeInboundCommandSchemas, harnessV1BridgeOutboundMessageSchema, harnessV1BridgeStartBaseSchema, harnessV1DiagnosticFromBridgeFrame } from "@ai-sdk/harness";
+ import { SandboxChannel, applyCredentialForwarding, classifyDiskLog, createBridgeErrorHandler, createBridgeStartupError, createBridgeToken, createBridgeWebSocketConnect, createCredentialRequestTransformation, createReadBridgeAsset, drainBridgeProcessStream, experimental_createBridgeUserMessageSubmitter, extractHarnessPromptContent, forwardBridgeProcessStream, getAiGatewayAuthFromEnv, getRestrictedSandboxSession, harnessPromptContentSchema, isAccessTokenExpiringSoon, isHarnessAuthenticationEnvironment, isMacOS, markBridgeStarting, readMacOSKeychainPassword, refreshOAuthAccessToken, resolveBridgeEndpoint, resolveBridgePort, resolveSandboxCredentialEnvironment, resolveSandboxHomeDir, shellQuote, shouldResolveNativeSubscription, validateBridgeSandboxSettings, waitForBridgeReady, warnCredentialBrokeringUnavailable, writeSkills } from "@ai-sdk/harness/utils";
+@@ -10,10 +14,10 @@ import { homedir } from "node:os";
+ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+ //#region src/claude-code-bootstrap.ts
+ const readBridgeAsset = createReadBridgeAsset({
+-	"package.json": new URL("./bridge/package.json", import.meta.url),
+-	"pnpm-lock.yaml": new URL("./bridge/pnpm-lock.yaml", import.meta.url),
+-	"pnpm-workspace.yaml": new URL("./bridge/pnpm-workspace.yaml", import.meta.url),
+-	"index.mjs": new URL("./bridge/index.mjs", import.meta.url)
++	"package.json": bridgeAsset0,
++	"pnpm-lock.yaml": bridgeAsset1,
++	"pnpm-workspace.yaml": bridgeAsset2,
++	"index.mjs": bridgeAsset3
+ });
+ const CLAUDE_CODE_BOOTSTRAP_DIR = ".harness-bootstrap/claude-code";
+ let cachedBootstrap;

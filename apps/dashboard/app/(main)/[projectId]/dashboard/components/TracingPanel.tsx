@@ -3192,8 +3192,7 @@ function TaskWaterfall({
 /**
  * One waterfall bar positioned within the task's time window. Model steps split
  * into a muted invoke-wait (time-to-first-token) segment and a solid streaming
- * segment so a slow step shows where the time went. A faint track behind the bar
- * marks the full task window so each child reads against the whole span.
+ * segment so a slow step shows where the time went.
  */
 function TimelineBar({
   span,
@@ -3247,7 +3246,6 @@ function TimelineBar({
 
   return (
     <div className="relative h-4 w-full">
-      <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60" />
       <div
         className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm transition-timeline"
         style={{ "--bar-left": `${leftPct}%`, "--bar-width": `${widthPct}%` }}

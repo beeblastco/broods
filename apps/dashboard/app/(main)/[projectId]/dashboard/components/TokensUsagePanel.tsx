@@ -30,7 +30,11 @@ import { parseAsEpochMs, parseAsModelKeys } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { estimateModelTokenCost } from "@broods/convex/model/modelPricing";
+import {
+  estimateModelTokenCost,
+  type ModelTokenRates,
+  type ModelTokenUsage,
+} from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
 import type { FunctionReturnType } from "convex/server";
@@ -80,8 +84,15 @@ interface LiveOverlay {
   // Running roots (tasks + subagent subtasks) and the model steps beneath them.
   invocations: number;
   modelCalls: number;
-  // Each step priced at its root's model, so the cost grows with the tokens.
-  estimatedCost: number;
+  // Each step's tokens under its root's model, priced like a usage row.
+  // A model with no usage row in range yet reads as unpriced until one lands.
+  modelUsage: ModelUsage[];
+}
+
+/** One model's tokens, keyed the way usage rows name the model. */
+interface ModelUsage extends ModelTokenUsage {
+  modelProvider: string;
+  modelId: string;
 }
 
 const RANGE_SECONDS: Record<Range, number> = {
@@ -175,7 +186,7 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   cachedInputTokens: 0,
   invocations: 0,
   modelCalls: 0,
-  estimatedCost: 0,
+  modelUsage: [],
 };
 
 // A task still "running" past this likely never reported its terminal span
@@ -234,6 +245,14 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
+  // Rates crawled hourly from models.dev, for the models in the buckets.
+  const rates = useMemo(
+    () =>
+      new Map<string, ModelTokenRates>(
+        (stats?.rates ?? []).map((row) => [modelKey(row), row]),
+      ),
+    [stats],
+  );
 
   const shownRange = stats?.range ?? range;
   const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
@@ -286,17 +305,23 @@ export function TokensUsagePanel({
   const { binCosts, estimatedCost, unpriced } = useMemo(() => {
     const byStart = new Map<number, number>();
     const unpricedModels = new Set<string>();
+    const priceOf = (m: ModelUsage): number => {
+      const cost = estimateModelTokenCost(rates.get(modelKey(m)), m);
+      if (cost === null) unpricedModels.add(modelKey(m));
+
+      return cost?.total ?? 0;
+    };
     for (const b of stats?.buckets ?? []) {
       if (activeFilter !== null && !activeFilter.includes(modelKey(b)))
         continue;
-      const cost = estimateModelTokenCost(b.modelProvider, b.modelId, b);
-      if (cost === null) unpricedModels.add(modelKey(b));
       const start = Math.floor(b.bucketStart / binMs) * binMs;
-      byStart.set(start, (byStart.get(start) ?? 0) + (cost?.total ?? 0));
+      byStart.set(start, (byStart.get(start) ?? 0) + priceOf(b));
     }
     const costs = bucketStarts.map((start) => byStart.get(start) ?? 0);
     if (activeFilter === null && costs.length > 0) {
-      costs[costs.length - 1] += liveOverlay.estimatedCost;
+      for (const m of liveOverlay.modelUsage) {
+        costs[costs.length - 1] += priceOf(m);
+      }
     }
 
     return {
@@ -307,7 +332,7 @@ export function TokensUsagePanel({
           : costs[selected],
       unpriced: unpricedModels.size,
     };
-  }, [stats, activeFilter, binMs, bucketStarts, selected, liveOverlay]);
+  }, [stats, activeFilter, binMs, bucketStarts, selected, liveOverlay, rates]);
 
   const averages = useMemo(
     () => perTaskAverages(bins, binCosts),
@@ -868,6 +893,7 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   );
   const totals = { ...EMPTY_LIVE_OVERLAY };
   totals.invocations = runningRoots.length;
+  const modelUsage: ModelUsage[] = [];
   for (const span of spans) {
     const root = span.parentSpanId
       ? runningRootsById.get(span.parentSpanId)
@@ -887,10 +913,10 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
     totals.cachedInputTokens += usage.cachedInputTokens;
     if (typeof provider === "string" && typeof modelId === "string") {
-      totals.estimatedCost +=
-        estimateModelTokenCost(provider, modelId, usage)?.total ?? 0;
+      modelUsage.push({ modelProvider: provider, modelId: modelId, ...usage });
     }
   }
+  totals.modelUsage = modelUsage;
 
   return totals;
 }
