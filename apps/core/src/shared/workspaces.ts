@@ -11,11 +11,8 @@
  * isolated folder is its own VM and its own S3 prefix.
  */
 
-import {
-  assertNoRetiredImageOptions,
-  PLATFORM_WORKER_SANDBOX_PROVIDERS,
-  STATELESS_SANDBOX_PROVIDERS,
-} from "@broods/convex/model/sandboxRules";
+import { supportsS3WorkspaceMount } from "@broods/convex/model/sandboxProviders";
+import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import type { ChannelPartition, AgentConfig } from "./domain/agent-config.ts";
 import type {
   SandboxConfig,
@@ -417,15 +414,18 @@ function assertSandboxReachesWorkspace(
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
 ): void {
-  // The file tools need an S3 mount. A machine, a custom server and the
-  // Cloudflare Workers have none, so they would act on their own disk. A
-  // fallback runs the same workspace, so it is held to the same rule.
-  const unmountable = [sandbox?.provider, sandbox?.fallbackProvider].find(
-    (provider): boolean =>
-      provider !== undefined &&
-      (PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider) ||
-        STATELESS_SANDBOX_PROVIDERS.has(provider)),
-  );
+  // The file tools need an S3 mount; without one they would act on the
+  // sandbox's own disk. The CLI sync's rule, held here too so a config made
+  // through the API cannot skip it. A fallback runs the same workspace but
+  // carries none of the primary's options, so it must mount without them.
+  const unmountable = !sandbox
+    ? undefined
+    : !supportsS3WorkspaceMount(sandbox.provider, sandbox.options)
+      ? sandbox.provider
+      : sandbox.fallbackProvider &&
+          !supportsS3WorkspaceMount(sandbox.fallbackProvider, undefined)
+        ? sandbox.fallbackProvider
+        : undefined;
   if (unmountable) {
     throw new Error(
       `Workspace "${workspaceName}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,

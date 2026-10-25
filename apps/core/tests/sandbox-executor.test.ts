@@ -3081,8 +3081,13 @@ describe("createSandboxExecutor", () => {
         persistent: false,
         // The 30 s call plus room for its setup.
         timeout: 330_000,
+        // A workspace run mounts, so the bucket's S3 hosts join the allow list.
         networkPolicy: {
-          allow: ["api.example.com"],
+          allow: [
+            "api.example.com",
+            "s3.us-east-1.amazonaws.com",
+            "workspace-bucket.s3.us-east-1.amazonaws.com",
+          ],
           subnets: { allow: ["10.0.0.0/8"] },
         },
       }),
@@ -3106,7 +3111,6 @@ describe("createSandboxExecutor", () => {
         token: "tok",
         teamId: "team_1",
         projectId: "prj_1",
-        mountAwsS3Buckets: true,
       },
     };
   }

@@ -4,10 +4,10 @@
  * sandbox per reservation key. Vercel's session `timeout` is a hard limit, not
  * an idle timer, so each call extends the session to one idle window past its
  * own end, and `maxLifetimeSeconds` retires the sandbox at acquire.
- * With `options.mountAwsS3Buckets`, a workspace run mounts its S3 prefix with
- * mount-s3 before each call, on credentials scoped to that prefix for an hour
- * and kept out of the sandbox env. `config.snapshot` names the image or snapshot it boots, and
- * the Snapshot action captures a reserved sandbox into a new snapshot.
+ * A workspace run mounts its S3 prefix with mount-s3 before each call, on
+ * credentials scoped to that prefix for an hour and kept out of the sandbox
+ * env. `config.snapshot` names the image or snapshot it boots, and the
+ * Snapshot action captures a reserved sandbox into a new snapshot.
  */
 
 import { randomUUID } from "node:crypto";
@@ -305,7 +305,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     sandbox: VercelSandbox,
     request: SandboxRunRequest,
   ): Promise<void> {
-    if (!mountsWorkspace(this.#config, request)) return;
+    if (!mountsWorkspace(request)) return;
     const mountPath = workspacePath(request, this.#workspaceRoot())!;
     const now = Math.floor(Date.now() / 1000);
     const check = await sandbox.runCommand({
@@ -728,12 +728,9 @@ function mountScript(
   ].join("\n");
 }
 
-// A workspace run on a sandbox that opted into S3 mounts.
-function mountsWorkspace(
-  config: SandboxExecutorConfig,
-  request: { namespace?: string },
-): boolean {
-  return config.options?.mountAwsS3Buckets === true && !!request.namespace;
+// A workspace run: a vercel sandbox mounts every workspace attached to it.
+function mountsWorkspace(request: { namespace?: string }): boolean {
+  return !!request.namespace;
 }
 
 // The hosts mount-s3 talks to: the bucket's virtual host and the regional
@@ -810,7 +807,7 @@ function vercelNetworkPolicy(
   const network = config.network ?? { mode: "deny-all" as const };
   if (network.mode === "allow-all") return "allow-all";
   // Identity only: no STS call.
-  const mountHosts = mountsWorkspace(config, request)
+  const mountHosts = mountsWorkspace(request)
     ? s3Hosts(resolveS3MountIdentity(executorS3Context(config, request)))
     : [];
   if (network.mode === "deny-all" && mountHosts.length === 0) return "deny-all";

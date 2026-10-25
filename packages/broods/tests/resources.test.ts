@@ -542,7 +542,7 @@ export const repo = defineWorkspace({
 
 export const runner = defineSandbox({
   name: "runner",
-  provider: "vercel", persistent: true,
+  provider: "e2b", network: { mode: "allow-all" }, persistent: true,
 });
 
 export const support = defineAgent({
@@ -554,11 +554,11 @@ export const support = defineAgent({
   );
 
   expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" workspace "repo" uses sandbox "runner" (vercel) which does not support S3 workspace mounts',
+    'Agent "support" workspace "repo" uses sandbox "runner" (e2b) which does not support S3 workspace mounts',
   );
 });
 
-test("compileProject accepts S3 workspaces on a vercel sandbox that mounts them", async () => {
+test("compileProject accepts S3 workspaces on a vercel sandbox", async () => {
   const cwd = await fixtureProject(
     "",
     `
@@ -572,7 +572,6 @@ export const repo = defineWorkspace({
 export const runner = defineSandbox({
   name: "runner",
   provider: "vercel", persistent: true,
-  options: { mountAwsS3Buckets: true },
 });
 
 export const support = defineAgent({

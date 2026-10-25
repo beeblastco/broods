@@ -116,7 +116,6 @@ async function workspaceCrossesSandboxes(
         permissionMode: "bypass",
         // The first mount installs mount-s3 from the Ubuntu mirrors.
         network: { mode: "allow-all" },
-        options: { mountAwsS3Buckets: true },
       },
     });
   const [writer, reader] = await Promise.all([
