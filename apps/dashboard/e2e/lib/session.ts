@@ -137,7 +137,17 @@ export async function signIn(page: Page): Promise<void> {
     .fill(probeAccount.password!);
   // Exact name: production AuthKit also offers "Sign in with passkey".
   await page.getByRole("button", { name: /^(continue|sign in)$/i }).click();
-  await page.waitForURL((url) => url.origin === origin, {
-    timeout: AUTH_TIMEOUT_MS,
-  });
+  await page
+    .waitForURL((url) => url.origin === origin, { timeout: AUTH_TIMEOUT_MS })
+    .catch(async (error: unknown) => {
+      // CI keeps no page snapshot (it records the typed password), so name
+      // the one AuthKit stop the probe cannot pass.
+      if (await page.getByText(/sure you are human/i).isVisible()) {
+        throw new Error(
+          "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment",
+          { cause: error },
+        );
+      }
+      throw error;
+    });
 }
