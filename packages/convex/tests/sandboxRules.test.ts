@@ -408,7 +408,7 @@ describe("sandbox config defaults & validation", () => {
         provider: "vercel",
         options: { mountAwsS3Buckets: true },
       }),
-    ).toThrow("a vercel sandbox mounts any workspace attached to it");
+    ).toThrow("not vercel; lambda and vercel mount any attached workspace");
     expect(() =>
       normalizeSandboxConfig({
         provider: "e2b",
