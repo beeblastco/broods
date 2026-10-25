@@ -5,6 +5,10 @@ test("the terminal fills the dock and draws in a real monospace font", async ({
 }) => {
   await openTerminal(page);
 
+  // Before a connect there is no state word, only a Connect button over the
+  // shell for a role that may write.
+  await expect(page.getByText("Not connected")).toHaveCount(0);
+
   // xterm sizes its cells on a canvas, where var() does not resolve: handed
   // the font stack as a variable, it measures a fallback font and pads every
   // glyph of the real one with letter spacing to fill the cell.

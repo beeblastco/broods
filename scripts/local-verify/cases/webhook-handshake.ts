@@ -1,8 +1,9 @@
 import type { BroodsAccount } from "../../../packages/broods/src/account.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-// Instagram, Messenger and WhatsApp share Meta's handshake, and core's GET
-// handling does not look at which one the URL names, so one stands for all.
+// Instagram, Messenger and WhatsApp share Meta's handshake. With no channel
+// configured, core answers all three the same way, so one stands for all;
+// each channel's own claim is covered by its core channel test.
 const CHANNEL = "whatsapp";
 
 /**

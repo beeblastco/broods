@@ -84,6 +84,10 @@ describe("BroodsSandboxProvider", () => {
       },
     });
 
+    expect(provider.providerId).toBe("broods-test");
+    expect(provider.bridgePorts).toEqual([4_321, 4_322]);
+    expect(networkSession.id).toBe("sandbox-1");
+    expect(networkSession.description).toBe("Fake Broods sandbox");
     expect(networkSession.defaultWorkingDirectory).toBe("/workspace");
     expect(networkSession.ports).toEqual([4_321]);
 
