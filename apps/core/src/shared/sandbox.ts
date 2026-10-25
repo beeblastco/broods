@@ -33,6 +33,21 @@ export interface WorkspaceSandboxLimits {
 }
 
 /**
+ * True once a reserved machine started at `startedAtMs` has passed
+ * `maxLifetimeSeconds`. Executors without a native hard expiry check it when a
+ * call acquires the machine, so it never interrupts the acquiring call's command.
+ */
+export function outlivedMaxLifetime(
+  lifecycle: ResolvedSandboxLifecycle,
+  startedAtMs: number,
+): boolean {
+  return (
+    lifecycle.maxLifetimeSeconds !== undefined &&
+    Date.now() - startedAtMs >= lifecycle.maxLifetimeSeconds * 1000
+  );
+}
+
+/**
  * Resolve a persistent sandbox's effective idle/expiry policy from its
  * account-configured `lifecycle` block, applying defaults. Used by the executors
  * (workdir standby, daytona autoStopInterval, e2b timeout).
@@ -48,21 +63,6 @@ export function resolveSandboxLifecycle(lifecycle?: {
       ? { maxLifetimeSeconds: lifecycle.maxLifetimeSeconds }
       : {}),
   };
-}
-
-/**
- * True once a reserved machine started at `startedAtMs` has passed
- * `maxLifetimeSeconds`. Executors without a native hard expiry check it when a
- * call acquires the machine, so it never interrupts a running command.
- */
-export function outlivedMaxLifetime(
-  lifecycle: ResolvedSandboxLifecycle,
-  startedAtMs: number,
-): boolean {
-  return (
-    lifecycle.maxLifetimeSeconds !== undefined &&
-    Date.now() - startedAtMs >= lifecycle.maxLifetimeSeconds * 1000
-  );
 }
 
 /**

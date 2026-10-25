@@ -293,7 +293,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       expiresAt;
     if (shortMs <= 0) return;
     const extendMs = Math.ceil(shortMs) + KEEP_ALIVE_SLACK_MS;
-    await sandbox.extendTimeout(extendMs).catch((err: unknown) => {
+    await sandbox.extendTimeout(extendMs).catch((err: unknown): void => {
       logWarn("vercel sandbox session extension refused", {
         sandbox: sandbox.name,
         error: toErrorMessage(err),
@@ -388,7 +388,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           return sandbox;
         }
         // Past maxLifetimeSeconds: retire it here and boot a fresh one below.
-        // Checked at acquire, never on a timer, so it never cuts a command.
+        // Checked at acquire, never on a timer, so it never cuts this call's
+        // command. Background jobs still on the sandbox end with it, as on
+        // workdir.
         await sandbox.delete();
         await deleteSandboxInstance(
           "vercel",
