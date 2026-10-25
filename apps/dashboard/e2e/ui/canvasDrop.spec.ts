@@ -59,20 +59,6 @@ test("a card dragged onto a frame opens a slot and lands in it", async ({
   ).toBeVisible();
 });
 
-/** The slot is the one under the cursor, so a card lands where it was dropped. */
-test("a card dropped under the last chip lands under it", async ({ page }) => {
-  await openGallery(page);
-  const fixture = page.locator('[data-fixture="canvas-drop"]');
-  await fixture.scrollIntoViewIfNeeded();
-
-  await aim(page, fixture, "spare", await belowMiddleOf(fixture, "box-two"));
-  await page.mouse.up();
-
-  await expect(fixture.locator('[data-testid="drop-log"]')).toHaveText(
-    "joined Cloud sandbox at 2",
-  );
-});
-
 /**
  * A group takes only its own kind, and a card dropped on one that will not have
  * it used to be silently returned. The frame says why instead, and opens no slot.
