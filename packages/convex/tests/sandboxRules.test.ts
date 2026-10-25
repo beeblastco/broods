@@ -390,6 +390,23 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
+  it("caps a vercel idle window at Vercel's 24 hour session limit", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "vercel",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 24 * 60 * 60 },
+      }).lifecycle,
+    ).toEqual({ idleTimeoutSeconds: 86400 });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 24 * 60 * 60 + 1 },
+      }),
+    ).toThrow("must be at most 86400 on the vercel provider");
+  });
+
   it("isolate takes on/off networking, no hooks, no lifecycle and a 60 s timeout", () => {
     expect(
       normalizeSandboxConfig({ provider: "worker", persistent: true }),

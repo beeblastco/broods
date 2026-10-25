@@ -146,7 +146,9 @@ export const box = defineSandbox({
 - All three network modes are enforced natively.
 - `size` does nothing here. The dashboard shows the vCPU and memory once Vercel reports them, and `?` for disk, which Vercel does not report.
 - Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.
-- `onResume` fires only when a stopped sandbox resumes. The idle timeout counts from start, and `maxLifetimeSeconds` is not enforced.
+- `lifecycle.idleTimeoutSeconds` is at most 24 hours. Vercel holds one session to 24 hours on Pro and Enterprise and to 45 minutes on Hobby, so a longer idle window is refused. Each call extends the session to one idle window past its own end. A session that reaches the plan cap stops, and the next call resumes it.
+- A background job holds the session open only while it is polled. One left unpolled for longer than `idleTimeoutSeconds` stops with the session, so set the idle window above the job's run time.
+- `maxLifetimeSeconds` is checked when a call takes the sandbox. The call that trips it boots a fresh one.
 
 | Symptom                                                | Fix                                                                                                        |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
