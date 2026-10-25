@@ -206,7 +206,6 @@ export function executorS3Context(
     throw new Error("an AWS S3 workspace mount requires a workspace namespace");
   }
   const options = config.options ?? {};
-  const endpoint = configString(options.s3Endpoint);
 
   return {
     storage: config.storage,
@@ -218,7 +217,7 @@ export function executorS3Context(
       configString(options.awsRegion) ??
       optionalEnv("AWS_REGION") ??
       optionalEnv("AWS_DEFAULT_REGION"),
-    ...(endpoint ? { endpoint: endpoint } : {}),
+    endpoint: configString(options.s3Endpoint),
     attribution: mountAttribution(config, request),
   };
 }

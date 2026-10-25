@@ -500,8 +500,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       : "declarative";
   }
 
-  // Throws when the run carries no workspace namespace.
-
   // Guest filesystem path the workspace mounts at.
   #mountPath(request: { namespace?: string; workspaceRoot?: string }): string {
     const root = (request.workspaceRoot ?? this.#workspaceRoot()).replace(

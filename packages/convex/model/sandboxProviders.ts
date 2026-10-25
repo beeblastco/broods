@@ -38,9 +38,37 @@ export const PLATFORM_WORKER_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda", "daytona", "e2b", "vercel"]);
 
+// Providers that always mount a workspace's S3 prefix.
+const ALWAYS_S3_MOUNT_PROVIDERS: ReadonlySet<string> = new Set<SandboxProvider>(
+  ["lambda", "sandbox"],
+);
+// Providers that mount it only with `options.mountAwsS3Buckets: true`, since
+// their default images ship no mount-s3.
+const OPT_IN_S3_MOUNT_PROVIDERS: ReadonlySet<string> = new Set<SandboxProvider>(
+  ["daytona", "vercel"],
+);
+// Where to point a workspace whose sandbox cannot mount it.
+export const S3_MOUNT_PROVIDER_HINT = `${[...ALWAYS_S3_MOUNT_PROVIDERS].join("/")}, or ${[...OPT_IN_S3_MOUNT_PROVIDERS].join(" or ")} with options.mountAwsS3Buckets: true`;
+
 // Providers whose workspace is a mount-s3 FUSE mount, which has no rename or append.
 export const S3_MOUNT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["daytona", "lambda", "sandbox", "vercel"]);
+
+/** Whether a sandbox of `provider` with these `options` mounts its workspace. */
+export function supportsS3WorkspaceMount(
+  provider: string,
+  options: unknown,
+): boolean {
+  if (ALWAYS_S3_MOUNT_PROVIDERS.has(provider)) return true;
+
+  return (
+    OPT_IN_S3_MOUNT_PROVIDERS.has(provider) &&
+    typeof options === "object" &&
+    options !== null &&
+    "mountAwsS3Buckets" in options &&
+    options.mountAwsS3Buckets === true
+  );
+}
 
 // Providers core can suspend and resume: their executors implement `suspend()`
 // and `resume()`. The rest stop after their idle window or on Terminate.

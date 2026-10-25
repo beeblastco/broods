@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AccountSandbox } from "../../../packages/broods/src/account.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   MODEL_KEY_HINT,
@@ -103,28 +104,32 @@ async function workspaceCrossesSandboxes(
     name: key,
     config: { storage: { provider: "s3" } },
   });
-  const [writer, reader] = await Promise.all(
-    [true, false].map((persistent) =>
-      context.account.createSandbox({
-        name: `${key}-${persistent ? "writer" : "reader"}`,
-        config: {
-          provider: "vercel",
-          persistent: persistent,
-          permissionMode: "bypass",
-          // The first mount installs mount-s3 from the Ubuntu mirrors.
-          network: { mode: "allow-all" },
-          options: { mountAwsS3Buckets: true },
-        },
-      }),
-    ),
-  );
+  const sandbox = (
+    name: string,
+    persistent: boolean,
+  ): Promise<AccountSandbox> =>
+    context.account.createSandbox({
+      name: name,
+      config: {
+        provider: "vercel",
+        persistent: persistent,
+        permissionMode: "bypass",
+        // The first mount installs mount-s3 from the Ubuntu mirrors.
+        network: { mode: "allow-all" },
+        options: { mountAwsS3Buckets: true },
+      },
+    });
+  const [writer, reader] = await Promise.all([
+    sandbox(`${key}-writer`, true),
+    sandbox(`${key}-reader`, false),
+  ]);
   const marker = `vercel-s3-${context.runId}`;
   const wrote = await turn(
     context,
     await commandAgent(
       context,
       `${key}-writer`,
-      writer!.sandboxId,
+      writer.sandboxId,
       workspace.workspaceId,
     ),
     `${key}-writer`,
@@ -136,7 +141,7 @@ async function workspaceCrossesSandboxes(
     await commandAgent(
       context,
       `${key}-reader`,
-      reader!.sandboxId,
+      reader.sandboxId,
       workspace.workspaceId,
     ),
     `${key}-reader`,
