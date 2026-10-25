@@ -7,10 +7,11 @@ import {
   canonicalModelProvider,
   estimateModelTokenCost,
 } from "../model/modelPricing";
-import { parseModelsDevRates } from "../model/modelsDev";
+import { parseInlinePrices, parseModelsDevRates } from "../model/modelsDev";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
+const CRAWL = { url: "https://models.dev/api.json", etag: '"v1"', inline: "" };
 
 describe("model pricing", () => {
   it("normalizes SDK providers", () => {
@@ -65,6 +66,7 @@ describe("model pricing", () => {
           "GPT-5.5": { cost: { input: 5, output: 30, cache_read: 0.5 } },
           "gpt-image-2": { cost: { input: 5 } },
           "free-preview": {},
+          "gpt-broken": { cost: { input: -1, output: 4 } },
         },
       },
       "unmapped-provider": {
@@ -72,7 +74,8 @@ describe("model pricing", () => {
       },
     });
 
-    // chatgpt reads OpenAI's rates; a missing cache-write rate is the input rate.
+    // chatgpt reads OpenAI's rates; a missing cache-write rate is the input
+    // rate; a negative rate drops the model.
     expect(providers).toEqual([
       {
         provider: "bedrock",
@@ -95,12 +98,13 @@ describe("model pricing", () => {
     const tt = convexTest(schema, modules);
     const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
     const stored = { models: [{ modelId: "gpt-5.5", ...rates }] };
-    const store = { providers: [{ provider: "openai", ...stored }] };
-    await tt.mutation(internal.modelPrices.store.store, store);
-    // A second crawl with the same rates writes nothing.
-    await tt.mutation(internal.modelPrices.store.store, store);
     await tt.mutation(internal.modelPrices.store.store, {
-      providers: [{ provider: "chatgpt", ...stored }],
+      crawled: [
+        { provider: "openai", ...stored },
+        { provider: "chatgpt", ...stored },
+      ],
+      inline: [],
+      crawl: CRAWL,
     });
 
     const priced = await tt.run(
@@ -122,5 +126,72 @@ describe("model pricing", () => {
     expect(
       await tt.run(async (ctx) => await ctx.db.query("modelPrices").collect()),
     ).toHaveLength(2);
+  });
+
+  it("reads the org's own prices and refuses a malformed one", () => {
+    expect(
+      parseInlinePrices(
+        '{"custom":{"GPT-OSS-120B":{"input":0.1,"output":0.5}}}',
+      ),
+    ).toEqual([
+      {
+        provider: "custom",
+        models: [
+          {
+            modelId: "gpt-oss-120b",
+            input: 0.1,
+            output: 0.5,
+            cacheRead: 0.1,
+            cacheWrite: 0.1,
+          },
+        ],
+      },
+    ]);
+    expect(parseInlinePrices("")).toEqual([]);
+    expect(() =>
+      parseInlinePrices('{"nope":{"m":{"input":1,"output":1}}}'),
+    ).toThrow("unknown provider");
+    expect(() =>
+      parseInlinePrices('{"openai":{"m":{"input":-1,"output":1}}}'),
+    ).toThrow("non-negative");
+  });
+
+  it("holds back a crawled rate that jumps over 10x, applies inline prices, keeps the crawl state", async () => {
+    const tt = convexTest(schema, modules);
+    const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
+    const crawl = (input: number, inline: typeof rates | null) =>
+      tt.mutation(internal.modelPrices.store.store, {
+        crawled: [
+          {
+            provider: "openai",
+            models: [{ modelId: "gpt-5.5", ...rates, input: input }],
+          },
+        ],
+        inline: inline
+          ? [{ provider: "custom", models: [{ modelId: "mine", ...inline }] }]
+          : [],
+        crawl: { ...CRAWL, inline: inline ? "set" : "" },
+      });
+    const stored = async (provider: string) =>
+      await tt.run(
+        async (ctx) =>
+          await ctx.db
+            .query("modelPrices")
+            .withIndex("by_provider", (q) => q.eq("provider", provider))
+            .unique(),
+      );
+
+    await crawl(5, null);
+    await crawl(500, rates);
+    expect((await stored("openai"))?.models[0].input).toBe(5);
+    expect((await stored("custom"))?.models).toEqual([
+      { modelId: "mine", ...rates },
+    ]);
+    await crawl(8, rates);
+    expect((await stored("openai"))?.models[0].input).toBe(8);
+    expect(await tt.query(internal.modelPrices.store.crawlState, {})).toEqual({
+      ...CRAWL,
+      inline: "set",
+    });
   });
 });

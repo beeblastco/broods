@@ -53,7 +53,7 @@ const usageStats = v.object({
   startTimeMs: v.number(),
   endTimeMs: v.number(),
   buckets: v.array(usageBucket),
-  /** Rates for each model in `buckets` that has a public price. */
+  /** Rates for each model in `buckets` or `liveModels` that has a price. */
   rates: v.array(usageModelRates),
   totals: v.object({
     inputTokens: v.number(),
@@ -144,10 +144,14 @@ export const fetchUsageStats = query({
     projectId: v.id("projects"),
     stageId: v.optional(v.id("stages")),
     range: usageRange,
+    /** Models running live with no usage row yet, priced alongside the buckets. */
+    liveModels: v.optional(
+      v.array(v.object({ modelProvider: v.string(), modelId: v.string() })),
+    ),
   },
   returns: usageStats,
   handler: async (ctx, args) => {
-    const { projectId, stageId, range } = args;
+    const { projectId, stageId, range, liveModels } = args;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -200,7 +204,7 @@ export const fetchUsageStats = query({
     );
 
     const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
-    const rates = await modelRates(ctx, buckets);
+    const rates = await modelRates(ctx, [...buckets, ...(liveModels ?? [])]);
 
     return { ...base, buckets: buckets, rates: rates, totals: totals };
   },
@@ -357,13 +361,13 @@ export async function collectUsageTasks(
     .take(limit);
 }
 
-/** The crawled rates of every priced model in `buckets`, named as the buckets name it. */
+/** The stored rates of every priced model in `models`, named as the caller names it. */
 export async function modelRates(
   ctx: QueryCtx,
-  buckets: Array<Pick<UsageBucketRow, "modelProvider" | "modelId">>,
+  models: Array<Pick<UsageBucketRow, "modelProvider" | "modelId">>,
 ): Promise<Array<Infer<typeof usageModelRates>>> {
   const modelIds = new Map<string, Set<string>>();
-  for (const { modelProvider, modelId } of buckets) {
+  for (const { modelProvider, modelId } of models) {
     modelIds.set(
       modelProvider,
       (modelIds.get(modelProvider) ?? new Set()).add(modelId),

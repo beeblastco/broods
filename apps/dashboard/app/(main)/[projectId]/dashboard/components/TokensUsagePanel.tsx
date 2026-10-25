@@ -85,7 +85,6 @@ interface LiveOverlay {
   invocations: number;
   modelCalls: number;
   // Each step's tokens under its root's model, priced like a usage row.
-  // A model with no usage row in range yet reads as unpriced until one lands.
   modelUsage: ModelUsage[];
 }
 
@@ -214,24 +213,6 @@ export function TokensUsagePanel({
   // The per-task tile picked for the big chart; none draws the token area.
   const [metric, setMetric] = useState<PerTaskMetric | null>(null);
 
-  // Reactive subscription: usage totals update live as the harness meters tokens.
-  const data = useQuery(api.logs.fetchUsageStats, {
-    projectId: projectId,
-    stageId: stageId ?? undefined,
-    range: range,
-  });
-  // Hold the last result while another range loads, so the chart morphs from
-  // it instead of collapsing to an empty grid first. Only for the same
-  // project and stage: another stage's numbers never show under this one.
-  const scopeKey = `${projectId}:${stageId ?? ""}`;
-  const [held, setHeld] = useState<{ key: string; stats: UsageStats } | null>(
-    null,
-  );
-  if (data !== undefined && data !== held?.stats) {
-    setHeld({ key: scopeKey, stats: data });
-  }
-  const stats = data ?? (held?.key === scopeKey ? held.stats : null);
-
   // Convex only records usage at task finalize, so a run in flight needs the
   // trace stream to show anything at all. See liveOverlayFromTraces.
   const { entries: liveSpans } = useObservabilityStream({
@@ -245,7 +226,43 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
-  // Rates crawled hourly from models.dev, for the models in the buckets.
+  // The running models, sorted so the query's args change only when the set
+  // does, priced with the buckets so a live run shows its cost at once.
+  const liveModels = useMemo(
+    () =>
+      [
+        ...new Map(
+          liveOverlay.modelUsage.map((m) => [
+            modelKey(m),
+            { modelProvider: m.modelProvider, modelId: m.modelId },
+          ]),
+        ).entries(),
+      ]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([, model]) => model),
+    [liveOverlay],
+  );
+
+  // Reactive subscription: usage totals update live as the harness meters tokens.
+  const data = useQuery(api.logs.fetchUsageStats, {
+    projectId: projectId,
+    stageId: stageId ?? undefined,
+    range: range,
+    liveModels: liveModels,
+  });
+  // Hold the last result while another range loads, so the chart morphs from
+  // it instead of collapsing to an empty grid first. Only for the same
+  // project and stage: another stage's numbers never show under this one.
+  const scopeKey = `${projectId}:${stageId ?? ""}`;
+  const [held, setHeld] = useState<{ key: string; stats: UsageStats } | null>(
+    null,
+  );
+  if (data !== undefined && data !== held?.stats) {
+    setHeld({ key: scopeKey, stats: data });
+  }
+  const stats = data ?? (held?.key === scopeKey ? held.stats : null);
+
+  // Rates for the models in the buckets and the ones running live.
   const rates = useMemo(
     () =>
       new Map<string, ModelTokenRates>(

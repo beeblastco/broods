@@ -160,6 +160,8 @@ From `packages/convex`, set each with `bunx convex env set NAME value`:
 | `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core |
 | `BROODS_AUTH_PROVIDER`                                                     | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login              |
 | `BROODS_SESSION_JWKS`                                                      | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                   |
+| `BROODS_MODEL_PRICES`                                                      | no        | Your token rates for the Usage tab, see [model prices](#model-prices)                      |
+| `BROODS_MODEL_PRICES_URL`                                                  | no        | A models.dev-format catalogue to crawl hourly. Unset fetches nothing                       |
 | `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | no        | The managed service's login. Leave unset                                                   |
 | `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs                                                      |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                               | no        | Billing                                                                                    |
@@ -174,6 +176,18 @@ CONVEX_DEPLOY_KEY=... bun run deploy
 # self-hosted backend instead:
 CONVEX_SELF_HOSTED_URL=https://convex.example.com CONVEX_SELF_HOSTED_ADMIN_KEY=... bun run deploy
 ```
+
+### Model prices
+
+The Usage tab prices tokens from the `modelPrices` table, which an hourly cron fills. The managed cloud crawls [models.dev](https://models.dev); a self-hosted deployment fetches nothing unless you set `BROODS_MODEL_PRICES_URL`, since most cannot reach the internet. Point it at `https://models.dev/api.json` if yours can, or at a copy inside your network.
+
+Set your own rates, such as negotiated prices or a `custom` endpoint, as JSON in `BROODS_MODEL_PRICES`: agent provider, then model id, then USD per million tokens. They apply over the catalogue. Cache rates are optional and default to the input rate.
+
+```bash
+bunx convex env set BROODS_MODEL_PRICES '{"custom":{"gpt-oss-120b":{"input":0.1,"output":0.5}},"anthropic":{"claude-sonnet-5-5":{"input":1.8,"output":9,"cacheRead":0.09}}}'
+```
+
+A malformed value fails the crawl with the reason in the Convex logs. Without either variable every model reads "not priced".
 
 ## 3. Shared services
 

@@ -1,11 +1,13 @@
 /**
- * models.dev, the public catalogue `modelPrices/crawl.ts` reads token rates
- * from, and how its providers line up with the agent providers.
+ * Where `modelPrices/crawl.ts` reads token rates from: the models.dev
+ * catalogue (or a copy at `BROODS_MODEL_PRICES_URL`), and the org's own rates
+ * in `BROODS_MODEL_PRICES`. Both come out as rows per agent provider.
  */
 
 import { normalizeModelId, type ModelTokenRates } from "./modelPricing";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
+  isAccountModelProviderName,
   type AccountModelProviderName,
 } from "./modelProviders";
 
@@ -33,45 +35,59 @@ export type ModelsDevApi = Record<
       string,
       {
         cost?: {
-          input?: number;
-          output?: number;
-          cache_read?: number;
-          cache_write?: number;
+          input?: unknown;
+          output?: unknown;
+          cache_read?: unknown;
+          cache_write?: unknown;
         };
       }
     >;
   }
 >;
 
-/**
- * Each agent provider's rate rows, ids normalized. A model without an input
- * and output price is skipped; a missing cache rate falls back to the input
- * rate, since the provider gives no discount for it.
- */
-export function parseModelsDevRates(body: ModelsDevApi): Array<{
+/** One agent provider's rate rows, as the `modelPrices` table stores them. */
+export interface ProviderRates {
   provider: string;
   models: Array<ModelTokenRates & { modelId: string }>;
-}> {
+}
+
+/**
+ * `BROODS_MODEL_PRICES`: agent provider, then model id, then USD per million
+ * tokens. Cache rates are optional and default to the input rate.
+ */
+type InlinePrices = Record<
+  string,
+  Record<
+    string,
+    {
+      input?: unknown;
+      output?: unknown;
+      cacheRead?: unknown;
+      cacheWrite?: unknown;
+    }
+  >
+>;
+
+/**
+ * Each agent provider's rate rows, ids normalized. A model without a valid
+ * input and output price is skipped; a missing cache rate falls back to the
+ * input rate, since the provider gives no discount for it.
+ */
+export function parseModelsDevRates(body: ModelsDevApi): ProviderRates[] {
   return ACCOUNT_MODEL_PROVIDER_NAMES.flatMap((provider) => {
     const source = MODELS_DEV_RENAMES[provider] ?? provider;
     const rows = new Map<string, ModelTokenRates & { modelId: string }>();
     for (const [id, model] of Object.entries(body[source]?.models ?? {})) {
       const cost = model.cost;
       const modelId = normalizeModelId(id);
-      if (
-        typeof cost?.input !== "number" ||
-        typeof cost.output !== "number" ||
-        rows.has(modelId)
-      )
+      if (!isRate(cost?.input) || !isRate(cost.output) || rows.has(modelId))
         continue;
       rows.set(modelId, {
         modelId: modelId,
         input: cost.input,
         output: cost.output,
-        cacheRead:
-          typeof cost.cache_read === "number" ? cost.cache_read : cost.input,
-        cacheWrite:
-          typeof cost.cache_write === "number" ? cost.cache_write : cost.input,
+        cacheRead: isRate(cost.cache_read) ? cost.cache_read : cost.input,
+        cacheWrite: isRate(cost.cache_write) ? cost.cache_write : cost.input,
       });
     }
 
@@ -79,4 +95,45 @@ export function parseModelsDevRates(body: ModelsDevApi): Array<{
       ? [{ provider: provider, models: [...rows.values()] }]
       : [];
   });
+}
+
+/**
+ * The org's own rates from `BROODS_MODEL_PRICES`, empty when unset.
+ * @throws when the JSON is malformed, names an unknown provider, or a model
+ * lacks a valid input or output rate, so a config mistake fails the crawl
+ * loudly instead of pricing nothing
+ */
+export function parseInlinePrices(raw: string): ProviderRates[] {
+  if (raw.trim() === "") return [];
+  const body: InlinePrices = JSON.parse(raw);
+
+  return Object.entries(body).map(([provider, models]) => {
+    if (!isAccountModelProviderName(provider)) {
+      throw new Error(`BROODS_MODEL_PRICES names unknown provider ${provider}`);
+    }
+
+    return {
+      provider: provider,
+      models: Object.entries(models).map(([id, cost]) => {
+        if (!isRate(cost.input) || !isRate(cost.output)) {
+          throw new Error(
+            `BROODS_MODEL_PRICES ${provider}/${id} needs non-negative input and output rates`,
+          );
+        }
+
+        return {
+          modelId: normalizeModelId(id),
+          input: cost.input,
+          output: cost.output,
+          cacheRead: isRate(cost.cacheRead) ? cost.cacheRead : cost.input,
+          cacheWrite: isRate(cost.cacheWrite) ? cost.cacheWrite : cost.input,
+        };
+      }),
+    };
+  });
+}
+
+/** A finite, non-negative USD rate. */
+function isRate(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }

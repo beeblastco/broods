@@ -1062,6 +1062,7 @@ export declare const api: {
       "query",
       "public",
       {
+        liveModels?: Array<{ modelId: string; modelProvider: string }>;
         projectId: Id<"projects">;
         range: "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
         stageId?: Id<"stages">;
@@ -5451,11 +5452,28 @@ export declare const internal: {
       run: FunctionReference<"action", "internal", {}, null>;
     };
     store: {
+      crawlState: FunctionReference<
+        "query",
+        "internal",
+        {},
+        { etag: string; inline: string; url: string } | null
+      >;
       store: FunctionReference<
         "mutation",
         "internal",
         {
-          providers: Array<{
+          crawl: { etag: string; inline: string; url: string };
+          crawled: Array<{
+            models: Array<{
+              cacheRead: number;
+              cacheWrite: number;
+              input: number;
+              modelId: string;
+              output: number;
+            }>;
+            provider: string;
+          }>;
+          inline: Array<{
             models: Array<{
               cacheRead: number;
               cacheWrite: number;

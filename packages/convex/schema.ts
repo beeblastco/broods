@@ -1651,8 +1651,9 @@ export const usageWritesFields = {
 
 /**
  * Token rates in USD per million tokens for one agent provider's models,
- * crawled hourly from models.dev by `modelPrices/crawl.ts`. `fetchUsageStats`
- * hands the dashboard the ones its usage names.
+ * written hourly by `modelPrices/crawl.ts` from models.dev and the org's own
+ * `BROODS_MODEL_PRICES`. `fetchUsageStats` hands the dashboard the ones its
+ * usage names.
  */
 export const modelPricesFields = {
   /** Agent provider name, as usage rows name it, e.g. `bedrock`. */
@@ -1667,6 +1668,17 @@ export const modelPricesFields = {
       cacheWrite: v.number(),
     }),
   ),
+};
+
+/**
+ * The last crawl's inputs, one row: the catalogue URL and its ETag, so an
+ * unchanged catalogue answers 304, and the inline prices it applied. Empty
+ * strings when there were none.
+ */
+export const modelPriceCrawlFields = {
+  url: v.string(),
+  etag: v.string(),
+  inline: v.string(),
 };
 
 export const usageRollupsFields = {
@@ -2012,6 +2024,7 @@ export default defineSchema({
   modelPrices: defineTable(modelPricesFields).index("by_provider", [
     "provider",
   ]),
+  modelPriceCrawl: defineTable(modelPriceCrawlFields),
   stripeSubscriptionSyncs: defineTable(stripeSubscriptionSyncsFields).index(
     "by_stripeSubscriptionId",
     ["stripeSubscriptionId"],
