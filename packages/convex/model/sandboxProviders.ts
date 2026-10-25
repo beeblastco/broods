@@ -38,15 +38,20 @@ export const PLATFORM_WORKER_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
 export const SNAPSHOT_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda", "daytona", "e2b", "vercel"]);
 
-// Providers that always mount a workspace's S3 prefix.
+// Providers that always mount a workspace's S3 prefix. Vercel installs
+// mount-s3 itself on the first mount.
 const ALWAYS_S3_MOUNT_PROVIDERS: ReadonlySet<string> = new Set<SandboxProvider>(
-  ["lambda", "sandbox"],
+  ["lambda", "sandbox", "vercel"],
 );
-// Providers that mount it only with `options.mountAwsS3Buckets: true`, since
-// their default images ship no mount-s3.
+// Providers that mount it only with `options.mountAwsS3Buckets: true`, because
+// the snapshot must ship mount-s3.
 const OPT_IN_S3_MOUNT_PROVIDERS: ReadonlySet<string> = new Set<SandboxProvider>(
-  ["daytona", "vercel"],
+  ["daytona"],
 );
+// Providers that read `options.mountAwsS3Buckets`: daytona to opt in, and the
+// workdir `sandbox` to mount even a run that names no workspace.
+export const MOUNT_FLAG_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
+  new Set<SandboxProvider>(["daytona", "sandbox"]);
 // Where to point a workspace whose sandbox cannot mount it.
 export const S3_MOUNT_PROVIDER_HINT = `${[...ALWAYS_S3_MOUNT_PROVIDERS].join("/")}, or ${[...OPT_IN_S3_MOUNT_PROVIDERS].join(" or ")} with options.mountAwsS3Buckets: true`;
 

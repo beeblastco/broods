@@ -130,6 +130,8 @@ export type ResourceInput<Name extends string, Config> = {
  */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
   reservationKey?: string;
+  /** daytona: mount workspaces (its snapshot must ship mount-s3). sandbox: mount even with no workspace. */
+  mountAwsS3Buckets?: boolean;
   endpoint?: string;
   token?: string | EnvRef;
   headers?: Record<string, string | EnvRef>;
