@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AccountSandbox } from "../../../packages/broods/src/account.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   MODEL_KEY_HINT,
@@ -68,13 +69,12 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     },
   });
   const agentId = await commandAgent(context, key, sandbox.sandboxId);
-  const marker = `vercel-${context.runId}`;
   const wrote = await turn(
     context,
     agentId,
     key,
     "vercel write",
-    `Run: echo ${marker} > /tmp/marker && echo written`,
+    `Run: echo ${key} > /tmp/marker && echo written`,
   );
   const read = await turn(
     context,
@@ -87,7 +87,7 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     "a persistent vercel sandbox keeps a file between turns",
     wrote.status === "completed" &&
       read.status === "completed" &&
-      JSON.stringify(read.response ?? "").includes(sha256(`${marker}\n`)),
+      JSON.stringify(read.response ?? "").includes(sha256(`${key}\n`)),
     `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
   );
 
@@ -113,28 +113,32 @@ async function workspaceCrossesSandboxes(
     name: key,
     config: { storage: { provider: "s3" } },
   });
-  const [writer, reader] = await Promise.all(
-    [true, false].map((persistent) =>
-      context.account.createSandbox({
-        name: `${key}-${persistent ? "writer" : "reader"}`,
-        config: {
-          provider: "vercel",
-          persistent: persistent,
-          permissionMode: "bypass",
-          // The first mount installs mount-s3 from the Ubuntu mirrors.
-          network: { mode: "allow-all" },
-          options: { mountAwsS3Buckets: true },
-        },
-      }),
-    ),
-  );
+  const sandbox = (
+    name: string,
+    persistent: boolean,
+  ): Promise<AccountSandbox> =>
+    context.account.createSandbox({
+      name: name,
+      config: {
+        provider: "vercel",
+        persistent: persistent,
+        permissionMode: "bypass",
+        // The first mount installs mount-s3 from the Ubuntu mirrors.
+        network: { mode: "allow-all" },
+        options: { mountAwsS3Buckets: true },
+      },
+    });
+  const [writer, reader] = await Promise.all([
+    sandbox(`${key}-writer`, true),
+    sandbox(`${key}-reader`, false),
+  ]);
   const marker = `vercel-s3-${context.runId}`;
   const wrote = await turn(
     context,
     await commandAgent(
       context,
       `${key}-writer`,
-      writer!.sandboxId,
+      writer.sandboxId,
       workspace.workspaceId,
     ),
     `${key}-writer`,
@@ -146,7 +150,7 @@ async function workspaceCrossesSandboxes(
     await commandAgent(
       context,
       `${key}-reader`,
-      reader!.sandboxId,
+      reader.sandboxId,
       workspace.workspaceId,
     ),
     `${key}-reader`,

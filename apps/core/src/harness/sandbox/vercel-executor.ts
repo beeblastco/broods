@@ -25,6 +25,8 @@ import { isPlainObject } from "../../shared/object.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
+  type ResolvedSandboxLifecycle,
+  outlivedMaxLifetime,
   resolveSandboxLifecycle,
 } from "../../shared/sandbox.ts";
 import {
@@ -78,13 +80,16 @@ import {
 } from "./utils.ts";
 
 const GENERATION_LENGTH = 8;
+// An extension overshoots by this much, so the calls that follow within it
+// need no extendTimeout of their own.
+const KEEP_ALIVE_SLACK_MS = 60_000;
 // An ephemeral session runs its setup (the workdir, a workspace mount) before
 // the command and is stopped when the call ends, so it gets this long past the
 // command's own timeout rather than being cut off mid-command.
 const EPHEMERAL_SETUP_SECONDS = 5 * 60;
+const MOUNT_LOCK = "/tmp/.fp-s3-mount.lock";
 // Mountpoint for S3's release package. The images ship without it, so a sandbox
 // whose snapshot lacks it fetches it once, which needs egress to these hosts.
-const MOUNT_LOCK = "/tmp/.fp-s3-mount.lock";
 const MOUNT_S3_PACKAGE =
   "https://s3.amazonaws.com/mountpoint-s3-release/latest/${arch}/mount-s3.deb";
 // Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
@@ -97,10 +102,12 @@ type VercelCreateOptions = NonNullable<
 
 export class VercelSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
+  readonly #lifecycle: ResolvedSandboxLifecycle;
   #sandboxClass?: Promise<VercelSandboxClass>;
 
   constructor(config: SandboxExecutorConfig) {
     this.#config = config;
+    this.#lifecycle = resolveSandboxLifecycle(config.lifecycle);
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -205,15 +212,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#reserved(request);
-    const status = await this.#shell(
-      sandbox,
-      statusScript(jobsDir, request.jobId),
-    );
-    // A polled job (status or logs) is activity: it holds the session open
-    // like a command does.
-    await this.#keepAlive(sandbox, 0);
 
-    return parseJobStatus(request.jobId, status);
+    return parseJobStatus(
+      request.jobId,
+      await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
+    );
   }
 
   async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
@@ -223,7 +226,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
     );
-    await this.#keepAlive(sandbox, 0);
 
     return {
       jobId: request.jobId,
@@ -304,7 +306,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     sandbox: VercelSandbox,
     request: SandboxRunRequest,
   ): Promise<void> {
-    if (!this.#mountsWorkspace(request)) return;
+    if (!mountsWorkspace(this.#config, request)) return;
     const mountPath = workspacePath(request, this.#workspaceRoot())!;
     const now = Math.floor(Date.now() / 1000);
     const check = await sandbox.runCommand({
@@ -336,12 +338,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  #mountsWorkspace(request: { namespace?: string }): boolean {
-    return (
-      this.#config.options?.mountAwsS3Buckets === true && !!request.namespace
-    );
-  }
-
   // Extends the running session to last one idle window past a call of
   // `callSeconds`. Vercel refuses to extend past the plan's session cap; the
   // session then stops at the cap and the next call resumes it, so a refusal
@@ -349,41 +345,18 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async #keepAlive(sandbox: VercelSandbox, callSeconds: number): Promise<void> {
     const expiresAt = sandbox.expiresAt?.getTime();
     if (expiresAt === undefined) return;
-    const { idleTimeoutSeconds } = resolveSandboxLifecycle(
-      this.#config.lifecycle,
-    );
     const shortMs =
-      Date.now() + (idleTimeoutSeconds + callSeconds) * 1000 - expiresAt;
+      Date.now() +
+      (this.#lifecycle.idleTimeoutSeconds + callSeconds) * 1000 -
+      expiresAt;
     if (shortMs <= 0) return;
-    await sandbox.extendTimeout(Math.ceil(shortMs)).catch((err: unknown) => {
+    const extendMs = Math.ceil(shortMs) + KEEP_ALIVE_SLACK_MS;
+    await sandbox.extendTimeout(extendMs).catch((err: unknown) => {
       logWarn("vercel sandbox session extension refused", {
         sandbox: sandbox.name,
         error: toErrorMessage(err),
       });
     });
-  }
-
-  // Checked at acquire, never on a timer, so the cap can never cut a running
-  // command: the call that trips it boots a fresh sandbox.
-  #outlivedMaxLifetime(sandbox: VercelSandbox): boolean {
-    const { maxLifetimeSeconds } = resolveSandboxLifecycle(
-      this.#config.lifecycle,
-    );
-    if (maxLifetimeSeconds === undefined) return false;
-
-    return (
-      Date.now() - sandbox.createdAt.getTime() >= maxLifetimeSeconds * 1000
-    );
-  }
-
-  // The hosts a mounted workspace reaches, which a network that is not
-  // allow-all must let through. Identity only: no STS call.
-  #mountHosts(request: SandboxRunRequest): string[] {
-    if (!this.#mountsWorkspace(request)) return [];
-
-    return s3Hosts(
-      resolveS3MountIdentity(executorS3Context(this.#config, request)),
-    );
   }
 
   // A reserved sandbox whose config names another Secure Compute network moves
@@ -453,14 +426,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         this.#config.snapshot,
       );
 
-      return Sandbox.create(
-        vercelCreateOptions(
-          this.#config,
-          request,
-          false,
-          this.#mountHosts(request),
-        ),
-      );
+      return Sandbox.create(vercelCreateOptions(this.#config, request, false));
     }
 
     const key = sandboxReservationKey(request)!;
@@ -471,28 +437,36 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           name: storedName,
           ...vercelAuthOptions(this.#config),
         });
-        if (this.#outlivedMaxLifetime(sandbox)) {
-          await this.release({ ...request, expectedExternalId: storedName });
+        if (
+          !outlivedMaxLifetime(this.#lifecycle, sandbox.createdAt.getTime())
+        ) {
+          await this.#moveNetwork(sandbox);
+          await saveSandboxInstance(
+            "vercel",
+            key,
+            storedName,
+            this.#config.controlPlane?.accountId,
+          ).catch(() => {});
+          await upsertSandboxInstance(
+            this.#config.controlPlane,
+            "vercel",
+            key,
+            storedName,
+            request.metadata,
+            { specs: vercelSpecs(sandbox) },
+          );
 
-          return await this.#acquireSandbox(request);
+          return sandbox;
         }
-        await this.#moveNetwork(sandbox);
-        await saveSandboxInstance(
+        // Past maxLifetimeSeconds: retire it here and boot a fresh one below.
+        // Checked at acquire, never on a timer, so it never cuts a command.
+        await sandbox.delete();
+        await deleteSandboxInstance(
           "vercel",
           key,
-          storedName,
           this.#config.controlPlane?.accountId,
-        ).catch(() => {});
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "vercel",
-          key,
           storedName,
-          request.metadata,
-          { specs: vercelSpecs(sandbox) },
-        );
-
-        return sandbox;
+        ).catch(() => {});
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
         // propagate or the still-live sandbox is orphaned at the provider. The
@@ -516,12 +490,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       this.#config.snapshot,
     );
     const sandbox = await Sandbox.create({
-      ...vercelCreateOptions(
-        this.#config,
-        request,
-        true,
-        this.#mountHosts(request),
-      ),
+      ...vercelCreateOptions(this.#config, request, true),
       name: name,
     });
     try {
@@ -597,6 +566,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       name: name,
       ...vercelAuthOptions(this.#config),
     });
+    // A job poll or log read is activity: it holds the session open like a
+    // command does.
+    await this.#keepAlive(sandbox, 0);
 
     return { sandbox: sandbox, jobsDir: this.#jobsDir(key) };
   }
@@ -625,14 +597,15 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     if (!this.#config.onCreate?.length && !this.#config.onResume?.length)
       return;
     const workDir = this.#workDir(key);
-    const marker = `${this.#jobsDir(key)}/.fp-lifecycle-created`;
+    const jobsDir = this.#jobsDir(key);
+    const marker = `${jobsDir}/.fp-lifecycle-created`;
     const createCommands = this.#config.onCreate ?? [];
     const resumeCommands = this.#config.onResume ?? [];
     const script = [
       "set -e",
-      `mkdir -p ${shellQuote(workDir)} ${shellQuote(this.#jobsDir(key))}`,
+      `mkdir -p ${shellQuote(workDir)} ${shellQuote(jobsDir)}`,
       // Parallel calls on one reservation take turns, so onCreate runs once.
-      `exec 9>${shellQuote(`${this.#jobsDir(key)}/.fp-lifecycle.lock`)}`,
+      `exec 9>${shellQuote(`${jobsDir}/.fp-lifecycle.lock`)}`,
       "flock 9",
       `cd ${shellQuote(workDir)}`,
       `if [ ! -f ${shellQuote(marker)} ]; then`,
@@ -746,9 +719,8 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
 
 function vercelCreateOptions(
   config: SandboxExecutorConfig,
-  request: { envVars?: Record<string, string>; timeoutSeconds: number },
+  request: SandboxRunRequest,
   persistent: boolean,
-  mountHosts: string[],
 ): VercelCreateOptions {
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
   const snapshot = config.snapshot;
@@ -768,7 +740,7 @@ function vercelCreateOptions(
       (persistent
         ? lifecycle.idleTimeoutSeconds
         : request.timeoutSeconds + EPHEMERAL_SETUP_SECONDS) * 1000,
-    networkPolicy: vercelNetworkPolicy(config, mountHosts),
+    networkPolicy: vercelNetworkPolicy(config, request),
     // No run identity here: a sandbox outlives the run that created it, and
     // every exec lays its own over this env.
     env: mergeSandboxEnv(config.envVars, request.envVars),
@@ -780,10 +752,14 @@ function vercelCreateOptions(
 // lambda sandbox always reaches its managed bucket.
 function vercelNetworkPolicy(
   config: SandboxExecutorConfig,
-  mountHosts: string[],
+  request: SandboxRunRequest,
 ): NetworkPolicy {
   const network = config.network ?? { mode: "deny-all" as const };
   if (network.mode === "allow-all") return "allow-all";
+  // Identity only: no STS call.
+  const mountHosts = mountsWorkspace(config, request)
+    ? s3Hosts(resolveS3MountIdentity(executorS3Context(config, request)))
+    : [];
   if (network.mode === "deny-all" && mountHosts.length === 0) return "deny-all";
   const allow = [...(network.allowDomains ?? []), ...mountHosts];
 
@@ -858,17 +834,20 @@ function mountScript(
   ].join("\n");
 }
 
+// A workspace run on a sandbox that opted into S3 mounts.
+function mountsWorkspace(
+  config: SandboxExecutorConfig,
+  request: { namespace?: string },
+): boolean {
+  return config.options?.mountAwsS3Buckets === true && !!request.namespace;
+}
+
 // The hosts mount-s3 talks to: the bucket's virtual host and the regional
 // endpoint on AWS, or the endpoint and its bucket subdomain elsewhere (R2).
 function s3Hosts(mount: S3MountIdentity): string[] {
-  if (mount.endpoint) {
-    const host = new URL(mount.endpoint).hostname;
+  const host = mount.endpoint
+    ? new URL(mount.endpoint).hostname
+    : `s3.${mount.region ? `${mount.region}.` : ""}amazonaws.com`;
 
-    return [host, `${mount.bucket}.${host}`];
-  }
-  const endpoint = mount.region
-    ? `s3.${mount.region}.amazonaws.com`
-    : "s3.amazonaws.com";
-
-  return [endpoint, `${mount.bucket}.${endpoint}`];
+  return [host, `${mount.bucket}.${host}`];
 }

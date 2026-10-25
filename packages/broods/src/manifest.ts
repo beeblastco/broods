@@ -34,6 +34,10 @@ import {
   isAccountModelProviderName,
 } from "../../convex/model/modelProviders.ts";
 import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
+import {
+  S3_MOUNT_PROVIDER_HINT,
+  supportsS3WorkspaceMount,
+} from "../../convex/model/sandboxProviders.ts";
 import { MAX_CONFIGURED_SKILLS } from "../../convex/model/skillLimits.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
@@ -742,10 +746,17 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
         defaultSandbox,
         sandboxes,
       );
-      if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
+      if (
+        !sandbox ||
+        supportsS3WorkspaceMount(
+          sandboxProvider(sandbox),
+          sandbox.config.options,
+        )
+      )
+        continue;
       throw new Error(
         `Agent "${resource.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" (${sandboxProvider(sandbox)}) ` +
-          `which does not support S3 workspace mounts. Use lambda/sandbox, or daytona or vercel with options.mountAwsS3Buckets: true, ` +
+          `which does not support S3 workspace mounts. Use ${S3_MOUNT_PROVIDER_HINT}, ` +
           `or set this workspace ref to sandbox: null for read-only S3 access.`,
       );
     }
@@ -786,20 +797,6 @@ function workspaceNameFor(entry: unknown): string {
   }
 
   return "<unknown>";
-}
-
-function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
-  const provider = sandboxProvider(sandbox);
-  if (provider === "lambda" || provider === "sandbox") return true;
-  if (provider !== "daytona" && provider !== "vercel") return false;
-  const options = (sandbox.config as { options?: unknown }).options;
-
-  return Boolean(
-    options &&
-    typeof options === "object" &&
-    !Array.isArray(options) &&
-    (options as Record<string, unknown>).mountAwsS3Buckets === true,
-  );
 }
 
 function sandboxProvider(sandbox: SandboxResource): string {

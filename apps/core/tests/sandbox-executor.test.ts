@@ -104,14 +104,13 @@ const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
 const vercelExtendTimeoutMock = mock(async (_duration: number) => {});
 const vercelUpdateMock = mock(async (_params: Record<string, unknown>) => {});
-// The Secure Compute network the next sandbox the mocks hand out reports.
-let vercelNetworkId: string | undefined;
 const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
   snapshotId: "snap_captured",
   status: "created",
 }));
-// What the next sandbox the mocks hand out reports for its session.
-let vercelSession: { createdAt: Date; expiresAt?: Date } = {
+// What the next sandbox the mocks hand out reports: its session and its
+// Secure Compute network.
+let vercelSession: { createdAt: Date; expiresAt?: Date; networkId?: string } = {
   createdAt: new Date(),
 };
 function vercelSandbox(name = "vercel-sandbox") {
@@ -125,7 +124,6 @@ function vercelSandbox(name = "vercel-sandbox") {
     delete: vercelDeleteMock,
     snapshot: vercelSnapshotMock,
     update: vercelUpdateMock,
-    networkId: vercelNetworkId,
   };
 }
 const vercelCreateMock = mock(
@@ -484,7 +482,6 @@ beforeEach(() => {
   vercelExtendTimeoutMock.mockClear();
   vercelSession = { createdAt: new Date() };
   vercelUpdateMock.mockClear();
-  vercelNetworkId = undefined;
   vercelCreateMock.mockClear();
   vercelGetMock.mockClear();
   storedSandboxExternalId = null;
@@ -3436,10 +3433,11 @@ describe("createSandboxExecutor", () => {
     await executor.run(persistentVercelRun());
 
     // Default idle 900 s plus the call's 30 s, less the 60 s left, plus the
-    // time the run took to reach the extension.
+    // time the run took to reach the extension, plus 60 s of slack so the
+    // calls right after it need no extension of their own.
     const extension = Number(vercelExtendTimeoutMock.mock.calls[0]?.[0]);
-    expect(extension).toBeGreaterThanOrEqual(870_000);
-    expect(extension).toBeLessThanOrEqual(870_000 + Date.now() - startedAt);
+    expect(extension).toBeGreaterThanOrEqual(930_000);
+    expect(extension).toBeLessThanOrEqual(930_000 + Date.now() - startedAt);
   });
 
   it("leaves a session alone when it outlasts the idle window", async () => {
@@ -3513,7 +3511,7 @@ describe("createSandboxExecutor", () => {
     const { VercelSandboxExecutor } =
       await import("../src/harness/sandbox/vercel-executor.ts");
     storedSandboxExternalId = "fp-p-stored-abc123";
-    vercelNetworkId = "net_old";
+    vercelSession = { createdAt: new Date(), networkId: "net_old" };
 
     await new VercelSandboxExecutor({
       ...persistentVercelConfig(),
