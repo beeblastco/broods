@@ -887,9 +887,7 @@ function validateProviderOptions(
     }
     if (!MOUNT_FLAG_SANDBOX_PROVIDERS.has(provider)) {
       throw new ClientError(
-        provider === "vercel"
-          ? "config.options.mountAwsS3Buckets is not used by the vercel provider: a vercel sandbox mounts any workspace attached to it"
-          : `config.options.mountAwsS3Buckets is only read by the daytona and sandbox providers, not ${provider}`,
+        `config.options.mountAwsS3Buckets is only read by the daytona and sandbox providers, not ${provider}; lambda and vercel mount any attached workspace without it`,
       );
     }
   }
