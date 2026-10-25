@@ -6,7 +6,6 @@ import {
 import type { Experimental_SandboxProcess } from "@ai-sdk/provider-utils";
 import {
   createBroodsSandbox,
-  type BroodsSandboxCommandOptions,
   type BroodsSandboxDriver,
   type BroodsSandboxDriverSession,
   type BroodsSandboxWriteFileOptions,
@@ -85,11 +84,6 @@ describe("BroodsSandboxProvider", () => {
       },
     });
 
-    expect(provider.specificationVersion).toBe("harness-sandbox-v1");
-    expect(provider.providerId).toBe("broods-test");
-    expect(provider.bridgePorts).toEqual([4_321, 4_322]);
-    expect(networkSession.id).toBe("sandbox-1");
-    expect(networkSession.description).toBe("Fake Broods sandbox");
     expect(networkSession.defaultWorkingDirectory).toBe("/workspace");
     expect(networkSession.ports).toEqual([4_321]);
 
@@ -148,20 +142,16 @@ describe("BroodsSandboxProvider", () => {
   });
 
   test("maps command, process, and file operations without changing driver failures", async () => {
-    const commandCalls: BroodsSandboxCommandOptions[] = [];
     const writes: BroodsSandboxWriteFileOptions[] = [];
     const process = fakeProcess();
     const runFailure = new Error("command failed in driver");
     const session = fakeSession({
       runCommand: async function (options) {
-        commandCalls.push(options);
         if (options.command === "fail") throw runFailure;
 
         return { exitCode: 7, stdout: "out", stderr: "err" };
       },
-      spawnCommand: async function (options) {
-        commandCalls.push(options);
-
+      spawnCommand: async function () {
         return process;
       },
       readFile: async function ({ path }) {

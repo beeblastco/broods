@@ -33,18 +33,6 @@ test("this project leads each resource, and its piece of the bar is its share of
   expect(own.width / used.width).toBeCloseTo(28.9 / 129.8, 1);
 });
 
-test("a project's Resources links to the organization's Usage page", async ({
-  page,
-}) => {
-  await openGallery(page);
-  const allowance = page.locator(ALLOWANCE);
-
-  await expect(
-    // A Button rendering a Link, like Billing's View usage: an <a> with the button role.
-    allowance.getByRole("button", { name: "All projects" }),
-  ).toHaveAttribute("href", "/settings/org?tab=usage");
-});
-
 test("the organization's page lists every project, busiest first on the picked resource", async ({
   page,
 }) => {

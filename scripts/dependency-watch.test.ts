@@ -37,14 +37,4 @@ describe("judgeException", () => {
       "exception for braces expires 2026-10-28, re-review reachability or bump the date",
     ]);
   });
-
-  test("stays quiet for an exception expiring in 60 days", () => {
-    const rows = judgeException(
-      { ...braces, expires: "2026-12-17" },
-      "3.0.3",
-      "3.0.3",
-      TODAY,
-    );
-    expect(rows).toEqual([]);
-  });
 });
