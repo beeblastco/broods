@@ -135,7 +135,8 @@ export async function signIn(page: Page): Promise<void> {
   await page
     .getByRole("textbox", { name: /password/i })
     .fill(probeAccount.password!);
-  await page.getByRole("button", { name: /continue|sign in/i }).click();
+  // Exact name: production AuthKit also offers "Sign in with passkey".
+  await page.getByRole("button", { name: /^(continue|sign in)$/i }).click();
   await page.waitForURL((url) => url.origin === origin, {
     timeout: AUTH_TIMEOUT_MS,
   });
