@@ -1629,10 +1629,15 @@ function noteText(span: ObservabilitySpanRow, key: string): string | undefined {
   return text === "" ? undefined : text;
 }
 
-/** The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before any is priced. */
+/**
+ * The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before
+ * any is priced. A paged list adds "shown", since the count covers every task
+ * held and the price only the ones listed.
+ */
 function costTotal(
   rows: ListRow[],
   costs: ReadonlyMap<string, number | null>,
+  paged: boolean,
 ): string {
   let total = 0;
   let priced = 0;
@@ -1647,8 +1652,10 @@ function costTotal(
     }
   }
   if (priced === 0 && unpriced === 0) return "";
+  const price =
+    priced > 0 ? ` · ${formatUsd(total)}${paged ? " shown" : ""}` : "";
 
-  return `${priced > 0 ? ` · ${formatUsd(total)}` : ""}${unpriced > 0 ? ` · ${unpriced} not priced` : ""}`;
+  return `${price}${unpriced > 0 ? ` · ${unpriced} not priced` : ""}`;
 }
 
 /** Every model the groups' runs name, subagents included, sorted by key. */
@@ -2993,7 +3000,7 @@ function TaskListPane({
           shown={shown}
           total={total}
           noun={["task", "tasks"]}
-          detail={costTotal(rows, costs)}
+          detail={costTotal(rows, costs, shown < total)}
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={onLoadMore}
