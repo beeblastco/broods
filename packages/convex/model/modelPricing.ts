@@ -8,7 +8,6 @@
 export const PROVIDER_CACHE_WRITE_FIELDS: Readonly<Record<string, string>> = {
   anthropic: "cacheCreationInputTokens",
   bedrock: "cacheCreationInputTokens",
-  google: "cachedContentTokenCount",
   openai: "",
 };
 

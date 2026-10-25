@@ -14,7 +14,7 @@ import {
  * stored files are the same across calls.
  */
 export async function workerSandbox(context: VerifyContext): Promise<void> {
-  const key = `worker-`;
+  const key = `worker-${context.runId}`;
   const refused: SandboxConfig[] = [
     {
       provider: "worker",
