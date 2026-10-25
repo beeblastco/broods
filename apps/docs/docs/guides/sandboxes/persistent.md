@@ -76,14 +76,14 @@ stateDiagram-v2
   Released --> [*]
 ```
 
-| Provider  | On idle                                    | Resume           | Limits                                                |
-| --------- | ------------------------------------------ | ---------------- | ----------------------------------------------------- |
-| `sandbox` | pause and standby                          | on the next exec |                                                       |
-| `lambda`  | suspended to a snapshot of memory and disk | 1 to 10 s        | a MicroVM lives at most 8 hours, then it is recreated |
-| `daytona` | stopped via `autoStopInterval`, disk kept  | on the next call |                                                       |
-| `e2b`     | paused, files, installs and processes kept | on the next call |                                                       |
-| `vercel`  | stopped, filesystem kept                   | on the next call | the timeout counts from start, not from last activity |
-| `worker`  | nothing to stop; files kept in storage     | on the next call | no idle time: nothing runs between commands           |
+| Provider  | On idle                                    | Resume           | Limits                                                       |
+| --------- | ------------------------------------------ | ---------------- | ------------------------------------------------------------ |
+| `sandbox` | pause and standby                          | on the next exec |                                                              |
+| `lambda`  | suspended to a snapshot of memory and disk | 1 to 10 s        | a MicroVM lives at most 8 hours, then it is recreated        |
+| `daytona` | stopped via `autoStopInterval`, disk kept  | on the next call |                                                              |
+| `e2b`     | paused, files, installs and processes kept | on the next call |                                                              |
+| `vercel`  | stopped, filesystem kept                   | on the next call | each call keeps the session open; 24 h cap (45 min on Hobby) |
+| `worker`  | nothing to stop; files kept in storage     | on the next call | no idle time: nothing runs between commands                  |
 
 `idleTimeoutSeconds` defaults to 900 and can be at most 7 days. `maxLifetimeSeconds` is an optional ceiling on age since creation, at most 30 days. It is checked when a call acquires the machine, so it never interrupts a running command; the call that trips it boots a fresh machine. On Vercel the idle window is at most 24 hours, the longest session Vercel allows on Pro and Enterprise (45 minutes on Hobby). Each call keeps the session open one idle window past its own end, so a busy sandbox is never stopped mid-command until it reaches that session cap.
 
