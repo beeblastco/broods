@@ -59,13 +59,12 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     },
   });
   const agentId = await commandAgent(context, key, sandbox.sandboxId);
-  const marker = `vercel-${context.runId}`;
   const wrote = await turn(
     context,
     agentId,
     key,
     "vercel write",
-    `Run: echo ${marker} > /tmp/marker && echo written`,
+    `Run: echo ${key} > /tmp/marker && echo written`,
   );
   const read = await turn(
     context,
@@ -78,7 +77,7 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     "a persistent vercel sandbox keeps a file between turns",
     wrote.status === "completed" &&
       read.status === "completed" &&
-      JSON.stringify(read.response ?? "").includes(sha256(`${marker}\n`)),
+      JSON.stringify(read.response ?? "").includes(sha256(`${key}\n`)),
     `${JSON.stringify(wrote)}\n${JSON.stringify(read)}`,
   );
 

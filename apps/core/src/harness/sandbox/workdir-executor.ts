@@ -29,6 +29,7 @@ import {
 } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
+  outlivedMaxLifetime,
   resolveSandboxLifecycle,
 } from "../../shared/sandbox.ts";
 import {
@@ -438,21 +439,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return isPlainObject(this.#config.options) ? this.#config.options : {};
   }
 
-  // workdir has no native hard expiry. `auto_stop_seconds` only stops the machine
-  // and never deletes it, so this executor enforces `lifecycle.maxLifetimeSeconds`
-  // at acquire time. Checking between turns rather than on a timer means an expiry can
-  // never interrupt a running exec: the next call retires the old sandbox and boots
-  // a fresh one, which costs a cold create instead of a resume. Local disk is lost;
-  // the S3 workspace mount is not, so the agent's files come back with it.
-  #outlivedMaxLifetime(claimedAt: number): boolean {
-    const { maxLifetimeSeconds } = resolveSandboxLifecycle(
-      this.#config.lifecycle,
-    );
-    if (maxLifetimeSeconds === undefined) return false;
-
-    return Date.now() - claimedAt >= maxLifetimeSeconds * 1000;
-  }
-
   #persistent(request: {
     namespace?: string;
     reservationKey?: string;
@@ -652,8 +638,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     }
     const ns = sandboxReservationKey(request)!;
     const reserved = await getSandboxReservationRecord("sandbox", ns);
+    // workdir has no native hard expiry: `auto_stop_seconds` only stops the
+    // machine. The call past `maxLifetimeSeconds` retires it and boots a fresh
+    // one, a cold create instead of a resume. Local disk is lost; the S3
+    // workspace mount is not, so the agent's files come back with it.
     const expired =
-      reserved !== null && this.#outlivedMaxLifetime(reserved.claimedAt);
+      reserved !== null &&
+      outlivedMaxLifetime(
+        resolveSandboxLifecycle(this.#config.lifecycle),
+        reserved.claimedAt,
+      );
     if (expired) {
       // Deliberately not caught: a failed delete here would leak the old sandbox
       // at the provider the moment the new one claims the key. Named so a
