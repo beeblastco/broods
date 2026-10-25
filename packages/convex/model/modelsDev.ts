@@ -10,6 +10,7 @@ import {
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "./modelProviders";
+import { isPlainObject } from "./objects";
 
 /** The rate keys `BROODS_MODEL_PRICES` takes per model. */
 const INLINE_RATE_KEYS: ReadonlySet<string> = new Set([
@@ -53,81 +54,87 @@ export type ModelsDevApi = Record<
   }
 >;
 
-/** One agent provider's rate rows, as the `modelPrices` table stores them. */
+/** One agent provider's org-set rates; a cache rate left out is the catalogue's. */
+export interface OverrideRates {
+  provider: string;
+  models: Array<
+    Pick<ModelTokenRates, "input" | "output"> &
+      Partial<Pick<ModelTokenRates, "cacheRead" | "cacheWrite">> & {
+        modelId: string;
+      }
+  >;
+}
+
+/** One agent provider's catalogue rates, as the `modelPrices` table stores them. */
 export interface ProviderRates {
   provider: string;
   models: Array<ModelTokenRates & { modelId: string }>;
 }
 
 /**
- * `BROODS_MODEL_PRICES`: agent provider, then model id, then USD per million
- * tokens. Cache rates are optional and default to the input rate.
+ * The org's own rates from `BROODS_MODEL_PRICES`: agent provider, then model
+ * id, then USD per million tokens for `input`, `output` and optionally
+ * `cacheRead` and `cacheWrite`. Empty when unset. The value is text an
+ * operator types, so its shape is checked at runtime.
+ * @throws a `BROODS_MODEL_PRICES` error naming the mistake, so a bad value
+ * fails the crawl loudly instead of pricing wrong
  */
-type InlinePrices = Record<
-  string,
-  Record<
-    string,
-    {
-      input?: unknown;
-      output?: unknown;
-      cacheRead?: unknown;
-      cacheWrite?: unknown;
-    }
-  >
->;
-
-/**
- * The org's own rates from `BROODS_MODEL_PRICES`, empty when unset.
- * @throws a `BROODS_MODEL_PRICES` error when the JSON is malformed or
- * mis-shaped, names an unknown provider, or a model lacks a valid input or
- * output rate, so a config mistake fails the crawl loudly instead of pricing
- * nothing
- */
-export function parseInlinePrices(raw: string): ProviderRates[] {
+export function parseInlinePrices(raw: string): OverrideRates[] {
   if (raw.trim() === "") return [];
+  let body: unknown;
   try {
-    const body: InlinePrices = JSON.parse(raw);
-
-    return Object.entries(body).map(([provider, models]) => {
-      if (!isAccountModelProviderName(provider)) {
-        throw new Error(`unknown provider ${provider}`);
-      }
-      if (Object.keys(models).length === 0) {
-        throw new Error(`${provider} lists no models`);
-      }
-
-      return {
-        provider: provider,
-        models: Object.entries(models).map(([id, cost]) => {
-          const unknown = Object.keys(cost).filter(
-            (key) => !INLINE_RATE_KEYS.has(key),
-          );
-          if (unknown.length > 0) {
-            throw new Error(
-              `${provider}/${id} has unknown keys ${unknown.join(", ")}; use input, output, cacheRead, cacheWrite`,
-            );
-          }
-          if (!isRate(cost.input) || !isRate(cost.output)) {
-            throw new Error(
-              `${provider}/${id} needs non-negative input and output rates`,
-            );
-          }
-
-          return {
-            modelId: normalizeModelId(id),
-            input: cost.input,
-            output: cost.output,
-            cacheRead: isRate(cost.cacheRead) ? cost.cacheRead : cost.input,
-            cacheWrite: isRate(cost.cacheWrite) ? cost.cacheWrite : cost.input,
-          };
-        }),
-      };
-    });
+    body = JSON.parse(raw);
   } catch (error) {
-    throw new Error(
-      `BROODS_MODEL_PRICES: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw inlineError(error instanceof Error ? error.message : String(error));
   }
+  if (!isPlainObject(body)) {
+    throw inlineError("must be an object keyed by agent provider");
+  }
+
+  return Object.entries(body).map(([provider, models]) => {
+    if (!isAccountModelProviderName(provider)) {
+      throw inlineError(`unknown provider ${provider}`);
+    }
+    if (!isPlainObject(models) || Object.keys(models).length === 0) {
+      throw inlineError(`${provider} must map model ids to rates`);
+    }
+
+    return {
+      provider: provider,
+      models: Object.entries(models).map(([id, rates]) => {
+        if (!isPlainObject(rates)) {
+          throw inlineError(`${provider}/${id} must be an object of rates`);
+        }
+        const unknown = Object.keys(rates).filter(
+          (key) => !INLINE_RATE_KEYS.has(key),
+        );
+        if (unknown.length > 0) {
+          throw inlineError(
+            `${provider}/${id} has unknown keys ${unknown.join(", ")}; use input, output, cacheRead, cacheWrite`,
+          );
+        }
+        const { input, output, cacheRead, cacheWrite } = rates;
+        if (
+          !isRate(input) ||
+          !isRate(output) ||
+          (cacheRead !== undefined && !isRate(cacheRead)) ||
+          (cacheWrite !== undefined && !isRate(cacheWrite))
+        ) {
+          throw inlineError(
+            `${provider}/${id} needs non-negative numeric rates`,
+          );
+        }
+
+        return {
+          modelId: normalizeModelId(id),
+          input: input,
+          output: output,
+          ...(cacheRead !== undefined ? { cacheRead: cacheRead } : {}),
+          ...(cacheWrite !== undefined ? { cacheWrite: cacheWrite } : {}),
+        };
+      }),
+    };
+  });
 }
 
 /**
@@ -157,6 +164,10 @@ export function parseModelsDevRates(body: ModelsDevApi): ProviderRates[] {
       ? [{ provider: provider, models: [...rows.values()] }]
       : [];
   });
+}
+
+function inlineError(problem: string): Error {
+  return new Error(`BROODS_MODEL_PRICES: ${problem}`);
 }
 
 /** A finite, non-negative USD rate. */

@@ -1,12 +1,12 @@
 "use node";
 
 /**
- * Hourly crawl of model rates into `modelPrices`: the models.dev catalogue
- * (or `BROODS_MODEL_PRICES_URL`) plus the org's own `BROODS_MODEL_PRICES`.
- * A self-hosted deployment fetches no catalogue unless it sets the URL, since
- * most cannot reach the internet. Node runtime because the catalogue is one
- * ~6 MB JSON document, past what the default runtime's memory parses
- * comfortably.
+ * Hourly crawl of model rates: the org's own `BROODS_MODEL_PRICES` into
+ * `modelPriceOverrides`, then the models.dev catalogue (or
+ * `BROODS_MODEL_PRICES_URL`) into `modelPrices`. A self-hosted deployment
+ * fetches no catalogue unless it sets the URL, since most cannot reach the
+ * internet. Node runtime because the catalogue is one ~6 MB JSON document,
+ * past what the default runtime's memory parses comfortably.
  */
 
 import { v } from "convex/values";
@@ -17,7 +17,6 @@ import {
   parseInlinePrices,
   parseModelsDevRates,
   type ModelsDevApi,
-  type ProviderRates,
 } from "../model/modelsDev";
 import { authProvider } from "../model/selfHostAuth";
 
@@ -25,45 +24,41 @@ const FETCH_TIMEOUT_MS = 30_000;
 // models.dev is ~6 MB; anything far past that is not a price catalogue.
 const MAX_CATALOGUE_BYTES = 32 * 1024 * 1024;
 
-/** Cron: gather every provider's rates and store the ones that changed. */
+/**
+ * Cron: store the org's rates first, so a catalogue that is down never holds
+ * them back, then the catalogue's.
+ */
 export const run = internalAction({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
+    await ctx.runMutation(internal.modelPrices.store.storeOverrides, {
+      providers: parseInlinePrices(process.env.BROODS_MODEL_PRICES ?? ""),
+    });
+
     const url = catalogueUrl();
-    const inline = process.env.BROODS_MODEL_PRICES ?? "";
-    // Before any download, so a malformed value fails without fetching.
-    const inlineRates = parseInlinePrices(inline);
-    const last = await ctx.runQuery(internal.modelPrices.store.crawlState, {});
-    // Unset on the first run and while no rate is stored, so those always
-    // write: a self-host upgrading with nothing configured clears old rates.
-    const sameInputs = last?.url === url && last.inline === inline;
-    let crawled: ProviderRates[] = [];
-    let etag = "";
-    if (url !== "") {
-      const response = await fetch(url, {
-        headers: {
-          Accept: "application/json",
-          ...(sameInputs && last?.etag ? { "If-None-Match": last.etag } : {}),
-        },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    if (url === "") {
+      await ctx.runMutation(internal.modelPrices.store.storeCatalogue, {
+        providers: [],
+        clear: true,
       });
-      if (response.status === 304) return null;
-      if (!response.ok) {
-        throw new Error(`${url} answered ${response.status}`);
-      }
-      crawled = parseModelsDevRates(await readCatalogue(response));
-      if (crawled.length === 0) {
-        throw new Error(`${url} returned no priced models`);
-      }
-      etag = response.headers.get("etag") ?? "";
-    } else if (sameInputs) {
+
       return null;
     }
-    await ctx.runMutation(internal.modelPrices.store.store, {
-      crawled: crawled,
-      inline: inlineRates,
-      crawl: { url: url, etag: etag, inline: inline },
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`${url} answered ${response.status}`);
+    }
+    const providers = parseModelsDevRates(await readCatalogue(response));
+    if (providers.length === 0) {
+      throw new Error(`${url} returned no priced models`);
+    }
+    await ctx.runMutation(internal.modelPrices.store.storeCatalogue, {
+      providers: providers,
+      clear: false,
     });
 
     return null;

@@ -5464,18 +5464,12 @@ export declare const internal: {
       run: FunctionReference<"action", "internal", {}, null>;
     };
     store: {
-      crawlState: FunctionReference<
-        "query",
-        "internal",
-        {},
-        { etag: string; inline: string; url: string } | null
-      >;
-      store: FunctionReference<
+      storeCatalogue: FunctionReference<
         "mutation",
         "internal",
         {
-          crawl: { etag: string; inline: string; url: string };
-          crawled: Array<{
+          clear: boolean;
+          providers: Array<{
             models: Array<{
               cacheRead: number;
               cacheWrite: number;
@@ -5485,10 +5479,17 @@ export declare const internal: {
             }>;
             provider: string;
           }>;
-          inline: Array<{
+        },
+        null
+      >;
+      storeOverrides: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          providers: Array<{
             models: Array<{
-              cacheRead: number;
-              cacheWrite: number;
+              cacheRead?: number;
+              cacheWrite?: number;
               input: number;
               modelId: string;
               output: number;

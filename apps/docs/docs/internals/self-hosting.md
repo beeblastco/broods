@@ -179,15 +179,15 @@ CONVEX_SELF_HOSTED_URL=https://convex.example.com CONVEX_SELF_HOSTED_ADMIN_KEY=.
 
 ### Model prices
 
-The Usage tab prices tokens from the `modelPrices` table, which an hourly cron fills. The managed cloud crawls [models.dev](https://models.dev); a self-hosted deployment fetches nothing unless you set `BROODS_MODEL_PRICES_URL`, since most cannot reach the internet. Point it at `https://models.dev/api.json` if yours can, or at a copy inside your network.
+The Usage tab prices tokens from rates an hourly cron stores. The managed cloud crawls [models.dev](https://models.dev); a self-hosted deployment fetches nothing unless you set `BROODS_MODEL_PRICES_URL`, since most cannot reach the internet. Point it at `https://models.dev/api.json` if yours can, or at a copy inside your network. A provider the catalogue stops listing keeps its last rates; unsetting the URL clears them.
 
-Set your own rates, such as negotiated prices or a `custom` endpoint, as JSON in `BROODS_MODEL_PRICES`: agent provider, then model id, then USD per million tokens. They apply over the catalogue. Cache rates are optional and default to the input rate.
+Set your own rates, such as negotiated prices or a `custom` endpoint, as JSON in `BROODS_MODEL_PRICES`: agent provider, then model id, then USD per million tokens for `input`, `output` and optionally `cacheRead` and `cacheWrite`. They win over the catalogue on that model and its dated snapshots, and a cache rate you leave out is the catalogue's, else your input rate. They are stored before the catalogue is fetched, so an unreachable URL never holds them back.
 
 ```bash
-bunx convex env set BROODS_MODEL_PRICES '{"custom":{"gpt-oss-120b":{"input":0.1,"output":0.5}},"anthropic":{"claude-sonnet-5-5":{"input":1.8,"output":9,"cacheRead":0.09}}}'
+bunx convex env set BROODS_MODEL_PRICES '{"custom":{"gpt-oss-120b":{"input":0.1,"output":0.5}},"anthropic":{"claude-sonnet-5-5":{"input":1.8,"output":9}}}'
 ```
 
-A malformed value fails the crawl with the reason in the Convex logs. Unset both variables and the next crawl clears every stored rate, so every model reads "not priced".
+A malformed value fails the crawl with the reason in the Convex logs. Removing a rate from the variable removes it on the next crawl.
 
 ## 3. Shared services
 

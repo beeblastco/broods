@@ -135,10 +135,7 @@ type UsageTotals = Omit<
   "bucketStart" | "modelProvider" | "modelId"
 >;
 
-/**
- * Rates for models the dashboard sees on the trace stream, which have no
- * usage row yet: live runs on the Usage tab, task prices on Tracing.
- */
+/** Rates for the models the Usage tab sees running live, which have no usage row yet. */
 export const fetchModelRates = query({
   args: { models: v.array(modelRef) },
   returns: v.array(usageModelRates),
@@ -378,7 +375,12 @@ export async function collectUsageTasks(
     .take(limit);
 }
 
-/** The stored rates of every priced model in `models`, named as the caller names it. */
+/**
+ * The rates of every priced model in `models`, named as the caller names it.
+ * The org's override wins on any id it matches, a dated snapshot through its
+ * alias included; a cache rate it leaves out is the catalogue's, else its
+ * input rate.
+ */
 export async function modelRates(
   ctx: QueryCtx,
   models: Array<Pick<UsageBucketRow, "modelProvider" | "modelId">>,
@@ -392,19 +394,47 @@ export async function modelRates(
   }
   const priced = await Promise.all(
     [...modelIds].map(async ([provider, ids]) => {
-      const doc = await ctx.db
-        .query("modelPrices")
-        .withIndex("by_provider", (q) => q.eq("provider", provider))
-        .unique();
-      const rows = new Map(doc?.models.map((row) => [row.modelId, row]));
+      const [catalogue, overrides] = await Promise.all([
+        ctx.db
+          .query("modelPrices")
+          .withIndex("by_provider", (q) => q.eq("provider", provider))
+          .unique(),
+        ctx.db
+          .query("modelPriceOverrides")
+          .withIndex("by_provider", (q) => q.eq("provider", provider))
+          .unique(),
+      ]);
+      const listed = new Map(
+        catalogue?.models.map((row) => [row.modelId, row]),
+      );
+      const own = new Map(overrides?.models.map((row) => [row.modelId, row]));
 
       return [...ids].flatMap((modelId) => {
-        const row = priceLookupIds(modelId)
-          .map((id) => rows.get(id))
-          .find((match) => match !== undefined);
+        const lookup = priceLookupIds(modelId);
+        const base = firstMatch(lookup, listed);
+        const override = firstMatch(lookup, own);
+        const rates = override
+          ? {
+              input: override.input,
+              output: override.output,
+              cacheRead:
+                override.cacheRead ?? base?.cacheRead ?? override.input,
+              cacheWrite:
+                override.cacheWrite ?? base?.cacheWrite ?? override.input,
+            }
+          : base;
 
-        return row
-          ? [{ ...row, modelProvider: provider, modelId: modelId }]
+        return rates
+          ? [
+              {
+                modelId: modelId,
+                input: rates.input,
+                output: rates.output,
+                cacheRead: rates.cacheRead,
+                cacheWrite: rates.cacheWrite,
+                modelProvider: provider,
+              },
+            ]
           : [];
       });
     }),
@@ -523,4 +553,12 @@ function aggregateUsage(
   );
 
   return { buckets: buckets, totals: totals };
+}
+
+/** The row of the first id in `ids` that `rows` holds. */
+function firstMatch<Row>(
+  ids: string[],
+  rows: Map<string, Row>,
+): Row | undefined {
+  return ids.map((id) => rows.get(id)).find((row) => row !== undefined);
 }

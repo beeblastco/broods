@@ -1,100 +1,66 @@
 /**
- * Writes the rates `modelPrices/crawl.ts` gathers, one doc per agent
- * provider, and the crawl's inputs so the next run can fetch conditionally.
+ * Writes what `modelPrices/crawl.ts` gathers: the catalogue's rates into
+ * `modelPrices` and the org's `BROODS_MODEL_PRICES` into `modelPriceOverrides`,
+ * one doc per agent provider, writing only the ones that changed.
  */
 
-import { v, type Infer } from "convex/values";
-import { internalMutation, internalQuery } from "../_generated/server";
-import { priceLookupIds, type ModelTokenRates } from "../model/modelPricing";
-import type { ProviderRates } from "../model/modelsDev";
+import { v } from "convex/values";
+import { internalMutation } from "../_generated/server";
 import { stableJson } from "../model/objects";
-import { modelPriceCrawlFields, modelPricesFields } from "../schema";
-
-const crawlInputs = v.object(modelPriceCrawlFields);
-const providerRates = v.array(v.object(modelPricesFields));
-
-type RateRow = ModelTokenRates & { modelId: string };
+import { modelPriceOverridesFields, modelPricesFields } from "../schema";
 
 /**
- * Crawl: the last run's catalogue URL, ETag and inline prices. Null before
- * the first run, and while a configured source has no rate stored, so an
- * emptied table is refilled instead of trusting a 304.
+ * Crawl: the catalogue's rates. A provider the catalogue stops listing keeps
+ * its last rates; `clear` drops every one, for when no catalogue is set.
  */
-export const crawlState = internalQuery({
-  args: {},
-  returns: v.union(crawlInputs, v.null()),
-  handler: async (ctx): Promise<Infer<typeof crawlInputs> | null> => {
-    const row = await ctx.db.query("modelPriceCrawl").first();
-    const priced = await ctx.db.query("modelPrices").first();
-
-    const configured = row !== null && (row.url !== "" || row.inline !== "");
-
-    return row && (priced || !configured)
-      ? { url: row.url, etag: row.etag, inline: row.inline }
-      : null;
+export const storeCatalogue = internalMutation({
+  args: {
+    providers: v.array(v.object(modelPricesFields)),
+    clear: v.boolean(),
   },
-});
-
-/**
- * Crawl: replace each provider's rates, writing only the ones that changed.
- * The org's inline prices apply over the crawl, an alias's rate over its
- * dated snapshots too. The table mirrors the inputs: a provider in neither
- * loses its rates.
- */
-export const store = internalMutation({
-  args: { crawled: providerRates, inline: providerRates, crawl: crawlInputs },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const stored = new Map(
-      (await ctx.db.query("modelPrices").collect()).map((doc) => [
-        doc.provider,
-        doc,
-      ]),
+    const stored = await ctx.db.query("modelPrices").collect();
+    const next = new Map(
+      args.providers.map((rates) => [rates.provider, rates]),
     );
-    const providers = new Set([
-      ...args.crawled.map((rates) => rates.provider),
-      ...args.inline.map((rates) => rates.provider),
-      ...stored.keys(),
-    ]);
-    for (const provider of providers) {
-      const existing = stored.get(provider);
-      const inline = ratesOf(args.inline, provider);
-      const overridden = new Set(inline.map((row) => row.modelId));
-      const models = new Map<string, RateRow>();
-      for (const row of ratesOf(args.crawled, provider)) {
-        if (!overridden.has(priceLookupIds(row.modelId).at(-1) ?? "")) {
-          models.set(row.modelId, row);
-        }
-      }
-      for (const row of inline) models.set(row.modelId, row);
-      const next = [...models.values()];
-      if (next.length === 0) {
-        if (existing) await ctx.db.delete(existing._id);
-      } else if (!existing) {
-        await ctx.db.insert("modelPrices", {
-          provider: provider,
-          models: next,
-        });
-      } else if (stableJson(existing.models) !== stableJson(next)) {
-        await ctx.db.patch(existing._id, { models: next });
+    for (const doc of stored) {
+      const rates = next.get(doc.provider);
+      next.delete(doc.provider);
+      if (args.clear) await ctx.db.delete(doc._id);
+      else if (rates && stableJson(doc.models) !== stableJson(rates.models)) {
+        await ctx.db.patch(doc._id, { models: rates.models });
       }
     }
-
-    const state = await ctx.db.query("modelPriceCrawl").first();
-    if (!state) {
-      await ctx.db.insert("modelPriceCrawl", args.crawl);
-    } else if (
-      stableJson({ url: state.url, etag: state.etag, inline: state.inline }) !==
-      stableJson(args.crawl)
-    ) {
-      await ctx.db.patch(state._id, args.crawl);
+    for (const rates of next.values()) {
+      await ctx.db.insert("modelPrices", rates);
     }
 
     return null;
   },
 });
 
-/** One provider's rows in a list of provider rates. */
-function ratesOf(rates: ProviderRates[], provider: string): RateRow[] {
-  return rates.find((entry) => entry.provider === provider)?.models ?? [];
-}
+/** Crawl: mirror the org's `BROODS_MODEL_PRICES`, so a removed rate goes. */
+export const storeOverrides = internalMutation({
+  args: { providers: v.array(v.object(modelPriceOverridesFields)) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const stored = await ctx.db.query("modelPriceOverrides").collect();
+    const next = new Map(
+      args.providers.map((rates) => [rates.provider, rates]),
+    );
+    for (const doc of stored) {
+      const rates = next.get(doc.provider);
+      next.delete(doc.provider);
+      if (!rates) await ctx.db.delete(doc._id);
+      else if (stableJson(doc.models) !== stableJson(rates.models)) {
+        await ctx.db.patch(doc._id, { models: rates.models });
+      }
+    }
+    for (const rates of next.values()) {
+      await ctx.db.insert("modelPriceOverrides", rates);
+    }
+
+    return null;
+  },
+});

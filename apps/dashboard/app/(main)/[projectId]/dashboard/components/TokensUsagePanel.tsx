@@ -251,10 +251,19 @@ export function TokensUsagePanel({
     stageId: stageId ?? undefined,
     range: range,
   });
-  const liveRates = useQuery(
+  const liveRateRows = useQuery(
     api.logs.fetchModelRates,
     liveModels.length > 0 ? { models: liveModels } : "skip",
   );
+  // The last live rates stay while a new live model set loads, so the cost
+  // does not dip; a model without a rate yet is not "not priced" until then.
+  const [heldLiveRates, setHeldLiveRates] =
+    useState<typeof liveRateRows>(undefined);
+  if (liveRateRows !== undefined && liveRateRows !== heldLiveRates) {
+    setHeldLiveRates(liveRateRows);
+  }
+  const liveRates = liveRateRows ?? heldLiveRates;
+  const liveRatesLoading = liveModels.length > 0 && liveRateRows === undefined;
   // Hold the last result while another range loads, so the chart morphs from
   // it instead of collapsing to an empty grid first. Only for the same
   // project and stage: another stage's numbers never show under this one.
@@ -330,9 +339,9 @@ export function TokensUsagePanel({
   const { binCosts, estimatedCost, unpriced } = useMemo(() => {
     const byStart = new Map<number, number>();
     const unpricedModels = new Set<string>();
-    const priceOf = (m: ModelUsage): number => {
+    const priceOf = (m: ModelUsage, loading = false): number => {
       const cost = estimateModelTokenCost(rates.get(modelKey(m)), m);
-      if (cost === null) unpricedModels.add(modelKey(m));
+      if (cost === null && !loading) unpricedModels.add(modelKey(m));
 
       return cost?.total ?? 0;
     };
@@ -343,11 +352,9 @@ export function TokensUsagePanel({
       byStart.set(start, (byStart.get(start) ?? 0) + priceOf(b));
     }
     const costs = bucketStarts.map((start) => byStart.get(start) ?? 0);
-    // Skipped while the live rates load, so a new live model never flashes
-    // as "not priced".
-    if (activeFilter === null && costs.length > 0 && liveRates !== undefined) {
+    if (activeFilter === null && costs.length > 0) {
       for (const m of liveOverlay.modelUsage) {
-        costs[costs.length - 1] += priceOf(m);
+        costs[costs.length - 1] += priceOf(m, liveRatesLoading);
       }
     }
 
@@ -367,7 +374,7 @@ export function TokensUsagePanel({
     selected,
     liveOverlay,
     rates,
-    liveRates,
+    liveRatesLoading,
   ]);
 
   const averages = useMemo(
