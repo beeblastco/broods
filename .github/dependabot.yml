@@ -41,6 +41,19 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: chore(deps)
+    ignore:
+      # The dashboard reads next fire times with the cron-parser major that
+      # @convex-dev/crons schedules with, so the two never disagree.
+      - dependency-name: cron-parser
+        update-types: ["version-update:semver-major"]
+      # @posthog/ai holds sdk-trace-base on 2.x, which wants api below 1.10, so the
+      # OpenTelemetry packages stay on that line together until it moves.
+      - dependency-name: "@opentelemetry/*"
+        versions: [">=0.300.0 <1.0.0", ">=1.10.0 <2.0.0", ">=3.0.0"]
+      # @convex-dev/workos-authkit takes @workos-inc/node up to 10; a newer
+      # major installs a second copy beside it.
+      - dependency-name: "@workos-inc/node"
+        update-types: ["version-update:semver-major"]
     groups:
       ai-sdk:
         patterns:

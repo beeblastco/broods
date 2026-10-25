@@ -1432,6 +1432,15 @@ function normalizeWhatsAppConfig(value: unknown): void {
     config.phoneNumberId,
     "config.channels.whatsapp.phoneNumberId",
   );
+  // It is a Graph API path segment, and the SDK refuses to send to any other.
+  if (
+    typeof config.phoneNumberId === "string" &&
+    !/^\d+$/.test(config.phoneNumberId)
+  ) {
+    throw new ClientError(
+      "config.channels.whatsapp.phoneNumberId must be the number's digits-only ID",
+    );
+  }
   assertOptionalString(config.userName, "config.channels.whatsapp.userName");
   assertOptionalString(
     config.verifyToken,

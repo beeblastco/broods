@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@broods/convex": "workspace:*",
-    "convex": "^1.44.0"
+    "convex": "^1.47.0"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3"

@@ -60,13 +60,11 @@ export function LockedValue({
 }): React.JSX.Element {
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex cursor-default items-center gap-1.5 text-muted-foreground" />
-        }
-      >
-        <Lock className="size-3" aria-label={reason} />
-        {children ?? "No permission"}
+      <TooltipTrigger render={<span className="cursor-default" />}>
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          <Lock className="size-3" aria-label={reason} />
+          {children ?? "No permission"}
+        </span>
       </TooltipTrigger>
       <TooltipContent>{reason}</TooltipContent>
     </Tooltip>

@@ -28,6 +28,7 @@ import type {
 import type { Attachment } from "chat";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { channelAdapterFromConfig } from "./integrations.ts";
+import { readFetchedBytes } from "../shared/channels.ts";
 import { createHash } from "node:crypto";
 import { basename } from "node:path/posix";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
@@ -333,7 +334,7 @@ export async function readAttachmentBytes(
       : Buffer.from(await attachment.data.arrayBuffer());
   }
   if (attachment.fetchData) {
-    return await attachment.fetchData();
+    return await readFetchedBytes(attachment.fetchData);
   }
   if (!attachment.url) {
     throw new Error("attachment carries neither data, a reader, nor a URL");

@@ -280,7 +280,6 @@ test("a dashboard canvas save cannot point a stage's sandbox at another stage's 
   const authId = "user_snapshot_owner";
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-    apiKey: "sk_test_fixture",
     event: {
       id: "evt_snapshot_owner",
       event: "user.created",

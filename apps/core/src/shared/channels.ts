@@ -279,6 +279,15 @@ export interface ChannelAdapter {
   rehydrateAttachment?(attachment: Attachment): Attachment;
 }
 
+/** An SDK attachment reader's bytes, which some adapters hand back unwrapped. */
+export async function readFetchedBytes(
+  fetchData: () => Promise<Buffer | ArrayBuffer>,
+): Promise<Buffer> {
+  const bytes = await fetchData();
+
+  return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+}
+
 /**
  * Bytes for an attachment, for providers that upload rather than fetch. A
  * workspace file arrives with `fetchData` so the object is read straight from
@@ -291,7 +300,7 @@ export async function channelAttachmentBytes(
   attachment: ChannelFile | ChannelImage,
 ): Promise<Buffer> {
   if (attachment.fetchData) {
-    return await attachment.fetchData();
+    return await readFetchedBytes(attachment.fetchData);
   }
   const response = await guardedFetch(attachment.url, undefined, {
     binary: true,

@@ -56,22 +56,22 @@
     "test:desktop": "BROODS_TEST_DESKTOP=1 bun test tests/cli-desktop.test.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.2.0",
+    "@modelcontextprotocol/client": "^2.3.1",
     "esbuild": "^0.28.2"
   },
   "devDependencies": {
     "@ai-sdk/tui": "1.0.154",
     "@arethetypeswrong/cli": "^0.18.5",
-    "@chat-adapter/discord": "^4.38.1",
-    "@chat-adapter/github": "^4.38.1",
-    "@chat-adapter/slack": "^4.38.1",
-    "@chat-adapter/telegram": "^4.38.1",
+    "@chat-adapter/discord": "^4.43.0",
+    "@chat-adapter/github": "^4.43.0",
+    "@chat-adapter/slack": "^4.43.0",
+    "@chat-adapter/telegram": "^4.43.0",
     "@modelcontextprotocol/server": "2.3.1",
     "@types/bun": "^1.4.3",
     "@typescript/typescript6": "6.0.2",
     "ai": "^7.0.153",
-    "publint": "^0.3.23",
-    "rollup": "^4.62.4",
+    "publint": "^0.3.25",
+    "rollup": "^4.65.0",
     "rollup-plugin-dts": "^6.5.1",
     "typescript": "^7.0.2",
     "zod": "^4.6.7"
