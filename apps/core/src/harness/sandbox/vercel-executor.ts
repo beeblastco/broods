@@ -116,8 +116,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`, { cwd: "/" });
       }
       if (persistent && cwd) {
+        // Before the hooks so they cannot outlast the session, and after them
+        // so the command still gets its full window.
+        await this.#keepAlive(sandbox, request.timeoutSeconds);
         await this.#runLifecycle(sandbox, cwd);
-        // After the hooks, so however long they took the command gets its window.
         await this.#keepAlive(sandbox, request.timeoutSeconds);
       }
       const result = await sandbox.runCommand({
@@ -162,6 +164,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const workDir = this.#workDir(ns);
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`, { cwd: "/" });
     const jobId = request.jobId ?? generateJobId();
+    await this.#keepAlive(sandbox, request.timeoutSeconds);
     await this.#runLifecycle(sandbox, workDir);
     await this.#keepAlive(sandbox, request.timeoutSeconds);
     const script = launchScript(

@@ -3326,6 +3326,32 @@ describe("createSandboxExecutor", () => {
     expect(extension).toBeLessThanOrEqual(930_000 + Date.now() - startedAt);
   });
 
+  // onResume runs on every call, so a slow hook could outlast a session that
+  // was about to expire.
+  it("extends the session before the lifecycle hooks run", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      onResume: ["sleep 1"],
+    });
+    const startedAt = Date.now();
+    vercelSession = {
+      createdAt: new Date(startedAt),
+      expiresAt: new Date(startedAt + 60_000),
+    };
+
+    await executor.run(persistentVercelRun());
+
+    const hookCall = vercelRunCommandMock.mock.calls.findIndex(
+      ([params]): boolean => JSON.stringify(params).includes("sleep 1"),
+    );
+    expect(hookCall).toBeGreaterThanOrEqual(0);
+    expect(vercelExtendTimeoutMock.mock.invocationCallOrder[0]).toBeLessThan(
+      vercelRunCommandMock.mock.invocationCallOrder[hookCall]!,
+    );
+  });
+
   it("leaves a session alone when it outlasts the idle window", async () => {
     const { VercelSandboxExecutor } =
       await import("../src/harness/sandbox/vercel-executor.ts");
