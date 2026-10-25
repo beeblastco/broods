@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 import { internal } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
 import { modelRates } from "../logs";
 import {
   canonicalModelProvider,
@@ -157,13 +158,19 @@ describe("model pricing", () => {
     expect(() => parseInlinePrices('{"openai":null}')).toThrow(
       "BROODS_MODEL_PRICES",
     );
+    expect(() => parseInlinePrices('{"openai":{}}')).toThrow("lists no models");
+    expect(() =>
+      parseInlinePrices(
+        '{"anthropic":{"m":{"input":3,"output":15,"cache_read":0.3}}}',
+      ),
+    ).toThrow("unknown keys cache_read");
   });
 
   it("applies inline prices over the crawl and mirrors both sources", async () => {
     const tt = convexTest(schema, modules);
     const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
     const inlineJson = '{"openai":{"gpt-5.5":{"input":1,"output":2}}}';
-    const crawl = (input: number, withInline: boolean) =>
+    const crawl = (input: number, withInline: boolean): Promise<null> =>
       tt.mutation(internal.modelPrices.store.store, {
         crawled: [
           {
@@ -182,7 +189,9 @@ describe("model pricing", () => {
           : [],
         crawl: { ...CRAWL, inline: withInline ? inlineJson : "" },
       });
-    const stored = async (provider: string) =>
+    const stored = async (
+      provider: string,
+    ): Promise<Doc<"modelPrices"> | null> =>
       await tt.run(
         async (ctx) =>
           await ctx.db
@@ -206,15 +215,62 @@ describe("model pricing", () => {
     expect((await stored("openai"))?.models[0].input).toBe(500);
     expect(await stored("custom")).toBeNull();
 
-    // Both sources unset: the table empties, and the next crawl fetches afresh.
+    // Both sources unset: the table empties, and that empty state is current,
+    // so the next crawl does not write again.
     await tt.mutation(internal.modelPrices.store.store, {
       crawled: [],
       inline: [],
       crawl: { url: "", etag: "", inline: "" },
     });
     expect(await stored("openai")).toBeNull();
-    expect(
-      await tt.query(internal.modelPrices.store.crawlState, {}),
-    ).toBeNull();
+    expect(await tt.query(internal.modelPrices.store.crawlState, {})).toEqual({
+      url: "",
+      etag: "",
+      inline: "",
+    });
+  });
+
+  it("lets an inline rate on an alias replace the crawl's dated snapshots", async () => {
+    const tt = convexTest(schema, modules);
+    const listed = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+    const negotiated = {
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
+    };
+    await tt.mutation(internal.modelPrices.store.store, {
+      crawled: [
+        {
+          provider: "anthropic",
+          models: [
+            { modelId: "claude-sonnet-5-5", ...listed },
+            { modelId: "claude-sonnet-5-5-20260101", ...listed },
+          ],
+        },
+      ],
+      inline: [
+        {
+          provider: "anthropic",
+          models: [{ modelId: "claude-sonnet-5-5", ...negotiated }],
+        },
+      ],
+      crawl: CRAWL,
+    });
+
+    const priced = await tt.run(
+      async (ctx) =>
+        await modelRates(ctx, [
+          { modelProvider: "anthropic", modelId: "claude-sonnet-5-5-20260101" },
+        ]),
+    );
+
+    expect(priced).toEqual([
+      {
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-5-5-20260101",
+        ...negotiated,
+      },
+    ]);
   });
 });

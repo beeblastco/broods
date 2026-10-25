@@ -343,7 +343,9 @@ export function TokensUsagePanel({
       byStart.set(start, (byStart.get(start) ?? 0) + priceOf(b));
     }
     const costs = bucketStarts.map((start) => byStart.get(start) ?? 0);
-    if (activeFilter === null && costs.length > 0) {
+    // Skipped while the live rates load, so a new live model never flashes
+    // as "not priced".
+    if (activeFilter === null && costs.length > 0 && liveRates !== undefined) {
       for (const m of liveOverlay.modelUsage) {
         costs[costs.length - 1] += priceOf(m);
       }
@@ -357,7 +359,16 @@ export function TokensUsagePanel({
           : costs[selected],
       unpriced: unpricedModels.size,
     };
-  }, [stats, activeFilter, binMs, bucketStarts, selected, liveOverlay, rates]);
+  }, [
+    stats,
+    activeFilter,
+    binMs,
+    bucketStarts,
+    selected,
+    liveOverlay,
+    rates,
+    liveRates,
+  ]);
 
   const averages = useMemo(
     () => perTaskAverages(bins, binCosts),

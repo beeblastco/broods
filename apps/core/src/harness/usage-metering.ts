@@ -88,20 +88,6 @@ export function extractCacheWriteTokens(
     }
   }
 
-  // Google: usageMetadata lives under the "google" key.
-  if (provider === "google") {
-    const googleBlock = providerMetadata["google"];
-    if (isPlainObject(googleBlock)) {
-      const usageMeta = googleBlock["usageMetadata"];
-      if (isPlainObject(usageMeta)) {
-        const val = usageMeta[field];
-        if (typeof val === "number" && val > 0) return val;
-      }
-      const direct = googleBlock[field];
-      if (typeof direct === "number" && direct > 0) return direct;
-    }
-  }
-
   return 0;
 }
 

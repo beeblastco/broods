@@ -11,6 +11,14 @@ import {
   type AccountModelProviderName,
 } from "./modelProviders";
 
+/** The rate keys `BROODS_MODEL_PRICES` takes per model. */
+const INLINE_RATE_KEYS: ReadonlySet<string> = new Set([
+  "input",
+  "output",
+  "cacheRead",
+  "cacheWrite",
+]);
+
 /** Where models.dev publishes every provider's models and rates. */
 export const MODELS_DEV_API_URL = "https://models.dev/api.json";
 
@@ -84,10 +92,21 @@ export function parseInlinePrices(raw: string): ProviderRates[] {
       if (!isAccountModelProviderName(provider)) {
         throw new Error(`unknown provider ${provider}`);
       }
+      if (Object.keys(models).length === 0) {
+        throw new Error(`${provider} lists no models`);
+      }
 
       return {
         provider: provider,
         models: Object.entries(models).map(([id, cost]) => {
+          const unknown = Object.keys(cost).filter(
+            (key) => !INLINE_RATE_KEYS.has(key),
+          );
+          if (unknown.length > 0) {
+            throw new Error(
+              `${provider}/${id} has unknown keys ${unknown.join(", ")}; use input, output, cacheRead, cacheWrite`,
+            );
+          }
           if (!isRate(cost.input) || !isRate(cost.output)) {
             throw new Error(
               `${provider}/${id} needs non-negative input and output rates`,

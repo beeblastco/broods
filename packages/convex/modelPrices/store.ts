@@ -5,7 +5,7 @@
 
 import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
-import type { ModelTokenRates } from "../model/modelPricing";
+import { priceLookupIds, type ModelTokenRates } from "../model/modelPricing";
 import type { ProviderRates } from "../model/modelsDev";
 import { stableJson } from "../model/objects";
 import { modelPriceCrawlFields, modelPricesFields } from "../schema";
@@ -17,8 +17,8 @@ type RateRow = ModelTokenRates & { modelId: string };
 
 /**
  * Crawl: the last run's catalogue URL, ETag and inline prices. Null before
- * the first run and while no rate is stored, so an emptied table is refilled
- * instead of trusting a 304.
+ * the first run, and while a configured source has no rate stored, so an
+ * emptied table is refilled instead of trusting a 304.
  */
 export const crawlState = internalQuery({
   args: {},
@@ -27,7 +27,9 @@ export const crawlState = internalQuery({
     const row = await ctx.db.query("modelPriceCrawl").first();
     const priced = await ctx.db.query("modelPrices").first();
 
-    return row && priced
+    const configured = row !== null && (row.url !== "" || row.inline !== "");
+
+    return row && (priced || !configured)
       ? { url: row.url, etag: row.etag, inline: row.inline }
       : null;
   },
@@ -35,8 +37,9 @@ export const crawlState = internalQuery({
 
 /**
  * Crawl: replace each provider's rates, writing only the ones that changed.
- * The org's inline prices apply over the crawl. The table mirrors the inputs:
- * a provider in neither loses its rates.
+ * The org's inline prices apply over the crawl, an alias's rate over its
+ * dated snapshots too. The table mirrors the inputs: a provider in neither
+ * loses its rates.
  */
 export const store = internalMutation({
   args: { crawled: providerRates, inline: providerRates, crawl: crawlInputs },
@@ -55,13 +58,15 @@ export const store = internalMutation({
     ]);
     for (const provider of providers) {
       const existing = stored.get(provider);
+      const inline = ratesOf(args.inline, provider);
+      const overridden = new Set(inline.map((row) => row.modelId));
       const models = new Map<string, RateRow>();
-      for (const row of [
-        ...ratesOf(args.crawled, provider),
-        ...ratesOf(args.inline, provider),
-      ]) {
-        models.set(row.modelId, row);
+      for (const row of ratesOf(args.crawled, provider)) {
+        if (!overridden.has(priceLookupIds(row.modelId).at(-1) ?? "")) {
+          models.set(row.modelId, row);
+        }
       }
+      for (const row of inline) models.set(row.modelId, row);
       const next = [...models.values()];
       if (next.length === 0) {
         if (existing) await ctx.db.delete(existing._id);
