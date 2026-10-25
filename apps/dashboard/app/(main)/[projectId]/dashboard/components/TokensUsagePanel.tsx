@@ -18,6 +18,13 @@ import {
 import { useTween } from "@/app/hooks/useTween";
 import { formatNumber } from "@/app/lib/formatNumber";
 import {
+  formatUsd,
+  modelKey,
+  runModel,
+  stepTokens,
+  type ModelUsage,
+} from "@/app/lib/modelCost";
+import {
   bucketStartsAcrossRange,
   formatAxisNumber,
   knownRuns,
@@ -33,7 +40,6 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   estimateModelTokenCost,
   type ModelTokenRates,
-  type ModelTokenUsage,
 } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
@@ -87,12 +93,6 @@ interface LiveOverlay {
   modelCalls: number;
   // Each step's tokens under its root's model, priced like a usage row.
   modelUsage: ModelUsage[];
-}
-
-/** One model's tokens, keyed the way usage rows name the model. */
-interface ModelUsage extends ModelTokenUsage {
-  modelProvider: string;
-  modelId: string;
 }
 
 const RANGE_SECONDS: Record<Range, number> = {
@@ -902,18 +902,6 @@ function formatMs(ms: number): string {
   return `${Math.round(ms)}ms`;
 }
 
-/** USD estimate with useful precision for small token batches. */
-function formatUsd(value: number): string {
-  if (value > 0 && value < 0.0001) return "<$0.0001";
-
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  });
-}
-
 /**
  * In-progress overlay taken straight off the live trace stream: Convex usage is
  * only written when a task finalizes, so a long run would otherwise show nothing
@@ -942,23 +930,15 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
       ? runningRootsById.get(span.parentSpanId)
       : undefined;
     if (span.kind !== "model.step" || !root) continue;
-    const usage = {
-      inputTokens: numericAttribute(span, "model.input_tokens"),
-      outputTokens: numericAttribute(span, "model.output_tokens"),
-      cachedInputTokens: numericAttribute(span, "model.cached_input_tokens"),
-      cacheWriteTokens: numericAttribute(span, "model.cache_write_tokens"),
-    };
-    const { "model.provider": provider, "model.id": modelId } =
-      root.attributes ?? {};
+    const usage = stepTokens(span);
+    const model = runModel(root);
     totals.modelCalls += 1;
     totals.inputTokens += usage.inputTokens;
     totals.outputTokens += usage.outputTokens;
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
     totals.cachedInputTokens += usage.cachedInputTokens;
     totals.cacheWriteTokens += usage.cacheWriteTokens;
-    if (typeof provider === "string" && typeof modelId === "string") {
-      modelUsage.push({ modelProvider: provider, modelId: modelId, ...usage });
-    }
+    if (model) modelUsage.push({ ...model, ...usage });
   }
   totals.modelUsage = modelUsage;
 
@@ -978,11 +958,6 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   }
 
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
-}
-
-/** `provider::model`, the key the model filter, its colors and the trace query share. */
-function modelKey(b: { modelProvider: string; modelId: string }): string {
-  return `${b.modelProvider}::${b.modelId}`;
 }
 
 function numericAttribute(span: ObservabilitySpanRow, key: string): number {

@@ -9,6 +9,7 @@ import {
   spanIssue,
   TASK_QUERY_FIELDS,
   taskChannel,
+  taskCosts,
   type TaskQuery,
 } from "../app/(main)/[projectId]/dashboard/components/TracingPanel";
 import { parseQuery } from "../app/lib/queryTokens";
@@ -369,6 +370,90 @@ describe("waterfall issues", () => {
     );
   });
 });
+
+describe("taskCosts", () => {
+  const sonnet = {
+    "model.provider": "anthropic",
+    "model.id": "claude-sonnet-5-5",
+  };
+  const rates = [
+    {
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-5-5",
+      input: 2,
+      output: 10,
+      cacheRead: 0.1,
+      cacheWrite: 2.5,
+    },
+  ];
+
+  test("prices a request with its subagents, and each subagent on its own", () => {
+    const parent = root("parent", 1_000, 9_000, "ok", {
+      ...sonnet,
+      "task.id": TASK_ID,
+    });
+    const sub = {
+      ...root("sub", 2_000, 3_000, "ok", {
+        ...sonnet,
+        "parent.trace_id": "trace-parent",
+      }),
+      kind: "subtask" as const,
+    };
+    const groups = groupSpans([
+      parent,
+      sub,
+      modelStep("parent", 1_000_000, 100_000),
+      modelStep("sub", 500_000, 0),
+    ]);
+
+    const costs = taskCosts(groups, rates);
+
+    // parent: $2 in + $1 out; subagent: $1 in.
+    expect(costs.get("trace-parent:parent")).toBeCloseTo(4);
+    expect(costs.get("trace-sub:sub")).toBeCloseTo(1);
+  });
+
+  test("reads not priced for an unknown model, nothing before a step or while rates load", () => {
+    const unknown = root("unknown", 1_000, 2_000, "ok", {
+      "model.provider": "custom",
+      "model.id": "mine",
+      "task.id": "acct:a:agent:b:tg:1:msg-1",
+    });
+    const idle = root("idle", 1_000, 2_000, "running", {
+      ...sonnet,
+      "task.id": "acct:a:agent:b:tg:1:msg-2",
+    });
+    const groups = groupSpans([unknown, idle, modelStep("unknown", 10, 10)]);
+
+    const costs = taskCosts(groups, rates);
+
+    expect(costs.get("trace-unknown:unknown")).toBeNull();
+    expect(costs.has("trace-idle:idle")).toBe(false);
+    expect(taskCosts(groups, undefined).size).toBe(0);
+  });
+});
+
+function modelStep(
+  runId: string,
+  inputTokens: number,
+  outputTokens: number,
+): ObservabilitySpanRow {
+  return {
+    traceId: `trace-${runId}`,
+    spanId: `${runId}-model`,
+    parentSpanId: runId,
+    name: "model.step",
+    kind: "model.step",
+    startTimeMs: 1_500,
+    endTimeMs: 1_600,
+    durationMs: 100,
+    status: "ok",
+    attributes: {
+      "model.input_tokens": inputTokens,
+      "model.output_tokens": outputTokens,
+    },
+  };
+}
 
 function child(
   runId: string,
