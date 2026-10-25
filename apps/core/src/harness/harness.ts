@@ -1190,7 +1190,7 @@ export async function runAgentLoop(
       }
 
       const stepTokens = usageTokenTotals(usage);
-      taskTotals.addStep(
+      const stepCacheWriteTokens = taskTotals.addStep(
         stepNumber,
         stepTokens,
         extractCacheWriteTokens(configuredModel.providerName, providerMetadata),
@@ -1285,6 +1285,7 @@ export async function runAgentLoop(
           "model.output_tokens": stepTokens.outputTokens,
           "model.reasoning_tokens": stepTokens.reasoningTokens,
           "model.cached_input_tokens": stepTokens.cachedInputTokens,
+          "model.cache_write_tokens": stepCacheWriteTokens,
           "model.total_tokens": stepTokens.totalTokens,
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),
