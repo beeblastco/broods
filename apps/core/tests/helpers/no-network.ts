@@ -7,7 +7,7 @@
  * work running, since that work outlives the test inside the shared process.
  */
 
-import { afterEach } from "bun:test";
+import { afterAll, afterEach, beforeAll } from "bun:test";
 import net from "node:net";
 import { inFlightForTests } from "../../src/shared/in-flight.ts";
 
@@ -64,13 +64,23 @@ net.Socket.prototype.connect = function (
   return Reflect.apply(realConnect, this, args) as net.Socket;
 } as typeof realConnect;
 
+const guardedFetch = globalThis.fetch;
+// oxlint-disable-next-line typescript/unbound-method -- restored onto the prototype below
+const guardedConnect = net.Socket.prototype.connect;
+
 /**
- * Lifts the guard for the whole process. Only the opt-in live suites call it,
- * when enabled, because they must reach a real provider; run them on their own.
+ * Lifts the guard for the calling test file only. The opt-in live suites call
+ * it at top level, when enabled, because they must reach a real provider.
  */
 export function allowNetwork(): void {
-  globalThis.fetch = realFetch;
-  net.Socket.prototype.connect = realConnect;
+  beforeAll((): void => {
+    globalThis.fetch = realFetch;
+    net.Socket.prototype.connect = realConnect;
+  });
+  afterAll((): void => {
+    globalThis.fetch = guardedFetch;
+    net.Socket.prototype.connect = guardedConnect;
+  });
 }
 
 // Work a test hands to waitUntil and leaves running (a real Convex write
