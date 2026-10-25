@@ -156,21 +156,22 @@ describe("model pricing", () => {
     ).toThrow("non-negative");
   });
 
-  it("holds back a crawled rate that jumps over 10x, applies inline prices, keeps the crawl state", async () => {
+  it("holds back any rate that jumps over 10x, applies inline prices, drops a removed inline provider", async () => {
     const tt = convexTest(schema, modules);
     const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
-    const crawl = (input: number, inline: typeof rates | null) =>
+    const inlineJson = JSON.stringify({ custom: { mine: rates } });
+    const crawl = (crawled: Partial<typeof rates>, withInline: boolean) =>
       tt.mutation(internal.modelPrices.store.store, {
         crawled: [
           {
             provider: "openai",
-            models: [{ modelId: "gpt-5.5", ...rates, input: input }],
+            models: [{ modelId: "gpt-5.5", ...rates, ...crawled }],
           },
         ],
-        inline: inline
-          ? [{ provider: "custom", models: [{ modelId: "mine", ...inline }] }]
+        inline: withInline
+          ? [{ provider: "custom", models: [{ modelId: "mine", ...rates }] }]
           : [],
-        crawl: { ...CRAWL, inline: inline ? "set" : "" },
+        crawl: { ...CRAWL, inline: withInline ? inlineJson : "" },
       });
     const stored = async (provider: string) =>
       await tt.run(
@@ -181,17 +182,23 @@ describe("model pricing", () => {
             .unique(),
       );
 
-    await crawl(5, null);
-    await crawl(500, rates);
-    expect((await stored("openai"))?.models[0].input).toBe(5);
+    await crawl({}, false);
+    await crawl({ input: 500 }, true);
+    await crawl({ cacheRead: 50 }, true);
+    expect((await stored("openai"))?.models[0]).toMatchObject({
+      input: 5,
+      cacheRead: 0.5,
+    });
     expect((await stored("custom"))?.models).toEqual([
       { modelId: "mine", ...rates },
     ]);
-    await crawl(8, rates);
-    expect((await stored("openai"))?.models[0].input).toBe(8);
     expect(await tt.query(internal.modelPrices.store.crawlState, {})).toEqual({
       ...CRAWL,
-      inline: "set",
+      inline: inlineJson,
     });
+
+    await crawl({ input: 8 }, false);
+    expect((await stored("openai"))?.models[0].input).toBe(8);
+    expect(await stored("custom")).toBeNull();
   });
 });

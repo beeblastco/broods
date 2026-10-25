@@ -6,12 +6,13 @@
 import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { ModelTokenRates } from "../model/modelPricing";
-import type { ProviderRates } from "../model/modelsDev";
+import { parseInlinePrices, type ProviderRates } from "../model/modelsDev";
 import { stableJson } from "../model/objects";
 import { modelPriceCrawlFields, modelPricesFields } from "../schema";
 
 // A crawled rate that moves further than this between runs is held back.
 const MAX_RATE_JUMP = 10;
+const RATE_KEYS = ["input", "output", "cacheRead", "cacheWrite"] as const;
 
 const crawlInputs = v.object(modelPriceCrawlFields);
 const providerRates = v.array(v.object(modelPricesFields));
@@ -33,12 +34,14 @@ export const crawlState = internalQuery({
  * Crawl: replace each provider's rates, writing only the ones that changed.
  * A crawled rate that moved more than 10x keeps its stored value and logs, so
  * a broken or tampered catalogue cannot swing costs; the org's inline prices
- * apply over the crawl as given.
+ * apply over the crawl as given. A provider taken out of the inline prices
+ * that the crawl does not list either loses its rates.
  */
 export const store = internalMutation({
   args: { crawled: providerRates, inline: providerRates, crawl: crawlInputs },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
+    const state = await ctx.db.query("modelPriceCrawl").first();
     const providers = new Set(
       [...args.crawled, ...args.inline].map((rates) => rates.provider),
     );
@@ -53,8 +56,7 @@ export const store = internalMutation({
         const old = stored.get(row.modelId);
         if (
           old &&
-          (jump(old.input, row.input) > MAX_RATE_JUMP ||
-            jump(old.output, row.output) > MAX_RATE_JUMP)
+          RATE_KEYS.some((key) => jump(old[key], row[key]) > MAX_RATE_JUMP)
         ) {
           console.warn(
             `modelPrices: ${provider}/${row.modelId} moved over ${MAX_RATE_JUMP}x, kept the stored rate. Set BROODS_MODEL_PRICES to accept it.`,
@@ -77,8 +79,15 @@ export const store = internalMutation({
         await ctx.db.patch(existing._id, { models: next });
       }
     }
+    for (const { provider } of parseInlinePrices(state?.inline ?? "")) {
+      if (providers.has(provider)) continue;
+      const dropped = await ctx.db
+        .query("modelPrices")
+        .withIndex("by_provider", (q) => q.eq("provider", provider))
+        .unique();
+      if (dropped) await ctx.db.delete(dropped._id);
+    }
 
-    const state = await ctx.db.query("modelPriceCrawl").first();
     if (!state) {
       await ctx.db.insert("modelPriceCrawl", args.crawl);
     } else if (
