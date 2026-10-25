@@ -22,6 +22,8 @@ import { isPlainObject } from "../../shared/object.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
+  type ResolvedSandboxLifecycle,
+  outlivedMaxLifetime,
   resolveSandboxLifecycle,
 } from "../../shared/sandbox.ts";
 import {
@@ -67,6 +69,9 @@ import {
 } from "./utils.ts";
 
 const GENERATION_LENGTH = 8;
+// An extension overshoots by this much, so the calls that follow within it
+// need no extendTimeout of their own.
+const KEEP_ALIVE_SLACK_MS = 60_000;
 // An ephemeral session runs its setup (the workdir, a workspace mount) before
 // the command and is stopped when the call ends, so it gets this long past the
 // command's own timeout rather than being cut off mid-command.
@@ -81,10 +86,12 @@ type VercelCreateOptions = NonNullable<
 
 export class VercelSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
+  readonly #lifecycle: ResolvedSandboxLifecycle;
   #sandboxClass?: Promise<VercelSandboxClass>;
 
   constructor(config: SandboxExecutorConfig) {
     this.#config = config;
+    this.#lifecycle = resolveSandboxLifecycle(config.lifecycle);
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -187,15 +194,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#reserved(request);
-    const status = await this.#shell(
-      sandbox,
-      statusScript(jobsDir, request.jobId),
-    );
-    // A polled job (status or logs) is activity: it holds the session open
-    // like a command does.
-    await this.#keepAlive(sandbox, 0);
 
-    return parseJobStatus(request.jobId, status);
+    return parseJobStatus(
+      request.jobId,
+      await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
+    );
   }
 
   async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
@@ -205,7 +208,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
     );
-    await this.#keepAlive(sandbox, 0);
 
     return {
       jobId: request.jobId,
@@ -285,31 +287,18 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async #keepAlive(sandbox: VercelSandbox, callSeconds: number): Promise<void> {
     const expiresAt = sandbox.expiresAt?.getTime();
     if (expiresAt === undefined) return;
-    const { idleTimeoutSeconds } = resolveSandboxLifecycle(
-      this.#config.lifecycle,
-    );
     const shortMs =
-      Date.now() + (idleTimeoutSeconds + callSeconds) * 1000 - expiresAt;
+      Date.now() +
+      (this.#lifecycle.idleTimeoutSeconds + callSeconds) * 1000 -
+      expiresAt;
     if (shortMs <= 0) return;
-    await sandbox.extendTimeout(Math.ceil(shortMs)).catch((err: unknown) => {
+    const extendMs = Math.ceil(shortMs) + KEEP_ALIVE_SLACK_MS;
+    await sandbox.extendTimeout(extendMs).catch((err: unknown) => {
       logWarn("vercel sandbox session extension refused", {
         sandbox: sandbox.name,
         error: toErrorMessage(err),
       });
     });
-  }
-
-  // Checked at acquire, never on a timer, so the cap can never cut a running
-  // command: the call that trips it boots a fresh sandbox.
-  #outlivedMaxLifetime(sandbox: VercelSandbox): boolean {
-    const { maxLifetimeSeconds } = resolveSandboxLifecycle(
-      this.#config.lifecycle,
-    );
-    if (maxLifetimeSeconds === undefined) return false;
-
-    return (
-      Date.now() - sandbox.createdAt.getTime() >= maxLifetimeSeconds * 1000
-    );
   }
 
   #persistent(request: {
@@ -378,27 +367,35 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           name: storedName,
           ...vercelAuthOptions(this.#config),
         });
-        if (this.#outlivedMaxLifetime(sandbox)) {
-          await this.release({ ...request, expectedExternalId: storedName });
+        if (
+          !outlivedMaxLifetime(this.#lifecycle, sandbox.createdAt.getTime())
+        ) {
+          await saveSandboxInstance(
+            "vercel",
+            key,
+            storedName,
+            this.#config.controlPlane?.accountId,
+          ).catch(() => {});
+          await upsertSandboxInstance(
+            this.#config.controlPlane,
+            "vercel",
+            key,
+            storedName,
+            request.metadata,
+            { specs: vercelSpecs(sandbox) },
+          );
 
-          return await this.#acquireSandbox(request);
+          return sandbox;
         }
-        await saveSandboxInstance(
+        // Past maxLifetimeSeconds: retire it here and boot a fresh one below.
+        // Checked at acquire, never on a timer, so it never cuts a command.
+        await sandbox.delete();
+        await deleteSandboxInstance(
           "vercel",
           key,
-          storedName,
           this.#config.controlPlane?.accountId,
-        ).catch(() => {});
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "vercel",
-          key,
           storedName,
-          request.metadata,
-          { specs: vercelSpecs(sandbox) },
-        );
-
-        return sandbox;
+        ).catch(() => {});
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
         // propagate or the still-live sandbox is orphaned at the provider. The
@@ -498,6 +495,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       name: name,
       ...vercelAuthOptions(this.#config),
     });
+    // A job poll or log read is activity: it holds the session open like a
+    // command does.
+    await this.#keepAlive(sandbox, 0);
 
     return { sandbox: sandbox, jobsDir: this.#jobsDir(key) };
   }

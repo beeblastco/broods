@@ -3319,10 +3319,11 @@ describe("createSandboxExecutor", () => {
     await executor.run(persistentVercelRun());
 
     // Default idle 900 s plus the call's 30 s, less the 60 s left, plus the
-    // time the run took to reach the extension.
+    // time the run took to reach the extension, plus 60 s of slack so the
+    // calls right after it need no extension of their own.
     const extension = Number(vercelExtendTimeoutMock.mock.calls[0]?.[0]);
-    expect(extension).toBeGreaterThanOrEqual(870_000);
-    expect(extension).toBeLessThanOrEqual(870_000 + Date.now() - startedAt);
+    expect(extension).toBeGreaterThanOrEqual(930_000);
+    expect(extension).toBeLessThanOrEqual(930_000 + Date.now() - startedAt);
   });
 
   it("leaves a session alone when it outlasts the idle window", async () => {

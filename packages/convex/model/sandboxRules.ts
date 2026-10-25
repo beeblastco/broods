@@ -60,8 +60,7 @@ export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 // Providers whose own idle window stops short of MAX_IDLE_TIMEOUT_SECONDS.
 // Cloudflare refuses a Container inactivity timeout over six hours. Vercel holds
 // a session to 24 hours on Pro and Enterprise (45 minutes on Hobby, which its
-// API refuses itself), and core keeps the session open one idle window past
-// each call.
+// API refuses itself).
 const PROVIDER_MAX_IDLE_TIMEOUT_SECONDS: Partial<
   Record<SandboxProvider, number>
 > = {
