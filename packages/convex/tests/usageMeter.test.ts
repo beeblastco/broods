@@ -348,7 +348,8 @@ test("the hourly accrual pages through every recent sandbox", async () => {
     }
   });
 
-  await t.mutation(internal.sandbox.instances.accrueRecent, {});
+  // Pinned: each commit moves the next transaction's clock past it.
+  await t.mutation(internal.sandbox.instances.accrueRecent, { now: NOW });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
 
   const meter = await t.run(async (ctx) =>
@@ -383,7 +384,8 @@ test("the hourly accrual bills and deletes ephemeral rows whose call is over", a
     }
   });
 
-  await t.mutation(internal.sandbox.instances.accrueRecent, {});
+  // Pinned: each commit moves the next transaction's clock past it.
+  await t.mutation(internal.sandbox.instances.accrueRecent, { now: NOW });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
 
   const rows = await t.run(async (ctx) =>

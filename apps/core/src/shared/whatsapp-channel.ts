@@ -337,11 +337,16 @@ function parseInbound(
   if (message.type === "reaction") {
     return { kind: "ignore", reason: "no message for this number" };
   }
+  // A username-only sender carries no phone number to allow-list or reply to.
+  const from = message.from;
+  if (!from) {
+    return { kind: "ignore", reason: "no sender phone number" };
+  }
   if (
-    !isAllowedId(options.allowedChannelIds, message.from) ||
-    !isAllowedId(options.allowedUserIds, message.from)
+    !isAllowedId(options.allowedChannelIds, from) ||
+    !isAllowedId(options.allowedUserIds, from)
   ) {
-    logWarn("WhatsApp sender not in allow list", { userId: message.from });
+    logWarn("WhatsApp sender not in allow list", { userId: from });
 
     return { kind: "ignore", reason: "not allowed" };
   }
@@ -358,7 +363,7 @@ function parseInbound(
   return {
     kind: "message",
     redelivers: true,
-    message: toInboundMessage(message, parsed, text),
+    message: toInboundMessage(message, from, parsed, text),
   };
 }
 
@@ -382,6 +387,7 @@ function replyText(message: WhatsAppInboundMessage): string | undefined {
 // so the sender is also the place the reply goes.
 function toInboundMessage(
   message: WhatsAppInboundMessage,
+  from: string,
   parsed: Message<WhatsAppRawMessage>,
   text: string,
 ): InboundMessage {
@@ -390,7 +396,7 @@ function toInboundMessage(
     messageId: message.id,
     phoneNumberId: parsed.raw.phoneNumberId,
     threadId: parsed.threadId,
-    userWaId: message.from,
+    userWaId: from,
     ...(userName ? { userName: userName } : {}),
   };
 
@@ -403,8 +409,8 @@ function toInboundMessage(
       ? { attachments: parsed.attachments }
       : {}),
     identity: {
-      channelId: message.from,
-      userId: message.from,
+      channelId: from,
+      userId: from,
       ...(userName ? { userName: userName } : {}),
     },
     source: { ...source },

@@ -53,7 +53,7 @@ describe("whatsapp channel adapter", () => {
       redelivers: true,
       message: {
         eventId: "whatsapp:wamid.1",
-        conversationKey: "whatsapp:phone-1:15551234567",
+        conversationKey: "whatsapp:106540352242922:15551234567",
         channelName: "whatsapp",
         content: "hello whatsapp",
         identity: {
@@ -63,8 +63,8 @@ describe("whatsapp channel adapter", () => {
         },
         source: {
           messageId: "wamid.1",
-          phoneNumberId: "phone-1",
-          threadId: "whatsapp:phone-1:15551234567",
+          phoneNumberId: "106540352242922",
+          threadId: "whatsapp:106540352242922:15551234567",
           userWaId: "15551234567",
           userName: "Ada",
         },
@@ -130,7 +130,7 @@ describe("whatsapp channel adapter", () => {
 
     expect(calls).toEqual([
       {
-        url: "https://graph.facebook.com/v25.0/phone-1/messages",
+        url: "https://graph.facebook.com/v25.0/106540352242922/messages",
         auth: "Bearer access-token",
         body: {
           messaging_product: "whatsapp",
@@ -141,7 +141,7 @@ describe("whatsapp channel adapter", () => {
         },
       },
       {
-        url: "https://graph.facebook.com/v25.0/phone-1/messages",
+        url: "https://graph.facebook.com/v25.0/106540352242922/messages",
         auth: "Bearer access-token",
         body: {
           messaging_product: "whatsapp",
@@ -227,7 +227,7 @@ function options(): Parameters<typeof createWhatsAppChannel>[0] {
     allowedChannelIds: null,
     allowedUserIds: null,
     appSecret: APP_SECRET,
-    phoneNumberId: "phone-1",
+    phoneNumberId: "106540352242922",
     verifyToken: VERIFY_TOKEN,
   };
 }
@@ -270,7 +270,7 @@ function textWebhook(text: string): {
               messaging_product: "whatsapp",
               metadata: {
                 display_phone_number: "15550001111",
-                phone_number_id: "phone-1",
+                phone_number_id: "106540352242922",
               },
               contacts: [{ profile: { name: "Ada" }, wa_id: "15551234567" }],
               messages: [

@@ -333,7 +333,8 @@ export async function readAttachmentBytes(
       : Buffer.from(await attachment.data.arrayBuffer());
   }
   if (attachment.fetchData) {
-    return await attachment.fetchData();
+    const bytes = await attachment.fetchData();
+    return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
   }
   if (!attachment.url) {
     throw new Error("attachment carries neither data, a reader, nor a URL");

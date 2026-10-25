@@ -532,7 +532,6 @@ async function seedProject(t: T, orgId: Id<"orgs">): Promise<Id<"projects">> {
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-    apiKey: "sk_test_fixture",
     event: {
       id: "evt_disabled_account_signup",
       event: "user.created",

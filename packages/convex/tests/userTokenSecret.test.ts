@@ -243,7 +243,6 @@ async function setup(): Promise<{
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-    apiKey: "sk_test_fixture",
     event: {
       id: "evt_user_token_signup",
       event: "user.created",

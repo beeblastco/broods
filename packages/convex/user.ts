@@ -53,9 +53,6 @@ export const ensureSynced = action({
         ? selfHostAdminUser()
         : await authKit.workos.userManagement.getUser(identity.subject);
     await ctx.runMutation(components.workOSAuthKit.lib.onWebhookEvent, {
-      // The component only reads the key for non-create events; the
-      // validator still wants a string.
-      apiKey: process.env.WORKOS_API_KEY ?? "",
       event: {
         id: `sync:${workosUser.id}`,
         createdAt: new Date().toISOString(),

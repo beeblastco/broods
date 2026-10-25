@@ -41,6 +41,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: chore(deps)
+    ignore:
+      # The dashboard reads next fire times with the cron-parser major that
+      # @convex-dev/crons schedules with, so the two never disagree.
+      - dependency-name: cron-parser
+        update-types: ["version-update:semver-major"]
     groups:
       ai-sdk:
         patterns:

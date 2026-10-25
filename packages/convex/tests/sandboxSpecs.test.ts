@@ -26,10 +26,13 @@ afterEach(() => {
 });
 
 test("setSpecs bills the time so far at the old size, then only patches the same live machine", async () => {
-  vi.useFakeTimers({ now: NOW });
+  // Seed before NOW: each commit moves the next transaction's clock past it,
+  // so the machine would start a millisecond late.
+  vi.useFakeTimers({ now: NOW - 1000 });
   const t = specsTest();
   const accountId = await seedAccount(t, "beeblast");
   const otherId = await seedAccount(t, "other");
+  vi.setSystemTime(NOW);
   await upsert(t, accountId, "vm-1", { specs: CONFIG_SPECS });
 
   vi.setSystemTime(NOW + 10 * 60 * 1000);

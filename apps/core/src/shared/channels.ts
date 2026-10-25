@@ -291,7 +291,8 @@ export async function channelAttachmentBytes(
   attachment: ChannelFile | ChannelImage,
 ): Promise<Buffer> {
   if (attachment.fetchData) {
-    return await attachment.fetchData();
+    const bytes = await attachment.fetchData();
+    return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
   }
   const response = await guardedFetch(attachment.url, undefined, {
     binary: true,

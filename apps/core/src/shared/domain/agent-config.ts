@@ -435,7 +435,10 @@ type ChannelCredentialDrift = AssertAllExact<
       string | undefined
     >,
     Exactly<TeamsAdapterConfig["apiUrl"], string | undefined>,
-    Exactly<TeamsAdapterConfig["appId"], string | undefined>,
+    Exactly<
+      SerializedCredential<TeamsAdapterConfig["appId"]>,
+      string | undefined
+    >,
     Exactly<TeamsAdapterConfig["appPassword"], string | undefined>,
     Exactly<TeamsAdapterConfig["appTenantId"], string | undefined>,
     Exactly<
