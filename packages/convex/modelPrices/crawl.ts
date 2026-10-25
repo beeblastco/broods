@@ -11,7 +11,7 @@
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalAction } from "../_generated/server";
+import { internalAction, type ActionCtx } from "../_generated/server";
 import {
   MODELS_DEV_API_URL,
   parseInlinePrices,
@@ -19,6 +19,7 @@ import {
   type ModelsDevApi,
 } from "../model/modelsDev";
 import { authProvider } from "../model/selfHostAuth";
+import { readCapped } from "../model/skills";
 
 const FETCH_TIMEOUT_MS = 30_000;
 // models.dev is ~6 MB; anything far past that is not a price catalogue.
@@ -26,40 +27,23 @@ const MAX_CATALOGUE_BYTES = 32 * 1024 * 1024;
 
 /**
  * Cron: store the org's rates first, so a catalogue that is down never holds
- * them back, then the catalogue's.
+ * them back, then the catalogue's. A malformed `BROODS_MODEL_PRICES` fails
+ * the run only after the catalogue is stored, so it never holds that back.
  */
 export const run = internalAction({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
-    await ctx.runMutation(internal.modelPrices.store.storeOverrides, {
-      providers: parseInlinePrices(process.env.BROODS_MODEL_PRICES ?? ""),
-    });
-
-    const url = catalogueUrl();
-    if (url === "") {
-      await ctx.runMutation(internal.modelPrices.store.storeCatalogue, {
-        providers: [],
-        clear: true,
+    let inlineError: unknown = null;
+    try {
+      await ctx.runMutation(internal.modelPrices.store.storeOverrides, {
+        providers: parseInlinePrices(process.env.BROODS_MODEL_PRICES ?? ""),
       });
-
-      return null;
+    } catch (error) {
+      inlineError = error;
     }
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      throw new Error(`${url} answered ${response.status}`);
-    }
-    const providers = parseModelsDevRates(await readCatalogue(response));
-    if (providers.length === 0) {
-      throw new Error(`${url} returned no priced models`);
-    }
-    await ctx.runMutation(internal.modelPrices.store.storeCatalogue, {
-      providers: providers,
-      clear: false,
-    });
+    await storeCatalogue(ctx);
+    if (inlineError !== null) throw inlineError;
 
     return null;
   },
@@ -73,20 +57,35 @@ function catalogueUrl(): string {
   return authProvider() === "self-host" ? "" : MODELS_DEV_API_URL;
 }
 
-/** The catalogue body, read in chunks and abandoned once past `MAX_CATALOGUE_BYTES`. */
-async function readCatalogue(response: Response): Promise<ModelsDevApi> {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("price catalogue has no body");
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  for (let part = await reader.read(); !part.done; part = await reader.read()) {
-    bytes += part.value.byteLength;
-    if (bytes > MAX_CATALOGUE_BYTES) {
-      await reader.cancel();
-      throw new Error(`price catalogue is over ${MAX_CATALOGUE_BYTES} bytes`);
-    }
-    chunks.push(part.value);
-  }
+/** The catalogue's rates into `modelPrices`, cleared when no catalogue is set. */
+async function storeCatalogue(ctx: ActionCtx): Promise<void> {
+  const url = catalogueUrl();
+  if (url === "") {
+    await ctx.runMutation(internal.modelPrices.store.storeCatalogue, {
+      providers: [],
+      mirror: true,
+    });
 
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return;
+  }
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`${url} answered ${response.status}`);
+  }
+  const body: ModelsDevApi = JSON.parse(
+    Buffer.from(await readCapped(response.body, MAX_CATALOGUE_BYTES)).toString(
+      "utf8",
+    ),
+  );
+  const providers = parseModelsDevRates(body);
+  if (providers.length === 0) {
+    throw new Error(`${url} returned no priced models`);
+  }
+  await ctx.runMutation(internal.modelPrices.store.storeCatalogue, {
+    providers: providers,
+    mirror: false,
+  });
 }

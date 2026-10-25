@@ -1,8 +1,9 @@
 import {
-  SELF_HOST_ADMIN,
-  SELF_HOST_ISSUER,
-} from "../../../packages/convex/model/selfHostAuth.ts";
-import { assertStep, convexResult, type VerifyContext } from "../harness.ts";
+  assertStep,
+  convexResult,
+  SELF_HOST_IDENTITY,
+  type VerifyContext,
+} from "../harness.ts";
 
 const INLINE_PRICES = JSON.stringify({
   custom: { "GPT-OSS-120B": { input: 0.1, output: 0.5 } },
@@ -14,19 +15,13 @@ const INLINE_PRICES = JSON.stringify({
  * rate query reads them back. Unsetting the variable clears them again.
  */
 export async function modelPrices(context: VerifyContext): Promise<void> {
-  const identity = JSON.stringify({
-    subject: SELF_HOST_ADMIN.subject,
-    issuer: SELF_HOST_ISSUER,
-    tokenIdentifier: `${SELF_HOST_ISSUER}|${SELF_HOST_ADMIN.subject}`,
-    email: SELF_HOST_ADMIN.email,
-  });
   const ratesOf = (modelId: string): unknown =>
     convexResult(
       context,
       "logs:fetchModelRates",
       { models: [{ modelProvider: "custom", modelId: modelId }] },
       "the rate query answers the admin",
-      identity,
+      SELF_HOST_IDENTITY,
     );
   const crawl = (step: string): void => {
     const cli = context.convex(["run", "modelPrices/crawl:run", "{}"]);
@@ -60,7 +55,12 @@ export async function modelPrices(context: VerifyContext): Promise<void> {
         JSON.stringify(rates),
       );
     } finally {
-      context.convex(["env", "remove", "BROODS_MODEL_PRICES"]);
+      const removed = context.convex(["env", "remove", "BROODS_MODEL_PRICES"]);
+      assertStep(
+        "the org's prices are unset again",
+        removed.ok,
+        removed.output.slice(-300),
+      );
     }
     crawl("the crawl runs with nothing configured");
     const cleared = ratesOf("gpt-oss-120b");

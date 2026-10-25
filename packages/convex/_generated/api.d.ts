@@ -5468,7 +5468,7 @@ export declare const internal: {
         "mutation",
         "internal",
         {
-          clear: boolean;
+          mirror: boolean;
           providers: Array<{
             models: Array<{
               cacheRead: number;

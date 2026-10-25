@@ -48,8 +48,8 @@ export type ModelsDevApi = Record<
           output?: unknown;
           cache_read?: unknown;
           cache_write?: unknown;
-        };
-      }
+        } | null;
+      } | null
     >;
   }
 >;
@@ -99,9 +99,16 @@ export function parseInlinePrices(raw: string): OverrideRates[] {
       throw inlineError(`${provider} must map model ids to rates`);
     }
 
+    const seen = new Set<string>();
+
     return {
       provider: provider,
       models: Object.entries(models).map(([id, rates]) => {
+        const modelId = normalizeModelId(id);
+        if (seen.has(modelId)) {
+          throw inlineError(`${provider} lists ${modelId} twice`);
+        }
+        seen.add(modelId);
         if (!isPlainObject(rates)) {
           throw inlineError(`${provider}/${id} must be an object of rates`);
         }
@@ -126,7 +133,7 @@ export function parseInlinePrices(raw: string): OverrideRates[] {
         }
 
         return {
-          modelId: normalizeModelId(id),
+          modelId: modelId,
           input: input,
           output: output,
           ...(cacheRead !== undefined ? { cacheRead: cacheRead } : {}),
@@ -147,7 +154,7 @@ export function parseModelsDevRates(body: ModelsDevApi): ProviderRates[] {
     const source = MODELS_DEV_RENAMES[provider] ?? provider;
     const rows = new Map<string, ModelTokenRates & { modelId: string }>();
     for (const [id, model] of Object.entries(body[source]?.models ?? {})) {
-      const cost = model.cost;
+      const cost = model?.cost;
       const modelId = normalizeModelId(id);
       if (!isRate(cost?.input) || !isRate(cost.output) || rows.has(modelId))
         continue;

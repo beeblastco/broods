@@ -65,6 +65,7 @@ describe("model pricing", () => {
           "GPT-5.5": { cost: { input: 5, output: 30, cache_read: 0.5 } },
           "gpt-image-2": { cost: { input: 5 } },
           "free-preview": {},
+          "null-entry": null,
           "gpt-broken": { cost: { input: -1, output: 4 } },
         },
       },
@@ -102,7 +103,7 @@ describe("model pricing", () => {
         { provider: "openai", models: models },
         { provider: "chatgpt", models: models },
       ],
-      clear: false,
+      mirror: false,
     });
 
     const priced = await tt.run(
@@ -153,6 +154,10 @@ describe("model pricing", () => {
         '{"openai":{"m":{"input":3,"output":15,"cache_read":0.3}}}',
         "unknown keys cache_read",
       ],
+      [
+        '{"custom":{"GPT-OSS":{"input":1,"output":2},"gpt-oss":{"input":5,"output":9}}}',
+        "lists gpt-oss twice",
+      ],
     ]) {
       expect(() => parseInlinePrices(raw)).toThrow(problem);
     }
@@ -171,7 +176,7 @@ describe("model pricing", () => {
           ],
         },
       ],
-      clear: false,
+      mirror: false,
     });
     await tt.mutation(internal.modelPrices.store.storeOverrides, {
       providers: [
@@ -210,13 +215,13 @@ describe("model pricing", () => {
       await tt.run(async (ctx) =>
         (await ctx.db.query(table).collect()).map((doc) => doc.provider).sort(),
       );
-    const catalogue = (names: string[], clear: boolean): Promise<null> =>
+    const catalogue = (names: string[], mirror: boolean): Promise<null> =>
       tt.mutation(internal.modelPrices.store.storeCatalogue, {
         providers: names.map((name) => ({
           provider: name,
           models: [{ modelId: "m", ...rates }],
         })),
-        clear: clear,
+        mirror: mirror,
       });
 
     await catalogue(["anthropic", "openai"], false);
