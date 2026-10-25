@@ -67,6 +67,18 @@ import {
 } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
 import {
+  estimateModelTokenCost,
+  type ModelTokenRates,
+} from "@broods/convex/model/modelPricing";
+import { useModelRates } from "@/app/hooks/useModelRates";
+import {
+  formatUsd,
+  modelKey,
+  runModel,
+  stepTokens,
+  type ModelRef,
+} from "@/app/lib/modelCost";
+import {
   createContext,
   memo,
   useCallback,
@@ -559,6 +571,8 @@ interface TaskListPaneProps {
   stackChoices: ReadonlyMap<string, boolean>;
   onSelect: (root: ObservabilitySpanRow) => void;
   onToggleStack: (root: ObservabilitySpanRow, open: boolean) => void;
+  // Each task's price by `spanKey(root)`, see taskCosts.
+  costs: ReadonlyMap<string, TaskCost | null>;
   // What the list says when it has no rows.
   emptyMessage: string;
   // Tasks loaded and in all, counted by request; subagent rows are extra.
@@ -568,6 +582,12 @@ interface TaskListPaneProps {
   onLoadMore: () => void;
 }
 
+/** A task's price in USD; `partial` when some of its steps have no price. */
+export interface TaskCost {
+  usd: number;
+  partial: boolean;
+}
+
 // The list row's props, primitives and stable callbacks so the memoized row
 // skips a flush that left them as they were.
 interface TaskListRowProps {
@@ -575,6 +595,10 @@ interface TaskListRowProps {
   status: SpanStatus;
   tone: StatusTone;
   taskDurationMs: number;
+  // The price under the duration, see costLabel; undefined before any model step.
+  cost: string | undefined;
+  // Whether `cost` is a price, not "not priced".
+  costPriced: boolean;
   cause: string | null;
   isSubagent: boolean;
   // The subagents' names, newline-joined so the memo compares one string.
@@ -731,6 +755,13 @@ export function TracingPanel({
           : []),
       ]),
     [visibleGroups, selectedGroup, stackChoices],
+  );
+  const { rates, loading: ratesLoading } = useModelRates(
+    listedModels(visibleGroups),
+  );
+  const costs = useMemo(
+    () => taskCosts(visibleGroups, rates, ratesLoading),
+    [visibleGroups, rates, ratesLoading],
   );
   // The span open in the side panel, resolved against the selected run so
   // it tracks live updates and closes when its run leaves the view.
@@ -1072,6 +1103,7 @@ export function TracingPanel({
             stackChoices={stackChoices}
             onSelect={pickTask}
             onToggleStack={toggleStack}
+            costs={costs}
             emptyMessage={
               entries.length === 0
                 ? emptyStreamMessage(history, error, "traces", "7 days")
@@ -1207,6 +1239,56 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   return groups;
 }
 
+/**
+ * Each listed task's price by `spanKey(root)`: its model steps at their run's
+ * rates, a request with its subagents. `partial` when some step's model has
+ * no price, so the sum is a floor; null when none has one; absent before any
+ * step ran or before the first rates arrive. While a new model set `loading`,
+ * a step without a rate yet is left out instead of counted as unpriced.
+ */
+export function taskCosts(
+  groups: SpanGroup[],
+  rates: Array<ModelRef & ModelTokenRates> | undefined,
+  loading = false,
+): Map<string, TaskCost | null> {
+  const costs = new Map<string, TaskCost | null>();
+  if (!rates) return costs;
+  const rateByModel = new Map(rates.map((rate) => [modelKey(rate), rate]));
+  const ownCost = (group: SpanGroup): TaskCost | null | undefined => {
+    const runModels = new Map(
+      group.spans
+        .filter((span) => isRootSpanKind(span.kind))
+        .map((root) => [root.traceId, runModel(root)]),
+    );
+    let cost: TaskCost | null | undefined;
+    for (const step of group.spans) {
+      if (step.kind !== "model.step") continue;
+      const model = runModels.get(step.traceId);
+      const rate = model ? rateByModel.get(modelKey(model)) : undefined;
+      if (!rate && loading) continue;
+      const priced = estimateModelTokenCost(rate, stepTokens(step));
+      cost = addCost(
+        cost,
+        priced ? { usd: priced.total, partial: false } : null,
+      );
+    }
+
+    return cost;
+  };
+  for (const group of groups) {
+    let request: TaskCost | null | undefined;
+    for (const part of [group, ...group.subagents]) {
+      const cost = ownCost(part);
+      if (cost === undefined) continue;
+      costs.set(spanKey(part.root), cost);
+      request = addCost(request, cost);
+    }
+    if (request !== undefined) costs.set(spanKey(group.root), request);
+  }
+
+  return costs;
+}
+
 /** The task list's failure cause: "rate limit", or the start of the error. */
 export function failureCause(group: SpanGroup): string | null {
   const error = taskError(group);
@@ -1330,6 +1412,17 @@ export function spanIssue(span: ObservabilitySpanRow): SpanIssue | null {
   };
 }
 
+/** Two prices summed: null only when both are, partial when either is. */
+function addCost(
+  sum: TaskCost | null | undefined,
+  cost: TaskCost | null,
+): TaskCost | null {
+  if (cost === null) return sum ? { usd: sum.usd, partial: true } : null;
+  if (!sum) return { usd: cost.usd, partial: cost.partial || sum === null };
+
+  return { usd: sum.usd + cost.usd, partial: sum.partial || cost.partial };
+}
+
 /** A request's spans and its subagents', for search. */
 function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   return [
@@ -1409,6 +1502,40 @@ function chainFor(
   }
 
   return chain;
+}
+
+/** A task's price as its row shows it: `$0.0012`, `$0.0012+` when partial, or "not priced". */
+function costLabel(cost: TaskCost | null | undefined): string | undefined {
+  if (cost === undefined) return undefined;
+  if (cost === null) return "not priced";
+
+  return `${formatUsd(cost.usd)}${cost.partial ? "+" : ""}`;
+}
+
+/**
+ * The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before
+ * any is priced. With more pages to load it adds "shown", since the count
+ * covers every matching task and the price only the loaded ones; a partial
+ * price adds "+".
+ */
+function costTotal(
+  rows: ListRow[],
+  costs: ReadonlyMap<string, TaskCost | null>,
+  paged: boolean,
+): string {
+  let total: TaskCost | null | undefined;
+  let unpriced = 0;
+  for (const { group, parent } of rows) {
+    if (parent !== null) continue;
+    const cost = costs.get(spanKey(group.root));
+    if (cost === null) unpriced += 1;
+    else if (cost !== undefined) total = addCost(total, cost);
+  }
+  const price = total
+    ? ` · ${formatUsd(total.usd)}${total.partial ? "+" : ""}${paged ? " shown" : ""}`
+    : "";
+
+  return `${price}${unpriced > 0 ? ` · ${unpriced} not priced` : ""}`;
 }
 
 /** Labeled fields first, then the run identity, then every key the panel does not already show. */
@@ -1533,6 +1660,18 @@ function isTaskRunning(root: ObservabilitySpanRow): boolean {
  * this dashboard build knows it, and that must not take down the panel. */
 function kindBar(kind: ObservabilitySpanRow["kind"]): string {
   return KIND_BAR[kind] ?? KIND_BAR["tool.call"];
+}
+
+/** Every model the groups' runs name, subagents included. */
+function listedModels(groups: SpanGroup[]): ModelRef[] {
+  return [...groups, ...groups.flatMap((group) => group.subagents)].flatMap(
+    (group) =>
+      group.spans.flatMap((span) => {
+        const model = isRootSpanKind(span.kind) ? runModel(span) : null;
+
+        return model ? [model] : [];
+      }),
+  );
 }
 
 /** A step's reasoning or response when it has one; core writes the key empty on a step without. */
@@ -2815,6 +2954,7 @@ function TaskListPane({
   stackChoices,
   onSelect,
   onToggleStack,
+  costs,
   emptyMessage,
   shown,
   total,
@@ -2847,6 +2987,8 @@ function TaskListPane({
             status={group.status}
             tone={groupTone(group)}
             taskDurationMs={group.taskDurationMs}
+            cost={costLabel(costs.get(spanKey(group.root)))}
+            costPriced={Boolean(costs.get(spanKey(group.root)))}
             cause={failureCause(group)}
             isSubagent={parent !== null}
             subagentNames={group.subagents
@@ -2869,6 +3011,7 @@ function TaskListPane({
           shown={shown}
           total={total}
           noun={["task", "tasks"]}
+          detail={costTotal(rows, costs, remaining > 0)}
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={onLoadMore}
@@ -2880,7 +3023,7 @@ function TaskListPane({
 
 /**
  * One row of the task list: dot, request and duration, then start time and
- * the failure cause or open wait. A subagent row is indented under its
+ * the failure cause or open wait, with the task's price under the duration. A subagent row is indented under its
  * request and names its agent, with its task after the time. A request with
  * subagents ends in their avatar stack. The button's id is the `?trace=` focus
  * target. Memoized on the root span, which the stream keeps across flushes,
@@ -2891,6 +3034,8 @@ const TaskListRow = memo(function TaskListRow({
   status,
   tone,
   taskDurationMs,
+  cost,
+  costPriced,
   cause,
   isSubagent,
   subagentNames,
@@ -2936,14 +3081,31 @@ const TaskListRow = memo(function TaskListRow({
         </span>
         <span
           className={cn(
-            "mt-0.5 block truncate text-muted-foreground",
+            "mt-0.5 flex min-w-0 gap-2 text-muted-foreground",
             isSubagent ? "pl-9.5" : "pl-4",
           )}
         >
-          {formatDateTime(root.startTimeMs)}
-          {isSubagent && ` · ${taskInput(root)}`}
-          {cause && <span className="text-destructive"> · {cause}</span>}
-          {waiting && <span className="text-needs-input"> · {waiting}</span>}
+          <span className="min-w-0 flex-1 truncate">
+            {formatDateTime(root.startTimeMs)}
+            {isSubagent && ` · ${taskInput(root)}`}
+            {cause && <span className="text-destructive"> · {cause}</span>}
+            {waiting && <span className="text-needs-input"> · {waiting}</span>}
+          </span>
+          {cost !== undefined && (
+            <span
+              className={cn(
+                "shrink-0 font-mono tabular-nums",
+                costPriced && "text-success",
+              )}
+              title={
+                cost.endsWith("+")
+                  ? "Some steps' models have no price"
+                  : undefined
+              }
+            >
+              {cost}
+            </span>
+          )}
         </span>
       </button>
       {subagentNames !== "" && (

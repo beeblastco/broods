@@ -11,6 +11,7 @@ export function LoadMore({
   shown,
   total,
   noun,
+  detail,
   pageSize,
   remaining,
   onLoad,
@@ -19,12 +20,14 @@ export function LoadMore({
   total: number;
   /** The rows' name, singular and plural: `["line", "lines"]`. */
   noun: [string, string];
+  /** Text after the count, such as ` · $0.0638`. */
+  detail?: string;
   pageSize: number;
   remaining: number;
   onLoad: () => void;
 }): React.JSX.Element {
   return (
-    <DataTableFooter shown={shown} total={total} noun={noun}>
+    <DataTableFooter shown={shown} total={total} noun={noun} detail={detail}>
       {remaining > 0 && (
         <Button
           type="button"

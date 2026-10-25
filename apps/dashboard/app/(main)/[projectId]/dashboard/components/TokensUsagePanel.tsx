@@ -15,8 +15,17 @@ import {
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
+import { useModelRates } from "@/app/hooks/useModelRates";
 import { useTween } from "@/app/hooks/useTween";
 import { formatNumber } from "@/app/lib/formatNumber";
+import {
+  formatUsd,
+  modelKey,
+  numberAttribute,
+  runModel,
+  stepTokens,
+  type ModelUsage,
+} from "@/app/lib/modelCost";
 import {
   bucketStartsAcrossRange,
   formatAxisNumber,
@@ -33,7 +42,6 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   estimateModelTokenCost,
   type ModelTokenRates,
-  type ModelTokenUsage,
 } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
@@ -87,12 +95,6 @@ interface LiveOverlay {
   modelCalls: number;
   // Each step's tokens under its root's model, priced like a usage row.
   modelUsage: ModelUsage[];
-}
-
-/** One model's tokens, keyed the way usage rows name the model. */
-interface ModelUsage extends ModelTokenUsage {
-  modelProvider: string;
-  modelId: string;
 }
 
 const RANGE_SECONDS: Record<Range, number> = {
@@ -228,42 +230,16 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
-  // The running models, sorted so the rates query's args change only when
-  // the set does, so a live run shows its cost at once.
-  const liveModels = useMemo(
-    () =>
-      [
-        ...new Map(
-          liveOverlay.modelUsage.map((m) => [
-            modelKey(m),
-            { modelProvider: m.modelProvider, modelId: m.modelId },
-          ]),
-        ).entries(),
-      ]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([, model]) => model),
-    [liveOverlay],
-  );
-
   // Reactive subscription: usage totals update live as the harness meters tokens.
   const data = useQuery(api.logs.fetchUsageStats, {
     projectId: projectId,
     stageId: stageId ?? undefined,
     range: range,
   });
-  const liveRateRows = useQuery(
-    api.logs.fetchModelRates,
-    liveModels.length > 0 ? { models: liveModels } : "skip",
+  // Rates for the running models, which have no usage row yet.
+  const { rates: liveRates, loading: liveRatesLoading } = useModelRates(
+    liveOverlay.modelUsage,
   );
-  // The last live rates stay while a new live model set loads, so the cost
-  // does not dip; a model without a rate yet is not "not priced" until then.
-  const [heldLiveRates, setHeldLiveRates] =
-    useState<typeof liveRateRows>(undefined);
-  if (liveRateRows !== undefined && liveRateRows !== heldLiveRates) {
-    setHeldLiveRates(liveRateRows);
-  }
-  const liveRates = liveRateRows ?? heldLiveRates;
-  const liveRatesLoading = liveModels.length > 0 && liveRateRows === undefined;
   // Hold the last result while another range loads, so the chart morphs from
   // it instead of collapsing to an empty grid first. Only for the same
   // project and stage: another stage's numbers never show under this one.
@@ -902,18 +878,6 @@ function formatMs(ms: number): string {
   return `${Math.round(ms)}ms`;
 }
 
-/** USD estimate with useful precision for small token batches. */
-function formatUsd(value: number): string {
-  if (value > 0 && value < 0.0001) return "<$0.0001";
-
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  });
-}
-
 /**
  * In-progress overlay taken straight off the live trace stream: Convex usage is
  * only written when a task finalizes, so a long run would otherwise show nothing
@@ -942,23 +906,15 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
       ? runningRootsById.get(span.parentSpanId)
       : undefined;
     if (span.kind !== "model.step" || !root) continue;
-    const usage = {
-      inputTokens: numericAttribute(span, "model.input_tokens"),
-      outputTokens: numericAttribute(span, "model.output_tokens"),
-      cachedInputTokens: numericAttribute(span, "model.cached_input_tokens"),
-      cacheWriteTokens: numericAttribute(span, "model.cache_write_tokens"),
-    };
-    const { "model.provider": provider, "model.id": modelId } =
-      root.attributes ?? {};
+    const usage = stepTokens(span);
+    const model = runModel(root);
     totals.modelCalls += 1;
     totals.inputTokens += usage.inputTokens;
     totals.outputTokens += usage.outputTokens;
-    totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
+    totals.reasoningTokens += numberAttribute(span, "model.reasoning_tokens");
     totals.cachedInputTokens += usage.cachedInputTokens;
     totals.cacheWriteTokens += usage.cacheWriteTokens;
-    if (typeof provider === "string" && typeof modelId === "string") {
-      modelUsage.push({ modelProvider: provider, modelId: modelId, ...usage });
-    }
+    if (model) modelUsage.push({ ...model, ...usage });
   }
   totals.modelUsage = modelUsage;
 
@@ -978,17 +934,6 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   }
 
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
-}
-
-/** `provider::model`, the key the model filter, its colors and the trace query share. */
-function modelKey(b: { modelProvider: string; modelId: string }): string {
-  return `${b.modelProvider}::${b.modelId}`;
-}
-
-function numericAttribute(span: ObservabilitySpanRow, key: string): number {
-  const value = span.attributes?.[key];
-
-  return typeof value === "number" ? value : 0;
 }
 
 /** Whole-number share for the numbers row, 0% when empty. */
