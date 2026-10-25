@@ -15,11 +15,13 @@ import {
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
+import { useModelRates } from "@/app/hooks/useModelRates";
 import { useTween } from "@/app/hooks/useTween";
 import { formatNumber } from "@/app/lib/formatNumber";
 import {
   formatUsd,
   modelKey,
+  numberAttribute,
   runModel,
   stepTokens,
   type ModelUsage,
@@ -228,42 +230,16 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
-  // The running models, sorted so the rates query's args change only when
-  // the set does, so a live run shows its cost at once.
-  const liveModels = useMemo(
-    () =>
-      [
-        ...new Map(
-          liveOverlay.modelUsage.map((m) => [
-            modelKey(m),
-            { modelProvider: m.modelProvider, modelId: m.modelId },
-          ]),
-        ).entries(),
-      ]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([, model]) => model),
-    [liveOverlay],
-  );
-
   // Reactive subscription: usage totals update live as the harness meters tokens.
   const data = useQuery(api.logs.fetchUsageStats, {
     projectId: projectId,
     stageId: stageId ?? undefined,
     range: range,
   });
-  const liveRateRows = useQuery(
-    api.logs.fetchModelRates,
-    liveModels.length > 0 ? { models: liveModels } : "skip",
+  // Rates for the running models, which have no usage row yet.
+  const { rates: liveRates, loading: liveRatesLoading } = useModelRates(
+    liveOverlay.modelUsage,
   );
-  // The last live rates stay while a new live model set loads, so the cost
-  // does not dip; a model without a rate yet is not "not priced" until then.
-  const [heldLiveRates, setHeldLiveRates] =
-    useState<typeof liveRateRows>(undefined);
-  if (liveRateRows !== undefined && liveRateRows !== heldLiveRates) {
-    setHeldLiveRates(liveRateRows);
-  }
-  const liveRates = liveRateRows ?? heldLiveRates;
-  const liveRatesLoading = liveModels.length > 0 && liveRateRows === undefined;
   // Hold the last result while another range loads, so the chart morphs from
   // it instead of collapsing to an empty grid first. Only for the same
   // project and stage: another stage's numbers never show under this one.
@@ -935,7 +911,7 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     totals.modelCalls += 1;
     totals.inputTokens += usage.inputTokens;
     totals.outputTokens += usage.outputTokens;
-    totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
+    totals.reasoningTokens += numberAttribute(span, "model.reasoning_tokens");
     totals.cachedInputTokens += usage.cachedInputTokens;
     totals.cacheWriteTokens += usage.cacheWriteTokens;
     if (model) modelUsage.push({ ...model, ...usage });
@@ -958,12 +934,6 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   }
 
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
-}
-
-function numericAttribute(span: ObservabilitySpanRow, key: string): number {
-  const value = span.attributes?.[key];
-
-  return typeof value === "number" ? value : 0;
 }
 
 /** Whole-number share for the numbers row, 0% when empty. */

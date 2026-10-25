@@ -409,8 +409,35 @@ describe("taskCosts", () => {
     const costs = taskCosts(groups, rates);
 
     // parent: $2 in + $1 out; subagent: $1 in.
-    expect(costs.get("trace-parent:parent")).toBeCloseTo(4);
-    expect(costs.get("trace-sub:sub")).toBeCloseTo(1);
+    expect(costs.get("trace-parent:parent")?.usd).toBeCloseTo(4);
+    expect(costs.get("trace-parent:parent")?.partial).toBe(false);
+    expect(costs.get("trace-sub:sub")?.usd).toBeCloseTo(1);
+  });
+
+  test("keeps a request's priced spend as a floor when a subagent has no price", () => {
+    const parent = root("parent", 1_000, 9_000, "ok", {
+      ...sonnet,
+      "task.id": TASK_ID,
+    });
+    const sub = {
+      ...root("sub", 2_000, 3_000, "ok", {
+        "model.provider": "custom",
+        "model.id": "mine",
+        "parent.trace_id": "trace-parent",
+      }),
+      kind: "subtask" as const,
+    };
+    const groups = groupSpans([
+      parent,
+      sub,
+      modelStep("parent", 1_000_000, 0),
+      modelStep("sub", 500_000, 0),
+    ]);
+
+    const costs = taskCosts(groups, rates);
+
+    expect(costs.get("trace-parent:parent")).toEqual({ usd: 2, partial: true });
+    expect(costs.get("trace-sub:sub")).toBeNull();
   });
 
   test("reads not priced for an unknown model, nothing before a step or while rates load", () => {

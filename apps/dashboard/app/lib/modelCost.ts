@@ -32,6 +32,16 @@ export function modelKey(model: ModelRef): string {
   return `${model.modelProvider}::${model.modelId}`;
 }
 
+/** A span's numeric attribute, 0 when absent. */
+export function numberAttribute(
+  span: ObservabilitySpanRow,
+  key: string,
+): number {
+  const value = span.attributes?.[key];
+
+  return typeof value === "number" ? value : 0;
+}
+
 /** The model a run's root span names, or null before it names one. */
 export function runModel(root: ObservabilitySpanRow): ModelRef | null {
   const { "model.provider": provider, "model.id": modelId } =
@@ -45,15 +55,9 @@ export function runModel(root: ObservabilitySpanRow): ModelRef | null {
 /** A model.step span's token counts, 0 for any it does not report. */
 export function stepTokens(step: ObservabilitySpanRow): ModelTokenUsage {
   return {
-    inputTokens: tokenAttribute(step, "model.input_tokens"),
-    outputTokens: tokenAttribute(step, "model.output_tokens"),
-    cachedInputTokens: tokenAttribute(step, "model.cached_input_tokens"),
-    cacheWriteTokens: tokenAttribute(step, "model.cache_write_tokens"),
+    inputTokens: numberAttribute(step, "model.input_tokens"),
+    outputTokens: numberAttribute(step, "model.output_tokens"),
+    cachedInputTokens: numberAttribute(step, "model.cached_input_tokens"),
+    cacheWriteTokens: numberAttribute(step, "model.cache_write_tokens"),
   };
-}
-
-function tokenAttribute(span: ObservabilitySpanRow, key: string): number {
-  const value = span.attributes?.[key];
-
-  return typeof value === "number" ? value : 0;
 }

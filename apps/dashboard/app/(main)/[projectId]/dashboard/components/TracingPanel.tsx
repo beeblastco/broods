@@ -66,12 +66,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
-import { useQuery } from "convex/react";
-import { api } from "@broods/convex/_generated/api";
 import {
   estimateModelTokenCost,
   type ModelTokenRates,
 } from "@broods/convex/model/modelPricing";
+import { useModelRates } from "@/app/hooks/useModelRates";
 import {
   formatUsd,
   modelKey,
@@ -573,7 +572,7 @@ interface TaskListPaneProps {
   onSelect: (root: ObservabilitySpanRow) => void;
   onToggleStack: (root: ObservabilitySpanRow, open: boolean) => void;
   // Each task's price by `spanKey(root)`, see taskCosts.
-  costs: ReadonlyMap<string, number | null>;
+  costs: ReadonlyMap<string, TaskCost | null>;
   // What the list says when it has no rows.
   emptyMessage: string;
   // Tasks loaded and in all, counted by request; subagent rows are extra.
@@ -583,6 +582,12 @@ interface TaskListPaneProps {
   onLoadMore: () => void;
 }
 
+/** A task's price in USD; `partial` when some of its steps have no price. */
+export interface TaskCost {
+  usd: number;
+  partial: boolean;
+}
+
 // The list row's props, primitives and stable callbacks so the memoized row
 // skips a flush that left them as they were.
 interface TaskListRowProps {
@@ -590,8 +595,10 @@ interface TaskListRowProps {
   status: SpanStatus;
   tone: StatusTone;
   taskDurationMs: number;
-  // USD, null when a model has no price, undefined before any model step.
-  cost: number | null | undefined;
+  // The price under the duration, see costLabel; undefined before any model step.
+  cost: string | undefined;
+  // Whether `cost` is a price, not "not priced".
+  costPriced: boolean;
   cause: string | null;
   isSubagent: boolean;
   // The subagents' names, newline-joined so the memo compares one string.
@@ -749,7 +756,11 @@ export function TracingPanel({
       ]),
     [visibleGroups, selectedGroup, stackChoices],
   );
-  const costs = useTaskCosts(visibleGroups);
+  const { rates } = useModelRates(listedModels(visibleGroups));
+  const costs = useMemo(
+    () => taskCosts(visibleGroups, rates),
+    [visibleGroups, rates],
+  );
   // The span open in the side panel, resolved against the selected run so
   // it tracks live updates and closes when its run leaves the view.
   const selectedSpan =
@@ -1227,66 +1238,49 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
 }
 
 /**
- * Each listed task's price, from the rates of every model its runs name. The
- * models are sorted so the query's args change only when that set does.
- */
-function useTaskCosts(groups: SpanGroup[]): Map<string, number | null> {
-  const models = useMemo(() => listedModels(groups), [groups]);
-  const rates = useQuery(
-    api.logs.fetchModelRates,
-    models.length > 0 ? { models: models } : "skip",
-  );
-
-  return useMemo(() => taskCosts(groups, rates), [groups, rates]);
-}
-
-/**
  * Each listed task's price by `spanKey(root)`: its model steps at their run's
- * rates, a request with its subagents. Null when a step's model has no price;
- * absent before any step ran or while the rates load.
+ * rates, a request with its subagents. `partial` when some step's model has
+ * no price, so the sum is a floor; null when none has one; absent before any
+ * step ran or while the rates load.
  */
 export function taskCosts(
   groups: SpanGroup[],
   rates: Array<ModelRef & ModelTokenRates> | undefined,
-): Map<string, number | null> {
-  const costs = new Map<string, number | null>();
+): Map<string, TaskCost | null> {
+  const costs = new Map<string, TaskCost | null>();
   if (!rates) return costs;
   const rateByModel = new Map(rates.map((rate) => [modelKey(rate), rate]));
-  const ownCost = (group: SpanGroup): number | null | undefined => {
+  const ownCost = (group: SpanGroup): TaskCost | null | undefined => {
     const runModels = new Map(
       group.spans
         .filter((span) => isRootSpanKind(span.kind))
         .map((root) => [root.traceId, runModel(root)]),
     );
-    let total: number | undefined;
+    let cost: TaskCost | null | undefined;
     for (const step of group.spans) {
       if (step.kind !== "model.step") continue;
       const model = runModels.get(step.traceId);
-      const cost = estimateModelTokenCost(
+      const priced = estimateModelTokenCost(
         model ? rateByModel.get(modelKey(model)) : undefined,
         stepTokens(step),
       );
-      if (cost === null) return null;
-      total = (total ?? 0) + cost.total;
+      cost = addCost(
+        cost,
+        priced ? { usd: priced.total, partial: false } : null,
+      );
     }
 
-    return total;
+    return cost;
   };
   for (const group of groups) {
-    const parts = [group, ...group.subagents].map((part) => {
+    let request: TaskCost | null | undefined;
+    for (const part of [group, ...group.subagents]) {
       const cost = ownCost(part);
-      if (cost !== undefined) costs.set(spanKey(part.root), cost);
-
-      return cost;
-    });
-    const priced = parts.filter((cost) => typeof cost === "number");
-    if (parts.includes(null)) costs.set(spanKey(group.root), null);
-    else if (priced.length === 0) costs.delete(spanKey(group.root));
-    else
-      costs.set(
-        spanKey(group.root),
-        priced.reduce((sum, cost) => sum + cost, 0),
-      );
+      if (cost === undefined) continue;
+      costs.set(spanKey(part.root), cost);
+      request = addCost(request, cost);
+    }
+    if (request !== undefined) costs.set(spanKey(group.root), request);
   }
 
   return costs;
@@ -1415,6 +1409,17 @@ export function spanIssue(span: ObservabilitySpanRow): SpanIssue | null {
   };
 }
 
+/** Two prices summed: null only when both are, partial when either is. */
+function addCost(
+  sum: TaskCost | null | undefined,
+  cost: TaskCost | null,
+): TaskCost | null {
+  if (cost === null) return sum ? { usd: sum.usd, partial: true } : null;
+  if (!sum) return { usd: cost.usd, partial: cost.partial || sum === null };
+
+  return { usd: sum.usd + cost.usd, partial: sum.partial || cost.partial };
+}
+
 /** A request's spans and its subagents', for search. */
 function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   return [
@@ -1494,6 +1499,39 @@ function chainFor(
   }
 
   return chain;
+}
+
+/** A task's price as its row shows it: `$0.0012`, `$0.0012+` when partial, or "not priced". */
+function costLabel(cost: TaskCost | null | undefined): string | undefined {
+  if (cost === undefined) return undefined;
+  if (cost === null) return "not priced";
+
+  return `${formatUsd(cost.usd)}${cost.partial ? "+" : ""}`;
+}
+
+/**
+ * The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before
+ * any is priced. A paged list adds "shown", since the count covers every task
+ * held and the price only the ones listed; a partial price adds "+".
+ */
+function costTotal(
+  rows: ListRow[],
+  costs: ReadonlyMap<string, TaskCost | null>,
+  paged: boolean,
+): string {
+  let total: TaskCost | null | undefined;
+  let unpriced = 0;
+  for (const { group, parent } of rows) {
+    if (parent !== null) continue;
+    const cost = costs.get(spanKey(group.root));
+    if (cost === null) unpriced += 1;
+    else if (cost !== undefined) total = addCost(total, cost);
+  }
+  const price = total
+    ? ` · ${formatUsd(total.usd)}${total.partial ? "+" : ""}${paged ? " shown" : ""}`
+    : "";
+
+  return `${price}${unpriced > 0 ? ` · ${unpriced} not priced` : ""}`;
 }
 
 /** Labeled fields first, then the run identity, then every key the panel does not already show. */
@@ -1620,6 +1658,18 @@ function kindBar(kind: ObservabilitySpanRow["kind"]): string {
   return KIND_BAR[kind] ?? KIND_BAR["tool.call"];
 }
 
+/** Every model the groups' runs name, subagents included. */
+function listedModels(groups: SpanGroup[]): ModelRef[] {
+  return [...groups, ...groups.flatMap((group) => group.subagents)].flatMap(
+    (group) =>
+      group.spans.flatMap((span) => {
+        const model = isRootSpanKind(span.kind) ? runModel(span) : null;
+
+        return model ? [model] : [];
+      }),
+  );
+}
+
 /** A step's reasoning or response when it has one; core writes the key empty on a step without. */
 function noteText(span: ObservabilitySpanRow, key: string): string | undefined {
   const value = span.attributes?.[key];
@@ -1627,50 +1677,6 @@ function noteText(span: ObservabilitySpanRow, key: string): string | undefined {
   const text = displayAttribute(value);
 
   return text === "" ? undefined : text;
-}
-
-/**
- * The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before
- * any is priced. A paged list adds "shown", since the count covers every task
- * held and the price only the ones listed.
- */
-function costTotal(
-  rows: ListRow[],
-  costs: ReadonlyMap<string, number | null>,
-  paged: boolean,
-): string {
-  let total = 0;
-  let priced = 0;
-  let unpriced = 0;
-  for (const { group, parent } of rows) {
-    if (parent !== null) continue;
-    const cost = costs.get(spanKey(group.root));
-    if (cost === null) unpriced += 1;
-    else if (cost !== undefined) {
-      total += cost;
-      priced += 1;
-    }
-  }
-  if (priced === 0 && unpriced === 0) return "";
-  const price =
-    priced > 0 ? ` · ${formatUsd(total)}${paged ? " shown" : ""}` : "";
-
-  return `${price}${unpriced > 0 ? ` · ${unpriced} not priced` : ""}`;
-}
-
-/** Every model the groups' runs name, subagents included, sorted by key. */
-function listedModels(groups: SpanGroup[]): ModelRef[] {
-  const models = new Map<string, ModelRef>();
-  for (const group of groups) {
-    for (const span of [group, ...group.subagents].flatMap((g) => g.spans)) {
-      const model = isRootSpanKind(span.kind) ? runModel(span) : null;
-      if (model) models.set(modelKey(model), model);
-    }
-  }
-
-  return [...models.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, model]) => model);
 }
 
 function numericAttribute(
@@ -2977,7 +2983,8 @@ function TaskListPane({
             status={group.status}
             tone={groupTone(group)}
             taskDurationMs={group.taskDurationMs}
-            cost={costs.get(spanKey(group.root))}
+            cost={costLabel(costs.get(spanKey(group.root)))}
+            costPriced={Boolean(costs.get(spanKey(group.root)))}
             cause={failureCause(group)}
             isSubagent={parent !== null}
             subagentNames={group.subagents
@@ -3024,6 +3031,7 @@ const TaskListRow = memo(function TaskListRow({
   tone,
   taskDurationMs,
   cost,
+  costPriced,
   cause,
   isSubagent,
   subagentNames,
@@ -3083,10 +3091,15 @@ const TaskListRow = memo(function TaskListRow({
             <span
               className={cn(
                 "shrink-0 font-mono tabular-nums",
-                cost !== null && "text-success",
+                costPriced && "text-success",
               )}
+              title={
+                cost.endsWith("+")
+                  ? "Some steps' models have no price"
+                  : undefined
+              }
             >
-              {cost === null ? "not priced" : formatUsd(cost)}
+              {cost}
             </span>
           )}
         </span>
