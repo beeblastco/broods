@@ -1190,11 +1190,11 @@ export async function runAgentLoop(
       }
 
       const stepTokens = usageTokenTotals(usage);
-      taskTotals.addStep(
-        stepNumber,
-        stepTokens,
-        extractCacheWriteTokens(configuredModel.providerName, providerMetadata),
+      const cacheWriteFallback = extractCacheWriteTokens(
+        configuredModel.providerName,
+        providerMetadata,
       );
+      taskTotals.addStep(stepNumber, stepTokens, cacheWriteFallback);
 
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
       // dropped setting) are silent in the stream; surface them in Loki.
@@ -1285,6 +1285,8 @@ export async function runAgentLoop(
           "model.output_tokens": stepTokens.outputTokens,
           "model.reasoning_tokens": stepTokens.reasoningTokens,
           "model.cached_input_tokens": stepTokens.cachedInputTokens,
+          "model.cache_write_tokens":
+            stepTokens.cacheWriteTokens || cacheWriteFallback,
           "model.total_tokens": stepTokens.totalTokens,
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),

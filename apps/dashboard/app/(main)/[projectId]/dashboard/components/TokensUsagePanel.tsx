@@ -920,7 +920,7 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
       inputTokens: numericAttribute(span, "model.input_tokens"),
       outputTokens: numericAttribute(span, "model.output_tokens"),
       cachedInputTokens: numericAttribute(span, "model.cached_input_tokens"),
-      cacheWriteTokens: 0,
+      cacheWriteTokens: numericAttribute(span, "model.cache_write_tokens"),
     };
     const { "model.provider": provider, "model.id": modelId } =
       root.attributes ?? {};

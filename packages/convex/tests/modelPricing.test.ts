@@ -200,5 +200,13 @@ describe("model pricing", () => {
     await crawl({ input: 8 }, false);
     expect((await stored("openai"))?.models[0].input).toBe(8);
     expect(await stored("custom")).toBeNull();
+
+    // Both sources unset: the table empties.
+    await tt.mutation(internal.modelPrices.store.store, {
+      crawled: [],
+      inline: [],
+      crawl: { url: "", etag: "", inline: "" },
+    });
+    expect(await stored("openai")).toBeNull();
   });
 });

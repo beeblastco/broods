@@ -6,7 +6,7 @@
 import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { ModelTokenRates } from "../model/modelPricing";
-import { parseInlinePrices, type ProviderRates } from "../model/modelsDev";
+import type { ProviderRates } from "../model/modelsDev";
 import { stableJson } from "../model/objects";
 import { modelPriceCrawlFields, modelPricesFields } from "../schema";
 
@@ -34,16 +34,19 @@ export const crawlState = internalQuery({
  * Crawl: replace each provider's rates, writing only the ones that changed.
  * A crawled rate that moved more than 10x keeps its stored value and logs, so
  * a broken or tampered catalogue cannot swing costs; the org's inline prices
- * apply over the crawl as given. A provider taken out of the inline prices
- * that the crawl does not list either loses its rates.
+ * apply over the crawl as given. The table mirrors the inputs: a provider in
+ * neither the crawl nor the inline prices loses its rates.
  */
 export const store = internalMutation({
   args: { crawled: providerRates, inline: providerRates, crawl: crawlInputs },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const state = await ctx.db.query("modelPriceCrawl").first();
+    const stale = await ctx.db.query("modelPrices").collect();
     const providers = new Set(
-      [...args.crawled, ...args.inline].map((rates) => rates.provider),
+      [...args.crawled, ...args.inline, ...stale].map(
+        (rates) => rates.provider,
+      ),
     );
     for (const provider of providers) {
       const existing = await ctx.db
@@ -70,7 +73,9 @@ export const store = internalMutation({
         models.set(row.modelId, row);
       }
       const next = [...models.values()];
-      if (!existing) {
+      if (next.length === 0) {
+        if (existing) await ctx.db.delete(existing._id);
+      } else if (!existing) {
         await ctx.db.insert("modelPrices", {
           provider: provider,
           models: next,
@@ -79,15 +84,6 @@ export const store = internalMutation({
         await ctx.db.patch(existing._id, { models: next });
       }
     }
-    for (const { provider } of parseInlinePrices(state?.inline ?? "")) {
-      if (providers.has(provider)) continue;
-      const dropped = await ctx.db
-        .query("modelPrices")
-        .withIndex("by_provider", (q) => q.eq("provider", provider))
-        .unique();
-      if (dropped) await ctx.db.delete(dropped._id);
-    }
-
     if (!state) {
       await ctx.db.insert("modelPriceCrawl", args.crawl);
     } else if (

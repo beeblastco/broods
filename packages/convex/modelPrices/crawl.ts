@@ -32,17 +32,20 @@ export const run = internalAction({
   handler: async (ctx): Promise<null> => {
     const url = catalogueUrl();
     const inline = process.env.BROODS_MODEL_PRICES ?? "";
-    if (url === "" && inline === "") return null;
-
+    // Before any download, so a malformed value fails without fetching.
+    const inlineRates = parseInlinePrices(inline);
     const last = await ctx.runQuery(internal.modelPrices.store.crawlState, {});
-    const sameInputs = last?.url === url && last.inline === inline;
+    const sameInputs =
+      (last?.url ?? "") === url && (last?.inline ?? "") === inline;
+    // Nothing configured and nothing stored from a past config.
+    if (url === "" && inline === "" && sameInputs) return null;
     let crawled: ProviderRates[] = [];
     let etag = "";
     if (url !== "") {
       const response = await fetch(url, {
         headers: {
           Accept: "application/json",
-          ...(sameInputs && last.etag ? { "If-None-Match": last.etag } : {}),
+          ...(sameInputs && last?.etag ? { "If-None-Match": last.etag } : {}),
         },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
@@ -60,7 +63,7 @@ export const run = internalAction({
     }
     await ctx.runMutation(internal.modelPrices.store.store, {
       crawled: crawled,
-      inline: parseInlinePrices(inline),
+      inline: inlineRates,
       crawl: { url: url, etag: etag, inline: inline },
     });
 
@@ -76,16 +79,20 @@ function catalogueUrl(): string {
   return authProvider() === "self-host" ? "" : MODELS_DEV_API_URL;
 }
 
-/** The catalogue body, refused past `MAX_CATALOGUE_BYTES`. */
+/** The catalogue body, read in chunks and abandoned once past `MAX_CATALOGUE_BYTES`. */
 async function readCatalogue(response: Response): Promise<ModelsDevApi> {
-  const declared = Number(response.headers.get("content-length"));
-  if (declared > MAX_CATALOGUE_BYTES) {
-    throw new Error(`price catalogue is ${declared} bytes, over the limit`);
-  }
-  const text = await response.text();
-  if (text.length > MAX_CATALOGUE_BYTES) {
-    throw new Error(`price catalogue is ${text.length} bytes, over the limit`);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("price catalogue has no body");
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (let part = await reader.read(); !part.done; part = await reader.read()) {
+    bytes += part.value.byteLength;
+    if (bytes > MAX_CATALOGUE_BYTES) {
+      await reader.cancel();
+      throw new Error(`price catalogue is over ${MAX_CATALOGUE_BYTES} bytes`);
+    }
+    chunks.push(part.value);
   }
 
-  return JSON.parse(text);
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }

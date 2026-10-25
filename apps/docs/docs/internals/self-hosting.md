@@ -187,7 +187,9 @@ Set your own rates, such as negotiated prices or a `custom` endpoint, as JSON in
 bunx convex env set BROODS_MODEL_PRICES '{"custom":{"gpt-oss-120b":{"input":0.1,"output":0.5}},"anthropic":{"claude-sonnet-5-5":{"input":1.8,"output":9,"cacheRead":0.09}}}'
 ```
 
-A malformed value fails the crawl with the reason in the Convex logs. Without either variable every model reads "not priced".
+A malformed value fails the crawl with the reason in the Convex logs. Unset both variables and the next crawl clears every stored rate, so every model reads "not priced".
+
+A crawled rate that moves more than 10x between runs keeps its stored value, and the crawl logs a warning. To accept the new rate, set it in `BROODS_MODEL_PRICES`.
 
 ## 3. Shared services
 
