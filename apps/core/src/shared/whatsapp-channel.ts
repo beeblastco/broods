@@ -340,6 +340,8 @@ function parseInbound(
   // A username-only sender carries no phone number to allow-list or reply to.
   const from = message.from;
   if (!from) {
+    logWarn("WhatsApp sender has no phone number", { messageId: message.id });
+
     return { kind: "ignore", reason: "no sender phone number" };
   }
   if (

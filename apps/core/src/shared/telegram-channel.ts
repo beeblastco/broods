@@ -30,6 +30,7 @@ import {
   questionButtonId,
 } from "./channels.ts";
 import { logWarn } from "./log.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const BOT_COMMAND_ENTITY = "bot_command";
@@ -117,7 +118,7 @@ class BroodsTelegramAdapter extends TelegramAdapter {
       );
     }
 
-    return Buffer.from(await response.arrayBuffer());
+    return await readCappedFile(response, fileId);
   }
 
   protected override async telegramFetch<TResult>(
@@ -517,14 +518,39 @@ function questionKeyboard(
   );
 }
 
+// A tenant file server's body, refused past the attachment cap the SDK's own
+// Telegram download keeps, so a tenant host cannot stream gigabytes into core.
+async function readCappedFile(
+  response: Response,
+  fileId: string,
+): Promise<Buffer> {
+  const tooLarge = (): Error =>
+    new Error(`Telegram file ${fileId} exceeds the download limit`);
+  if (Number(response.headers.get("content-length")) > MAX_ATTACHMENT_BYTES) {
+    await response.body?.cancel();
+    throw tooLarge();
+  }
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const read = await reader?.read();
+    if (!read || read.done) break;
+    size += read.value.byteLength;
+    if (size > MAX_ATTACHMENT_BYTES) {
+      await reader?.cancel();
+      throw tooLarge();
+    }
+    chunks.push(read.value);
+  }
+
+  return Buffer.concat(chunks, size);
+}
+
 // The text a sticker arrives as, since it carries no caption: its emoji, which
 // is all an animated or video sticker says once `telegramAttachments` skips it,
 // and the file_id send-sticker takes to send the same sticker back.
-function stickerText(sticker: TelegramSticker | undefined): string {
-  if (!sticker) {
-    return "";
-  }
-
+function stickerText(sticker: TelegramSticker): string {
   return `${sticker.emoji ?? ""} [sticker file_id: ${sticker.file_id}]`.trim();
 }
 

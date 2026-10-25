@@ -762,6 +762,13 @@ describe("agent rules", () => {
     ).toThrow('config.channels.whatsapp.apiVersion must look like "v25.0"');
     expect(() =>
       normalizeAgentConfig({
+        channels: { whatsapp: { id: "wa", phoneNumberId: " 1065403522" } },
+      }),
+    ).toThrow(
+      "config.channels.whatsapp.phoneNumberId must be the number's digits-only ID",
+    );
+    expect(() =>
+      normalizeAgentConfig({
         channels: { teams: { id: "teams", appId: "app", appPassword: "pw" } },
       }),
     ).toThrow(
