@@ -120,7 +120,7 @@ model: {
 
 ## System prompt and turn limit
 
-`agent.system` is the base prompt. Broods appends a block for each feature that is on, such as workspace guidance, the memory index, available skills, subagents and the scheduler clock. The Tracing tab in the dashboard shows the full assembled prompt for every run.
+`agent.system` is the base prompt. Broods appends a block for each feature that is on, such as workspace guidance, the memory index, available skills, subagents and the scheduler. Every run also gets an `<environment>` block with the current time. The Tracing tab in the dashboard shows the full assembled prompt for every run.
 
 `agent.maxTurn` caps model steps per run. The default is 30, and `0` removes the cap. A run that hits the cap ends as `failed` with its history intact, and `continue` resumes it. See [Conversations](conversations.md).
 
@@ -178,7 +178,7 @@ export const codingAgent = defineAgent({
 - The harness ships its own file tools, so the Broods workspace prompt is off. `memory_save` still works.
 - Broods MCP servers and account skills still reach the harness. Filter tools with `activeTools` or `inactiveTools` on `defineHarness`.
 - The harness's own "ask the user" tool is off. The agent asks through [`ask_questions`](tools.md#asking-the-user).
-- Steering sent before a turn starts is folded into its prompt. Steering sent during a turn runs as the next turn.
+- Steering sent before a turn starts is folded into its prompt. Claude Code, Codex, OpenCode and Pi take steering sent during a turn at its next step. Deep Agents reads it when the next turn starts.
 - Images reach the harness as images, so send them only to a model that reads images. Any other attachment arrives as a note pointing at its copy in the workspace.
 - Policies and structured output are not supported yet.
 

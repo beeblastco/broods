@@ -21,36 +21,35 @@ flowchart TD
     As["async_status"]
   end
   Create --> Deny["withholdTools<br/>config.denyTools"]
-  Deny --> Async["AsyncToolCoordinator<br/>wraps async: true tools"]
-  Async --> Hooks["wrapToolsWithHooks<br/>tool.call.started, tool.result"]
+  Deny --> Hooks["wrapToolsWithHooks<br/>tool.call.started, tool.result"]
   Hooks --> Fence["wrapToolsWithOwnerFence<br/>lease still ours?"]
   Fence --> ST["streamText<br/>+ toolApproval"]
 ```
 
-| Group     | Tools                                                                        | Registered when                                                                                                                 |
-| --------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Sandbox   | `bash`                                                                       | any sandbox or sandbox-backed workspace                                                                                         |
-|           | `computer`                                                                   | a machine sandbox                                                                                                               |
-|           | `browse`                                                                     | `browser.enabled`; CLI sync refuses the agent, and core fails the run, unless the first sandbox can run Obscura                 |
-|           | `read`, `glob`                                                               | any workspace (mount when it has a sandbox, else S3 or a read-only mount)                                                       |
-|           | `write`, `edit`, `grep`                                                      | a workspace with a sandbox                                                                                                      |
-|           | `memory_save`                                                                | a sandbox-backed workspace with the memory harness on                                                                           |
-| Channel   | `send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update` | a channel turn, each gated on adapter capabilities. See [channels](channels.md)                                                 |
-|           | `send-message`                                                               | the agent has channels and the request can dispatch to another session                                                          |
-| Subagent  | `run_subagent`; persistent mode adds `update_subagent`, `stop_subagent`      | `subagent.enabled` and a dispatcher                                                                                             |
-|           | `ask_parent`                                                                 | a persistent subagent run                                                                                                       |
-| Skills    | `load_skill`                                                                 | `skills.enabled` with `allowed` paths                                                                                           |
-| Scheduler | `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`           | `scheduler.enabled`, not on a cron-fired run                                                                                    |
-| Provider  | every `config.tools` key                                                     | the key names a tool in the provider's `tools` namespace, else the run fails with `config.tools.<name> is not a supported tool` |
-| Questions | `ask_questions`                                                              | the session has a delivery (channel or WebSocket) and is not cron-fired                                                         |
-| MCP       | `<server>__<tool>`                                                           | each enabled `config.mcp` server                                                                                                |
-| Async     | `async_status`                                                               | any `async: true` tool or a workspace with background jobs; `logs` and `stop` only with live job controls                       |
+| Group     | Tools                                                                        | Registered when                                                                                                                                    |
+| --------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sandbox   | `bash`                                                                       | any sandbox or sandbox-backed workspace                                                                                                            |
+|           | `computer`                                                                   | a machine sandbox                                                                                                                                  |
+|           | `browse`                                                                     | `browser.enabled`; CLI sync refuses the agent, and core fails the run, unless the first sandbox can run Obscura                                    |
+|           | `read`, `glob`                                                               | any workspace (mount when it has a sandbox, else S3 or a read-only mount)                                                                          |
+|           | `write`, `edit`, `grep`                                                      | a workspace with a sandbox                                                                                                                         |
+|           | `memory_save`                                                                | a sandbox-backed workspace with the memory harness on                                                                                              |
+| Channel   | `send-files`, `send-images`, `send-reactions`, `send-sticker`, `send-update` | a channel turn. `send-update` always; `send-files` also needs a workspace; the rest are gated on adapter capabilities. See [channels](channels.md) |
+|           | `send-message`                                                               | the agent has channels and the request can dispatch to another session                                                                             |
+| Subagent  | `run_subagent`; persistent mode adds `update_subagent`, `stop_subagent`      | `subagent.enabled` and a dispatcher; the persistent controls also need the run's account and session                                               |
+|           | `ask_parent`                                                                 | a persistent subagent run                                                                                                                          |
+| Skills    | `load_skill`                                                                 | `skills.enabled` with `allowed` paths                                                                                                              |
+| Scheduler | `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`           | `scheduler.enabled`, not on a cron-fired run                                                                                                       |
+| Provider  | every `config.tools` key                                                     | the key names a tool in the provider's `tools` namespace, else the run fails with `config.tools.<name> is not a supported tool`                    |
+| Questions | `ask_questions`                                                              | the session has a delivery (channel or WebSocket) and is not cron-fired                                                                            |
+| MCP       | `<server>__<tool>`                                                           | each enabled `config.mcp` server                                                                                                                   |
+| Async     | `async_status`                                                               | a workspace on a persistent sandbox, where `bash` starts background jobs; `logs` and `stop` only with live job controls                            |
 
 `withholdTools` runs after every group is registered, so a channel record's `denyTools` also covers sandbox and MCP tools.
 
 ### Provider-defined tools
 
-A provider tool serializes to `{ type: "provider", id: "google.google_search", args }`, which loses its schemas, so `provider-tool.ts` rebuilds it from the live provider factory with those `args`. Core keeps no list of names. Provider tools have no local `execute`, so `async: true` on one only logs a warning.
+A provider tool serializes to `{ type: "provider", id: "google.google_search", args }`, which loses its schemas, so `provider-tool.ts` rebuilds it from the live provider factory with those `args`. Core keeps no list of names.
 
 ## A tool call
 
@@ -84,36 +83,9 @@ sequenceDiagram
   end
 ```
 
-An `async: true` tool returns a status id at once and its result joins the conversation later (`async-tools.ts`, `async-tool-result.ts`):
+Two tools return a status id at once and settle outside the model step: `bash` with `background: true` and `ask_questions`. Each writes a detached row (`async-tool-result.ts`). A background job settles it through `POST /v1/sandbox-jobs/:resultId/complete` (see [sandboxes](sandboxes.md#background-jobs)), an answer through `questions.ts`. Either way `continueAfterAsyncToolSettlement` in `handler.ts` resumes the conversation with the result; an answer joins a live run at its next step boundary. The model can read a row early with `async_status`.
 
-```mermaid
-sequenceDiagram
-  participant M as model
-  participant A as AsyncToolCoordinator
-  participant T as tool execute
-  participant CV as runtimeAsyncToolResults
-  participant L as runParentContinuationLoop
-
-  M->>A: call the wrapped tool
-  A->>CV: createPendingAsyncToolResult
-  A->>T: start execute, not awaited
-  A-->>M: resultId, status running
-  opt model checks early
-    M->>CV: async_status(statusId)
-  end
-  M-->>L: parent pass ends
-  L->>A: waitForIdle, heartbeat every 15 s
-  T-->>A: output
-  A->>CV: markAsyncToolResultCompleted
-  A-->>L: idle
-  L->>A: drainCompletionsToParent
-  A->>A: persist results as parent user messages
-  L->>M: next parent pass
-```
-
-- A call still pending at the request deadline goes through `drainCompletionsAndTimeoutsToParent`, which marks it `failed` and injects a timeout notice.
-- Detached `bash` background jobs settle through `POST /v1/sandbox-jobs/:resultId/complete` instead, which resumes the conversation. See [sandboxes](sandboxes.md#background-jobs).
-- A settled row carries `handback`, the same field a subagent result row has (see [subagents](subagents.md#late-results-are-told-once-and-survive-a-restart)): `pending` from the settle, `stored` once the conversation holds the result, `detached` once the run that started it gave up. The drain writes each result under the key `async-tool:<resultId>:<status>`, and `insertConversationEvents` marks the row `stored` in that insert's transaction; a failed drain marks each row `detached`, best effort. `async_status` marks a row it reads `stored`, unless a continuation of it already waits in the queue: then it stores nothing and answers `delivery: "automatic"` without the result, so the continuation tells it once. A continuation (`continueAfterAsyncToolSettlement`, admitted once per result as `<root event>:async-tools:<resultId>`) passes the row as `toolResultId` to `runtimeIngress.accept`, which refuses it as a duplicate once the row is stored, and stores it when an owner takes it: on admission as owner, or when a queued one is applied. A queued continuation that expires leaves the row for the sweep, whose retry replaces the expired envelope. The ingress recovery sweep's `resumeLostAsyncToolResults` (`async-tools.ts`) runs after the subagent pass, over rows `detached` for longer than the 2 minute grace and rows `pending` for longer than one run budget plus wind-down plus that grace, each written within a day; each resumes its conversation through the same continuation, a `capacity` or `duplicate` admission keeps the row for the next pass (admission stores the row of a result the conversation has), and a row refused as a conflict or with nothing to resume is marked `stored` and logged once.
+- A settled row carries `handback`, the same field a subagent result row has (see [subagents](subagents.md#late-results-are-told-once-and-survive-a-restart)): `pending` from the settle, `stored` once the conversation holds the result. `async_status` marks a row it reads `stored`, unless a continuation of it already waits in the queue: then it stores nothing and answers `delivery: "automatic"` without the result, so the continuation tells it once. A continuation (`continueAfterAsyncToolSettlement`, admitted once per result as `<root event>:async-tools:<resultId>`) passes the row as `toolResultId` to `runtimeIngress.accept`, which refuses it as a duplicate once the row is stored, and stores it when an owner takes it: on admission as owner, or when a queued one is applied. A queued continuation that expires leaves the row for the sweep, whose retry replaces the expired envelope. The ingress recovery sweep's `resumeLostAsyncToolResults` (`async-tools.ts`) runs after the subagent pass, over rows `pending` for longer than one run budget plus wind-down plus the 2 minute grace, each written within a day; each resumes its conversation through the same continuation, a `capacity` or `duplicate` admission keeps the row for the next pass (admission stores the row of a result the conversation has), and a row refused as a conflict or with nothing to resume is marked `stored` and logged once.
 
 ## MCP servers
 
@@ -346,7 +318,6 @@ Rules:
 
 - One tool per `<name>.tool.ts`. Orchestration stays in `harness.ts`.
 - No new Lambda, queue or worker for an ordinary external-service tool. Use an MCP server.
-- `async: true` only for tools with a local `execute`. The platform picks wait behavior; agent config does not.
 - Reuse provider or service SDK types. Return structured data, not prose.
 - Per-account credentials live in encrypted agent config or account env vars. SST secrets are only service-wide fallbacks.
 - Approval goes through `needsApproval` ([AI SDK tool approval](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval)), never a question inside the tool.
