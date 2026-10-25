@@ -69,6 +69,49 @@ type InlinePrices = Record<
 >;
 
 /**
+ * The org's own rates from `BROODS_MODEL_PRICES`, empty when unset.
+ * @throws a `BROODS_MODEL_PRICES` error when the JSON is malformed or
+ * mis-shaped, names an unknown provider, or a model lacks a valid input or
+ * output rate, so a config mistake fails the crawl loudly instead of pricing
+ * nothing
+ */
+export function parseInlinePrices(raw: string): ProviderRates[] {
+  if (raw.trim() === "") return [];
+  try {
+    const body: InlinePrices = JSON.parse(raw);
+
+    return Object.entries(body).map(([provider, models]) => {
+      if (!isAccountModelProviderName(provider)) {
+        throw new Error(`unknown provider ${provider}`);
+      }
+
+      return {
+        provider: provider,
+        models: Object.entries(models).map(([id, cost]) => {
+          if (!isRate(cost.input) || !isRate(cost.output)) {
+            throw new Error(
+              `${provider}/${id} needs non-negative input and output rates`,
+            );
+          }
+
+          return {
+            modelId: normalizeModelId(id),
+            input: cost.input,
+            output: cost.output,
+            cacheRead: isRate(cost.cacheRead) ? cost.cacheRead : cost.input,
+            cacheWrite: isRate(cost.cacheWrite) ? cost.cacheWrite : cost.input,
+          };
+        }),
+      };
+    });
+  } catch (error) {
+    throw new Error(
+      `BROODS_MODEL_PRICES: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
  * Each agent provider's rate rows, ids normalized. A model without a valid
  * input and output price is skipped; a missing cache rate falls back to the
  * input rate, since the provider gives no discount for it.
@@ -94,42 +137,6 @@ export function parseModelsDevRates(body: ModelsDevApi): ProviderRates[] {
     return rows.size > 0
       ? [{ provider: provider, models: [...rows.values()] }]
       : [];
-  });
-}
-
-/**
- * The org's own rates from `BROODS_MODEL_PRICES`, empty when unset.
- * @throws when the JSON is malformed, names an unknown provider, or a model
- * lacks a valid input or output rate, so a config mistake fails the crawl
- * loudly instead of pricing nothing
- */
-export function parseInlinePrices(raw: string): ProviderRates[] {
-  if (raw.trim() === "") return [];
-  const body: InlinePrices = JSON.parse(raw);
-
-  return Object.entries(body).map(([provider, models]) => {
-    if (!isAccountModelProviderName(provider)) {
-      throw new Error(`BROODS_MODEL_PRICES names unknown provider ${provider}`);
-    }
-
-    return {
-      provider: provider,
-      models: Object.entries(models).map(([id, cost]) => {
-        if (!isRate(cost.input) || !isRate(cost.output)) {
-          throw new Error(
-            `BROODS_MODEL_PRICES ${provider}/${id} needs non-negative input and output rates`,
-          );
-        }
-
-        return {
-          modelId: normalizeModelId(id),
-          input: cost.input,
-          output: cost.output,
-          cacheRead: isRate(cost.cacheRead) ? cost.cacheRead : cost.input,
-          cacheWrite: isRate(cost.cacheWrite) ? cost.cacheWrite : cost.input,
-        };
-      }),
-    };
   });
 }
 

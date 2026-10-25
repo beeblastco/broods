@@ -10,66 +10,56 @@ import type { ProviderRates } from "../model/modelsDev";
 import { stableJson } from "../model/objects";
 import { modelPriceCrawlFields, modelPricesFields } from "../schema";
 
-// A crawled rate that moves further than this between runs is held back.
-const MAX_RATE_JUMP = 10;
-const RATE_KEYS = ["input", "output", "cacheRead", "cacheWrite"] as const;
-
 const crawlInputs = v.object(modelPriceCrawlFields);
 const providerRates = v.array(v.object(modelPricesFields));
 
 type RateRow = ModelTokenRates & { modelId: string };
 
-/** Crawl: the last run's catalogue URL, ETag and inline prices, or null before the first. */
+/**
+ * Crawl: the last run's catalogue URL, ETag and inline prices. Null before
+ * the first run and while no rate is stored, so an emptied table is refilled
+ * instead of trusting a 304.
+ */
 export const crawlState = internalQuery({
   args: {},
   returns: v.union(crawlInputs, v.null()),
   handler: async (ctx): Promise<Infer<typeof crawlInputs> | null> => {
     const row = await ctx.db.query("modelPriceCrawl").first();
+    const priced = await ctx.db.query("modelPrices").first();
 
-    return row ? { url: row.url, etag: row.etag, inline: row.inline } : null;
+    return row && priced
+      ? { url: row.url, etag: row.etag, inline: row.inline }
+      : null;
   },
 });
 
 /**
  * Crawl: replace each provider's rates, writing only the ones that changed.
- * A crawled rate that moved more than 10x keeps its stored value and logs, so
- * a broken or tampered catalogue cannot swing costs; the org's inline prices
- * apply over the crawl as given. The table mirrors the inputs: a provider in
- * neither the crawl nor the inline prices loses its rates.
+ * The org's inline prices apply over the crawl. The table mirrors the inputs:
+ * a provider in neither loses its rates.
  */
 export const store = internalMutation({
   args: { crawled: providerRates, inline: providerRates, crawl: crawlInputs },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const state = await ctx.db.query("modelPriceCrawl").first();
-    const stale = await ctx.db.query("modelPrices").collect();
-    const providers = new Set(
-      [...args.crawled, ...args.inline, ...stale].map(
-        (rates) => rates.provider,
-      ),
+    const stored = new Map(
+      (await ctx.db.query("modelPrices").collect()).map((doc) => [
+        doc.provider,
+        doc,
+      ]),
     );
+    const providers = new Set([
+      ...args.crawled.map((rates) => rates.provider),
+      ...args.inline.map((rates) => rates.provider),
+      ...stored.keys(),
+    ]);
     for (const provider of providers) {
-      const existing = await ctx.db
-        .query("modelPrices")
-        .withIndex("by_provider", (q) => q.eq("provider", provider))
-        .unique();
-      const stored = new Map(existing?.models.map((row) => [row.modelId, row]));
+      const existing = stored.get(provider);
       const models = new Map<string, RateRow>();
-      for (const row of ratesOf(args.crawled, provider)) {
-        const old = stored.get(row.modelId);
-        if (
-          old &&
-          RATE_KEYS.some((key) => jump(old[key], row[key]) > MAX_RATE_JUMP)
-        ) {
-          console.warn(
-            `modelPrices: ${provider}/${row.modelId} moved over ${MAX_RATE_JUMP}x, kept the stored rate. Set BROODS_MODEL_PRICES to accept it.`,
-          );
-          models.set(row.modelId, old);
-        } else {
-          models.set(row.modelId, row);
-        }
-      }
-      for (const row of ratesOf(args.inline, provider)) {
+      for (const row of [
+        ...ratesOf(args.crawled, provider),
+        ...ratesOf(args.inline, provider),
+      ]) {
         models.set(row.modelId, row);
       }
       const next = [...models.values()];
@@ -84,6 +74,8 @@ export const store = internalMutation({
         await ctx.db.patch(existing._id, { models: next });
       }
     }
+
+    const state = await ctx.db.query("modelPriceCrawl").first();
     if (!state) {
       await ctx.db.insert("modelPriceCrawl", args.crawl);
     } else if (
@@ -96,13 +88,6 @@ export const store = internalMutation({
     return null;
   },
 });
-
-/** How many times apart two rates are; 1 when either is free, since a free preview turning paid is normal. */
-function jump(before: number, after: number): number {
-  return before > 0 && after > 0
-    ? Math.max(before, after) / Math.min(before, after)
-    : 1;
-}
 
 /** One provider's rows in a list of provider rates. */
 function ratesOf(rates: ProviderRates[], provider: string): RateRow[] {

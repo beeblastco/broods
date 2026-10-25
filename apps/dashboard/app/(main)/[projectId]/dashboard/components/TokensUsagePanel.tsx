@@ -81,6 +81,7 @@ interface LiveOverlay {
   outputTokens: number;
   reasoningTokens: number;
   cachedInputTokens: number;
+  cacheWriteTokens: number;
   // Running roots (tasks + subagent subtasks) and the model steps beneath them.
   invocations: number;
   modelCalls: number;
@@ -183,6 +184,7 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   outputTokens: 0,
   reasoningTokens: 0,
   cachedInputTokens: 0,
+  cacheWriteTokens: 0,
   invocations: 0,
   modelCalls: 0,
   modelUsage: [],
@@ -226,8 +228,8 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
-  // The running models, sorted so the query's args change only when the set
-  // does, priced with the buckets so a live run shows its cost at once.
+  // The running models, sorted so the rates query's args change only when
+  // the set does, so a live run shows its cost at once.
   const liveModels = useMemo(
     () =>
       [
@@ -248,8 +250,11 @@ export function TokensUsagePanel({
     projectId: projectId,
     stageId: stageId ?? undefined,
     range: range,
-    liveModels: liveModels,
   });
+  const liveRates = useQuery(
+    api.logs.fetchModelRates,
+    liveModels.length > 0 ? { models: liveModels } : "skip",
+  );
   // Hold the last result while another range loads, so the chart morphs from
   // it instead of collapsing to an empty grid first. Only for the same
   // project and stage: another stage's numbers never show under this one.
@@ -266,9 +271,12 @@ export function TokensUsagePanel({
   const rates = useMemo(
     () =>
       new Map<string, ModelTokenRates>(
-        (stats?.rates ?? []).map((row) => [modelKey(row), row]),
+        [...(stats?.rates ?? []), ...(liveRates ?? [])].map((row) => [
+          modelKey(row),
+          row,
+        ]),
       ),
-    [stats],
+    [stats, liveRates],
   );
 
   const shownRange = stats?.range ?? range;
@@ -929,6 +937,7 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     totals.outputTokens += usage.outputTokens;
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
     totals.cachedInputTokens += usage.cachedInputTokens;
+    totals.cacheWriteTokens += usage.cacheWriteTokens;
     if (typeof provider === "string" && typeof modelId === "string") {
       modelUsage.push({ modelProvider: provider, modelId: modelId, ...usage });
     }
@@ -999,6 +1008,7 @@ function withLiveOverlay(bins: Counters[], live: LiveOverlay): Counters[] {
     outputTokens: last.outputTokens + live.outputTokens,
     reasoningTokens: last.reasoningTokens + live.reasoningTokens,
     cachedInputTokens: last.cachedInputTokens + live.cachedInputTokens,
+    cacheWriteTokens: last.cacheWriteTokens + live.cacheWriteTokens,
     totalTokens: last.totalTokens + live.inputTokens + live.outputTokens,
     invocations: last.invocations + live.invocations,
     modelCalls: last.modelCalls + live.modelCalls,

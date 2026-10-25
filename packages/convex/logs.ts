@@ -41,6 +41,9 @@ const usageBucket = v.object({
   toolSandboxCpuUsec: v.number(),
 });
 
+/** A model as usage rows name it. */
+const modelRef = v.object({ modelProvider: v.string(), modelId: v.string() });
+
 /** One model's token rates, named the way its usage buckets name it. */
 const usageModelRates = v.object({
   ...modelPricesFields.models.element.fields,
@@ -53,7 +56,7 @@ const usageStats = v.object({
   startTimeMs: v.number(),
   endTimeMs: v.number(),
   buckets: v.array(usageBucket),
-  /** Rates for each model in `buckets` or `liveModels` that has a price. */
+  /** Rates for each model in `buckets` that has a price. */
   rates: v.array(usageModelRates),
   totals: v.object({
     inputTokens: v.number(),
@@ -133,6 +136,24 @@ type UsageTotals = Omit<
 >;
 
 /**
+ * Rates for models the dashboard sees on the trace stream, which have no
+ * usage row yet: live runs on the Usage tab, task prices on Tracing.
+ */
+export const fetchModelRates = query({
+  args: { models: v.array(modelRef) },
+  returns: v.array(usageModelRates),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    return await modelRates(ctx, args.models);
+  },
+});
+
+/**
  * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
  * caller's project/stage. Reads the coarsest rollup grain that fits the
  * range's display bins and re-groups it into the requested range. Subscribed
@@ -144,14 +165,10 @@ export const fetchUsageStats = query({
     projectId: v.id("projects"),
     stageId: v.optional(v.id("stages")),
     range: usageRange,
-    /** Models running live with no usage row yet, priced alongside the buckets. */
-    liveModels: v.optional(
-      v.array(v.object({ modelProvider: v.string(), modelId: v.string() })),
-    ),
   },
   returns: usageStats,
   handler: async (ctx, args) => {
-    const { projectId, stageId, range, liveModels } = args;
+    const { projectId, stageId, range } = args;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -204,7 +221,7 @@ export const fetchUsageStats = query({
     );
 
     const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
-    const rates = await modelRates(ctx, [...buckets, ...(liveModels ?? [])]);
+    const rates = await modelRates(ctx, buckets);
 
     return { ...base, buckets: buckets, rates: rates, totals: totals };
   },

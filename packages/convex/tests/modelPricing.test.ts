@@ -154,22 +154,31 @@ describe("model pricing", () => {
     expect(() =>
       parseInlinePrices('{"openai":{"m":{"input":-1,"output":1}}}'),
     ).toThrow("non-negative");
+    expect(() => parseInlinePrices('{"openai":null}')).toThrow(
+      "BROODS_MODEL_PRICES",
+    );
   });
 
-  it("holds back any rate that jumps over 10x, applies inline prices, drops a removed inline provider", async () => {
+  it("applies inline prices over the crawl and mirrors both sources", async () => {
     const tt = convexTest(schema, modules);
     const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
-    const inlineJson = JSON.stringify({ custom: { mine: rates } });
-    const crawl = (crawled: Partial<typeof rates>, withInline: boolean) =>
+    const inlineJson = '{"openai":{"gpt-5.5":{"input":1,"output":2}}}';
+    const crawl = (input: number, withInline: boolean) =>
       tt.mutation(internal.modelPrices.store.store, {
         crawled: [
           {
             provider: "openai",
-            models: [{ modelId: "gpt-5.5", ...rates, ...crawled }],
+            models: [{ modelId: "gpt-5.5", ...rates, input: input }],
           },
         ],
         inline: withInline
-          ? [{ provider: "custom", models: [{ modelId: "mine", ...rates }] }]
+          ? [
+              {
+                provider: "openai",
+                models: [{ modelId: "gpt-5.5", ...rates, input: 1 }],
+              },
+              { provider: "custom", models: [{ modelId: "mine", ...rates }] },
+            ]
           : [],
         crawl: { ...CRAWL, inline: withInline ? inlineJson : "" },
       });
@@ -182,13 +191,8 @@ describe("model pricing", () => {
             .unique(),
       );
 
-    await crawl({}, false);
-    await crawl({ input: 500 }, true);
-    await crawl({ cacheRead: 50 }, true);
-    expect((await stored("openai"))?.models[0]).toMatchObject({
-      input: 5,
-      cacheRead: 0.5,
-    });
+    await crawl(5, true);
+    expect((await stored("openai"))?.models[0].input).toBe(1);
     expect((await stored("custom"))?.models).toEqual([
       { modelId: "mine", ...rates },
     ]);
@@ -197,16 +201,20 @@ describe("model pricing", () => {
       inline: inlineJson,
     });
 
-    await crawl({ input: 8 }, false);
-    expect((await stored("openai"))?.models[0].input).toBe(8);
+    // Inline prices removed: the crawl's rate returns, the inline-only provider goes.
+    await crawl(500, false);
+    expect((await stored("openai"))?.models[0].input).toBe(500);
     expect(await stored("custom")).toBeNull();
 
-    // Both sources unset: the table empties.
+    // Both sources unset: the table empties, and the next crawl fetches afresh.
     await tt.mutation(internal.modelPrices.store.store, {
       crawled: [],
       inline: [],
       crawl: { url: "", etag: "", inline: "" },
     });
     expect(await stored("openai")).toBeNull();
+    expect(
+      await tt.query(internal.modelPrices.store.crawlState, {}),
+    ).toBeNull();
   });
 });

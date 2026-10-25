@@ -1058,11 +1058,23 @@ export declare const api: {
     >;
   };
   logs: {
+    fetchModelRates: FunctionReference<
+      "query",
+      "public",
+      { models: Array<{ modelId: string; modelProvider: string }> },
+      Array<{
+        cacheRead: number;
+        cacheWrite: number;
+        input: number;
+        modelId: string;
+        modelProvider: string;
+        output: number;
+      }>
+    >;
     fetchUsageStats: FunctionReference<
       "query",
       "public",
       {
-        liveModels?: Array<{ modelId: string; modelProvider: string }>;
         projectId: Id<"projects">;
         range: "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
         stageId?: Id<"stages">;

@@ -189,8 +189,6 @@ bunx convex env set BROODS_MODEL_PRICES '{"custom":{"gpt-oss-120b":{"input":0.1,
 
 A malformed value fails the crawl with the reason in the Convex logs. Unset both variables and the next crawl clears every stored rate, so every model reads "not priced".
 
-A crawled rate that moves more than 10x between runs keeps its stored value, and the crawl logs a warning. To accept the new rate, set it in `BROODS_MODEL_PRICES`.
-
 ## 3. Shared services
 
 | Service             | Needed for                | Notes                                                                                                                            |

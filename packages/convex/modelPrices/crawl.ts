@@ -35,10 +35,9 @@ export const run = internalAction({
     // Before any download, so a malformed value fails without fetching.
     const inlineRates = parseInlinePrices(inline);
     const last = await ctx.runQuery(internal.modelPrices.store.crawlState, {});
-    const sameInputs =
-      (last?.url ?? "") === url && (last?.inline ?? "") === inline;
-    // Nothing configured and nothing stored from a past config.
-    if (url === "" && inline === "" && sameInputs) return null;
+    // Unset on the first run and while no rate is stored, so those always
+    // write: a self-host upgrading with nothing configured clears old rates.
+    const sameInputs = last?.url === url && last.inline === inline;
     let crawled: ProviderRates[] = [];
     let etag = "";
     if (url !== "") {
