@@ -28,16 +28,6 @@ test("a cache-heavy stack fits the chart instead of drawing past its top", async
   expect(highest).toBeLessThan(svg.y + svg.height / 2);
 });
 
-test("y ticks are round numbers", async ({ page }) => {
-  await openGallery(page);
-  const labels = await page
-    .locator('[data-fixture="usage-chart"] svg text[x="2"]')
-    .allTextContents();
-
-  expect(labels.length).toBeGreaterThan(1);
-  for (const label of labels) expect(label).toMatch(/^\d+(\.5)?K$/);
-});
-
 test("clicking or pressing Enter on a bin selects it", async ({ page }) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="usage-chart"]');

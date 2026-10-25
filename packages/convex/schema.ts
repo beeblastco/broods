@@ -1650,9 +1650,9 @@ export const usageWritesFields = {
 };
 
 /**
- * Token rates in USD per million tokens for one agent provider's models,
- * crawled hourly from models.dev by `modelPrices/crawl.ts`. `fetchUsageStats`
- * hands the dashboard the ones its usage names.
+ * Catalogue token rates in USD per million tokens for one agent provider's
+ * models, crawled hourly by `modelPrices/crawl.ts`. `modelRates` in `logs.ts`
+ * reads them under the org's own `modelPriceOverrides`.
  */
 export const modelPricesFields = {
   /** Agent provider name, as usage rows name it, e.g. `bedrock`. */
@@ -1665,6 +1665,23 @@ export const modelPricesFields = {
       output: v.number(),
       cacheRead: v.number(),
       cacheWrite: v.number(),
+    }),
+  ),
+};
+
+/**
+ * The org's own rates from `BROODS_MODEL_PRICES`, one doc per agent provider,
+ * mirrored by every crawl. A cache rate left out falls back to the catalogue's.
+ */
+export const modelPriceOverridesFields = {
+  provider: v.string(),
+  models: v.array(
+    v.object({
+      modelId: v.string(),
+      input: v.number(),
+      output: v.number(),
+      cacheRead: v.optional(v.number()),
+      cacheWrite: v.optional(v.number()),
     }),
   ),
 };
@@ -2012,6 +2029,10 @@ export default defineSchema({
   modelPrices: defineTable(modelPricesFields).index("by_provider", [
     "provider",
   ]),
+  modelPriceOverrides: defineTable(modelPriceOverridesFields).index(
+    "by_provider",
+    ["provider"],
+  ),
   stripeSubscriptionSyncs: defineTable(stripeSubscriptionSyncsFields).index(
     "by_stripeSubscriptionId",
     ["stripeSubscriptionId"],

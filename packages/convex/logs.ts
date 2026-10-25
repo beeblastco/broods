@@ -41,6 +41,9 @@ const usageBucket = v.object({
   toolSandboxCpuUsec: v.number(),
 });
 
+/** A model as usage rows name it. */
+const modelRef = v.object({ modelProvider: v.string(), modelId: v.string() });
+
 /** One model's token rates, named the way its usage buckets name it. */
 const usageModelRates = v.object({
   ...modelPricesFields.models.element.fields,
@@ -53,7 +56,7 @@ const usageStats = v.object({
   startTimeMs: v.number(),
   endTimeMs: v.number(),
   buckets: v.array(usageBucket),
-  /** Rates for each model in `buckets` that has a public price. */
+  /** Rates for each model in `buckets` that has a price. */
   rates: v.array(usageModelRates),
   totals: v.object({
     inputTokens: v.number(),
@@ -131,6 +134,21 @@ type UsageTotals = Omit<
   UsageBucketRow,
   "bucketStart" | "modelProvider" | "modelId"
 >;
+
+/** Rates for the models the Usage tab sees running live, which have no usage row yet. */
+export const fetchModelRates = query({
+  args: { models: v.array(modelRef) },
+  returns: v.array(usageModelRates),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    return await modelRates(ctx, args.models);
+  },
+});
 
 /**
  * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
@@ -357,13 +375,18 @@ export async function collectUsageTasks(
     .take(limit);
 }
 
-/** The crawled rates of every priced model in `buckets`, named as the buckets name it. */
+/**
+ * The rates of every priced model in `models`, named as the caller names it.
+ * The org's override wins on any id it matches, a dated snapshot through its
+ * alias included; a cache rate it leaves out is the catalogue's, else its
+ * input rate.
+ */
 export async function modelRates(
   ctx: QueryCtx,
-  buckets: Array<Pick<UsageBucketRow, "modelProvider" | "modelId">>,
+  models: Array<Pick<UsageBucketRow, "modelProvider" | "modelId">>,
 ): Promise<Array<Infer<typeof usageModelRates>>> {
   const modelIds = new Map<string, Set<string>>();
-  for (const { modelProvider, modelId } of buckets) {
+  for (const { modelProvider, modelId } of models) {
     modelIds.set(
       modelProvider,
       (modelIds.get(modelProvider) ?? new Set()).add(modelId),
@@ -371,19 +394,47 @@ export async function modelRates(
   }
   const priced = await Promise.all(
     [...modelIds].map(async ([provider, ids]) => {
-      const doc = await ctx.db
-        .query("modelPrices")
-        .withIndex("by_provider", (q) => q.eq("provider", provider))
-        .unique();
-      const rows = new Map(doc?.models.map((row) => [row.modelId, row]));
+      const [catalogue, overrides] = await Promise.all([
+        ctx.db
+          .query("modelPrices")
+          .withIndex("by_provider", (q) => q.eq("provider", provider))
+          .unique(),
+        ctx.db
+          .query("modelPriceOverrides")
+          .withIndex("by_provider", (q) => q.eq("provider", provider))
+          .unique(),
+      ]);
+      const listed = new Map(
+        catalogue?.models.map((row) => [row.modelId, row]),
+      );
+      const own = new Map(overrides?.models.map((row) => [row.modelId, row]));
 
       return [...ids].flatMap((modelId) => {
-        const row = priceLookupIds(modelId)
-          .map((id) => rows.get(id))
-          .find((match) => match !== undefined);
+        const lookup = priceLookupIds(modelId);
+        const base = firstMatch(lookup, listed);
+        const override = firstMatch(lookup, own);
+        const rates = override
+          ? {
+              input: override.input,
+              output: override.output,
+              cacheRead:
+                override.cacheRead ?? base?.cacheRead ?? override.input,
+              cacheWrite:
+                override.cacheWrite ?? base?.cacheWrite ?? override.input,
+            }
+          : base;
 
-        return row
-          ? [{ ...row, modelProvider: provider, modelId: modelId }]
+        return rates
+          ? [
+              {
+                modelId: modelId,
+                input: rates.input,
+                output: rates.output,
+                cacheRead: rates.cacheRead,
+                cacheWrite: rates.cacheWrite,
+                modelProvider: provider,
+              },
+            ]
           : [];
       });
     }),
@@ -502,4 +553,12 @@ function aggregateUsage(
   );
 
   return { buckets: buckets, totals: totals };
+}
+
+/** The row of the first id in `ids` that `rows` holds. */
+function firstMatch<Row>(
+  ids: string[],
+  rows: Map<string, Row>,
+): Row | undefined {
+  return ids.map((id) => rows.get(id)).find((row) => row !== undefined);
 }

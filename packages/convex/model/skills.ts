@@ -279,9 +279,7 @@ export async function readCapped(
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        throw new ClientError(
-          `GitHub archive exceeds the ${maxBytes} byte limit`,
-        );
+        throw new ClientError(`Download exceeds the ${maxBytes} byte limit`);
       }
       chunks.push(value);
     }

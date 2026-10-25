@@ -295,6 +295,7 @@ if confirm "Create a production probe now?"; then
   open_url "https://dashboard.workos.com/"
   step "Switch the environment to Production, then User Management → Users → Create user,"
   step "  the same way as staging."
+  step "Radar → Restrictions: allow that email. Production shows CI a bot check otherwise."
   ask PROD_E2E_EMAIL "Production probe email:"
   ask_secret PROD_E2E_PASSWORD "Production probe password:"
   set_env_secret production DASHBOARD_E2E_EMAIL "$PROD_E2E_EMAIL"

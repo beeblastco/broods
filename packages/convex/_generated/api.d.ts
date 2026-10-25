@@ -1058,6 +1058,19 @@ export declare const api: {
     >;
   };
   logs: {
+    fetchModelRates: FunctionReference<
+      "query",
+      "public",
+      { models: Array<{ modelId: string; modelProvider: string }> },
+      Array<{
+        cacheRead: number;
+        cacheWrite: number;
+        input: number;
+        modelId: string;
+        modelProvider: string;
+        output: number;
+      }>
+    >;
     fetchUsageStats: FunctionReference<
       "query",
       "public",
@@ -5451,14 +5464,32 @@ export declare const internal: {
       run: FunctionReference<"action", "internal", {}, null>;
     };
     store: {
-      store: FunctionReference<
+      storeCatalogue: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          mirror: boolean;
+          providers: Array<{
+            models: Array<{
+              cacheRead: number;
+              cacheWrite: number;
+              input: number;
+              modelId: string;
+              output: number;
+            }>;
+            provider: string;
+          }>;
+        },
+        null
+      >;
+      storeOverrides: FunctionReference<
         "mutation",
         "internal",
         {
           providers: Array<{
             models: Array<{
-              cacheRead: number;
-              cacheWrite: number;
+              cacheRead?: number;
+              cacheWrite?: number;
               input: number;
               modelId: string;
               output: number;
