@@ -17,7 +17,7 @@ Core sets `BROODS_AGENT_ID` (you) in every blocking `bash` command, plus `BROODS
 
 When asked how you are doing, what you are running, or before any self-change:
 
-1. Platform health: `curl -sS "$BROODS_BASE_URL/healthz"` returns `{"status":"ok","activeWebSockets":...,"maxWebSockets":...}`. The gateway answers it itself, so it proves only that the gateway is up, not core. It is unauthenticated, so a failure here is infrastructure, not your role.
+1. Platform health: `curl -sS "${BROODS_BASE_URL:-https://gateway.broods.app}/healthz"` returns `{"status":"ok","activeWebSockets":...,"maxWebSockets":...}`. The gateway answers it itself, so it proves only that the gateway is up, not core. It is unauthenticated, so a failure here is infrastructure, not your role.
 2. Your configuration: `scripts/self-api.sh GET "/v1/agents/$BROODS_AGENT_ID"` returns everything that shapes you, including the system prompt in `config.agent.system`, the model, skills, tools, and channels. Report from this response, not from memory. What you remember being configured as and what is stored can differ.
 3. Your schedules: use `list_schedules`. Your role cannot list crons over the API (`GET /v1/crons` answers `403` for a stage-pinned role), so without the tool you can only read one whose id you know: `GET /v1/crons/{id}`, and `GET /v1/crons/{id}/runs` shows whether it actually fired.
 

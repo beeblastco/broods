@@ -94,7 +94,7 @@ The comment lines are ignored by SSE clients but keep idle proxies from closing 
 
 ### Async, WebSocket and channels
 
-Background runs, cron-fired runs, the WebSocket worker and channel turns run the same loop on an in-process worker. Of those, only the WebSocket worker sends its client a heartbeat while it waits, as `{ type: "waiting" }` frames. The parent's envelope settles only after the continuation, so the async result, the WebSocket `done` frame or the channel reply already includes the children's work. `runtimeAsyncAgentResults` keeps each child's status for polling.
+Background runs, cron-fired runs, the WebSocket worker and channel turns run the same loop on an in-process worker. Of those, only the WebSocket worker sends its client a heartbeat while it waits, as `{ type: "waiting" }` frames. The parent's envelope settles only after the continuation, so the async result, the WebSocket `done` frame or the channel reply already includes the work of every child that finished within the parent's wait. A child still running past it is detached, and its result reaches the parent later as a follow-up turn. `runtimeAsyncAgentResults` keeps each child's status for polling.
 
 ```mermaid
 sequenceDiagram
