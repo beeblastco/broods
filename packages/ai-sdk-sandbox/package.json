@@ -37,7 +37,7 @@
     "@ai-sdk/provider-utils": "5.0.68"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.3",
+    "@types/bun": "^1.4.4",
     "typescript": "^7.0.2"
   },
   "engines": {
