@@ -1,3 +1,4 @@
+import * as realGoogle from "@ai-sdk/google";
 import { APICallError } from "@ai-sdk/provider";
 import {
   afterAll,
@@ -144,8 +145,12 @@ afterEach(() => {
   setStorageForTests(testStorage());
 });
 
-afterAll(() => {
+// mock.module is process-wide; restore the real modules for later test files.
+afterAll(async () => {
   setStorageForTests(null);
+  await mock.module("ai", () => actualAi);
+  await mock.module("@ai-sdk/google", () => realGoogle);
+  await mock.module("../src/shared/s3.ts", () => realS3);
 });
 
 describe("session system context", () => {

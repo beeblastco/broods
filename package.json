@@ -41,8 +41,8 @@
     "@shadcn/lint": "^0.2.3",
     "@types/bun": "^1.4.4",
     "oxfmt": "^0.74.0",
-    "oxlint": "1.89.0",
-    "oxlint-tsgolint": "7.0.2004",
+    "oxlint": "1.90.0",
+    "oxlint-tsgolint": "7.0.2005",
     "typescript": "^7.0.2"
   },
   "overrides": {
@@ -76,7 +76,7 @@
     "stripe": "22.5.0",
     "tar": "7.5.22",
     "tinypool": "2.1.2",
-    "webpack": "5.111.1"
+    "webpack": "5.112.1"
   },
   "engines": {
     "bun": ">=1.4.2"

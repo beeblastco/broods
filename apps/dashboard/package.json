@@ -34,7 +34,7 @@
     "@opentelemetry/sdk-logs": "^0.223.0",
     "@uiw/react-codemirror": "^4.25.12",
     "@workos-inc/authkit-nextjs": "^4.5.0",
-    "@workos-inc/node": "^10.10.0",
+    "@workos-inc/node": "^10.14.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.12.0",

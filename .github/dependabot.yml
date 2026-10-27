@@ -54,6 +54,10 @@ updates:
       # major installs a second copy beside it.
       - dependency-name: "@workos-inc/node"
         update-types: ["version-update:semver-major"]
+      # The root override pins stripe to 22.5.0, so a manifest-only major bump
+      # installs nothing new; moving to 23 is a change of its own.
+      - dependency-name: stripe
+        update-types: ["version-update:semver-major"]
     groups:
       ai-sdk:
         patterns:
