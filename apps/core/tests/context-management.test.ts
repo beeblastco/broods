@@ -1,4 +1,4 @@
-import * as realGoogle from "@ai-sdk/google";
+import * as actualGoogle from "@ai-sdk/google";
 import { APICallError } from "@ai-sdk/provider";
 import {
   afterAll,
@@ -16,8 +16,12 @@ import type {
   StoredConversationEventPage,
 } from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
-import * as realS3 from "../src/shared/s3.ts";
+import * as actualS3 from "../src/shared/s3.ts";
 
+// mock.module patches each namespace in place, so restore from copies taken first.
+const realAi = { ...actualAi };
+const realGoogle = { ...actualGoogle };
+const realS3 = { ...actualS3 };
 const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({
   provider: "google",
@@ -148,7 +152,7 @@ afterEach(() => {
 // mock.module is process-wide; restore the real modules for later test files.
 afterAll(async () => {
   setStorageForTests(null);
-  await mock.module("ai", () => actualAi);
+  await mock.module("ai", () => realAi);
   await mock.module("@ai-sdk/google", () => realGoogle);
   await mock.module("../src/shared/s3.ts", () => realS3);
 });

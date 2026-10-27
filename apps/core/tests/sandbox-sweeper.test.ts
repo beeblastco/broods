@@ -7,7 +7,10 @@
 import { afterAll, afterEach, beforeEach, expect, it, mock } from "bun:test";
 import type { ReservedSandbox } from "../src/harness/sandbox/types.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
-import * as realCleanup from "../src/shared/sandbox-cleanup.ts";
+import * as cleanupModule from "../src/shared/sandbox-cleanup.ts";
+
+// mock.module patches the namespace in place, so restore from a copy taken first.
+const realCleanup = { ...cleanupModule };
 
 // Returns what it released, so the sweeper can tell the released rows from the
 // ones it still has to defer. Everything handed in is released by default; a test
@@ -32,7 +35,7 @@ const { sweepExpiredSandboxes } =
 afterAll(async (): Promise<void> => {
   await mock.module(
     "../src/shared/sandbox-cleanup.ts",
-    (): typeof realCleanup => realCleanup,
+    (): typeof cleanupModule => realCleanup,
   );
 });
 
