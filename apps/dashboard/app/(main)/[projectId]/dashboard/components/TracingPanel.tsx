@@ -595,10 +595,6 @@ interface TaskListRowProps {
   status: SpanStatus;
   tone: StatusTone;
   taskDurationMs: number;
-  // The price under the duration, see costLabel; undefined before any model step.
-  cost: string | undefined;
-  // Whether `cost` is a price, not "not priced".
-  costPriced: boolean;
   cause: string | null;
   isSubagent: boolean;
   // The subagents' names, newline-joined so the memo compares one string.
@@ -1124,6 +1120,7 @@ export function TracingPanel({
                 key={spanKey(selectedGroup.root)}
                 attempt={continueAttempts.get(selectedGroup.root.traceId)}
                 chain={chain}
+                cost={costLabel(costs.get(spanKey(selectedGroup.root)))}
                 projectSlug={projectSlug}
                 stageSlug={stageSlug}
                 onContinue={() => void continueTask(selectedGroup.root)}
@@ -1504,7 +1501,7 @@ function chainFor(
   return chain;
 }
 
-/** A task's price as its row shows it: `$0.0012`, `$0.0012+` when partial, or "not priced". */
+/** A run's price as its trace header shows it: `$0.0012`, `$0.0012+` when partial, or "not priced". */
 function costLabel(cost: TaskCost | null | undefined): string | undefined {
   if (cost === undefined) return undefined;
   if (cost === null) return "not priced";
@@ -2987,8 +2984,6 @@ function TaskListPane({
             status={group.status}
             tone={groupTone(group)}
             taskDurationMs={group.taskDurationMs}
-            cost={costLabel(costs.get(spanKey(group.root)))}
-            costPriced={Boolean(costs.get(spanKey(group.root)))}
             cause={failureCause(group)}
             isSubagent={parent !== null}
             subagentNames={group.subagents
@@ -3023,7 +3018,7 @@ function TaskListPane({
 
 /**
  * One row of the task list: dot, request and duration, then start time and
- * the failure cause or open wait, with the task's price under the duration. A subagent row is indented under its
+ * the failure cause or open wait. A subagent row is indented under its
  * request and names its agent, with its task after the time. A request with
  * subagents ends in their avatar stack. The button's id is the `?trace=` focus
  * target. Memoized on the root span, which the stream keeps across flushes,
@@ -3034,8 +3029,6 @@ const TaskListRow = memo(function TaskListRow({
   status,
   tone,
   taskDurationMs,
-  cost,
-  costPriced,
   cause,
   isSubagent,
   subagentNames,
@@ -3091,21 +3084,6 @@ const TaskListRow = memo(function TaskListRow({
             {cause && <span className="text-destructive"> · {cause}</span>}
             {waiting && <span className="text-needs-input"> · {waiting}</span>}
           </span>
-          {cost !== undefined && (
-            <span
-              className={cn(
-                "shrink-0 font-mono tabular-nums",
-                costPriced && "text-success",
-              )}
-              title={
-                cost.endsWith("+")
-                  ? "Some steps' models have no price"
-                  : undefined
-              }
-            >
-              {cost}
-            </span>
-          )}
         </span>
       </button>
       {subagentNames !== "" && (
@@ -3168,7 +3146,7 @@ function TaskRailDot({
 
 /**
  * The selected run on the right: its request, or its chain for a subagent,
- * its conversation and trace, the copy actions for the user's own coding
+ * its price, conversation and trace, the copy actions for the user's own coding
  * agent, Continue when a request failed, the count of what went wrong, then
  * its waterfall scaled to that run alone. The header opens with the task
  * list's fold, next to the list it folds.
@@ -3176,6 +3154,7 @@ function TaskRailDot({
 function TaskWaterfall({
   attempt,
   chain,
+  cost,
   fold,
   onContinue,
   onPickRun,
@@ -3185,6 +3164,8 @@ function TaskWaterfall({
 }: {
   attempt: ContinueAttempt | undefined;
   chain: SpanGroup[];
+  /** The run's price, see costLabel; undefined before any model step. */
+  cost: string | undefined;
   /** The task list's fold button, first in the header. */
   fold: React.ReactNode;
   onContinue: () => void;
@@ -3282,6 +3263,18 @@ function TaskWaterfall({
                 {found.length} {word}
               </button>
             ),
+        )}
+        {cost !== undefined && (
+          <span
+            className="font-mono tabular-nums text-muted-foreground"
+            title={
+              cost.endsWith("+")
+                ? "Some steps' models have no price"
+                : "Estimated cost of this run"
+            }
+          >
+            {cost}
+          </span>
         )}
         {root.conversationKey && (
           <Badge

@@ -1,16 +1,27 @@
 "use client";
 
 import { Input } from "@/app/components/ui/input";
+import { useNow } from "@/app/hooks/useNow";
 import { formatNumber } from "@/app/lib/formatNumber";
+import { formatUsd, modelKey } from "@/app/lib/modelCost";
 import { tabHref } from "@/app/lib/navigation";
+import { rangeMs } from "@/app/lib/queryTokens";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import {
+  estimateModelTokenCost,
+  type ModelTokenRates,
+} from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { Search, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { formatBucketLabel } from "./UsageChart";
+
+// Tracing lists 30 days at most, and Tempo keeps traces that long, so an
+// older row has nothing to open.
+const TRACE_RETENTION_MS = rangeMs("30d");
 
 interface Props {
   projectId: Id<"projects">;
@@ -21,6 +32,8 @@ interface Props {
   binTokens: number;
   /** The model filter as `provider::model` keys, or null for every model. */
   models: string[] | null;
+  /** Rates by `provider::model` key, as the usage panel prices its totals. */
+  rates: ReadonlyMap<string, ModelTokenRates>;
   onClose: () => void;
 }
 
@@ -28,8 +41,9 @@ interface Props {
  * The trace list that opens beside the token chart when a bin is clicked:
  * links to the traces behind that bin, heaviest first, with a search over
  * their prompts and trace ids. Each row carries the start of its prompt, as
- * Tracing labels it, wrapped to two lines and cut with an ellipsis, and the
- * tokens it contributed; the trace itself opens in the Tracing tab. It keeps
+ * Tracing labels it, wrapped to two lines and cut with an ellipsis, the
+ * tokens it contributed and their estimated cost; the trace itself opens in
+ * the Tracing tab while Tempo still keeps it. It keeps
  * the chart's height and scrolls inside, so opening it never moves the
  * content below.
  */
@@ -39,10 +53,12 @@ export function UsageTraceRail({
   bin,
   binTokens,
   models,
+  rates,
   onClose,
 }: Props): React.JSX.Element {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const now = useNow();
   const [query, setQuery] = useState("");
   const result = useQuery(api.logs.fetchUsageTasks, {
     projectId: projectId,
@@ -60,6 +76,10 @@ export function UsageTraceRail({
             traceId: task.traceId,
             totalTokens: task.totalTokens,
             inputPreview: task.inputPreview,
+            cost:
+              estimateModelTokenCost(rates.get(modelKey(task)), task)?.total ??
+              null,
+            expired: task.finishedAt < now - TRACE_RETENTION_MS,
           },
         ]
       : [],
@@ -119,33 +139,60 @@ export function UsageTraceRail({
           {needle ? "No traces match." : "No traces listed for this time."}
         </p>
       )}
-      {shown.map(({ traceId, totalTokens, inputPreview }, i) => (
-        <Link
-          key={`${traceId}-${i}`}
-          href={traceHref(traceId)}
-          title={inputPreview ?? "Open in Tracing"}
-          className="grid min-w-0 cursor-pointer gap-0.5 border-b border-border px-3 py-2 text-xs hover:bg-accent/40"
-        >
-          <span className="flex min-w-0 items-start justify-between gap-3">
-            <span className="line-clamp-2 min-w-0 break-words">
-              {inputPreview ?? "No prompt text"}
+      {shown.map(({ traceId, totalTokens, inputPreview, cost, expired }, i) => {
+        const body = (
+          <>
+            <span className="flex min-w-0 items-start justify-between gap-3">
+              <span className="line-clamp-2 min-w-0 break-words">
+                {inputPreview ?? "No prompt text"}
+              </span>
+              <span className="shrink-0 text-right font-medium tabular-nums">
+                {formatNumber(totalTokens)}
+                <span className="block font-mono font-normal text-muted-foreground">
+                  {cost === null ? "not priced" : formatUsd(cost)}
+                </span>
+              </span>
             </span>
-            <span className="shrink-0 font-medium tabular-nums">
-              {formatNumber(totalTokens)}
+            <span className="flex min-w-0 items-baseline justify-between gap-3 text-2xs text-muted-foreground">
+              <span
+                className={
+                  expired
+                    ? "min-w-0 truncate font-mono"
+                    : "min-w-0 truncate font-mono text-info"
+                }
+              >
+                {traceId}
+              </span>
+              <span className="shrink-0 tabular-nums">
+                {binTokens > 0
+                  ? `${Math.round((totalTokens / binTokens) * 100)}% of tokens`
+                  : ""}
+              </span>
             </span>
-          </span>
-          <span className="flex min-w-0 items-baseline justify-between gap-3 text-2xs text-muted-foreground">
-            <span className="min-w-0 truncate font-mono text-info">
-              {traceId}
-            </span>
-            <span className="shrink-0 tabular-nums">
-              {binTokens > 0
-                ? `${Math.round((totalTokens / binTokens) * 100)}% of tokens`
-                : ""}
-            </span>
-          </span>
-        </Link>
-      ))}
+          </>
+        );
+        const rowClass =
+          "grid min-w-0 gap-0.5 border-b border-border px-3 py-2 text-xs";
+
+        return expired ? (
+          <div
+            key={`${traceId}-${i}`}
+            title="Traces are kept 30 days"
+            className={`${rowClass} cursor-help`}
+          >
+            {body}
+          </div>
+        ) : (
+          <Link
+            key={`${traceId}-${i}`}
+            href={traceHref(traceId)}
+            title={inputPreview ?? "Open in Tracing"}
+            className={`${rowClass} cursor-pointer hover:bg-accent/40`}
+          >
+            {body}
+          </Link>
+        );
+      })}
       {result?.truncated && (
         <p className="px-3 py-2 text-2xs text-muted-foreground">
           Some tasks in this bin are not listed.
