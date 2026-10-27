@@ -4,9 +4,10 @@
  * released or deferred, and that one account's failure never costs another its sweep.
  */
 
-import { afterEach, beforeEach, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, it, mock } from "bun:test";
 import type { ReservedSandbox } from "../src/harness/sandbox/types.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import * as realCleanup from "../src/shared/sandbox-cleanup.ts";
 
 // Returns what it released, so the sweeper can tell the released rows from the
 // ones it still has to defer. Everything handed in is released by default; a test
@@ -26,6 +27,14 @@ await mock.module("../src/shared/sandbox-cleanup.ts", () => ({
 
 const { sweepExpiredSandboxes } =
   await import("../src/shared/sandbox-sweeper.ts");
+
+// mock.module is process-wide; restore the real release path for later test files.
+afterAll(async (): Promise<void> => {
+  await mock.module(
+    "../src/shared/sandbox-cleanup.ts",
+    (): typeof realCleanup => realCleanup,
+  );
+});
 
 const originalQuery = runtime.query.bind(runtime);
 const originalMutate = runtime.mutate.bind(runtime);
