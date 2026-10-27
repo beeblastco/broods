@@ -60,7 +60,7 @@
     "esbuild": "^0.28.2"
   },
   "devDependencies": {
-    "@ai-sdk/tui": "1.0.154",
+    "@ai-sdk/tui": "1.0.155",
     "@arethetypeswrong/cli": "^0.18.5",
     "@chat-adapter/discord": "^4.43.0",
     "@chat-adapter/github": "^4.43.0",
@@ -69,7 +69,7 @@
     "@modelcontextprotocol/server": "2.3.1",
     "@types/bun": "^1.4.4",
     "@typescript/typescript6": "6.0.2",
-    "ai": "^7.0.153",
+    "ai": "^7.0.154",
     "publint": "^0.3.25",
     "rollup": "^4.65.0",
     "rollup-plugin-dts": "^6.5.1",
@@ -77,7 +77,7 @@
     "zod": "^4.6.7"
   },
   "peerDependencies": {
-    "ai": "^7.0.153"
+    "ai": "^7.0.154"
   },
   "engines": {
     "node": ">=22.15"

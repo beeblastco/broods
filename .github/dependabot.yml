@@ -54,6 +54,10 @@ updates:
       # major installs a second copy beside it.
       - dependency-name: "@workos-inc/node"
         update-types: ["version-update:semver-major"]
+      # @convex-dev/stripe depends on stripe ^22 and shares our client types and
+      # API version; lift once it ships a release on stripe 23.
+      - dependency-name: stripe
+        update-types: ["version-update:semver-major"]
     groups:
       ai-sdk:
         patterns:
