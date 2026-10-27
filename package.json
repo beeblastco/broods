@@ -76,7 +76,7 @@
     "stripe": "22.5.0",
     "tar": "7.5.22",
     "tinypool": "2.1.2",
-    "webpack": "5.111.1"
+    "webpack": "5.112.1"
   },
   "engines": {
     "bun": ">=1.4.2"
