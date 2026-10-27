@@ -7,6 +7,7 @@
  * seam instead.
  */
 
+import * as realMicrovms from "@aws-sdk/client-lambda-microvms";
 import { afterAll, beforeEach, expect, it, mock } from "bun:test";
 import type { SandboxReleaseTarget } from "../src/harness/sandbox/types.ts";
 import type { SandboxConfigRecord } from "../src/shared/domain/sandbox-config.ts";
@@ -62,7 +63,10 @@ class TerminateMicrovmCommand {
   }
 }
 
+// Spread the real module first: the executor imports commands this suite never
+// sends, and a missing export fails the import outright.
 await mock.module("@aws-sdk/client-lambda-microvms", () => ({
+  ...realMicrovms,
   LambdaMicrovms: class {
     send = microvmSendMock;
   },
