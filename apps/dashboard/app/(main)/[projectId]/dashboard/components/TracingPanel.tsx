@@ -2597,7 +2597,10 @@ function StepLine({
   return (
     <TraceLine size="xs">
       <TraceTitle strong>{name}</TraceTitle>
-      {cost !== undefined && <TraceDescription>{cost}</TraceDescription>}
+      {/* A running step has no tokens yet, so it has no price to show. */}
+      {cost !== undefined && tokens !== undefined && (
+        <TraceDescription>{cost}</TraceDescription>
+      )}
       {tokens !== undefined && (
         <TraceDescription>{formatNumber(tokens)} tok</TraceDescription>
       )}
