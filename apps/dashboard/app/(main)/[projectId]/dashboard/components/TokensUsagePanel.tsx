@@ -457,6 +457,7 @@ export function TokensUsagePanel({
               bin={{ startMs: bucketStarts[selected], binSeconds: binSeconds }}
               binTokens={bins[selected].totalTokens}
               models={activeFilter}
+              rates={rates}
               onClose={() => setSelectedStart(null)}
             />
           )}

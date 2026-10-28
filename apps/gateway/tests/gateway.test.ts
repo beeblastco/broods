@@ -1971,7 +1971,7 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
     expect(sent.at(-1)).toMatchObject({
       type: "backfill",
       entries: [],
-      error: "Trace not found in this stage",
+      error: "Trace not found in this stage. Traces are kept 30 days",
     });
 
     await handleObservabilityMessage(socket, fetchTrace(ownTraceId), noNats);
