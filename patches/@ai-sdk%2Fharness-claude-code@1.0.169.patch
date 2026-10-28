@@ -1,9 +1,9 @@
 diff --git a/dist/bridge/pnpm-lock.yaml b/dist/bridge/pnpm-lock.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474191aa1ee
+index 0000000000000000000000000000000000000000..ae5779773d4057a95195713fb3ac965b9ebd0518
 --- /dev/null
 +++ b/dist/bridge/pnpm-lock.yaml
-@@ -0,0 +1,1056 @@
+@@ -0,0 +1,1048 @@
 +lockfileVersion: '9.0'
 +
 +settings:
@@ -14,26 +14,137 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +
 +  .:
 +    dependencies:
++      '@anthropic-ai/claude-agent-sdk':
++        specifier: 0.3.290
++        version: 0.3.290(@anthropic-ai/sdk@1.3.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(zod@4.4.3)
++      '@anthropic-ai/claude-code':
++        specifier: 2.1.290
++        version: 2.1.290
 +      '@modelcontextprotocol/sdk':
 +        specifier: 1.32.1
-+        version: 1.32.1(zod@3.25.76)
-+      '@opencode-ai/sdk':
-+        specifier: 1.18.34
-+        version: 1.18.34
-+      '@vscode/ripgrep':
-+        specifier: 1.18.0
-+        version: 1.18.0
-+      opencode-ai:
-+        specifier: 1.18.34
-+        version: 1.18.34
++        version: 1.32.1(zod@4.4.3)
 +      ws:
 +        specifier: 8.21.0
 +        version: 8.21.0
 +      zod:
-+        specifier: 3.25.76
-+        version: 3.25.76
++        specifier: 4.4.3
++        version: 4.4.3
 +
 +packages:
++
++  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.290':
++    resolution: {integrity: sha512-Xy1MPSSgCAzbCzT+3w+5+jHo9OIQf90QROyO8UcZNIOyaJ0qKQNRji0SztulGfo3uQsfj07t+qJcvXU+8gWcTw==}
++    cpu: [arm64]
++    os: [darwin]
++
++  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.290':
++    resolution: {integrity: sha512-ezuHy4rUdC0wmiXWROi2g+6mj2oVXFW0a5JwUNSrgjT5yglEOvoHXSkGXzk7n64vOxQJ/JnKOqUCfO85htchZA==}
++    cpu: [x64]
++    os: [darwin]
++
++  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.290':
++    resolution: {integrity: sha512-3sIYs6vhwBoJsiCQBb+3lXIcIeGq8aDOhiyYtSQwOhvMTwAjwuZN6mHjZGeSnGH3hn4CAXi3n3NEK49SSoFilg==}
++    cpu: [arm64]
++    os: [linux]
++    libc: [musl]
++
++  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.290':
++    resolution: {integrity: sha512-HR3HuBSzYtyhh6AbILvWofuqrnn91bzgEovwDfS+pS99Dp4OpvaAopCEXpirc99dcSJ11Dj1OkEBq7r/4aR2xw==}
++    cpu: [arm64]
++    os: [linux]
++    libc: [glibc]
++
++  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.290':
++    resolution: {integrity: sha512-JRmW03yRKHKZ41T+e4eYzY3lA0pbaJG4PF1GO1cG09Pu8MBPsuWhZZMtP/fsIJ+4vv5dFhdaPmdBPhWgHSMqyw==}
++    cpu: [x64]
++    os: [linux]
++    libc: [musl]
++
++  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.290':
++    resolution: {integrity: sha512-q9YflZoDtz/vK9vo28KvnUPvZWqPpXVD8j8RCHepi6zAiOxxJV/3s2URtA3ZQKYSo4zThJ48yrZJnGm8mkGWyA==}
++    cpu: [x64]
++    os: [linux]
++    libc: [glibc]
++
++  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.290':
++    resolution: {integrity: sha512-oLHI6y0uEkGK31KNEBqNyZGbXqbEFNyWopg/5iB1hW//aQ6OBtuawGiORzTnFAqYUxIU/oHgKx5w6ZMVgrKMnQ==}
++    cpu: [arm64]
++    os: [win32]
++
++  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.290':
++    resolution: {integrity: sha512-mXgdB/OaZRAlt4E+cculWgEgmn5wAspzHO63ZfaSOVSuGJVDLBLBnwRDKkjI0cWCwAc17cetmu3TdNap/f0hxA==}
++    cpu: [x64]
++    os: [win32]
++
++  '@anthropic-ai/claude-agent-sdk@0.3.290':
++    resolution: {integrity: sha512-Rf2zz1kU3nyK9UCWhlZGYrCUi+0FuNmZFmzflZFKJKajuU+fsQrNht+jeUb2jyTszF/yMGobHhe3HfY4gB41Xg==}
++    engines: {node: '>=18.0.0'}
++    peerDependencies:
++      '@anthropic-ai/sdk': '>=0.93.0'
++      '@modelcontextprotocol/sdk': ^1.29.0
++      zod: ^4.0.0
++
++  '@anthropic-ai/claude-code-darwin-arm64@2.1.290':
++    resolution: {integrity: sha512-Gwf07acohw9mGTBIXeac1PTZKRMRsGoBFtm7OA3TMoLoF/3M2kPojkqdjxEzTVw15lJjA0N1lgZEa8jLWt4odQ==}
++    cpu: [arm64]
++    os: [darwin]
++
++  '@anthropic-ai/claude-code-darwin-x64@2.1.290':
++    resolution: {integrity: sha512-T7VTeuPrIfK7fjzn37izXxKfru9ZNYiiHSx+8jCZJK5TLCCDPaJAFPjQRhdLtk7adHOJe5PeAK8Rm0d8mcNRFg==}
++    cpu: [x64]
++    os: [darwin]
++
++  '@anthropic-ai/claude-code-linux-arm64-musl@2.1.290':
++    resolution: {integrity: sha512-MxA+W79eTB9084PMbRHW1cApY2OXJVBLRZLg+os030mPvOSsO9x300bftgwAk1LqzoJP7zQo4aiDG1xXDfE8jw==}
++    cpu: [arm64]
++    os: [linux]
++    libc: [musl]
++
++  '@anthropic-ai/claude-code-linux-arm64@2.1.290':
++    resolution: {integrity: sha512-xUcpprHxzKHAfYQeOSWLBEX58FHIpueVWUUSRbYmQQkPSm2C+RzwPYfwvAbdleyV5Bncmor9FmRUCyiq1DwDww==}
++    cpu: [arm64]
++    os: [linux]
++    libc: [glibc]
++
++  '@anthropic-ai/claude-code-linux-x64-musl@2.1.290':
++    resolution: {integrity: sha512-wUlWlEmpJ0QKBUBNA0139dhChhMg5HLPi/78sZ2dJEJ6ff89qJF5s4LEXP0tLIsUfX/CggX4J4/2prcgueUyYw==}
++    cpu: [x64]
++    os: [linux]
++    libc: [musl]
++
++  '@anthropic-ai/claude-code-linux-x64@2.1.290':
++    resolution: {integrity: sha512-1FQDIO4tXPFyw9wR1icEedIhEmLzOiQBAGR0NgETrXK8M2YbHEDXoE5Gg/LIuIee7giUuX5F2RzLw2N2i++ofQ==}
++    cpu: [x64]
++    os: [linux]
++    libc: [glibc]
++
++  '@anthropic-ai/claude-code-win32-arm64@2.1.290':
++    resolution: {integrity: sha512-QL2yNLFbj1Jx0nfNI+gKrta7RWNzYHD3OYKChieHmU1V2EJRyTUaYWeOZRHUkHc/tlK7Z/o9v43BQPEwHQmqkQ==}
++    cpu: [arm64]
++    os: [win32]
++
++  '@anthropic-ai/claude-code-win32-x64@2.1.290':
++    resolution: {integrity: sha512-wkjNwUSqEJ0d7TLkxYAjBHGqpVRTKuars/60VzcrTMkaY5iTaMJvNRjagVYx8SKWP+Zd3f5Gh+jAyRPZAl0U+A==}
++    cpu: [x64]
++    os: [win32]
++
++  '@anthropic-ai/claude-code@2.1.290':
++    resolution: {integrity: sha512-N1VOjg+2Bc0unJztexfNYMTi+XkghzLe1m7Z2vswj6geJAto7mib7FeRbhuSAYHz6lmtWz1XZhLqwT+ugUaxhQ==}
++    engines: {node: '>=22.0.0'}
++    hasBin: true
++
++  '@anthropic-ai/sdk@1.3.0':
++    resolution: {integrity: sha512-k7z9BlLLPxfZH+ov7dS6EnaN/wiZeV8YNT1LZfrpAHIy7oY7pHr4UzirF9f2OlHtFEnRBOX+AZQ91Y5fK+TPTw==}
++    hasBin: true
++    peerDependencies:
++      zod: ^3.25.0 || ^4.0.0
++    peerDependenciesMeta:
++      zod:
++        optional: true
++
++  '@babel/runtime@7.29.10':
++    resolution: {integrity: sha512-NpugTzbKgGrNe45Ui32cN8vCFFMxVtP/9rtfwv0nP5FRDAjvYBxJcLVpYA9mr1jxP6cnIT7x9LUzuDTbWYYNRA==}
++    engines: {node: '>=6.9.0'}
 +
 +  '@hono/node-server@2.1.5':
 +    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
@@ -51,71 +162,12 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +      '@cfworker/json-schema':
 +        optional: true
 +
-+  '@opencode-ai/sdk@1.18.34':
-+    resolution: {integrity: sha512-R9QWUpcngtdQ6FCixz7NC6n1WsSho6CEuRUzYHz/CzZcp3miSklDzXkm0oDwXVCnuEu+ANoeM0f6RDp51kOMzQ==}
++  '@opentelemetry/api@1.10.0':
++    resolution: {integrity: sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ==}
++    engines: {node: '>=8.0.0'}
 +
-+  '@vscode/ripgrep-darwin-arm64@1.18.0':
-+    resolution: {integrity: sha512-r3ktHSvbFycQNF6sl7sNDPocpsI7J+mEzh1IaZFkY0spm3k2Z9t8hPAeOK7+p0l6p6/swkQC14XWX01low+94Q==}
-+    cpu: [arm64]
-+    os: [darwin]
-+
-+  '@vscode/ripgrep-darwin-x64@1.18.0':
-+    resolution: {integrity: sha512-25b4gWbL138dGuQU244ebCKKc0q05ULBMoFSz9oAEUHNeqK/lOJViDS7DRvbDazzAzSEdan391Znks/R5mkaTQ==}
-+    cpu: [x64]
-+    os: [darwin]
-+
-+  '@vscode/ripgrep-linux-arm64@1.18.0':
-+    resolution: {integrity: sha512-lQ/5zTG++U0E3IhVgS4EPTTn/U4okncaRMM5GOFfOYZywS4nuD31GhkHbNYlDk5CuDC68+hYJ0/eQeyCKJDA+g==}
-+    cpu: [arm64]
-+    os: [linux]
-+
-+  '@vscode/ripgrep-linux-arm@1.18.0':
-+    resolution: {integrity: sha512-GDAvufNDHu8zqLEmXstalQF0Wh6wQvdsBi/Vg3Yi3CK4a8XoFXqqXVEHEZ9xQz3t0NfoSEc9JbvK9DDS6FxyxQ==}
-+    cpu: [arm]
-+    os: [linux]
-+
-+  '@vscode/ripgrep-linux-ia32@1.18.0':
-+    resolution: {integrity: sha512-YWLkSUtFd4Jh5EepIhA9RJSfv3uMAVMo+2rBIGHPBnvgLrZciIs2cDKei1/p6Wc/aCzUoHyMAg2R6tw4ZCBKGg==}
-+    cpu: [ia32]
-+    os: [linux]
-+
-+  '@vscode/ripgrep-linux-ppc64@1.18.0':
-+    resolution: {integrity: sha512-quXVY8fwQ8O/lvU1yrSqSl3jlUzysRSb+AfUfCL/tRtphxsKlFvPAejryZ6vg4Bgvn8XL74xb4qMCDmWgYrT5w==}
-+    cpu: [ppc64]
-+    os: [linux]
-+
-+  '@vscode/ripgrep-linux-riscv64@1.18.0':
-+    resolution: {integrity: sha512-f5kBQBrWfQt8Q7OhSORuNDei5dkYagBj3y4jImSUXGMy8B/Ke7SltSRcUtjPv166FAFfHCAmWuZp3+cWnX2/Vw==}
-+    cpu: [riscv64]
-+    os: [linux]
-+
-+  '@vscode/ripgrep-linux-s390x@1.18.0':
-+    resolution: {integrity: sha512-rTOcJFGGcl2c07RUOWUo4U1ndnemKhY6A9hnMB18uk7jSgJc0d/QLBGWMWpumdtoJtpizn/wIv5mXIisJukusQ==}
-+    cpu: [s390x]
-+    os: [linux]
-+
-+  '@vscode/ripgrep-linux-x64@1.18.0':
-+    resolution: {integrity: sha512-mQ3bVrUpnD2vs7QT0vX90Lt0cnUq467uFtEktIdsJJmW296RoSULRGqWgzG1AKxyBpNDD6l4ZO4qKf6SgyC23Q==}
-+    cpu: [x64]
-+    os: [linux]
-+
-+  '@vscode/ripgrep-win32-arm64@1.18.0':
-+    resolution: {integrity: sha512-vfTIjq1OHnzUjxZcHVQAMbnggp8dpGf+0QKFOZHwWPqFwXxQC8eCWM+5NUdoJ6yrElCeMzoUTXoK/LdZaniB+Q==}
-+    cpu: [arm64]
-+    os: [win32]
-+
-+  '@vscode/ripgrep-win32-ia32@1.18.0':
-+    resolution: {integrity: sha512-//rfAE+BOw5AC2EMmepmiE36jUuevtQYNQqqlw1s3m9FlRxjxEut97RkRPHAu9BG4mSojatZx+kXZXNdyI9caQ==}
-+    cpu: [ia32]
-+    os: [win32]
-+
-+  '@vscode/ripgrep-win32-x64@1.18.0':
-+    resolution: {integrity: sha512-KNPvtElldqILHdnAetujPaowkNbpqJy3ssIGGN6F6Kve9Qi+nNLI2DN01O83JjCEVQbCzl8Ov3QZ9Eov3BR8Dg==}
-+    cpu: [x64]
-+    os: [win32]
-+
-+  '@vscode/ripgrep@1.18.0':
-+    resolution: {integrity: sha512-ns5lWe44tSfbTMbVUsyB+I1819PVSw4AdpgK0RNkzfWfwy6+3IUNSxwSrfTno1/oWaS/hERNz+XLWVyga2aJBQ==}
++  '@stablelib/base64@1.0.1':
++    resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 +
 +  accepts@2.0.0:
 +    resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -240,6 +292,9 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +  fast-deep-equal@3.1.3:
 +    resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 +
++  fast-sha256@1.3.0:
++    resolution: {integrity: sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==}
++
 +  fast-uri@3.1.9:
 +    resolution: {integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==}
 +
@@ -278,8 +333,8 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +    resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
 +    engines: {node: '>= 0.4'}
 +
-+  hono@4.13.13:
-+    resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
++  hono@4.13.14:
++    resolution: {integrity: sha512-yhRLQ21U6qa9Hsu2N7Qcbh8tE+WKEcoErjIo56LeSGiGXGp9sA7UpE86Ui9uexb61KakiGwuHMn2QdV7w6i6kQ==}
 +    engines: {node: '>=16.9.0'}
 +
 +  http-errors@2.0.1:
@@ -293,8 +348,8 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +  inherits@2.0.4:
 +    resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 +
-+  ip-address@10.7.4:
-+    resolution: {integrity: sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==}
++  ip-address@10.7.5:
++    resolution: {integrity: sha512-t2v0rkILYv9WXmSL7TpAaU3HXgaFYOPUcH3QHgwQ++gpJuH3bqyMy4Fvt/DJCTKwzH3Cf+bAp5W/mFL39KPLzA==}
 +    engines: {node: '>= 12'}
 +
 +  ipaddr.js@1.9.1:
@@ -309,6 +364,10 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +
 +  jose@6.2.13:
 +    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
++
++  json-schema-to-ts@3.1.1:
++    resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
++    engines: {node: '>=16'}
 +
 +  json-schema-traverse@1.0.0:
 +    resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
@@ -358,75 +417,6 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +  once@1.4.0:
 +    resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 +
-+  opencode-ai@1.18.34:
-+    resolution: {integrity: sha512-9WUS2T0t4HHDVzXvuwTHF0nvhXvZ9mQ0r+ozCvKdJu0LVoQpOzqAW4qWTC3ygNc5Oedcc7j+Oct24JYlQYnySA==}
-+    cpu: [arm64, x64]
-+    os: [darwin, linux, win32]
-+    hasBin: true
-+
-+  opencode-darwin-arm64@1.18.34:
-+    resolution: {integrity: sha512-ioBEvc3nUA64waDIVsphh92LgJgyTbq+uRd0OurdqqT9WEI9rp4J7NrA24NfL6epCa1Xr06TnRx5+th9W3T/sA==}
-+    cpu: [arm64]
-+    os: [darwin]
-+
-+  opencode-darwin-x64-baseline@1.18.34:
-+    resolution: {integrity: sha512-WF9kdwGRDkss6jBR6lR3bG66U804onEaROY0zRtpWx2uyhaxKtLnOV74BYuS71meqkbsxLNA1SZKfi8qvS8HJA==}
-+    cpu: [x64]
-+    os: [darwin]
-+
-+  opencode-darwin-x64@1.18.34:
-+    resolution: {integrity: sha512-o8KXQ4jP5zfEHJAYpCz5Ifs0aa5dX+26wyLbxHEvfyGJu8hrBoNiJed3PE0uiPIlHCrj5yzF0b6k5aWonaPcTw==}
-+    cpu: [x64]
-+    os: [darwin]
-+
-+  opencode-linux-arm64-musl@1.18.34:
-+    resolution: {integrity: sha512-3iCUYcJ0a6z4QjqgpCCA0G0cJHCNiJSg6zxUz9nQZvQ8tAJH0fgrI8Qu5E3RuRvFwk75oOQL8iHBW5cD3Pwrrw==}
-+    cpu: [arm64]
-+    os: [linux]
-+    libc: [musl]
-+
-+  opencode-linux-arm64@1.18.34:
-+    resolution: {integrity: sha512-ZSjqcH0MEbAzLEmkRC9Aop1PbWZxe2NuKONAE/x8MRQdjKdOepX7M50UpjbsNoiLMkP584Z98Mg4a42fJhouvA==}
-+    cpu: [arm64]
-+    os: [linux]
-+
-+  opencode-linux-x64-baseline-musl@1.18.34:
-+    resolution: {integrity: sha512-LXNBBe4MBKwa1msQdVdKdr6J48zW4zC05h++6n9a2vwrm9zUQR5n7ZcS6qvVnEprl/qSBx9JTTZbkRrB4FIezQ==}
-+    cpu: [x64]
-+    os: [linux]
-+    libc: [musl]
-+
-+  opencode-linux-x64-baseline@1.18.34:
-+    resolution: {integrity: sha512-StWC81sqAGzsig602U6xui3t0Y/kJtZRmJd+H1xYTY7zVLIZ4Iucb1Wp0no6A7/sDj6VqtFKdL718usH92sHBA==}
-+    cpu: [x64]
-+    os: [linux]
-+
-+  opencode-linux-x64-musl@1.18.34:
-+    resolution: {integrity: sha512-PigrBoMSnozys5C5ls8YZTrUPNNN1AhbySib7yJETkqGRUFOkg1Z1eTUnz9dXJRXshWA4n15dOVo+Sqx1FYPIg==}
-+    cpu: [x64]
-+    os: [linux]
-+    libc: [musl]
-+
-+  opencode-linux-x64@1.18.34:
-+    resolution: {integrity: sha512-RTAMjCve4euxP2QKLuvRmdoW5J5DQK1DiZqt+7slfixyjAEi79QC2Df2oYKogibaAI4IEU8uzenoJeEl3k+UEw==}
-+    cpu: [x64]
-+    os: [linux]
-+
-+  opencode-windows-arm64@1.18.34:
-+    resolution: {integrity: sha512-W1sCmZPywVjHTaK88ASWTLOR2UcF70LBNiJddKoBG8Yxb70avl+GUlpNNa026E6y9T84s3n5xZ07ZL7u6Wo3Ew==}
-+    cpu: [arm64]
-+    os: [win32]
-+
-+  opencode-windows-x64-baseline@1.18.34:
-+    resolution: {integrity: sha512-Ng4R5BDWS/xHmHyjBC2hQpakIrvu3vYvO7U2oF820xjih1VJl4zON52VGtT4Zh1o6kbf8f6s7yLPMzzblGSXuw==}
-+    cpu: [x64]
-+    os: [win32]
-+
-+  opencode-windows-x64@1.18.34:
-+    resolution: {integrity: sha512-Nbw1JUHcMd+6Zab97tvhiR/wzMBrtFbHMog3w+HssBqt0068BLdpPadLmo72+vPtBu+ZxXIZzqNB9R3qtca7qg==}
-+    cpu: [x64]
-+    os: [win32]
-+
 +  parseurl@1.3.3:
 +    resolution: {integrity: sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==}
 +    engines: {node: '>= 0.8'}
@@ -446,8 +436,8 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +    resolution: {integrity: sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==}
 +    engines: {node: '>= 0.10'}
 +
-+  qs@6.16.1:
-+    resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
++  qs@6.17.0:
++    resolution: {integrity: sha512-5LK5BZ2XDHMvcUJaf0CQ5HL3aVgKbpklvByC7qLSxYkfE8COEEbJg5xCHWCTqzqi0Gs4Jn5Mv5v3R38W6edscA==}
 +    engines: {node: '>=0.6'}
 +
 +  range-parser@1.3.0:
@@ -504,6 +494,9 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +    resolution: {integrity: sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==}
 +    engines: {node: '>= 0.4'}
 +
++  standardwebhooks@1.1.1:
++    resolution: {integrity: sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==}
++
 +  statuses@2.0.2:
 +    resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
 +    engines: {node: '>= 0.8'}
@@ -511,6 +504,9 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +  toidentifier@1.0.1:
 +    resolution: {integrity: sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==}
 +    engines: {node: '>=0.6'}
++
++  ts-algebra@2.0.0:
++    resolution: {integrity: sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==}
 +
 +  type-is@2.1.0:
 +    resolution: {integrity: sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==}
@@ -549,18 +545,102 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +    peerDependencies:
 +      zod: ^3.25.28 || ^4
 +
-+  zod@3.25.76:
-+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
++  zod@4.4.3:
++    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 +
 +snapshots:
 +
-+  '@hono/node-server@2.1.5(hono@4.13.13)':
-+    dependencies:
-+      hono: 4.13.13
++  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.290':
++    optional: true
 +
-+  '@modelcontextprotocol/sdk@1.32.1(zod@3.25.76)':
++  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.290':
++    optional: true
++
++  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.290':
++    optional: true
++
++  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.290':
++    optional: true
++
++  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.290':
++    optional: true
++
++  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.290':
++    optional: true
++
++  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.290':
++    optional: true
++
++  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.290':
++    optional: true
++
++  '@anthropic-ai/claude-agent-sdk@0.3.290(@anthropic-ai/sdk@1.3.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(zod@4.4.3)':
 +    dependencies:
-+      '@hono/node-server': 2.1.5(hono@4.13.13)
++      '@anthropic-ai/sdk': 1.3.0(zod@4.4.3)
++      '@modelcontextprotocol/sdk': 1.32.1(zod@4.4.3)
++      zod: 4.4.3
++    optionalDependencies:
++      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.290
++      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.290
++      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.290
++      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.290
++      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.290
++      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.290
++      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.290
++      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.290
++
++  '@anthropic-ai/claude-code-darwin-arm64@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code-darwin-x64@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code-linux-arm64-musl@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code-linux-arm64@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code-linux-x64-musl@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code-linux-x64@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code-win32-arm64@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code-win32-x64@2.1.290':
++    optional: true
++
++  '@anthropic-ai/claude-code@2.1.290':
++    optionalDependencies:
++      '@anthropic-ai/claude-code-darwin-arm64': 2.1.290
++      '@anthropic-ai/claude-code-darwin-x64': 2.1.290
++      '@anthropic-ai/claude-code-linux-arm64': 2.1.290
++      '@anthropic-ai/claude-code-linux-arm64-musl': 2.1.290
++      '@anthropic-ai/claude-code-linux-x64': 2.1.290
++      '@anthropic-ai/claude-code-linux-x64-musl': 2.1.290
++      '@anthropic-ai/claude-code-win32-arm64': 2.1.290
++      '@anthropic-ai/claude-code-win32-x64': 2.1.290
++
++  '@anthropic-ai/sdk@1.3.0(zod@4.4.3)':
++    dependencies:
++      '@opentelemetry/api': 1.10.0
++      json-schema-to-ts: 3.1.1
++      standardwebhooks: 1.1.1
++    optionalDependencies:
++      zod: 4.4.3
++
++  '@babel/runtime@7.29.10': {}
++
++  '@hono/node-server@2.1.5(hono@4.13.14)':
++    dependencies:
++      hono: 4.13.14
++
++  '@modelcontextprotocol/sdk@1.32.1(zod@4.4.3)':
++    dependencies:
++      '@hono/node-server': 2.1.5(hono@4.13.14)
 +      ajv: 8.20.0
 +      ajv-formats: 3.0.1(ajv@8.20.0)
 +      content-type: 1.0.5
@@ -570,70 +650,19 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +      eventsource-parser: 3.1.1
 +      express: 5.3.0
 +      express-rate-limit: 8.7.1(express@5.3.0)
-+      hono: 4.13.13
++      hono: 4.13.14
 +      jose: 6.2.13
 +      json-schema-typed: 8.0.2
 +      pkce-challenge: 5.0.1
 +      raw-body: 3.0.2
-+      zod: 3.25.76
-+      zod-to-json-schema: 3.25.2(zod@3.25.76)
++      zod: 4.4.3
++      zod-to-json-schema: 3.25.2(zod@4.4.3)
 +    transitivePeerDependencies:
 +      - supports-color
 +
-+  '@opencode-ai/sdk@1.18.34':
-+    dependencies:
-+      cross-spawn: 7.0.6
++  '@opentelemetry/api@1.10.0': {}
 +
-+  '@vscode/ripgrep-darwin-arm64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-darwin-x64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-linux-arm64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-linux-arm@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-linux-ia32@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-linux-ppc64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-linux-riscv64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-linux-s390x@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-linux-x64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-win32-arm64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-win32-ia32@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep-win32-x64@1.18.0':
-+    optional: true
-+
-+  '@vscode/ripgrep@1.18.0':
-+    optionalDependencies:
-+      '@vscode/ripgrep-darwin-arm64': 1.18.0
-+      '@vscode/ripgrep-darwin-x64': 1.18.0
-+      '@vscode/ripgrep-linux-arm': 1.18.0
-+      '@vscode/ripgrep-linux-arm64': 1.18.0
-+      '@vscode/ripgrep-linux-ia32': 1.18.0
-+      '@vscode/ripgrep-linux-ppc64': 1.18.0
-+      '@vscode/ripgrep-linux-riscv64': 1.18.0
-+      '@vscode/ripgrep-linux-s390x': 1.18.0
-+      '@vscode/ripgrep-linux-x64': 1.18.0
-+      '@vscode/ripgrep-win32-arm64': 1.18.0
-+      '@vscode/ripgrep-win32-ia32': 1.18.0
-+      '@vscode/ripgrep-win32-x64': 1.18.0
++  '@stablelib/base64@1.0.1': {}
 +
 +  accepts@2.0.0:
 +    dependencies:
@@ -659,7 +688,7 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +      http-errors: 2.0.1
 +      iconv-lite: 0.7.3
 +      on-finished: 2.4.2
-+      qs: 6.16.1
++      qs: 6.17.0
 +      raw-body: 3.0.2
 +      type-is: 2.1.0
 +    transitivePeerDependencies:
@@ -736,7 +765,7 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +    dependencies:
 +      debug: 4.4.3
 +      express: 5.3.0
-+      ip-address: 10.7.4
++      ip-address: 10.7.5
 +    transitivePeerDependencies:
 +      - supports-color
 +
@@ -762,7 +791,7 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +      once: 1.4.0
 +      parseurl: 1.3.3
 +      proxy-addr: 2.0.8
-+      qs: 6.16.1
++      qs: 6.17.0
 +      range-parser: 1.3.0
 +      router: 2.2.0
 +      send: 1.2.1
@@ -774,6 +803,8 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +      - supports-color
 +
 +  fast-deep-equal@3.1.3: {}
++
++  fast-sha256@1.3.0: {}
 +
 +  fast-uri@3.1.9: {}
 +
@@ -820,7 +851,7 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +    dependencies:
 +      function-bind: 1.1.2
 +
-+  hono@4.13.13: {}
++  hono@4.13.14: {}
 +
 +  http-errors@2.0.1:
 +    dependencies:
@@ -836,7 +867,7 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +
 +  inherits@2.0.4: {}
 +
-+  ip-address@10.7.4: {}
++  ip-address@10.7.5: {}
 +
 +  ipaddr.js@1.9.1: {}
 +
@@ -845,6 +876,11 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +  isexe@2.0.0: {}
 +
 +  jose@6.2.13: {}
++
++  json-schema-to-ts@3.1.1:
++    dependencies:
++      '@babel/runtime': 7.29.10
++      ts-algebra: 2.0.0
 +
 +  json-schema-traverse@1.0.0: {}
 +
@@ -880,57 +916,6 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +    dependencies:
 +      wrappy: 1.0.2
 +
-+  opencode-ai@1.18.34:
-+    optionalDependencies:
-+      opencode-darwin-arm64: 1.18.34
-+      opencode-darwin-x64: 1.18.34
-+      opencode-darwin-x64-baseline: 1.18.34
-+      opencode-linux-arm64: 1.18.34
-+      opencode-linux-arm64-musl: 1.18.34
-+      opencode-linux-x64: 1.18.34
-+      opencode-linux-x64-baseline: 1.18.34
-+      opencode-linux-x64-baseline-musl: 1.18.34
-+      opencode-linux-x64-musl: 1.18.34
-+      opencode-windows-arm64: 1.18.34
-+      opencode-windows-x64: 1.18.34
-+      opencode-windows-x64-baseline: 1.18.34
-+
-+  opencode-darwin-arm64@1.18.34:
-+    optional: true
-+
-+  opencode-darwin-x64-baseline@1.18.34:
-+    optional: true
-+
-+  opencode-darwin-x64@1.18.34:
-+    optional: true
-+
-+  opencode-linux-arm64-musl@1.18.34:
-+    optional: true
-+
-+  opencode-linux-arm64@1.18.34:
-+    optional: true
-+
-+  opencode-linux-x64-baseline-musl@1.18.34:
-+    optional: true
-+
-+  opencode-linux-x64-baseline@1.18.34:
-+    optional: true
-+
-+  opencode-linux-x64-musl@1.18.34:
-+    optional: true
-+
-+  opencode-linux-x64@1.18.34:
-+    optional: true
-+
-+  opencode-windows-arm64@1.18.34:
-+    optional: true
-+
-+  opencode-windows-x64-baseline@1.18.34:
-+    optional: true
-+
-+  opencode-windows-x64@1.18.34:
-+    optional: true
-+
 +  parseurl@1.3.3: {}
 +
 +  path-key@3.1.1: {}
@@ -944,7 +929,7 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +      forwarded: 0.2.0
 +      ipaddr.js: 1.9.1
 +
-+  qs@6.16.1:
++  qs@6.17.0:
 +    dependencies:
 +      es-define-property: 1.0.1
 +      side-channel: 1.1.1
@@ -1033,9 +1018,16 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +      side-channel-map: 1.0.1
 +      side-channel-weakmap: 1.0.2
 +
++  standardwebhooks@1.1.1:
++    dependencies:
++      '@stablelib/base64': 1.0.1
++      fast-sha256: 1.3.0
++
 +  statuses@2.0.2: {}
 +
 +  toidentifier@1.0.1: {}
++
++  ts-algebra@2.0.0: {}
 +
 +  type-is@2.1.0:
 +    dependencies:
@@ -1055,38 +1047,35 @@ index 0000000000000000000000000000000000000000..1b3f9e52f10df6946e2577e142619474
 +
 +  ws@8.21.0: {}
 +
-+  zod-to-json-schema@3.25.2(zod@3.25.76):
++  zod-to-json-schema@3.25.2(zod@4.4.3):
 +    dependencies:
-+      zod: 3.25.76
++      zod: 4.4.3
 +
-+  zod@3.25.76: {}
++  zod@4.4.3: {}
 diff --git a/dist/index.js b/dist/index.js
-index 7062ca7cc86459e67fa02fce4d14513ce0fddf1b..563dc7757feaff5b92141b4e10b035c0595adf87 100644
+index 1463daca117dc0f4121cad4647d54cb262e57bb0..397dd0b234abc9d21fccbeba8c3290e546782235 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -1,3 +1,8 @@
+@@ -1,3 +1,7 @@
 +import bridgeAsset0 from "./bridge/package.json" with { type: "file" };
 +import bridgeAsset1 from "./bridge/pnpm-lock.yaml" with { type: "file" };
 +import bridgeAsset2 from "./bridge/pnpm-workspace.yaml" with { type: "file" };
 +import bridgeAsset3 from "./bridge/index.mjs" with { type: "file" };
-+import bridgeAsset4 from "./bridge/host-tool-mcp.mjs" with { type: "file" };
- import path, { dirname, join } from "node:path";
- import { HARNESS_V1_BUILTIN_TOOLS, HarnessCapabilityUnsupportedError, commonTool, harnessSessionDataDirectoryPath, harnessStateDirectoryPath, harnessV1BridgeInboundCommandSchemas, harnessV1BridgeOutboundMessageSchema, harnessV1BridgeStartBaseSchema, harnessV1DiagnosticFromBridgeFrame, isHarnessV1BuiltinToolIncluded } from "@ai-sdk/harness";
- import { SandboxChannel, applyCredentialForwarding, classifyDiskLog, createBridgeErrorHandler, createBridgeStartupError, createBridgeToken, createBridgeWebSocketConnect, createCredentialRequestTransformation, createReadBridgeAsset, drainBridgeProcessStream, experimental_createBridgeUserMessageSubmitter, extractHarnessPromptContent, forwardBridgeProcessStream, getAiGatewayAuthFromEnv, getRestrictedSandboxSession, harnessPromptContentSchema, isAccessTokenExpiringSoon, isHarnessAuthenticationEnvironment, isWindows, markBridgeStarting, parseJwtPayload, refreshOAuthAccessToken, resolveBridgeEndpoint, resolveBridgePort, resolveSandboxCredentialEnvironment, resolveSandboxHomeDir, shellQuote, validateBridgeSandboxSettings, waitForBridgeReady, warnCredentialBrokeringUnavailable, writeSkills } from "@ai-sdk/harness/utils";
-@@ -8,11 +13,11 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
- import { homedir } from "node:os";
- //#region src/opencode-bootstrap.ts
+ import { dirname, join, posix, resolve } from "node:path";
+ import { HARNESS_V1_BUILTIN_TOOLS, HarnessCapabilityUnsupportedError, commonTool, harnessSessionDataDirectoryPath, harnessStateDirectoryPath, harnessV1BridgeInboundCommandSchemas, harnessV1BridgeOutboundMessageSchema, harnessV1BridgeStartBaseSchema, harnessV1DiagnosticFromBridgeFrame } from "@ai-sdk/harness";
+ import { SandboxChannel, applyCredentialForwarding, classifyDiskLog, createBridgeErrorHandler, createBridgeStartupError, createBridgeToken, createBridgeWebSocketConnect, createCredentialRequestTransformation, createReadBridgeAsset, drainBridgeProcessStream, experimental_createBridgeUserMessageSubmitter, extractHarnessPromptContent, forwardBridgeProcessStream, getAiGatewayAuthFromEnv, getRestrictedSandboxSession, harnessPromptContentSchema, isAccessTokenExpiringSoon, isHarnessAuthenticationEnvironment, isMacOS, markBridgeStarting, readMacOSKeychainPassword, refreshOAuthAccessToken, resolveBridgeEndpoint, resolveBridgePort, resolveSandboxCredentialEnvironment, resolveSandboxHomeDir, shellQuote, shouldResolveNativeSubscription, validateBridgeSandboxSettings, waitForBridgeReady, warnCredentialBrokeringUnavailable, writeSkills } from "@ai-sdk/harness/utils";
+@@ -10,10 +14,10 @@ import { homedir } from "node:os";
+ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+ //#region src/claude-code-bootstrap.ts
  const readBridgeAsset = createReadBridgeAsset({
 -	"package.json": new URL("./bridge/package.json", import.meta.url),
 -	"pnpm-lock.yaml": new URL("./bridge/pnpm-lock.yaml", import.meta.url),
 -	"pnpm-workspace.yaml": new URL("./bridge/pnpm-workspace.yaml", import.meta.url),
--	"index.mjs": new URL("./bridge/index.mjs", import.meta.url),
--	"host-tool-mcp.mjs": new URL("./bridge/host-tool-mcp.mjs", import.meta.url)
+-	"index.mjs": new URL("./bridge/index.mjs", import.meta.url)
 +	"package.json": bridgeAsset0,
 +	"pnpm-lock.yaml": bridgeAsset1,
 +	"pnpm-workspace.yaml": bridgeAsset2,
-+	"index.mjs": bridgeAsset3,
-+	"host-tool-mcp.mjs": bridgeAsset4
++	"index.mjs": bridgeAsset3
  });
- const OPENCODE_BOOTSTRAP_DIR = ".harness-bootstrap/opencode";
+ const CLAUDE_CODE_BOOTSTRAP_DIR = ".harness-bootstrap/claude-code";
  let cachedBootstrap;

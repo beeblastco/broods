@@ -1,12 +1,11 @@
 /**
- * readS3Bytes' byte limit and readS3TextHead's ranged read, run on its own by browse-tool.test.ts: other test
- * files replace shared/s3.ts with a mock for the whole `bun test` process, so
- * the real module is checked in a process of its own.
+ * readS3Bytes' byte limit and readS3TextHead's ranged read against the real
+ * S3 client.
  */
 
 import { S3Client } from "@aws-sdk/client-s3";
 import { expect, mock, spyOn, test } from "bun:test";
-import { readS3Bytes, readS3TextHead } from "../../src/shared/s3.ts";
+import { readS3Bytes, readS3TextHead } from "../src/shared/s3.ts";
 
 test.each([
   [7 * 1024 * 1024, "7340032 bytes"],

@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  mock,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { requestBodyText } from "./helpers/http.ts";
 import { loopbackTransport, TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
@@ -41,12 +33,10 @@ import type {
   ResolvedWorkspace,
 } from "../src/shared/workspaces.ts";
 
-// mock.module("ai") below patches the namespace binding, so hold the real one.
+// The mocks below patch these namespaces in place, so hold the real ones.
 const realStreamText = actualAi.streamText;
 const realCreateAnthropic = actualAnthropic.createAnthropic;
-// Copied before the mocks patch them; afterAll hands them back to later files.
-const realAi = { ...actualAi };
-const realOpenAI = { ...actualOpenAI };
+const realCreateOpenAI = actualOpenAI.createOpenAI;
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
@@ -629,11 +619,6 @@ await mock.module("ai", () => ({
   ...actualAi,
   streamText: streamTextMock,
 }));
-
-afterAll(async () => {
-  await mock.module("ai", () => realAi);
-  await mock.module("@ai-sdk/openai", () => realOpenAI);
-});
 
 beforeEach(() => {
   setStorageForTests(usageStorage([]));
@@ -3808,9 +3793,7 @@ async function providerRequestBody(
   await realStreamText({
     model:
       config.model?.provider === "openai"
-        ? realOpenAI.createOpenAI({ apiKey: "openai-key", fetch: fetch })(
-            modelId,
-          )
+        ? realCreateOpenAI({ apiKey: "openai-key", fetch: fetch })(modelId)
         : realCreateAnthropic({ apiKey: "anthropic-key", fetch: fetch })(
             modelId,
           ),
