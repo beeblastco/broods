@@ -543,6 +543,8 @@ interface TimelineScale {
 
 // What every waterfall row of the selected run reads and calls.
 interface WaterfallView {
+  /** Each run's and model step's price by `spanKey`, see taskCosts. */
+  costs: ReadonlyMap<string, TaskCost | null>;
   /** The run a pick or a link landed on, ringed for a moment. */
   focusTraceId: string | null;
   group: SpanGroup;
@@ -1132,6 +1134,7 @@ export function TracingPanel({
                   />
                 }
                 view={{
+                  costs: costs,
                   focusTraceId: focusTraceId,
                   group: selectedGroup,
                   onFocusTrace: focusTrace,
@@ -1264,10 +1267,9 @@ export function taskCosts(
       const rate = model ? rateByModel.get(modelKey(model)) : undefined;
       if (!rate && loading) continue;
       const priced = estimateModelTokenCost(rate, stepTokens(step));
-      cost = addCost(
-        cost,
-        priced ? { usd: priced.total, partial: false } : null,
-      );
+      const stepCost = priced ? { usd: priced.total, partial: false } : null;
+      costs.set(spanKey(step), stepCost);
+      cost = addCost(cost, stepCost);
     }
 
     return cost;
@@ -2522,11 +2524,12 @@ function PhaseLine({
 
 /**
  * The Span cell: the row's name as a Trace line. A step is a title, its
- * tokens and a chevron that folds its lines; a tool call opens on its input
- * and output; a subagent is its avatar and name and opens its own run; a
- * phase is its name.
+ * price and tokens and a chevron that folds its lines; a tool call opens on
+ * its input and output; a subagent is its avatar and name and opens its own
+ * run; a phase is its name.
  */
 function SpanLine({
+  cost,
   hasChildren,
   isOpen,
   isTaskRow,
@@ -2534,6 +2537,7 @@ function SpanLine({
   onToggle,
   span,
 }: {
+  cost: string | undefined;
   hasChildren: boolean;
   isOpen: boolean;
   isTaskRow: boolean;
@@ -2562,6 +2566,7 @@ function SpanLine({
 
   return (
     <StepLine
+      cost={cost}
       hasChildren={hasChildren}
       isOpen={isOpen}
       name={rowLabel(span)}
@@ -2571,14 +2576,16 @@ function SpanLine({
   );
 }
 
-/** A model step or a resumed pass: the name, the tokens, and the chevron that folds what ran under it. */
+/** A model step or a resumed pass: the name, the price, the tokens, and the chevron that folds what ran under it. */
 function StepLine({
+  cost,
   hasChildren,
   isOpen,
   name,
   onToggle,
   span,
 }: {
+  cost: string | undefined;
   hasChildren: boolean;
   isOpen: boolean;
   name: string;
@@ -2590,6 +2597,10 @@ function StepLine({
   return (
     <TraceLine size="xs">
       <TraceTitle strong>{name}</TraceTitle>
+      {/* A running step has no tokens yet, so it has no price to show. */}
+      {cost !== undefined && tokens !== undefined && (
+        <TraceDescription>{cost}</TraceDescription>
+      )}
       {tokens !== undefined && (
         <TraceDescription>{formatNumber(tokens)} tok</TraceDescription>
       )}
@@ -2723,6 +2734,7 @@ function SpanRow({
   group,
   taskRunning,
   highlighted,
+  cost,
   onFocusTrace,
   issue,
   below,
@@ -2738,6 +2750,8 @@ function SpanRow({
   group: SpanGroup;
   taskRunning: boolean;
   highlighted: boolean;
+  /** The row's price, see costLabel; only a step's line shows it. */
+  cost: string | undefined;
   onFocusTrace: (traceId: string) => void;
   issue: SpanIssue | null;
   below: SpanIssue[];
@@ -2785,6 +2799,7 @@ function SpanRow({
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0">
             <SpanLine
+              cost={cost}
               hasChildren={hasChildren}
               isOpen={isOpen}
               isTaskRow={isTaskRow}
@@ -3639,6 +3654,7 @@ function renderSpanRows(
       group={view.group}
       taskRunning={rootLive}
       highlighted={isRoot && span.traceId === view.focusTraceId}
+      cost={costLabel(view.costs.get(key))}
       onFocusTrace={view.onFocusTrace}
       issue={issue}
       below={view.issues.below.get(span.spanId) ?? []}

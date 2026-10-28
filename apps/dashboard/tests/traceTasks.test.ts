@@ -412,6 +412,8 @@ describe("taskCosts", () => {
     expect(costs.get("trace-parent:parent")?.usd).toBeCloseTo(4);
     expect(costs.get("trace-parent:parent")?.partial).toBe(false);
     expect(costs.get("trace-sub:sub")?.usd).toBeCloseTo(1);
+    // Each model step keeps its own price for its waterfall row.
+    expect(costs.get("trace-parent:parent-model")?.usd).toBeCloseTo(3);
   });
 
   test("keeps a request's priced spend as a floor when a subagent has no price", () => {
