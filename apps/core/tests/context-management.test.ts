@@ -18,7 +18,6 @@ import type {
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as actualS3 from "../src/shared/s3.ts";
 
-// mock.module patches each namespace in place, so restore from copies taken first.
 const realAi = { ...actualAi };
 const realGoogle = { ...actualGoogle };
 const realS3 = { ...actualS3 };
@@ -61,12 +60,11 @@ await mock.module("@ai-sdk/google", () => ({
 }));
 
 await mock.module("ai", () => ({
-  ...actualAi,
+  ...realAi,
   generateText: generateTextMock,
 }));
 
-// Spread the real module first: mock.module is process-global, so any export
-// omitted here disappears for every test file that loads after this one.
+// Spread the real module first so no export disappears for later test files.
 await mock.module("../src/shared/s3.ts", () => ({
   ...realS3,
   isMissingS3Error: (error: unknown) =>
@@ -149,7 +147,8 @@ afterEach(() => {
   setStorageForTests(testStorage());
 });
 
-// mock.module is process-wide; restore the real modules for later test files.
+// mock.module is process-wide and patches each namespace in place, so restore
+// the copies taken before mocking for later test files.
 afterAll(async () => {
   setStorageForTests(null);
   await mock.module("ai", () => realAi);
