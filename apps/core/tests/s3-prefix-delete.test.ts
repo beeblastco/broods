@@ -1,8 +1,5 @@
 /**
- * deleteS3Prefix against a fake bucket behind the real S3 client, run on its
- * own by account-cleanup.test.ts: other test files replace shared/s3.ts with a
- * mock for the whole `bun test` process, so the real module is checked in a
- * process of its own.
+ * deleteS3Prefix against a fake bucket behind the real S3 client.
  */
 
 import {
@@ -11,7 +8,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { deleteS3Prefix } from "../../src/shared/s3.ts";
+import { deleteS3Prefix } from "../src/shared/s3.ts";
 
 const BUCKET = "cleanup-bucket";
 const PREFIX = "acct_cleanup/";

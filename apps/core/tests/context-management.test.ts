@@ -3,7 +3,6 @@
  * projection, context prepare, and auto-compaction with its summary.
  */
 
-import * as actualGoogle from "@ai-sdk/google";
 import { APICallError } from "@ai-sdk/provider";
 import {
   afterAll,
@@ -23,9 +22,6 @@ import type {
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as actualS3 from "../src/shared/s3.ts";
 
-const realAi = { ...actualAi };
-const realGoogle = { ...actualGoogle };
-const realS3 = { ...actualS3 };
 const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({
   provider: "google",
@@ -65,13 +61,13 @@ await mock.module("@ai-sdk/google", () => ({
 }));
 
 await mock.module("ai", () => ({
-  ...realAi,
+  ...actualAi,
   generateText: generateTextMock,
 }));
 
 // Spread the real module first so its other exports keep working for the code under test.
 await mock.module("../src/shared/s3.ts", () => ({
-  ...realS3,
+  ...actualS3,
   isMissingS3Error: (error: unknown) =>
     typeof error === "object" &&
     error !== null &&
@@ -152,13 +148,8 @@ afterEach(() => {
   setStorageForTests(testStorage());
 });
 
-// mock.module is process-wide and patches each namespace in place, so restore
-// the copies taken before mocking for later test files.
-afterAll(async () => {
+afterAll(() => {
   setStorageForTests(null);
-  await mock.module("ai", () => realAi);
-  await mock.module("@ai-sdk/google", () => realGoogle);
-  await mock.module("../src/shared/s3.ts", () => realS3);
 });
 
 describe("session system context", () => {

@@ -1,8 +1,7 @@
 /**
- * Hook bundle reuse across fire points, run on its own by hook-runner.test.ts:
- * its shared/s3.ts stand-in counts reads, and replacing that module would
- * reach every other test file in the same `bun test` process. A stub pooled
- * runner answers each call with the sha256 of the bundle it was handed.
+ * Hook bundle reuse across fire points: a shared/s3.ts stand-in counts reads,
+ * and a stub pooled runner answers each call with the sha256 of the bundle it
+ * was handed.
  */
 
 import { afterAll, beforeEach, expect, mock, test } from "bun:test";
@@ -10,8 +9,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { shutdownIsolatePool } from "../../src/harness/isolate/executor.ts";
-import type { AccountHookRecord } from "../../src/shared/domain/account-hooks.ts";
+import { shutdownIsolatePool } from "../src/harness/isolate/executor.ts";
+import type { AccountHookRecord } from "../src/shared/domain/account-hooks.ts";
 
 const dir = await mkdtemp(join(tmpdir(), "broods-hook-cache-"));
 const runnerPath = join(dir, "runner.mjs");
@@ -40,7 +39,7 @@ delete process.env.ISOLATE_POOL;
 // Each key's next answers; an Error entry fails that read, and the last entry repeats.
 const objects = new Map<string, Array<Uint8Array | Error>>();
 const reads: string[] = [];
-await mock.module("../../src/shared/s3.ts", () => ({
+await mock.module("../src/shared/s3.ts", () => ({
   readS3Bytes: async (_bucket: string, key: string): Promise<Uint8Array> => {
     reads.push(key);
     const answers = objects.get(key)!;
@@ -50,7 +49,7 @@ await mock.module("../../src/shared/s3.ts", () => ({
     return answer;
   },
 }));
-const { runCodeHook } = await import("../../src/harness/hook-runner.ts");
+const { runCodeHook } = await import("../src/harness/hook-runner.ts");
 
 beforeEach((): void => {
   reads.length = 0;
