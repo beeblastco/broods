@@ -56,7 +56,8 @@ export function UsageTraceRail({
 }: Props): React.JSX.Element {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const now = useNow();
+  // Read once: a row crosses the cutoff after weeks, not while the rail is open.
+  const now = useNow(null);
   const [query, setQuery] = useState("");
   const result = useQuery(api.logs.fetchUsageTasks, {
     projectId: projectId,

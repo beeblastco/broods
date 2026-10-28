@@ -26,7 +26,6 @@ import {
 } from "@/app/components/ui/trace";
 import {
   isRootSpanKind,
-  TRACE_RETENTION_DAYS,
   useObservabilityStream,
   type ObservabilitySpanRow,
   type TaskWaitingOn,
@@ -1045,8 +1044,7 @@ export function TracingPanel({
         >
           <span className="truncate font-mono">
             Trace {missingTrace} is not available
-            {error ? `: ${error}` : " in this stage's history"}. Traces are kept{" "}
-            {TRACE_RETENTION_DAYS} days.
+            {error ? `: ${error}` : " in this stage's history."}
           </span>
           <button
             type="button"
@@ -3272,7 +3270,9 @@ function TaskWaterfall({
             title={
               cost.endsWith("+")
                 ? "Some steps' models have no price"
-                : "Estimated cost of this run"
+                : group.subagents.length > 0
+                  ? "Estimated cost, subagents included"
+                  : "Estimated cost"
             }
           >
             {cost}
