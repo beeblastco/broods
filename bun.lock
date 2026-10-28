@@ -239,7 +239,7 @@
         "@docusaurus/preset-classic": "^3.10.2",
         "@mdx-js/react": "^3.1.1",
         "@scalar/docusaurus": "^0.8.51",
-        "pele": "1.9.1",
+        "pele": "1.10.0",
         "react": "19.3.1",
         "react-dom": "19.3.1",
       },
@@ -3700,7 +3700,7 @@
 
     "pathe": ["pathe@2.0.3", "", {}, "sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w=="],
 
-    "pele": ["pele@1.9.1", "", {}, "sha512-fZTPmzJrle/O605TlBM36TrWStof07+TzaXRIQWoxqRgds34MMpNXbaXGzGwQc3f86Xavdc/TJtM2fZIZPe+qQ=="],
+    "pele": ["pele@1.10.0", "", {}, "sha512-hDMEM+GQ01pZin8tst3PRXGeB/xFATvXBreHHtjx2glSNAQ7nHFq7EbMuNJGTbqkYgueWPboLjyUBsAudsb1qQ=="],
 
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 
