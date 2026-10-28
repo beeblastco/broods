@@ -2,10 +2,11 @@
 
 import { Input } from "@/app/components/ui/input";
 import { useNow } from "@/app/hooks/useNow";
+import { TRACE_RETENTION_DAYS } from "@/app/hooks/useObservabilityStream";
 import { formatNumber } from "@/app/lib/formatNumber";
 import { formatUsd, modelKey } from "@/app/lib/modelCost";
 import { tabHref } from "@/app/lib/navigation";
-import { rangeMs } from "@/app/lib/queryTokens";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
@@ -19,9 +20,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { formatBucketLabel } from "./UsageChart";
 
-// Tracing lists 30 days at most, and Tempo keeps traces that long, so an
-// older row has nothing to open.
-const TRACE_RETENTION_MS = rangeMs("30d");
+const TRACE_RETENTION_MS = TRACE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 interface Props {
   projectId: Id<"projects">;
@@ -43,9 +42,8 @@ interface Props {
  * their prompts and trace ids. Each row carries the start of its prompt, as
  * Tracing labels it, wrapped to two lines and cut with an ellipsis, the
  * tokens it contributed and their estimated cost; the trace itself opens in
- * the Tracing tab while Tempo still keeps it. It keeps
- * the chart's height and scrolls inside, so opening it never moves the
- * content below.
+ * the Tracing tab until it ages out of Tempo. The rail matches the chart's
+ * height and scrolls inside, so opening it never moves the content below.
  */
 export function UsageTraceRail({
   projectId,
@@ -139,66 +137,89 @@ export function UsageTraceRail({
           {needle ? "No traces match." : "No traces listed for this time."}
         </p>
       )}
-      {shown.map(({ traceId, totalTokens, inputPreview, cost, expired }, i) => {
-        const body = (
-          <>
-            <span className="flex min-w-0 items-start justify-between gap-3">
-              <span className="line-clamp-2 min-w-0 break-words">
-                {inputPreview ?? "No prompt text"}
-              </span>
-              <span className="shrink-0 text-right font-medium tabular-nums">
-                {formatNumber(totalTokens)}
-                <span className="block font-mono font-normal text-muted-foreground">
-                  {cost === null ? "not priced" : formatUsd(cost)}
-                </span>
-              </span>
-            </span>
-            <span className="flex min-w-0 items-baseline justify-between gap-3 text-2xs text-muted-foreground">
-              <span
-                className={
-                  expired
-                    ? "min-w-0 truncate font-mono"
-                    : "min-w-0 truncate font-mono text-info"
-                }
-              >
-                {traceId}
-              </span>
-              <span className="shrink-0 tabular-nums">
-                {binTokens > 0
-                  ? `${Math.round((totalTokens / binTokens) * 100)}% of tokens`
-                  : ""}
-              </span>
-            </span>
-          </>
-        );
-        const rowClass =
-          "grid min-w-0 gap-0.5 border-b border-border px-3 py-2 text-xs";
-
-        return expired ? (
-          <div
-            key={`${traceId}-${i}`}
-            title="Traces are kept 30 days"
-            className={`${rowClass} cursor-help`}
-          >
-            {body}
-          </div>
-        ) : (
-          <Link
-            key={`${traceId}-${i}`}
-            href={traceHref(traceId)}
-            title={inputPreview ?? "Open in Tracing"}
-            className={`${rowClass} cursor-pointer hover:bg-accent/40`}
-          >
-            {body}
-          </Link>
-        );
-      })}
+      {shown.map((row, i) => (
+        <UsageTraceRow
+          key={`${row.traceId}-${i}`}
+          traceId={row.traceId}
+          totalTokens={row.totalTokens}
+          inputPreview={row.inputPreview}
+          cost={row.cost}
+          href={row.expired ? null : traceHref(row.traceId)}
+          share={binTokens > 0 ? row.totalTokens / binTokens : null}
+        />
+      ))}
       {result?.truncated && (
         <p className="px-3 py-2 text-2xs text-muted-foreground">
           Some tasks in this bin are not listed.
         </p>
       )}
     </Rail>
+  );
+}
+
+/**
+ * One rail row: prompt, tokens and cost, then the trace id and its share of
+ * the bin. A link to Tracing, or plain text once the trace has aged out.
+ */
+function UsageTraceRow({
+  traceId,
+  totalTokens,
+  inputPreview,
+  cost,
+  href,
+  share,
+}: {
+  traceId: string;
+  totalTokens: number;
+  inputPreview: string | null;
+  /** Estimated USD, null when the model has no price. */
+  cost: number | null;
+  /** The Tracing link, null once Tempo has dropped the trace. */
+  href: string | null;
+  /** The row's fraction of the bin's tokens, null for an empty bin. */
+  share: number | null;
+}): React.JSX.Element {
+  const body = (
+    <>
+      <span className="flex min-w-0 items-start justify-between gap-3">
+        <span className="line-clamp-2 min-w-0 break-words">
+          {inputPreview ?? "No prompt text"}
+        </span>
+        <span className="shrink-0 text-right font-medium tabular-nums">
+          {formatNumber(totalTokens)}
+          <span className="block font-mono font-normal text-muted-foreground">
+            {cost === null ? "not priced" : formatUsd(cost)}
+          </span>
+        </span>
+      </span>
+      <span className="flex min-w-0 items-baseline justify-between gap-3 text-2xs text-muted-foreground">
+        <span className={cn("min-w-0 truncate font-mono", href && "text-info")}>
+          {traceId}
+        </span>
+        <span className="shrink-0 tabular-nums">
+          {share === null ? "" : `${Math.round(share * 100)}% of tokens`}
+        </span>
+      </span>
+    </>
+  );
+  const rowClass =
+    "grid min-w-0 gap-0.5 border-b border-border px-3 py-2 text-xs";
+
+  return href ? (
+    <Link
+      href={href}
+      title={inputPreview ?? "Open in Tracing"}
+      className={cn(rowClass, "cursor-pointer hover:bg-accent/40")}
+    >
+      {body}
+    </Link>
+  ) : (
+    <div
+      title={`Traces are kept ${TRACE_RETENTION_DAYS} days`}
+      className={cn(rowClass, "cursor-help")}
+    >
+      {body}
+    </div>
   );
 }
 

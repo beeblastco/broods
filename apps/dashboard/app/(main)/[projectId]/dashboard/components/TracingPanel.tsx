@@ -26,6 +26,7 @@ import {
 } from "@/app/components/ui/trace";
 import {
   isRootSpanKind,
+  TRACE_RETENTION_DAYS,
   useObservabilityStream,
   type ObservabilitySpanRow,
   type TaskWaitingOn,
@@ -1044,7 +1045,8 @@ export function TracingPanel({
         >
           <span className="truncate font-mono">
             Trace {missingTrace} is not available
-            {error ? `: ${error}` : " in this stage's history."}
+            {error ? `: ${error}` : " in this stage's history"}. Traces are kept{" "}
+            {TRACE_RETENTION_DAYS} days.
           </span>
           <button
             type="button"

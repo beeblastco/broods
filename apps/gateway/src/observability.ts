@@ -703,8 +703,8 @@ async function sendBackfill(
   }
 }
 
-// One trace by id, for a log line's "View trace" when the trace is older than
-// the backfill window covers. Tempo's id lookup is not tenant-scoped, so the
+// One trace by id, for a trace opened past the backfill window: a log line's
+// "View trace", a Usage rail row, a shared link. Tempo's id lookup is not tenant-scoped, so the
 // spans are checked against the socket's scope before anything leaves.
 async function sendTrace(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
