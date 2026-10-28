@@ -4,12 +4,9 @@
  * released or deferred, and that one account's failure never costs another its sweep.
  */
 
-import { afterAll, afterEach, beforeEach, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, expect, it, mock } from "bun:test";
 import type { ReservedSandbox } from "../src/harness/sandbox/types.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
-import * as actualCleanup from "../src/shared/sandbox-cleanup.ts";
-
-const realCleanup = { ...actualCleanup };
 
 // Returns what it released, so the sweeper can tell the released rows from the
 // ones it still has to defer. Everything handed in is released by default; a test
@@ -21,7 +18,7 @@ const releaseMock = mock(
   ): Promise<ReservedSandbox[]> => reservations,
 );
 
-// The fake's exports are the module's whole surface, so every export its importers need is here.
+// mock.module replaces the whole module, so every export its importers need is here.
 await mock.module("../src/shared/sandbox-cleanup.ts", () => ({
   releaseExpiredSandboxes: releaseMock,
   releaseReservedSandboxes: mock(async () => 0),
@@ -29,15 +26,6 @@ await mock.module("../src/shared/sandbox-cleanup.ts", () => ({
 
 const { sweepExpiredSandboxes } =
   await import("../src/shared/sandbox-sweeper.ts");
-
-// mock.module is process-wide and patches the namespace in place, so restore
-// the copy taken before mocking for later test files.
-afterAll(async (): Promise<void> => {
-  await mock.module(
-    "../src/shared/sandbox-cleanup.ts",
-    (): typeof realCleanup => realCleanup,
-  );
-});
 
 const originalQuery = runtime.query.bind(runtime);
 const originalMutate = runtime.mutate.bind(runtime);
