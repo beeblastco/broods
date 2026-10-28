@@ -158,7 +158,7 @@ export function UsageTraceRail({
 }
 
 /**
- * One rail row: prompt, tokens and cost, then the trace id and its share of
+ * One rail row: prompt, cost and tokens, then the trace id and its share of
  * the bin. A link to Tracing, or plain text once the trace has aged out.
  */
 function UsageTraceRow({
@@ -185,11 +185,11 @@ function UsageTraceRow({
         <span className="line-clamp-2 min-w-0 break-words">
           {inputPreview ?? "No prompt text"}
         </span>
-        <span className="shrink-0 text-right font-medium tabular-nums">
-          {formatNumber(totalTokens)}
-          <span className="block font-mono font-normal text-muted-foreground">
+        <span className="shrink-0 font-mono tabular-nums">
+          <span className="text-muted-foreground">
             {cost === null ? "not priced" : formatUsd(cost)}
-          </span>
+          </span>{" "}
+          <span className="font-medium">{formatNumber(totalTokens)}</span>
         </span>
       </span>
       <span className="flex min-w-0 items-baseline justify-between gap-3 text-2xs text-muted-foreground">
