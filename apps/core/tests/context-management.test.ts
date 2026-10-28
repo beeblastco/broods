@@ -1,3 +1,8 @@
+/**
+ * Session context: system context, pruning, stored-item persistence and
+ * projection, context prepare, and auto-compaction with its summary.
+ */
+
 import * as actualGoogle from "@ai-sdk/google";
 import { APICallError } from "@ai-sdk/provider";
 import {
@@ -64,7 +69,7 @@ await mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
-// Spread the real module first so no export disappears for later test files.
+// Spread the real module first so its other exports keep working for the code under test.
 await mock.module("../src/shared/s3.ts", () => ({
   ...realS3,
   isMissingS3Error: (error: unknown) =>

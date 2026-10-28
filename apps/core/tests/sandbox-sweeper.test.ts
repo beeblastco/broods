@@ -21,7 +21,7 @@ const releaseMock = mock(
   ): Promise<ReservedSandbox[]> => reservations,
 );
 
-// mock.module replaces the whole module, so every export its importers need is here.
+// The fake's exports are the module's whole surface, so every export its importers need is here.
 await mock.module("../src/shared/sandbox-cleanup.ts", () => ({
   releaseExpiredSandboxes: releaseMock,
   releaseReservedSandboxes: mock(async () => 0),
