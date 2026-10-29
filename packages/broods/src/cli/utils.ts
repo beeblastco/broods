@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { Writable } from "node:stream";
+import { text } from "node:stream/consumers";
 import {
   gatewayUrlForDashboard,
   readStoredAuth,
@@ -241,17 +242,26 @@ export async function promptConfirm(question: string): Promise<boolean> {
 
 /**
  * Reads a secret without echoing it: readline still edits the line, but writes
- * every keystroke to a stream that drops it.
+ * every keystroke to a stream that drops it. Piped stdin is read whole (one
+ * trailing newline dropped), since a readline question never answers input that
+ * ends without a newline.
  */
 export async function promptSecret(label: string): Promise<string> {
   output.write(`${label}: `);
+  if (input.isTTY !== true) {
+    const piped = (await text(input)).replace(/\r?\n$/, "");
+    output.write("\n");
+    if (!piped) throw new Error(`${label} is required`);
+
+    return piped;
+  }
   const muted = new Writable({
     write: (_chunk, _encoding, callback): void => callback(),
   });
   const rl = createInterface({
     input: input,
     output: muted,
-    terminal: input.isTTY === true,
+    terminal: true,
   });
   try {
     const value = await rl.question("");
