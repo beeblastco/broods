@@ -8,10 +8,16 @@ It subscribes to every config plane it is given over a Convex websocket (the con
 
 ```text
 POST {plane webhookBaseUrl}/v1/webhooks/{accountId}/dev/{endpointId}/discord
-x-discord-gateway-token: <bot token>
+x-discord-gateway-token: <credential derived from the bot token>
 
 { "type": "GATEWAY_MESSAGE_CREATE", "data": { ...MESSAGE_CREATE } }
 ```
+
+The header value is `discordForwarderToken(botToken)` from
+`apps/core/src/shared/discord-wire.ts`, never the bot token itself: a leak of
+the transport credential cannot call Discord. Core still accepts the raw token
+with a deprecation warning until the forwarder release with this derivation has
+rolled everywhere.
 
 ## Gotchas
 
@@ -23,7 +29,7 @@ x-discord-gateway-token: <bot token>
 - **the resume host is a credential decision.** the RESUME frame carries the bot token, and READY names its own host in `resume_gateway_url`. `resumeGatewayUrl` in `src/discord.ts` does not use the name as given: it keeps one validated DNS label and rebuilds the URL onto a literal `.discord.gg`, so the dial cannot leave Discord no matter what READY says. Following a redirect would hand the token to whoever named the host. `heartbeat_interval` from HELLO is clamped for the same reason. An unbounded value from the wire becomes a hot loop.
 - **liveness and readiness are different paths.** `/healthz` answers while the process is alive, `/readyz` waits on the first config-plane snapshot. probing liveness on the config plane would turn a Convex outage into a restart loop, which is the one thing the IDENTIFY budget cannot survive.
 - **the config-plane read is not Discord-specific.** `channel/connections.listConnections` in `packages/convex` takes a channel name, and `watchChannelConnections` in `src/connections.ts` takes it too. Telegram, Slack, Zalo, GitHub and Pancake all receive regular messages on a registered webhook URL and need no forwarder. Matrix does: `apps/matrix-forwarder` imports `src/config.ts`, `src/connections.ts`, `src/backoff.ts`, `src/log.ts`, `src/forward.ts` (`fanOut`) and `src/supervisor.ts` (`warnOnSharedToken`, `webhookUrls`) by relative path, so renaming any of them or changing those signatures breaks that build too.
-- **it imports one core module by relative path**, not as a package: `../../core/src/shared/env.ts`. rename it and this build breaks with nothing declaring the dependency. the Dockerfile copies it by name too. `@broods/convex` is only a type import; the query ref is built by name in `src/connections.ts`.
+- **it imports two core modules by relative path**, not as a package: `../../core/src/shared/env.ts` and `../../core/src/shared/discord-wire.ts` (the transport credential and its header). rename either and this build breaks with nothing declaring the dependency. the Dockerfile copies them by name too. `@broods/convex` is only a type import; the query ref is built by name in `src/connections.ts`.
 - **it forwards Discord's payload, it does not normalize it.** the one addition is `thread`, which Discord genuinely omits from `MESSAGE_CREATE`. Inside a thread `channel_id` _is_ the thread and the parent is unsaid, and core needs both to key the conversation the same way the slash-command path does. `author.bot` is left absent for human authors because core's `isGatewayMessage` accepts that; putting the same rule in two places would leave every other forwarder still broken. **opening** a thread on a mention is a product decision and does not live here. See the `replyIn` follow-up on issue #320.
 
 ## Why its own deployment

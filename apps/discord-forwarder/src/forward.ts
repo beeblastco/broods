@@ -8,8 +8,15 @@
  * it, absent for human authors, because core's `isGatewayMessage` accepts that
  * shape. Normalizing it here would put the same rule in two places and leave
  * every other forwarder still broken.
+ *
+ * The POST authenticates with the transport credential `discord-wire.ts`
+ * derives from the bot token, so the token itself never rides the public edge.
  */
 
+import {
+  DISCORD_GATEWAY_TOKEN_HEADER,
+  discordForwarderToken,
+} from "../../core/src/shared/discord-wire.ts";
 import { backoffDelayMs } from "./backoff.ts";
 import {
   FETCH_TIMEOUT_MS,
@@ -82,9 +89,9 @@ export async function forwardMessageCreate(
 
   await fanOut(targets, body, {
     attempts: DISCORD_FORWARD_ATTEMPTS,
-    header: "x-discord-gateway-token",
+    header: DISCORD_GATEWAY_TOKEN_HEADER,
     timeoutMs: FETCH_TIMEOUT_MS,
-    token: botToken,
+    token: discordForwarderToken(botToken),
   });
 }
 

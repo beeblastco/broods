@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
+import { discordForwarderToken } from "../../core/src/shared/discord-wire.ts";
 import type { MessageCreate } from "../src/discord.ts";
 import {
   fanOut,
@@ -67,11 +68,20 @@ describe("forwarding a gateway message", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(TARGETS[0]!.webhookUrl);
-    expect(calls[0]!.headers["x-discord-gateway-token"]).toBe("token-a");
     expect(calls[0]!.body).toEqual({
       type: "GATEWAY_MESSAGE_CREATE",
       data: MESSAGE,
     });
+  });
+
+  it("authenticates with the derived credential, never the bot token", async () => {
+    const calls = captureFetch();
+    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+
+    expect(calls[0]!.headers["x-discord-gateway-token"]).toBe(
+      discordForwarderToken("token-a"),
+    );
+    expect(Object.values(calls[0]!.headers)).not.toContain("token-a");
   });
 
   it("adds the thread object Discord leaves out", async () => {
