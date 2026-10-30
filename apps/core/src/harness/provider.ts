@@ -1133,7 +1133,7 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
  * connection that stays silent for 300s, and a busy provider can hold a stream
  * that long, so a model call ends on the provider's own error or the run's
  * abort signal, which `watchModelStream` in harness.ts fires on a silent
- * stream. A request whose response headers do not arrive within
+ * stream. A streamed request whose response headers do not arrive within
  * MODEL_FIRST_BYTE_TIMEOUT_MS is aborted and fails as a retryable 408, so the
  * SDK's retry sends it again instead of the whole run waiting on the stall
  * watchdog. A provider with any tenant-supplied endpoint also gets the
@@ -1154,25 +1154,26 @@ function withModelFetch<T extends AgentProviderSettings>(
       DEFAULT_MODEL_FIRST_BYTE_TIMEOUT_MS,
     );
     const firstByte = new AbortController();
-    const timer = setTimeout((): void => firstByte.abort(), firstByteMs);
-    const signal = init?.signal
-      ? AbortSignal.any([init.signal, firstByte.signal])
+    // Only a streamed answer sends its headers at once. A whole answer (compaction's generateText) sends them when it is done, however long that takes.
+    const streamed =
+      typeof init?.body === "string" && /"stream"\s*:\s*true/.test(init.body);
+    const timer = streamed
+      ? setTimeout((): void => firstByte.abort(), firstByteMs)
+      : undefined;
+    // The caller's signal rides init, or the Request itself when init has none.
+    const callerSignal =
+      init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = callerSignal
+      ? AbortSignal.any([callerSignal, firstByte.signal])
       : firstByte.signal;
     const unbounded = { ...init, signal: signal, timeout: false };
-    // A request still resolving DNS (publicHostFetch) has not handed the signal to fetch yet: the abort ends that wait too.
-    const abandoned = new Promise<never>((_resolve, reject): void => {
-      signal.addEventListener("abort", (): void => reject(signal.reason), {
-        once: true,
-      });
-    });
     let response: Response;
     try {
-      response = await Promise.race([
-        guarded ? publicHostFetch(input, unbounded) : fetch(input, unbounded),
-        abandoned,
-      ]);
+      response = guarded
+        ? await publicHostFetch(input, unbounded)
+        : await fetch(input, unbounded);
     } catch (error) {
-      if (!firstByte.signal.aborted || init?.signal?.aborted) throw error;
+      if (!firstByte.signal.aborted || callerSignal?.aborted) throw error;
       throw new APICallError({
         message: `The model sent no response within ${Math.ceil(firstByteMs / 1000)}s`,
         url: input instanceof Request ? input.url : String(input),

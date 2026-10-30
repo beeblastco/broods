@@ -1032,7 +1032,7 @@ describe("runAgentLoop", () => {
         { choices: [{ index: 0, delta: { content: "hello back" } }] },
         { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
       ]
-        .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+        .map((chunk): string => `data: ${JSON.stringify(chunk)}\n\n`)
         .join("");
       let requests = 0;
       // The first request is held like a provider that never answers.
