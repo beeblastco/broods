@@ -190,6 +190,28 @@ describe("handleMediaRequest", () => {
     ]);
   });
 
+  it("404s an expired ticket without touching storage", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    const { DEFAULT_MEDIA_TICKET_TTL_SECONDS, sealMediaTicket: seal } =
+      await import("../src/shared/media-ticket.ts");
+    const expired = seal(
+      {
+        accountId: ACCOUNT,
+        workspaceId: "ws_a",
+        namespace: NS,
+        path: "pics/shot.png",
+      },
+      SECRET,
+      Date.now() - (DEFAULT_MEDIA_TICKET_TTL_SECONDS + 60) * 1000,
+    );
+
+    const response = await handleMediaRequest(mediaRequest(expired));
+
+    expect(response.status).toBe(404);
+    expect(headS3ObjectMock).not.toHaveBeenCalled();
+    expect(readS3BytesMock).not.toHaveBeenCalled();
+  });
+
   it("404s once the file is gone", async (): Promise<void> => {
     const { handleMediaRequest } = await import("../src/media.ts");
     headS3ObjectMock.mockImplementation(async () => null as never);
