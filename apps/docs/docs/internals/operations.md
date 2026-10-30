@@ -92,6 +92,7 @@ flowchart TB
 | `MAX_INPROCESS_WORKERS`                                  | 8       | Runs in flight per pod, streamed runs too. The rest queue, with their lease renewed |
 | `WORKER_TIMEOUT_BUDGET_MS`                               | 600000  | A run still going 5 s past this loses its slot and fails                            |
 | `MODEL_FIRST_CHUNK_TIMEOUT_MS`, `MODEL_CHUNK_TIMEOUT_MS` | 300000  | Model silence before the first chunk, or between chunks, fails the run              |
+| `MODEL_FIRST_BYTE_TIMEOUT_MS`                            | 90000   | A model request with no response headers by then is sent again                      |
 | `REQUEST_TIMEOUT_BUDGET_MS`                              | 600000  | Work deadline of one request                                                        |
 | `SHUTDOWN_DEADLINE_MS`                                   | 25000   | Drain time on `SIGTERM` before live runs are failed                                 |
 | `SANDBOX_SWEEP_INTERVAL_SECONDS`                         | 3600    | How often core releases reserved sandboxes whose conversation never came back       |
