@@ -2,7 +2,7 @@
  * Canvas layout persistence keyed by (project, stage).
  */
 
-import { v, type Infer } from "convex/values";
+import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
@@ -11,6 +11,12 @@ import {
   accountCipherForWrite,
   hasEncryptionSecret,
 } from "./model/accountKeys";
+import {
+  canvasEdgeValidator,
+  canvasNodeValidator,
+  type CanvasEdge,
+  type CanvasNode,
+} from "./model/canvasShapes";
 import { stableJson } from "./model/objects";
 import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
 import { hasReservation } from "./model/cliSyncResources";
@@ -26,39 +32,11 @@ import {
   workspaceEnvRefFields,
 } from "./model/workspaceRules";
 
-export const canvasEdgeValidator = v.object({
-  id: v.string(),
-  source: v.string(),
-  target: v.string(),
-  animated: v.optional(v.boolean()),
-});
-
-export const canvasNodeValidator = v.object({
-  id: v.string(),
-  type: v.union(
-    v.literal("agent"),
-    v.literal("sandbox"),
-    v.literal("workspace"),
-    v.literal("mcp"),
-    v.literal("skill"),
-  ),
-  position: v.object({ x: v.number(), y: v.number() }),
-  data: v.any(),
-});
-
 const saveLayoutResult = v.object({
   layoutId: v.id("canvasLayouts"),
   nodes: v.array(canvasNodeValidator),
   edges: v.array(canvasEdgeValidator),
 });
-
-export type CanvasEdge = Infer<typeof canvasEdgeValidator>;
-
-// `data` is `v.any()` (which infers `any`); every consumer treats it as an
-// unknown-valued record, so the override keeps type checking without casts.
-export type CanvasNode = Omit<Infer<typeof canvasNodeValidator>, "data"> & {
-  data: Record<string, unknown>;
-};
 
 type MaterializeNodeOptions = {
   account: Doc<"accounts">;

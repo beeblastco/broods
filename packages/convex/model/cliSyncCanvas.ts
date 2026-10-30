@@ -7,7 +7,7 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import type { CanvasEdge, CanvasNode } from "../canvas";
+import type { CanvasEdge, CanvasNode } from "./canvasShapes";
 import { defaultSandboxOf } from "./agentRules";
 import { isCliEdgeId } from "./canvasFrames";
 import { applyTidyLayout } from "./canvasLayout";

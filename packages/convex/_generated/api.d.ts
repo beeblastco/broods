@@ -5660,7 +5660,27 @@ export declare const internal: {
       {
         completionToken?: string;
         conversationKey: string;
-        delivery?: any;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
         input: any;
         parentEventId: string;
         resultId: string;
@@ -5748,14 +5768,28 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"runtimeAsyncAgentResults">;
         accountId: Id<"accounts">;
-        approvals?: Array<any>;
+        approvals?: Array<{
+          approvalId: string;
+          input: any;
+          toolCallId: string;
+          toolName: string;
+        }>;
         conversationKey: string;
         createdAt: string;
         error?: string;
         eventId: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
-        questions?: Array<any>;
+        questions?: Array<{
+          answerBy: string;
+          questions: Array<{
+            header: string;
+            id: string;
+            options: Array<{ description?: string; label: string }>;
+            question: string;
+          }>;
+          statusId: string;
+        }>;
         response?: any;
         status:
           | "processing"
@@ -5801,7 +5835,27 @@ export declare const internal: {
         accountId: Id<"accounts">;
         conversationKey: string;
         createdAt: string;
-        delivery?: any;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
         error?: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
@@ -6038,14 +6092,28 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"runtimeAsyncAgentResults">;
           accountId: Id<"accounts">;
-          approvals?: Array<any>;
+          approvals?: Array<{
+            approvalId: string;
+            input: any;
+            toolCallId: string;
+            toolName: string;
+          }>;
           conversationKey: string;
           createdAt: string;
           error?: string;
           eventId: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
-          questions?: Array<any>;
+          questions?: Array<{
+            answerBy: string;
+            questions: Array<{
+              header: string;
+              id: string;
+              options: Array<{ description?: string; label: string }>;
+              question: string;
+            }>;
+            statusId: string;
+          }>;
           response?: any;
           status:
             | "processing"
@@ -6101,7 +6169,27 @@ export declare const internal: {
           accountId: Id<"accounts">;
           conversationKey: string;
           createdAt: string;
-          delivery?: any;
+          delivery?:
+            | { kind: "async" }
+            | {
+                connectionId: string;
+                kind: "nats";
+                publicConversationKey: string;
+                publicEventId: string;
+              }
+            | {
+                channelName: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source: Record<string, any>;
+              };
           error?: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
@@ -6140,7 +6228,27 @@ export declare const internal: {
         accountId: Id<"accounts">;
         conversationKey: string;
         createdAt: string;
-        delivery?: any;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
         error?: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
@@ -6212,12 +6320,26 @@ export declare const internal: {
       "mutation",
       "internal",
       {
-        approvals?: Array<any>;
+        approvals?: Array<{
+          approvalId: string;
+          input: any;
+          toolCallId: string;
+          toolName: string;
+        }>;
         error?: string;
         eventId: string;
         handback?: "detached";
         onlyWhileProcessing?: boolean;
-        questions?: Array<any>;
+        questions?: Array<{
+          answerBy: string;
+          questions: Array<{
+            header: string;
+            id: string;
+            options: Array<{ description?: string; label: string }>;
+            question: string;
+          }>;
+          statusId: string;
+        }>;
         response?: any;
         status:
           | "processing"
@@ -6244,7 +6366,27 @@ export declare const internal: {
         accountId: Id<"accounts">;
         conversationKey: string;
         createdAt: string;
-        delivery?: any;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
         error?: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
@@ -6296,9 +6438,63 @@ export declare const internal: {
           model?: Record<string, any>;
         };
         conversationKey: string;
-        delivery: any;
+        delivery:
+          | {
+              kind: "http";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              kind: "async";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl: string;
+            }
+          | {
+              connectionId: string;
+              kind: "websocket";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              channel: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source?: Record<string, any>;
+            };
         envelopeTtlMs: number;
-        ephemeralSystem?: Array<any>;
+        ephemeralSystem?: Array<{
+          content: string;
+          providerOptions?: Record<string, Record<string, any>>;
+          role: "system";
+        }>;
         eventId: string;
         events: Array<any>;
         expectedOwnerTaskId?: string;
@@ -6338,8 +6534,62 @@ export declare const internal: {
             model?: Record<string, any>;
           };
           contributingEventIds: Array<string>;
-          delivery: any;
-          ephemeralSystem?: Array<any>;
+          delivery:
+            | {
+                kind: "http";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                kind: "async";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl: string;
+              }
+            | {
+                connectionId: string;
+                kind: "websocket";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                channel: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source?: Record<string, any>;
+              };
+          ephemeralSystem?: Array<{
+            content: string;
+            providerOptions?: Record<string, Record<string, any>>;
+            role: "system";
+          }>;
           eventId: string;
           events: Array<any>;
           ownerGeneration: number;
@@ -6402,8 +6652,62 @@ export declare const internal: {
           model?: Record<string, any>;
         };
         contributingEventIds: Array<string>;
-        delivery: any;
-        ephemeralSystem?: Array<any>;
+        delivery:
+          | {
+              kind: "http";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              kind: "async";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl: string;
+            }
+          | {
+              connectionId: string;
+              kind: "websocket";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              channel: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source?: Record<string, any>;
+            };
+        ephemeralSystem?: Array<{
+          content: string;
+          providerOptions?: Record<string, Record<string, any>>;
+          role: "system";
+        }>;
         eventId: string;
         events: Array<any>;
         ownerGeneration: number;
@@ -6536,8 +6840,62 @@ export declare const internal: {
               model?: Record<string, any>;
             };
             contributingEventIds: Array<string>;
-            delivery: any;
-            ephemeralSystem?: Array<any>;
+            delivery:
+              | {
+                  kind: "http";
+                  publicConversationKey: string;
+                  publicDeploymentIngress?: {
+                    accountId: string;
+                    endpointId: string;
+                    projectSlug: string;
+                    stageSlug: string;
+                  };
+                  publicEventId: string;
+                  statusUrl?: string;
+                }
+              | {
+                  kind: "async";
+                  publicConversationKey: string;
+                  publicDeploymentIngress?: {
+                    accountId: string;
+                    endpointId: string;
+                    projectSlug: string;
+                    stageSlug: string;
+                  };
+                  publicEventId: string;
+                  statusUrl: string;
+                }
+              | {
+                  connectionId: string;
+                  kind: "websocket";
+                  publicConversationKey: string;
+                  publicDeploymentIngress?: {
+                    accountId: string;
+                    endpointId: string;
+                    projectSlug: string;
+                    stageSlug: string;
+                  };
+                  publicEventId: string;
+                  statusUrl?: string;
+                }
+              | {
+                  channel: string;
+                  identity?: {
+                    channelId?: string;
+                    threadId?: string;
+                    userId?: string;
+                    userName?: string;
+                    userRoles?: Array<string>;
+                    workspaceRef?: string;
+                  };
+                  kind: "channel";
+                  source?: Record<string, any>;
+                };
+            ephemeralSystem?: Array<{
+              content: string;
+              providerOptions?: Record<string, Record<string, any>>;
+              role: "system";
+            }>;
             eventId: string;
             events: Array<any>;
             ownerGeneration: number;
@@ -6589,9 +6947,23 @@ export declare const internal: {
         asyncResult?: {
           eventIds: Array<string>;
           outcome: {
-            approvals?: Array<any>;
+            approvals?: Array<{
+              approvalId: string;
+              input: any;
+              toolCallId: string;
+              toolName: string;
+            }>;
             error?: string;
-            questions?: Array<any>;
+            questions?: Array<{
+              answerBy: string;
+              questions: Array<{
+                header: string;
+                id: string;
+                options: Array<{ description?: string; label: string }>;
+                question: string;
+              }>;
+              statusId: string;
+            }>;
             response?: any;
             status:
               | "processing"
@@ -6636,8 +7008,62 @@ export declare const internal: {
             model?: Record<string, any>;
           };
           contributingEventIds: Array<string>;
-          delivery: any;
-          ephemeralSystem?: Array<any>;
+          delivery:
+            | {
+                kind: "http";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                kind: "async";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl: string;
+              }
+            | {
+                connectionId: string;
+                kind: "websocket";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                channel: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source?: Record<string, any>;
+              };
+          ephemeralSystem?: Array<{
+            content: string;
+            providerOptions?: Record<string, Record<string, any>>;
+            role: "system";
+          }>;
           eventId: string;
           events: Array<any>;
           ownerGeneration: number;
@@ -6683,8 +7109,62 @@ export declare const internal: {
           model?: Record<string, any>;
         };
         contributingEventIds: Array<string>;
-        delivery: any;
-        ephemeralSystem?: Array<any>;
+        delivery:
+          | {
+              kind: "http";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              kind: "async";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl: string;
+            }
+          | {
+              connectionId: string;
+              kind: "websocket";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              channel: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source?: Record<string, any>;
+            };
+        ephemeralSystem?: Array<{
+          content: string;
+          providerOptions?: Record<string, Record<string, any>>;
+          role: "system";
+        }>;
         eventId: string;
         events: Array<any>;
         ownerGeneration: number;

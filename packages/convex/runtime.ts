@@ -13,6 +13,8 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { sha256Hex } from "./model/accountSecrets";
 import {
+  asyncToolDeliveryValidator,
+  pendingQuestionSummaryValidator,
   reservedSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
@@ -20,6 +22,7 @@ import {
   sandboxProviderValidator,
   sandboxSnapshotScopeValidator,
   subagentTaskValidator,
+  toolApprovalSummaryValidator,
 } from "./schema";
 import {
   accountIdFromKey,
@@ -68,8 +71,8 @@ export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
   response: v.optional(v.any()),
   error: v.optional(v.string()),
-  approvals: v.optional(v.array(v.any())),
-  questions: v.optional(v.array(v.any())),
+  approvals: v.optional(v.array(toolApprovalSummaryValidator)),
+  questions: v.optional(v.array(pendingQuestionSummaryValidator)),
 });
 
 const asyncAgentDoc = v.object({
@@ -723,7 +726,7 @@ export const createAsyncToolResult = internalMutation({
     toolName: v.string(),
     toolCallId: v.string(),
     input: v.any(),
-    delivery: v.optional(v.any()),
+    delivery: v.optional(asyncToolDeliveryValidator),
     completionToken: v.optional(v.string()),
   },
   returns: v.boolean(),

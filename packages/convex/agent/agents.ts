@@ -381,25 +381,17 @@ export const remove = internalMutation({
         )
         .unique();
       if (layout) {
-        const nodes = layout.nodes as Array<{
-          id: string;
-          data?: { agentConfigId?: string };
-        }>;
         const removedIds = new Set(
-          nodes
+          layout.nodes
             .filter((n) => n.data?.agentConfigId === linkedConfig._id)
             .map((n) => n.id),
         );
         if (removedIds.size > 0) {
           // A deleted node takes its incident edges with it. A dangling edge
           // would survive every later reconciliation pass.
-          const edges = layout.edges as Array<{
-            source: string;
-            target: string;
-          }>;
           await ctx.db.patch(layout._id, {
-            nodes: nodes.filter((n) => !removedIds.has(n.id)),
-            edges: edges.filter(
+            nodes: layout.nodes.filter((n) => !removedIds.has(n.id)),
+            edges: layout.edges.filter(
               (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
             ),
             updatedAt: Date.now(),
