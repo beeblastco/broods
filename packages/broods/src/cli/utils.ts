@@ -241,34 +241,29 @@ export async function promptConfirm(question: string): Promise<boolean> {
 
 /**
  * Reads a secret without echoing it: readline still edits the line, but writes
- * every keystroke to a stream that drops it. Piped stdin gives its first line,
- * or what is left when the pipe closes without a newline (`printf '%s'`), which
- * a readline question never answers.
+ * every keystroke to a stream that drops it. A terminal gives one line; piped
+ * stdin gives every line up to its end (a PEM key, a JSON file), also a last
+ * line without a newline. Ctrl+D or an empty pipe is an error, never a silent
+ * exit: a readline question never settles when input ends first.
  */
 export async function promptSecret(label: string): Promise<string> {
   output.write(`${label}: `);
-  if (input.isTTY !== true) {
-    const lines = createInterface({ input: input, terminal: false });
-    const piped = await new Promise<string>((resolve) => {
-      lines.once("line", resolve);
-      lines.once("close", () => resolve(""));
-    });
-    lines.close();
-    output.write("\n");
-    if (!piped) throw new Error(`${label} is required`);
-
-    return piped;
-  }
   const muted = new Writable({
     write: (_chunk, _encoding, callback): void => callback(),
   });
+  const terminal = input.isTTY === true;
   const rl = createInterface({
     input: input,
     output: muted,
-    terminal: true,
+    terminal: terminal,
   });
   try {
-    const value = await rl.question("");
+    const lines: string[] = [];
+    for await (const line of rl) {
+      lines.push(line);
+      if (terminal) break;
+    }
+    const value = lines.join("\n");
     if (!value) throw new Error(`${label} is required`);
 
     return value;
