@@ -35,7 +35,7 @@ test("the first piped line answers while the pipe stays open", async () => {
     stdin: "pipe",
     stdout: "pipe",
   });
-  child.stdin.write("abc\n");
+  await child.stdin.write("abc\n");
   await child.stdin.flush();
   const stdout = await new Response(child.stdout).text();
   child.kill();
