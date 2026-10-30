@@ -7,9 +7,12 @@
 
 import { createHmac, randomBytes } from "node:crypto";
 
-const PROCESS_CACHE_KEY = randomBytes(32);
+// Drawn on first use: a V8 isolate (workerd) refuses random bytes at module scope.
+let processCacheKey: Buffer | undefined;
 
 /** The cache-key digest of `value`: the same value gives the same key for this process's lifetime. */
 export function cacheDigest(value: string): string {
-  return createHmac("sha256", PROCESS_CACHE_KEY).update(value).digest("hex");
+  processCacheKey ??= randomBytes(32);
+
+  return createHmac("sha256", processCacheKey).update(value).digest("hex");
 }

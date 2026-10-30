@@ -228,8 +228,19 @@ export async function publicHostFetch(
     }
     publicHosts.set(hostname, validated);
   }
-  url.hostname = validated.address;
   const request = input instanceof Request ? input : undefined;
+  // A V8 isolate (workerd) cannot dial an address while presenting another
+  // name for TLS: it reaches the checked host by name instead.
+  if (globalThis.navigator?.userAgent === "Cloudflare-Workers") {
+    return fetch(url, {
+      ...(request
+        ? { method: request.method, body: request.body, signal: request.signal }
+        : {}),
+      ...init,
+      redirect: "error",
+    });
+  }
+  url.hostname = validated.address;
   const headers = new Headers(init?.headers ?? request?.headers);
   headers.set("host", host);
 
