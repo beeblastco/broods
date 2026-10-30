@@ -821,13 +821,14 @@ export function toChannelRuntimeAgentConfig(
 }
 
 // The config branches a run reads; everything else the stored row carries is
-// dropped. `sandbox` predates `sandboxes`: a stored config from before the
-// rename would otherwise lose the key here and quietly promote its first extra
-// to the default, so it is carried through for the normalizer to refuse.
+// dropped. `sandbox` and `policy` predate `sandboxes` and `policies`: a stored
+// config from before either rename would otherwise lose the key here and run
+// without it, so both are carried through for the normalizer to refuse by name.
 const RUNTIME_CONFIG_KEYS = [
   "agent",
   "harness",
   "model",
+  "policy",
   "provider",
   "sandbox",
   "sandboxes",

@@ -72,6 +72,7 @@ import {
 import {
   isSandboxLogId,
   isTraceId,
+  MAX_OBSERVABILITY_BACKFILL,
   type LogLevel,
   type ObservabilityLogEntry,
   type ObservabilitySpanRow,
@@ -2695,10 +2696,16 @@ async function logs(args: string[]): Promise<void> {
   const limit = Number(
     optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
   );
-  // A NaN or non-positive backfill makes the gateway refuse the whole
+  // An out-of-protocol backfill makes the gateway refuse the whole
   // subscribe, so a typo fails here by name instead.
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new Error("--limit must be a non-negative integer");
+  if (
+    !Number.isInteger(limit) ||
+    limit < 0 ||
+    limit > MAX_OBSERVABILITY_BACKFILL
+  ) {
+    throw new Error(
+      `--limit must be an integer between 0 and ${MAX_OBSERVABILITY_BACKFILL}`,
+    );
   }
   const jsonMode = hasFlag(args, "--json");
 
