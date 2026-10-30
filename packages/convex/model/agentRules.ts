@@ -855,7 +855,7 @@ function normalizeSessionAutoCompactionConfig(value: unknown): void {
   );
 }
 
-export function normalizeHooksConfig(value: unknown): void {
+function normalizeHooksConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
     throw new ClientError("config.hooks must be an object");
@@ -901,7 +901,7 @@ function normalizeCodeHookConfig(value: unknown, path: string): void {
   }
 }
 
-function normalizeWebhookHookConfig(value: unknown, path: string): void {
+export function normalizeWebhookHookConfig(value: unknown, path: string): void {
   if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, `${path}.enabled`);

@@ -75,7 +75,50 @@ test("addAgentWebhook keeps a valid webhook", async () => {
   ]);
 });
 
+test("a stored legacy row can be disabled and removed, but not re-enabled", async () => {
+  const { t, caller, configId, projectId, stageId } = await setup();
+  // Seed a row that predates the https rule, bypassing the mutations.
+  await t.run(async (ctx): Promise<void> => {
+    await ctx.db.patch(configId, {
+      extraConfig: {
+        hooks: {
+          webhooks: [
+            {
+              enabled: true,
+              url: "http://legacy.invalid/hook",
+              secret: "legacy-secret",
+              events: [],
+            },
+          ],
+        },
+      },
+    });
+  });
+  await caller.mutation(api.webhooks.setAgentWebhookEnabled, {
+    agentConfigId: configId,
+    index: 0,
+    enabled: false,
+  });
+  await expect(
+    caller.mutation(api.webhooks.setAgentWebhookEnabled, {
+      agentConfigId: configId,
+      index: 0,
+      enabled: true,
+    }),
+  ).rejects.toThrow(/https/i);
+  await caller.mutation(api.webhooks.removeAgentWebhook, {
+    agentConfigId: configId,
+    index: 0,
+  });
+  const listed = await caller.query(api.webhooks.listAgentWebhooks, {
+    projectId: projectId,
+    stageId: stageId,
+  });
+  expect(listed[0]?.webhooks).toEqual([]);
+});
+
 async function setup(): Promise<{
+  t: T;
   caller: ReturnType<T["withIdentity"]>;
   configId: Id<"agentConfigs">;
   projectId: Id<"projects">;
@@ -116,7 +159,7 @@ async function setup(): Promise<{
     return { projectId: projectId, stageId: stageId, configId: configId };
   });
 
-  return { caller: caller, ...ids };
+  return { t: t, caller: caller, ...ids };
 }
 
 /** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
