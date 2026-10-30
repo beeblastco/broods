@@ -1,8 +1,9 @@
 /**
  * The model providers an agent may name in `config.model.provider`.
  * One plain-data list the Convex runtime, the dashboard and core all read; core
- * pairs each name with its Vercel AI SDK factory in `harness/provider.ts` and a
- * `satisfies` there fails the build if the two ever drift.
+ * pairs each name with its Vercel AI SDK factory in `harness/provider.ts`,
+ * where the declared return type of `modelProviderFactories` fails the build if
+ * the two ever drift.
  */
 
 /**
@@ -13,12 +14,6 @@
  */
 export const PROVIDER_ENDPOINT_SETTING = /url$/i;
 
-/** Display metadata for the dashboard's provider pickers. */
-export interface ModelProviderMeta {
-  label: string;
-  modelPlaceholder: string;
-}
-
 /**
  * Every Vercel AI SDK provider that ships language models, the community
  * providers on the same spec that take an API key (`cloudflare`, `llmgateway`,
@@ -27,7 +22,56 @@ export interface ModelProviderMeta {
  * Image-, speech- and transcription-only providers are deliberately absent:
  * they cannot back `config.model`.
  */
-export const MODEL_PROVIDERS = {
+export const ACCOUNT_MODEL_PROVIDER_NAMES = [
+  "alibaba",
+  "anthropic",
+  "azure",
+  "baseten",
+  "bedrock",
+  "cerebras",
+  "chatgpt",
+  "cloudflare",
+  "cohere",
+  "custom",
+  "deepinfra",
+  "deepseek",
+  "fireworks",
+  "google",
+  "groq",
+  "huggingface",
+  "llmgateway",
+  "minimax",
+  "mistral",
+  "moonshotai",
+  "ollama",
+  "openai",
+  "openrouter",
+  "perplexity",
+  "togetherai",
+  "v0",
+  "vercel",
+  "vertex",
+  "xai",
+  "zai",
+] as const;
+
+export type AccountModelProviderName =
+  (typeof ACCOUNT_MODEL_PROVIDER_NAMES)[number];
+
+/** Display metadata for the dashboard's provider pickers. */
+export interface ModelProviderMeta {
+  label: string;
+  modelPlaceholder: string;
+}
+
+/**
+ * Picker metadata per provider. The `Record` annotation keys it to the name
+ * list above, so a provider added to one without the other fails the build.
+ */
+export const MODEL_PROVIDERS: Record<
+  AccountModelProviderName,
+  ModelProviderMeta
+> = {
   alibaba: { label: "Alibaba Qwen", modelPlaceholder: "qwen3-max" },
   anthropic: {
     label: "Anthropic",
@@ -88,13 +132,7 @@ export const MODEL_PROVIDERS = {
   vertex: { label: "Google Vertex AI", modelPlaceholder: "gemini-2.5-flash" },
   xai: { label: "xAI Grok", modelPlaceholder: "grok-4" },
   zai: { label: "Z.ai GLM", modelPlaceholder: "glm-4.7" },
-} as const satisfies Record<string, ModelProviderMeta>;
-
-export type AccountModelProviderName = keyof typeof MODEL_PROVIDERS;
-
-export const ACCOUNT_MODEL_PROVIDER_NAMES = Object.keys(
-  MODEL_PROVIDERS,
-) as AccountModelProviderName[];
+};
 
 // Own properties only: `in` would accept "constructor"/"__proto__"/"toString"
 // as provider names, which then reach a registry lookup that has no factory.

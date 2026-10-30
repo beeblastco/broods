@@ -2396,10 +2396,11 @@ async function pushReplyToChannel(
 }
 
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
+  const invocation: AsyncWorkerInvocation = {
     kind: "direct-api-async-worker",
     event: event,
-  } satisfies AsyncWorkerInvocation);
+  };
+  await invokeHarnessWorker(invocation);
 }
 
 /** Runs a continuation on the worker kind its original request came in on. */
@@ -2434,10 +2435,11 @@ function onSocket(
 }
 
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
+  const invocation: NatsWorkerInvocation = {
     kind: "nats-worker",
     event: event,
-  } satisfies NatsWorkerInvocation);
+  };
+  await invokeHarnessWorker(invocation);
 }
 
 /**
