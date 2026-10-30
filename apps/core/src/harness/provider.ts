@@ -1159,11 +1159,18 @@ function withModelFetch<T extends AgentProviderSettings>(
       ? AbortSignal.any([init.signal, firstByte.signal])
       : firstByte.signal;
     const unbounded = { ...init, signal: signal, timeout: false };
+    // A request still resolving DNS (publicHostFetch) has not handed the signal to fetch yet: the abort ends that wait too.
+    const abandoned = new Promise<never>((_resolve, reject): void => {
+      signal.addEventListener("abort", (): void => reject(signal.reason), {
+        once: true,
+      });
+    });
     let response: Response;
     try {
-      response = guarded
-        ? await publicHostFetch(input, unbounded)
-        : await fetch(input, unbounded);
+      response = await Promise.race([
+        guarded ? publicHostFetch(input, unbounded) : fetch(input, unbounded),
+        abandoned,
+      ]);
     } catch (error) {
       if (!firstByte.signal.aborted || init?.signal?.aborted) throw error;
       throw new APICallError({
