@@ -256,6 +256,8 @@ export async function promptSecret(label: string): Promise<string> {
     input: input,
     output: muted,
     terminal: terminal,
+    // A CRLF split across two pipe chunks is one line break, however late the LF.
+    crlfDelay: Infinity,
   });
   try {
     const lines: string[] = [];
