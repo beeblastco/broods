@@ -855,7 +855,7 @@ function normalizeSessionAutoCompactionConfig(value: unknown): void {
   );
 }
 
-function normalizeHooksConfig(value: unknown): void {
+export function normalizeHooksConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
     throw new ClientError("config.hooks must be an object");

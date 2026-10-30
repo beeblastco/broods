@@ -310,7 +310,7 @@ async function postPancakeMessage(
     );
   }
 
-  logInfo("Pancake send message succeeded", {
+  logDebug("Pancake send message succeeded", {
     pageId: source.pageId,
     conversationId: source.conversationId,
     status: response.status,
@@ -439,22 +439,6 @@ function parsePancakeWebhook(
     return body;
   }
   const payload = body.payload;
-  logDebug("Pancake webhook received", {
-    configuredPageId: pageId,
-    payloadPageId: payload.page_id,
-    eventType: payload.event_type,
-    conversationId: payload.data?.conversation?.id,
-    messageId: payload.data?.message?.id,
-    messageType: payload.data?.message?.type,
-    fromId:
-      payload.data?.message?.from?.id ?? payload.data?.conversation?.from?.id,
-    fromName:
-      payload.data?.message?.from?.name ??
-      payload.data?.conversation?.from?.name,
-    pageCustomerId: payload.data?.message?.from?.page_customer_id,
-    tagIds: normalizePancakeTagIds(payload.data?.conversation?.tags),
-  });
-
   if (payload.event_type !== "messaging") {
     logDebug("Pancake webhook ignored", {
       reason: "unsupported_event_type",
@@ -502,13 +486,7 @@ function parsePancakeWebhook(
     !message.from?.page_customer_id
   ) {
     logDebug("Pancake webhook ignored", {
-      reason: message.is_hidden
-        ? "hidden_message"
-        : message.is_removed
-          ? "removed_message"
-          : message.from?.id === pageId
-            ? "page_originated_message"
-            : "missing_page_customer_id",
+      reason: pancakeDropReason(message, pageId),
       pageId: payload.page_id,
       conversationId: conversation.id,
       messageId: message.id,
@@ -534,13 +512,53 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
+  return pancakeMessageResult({
+    pageId: pageId,
+    postId: payload.data?.post?.id,
+    conversation: conversation,
+    conversationId: conversation.id,
+    message: message,
+    messageId: message.id,
+    messageType: message.type,
+    text: text,
+    attachments: attachments,
+    fromId: fromId,
+  });
+}
+
+/**
+ * Builds the accepted-delivery result once every gate has passed: the inbound
+ * message plus the PancakeSource replies route on.
+ */
+function pancakeMessageResult(options: {
+  pageId: string;
+  postId: string | undefined;
+  conversation: PancakeConversation;
+  conversationId: string;
+  message: PancakeMessage;
+  messageId: string;
+  messageType: "INBOX" | "COMMENT";
+  text: string | undefined;
+  attachments: ReturnType<typeof pancakeAttachments>;
+  fromId: string | undefined;
+}): ChannelParseResult {
+  const {
+    pageId,
+    conversation,
+    conversationId,
+    message,
+    messageId,
+    text,
+    attachments,
+  } = options;
+  const fromId = options.fromId;
   const fromName = message.from?.name ?? conversation.from?.name;
   const tagIds = normalizePancakeTagIds(conversation.tags);
   logInfo("Pancake webhook accepted", {
     pageId: pageId,
-    conversationId: conversation.id,
-    messageId: message.id,
-    messageType: message.type,
+    conversationId: conversationId,
+    messageId: messageId,
+    messageType: options.messageType,
     textLength: text?.length ?? 0,
     attachmentCount: attachments.length,
     tagIds: tagIds,
@@ -548,10 +566,10 @@ function parsePancakeWebhook(
 
   const source: PancakeSource = {
     pageId: pageId,
-    conversationId: conversation.id,
-    messageId: message.id,
-    messageType: message.type,
-    postId: payload.data?.post?.id,
+    conversationId: conversationId,
+    messageId: messageId,
+    messageType: options.messageType,
+    postId: options.postId,
     fromId: fromId,
     fromName: fromName,
     pageCustomerId: message.from?.page_customer_id,
@@ -562,8 +580,8 @@ function parsePancakeWebhook(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventContent(text, attachments)}`,
-      conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
+      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${messageId}:${hashEventContent(text, attachments)}`,
+      conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversationId}`,
       channelName: "pancake",
       content: [{ type: "text", text: text ?? "" }],
       ...(attachments.length > 0 ? { attachments: attachments } : {}),
@@ -577,6 +595,24 @@ function parsePancakeWebhook(
       source: { ...source },
     },
   };
+}
+
+/**
+ * Why a messaging delivery from the right page still is not a customer
+ * message, for the ignore log.
+ */
+function pancakeDropReason(message: PancakeMessage, pageId: string): string {
+  if (message.is_hidden) {
+    return "hidden_message";
+  }
+  if (message.is_removed) {
+    return "removed_message";
+  }
+  if (message.from?.id === pageId) {
+    return "page_originated_message";
+  }
+
+  return "missing_page_customer_id";
 }
 
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {

@@ -64,7 +64,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
   return {
     bash: tool({
       description: description(context),
-      inputSchema: jsonSchema(inputSchema(context)),
+      inputSchema: jsonSchema<BashInput>(inputSchema(context)),
       execute: async function (input, options) {
         const {
           command,
@@ -72,7 +72,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           sandbox: onSandbox,
           background,
           pty,
-        } = input as BashInput;
+        } = input;
         const trimmed = (command ?? "").trim();
         if (!trimmed) {
           return toolError("Error: command is required");
@@ -93,10 +93,11 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           const ws = onAgentSandbox
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
-          const ignoredWorkspace =
-            onAgentSandbox && workspace !== undefined
-              ? `Note: ran on sandbox ${picked?.name} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
-              : "";
+          const ignoredWorkspace = ignoredWorkspaceNote(
+            onAgentSandbox,
+            workspace,
+            picked?.name,
+          );
           // A read-only workspace must not fall through to the default sandbox: the
           // approval gate skipped it expecting this refusal.
           const sandbox = ws ? ws.sandbox : picked?.sandbox;
@@ -122,7 +123,6 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             return await dispatchBackground(
               context,
               ws,
-              sandbox,
               effective,
               options.toolCallId,
             );
@@ -152,6 +152,19 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
       },
     }),
   };
+}
+
+// Names the workspace the model asked for when a named sandbox made it moot.
+function ignoredWorkspaceNote(
+  onAgentSandbox: boolean,
+  workspace: string | undefined,
+  sandboxName: string | undefined,
+): string {
+  if (!onAgentSandbox || workspace === undefined) {
+    return "";
+  }
+
+  return `Note: ran on sandbox ${sandboxName} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`;
 }
 
 // Background jobs need a persistent workspace sandbox (to outlive the request)
@@ -211,7 +224,6 @@ Usage notes:
 async function dispatchBackground(
   context: SandboxToolContext,
   ws: ResolvedWorkspace | undefined,
-  _sandbox: SandboxExecutorConfig,
   command: string,
   toolCallId: string,
 ): Promise<string> {

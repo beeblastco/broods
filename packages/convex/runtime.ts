@@ -1752,12 +1752,7 @@ function reservationExpiresAt(ttlSeconds: number | undefined): number {
   return Math.floor(Date.now() / 1000) + ttl;
 }
 
-/**
- * Requires an account to exist and remain active in the runtime-write transaction.
- * @param ctx Convex mutation context
- * @param accountId account ID embedded in the runtime row or key
- * @throws when the account is missing, disabled, or malformed
- */
+/** Answers whether the sandbox's reservation row still exists and is current. */
 async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,

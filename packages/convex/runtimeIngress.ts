@@ -1871,8 +1871,6 @@ async function renewHeldLease(
   });
 }
 
-/** Requires the account to exist and remain active in the write transaction. */
-
 /** Requires the exact owner event and fencing generation for a mutation. */
 async function requireOwner(
   ctx: QueryCtx | MutationCtx,

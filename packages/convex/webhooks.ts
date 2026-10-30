@@ -11,6 +11,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
+import { normalizeHooksConfig } from "./model/agentRules";
 import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
@@ -217,6 +218,10 @@ async function mutateAgentWebhooks(
     ? { ...extra.hooks }
     : {};
   hooks.webhooks = mutate(readWebhooks(config.extraConfig));
+  // The config-plane rules are the only validation copy: without this, the
+  // dashboard path could store an http:// or unknown-event webhook the API
+  // would refuse (public-https URL, lifecycle-event whitelist).
+  normalizeHooksConfig(hooks);
   extra.hooks = hooks;
 
   await ctx.db.patch(agentConfigId, {

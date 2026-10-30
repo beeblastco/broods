@@ -299,18 +299,15 @@ export async function readS3Bytes(
 /**
  * @param bucket source bucket
  * @param key object key
+ * @param access optional overrides for a bring-your-own bucket
  * @returns the object body decoded as text
  */
-export async function readS3Text(bucket: string, key: string): Promise<string> {
-  const client = await s3Client();
-  const result = await client.send(
-    new GetObjectCommand({ Bucket: bucket, Key: key }),
-  );
-  if (!result.Body) {
-    throw new Error(`S3 object has no body: ${key}`);
-  }
-
-  return result.Body.transformToString();
+export async function readS3Text(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<string> {
+  return new TextDecoder().decode(await readS3Bytes(bucket, key, access));
 }
 
 /**
