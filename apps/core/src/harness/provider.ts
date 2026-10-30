@@ -52,6 +52,7 @@ import {
 } from "ai";
 import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
 import { createWorkersAI } from "workers-ai-provider";
+import { positiveIntegerEnv } from "../shared/env.ts";
 import { isContextLengthError } from "../shared/errors.ts";
 import { publicHostFetch } from "../shared/http.ts";
 import {
@@ -103,6 +104,10 @@ const CUSTOM_CACHE_FIELD = "cache_control";
 
 // Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
 const MAX_RETRY_HEADER_MS = 59_999;
+
+// How long a model request may wait for response headers before it is sent
+// again; overridable by MODEL_FIRST_BYTE_TIMEOUT_MS.
+const DEFAULT_MODEL_FIRST_BYTE_TIMEOUT_MS = 90_000;
 
 // The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s" or
 // Gemini's RetryInfo `"retryDelay": "35s"`.
@@ -1128,7 +1133,10 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
  * connection that stays silent for 300s, and a busy provider can hold a stream
  * that long, so a model call ends on the provider's own error or the run's
  * abort signal, which `watchModelStream` in harness.ts fires on a silent
- * stream. A provider with any tenant-supplied endpoint also gets the
+ * stream. A request whose response headers do not arrive within
+ * MODEL_FIRST_BYTE_TIMEOUT_MS is aborted and fails as a retryable 408, so the
+ * SDK's retry sends it again instead of the whole run waiting on the stall
+ * watchdog. A provider with any tenant-supplied endpoint also gets the
  * resolve-then-connect `fetch`.
  */
 function withModelFetch<T extends AgentProviderSettings>(
@@ -1137,16 +1145,40 @@ function withModelFetch<T extends AgentProviderSettings>(
   const guarded = Object.entries(settings).some(
     ([key, value]) => PROVIDER_ENDPOINT_SETTING.test(key) && Boolean(value),
   );
-  const modelFetch = (
+  const modelFetch = async (
     input: string | URL | Request,
     init?: BunFetchRequestInit,
   ): Promise<Response> => {
-    const unbounded = { ...init, timeout: false };
-    const response = guarded
-      ? publicHostFetch(input, unbounded)
-      : fetch(input, unbounded);
+    const firstByteMs = positiveIntegerEnv(
+      "MODEL_FIRST_BYTE_TIMEOUT_MS",
+      DEFAULT_MODEL_FIRST_BYTE_TIMEOUT_MS,
+    );
+    const firstByte = new AbortController();
+    const timer = setTimeout((): void => firstByte.abort(), firstByteMs);
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal, firstByte.signal])
+      : firstByte.signal;
+    const unbounded = { ...init, signal: signal, timeout: false };
+    let response: Response;
+    try {
+      response = guarded
+        ? await publicHostFetch(input, unbounded)
+        : await fetch(input, unbounded);
+    } catch (error) {
+      if (!firstByte.signal.aborted || init?.signal?.aborted) throw error;
+      throw new APICallError({
+        message: `The model sent no response within ${Math.ceil(firstByteMs / 1000)}s`,
+        url: input instanceof Request ? input.url : String(input),
+        requestBodyValues: undefined,
+        statusCode: 408,
+        cause: error,
+        isRetryable: true,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
-    return response.then(withRateLimitRetryHeader);
+    return withRateLimitRetryHeader(response);
   };
 
   return { ...settings, fetch: modelFetch as typeof fetch };
