@@ -5584,6 +5584,7 @@ components:
         firstByteTimeoutMs:
           type: integer
           minimum: 1
+          maximum: 600000
           description: >-
             A streamed model request whose response headers do not arrive
             within this many milliseconds is sent again (the provider queued it
