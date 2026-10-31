@@ -17,18 +17,23 @@ import { isPlainObject } from "../shared/object.ts";
 import type { ModelAttempt } from "./provider.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
 
-// Generated-content stream parts that count toward per-step streaming windows
-// (time-to-first-token / last-token). v7 delivers every TextStreamPart to
-// onChunk, so boundary, lifecycle, and post-execution parts must not qualify.
-const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<TextStreamPart<ToolSet>["type"]> =
-  new Set<TextStreamPart<ToolSet>["type"]>([
-    "text-delta",
-    "reasoning-delta",
-    "tool-input-start",
-    "tool-input-delta",
-    "tool-call",
-    "file",
-  ]);
+/**
+ * Generated-content stream parts: they count toward per-step streaming windows
+ * (time-to-first-token / last-token) and are the output that keeps the silent
+ * model watchdog in harness.ts from firing. v7 delivers every TextStreamPart
+ * to onChunk, so boundary, lifecycle, error and post-execution parts must not
+ * qualify.
+ */
+export const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<
+  TextStreamPart<ToolSet>["type"]
+> = new Set<TextStreamPart<ToolSet>["type"]>([
+  "text-delta",
+  "reasoning-delta",
+  "tool-input-start",
+  "tool-input-delta",
+  "tool-call",
+  "file",
+]);
 
 export interface UsageTokenTotals {
   inputTokens: number;
