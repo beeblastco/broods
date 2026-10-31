@@ -5,6 +5,7 @@ import { auditLedger } from "./audit-ledger.ts";
 import { authFailures } from "./auth-failures.ts";
 import { autoCompaction } from "./auto-compaction.ts";
 import { bashTimeout } from "./bash-timeout.ts";
+import { browserMachine } from "./browser-machine.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
@@ -57,6 +58,7 @@ export const verifyCases: readonly VerifyCase[] = [
   asyncToolHandback,
   autoCompaction,
   machineSandbox,
+  browserMachine,
   bashTimeout,
   ownBucketSandbox,
   snapshotStage,

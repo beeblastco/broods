@@ -171,6 +171,11 @@ The runtime key is embeddable, so it carries no end-user identity. A `buat_` use
 - **Requirement.** `agents.requireUserToken`, a row field rather than config so no sync rewrites it. Both inserts (`agent/agents.create`, `ensureAgentsRowForConfig`) set it; older rows have none and answer without a token until the owner flips `agent/config.setRequireUserToken`. A token is honored either way.
 - **Socket.** The scope lookup returns `conversationPrefix` when a token rode the upgrade, and the gateway subscribes NATS on the namespaced key core publishes to.
 - **Limits.** A token is a bearer until it expires: it is not bound to a client and can be replayed within its lifetime, which is why it is short. Rotating the secret voids every token at once.
+- **Run end user.** A valid token also sets the run's `principal.endUser` (`apps/core/src/shared/domain/principal.ts`), stored on the envelope's direct delivery so a queued turn keeps it, and handed to subagents. It is the only way a run gets one: never from the `bsu:` key, so an account key or a member's ticket continuing that conversation runs without one. The browser tool reaches only that user's browser.
+
+### Browser tickets
+
+A `bbt_` ticket opens an end user's browser socket on a `scope: "user"` machine sandbox. Same format and same `bsig_` secret as a user token, keyed by `broods-browser-ticket:` (`packages/convex/model/browserTicket.ts`), so neither opens as the other. Claims `{userId, sandbox, expiresAt, jti}`, at most 15 minutes. Core opens it against the stage the socket path names (`agent/deployments.getByStageIds`), spends its `jti` once in memory, and requires the record's own `chrome-extension://<id>` Origin. A forged Origin from a native client is not stopped by that check, so the ticket is the credential: a stolen unused ticket is good for its lifetime, once. The heartbeat opens each socket's ticket again under the current secret, so a rotation closes every browser within a minute. Mechanics: [sandboxes](sandboxes.md#browsers-scope-user).
 
 ## Hosted MCP servers
 

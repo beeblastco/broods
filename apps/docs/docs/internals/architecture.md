@@ -10,7 +10,7 @@ Traefik is the only public door. `apps/edge/src/routes.ts` is the route table, i
 flowchart LR
   Req["request on the API host"] --> H{"GET / or /healthz"}
   H -->|"yes"| GW["gateway"]
-  H -->|"no"| S{"socket path<br/>agents/:id/ws, observability/ws,<br/>sandboxes/terminal/ws, machines/ws"}
+  H -->|"no"| S{"socket path<br/>agents/:id/ws, observability/ws,<br/>sandboxes/terminal/ws, machines/ws,<br/>browsers/ws"}
   S -->|"yes, upgrade limit"| GW
   S -->|"no"| D{"GET /v1/downloads/:token"}
   D -->|"yes"| CVX["Convex config plane"]
@@ -253,6 +253,8 @@ stateDiagram-v2
 | Admin secret         | none    | core, `ADMIN_ACCOUNT_SECRET`, self-hosted account creation         |
 | Service token        | none    | core, only with `X-Account-Id` and no `x-broods-via-gateway`       |
 | Terminal ticket      | sealed  | gateway, `TERMINAL_TICKET_SECRET`; core seals it                   |
+| End-user token       | `buat_` | core, beside a runtime key, under the stage's `bsig_` secret       |
+| Browser ticket       | `bbt_`  | core, on the browser socket, under the stage's `bsig_` secret      |
 | Per-job token        | none    | core, against the `runtimeAsyncToolResults` row                    |
 
 Channel webhooks use each provider's own signature, checked by the adapter. The gateway holds only `TERMINAL_TICKET_SECRET`, never the service token. Scopes, resolution order and rotation: [security](security.md) and [operations](operations.md).

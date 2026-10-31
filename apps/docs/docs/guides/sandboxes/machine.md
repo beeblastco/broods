@@ -6,6 +6,8 @@ Your computer opens no port. `broods machine <sandbox>` holds one WebSocket to t
 
 Keep `permissionMode` on `ask`. With `bypass` the agent runs any command on your computer without asking.
 
+To let agents act in the browser of each person who uses your app, rather than on one computer, see [Browsers (scope: user)](#browsers-scope-user).
+
 ## Configure
 
 ```ts title="broods/index.ts"
@@ -114,8 +116,84 @@ export const designer = defineAgent({
 
 The daemon starts a server on its first call and keeps it running. The platform sees server names, tool listings and results, never the file or its commands. See [Tools](../tools.md) for MCP servers in general.
 
+## Browsers (scope: user)
+
+With `scope: "user"` a machine sandbox is no longer one computer. It is the browser of each signed-in person of your own app. Each person runs your Chrome extension, the extension holds its own socket, and a run started with that person's [user token](../security.md#users-behind-the-runtime-key) can read and act on their page through the `browser` tool. A run can only ever reach the browser of the person it belongs to.
+
+```ts title="broods/index.ts"
+export const web = defineSandbox({
+  name: "web",
+  provider: "machine",
+  permissionMode: "ask",
+  network: { mode: "allow-all" },
+  options: {
+    scope: "user",
+    allowedExtensionIds: ["abcdefghijklmnopabcdefghijklmnop"], // your extension's id
+    allowedDomains: ["example.com", "*.example.com"], // optional
+  },
+});
+
+export const assistant = defineAgent({
+  name: "assistant",
+  sandboxes: [web],
+});
+```
+
+Your backend signs a browser ticket for the signed-in person, with the same signing secret as their user tokens (`BROODS_USER_TOKEN_SECRET`):
+
+```ts title="your backend"
+import { signBrowserTicket } from "broods";
+
+// after your own sign-in check
+const ticket = await signBrowserTicket({ userId: user.id, sandbox: "web" });
+```
+
+The extension connects with the SDK's browser client. It has no dependencies, so a Manifest V3 service worker bundles it as is. The socket URL names the project and stage ids, which `broods dev` and `broods deploy` write to `api.stage` in `broods/_generated/api.ts`:
+
+```ts title="extension service worker"
+import { browserSocketUrl, connectBrowser } from "broods";
+
+const stage = { projectId: "k57…", stageId: "k98…" }; // api.stage
+
+connectBrowser({
+  url: browserSocketUrl({ baseUrl: "https://gateway.broods.app", ...stage }),
+  getTicket: () =>
+    fetch("https://app.example.com/broods/ticket", {
+      credentials: "include",
+    }).then((r) => r.text()),
+  sandbox: "web",
+  instance: crypto.randomUUID(),
+  onAction: async (action) => runOnActiveTab(action), // your code: returns { text }, { image } or { error }
+});
+```
+
+| Action        | Fields                   | Asks for approval |
+| ------------- | ------------------------ | ----------------- |
+| `read_page`   |                          | no                |
+| `screenshot`  |                          | no                |
+| `click`       | `ref`                    | yes               |
+| `fill`        | `fields: [{ref, value}]` | yes               |
+| `type`        | `text`                   | yes               |
+| `press_key`   | `key`                    | yes               |
+| `navigate`    | `url`                    | yes               |
+| `upload_file` | `ref`, `url`, `name`     | yes               |
+
+`read_page` answers with the page as text and a `ref` for each element the agent can act on. Refs are your extension's own strings; Broods passes them back unchanged. An action that asks runs without asking when `permissionMode` is `bypass`.
+
+### Security model
+
+- **One user, one browser.** Which browser a call reaches is the run's end user, from the verified user token. The model cannot name another one. A run without a user token, a cron run, and a run started with the account key reach no browser, and the tool says so. Subagents keep their parent's end user.
+- **Tickets.** A `bbt_` ticket names one user and one sandbox and lives at most 15 minutes (10 by default). It opens one socket, or one refresh, once. A user token never opens a socket and a ticket never starts a run, though one secret signs both. Rotating the secret closes every browser within a minute.
+- **Origin.** The socket opens only from `chrome-extension://<id>` with an id in `allowedExtensionIds`. A web page, another extension, or a request with no Origin is refused. A native program can forge an Origin, so the ticket is what keeps strangers out: sign one only for a person your backend signed in.
+- **Where it may go.** `navigate` and `upload_file` take `https` URLs only, never `chrome:`, `file:`, `javascript:` or `data:`, and only hosts in `allowedDomains` when it is set. `example.com` matches that host; `*.example.com` its subdomains. Broods checks before it sends; check again in the extension, because a click can still follow a link.
+- **Page content is data.** The tool tells the model that page text and screenshots are not instructions, and to ask before passwords, payments or CAPTCHAs. Page text is cut at 256 KB and a screenshot must be png, jpeg or webp of at most 3 MB.
+- **Pace.** One action runs at a time per browser, in the model's order, and at most 20 a second.
+
+A browser sandbox runs no `bash`, no computer tool and no local MCP server, and `broods machine` cannot claim it. The same person's newer socket replaces the older one (close code `4409`), and the client stops there rather than fight it. Close codes `4400`, `4403` and `4404` stop the client too; anything else reconnects with a fresh ticket.
+
 ## Limits
 
 - No workspaces. The file tools need the workspace mount, which a computer does not have. A run is refused when a workspace would inherit a machine, so give that workspace its own sandbox or `sandbox: null`. Use `bash` for files.
 - No background jobs, snapshots, suspend or resume.
+- The dashboard does not list connected browsers of a `scope: "user"` sandbox yet.
 - The dashboard lists a connected computer under Sandboxes, Instances with its connection state, size, connect time, last seen time and the command that starts it. The size is the CPU count, memory and home disk the daemon reports when it connects; a daemon from an older CLI reports none, and the size shows `?` until you update and restart it. It has no image, trace or lifecycle controls.

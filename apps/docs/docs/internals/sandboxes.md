@@ -615,6 +615,41 @@ sequenceDiagram
 - Frames cap at 4 MiB. A computer action has 30 s, an MCP call 60 s, `bash` its timeout plus 5 s.
 - Validation rejects `persistent`, `size`, `snapshot` and any network mode but `allow-all`, and a machine cannot back a workspace.
 
+### Browsers (`scope: "user"`)
+
+A machine record with `options.scope: "user"` (`browserMachineScope` in `packages/convex/model/sandboxRules.ts`) holds one browser socket per end user instead of one daemon. Same executor, same frames file, same registry, keyed `accountId:sandboxConfigId:userId`.
+
+```mermaid
+sequenceDiagram
+  participant B as customer backend
+  participant X as extension: connectBrowser
+  participant G as gateway
+  participant Core as core machine-executor
+  participant R as run with alice's user token
+
+  B->>X: bbt_ ticket from signBrowserTicket
+  X->>G: WS /v1/projects/:projectId/stages/:stageId/browsers/ws, token subprotocol, Origin chrome-extension://id
+  G->>Core: upstream WS, Bearer ticket, Origin forwarded
+  Core->>Core: stage secret by path ids, open ticket, spend jti, scope-user record, Origin in allowedExtensionIds
+  X->>Core: hello: sandbox, instance, browser true
+  Core->>X: ready, expiresInMs
+  R->>Core: browser tool, endUser alice
+  Core->>Core: browserAction parse, https and allowedDomains, rate, one in flight
+  Core->>X: browser frame
+  X-->>Core: browser-result: text, image or error
+  Core-->>R: capped result
+```
+
+- **Path.** The extension holds no account credential, so the path names the stage by its Convex ids. `agent/deployments.getByStageIds` returns the active deployment with its sealed `bsig_` secret, which core opens with the account key ring. Slugs are per org, so they cannot name a stage alone.
+- **Ticket.** `bbt_` is the signed-ticket format of `model/stageSessionTicket.ts` under key context `broods-browser-ticket:` (`model/browserTicket.ts`), so a `buat_` user token never opens a socket and a ticket never authorizes a run. Claims `{ userId, sandbox, expiresAt, jti }`, at most 15 minutes. Core records each `stageId:jti` that opened a socket or a refresh in memory until it expires and refuses it again (`4401`). Single replica, like the registry.
+- **Origin.** The gateway skips its page allowlist for this path and forwards `Origin`; core requires `chrome-extension://<id>` with `<id>` in the record's `allowedExtensionIds`, and refuses a missing one (`4403`).
+- **Every check runs at the upgrade.** A refusal still upgrades and closes on open, so the client reads the code through the relay: `4401` ticket refused, `4404` no scope-user record of that name in the stage (else an account-level one, as a daemon claims), `4403` Origin. The hello must say `browser: true` and name the ticket's sandbox (`4400`, `4403`). A daemon's claim never matches a scope-user record (`4404`), and a daemon socket's hello with `browser: true` is malformed.
+- **Same user, newer socket wins.** A browser hello closes that user's older socket with `4409` and rejects its pending action; another user's slot is untouched. `machineConnections` gets one row per user (`subject`), found by `by_sandboxConfigId_and_subject`. The dashboard's machine list reads daemon rows only (`subject` absent). Nothing routes from the table.
+- **Refresh.** A `credential` frame with a fresh `bbt_` moves the deadline only when it opens under the stage's current secret, is unspent, and names the same user and sandbox; another user or sandbox closes with `4403`, a bad ticket with `4401`. Without one the socket closes with `4419` at expiry, and no frame goes out past it.
+- **Heartbeat.** Every 60 s each browser's ticket is opened again under the stage's current secret (a rotation closes them with `4401`, an expired ticket with `4419`), and its record must still be scope user with its Origin listed (`4404`, `4403`). Stage and record lookups are shared across one sweep. An outage keeps the socket.
+- **Routing.** The run's end user is `principal.endUser`: set only from a verified user token on the direct, async and WebSocket paths, stored on the envelope's delivery so a queued turn keeps it and envelopes of different end users never coalesce, passed to subagents, absent for cron and account-key runs. It is never read off the `bsu:` conversation key. `resolveAgentRuntime` puts scope-user machines in `browsers`, never in `sandboxes`, so no `bash`, computer tool, machine MCP, workspace default or harness lands on one. `tools/browser.tool.ts` takes the end user from the session at call time.
+- **Limits.** `runBrowserAction` parses the flat tool input with `browserAction`, refuses a `navigate` or `upload_file` URL that is not https or outside `allowedDomains` (`browserHostAllowed`), allows 20 actions a second per slot and one in flight, waits 30 s for an answer, cuts text at 256 KB and drops a screenshot that is not png, jpeg or webp under 3 MB of base64. Approval: `read_page` and `screenshot` are free, the rest follow the record's `permissionMode` like a computer action, and a later browser call in a step behind one waiting for approval asks too.
+
 ## Harness adapters
 
 An agent with `harness` set runs its adapter (Claude Code, Codex, Deep Agents, OpenCode or Pi) inside its first sandbox through `@broods/ai-sdk-sandbox`. Only a persistent `lambda` or `sandbox` qualifies; `src/harness/ai-sdk-harness/sandbox.ts` picks `microvm-harness-driver.ts` or `workdir-harness-driver.ts`. The bridge listens on port 4321.
