@@ -1170,7 +1170,7 @@ export default $config({
             stage,
             region,
             "mcp",
-            ["bun.lock"],
+            ["apps/cloudflare-sandbox/src/bearer.ts", "bun.lock"],
             {
               BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
             },

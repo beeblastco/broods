@@ -12,7 +12,6 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { isPlainObject } from "./model/objects";
 import {
   asyncAgentOutcomeValidator,
   asyncAgentResultRow,
@@ -25,9 +24,12 @@ import {
 import {
   channelTargetRefsFields,
   ingressConfigRefValidator,
+  ingressDeliveryValidator,
   ingressModeValidator,
   ingressStatusValidator,
+  publicDeploymentIngressValidator,
   runtimeHarnessSessionsFields,
+  systemModelMessageValidator,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 import {
@@ -70,14 +72,14 @@ const RELEASED_PAYLOAD = {
 const appliedEnvelopeValidator = v.object({
   eventId: v.string(),
   events: v.array(v.any()),
-  delivery: v.any(),
+  delivery: ingressDeliveryValidator,
   requestedMode: ingressModeValidator,
   appliedMode: ingressModeValidator,
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
   configRef: v.optional(ingressConfigRefValidator),
-  ephemeralSystem: v.optional(v.array(v.any())),
+  ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
 });
 
 const admissionResultValidator = v.object({
@@ -135,14 +137,7 @@ const ingressStatusResultValidator = v.object({
   error: v.optional(v.string()),
   stoppedByUser: v.optional(v.boolean()),
   result: v.optional(v.any()),
-  publicDeploymentIngress: v.optional(
-    v.object({
-      accountId: v.string(),
-      endpointId: v.string(),
-      stageSlug: v.string(),
-      projectSlug: v.string(),
-    }),
-  ),
+  publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
 });
 
 const ownerRenewalResultValidator = v.union(
@@ -156,15 +151,7 @@ const stepBoundaryResultValidator = v.object({
   steering: v.union(appliedEnvelopeValidator, v.null()),
 });
 
-// The part of a channel delivery that names who sent the message.
-type DeliverySender = { identity?: { userId?: string } } | null | undefined;
-
-type PublicDeploymentIngress = {
-  accountId: string;
-  endpointId: string;
-  stageSlug: string;
-  projectSlug: string;
-};
+type PublicDeploymentIngress = Infer<typeof publicDeploymentIngressValidator>;
 
 /**
  * Atomically admits an ingress candidate, binds idempotency, and either owns or queues it.
@@ -183,11 +170,11 @@ export const accept = internalMutation({
     idempotencyKey: v.string(),
     payloadDigest: v.string(),
     events: v.array(v.any()),
-    delivery: v.any(),
+    delivery: ingressDeliveryValidator,
     requestedMode: ingressModeValidator,
     configRef: v.optional(ingressConfigRefValidator),
     channelTarget: v.optional(channelTargetValidator),
-    ephemeralSystem: v.optional(v.array(v.any())),
+    ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
     envelopeTtlMs: v.number(),
@@ -1053,11 +1040,11 @@ function buildAdmissionEnvelope(
     idempotencyKey: string;
     payloadDigest: string;
     events: unknown[];
-    delivery: unknown;
+    delivery: Infer<typeof ingressDeliveryValidator>;
     requestedMode: Infer<typeof ingressModeValidator>;
     ownerTaskId?: string;
     configRef?: Infer<typeof ingressConfigRefValidator>;
-    ephemeralSystem?: unknown[];
+    ephemeralSystem?: Infer<typeof systemModelMessageValidator>[];
     resultEventId?: string;
     toolResultId?: string;
     sizeBytes: number;
@@ -1432,19 +1419,25 @@ function isPlainUserText(event: unknown): boolean {
  */
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
-  sender: DeliverySender = rows[0]?.delivery,
+  sender: Infer<typeof ingressDeliveryValidator> | undefined = rows[0]
+    ?.delivery,
 ): Doc<"runtimeIngressEnvelopes">[] {
   if (rows.length === 0) return [];
-  const end = rows.findIndex((row): boolean => {
-    const delivery: DeliverySender = row.delivery;
-
-    return (
+  const senderUserId = deliverySenderUserId(sender);
+  const end = rows.findIndex(
+    (row): boolean =>
       row.requestedMode !== rows[0]!.requestedMode ||
-      delivery?.identity?.userId !== sender?.identity?.userId
-    );
-  });
+      deliverySenderUserId(row.delivery) !== senderUserId,
+  );
 
   return end === -1 ? rows : rows.slice(0, end);
+}
+
+/** Who sent a delivery, for the sender fence; only channel deliveries name one. */
+function deliverySenderUserId(
+  delivery: Infer<typeof ingressDeliveryValidator> | undefined,
+): string | undefined {
+  return delivery?.kind === "channel" ? delivery.identity?.userId : undefined;
 }
 
 /** Inserts a new zeroed coordinator when the conversation has no state yet. */
@@ -1688,18 +1681,7 @@ async function promoteQueuedGroup(
     leaseTtlMs: number;
     ownerGeneration: number;
   },
-): Promise<{
-  eventId: string;
-  events: unknown[];
-  delivery: unknown;
-  requestedMode: Doc<"runtimeIngressEnvelopes">["requestedMode"];
-  appliedMode: "collect" | "followup";
-  appliedToEventId: string;
-  contributingEventIds: string[];
-  ownerGeneration: number;
-  configRef?: Infer<typeof ingressConfigRefValidator>;
-  ephemeralSystem?: unknown[];
-} | null> {
+): Promise<Infer<typeof appliedEnvelopeValidator> | null> {
   const { coordinator, queue, now } = options;
   const rows = options.rows ?? (await queuedPage(ctx, coordinator));
   const active = rows.filter((row) => row.expiresAt > now);
@@ -1769,35 +1751,11 @@ async function promoteQueuedGroup(
 }
 
 function publicDeploymentIngressFromDelivery(
-  delivery: unknown,
+  delivery: Infer<typeof ingressDeliveryValidator>,
 ): PublicDeploymentIngress | undefined {
-  if (!isPlainObject(delivery)) return undefined;
-  const record = delivery;
-  if (
-    record.kind !== "http" &&
-    record.kind !== "async" &&
-    record.kind !== "websocket"
-  ) {
-    return undefined;
-  }
-  const marker = record.publicDeploymentIngress;
-  if (!isPlainObject(marker)) return undefined;
-  const value = marker;
-  if (
-    typeof value.accountId !== "string" ||
-    typeof value.endpointId !== "string" ||
-    typeof value.stageSlug !== "string" ||
-    typeof value.projectSlug !== "string"
-  ) {
-    return undefined;
-  }
+  if (delivery.kind === "channel") return undefined;
 
-  return {
-    accountId: value.accountId,
-    endpointId: value.endpointId,
-    stageSlug: value.stageSlug,
-    projectSlug: value.projectSlug,
-  };
+  return delivery.publicDeploymentIngress;
 }
 
 /**
@@ -1870,8 +1828,6 @@ async function renewHeldLease(
     updatedAt: now,
   });
 }
-
-/** Requires the account to exist and remain active in the write transaction. */
 
 /** Requires the exact owner event and fencing generation for a mutation. */
 async function requireOwner(

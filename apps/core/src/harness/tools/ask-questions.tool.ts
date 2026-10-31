@@ -6,7 +6,8 @@
  * answer and handler.ts resumes the conversation.
  */
 
-import { jsonSchema, tool, type ToolSet } from "ai";
+import { tool, type ToolSet } from "ai";
+import { z } from "zod";
 import type { ChannelQuestion } from "../../shared/channels.ts";
 import { logInfo } from "../../shared/log.ts";
 import {
@@ -31,6 +32,60 @@ import { toolError } from "./utils.ts";
 
 const MAX_HEADER_LENGTH = 12;
 
+// The SDK validates every call against this before `execute` runs and hands a
+// failure back to the model to retry. Strict objects, because
+// `pendingQuestionSummaryValidator` refuses an unknown key on the outcome
+// write just as hard as a missing one.
+const askQuestionsInput = z.strictObject({
+  questions: z
+    .array(
+      z.strictObject({
+        id: z
+          .string()
+          .regex(/^[a-z][a-z0-9_]*$/)
+          .describe(
+            "snake_case key the answer comes back under, unique within the call.",
+          ),
+        header: z
+          .string()
+          .min(1)
+          .max(MAX_HEADER_LENGTH)
+          .describe(`Short label, at most ${MAX_HEADER_LENGTH} characters.`),
+        question: z
+          .string()
+          .min(1)
+          .describe("One sentence, in the language of the conversation."),
+        options: z
+          .array(
+            z.strictObject({
+              label: z.string().min(1),
+              description: z.string().optional(),
+            }),
+          )
+          .min(MIN_OPTIONS)
+          .max(MAX_OPTIONS),
+      }),
+    )
+    .min(1)
+    .max(MAX_QUESTIONS),
+  blocking: z
+    .boolean()
+    .optional()
+    .describe(
+      "true to stop the turn until the answer arrives; false (default) to keep working.",
+    ),
+  timeoutSeconds: z
+    .int()
+    .min(MIN_ANSWER_TIMEOUT_SECONDS)
+    .max(MAX_ANSWER_TIMEOUT_SECONDS)
+    .optional()
+    .describe(
+      `Seconds to wait before the prompt counts as no_answer. Default ${DEFAULT_ANSWER_TIMEOUT_SECONDS}.`,
+    ),
+});
+
+export type AskQuestionsInput = z.infer<typeof askQuestionsInput>;
+
 export interface AskQuestionsContext {
   conversationKey: string;
   eventId: string;
@@ -40,12 +95,6 @@ export interface AskQuestionsContext {
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
   // Tells the harness a question is open, blocking or not.
   onDetachedResult?: (resultId: string) => void;
-}
-
-export interface AskQuestionsInput {
-  questions: ChannelQuestion[];
-  blocking?: boolean;
-  timeoutSeconds?: number;
 }
 
 export interface AskQuestionsOutput {
@@ -62,69 +111,15 @@ export default function askQuestionsTool(
       description: `Ask the person you are working for up to ${MAX_QUESTIONS} structured questions, each with ${MIN_OPTIONS} to ${MAX_OPTIONS} options, for decisions that are theirs to make. Do not use it for confirmation you can infer from the request, the code, or a sensible default. Every question already accepts the person's own typed answer, so never add an option like "Other" or "Type my own"; picking it would end the question before they could type.
 
 The tool returns a statusId at once and the answer is delivered into this conversation automatically when it arrives ("no_answer" if nobody answers in time). With blocking false (default) keep working on what does not depend on the answer. With blocking true, end your turn right after this call with no further tool calls; the answer will resume the conversation. Never ask the same question twice or poll async_status for it.`,
-      inputSchema: jsonSchema<AskQuestionsInput>({
-        type: "object",
-        properties: {
-          questions: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_QUESTIONS,
-            items: {
-              type: "object",
-              properties: {
-                id: {
-                  type: "string",
-                  pattern: "^[a-z][a-z0-9_]*$",
-                  description:
-                    "snake_case key the answer comes back under, unique within the call.",
-                },
-                header: {
-                  type: "string",
-                  minLength: 1,
-                  maxLength: MAX_HEADER_LENGTH,
-                  description: `Short label, at most ${MAX_HEADER_LENGTH} characters.`,
-                },
-                question: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "One sentence, in the language of the conversation.",
-                },
-                options: {
-                  type: "array",
-                  minItems: MIN_OPTIONS,
-                  maxItems: MAX_OPTIONS,
-                  items: {
-                    type: "object",
-                    properties: {
-                      label: { type: "string", minLength: 1 },
-                      description: { type: "string" },
-                    },
-                    required: ["label"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-              required: ["id", "header", "question", "options"],
-              additionalProperties: false,
-            },
-          },
-          blocking: {
-            type: "boolean",
-            description:
-              "true to stop the turn until the answer arrives; false (default) to keep working.",
-          },
-          timeoutSeconds: {
-            type: "integer",
-            minimum: MIN_ANSWER_TIMEOUT_SECONDS,
-            maximum: MAX_ANSWER_TIMEOUT_SECONDS,
-            description: `Seconds to wait before the prompt counts as no_answer. Default ${DEFAULT_ANSWER_TIMEOUT_SECONDS}.`,
-          },
-        },
-        required: ["questions"],
-        additionalProperties: false,
-      }),
-      execute: async function (input, options): Promise<AskQuestionsOutput> {
+      inputSchema: askQuestionsInput,
+      execute: async function (args, options): Promise<AskQuestionsOutput> {
+        // A tool.call.started hook can replace the args after the SDK checked
+        // them, so the schema runs again here.
+        const parsed = askQuestionsInput.safeParse(args);
+        if (!parsed.success) {
+          return toolError(`Error: ${z.prettifyError(parsed.error)}`);
+        }
+        const input = parsed.data;
         const invalid = validateQuestions(input.questions);
         if (invalid) {
           return toolError(`Error: ${invalid}`);
@@ -132,7 +127,8 @@ The tool returns a statusId at once and the answer is delivered into this conver
         const blocking = input.blocking === true;
         const resultId = `async_tool_${crypto.randomUUID()}`;
         const answerBy = new Date(
-          Date.now() + clampTimeout(input.timeoutSeconds) * 1000,
+          Date.now() +
+            (input.timeoutSeconds ?? DEFAULT_ANSWER_TIMEOUT_SECONDS) * 1000,
         ).toISOString();
         const pending: PendingQuestionInput = {
           questions: input.questions,
@@ -189,17 +185,6 @@ The tool returns a statusId at once and the answer is delivered into this conver
   };
 }
 
-function clampTimeout(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return DEFAULT_ANSWER_TIMEOUT_SECONDS;
-  }
-
-  return Math.min(
-    MAX_ANSWER_TIMEOUT_SECONDS,
-    Math.max(MIN_ANSWER_TIMEOUT_SECONDS, Math.floor(value)),
-  );
-}
-
 // The failure reason, or null once the prompt is out.
 async function postToChannel(
   channel: ChannelToolContext,
@@ -223,24 +208,15 @@ async function postToChannel(
   return null;
 }
 
-// Only what the JSON schema cannot say: counts the SDK does not enforce at
-// runtime, and id uniqueness.
+// The input schema holds every shape and count rule; id uniqueness is the one
+// it cannot say.
 function validateQuestions(questions: ChannelQuestion[]): string | null {
-  if (questions.length === 0 || questions.length > MAX_QUESTIONS) {
-    return `ask_questions takes 1 to ${MAX_QUESTIONS} questions`;
-  }
   const ids = new Set<string>();
   for (const question of questions) {
     if (ids.has(question.id)) {
       return `question id "${question.id}" is used twice`;
     }
     ids.add(question.id);
-    if (
-      question.options.length < MIN_OPTIONS ||
-      question.options.length > MAX_OPTIONS
-    ) {
-      return `question "${question.id}" needs ${MIN_OPTIONS} to ${MAX_OPTIONS} options`;
-    }
   }
 
   return null;

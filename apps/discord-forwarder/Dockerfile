@@ -23,10 +23,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/discord-forwarder/node_modules ./apps/discord-forwarder/node_modules
 COPY package.json bun.lock ./
-# The one core module the forwarder imports by relative path. It has no imports
-# of its own. Rename it and this build breaks. `packages/convex` is only ever a
-# type import here, so the bundle needs none of it.
+# The core modules the forwarder imports by relative path. Neither imports
+# another workspace file. Rename one and this build breaks. `packages/convex`
+# is only ever a type import here, so the bundle needs none of it.
 COPY apps/core/src/shared/env.ts ./apps/core/src/shared/env.ts
+COPY apps/core/src/shared/discord-wire.ts ./apps/core/src/shared/discord-wire.ts
 COPY apps/discord-forwarder ./apps/discord-forwarder
 RUN bun build apps/discord-forwarder/src/main.ts --compile --minify --outfile /out/discord-forwarder
 

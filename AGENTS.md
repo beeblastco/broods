@@ -17,6 +17,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `packages/convex` (`@broods/convex`) is the shared Convex backend for both dashboard and core + config plane.
 - `apps/docs` (`@broods/docs`) is the Docusaurus docs. core, public API, whole architecture.
 - `packages/broods` (`broods`) is the published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
+- `packages/ai-sdk-sandbox` (`@broods/ai-sdk-sandbox`) is the AI SDK Harness sandbox adapter over Broods sandbox drivers: it is how an external harness (claude-code, codex, ...) runs its shell on a Broods sandbox.
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
 - `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
 

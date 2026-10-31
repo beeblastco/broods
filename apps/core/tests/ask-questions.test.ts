@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import type { ToolExecuteFunction, ToolSet } from "ai";
+import { asSchema, type ToolExecuteFunction, type ToolSet } from "ai";
 import {
   rootEventId,
   type AsyncToolResultRecord,
@@ -149,6 +149,8 @@ describe("ask_questions tool", () => {
     expect(blocked).toEqual([output.statusId]);
   });
 
+  // `execute` is called directly here, the way a tool.call.started hook's
+  // replacement args reach it: past the SDK's own schema check.
   it("rejects a malformed prompt before touching storage", async () => {
     stubMutations();
     const execute = toolExecute(
@@ -162,11 +164,44 @@ describe("ask_questions tool", () => {
       execute({
         questions: [{ ...QUESTION, options: [{ label: "only one" }] }],
       }),
-    ).rejects.toThrow("needs 2 to 4 options");
+    ).rejects.toThrow("options");
     expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
       "is used twice",
     );
     expect(mutations).toHaveLength(0);
+  });
+
+  // The SDK runs this validation before `execute` and hands a failure back to
+  // the model. Stored as-is, any of these would fail
+  // `pendingQuestionSummaryValidator` on the run's outcome write instead.
+  it("refuses at the input schema any shape the outcome validator would refuse", async () => {
+    const schema = asSchema(
+      askQuestionsTool({
+        conversationKey: CONVERSATION_KEY,
+        eventId: "event-1",
+      }).ask_questions!.inputSchema,
+    );
+    const accepts = async (questions: unknown[]): Promise<boolean> =>
+      (await schema.validate!({ questions: questions })).success;
+
+    expect(await accepts([QUESTION])).toBe(true);
+    expect(await accepts([{ ...QUESTION, hint: "never stored" }])).toBe(false);
+    expect(
+      await accepts([
+        { id: "stage", question: "Which stage?", options: QUESTION.options },
+      ]),
+    ).toBe(false);
+    expect(
+      await accepts([
+        {
+          ...QUESTION,
+          options: [{ label: "dev", icon: "d" }, { label: "prod" }],
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      await accepts([{ ...QUESTION, options: [{ label: "only one" }] }]),
+    ).toBe(false);
   });
 
   it("fails the row when the outbound hook blocks the prompt", async () => {

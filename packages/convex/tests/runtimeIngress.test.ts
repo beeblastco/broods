@@ -68,7 +68,12 @@ function admission(options: {
     idempotencyKey: options.idempotencyKey ?? options.eventId,
     payloadDigest: options.payloadDigest ?? `digest:${options.eventId}`,
     events: [{ role: "user", content: options.eventId }],
-    delivery: { kind: "async" },
+    delivery: {
+      kind: "async" as const,
+      publicEventId: options.eventId,
+      publicConversationKey: options.conversationKey,
+      statusUrl: `https://example.test/v1/runs/run_${options.eventId}`,
+    },
     requestedMode: options.mode,
     sizeBytes: options.sizeBytes ?? 32,
     leaseTtlMs: 60_000,
@@ -113,7 +118,7 @@ describe("runtime ingress", () => {
     ).toEqual(channelTarget);
   });
 
-  test("returns only narrowed public deployment ingress provenance from delivery", async () => {
+  test("returns public deployment ingress provenance from delivery, never from channel deliveries", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -126,12 +131,14 @@ describe("runtime ingress", () => {
       }),
       delivery: {
         kind: "websocket",
+        publicEventId: "public-owner",
+        publicConversationKey: conversationKey,
+        connectionId: "conn-1",
         publicDeploymentIngress: {
           accountId: accountId,
           endpointId: "endpoint-one",
           stageSlug: "development",
           projectSlug: "demo",
-          ignored: "not-returned",
         },
       },
     });
@@ -151,75 +158,32 @@ describe("runtime ingress", () => {
     });
   });
 
-  test("ignores forged public deployment provenance on channel delivery", async () => {
+  test("rejects forged public deployment provenance on channel delivery at the write", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
-    await t.mutation(internal.runtimeIngress.accept, {
-      ...admission({
-        accountId: accountId,
-        conversationKey: conversationKey,
-        eventId: "channel-owner",
-        mode: "reject",
-      }),
-      delivery: {
-        kind: "channel",
-        publicDeploymentIngress: {
-          accountId: accountId,
-          endpointId: "endpoint-one",
-          stageSlug: "development",
-          projectSlug: "demo",
-        },
-      },
-    });
-
-    const status = await t.query(internal.runtimeIngress.getStatus, {
-      accountId: accountId,
-      runId: "run_channel-owner",
-    });
-
-    // Assert the row was found first: the negative below holds for null too.
-    expect(status?.eventId).toBe("channel-owner");
-    expect(status).not.toHaveProperty("publicDeploymentIngress");
-  });
-
-  for (const [kind, marker] of [
-    [
-      "http",
-      {
-        accountId: 42,
-        endpointId: "endpoint-one",
-        stageSlug: "development",
-        projectSlug: "demo",
-      },
-    ],
-    ["async", "client-asserted-marker"],
-  ] as const) {
-    test(`ignores malformed public deployment provenance on ${kind} delivery`, async () => {
-      const t = runtimeTest();
-      const accountId = await createActiveAccount(t);
-      const eventId = `${kind}-owner`;
-      await t.mutation(internal.runtimeIngress.accept, {
+    await expect(
+      t.mutation(internal.runtimeIngress.accept, {
         ...admission({
           accountId: accountId,
-          conversationKey: `acct:${accountId}:agent:test-agent:api:${eventId}`,
-          eventId: eventId,
+          conversationKey: conversationKey,
+          eventId: "channel-owner",
           mode: "reject",
         }),
         delivery: {
-          kind: kind,
-          publicDeploymentIngress: marker,
+          kind: "channel",
+          channel: "slack",
+          // @ts-expect-error the channel variant carries no provenance
+          publicDeploymentIngress: {
+            accountId: accountId,
+            endpointId: "endpoint-one",
+            stageSlug: "development",
+            projectSlug: "demo",
+          },
         },
-      });
-
-      expect(
-        await t.query(internal.runtimeIngress.getStatus, {
-          accountId: accountId,
-          runId: `run_${eventId}`,
-        }),
-      ).not.toHaveProperty("publicDeploymentIngress");
-    });
-  }
+      }),
+    ).rejects.toThrow(/Validator error/);
+  });
 
   test("an idempotent retry keeps the first admission's run id", async () => {
     const t = runtimeTest();
@@ -998,7 +962,7 @@ describe("runtime ingress", () => {
     });
     const next = await t.mutation(internal.runtimeIngress.takeNext, owner);
     expect(next?.contributingEventIds).toEqual(["bob-steer"]);
-    expect(next?.delivery.identity).toEqual({ userId: "bob" });
+    expect(next?.delivery).toMatchObject({ identity: { userId: "bob" } });
   });
 
   test("collects contiguous FIFO contributors and falls back missed steer to followup", async () => {
@@ -2461,7 +2425,12 @@ describe("runtime ingress", () => {
           idempotencyKey: `terminal-${index}`,
           payloadDigest: "digest",
           events: [],
-          delivery: { kind: "async" },
+          delivery: {
+            kind: "async",
+            publicEventId: "evt-maintenance",
+            publicConversationKey: "conv-maintenance",
+            statusUrl: "https://example.test/status",
+          },
           requestedMode: "followup",
           status: "completed",
           sizeBytes: 1,
@@ -2482,7 +2451,12 @@ describe("runtime ingress", () => {
         idempotencyKey: "overdue-queued",
         payloadDigest: "digest",
         events: [],
-        delivery: { kind: "async" },
+        delivery: {
+          kind: "async",
+          publicEventId: "evt-maintenance",
+          publicConversationKey: "conv-maintenance",
+          statusUrl: "https://example.test/status",
+        },
         requestedMode: "followup",
         status: "queued",
         sizeBytes: 1,
