@@ -17,7 +17,7 @@ The `broods` CLI does the interaction: sign-in, project sync, env, logs, running
 
 `broods dev` on first run does everything: scaffolds `broods/` with a starter agent, runs the browser login if needed, pushes model keys from `.env.local` to the cloud env store, syncs to the `development` stage, then watches for changes and tails logs. `broods init` and `broods login` exist standalone when you want the steps separate.
 
-A project is the `broods/` directory. `broods/index.ts` exports resources built with the `define*` functions: `defineAgent`, `defineSandbox`, `defineWorkspace`, `defineSkill`, `defineCron`, `defineMcp`, `definePolicy`, and the channel helpers. An optional `export default defineBroods({...})` sets project defaults like project name and stage mapping. The full reference is https://docs.broods.app/reference/configuration; the starter agent in `broods/index.ts` shows the minimum shape.
+A project is the `broods/` directory. `broods/index.ts` exports resources built with the `define*` functions: `defineAgent`, `defineSandbox`, `defineWorkspace`, `defineSkill`, `defineCron`, `defineMcp`, `definePolicy`, `defineHarness`, the channel helpers, and the `define<Provider>Connection` helpers such as `defineSlackConnection`. An optional `export default defineBroods({...})` sets project defaults like project name and stage mapping. The full reference is https://docs.broods.app/reference/configuration; the starter agent in `broods/index.ts` shows the minimum shape.
 
 To create an agent, add a `defineAgent` to the project and sync. Talk to it with `broods run <agent> "prompt"`. Day to day: `broods dev` watches, `broods diff` previews, `broods deploy` syncs the production stage. Always `diff` before the first `deploy` on a stage you did not create.
 
@@ -41,12 +41,12 @@ When the user hands you a trace id, or a prompt copied from the dashboard's Trac
 
 ## When the CLI has no command
 
-Crons, skills, sandboxes, policies, roles, channels, and hooks have no CLI verb. Prefer changing them in the project definition and syncing. For one-off reads and operations a manifest cannot say, use the MCP server. `claude mcp add broods -- broods mcp` adds it, and its tool names mirror the SDK: `list-agents`, `create-cron`, `update-agent`, and so on. For scoped automation credentials, read the roles section of https://docs.broods.app/guides/security.
+Crons, skills, sandboxes, policies, roles, channels, and hooks have no CLI verb. Prefer changing them in the project definition and syncing. Hooks have no MCP tool either, so they go through the project definition only. For one-off reads and operations a manifest cannot say, use the MCP server. `claude mcp add broods -- broods mcp` adds it, and its tool names mirror the SDK: `list-agents`, `create-cron`, `update-agent`, and so on. For scoped automation credentials, read the roles section of https://docs.broods.app/guides/security.
 
 ## Rules that keep you out of trouble
 
 - Say which stage you are touching before you touch it. Production is opt-in. Never write to a prod stage unless the request names it.
 - Skills are account-scoped, so two projects on one account share a skill namespace and a same-named skill overwrites the other. A skill's stored name comes from its `SKILL.md` frontmatter, not the folder name.
-- Env values are write-only. Reference them from configs as `${NAME}`. If the user pastes a secret at you, put it in the env store and use the ref.
+- The API never returns env values, but `broods env get <name>` reveals one and is audited. Do not read a value unless the user asks. Reference them from configs as `${NAME}`. If the user pastes a secret at you, put it in the env store and use the ref.
 - Deletes are confirmed, named, and singular. Never loop a delete over a list.
 - Editing a manifest-declared resource outside the project drifts from the definition, and the next deploy silently reverts it.

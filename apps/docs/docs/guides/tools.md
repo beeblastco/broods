@@ -223,19 +223,20 @@ Each question has an `id`, a short `header`, the `question`, and two to four `op
 
 ## Background tools
 
-`async_status` appears on its own when the agent can start background work, through a workspace on a persistent sandbox or a tool marked `async: true`. The model uses it to check, tail or stop that work. See [Persistent sandboxes](sandboxes/persistent.md).
+`async_status` appears on its own when the agent has a workspace on a persistent sandbox, where `bash` can start background jobs. The model uses it to check, tail or stop a job. Tools no longer take an `async` flag. See [Persistent sandboxes](sandboxes/persistent.md).
 
 ## Other built-in tools
 
-| Tool                                                               | Enabled by                          | Guide                                         |
-| ------------------------------------------------------------------ | ----------------------------------- | --------------------------------------------- |
-| `browse`                                                           | `browser`                           | [Web browsing](sandboxes/browsing.md)         |
-| `load_skill`                                                       | `skills`                            | [Skills](skills.md)                           |
-| `run_subagent`, `update_subagent`, `stop_subagent`                 | `subagent`                          | [Subagents](subagents.md)                     |
-| `ask_parent`                                                       | the run being a persistent subagent | [Subagents](subagents.md)                     |
-| `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule` | `scheduler`                         | [Scheduling](scheduling.md)                   |
-| `memory_save`                                                      | a workspace with a sandbox          | [Memory and sessions](memory-and-sessions.md) |
-| `send-message`, `send-images`, `send-files`, `send-update`, ...    | channel turns                       | [Channels](../channels/index.md)              |
-| `computer`                                                         | a machine sandbox with `--computer` | [Machine](sandboxes/machine.md)               |
+| Tool                                                               | Enabled by                                                                                                                                | Guide                                         |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `browse`                                                           | `browser`                                                                                                                                 | [Web browsing](sandboxes/browsing.md)         |
+| `load_skill`                                                       | `skills`                                                                                                                                  | [Skills](skills.md)                           |
+| `run_subagent`, `update_subagent`, `stop_subagent`                 | `subagent`                                                                                                                                | [Subagents](subagents.md)                     |
+| `ask_parent`                                                       | the run being a persistent subagent                                                                                                       | [Subagents](subagents.md)                     |
+| `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule` | `scheduler`                                                                                                                               | [Scheduling](scheduling.md)                   |
+| `memory_save`                                                      | a workspace with a sandbox and memory not turned off                                                                                      | [Memory and sessions](memory-and-sessions.md) |
+| `send-images`, `send-files`, `send-update`, ...                    | channel turns                                                                                                                             | [Channels](../channels/index.md)              |
+| `send-message`                                                     | an agent with at least one channel. Sends to another channel conversation of the same agent, never to a subagent. Subagents do not get it | [Channels](../channels/index.md)              |
+| `computer`                                                         | a machine sandbox with `--computer`                                                                                                       | [Machine](sandboxes/machine.md)               |
 
 Withhold any tool in one channel with `denyTools` on its [channel record](../channels/channel-records.md), or everywhere with a [policy](policies.md).

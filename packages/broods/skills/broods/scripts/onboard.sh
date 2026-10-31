@@ -24,7 +24,9 @@ STATUS=$?
 set -e
 echo "$WHOAMI"
 
-if printf '%s' "$WHOAMI" | grep -q "Not logged in"; then
+# Signed out prints "Not logged in to <url>", or "Run `broods login` first"
+# when no server is configured. whoami exits 0 on both.
+if printf '%s' "$WHOAMI" | grep -qE 'Not logged in|Run `broods login` first'; then
   echo
   echo "Opening the browser to sign in. Finish the login there."
   broods login

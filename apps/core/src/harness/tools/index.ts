@@ -29,7 +29,6 @@ import type {
   ResolvedAgentSandbox,
   ResolvedWorkspace,
 } from "../../shared/workspaces.ts";
-import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
@@ -117,7 +116,6 @@ export interface ToolContext {
   // Set on a persistent subagent's run: asks the parent and waits for its answer.
   askParent?: AskParent;
   dispatchAppliedIngress?: DispatchAppliedIngress;
-  dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
   // (agent bash/fs => role "agent"; hosted MCP servers => role "tool").
@@ -260,7 +258,6 @@ export async function createTools(
     }
   }
   Object.assign(tools, sandboxTools);
-  const asyncToolNames: AsyncToolNames = new Set();
 
   if (context.channel) {
     Object.assign(
@@ -400,7 +397,6 @@ export async function createTools(
         config: externalToolRuntimeConfig(toolConfig),
       }),
     );
-    if (toolConfig.async === true) asyncToolNames.add(toolName);
   }
 
   // ask_questions needs a delivery to resume on: a channel or a WebSocket turn.
@@ -426,7 +422,7 @@ export async function createTools(
 
   await registerMcpTools(tools, agentConfig, context);
 
-  if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
+  if (hasBackgroundWorkspace) {
     Object.assign(
       tools,
       asyncStatusTool({
@@ -444,16 +440,13 @@ export async function createTools(
   // Those are derived from workspaces and server rows, never from config.tools.
   withholdTools(tools, agentConfig.denyTools);
 
-  return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncToolNames)
-    : tools;
+  return tools;
 }
 
 function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   const {
     enabled: _enabled,
     needsApproval: _needsApproval,
-    async: _async,
     ...runtimeConfig
   } = config;
 
