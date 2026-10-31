@@ -641,7 +641,11 @@ function normalizeHarnessDebugConfig(value: unknown): void {
   );
 }
 
-function normalizeModelConfig(value: unknown, label: string): void {
+/**
+ * Checks a model config's keys and values: the stored `config.model`, the
+ * subagent's, and a per-run `model` override.
+ */
+export function normalizeModelConfig(value: unknown, label: string): void {
   if (value == null) return;
   if (!isPlainObject(value))
     throw new ClientError(`${label} must be an object`);

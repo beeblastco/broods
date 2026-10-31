@@ -44,7 +44,7 @@ import {
 import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
-import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
+import { normalizeModelConfig } from "@broods/convex/model/agentRules";
 import {
   applyRunOverrides,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
@@ -2662,9 +2662,9 @@ function parseIngressMode(value: unknown): IngressMode | undefined {
 
 /**
  * Validates optional per-run overrides from a request body. `model` rejects the
- * reserved identity/credential keys (RUN_OVERRIDE_RESERVED_MODEL_KEYS), rejects unsupported
- * keys, and forwards AI SDK call settings/providerOptions to the same
- * model path as the stored config. Returns undefined when absent.
+ * reserved identity/credential keys (RUN_OVERRIDE_RESERVED_MODEL_KEYS), checks the
+ * rest like the stored model config, and forwards AI SDK call settings/providerOptions
+ * to the same model path. Returns undefined when absent.
  */
 export function parseRunOverrides(
   record: Record<string, unknown>,
@@ -2689,19 +2689,14 @@ export function parseRunOverrides(
       throw new Error("model must be an object");
     }
     const reserved = new Set<string>(RUN_OVERRIDE_RESERVED_MODEL_KEYS);
-    const supportedSettings = new Set<string>(MODEL_CONFIG_SETTING_KEYS);
     const model: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(record.model)) {
       if (reserved.has(key)) {
         throw new Error(`model.${key} cannot be overridden per run`);
       }
-      if (!supportedSettings.has(key)) {
-        throw new Error(
-          `model.${key} is not supported; use model.providerOptions for provider-specific settings`,
-        );
-      }
       model[key] = value;
     }
+    normalizeModelConfig(model, "model");
     if (Object.keys(model).length > 0) {
       overrides.model = model;
     }

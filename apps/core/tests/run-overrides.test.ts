@@ -51,6 +51,18 @@ describe("parseRunOverrides", () => {
     }
   });
 
+  it("checks override values like the stored model config", () => {
+    expect(() =>
+      parseRunOverrides({ model: { timeout: { firstChunkMs: 0 } } }),
+    ).toThrow(/model\.timeout\.firstChunkMs/);
+    expect(() => parseRunOverrides({ model: { reasoning: "max" } })).toThrow(
+      /model\.reasoning/,
+    );
+    expect(
+      parseRunOverrides({ model: { timeout: { totalMs: 60_000 } } }),
+    ).toEqual({ model: { timeout: { totalMs: 60_000 } } });
+  });
+
   it("rejects non-message system overrides", () => {
     expect(() =>
       parseRunOverrides({ system: "one-turn instructions" }),
