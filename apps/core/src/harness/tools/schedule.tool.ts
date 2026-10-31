@@ -27,8 +27,8 @@ const scheduleSchema = z
     message: "schedule must be a cron(...), rate(...), or at(...) expression",
   })
   .describe(SCHEDULE_EXPRESSION_DESCRIPTION);
-const nameSchema = z.string().min(1).max(120);
-const instructionsSchema = z.string().min(1);
+const nameSchema = z.string().trim().min(1).max(120);
+const instructionsSchema = z.string().trim().min(1);
 
 const cancelScheduleInput = z.strictObject({
   cronId: cronIdSchema.describe("Id of the scheduled task to cancel."),

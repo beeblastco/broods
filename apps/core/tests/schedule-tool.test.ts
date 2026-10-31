@@ -30,6 +30,11 @@ describe("schedule tool input", () => {
       false,
     );
     expect((await validate({ ...TASK, name: "" })).success).toBe(false);
+    // The config plane stores instructions as they come, so blank ones would
+    // fire as an empty task.
+    expect((await validate({ ...TASK, instructions: "   " })).success).toBe(
+      false,
+    );
     expect((await validate({ ...TASK, repeat: true })).success).toBe(false);
     expect(
       (await validate({ name: TASK.name, schedule: TASK.schedule })).success,
