@@ -6,10 +6,10 @@
  * answer and handler.ts resumes the conversation.
  */
 
-import { jsonSchema, tool, type ToolSet } from "ai";
+import { tool, type ToolSet } from "ai";
+import { z } from "zod";
 import type { ChannelQuestion } from "../../shared/channels.ts";
 import { logInfo } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
 import {
   createDetachedAsyncToolResult,
   markAsyncToolResultFailed,
@@ -31,9 +31,60 @@ import type { ChannelToolContext } from "./channel.tool.ts";
 import { toolError } from "./utils.ts";
 
 const MAX_HEADER_LENGTH = 12;
-// The exact shapes `pendingQuestionSummaryValidator` stores.
-const QUESTION_KEYS = new Set(["id", "header", "question", "options"]);
-const OPTION_KEYS = new Set(["label", "description"]);
+
+// The SDK validates every call against this before `execute` runs and hands a
+// failure back to the model to retry. Strict objects, because
+// `pendingQuestionSummaryValidator` refuses an unknown key on the outcome
+// write just as hard as a missing one.
+const askQuestionsInput = z.strictObject({
+  questions: z
+    .array(
+      z.strictObject({
+        id: z
+          .string()
+          .regex(/^[a-z][a-z0-9_]*$/)
+          .describe(
+            "snake_case key the answer comes back under, unique within the call.",
+          ),
+        header: z
+          .string()
+          .min(1)
+          .max(MAX_HEADER_LENGTH)
+          .describe(`Short label, at most ${MAX_HEADER_LENGTH} characters.`),
+        question: z
+          .string()
+          .min(1)
+          .describe("One sentence, in the language of the conversation."),
+        options: z
+          .array(
+            z.strictObject({
+              label: z.string().min(1),
+              description: z.string().optional(),
+            }),
+          )
+          .min(MIN_OPTIONS)
+          .max(MAX_OPTIONS),
+      }),
+    )
+    .min(1)
+    .max(MAX_QUESTIONS),
+  blocking: z
+    .boolean()
+    .optional()
+    .describe(
+      "true to stop the turn until the answer arrives; false (default) to keep working.",
+    ),
+  timeoutSeconds: z
+    .int()
+    .min(MIN_ANSWER_TIMEOUT_SECONDS)
+    .max(MAX_ANSWER_TIMEOUT_SECONDS)
+    .optional()
+    .describe(
+      `Seconds to wait before the prompt counts as no_answer. Default ${DEFAULT_ANSWER_TIMEOUT_SECONDS}.`,
+    ),
+});
+
+export type AskQuestionsInput = z.infer<typeof askQuestionsInput>;
 
 export interface AskQuestionsContext {
   conversationKey: string;
@@ -44,12 +95,6 @@ export interface AskQuestionsContext {
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
   // Tells the harness a question is open, blocking or not.
   onDetachedResult?: (resultId: string) => void;
-}
-
-export interface AskQuestionsInput {
-  questions: ChannelQuestion[];
-  blocking?: boolean;
-  timeoutSeconds?: number;
 }
 
 export interface AskQuestionsOutput {
@@ -66,68 +111,7 @@ export default function askQuestionsTool(
       description: `Ask the person you are working for up to ${MAX_QUESTIONS} structured questions, each with ${MIN_OPTIONS} to ${MAX_OPTIONS} options, for decisions that are theirs to make. Do not use it for confirmation you can infer from the request, the code, or a sensible default. Every question already accepts the person's own typed answer, so never add an option like "Other" or "Type my own"; picking it would end the question before they could type.
 
 The tool returns a statusId at once and the answer is delivered into this conversation automatically when it arrives ("no_answer" if nobody answers in time). With blocking false (default) keep working on what does not depend on the answer. With blocking true, end your turn right after this call with no further tool calls; the answer will resume the conversation. Never ask the same question twice or poll async_status for it.`,
-      inputSchema: jsonSchema<AskQuestionsInput>({
-        type: "object",
-        properties: {
-          questions: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_QUESTIONS,
-            items: {
-              type: "object",
-              properties: {
-                id: {
-                  type: "string",
-                  pattern: "^[a-z][a-z0-9_]*$",
-                  description:
-                    "snake_case key the answer comes back under, unique within the call.",
-                },
-                header: {
-                  type: "string",
-                  minLength: 1,
-                  maxLength: MAX_HEADER_LENGTH,
-                  description: `Short label, at most ${MAX_HEADER_LENGTH} characters.`,
-                },
-                question: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "One sentence, in the language of the conversation.",
-                },
-                options: {
-                  type: "array",
-                  minItems: MIN_OPTIONS,
-                  maxItems: MAX_OPTIONS,
-                  items: {
-                    type: "object",
-                    properties: {
-                      label: { type: "string", minLength: 1 },
-                      description: { type: "string" },
-                    },
-                    required: ["label"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-              required: ["id", "header", "question", "options"],
-              additionalProperties: false,
-            },
-          },
-          blocking: {
-            type: "boolean",
-            description:
-              "true to stop the turn until the answer arrives; false (default) to keep working.",
-          },
-          timeoutSeconds: {
-            type: "integer",
-            minimum: MIN_ANSWER_TIMEOUT_SECONDS,
-            maximum: MAX_ANSWER_TIMEOUT_SECONDS,
-            description: `Seconds to wait before the prompt counts as no_answer. Default ${DEFAULT_ANSWER_TIMEOUT_SECONDS}.`,
-          },
-        },
-        required: ["questions"],
-        additionalProperties: false,
-      }),
+      inputSchema: askQuestionsInput,
       execute: async function (input, options): Promise<AskQuestionsOutput> {
         const invalid = validateQuestions(input.questions);
         if (invalid) {
@@ -227,81 +211,15 @@ async function postToChannel(
   return null;
 }
 
-// The JSON schema only steers the model: `jsonSchema` carries no runtime
-// validator, so every rule has to hold here, before a row is stored. A shape
-// the model got wrong must come back as a tool error it can retry, not fail
-// `pendingQuestionSummaryValidator` on the Convex write after the question
-// already posted.
+// The input schema holds every shape and count rule; id uniqueness is the one
+// it cannot say.
 function validateQuestions(questions: ChannelQuestion[]): string | null {
-  if (
-    !Array.isArray(questions) ||
-    questions.length === 0 ||
-    questions.length > MAX_QUESTIONS
-  ) {
-    return `ask_questions takes 1 to ${MAX_QUESTIONS} questions`;
-  }
   const ids = new Set<string>();
   for (const question of questions) {
-    const malformed = malformedQuestion(question);
-    if (malformed) {
-      return malformed;
-    }
     if (ids.has(question.id)) {
       return `question id "${question.id}" is used twice`;
     }
     ids.add(question.id);
-    if (
-      question.options.length < MIN_OPTIONS ||
-      question.options.length > MAX_OPTIONS
-    ) {
-      return `question "${question.id}" needs ${MIN_OPTIONS} to ${MAX_OPTIONS} options`;
-    }
-  }
-
-  return null;
-}
-
-// Shape check on the model's JSON, matching `pendingQuestionSummaryValidator`
-// exactly: that validator rejects an unknown key or a missing field just as
-// hard, so anything it would refuse must be refused here first.
-function malformedQuestion(candidate: ChannelQuestion): string | null {
-  const question: unknown = candidate;
-  if (!isPlainObject(question)) {
-    return "each question must be an object";
-  }
-  const extra = Object.keys(question).find((key) => !QUESTION_KEYS.has(key));
-  if (extra !== undefined) {
-    return `a question carries an unknown key "${extra}"`;
-  }
-  if (
-    typeof question.id !== "string" ||
-    typeof question.header !== "string" ||
-    typeof question.question !== "string"
-  ) {
-    return "a question is missing its id, header or question text";
-  }
-  if (!Array.isArray(question.options)) {
-    return `question "${question.id}" is missing its options`;
-  }
-  for (const option of question.options as unknown[]) {
-    if (!isPlainObject(option)) {
-      return `question "${question.id}" has a malformed option`;
-    }
-    const extraOption = Object.keys(option).find(
-      (key) => !OPTION_KEYS.has(key),
-    );
-    if (extraOption !== undefined) {
-      return `an option on "${question.id}" carries an unknown key "${extraOption}"`;
-    }
-    if (typeof option.label !== "string") {
-      return `an option on "${question.id}" is missing its label`;
-    }
-    if (
-      option.description !== undefined &&
-      typeof option.description !== "string"
-    ) {
-      return `an option on "${question.id}" has a non-string description`;
-    }
   }
 
   return null;
