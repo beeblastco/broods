@@ -2128,8 +2128,9 @@ function harnessReadsMedia(part: ImagePart | FilePart): boolean {
  * reads as a stalled model. A provider-executed call only stops it on a
  * harness, whose native tools (bash) are provider-executed; on streamText its
  * result streams back from the model itself. It reads its own copy of the
- * stream rather than the SDK's `timeout` option, which keeps `chunkMs` ticking
- * through tool execution and which HarnessAgent ignores.
+ * stream rather than the SDK's `timeout` option, whose `firstChunkMs` starts
+ * only once a response arrives and which HarnessAgent ignores. An agent's own
+ * `model.timeout` still reaches streamText as set.
  */
 async function watchModelStream(
   parts: AsyncIterable<TextStreamPart<ToolSet>>,

@@ -403,6 +403,59 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
     ).not.toThrow();
+    // Every shape of the AI SDK's TimeoutConfiguration, as streamText takes it.
+    for (const timeout of [
+      60_000,
+      {},
+      { totalMs: 600_000 },
+      { stepMs: 120_000, firstChunkMs: 30_000, chunkMs: 10_000 },
+      { toolMs: 60_000, tools: { bashMs: 300_000 } },
+    ]) {
+      expect(
+        normalizeAgentConfig({ model: { timeout: timeout } }).model,
+      ).toEqual({ timeout: timeout });
+    }
+    for (const [timeout, message] of [
+      [0, "config.model.timeout must be an integer from 1 to 2147483647"],
+      [1.5, "config.model.timeout must be an integer from 1 to 2147483647"],
+      [
+        2_147_483_648,
+        "config.model.timeout must be an integer from 1 to 2147483647",
+      ],
+      [
+        "60000",
+        "config.model.timeout must be a number of milliseconds or an object with totalMs, stepMs, firstChunkMs, chunkMs, toolMs, tools",
+      ],
+      [
+        { firstChunkMS: 30_000 },
+        "config.model.timeout.firstChunkMS is not supported; use one of: totalMs, stepMs, firstChunkMs, chunkMs, toolMs, tools",
+      ],
+      [
+        { chunkMs: -1 },
+        "config.model.timeout.chunkMs must be an integer from 1 to 2147483647",
+      ],
+      [
+        { tools: [] },
+        "config.model.timeout.tools must be an object of {toolName}Ms limits",
+      ],
+      [
+        { tools: { bash: 1_000 } },
+        "config.model.timeout.tools.bash must be named {toolName}Ms, like bashMs",
+      ],
+      [
+        { tools: { bashMs: "1s" } },
+        "config.model.timeout.tools.bashMs must be an integer from 1 to 2147483647",
+      ],
+    ] as const) {
+      expect(() =>
+        normalizeAgentConfig({ model: { timeout: timeout } }),
+      ).toThrow(message);
+    }
+    expect(() =>
+      normalizeAgentConfig({ subagent: { model: { timeout: { stepMs: 0 } } } }),
+    ).toThrow(
+      "config.subagent.model.timeout.stepMs must be an integer from 1 to 2147483647",
+    );
     // Core puts it into AI Gateway URL paths.
     for (const gatewayId of [7, "gw/../other", "gw?x=1"]) {
       expect(() =>

@@ -263,12 +263,18 @@ describe("modelSettingsFromModelConfig", () => {
     ).toEqual({ maxRetries: 5, temperature: 0.2 });
   });
 
-  it("keeps the agent's own retry count", () => {
+  it("keeps the agent's own retry count and timeouts", () => {
+    const timeout = { stepMs: 120_000, firstChunkMs: 30_000 };
     expect(
       modelSettingsFromModelConfig({
-        model: { provider: "openai", modelId: "gpt-5", maxRetries: 1 },
+        model: {
+          provider: "openai",
+          modelId: "gpt-5",
+          maxRetries: 1,
+          timeout: timeout,
+        },
       }),
-    ).toEqual({ maxRetries: 1 });
+    ).toEqual({ maxRetries: 1, timeout: timeout });
   });
 });
 

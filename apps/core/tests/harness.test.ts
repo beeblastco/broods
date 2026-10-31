@@ -1760,6 +1760,15 @@ describe("runAgentLoop", () => {
           temperature: 0.2,
           maxOutputTokens: 2048,
           reasoning: "low",
+          maxRetries: 1,
+          timeout: {
+            totalMs: 600_000,
+            stepMs: 120_000,
+            firstChunkMs: 30_000,
+            chunkMs: 10_000,
+            toolMs: 60_000,
+            tools: { bashMs: 300_000 },
+          },
           providerOptions: {
             google: {
               thinkingConfig: {
@@ -1784,6 +1793,16 @@ describe("runAgentLoop", () => {
       maxOutputTokens: 2048,
       // Unified v7 reasoning setting flows through as a plain model setting.
       reasoning: "low",
+      maxRetries: 1,
+      // The AI SDK enforces every timeout field itself, so it arrives as set.
+      timeout: {
+        totalMs: 600_000,
+        stepMs: 120_000,
+        firstChunkMs: 30_000,
+        chunkMs: 10_000,
+        toolMs: 60_000,
+        tools: { bashMs: 300_000 },
+      },
       providerOptions: {
         google: {
           thinkingConfig: {
