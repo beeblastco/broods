@@ -254,8 +254,10 @@ export function createDiscordChannel(
         // Rollout fallback: a forwarder built before the derived credential
         // sends the bot token itself. Core deploys on every push to `dev`
         // while the forwarder only rolls at promote, so this branch keeps
-        // messages flowing across that gap. Remove it once the forwarder has
-        // rolled; the warning names the senders still on it.
+        // messages flowing across that gap. Remove it together with the
+        // forwarder's 401 retry (`ForwardAuth.fallbackToken`) once the
+        // derivation has rolled everywhere; the warning names the senders
+        // still on it.
         if (timingSafeStringEqual(provided, botToken)) {
           logWarn("Discord forward authenticated with the raw bot token", {
             deprecation: "send discordForwarderToken(botToken) instead",

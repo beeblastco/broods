@@ -2350,10 +2350,8 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
     "utf8",
   );
 
-  expect(api).toContain("const resources = {");
-  expect(api).toContain(
-    "export const api: ResourceApi & typeof resources = resources;",
-  );
+  expect(api).toContain("export const api = resourceApi({");
+  expect(api).toContain("} as const);");
   expect(api).toContain(
     'support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", stage: "development" }',
   );

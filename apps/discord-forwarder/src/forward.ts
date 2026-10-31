@@ -10,7 +10,9 @@
  * every other forwarder still broken.
  *
  * The POST authenticates with the transport credential `discord-wire.ts`
- * derives from the bot token, so the token itself never rides the public edge.
+ * derives from the bot token, so the token itself stays off the public edge.
+ * A core that predates the derivation answers it with a 401; the retry with
+ * the raw token below keeps messages flowing until that core has rolled.
  */
 
 import {
@@ -44,6 +46,12 @@ export interface ForwardTarget {
  */
 export interface ForwardAuth {
   attempts?: number;
+  /**
+   * Retried once per target when `token` gets a 401: a core that predates the
+   * derived Discord credential still expects the raw bot token. Remove
+   * together with the raw-token fallback in core's `discord-channel.ts`.
+   */
+  fallbackToken?: string;
   header: string;
   timeoutMs: number;
   token: string;
@@ -89,6 +97,7 @@ export async function forwardMessageCreate(
 
   await fanOut(targets, body, {
     attempts: DISCORD_FORWARD_ATTEMPTS,
+    fallbackToken: botToken,
     header: DISCORD_GATEWAY_TOKEN_HEADER,
     timeoutMs: FETCH_TIMEOUT_MS,
     token: discordForwarderToken(botToken),
@@ -102,6 +111,7 @@ async function post(
   fields: LogFields,
 ): Promise<boolean> {
   const attempts = auth.attempts ?? 1;
+  let token = auth.token;
   let retryAfterMs = Number.NaN;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (attempt > 1) {
@@ -120,7 +130,7 @@ async function post(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          [auth.header]: auth.token,
+          [auth.header]: token,
         },
         body: body,
         // The forwarder's token rides the header above, and the gateway never
@@ -129,9 +139,15 @@ async function post(
         signal: AbortSignal.timeout(auth.timeoutMs),
       });
       if (response.ok) return true;
-      // A 4xx answers the same way every time, except a timeout and a rate
-      // limit, so only those and a 5xx earn a retry.
+      // A 401 on the primary token earns one retry with the fallback (see
+      // `ForwardAuth`). Any other 4xx answers the same way every time, except
+      // a timeout and a rate limit, so only those and a 5xx earn a retry.
+      const fallbackToken =
+        response.status === 401 && token !== auth.fallbackToken
+          ? auth.fallbackToken
+          : undefined;
       const retryable =
+        fallbackToken !== undefined ||
         response.status >= 500 ||
         response.status === 408 ||
         response.status === 429;
@@ -142,10 +158,13 @@ async function post(
           agentName: target.agentName,
           attempts: attempt,
           status: response.status,
-          tokenHint: tokenHint(auth.token),
+          tokenHint: tokenHint(token),
         });
 
         return !retryable;
+      }
+      if (fallbackToken !== undefined) {
+        token = fallbackToken;
       }
       // Seconds only. The HTTP-date form parses to NaN and gets the backoff.
       retryAfterMs =
@@ -158,7 +177,7 @@ async function post(
           agentName: target.agentName,
           attempts: attempt,
           error: error instanceof Error ? error.message : String(error),
-          tokenHint: tokenHint(auth.token),
+          tokenHint: tokenHint(token),
         });
       }
     }

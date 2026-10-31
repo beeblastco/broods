@@ -159,10 +159,44 @@ describe("forwarding a gateway message", () => {
   });
 
   it("does not retry a 4xx", async (): Promise<void> => {
-    const seen = scriptFetch([401]);
+    const seen = scriptFetch([403]);
     await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
 
     expect(seen.calls).toBe(1);
+  });
+
+  // A core that predates the derived credential answers it with a 401 but
+  // still accepts the raw bot token. Rollout order is not guaranteed (the one
+  // forwarder release serves prod too and promote dispatches the rollouts in
+  // parallel), so a message sent into that window must not be dropped.
+  it("falls back to the raw bot token when core predates the derived credential", async (): Promise<void> => {
+    const derived = discordForwarderToken("token-a");
+    const tokens: string[] = [];
+    globalThis.fetch = (async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const token = (init?.headers as Record<string, string>)[
+        "x-discord-gateway-token"
+      ]!;
+      tokens.push(token);
+
+      return new Response("", { status: token === derived ? 401 : 200 });
+    }) as typeof fetch;
+    await withoutWaiting(
+      forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]),
+    );
+
+    expect(tokens).toEqual([derived, "token-a"]);
+  });
+
+  it("settles a 401 that the raw token does not cure", async (): Promise<void> => {
+    const seen = scriptFetch([401, 401]);
+    await withoutWaiting(
+      forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]),
+    );
+
+    expect(seen.calls).toBe(2);
   });
 
   // Matrix awaits each delivery in its sync loop, so it does not opt in.
