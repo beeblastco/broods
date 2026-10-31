@@ -5581,6 +5581,14 @@ components:
             AI models (`@cf/...`) take the gateway's Workers AI route; any other
             `{provider}/{model}` id takes its OpenAI-compatible endpoint.
             Letters, digits, `-` and `_`.
+        firstByteTimeoutMs:
+          type: integer
+          minimum: 1
+          description: >-
+            A streamed model request whose response headers do not arrive
+            within this many milliseconds is sent again (the provider queued it
+            without answering). Unset: no limit, for endpoints that take long
+            to start a stream, like a cold self-hosted model.
         headers:
           type: object
           additionalProperties:

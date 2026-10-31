@@ -692,6 +692,15 @@ function normalizeProviderSettings(
     throw new ClientError(
       `config.provider.${providerName}.gatewayId must be an AI Gateway id (letters, digits, - and _)`,
     );
+  if (
+    config.firstByteTimeoutMs !== undefined &&
+    (typeof config.firstByteTimeoutMs !== "number" ||
+      !Number.isSafeInteger(config.firstByteTimeoutMs) ||
+      config.firstByteTimeoutMs <= 0)
+  )
+    throw new ClientError(
+      `config.provider.${providerName}.firstByteTimeoutMs must be a positive whole number of milliseconds`,
+    );
   assertOptionalString(
     config.base_url,
     `config.provider.${providerName}.base_url`,

@@ -1009,7 +1009,6 @@ describe("runAgentLoop", () => {
     async (stall): Promise<void> => {
       installHarnessEnv();
       // The retry waits out the SDK's 2s backoff, well inside the stall watchdog.
-      process.env.MODEL_FIRST_BYTE_TIMEOUT_MS = "100";
       process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "5000";
       streamTextScenario = "real-model";
       createOpenAICompatibleMock.mockImplementationOnce(
@@ -1084,6 +1083,7 @@ describe("runAgentLoop", () => {
               custom: {
                 apiKey: "custom-key",
                 base_url: `https://${stall}.llm.example/v1`,
+                firstByteTimeoutMs: 100,
               },
             },
             model: { provider: "custom", modelId: "gpt-oss-120b" },

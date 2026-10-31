@@ -417,6 +417,30 @@ describe("agent rules", () => {
         provider: { cloudflare: { gatewayId: "broods-dev_1" } },
       }),
     ).not.toThrow();
+    for (const firstByteTimeoutMs of [0, -1, 1.5, "90000"]) {
+      expect(() =>
+        normalizeAgentConfig({
+          provider: {
+            custom: {
+              base_url: "https://llm.example/v1",
+              firstByteTimeoutMs: firstByteTimeoutMs,
+            },
+          },
+        }),
+      ).toThrow(
+        "config.provider.custom.firstByteTimeoutMs must be a positive whole number",
+      );
+    }
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          custom: {
+            base_url: "https://llm.example/v1",
+            firstByteTimeoutMs: 90_000,
+          },
+        },
+      }),
+    ).not.toThrow();
     // An upstream key in a literal header is as secret as an apiKey; a header
     // made only of an env ref is not. Outside headers only refs are shown.
     expect(
