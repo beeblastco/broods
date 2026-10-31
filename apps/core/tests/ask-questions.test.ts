@@ -149,9 +149,7 @@ describe("ask_questions tool", () => {
     expect(blocked).toEqual([output.statusId]);
   });
 
-  // `execute` is called directly here, the way a tool.call.started hook's
-  // replacement args reach it: past the SDK's own schema check.
-  it("rejects a malformed prompt before touching storage", async () => {
+  it("rejects a repeated question id before touching storage", async () => {
     stubMutations();
     const execute = toolExecute(
       askQuestionsTool({
@@ -160,11 +158,6 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    expect(
-      execute({
-        questions: [{ ...QUESTION, options: [{ label: "only one" }] }],
-      }),
-    ).rejects.toThrow("options");
     expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
       "is used twice",
     );

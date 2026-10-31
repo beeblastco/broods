@@ -76,7 +76,7 @@ sequenceDiagram
   else approved or not applicable
     ST->>W: execute
     W->>W: owner fence, tool.call.started hook
-    W->>T: input, maybe rewritten by the hook
+    W->>T: input, maybe rewritten by the hook and checked again against the tool's input schema
     T-->>W: output
     W->>W: tool.result hook
     W-->>ST: output

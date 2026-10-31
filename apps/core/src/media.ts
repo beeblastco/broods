@@ -90,8 +90,9 @@ export async function handleMediaRequest(
     ...(contentType === "image/svg+xml"
       ? { "content-disposition": "attachment" }
       : {}),
-    // The ticket names one immutable file, so a provider CDN may hold it forever.
-    "cache-control": "public, max-age=31536000, immutable",
+    // The ticket names one immutable file, so a provider CDN may hold it, but
+    // never past the ticket's own expiry.
+    "cache-control": `public, max-age=${Math.max(0, ticket.exp - Math.floor(Date.now() / 1000))}, immutable`,
     ...(object.head.contentLength !== undefined
       ? { "content-length": String(object.head.contentLength) }
       : {}),

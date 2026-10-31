@@ -45,6 +45,7 @@ const SAMPLES = [
   "/v1/media/ml1abc",
   "/v1/media//",
   "/v1/webhooks/acct/slack",
+  "/v1/webhooks/acct/dev/e1/pancake/",
   "/v1/webhooks//",
   "/v1/runs",
   "/v2/agents",
@@ -125,7 +126,7 @@ test("credential-bearing routers stay out of the access log", (): void => {
 
   expect(unlogged).toEqual([
     "broods-edge-downloads",
-    "broods-edge-webhooks",
+    "broods-edge-pancake-webhooks",
     "broods-edge-media",
   ]);
   // The cluster render carries the same switch on the same routers.
@@ -134,7 +135,17 @@ test("credential-bearing routers stay out of the access log", (): void => {
     .map((route) => route.match);
 
   expect(clusterUnlogged).toHaveLength(3);
-  expect(clusterUnlogged.join()).toMatch(/webhooks/);
+  expect(clusterUnlogged.join()).toMatch(/pancake/);
+});
+
+test("only Pancake's webhook URLs skip the access log", (): void => {
+  const unlogged = (path: string): boolean | undefined =>
+    resolveRouter("POST", path)?.secretPath;
+
+  expect(unlogged("/v1/webhooks/acct/pancake")).toBe(true);
+  expect(unlogged("/v1/webhooks/acct/dev/e1/pancake")).toBe(true);
+  expect(unlogged("/v1/webhooks/acct/slack")).toBeUndefined();
+  expect(unlogged("/v1/webhooks/acct/dev/e1/telegram")).toBeUndefined();
 });
 
 test("a self-hosted install allows its own origins", (): void => {

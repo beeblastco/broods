@@ -8,7 +8,7 @@
  * subagents.ts).
  */
 
-import type { JSONValue, ToolSet } from "ai";
+import { asSchema, type JSONValue, type Tool, type ToolSet } from "ai";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
 import type {
   AgentCodeHookConfig,
@@ -16,7 +16,6 @@ import type {
   AgentHookEventName,
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
-import { isPlainObject } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
@@ -169,7 +168,9 @@ export function wrapToolsWithHooks(
         throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
       }
 
-      return isPlainObject(mutation.args) ? mutation.args : input;
+      return mutation.args === undefined
+        ? input
+        : hookArgs(tools[name]!, name, mutation.args);
     },
     after: async (output: unknown) => {
       if (!wantsResult) return output;
@@ -208,6 +209,30 @@ function buildEventIndex(
   }
 
   return index;
+}
+
+/**
+ * Holds a hook's replacement args to the tool's input schema, the check the SDK
+ * already ran on the model's own args. A tool with no runtime schema (an MCP
+ * listing) takes them as the SDK would.
+ */
+async function hookArgs(
+  tool: Tool,
+  name: string,
+  args: unknown,
+): Promise<unknown> {
+  const { validate } = asSchema(tool.inputSchema);
+  if (!validate) {
+    return args;
+  }
+  const result = await validate(args);
+  if (!result.success) {
+    throw new Error(
+      `Tool "${name}" got invalid args from hook: ${result.error.message}`,
+    );
+  }
+
+  return result.value;
 }
 
 /** Projects the agent config onto what a hook may read as ctx.config; see HookAgentConfig. */
