@@ -5581,6 +5581,16 @@ components:
             AI models (`@cf/...`) take the gateway's Workers AI route; any other
             `{provider}/{model}` id takes its OpenAI-compatible endpoint.
             Letters, digits, `-` and `_`.
+        firstByteTimeoutMs:
+          type: integer
+          minimum: 1
+          maximum: 300000
+          description: >-
+            A streamed model request whose response does not start within this
+            many milliseconds fails as retryable and is sent again while
+            `maxRetries` allows. Unset: no limit, for endpoints that take long
+            to start a stream, like a cold self-hosted model. Applies to the
+            built-in loop, not `config.harness`.
         headers:
           type: object
           additionalProperties:
