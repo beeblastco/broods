@@ -88,19 +88,23 @@ describe("providerOptionsFromModelConfig", () => {
 
   test("a custom endpoint serving GPT gets prompt_cache_key under its name", () => {
     const config: AgentConfig = {
-      model: { provider: "custom", modelId: "cx/gpt-6-luna" },
+      model: { provider: "custom", modelId: "openai/gpt-6-luna" },
       provider: {
-        custom: { apiKey: "k", base_url: "https://proxy.test/v1", name: "cx" },
+        custom: {
+          apiKey: "k",
+          base_url: "https://proxy.test/v1",
+          name: "proxy",
+        },
       },
     };
 
     const options = providerOptionsFromModelConfig(config, CONVERSATION_KEY);
-    expect(options?.["cx"]?.["prompt_cache_key"]).toMatch(/^[0-9a-f]{32}$/);
+    expect(options?.["proxy"]?.["prompt_cache_key"]).toMatch(/^[0-9a-f]{32}$/);
   });
 
   test("a custom endpoint serving Claude gets cache_control, no key", () => {
     const config: AgentConfig = {
-      model: { provider: "custom", modelId: "cc/claude-sonnet-5" },
+      model: { provider: "custom", modelId: "anthropic/claude-sonnet-5" },
     };
 
     expect(providerOptionsFromModelConfig(config, CONVERSATION_KEY)).toEqual({
@@ -138,7 +142,7 @@ describe("providerOptionsFromModelConfig", () => {
   });
 
   test("the Claude cache mark adds no field to the request body", async () => {
-    const body = await requestBody("cc/claude-sonnet-5");
+    const body = await requestBody("anthropic/claude-sonnet-5");
 
     expect(JSON.stringify(body)).not.toContain("cache_control");
   });
@@ -214,7 +218,7 @@ describe("cacheBreakpointFromProviderOptions", () => {
 
   test("Claude behind a custom endpoint gets cache_control", () => {
     const config: AgentConfig = {
-      model: { provider: "custom", modelId: "cc/claude-sonnet-5" },
+      model: { provider: "custom", modelId: "anthropic/claude-sonnet-5" },
     };
 
     expect(
@@ -229,7 +233,7 @@ describe("cacheBreakpointFromProviderOptions", () => {
 
   test("GPT behind a custom endpoint gets no mark, only its key", () => {
     const config: AgentConfig = {
-      model: { provider: "custom", modelId: "cx/gpt-6-luna" },
+      model: { provider: "custom", modelId: "openai/gpt-6-luna" },
     };
 
     expect(
