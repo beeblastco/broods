@@ -111,11 +111,32 @@ describe("wrapToolsWithHooks", () => {
     expect(run(editTo({ query: "x", extra: 1 }))).rejects.toThrow(
       /invalid args from hook/,
     );
-    expect(run(editTo("not an object"))).rejects.toThrow(
-      /invalid args from hook/,
-    );
     expect(ran).toBe(false);
     expect(await run(editTo({ query: "edited" }))).toBe("ok");
+  });
+
+  it("ignores edited args that are not an object", async () => {
+    let seen: unknown;
+    const tools: ToolSet = {
+      search: fakeTool((input) => {
+        seen = input;
+
+        return "ok";
+      }),
+    };
+    const wrapped = wrapToolsWithHooks(
+      tools,
+      dispatcherReturning((event) =>
+        event === "tool.call.started"
+          ? { decision: "allow", args: null }
+          : undefined,
+      ),
+    );
+    await (
+      wrapped.search!.execute as (i: unknown, o: unknown) => Promise<unknown>
+    )({ query: "original" }, {});
+
+    expect(seen).toEqual({ query: "original" });
   });
 
   it("transforms tool output via a tool.result hook", async () => {

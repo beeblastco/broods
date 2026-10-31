@@ -16,6 +16,7 @@ import type {
   AgentHookEventName,
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
+import { isPlainObject } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
@@ -168,9 +169,9 @@ export function wrapToolsWithHooks(
         throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
       }
 
-      return mutation.args === undefined
-        ? input
-        : hookArgs(tools[name]!, name, mutation.args);
+      return isPlainObject(mutation.args)
+        ? hookArgs(tools[name]!, name, mutation.args)
+        : input;
     },
     after: async (output: unknown) => {
       if (!wantsResult) return output;
@@ -214,12 +215,12 @@ function buildEventIndex(
 /**
  * Holds a hook's replacement args to the tool's input schema, the check the SDK
  * already ran on the model's own args. A tool with no runtime schema (an MCP
- * listing) takes them as the SDK would.
+ * listing, a `jsonSchema()` tool) takes them as the SDK would.
  */
 async function hookArgs(
   tool: Tool,
   name: string,
-  args: unknown,
+  args: Record<string, unknown>,
 ): Promise<unknown> {
   const { validate } = asSchema(tool.inputSchema);
   if (!validate) {

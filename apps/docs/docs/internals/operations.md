@@ -179,7 +179,7 @@ flowchart LR
   A["Prepend new value"] --> B["Roll the pods"] --> C["Drop the old value"]
 ```
 
-- `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`: the steps above. A media link expires on its own after `MEDIA_TICKET_TTL_SECONDS` (default 30 days); dropping a value stops every link it sealed at the origin, though a CDN that fetched the bytes in time can serve its copy until the ticket would have expired, which is where the route's cache-control stops it.
+- `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`: the steps above. A media link expires on its own after `MEDIA_TICKET_TTL_SECONDS` (default 30 days); dropping a value stops every link it sealed at the origin, though a CDN that fetched the bytes in time can serve its copy until the ticket would have expired, which is where the route's cache-control stops it. A copy fetched before 2026-11 keeps the old one-year `max-age`.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: follow the [rotation runbook](security.md#rotation-runbook). It adds a `rewrapAllKeys` step; dropping a value before the rewrap finishes makes every config it wrapped unreadable.
 - `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`: change core and Convex together. Rotating the stage secret logs out open dashboard log streams and `broods logs` until they mint a new ticket.
 - `ANALYTICS_ID_SECRET`: never rotate it for security; it guards nothing. A new value makes every user and AI session look new in PostHog.

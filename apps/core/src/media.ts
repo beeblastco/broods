@@ -98,7 +98,7 @@ export async function handleMediaRequest(
       : {}),
     // The ticket names one immutable file, so a provider CDN may hold it, but
     // never past the ticket's own expiry.
-    "cache-control": `public, max-age=${Math.max(0, ticket.exp - Math.floor(Date.now() / 1000))}, immutable`,
+    "cache-control": `public, max-age=${Math.max(0, Math.floor(ticket.exp - Date.now() / 1000))}, immutable`,
     ...(object.head.contentLength !== undefined
       ? { "content-length": String(object.head.contentLength) }
       : {}),
