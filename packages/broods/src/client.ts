@@ -116,6 +116,8 @@ export interface ResourceApi {
   readonly crons?: Record<string, unknown>;
   readonly skills?: Record<string, unknown>;
   readonly policies?: Record<string, unknown>;
+  /** The deployed stage's ids, for `browserSocketUrl`. */
+  readonly stage?: { readonly projectId: string; readonly stageId: string };
 }
 
 export interface BroodsClientOptions {

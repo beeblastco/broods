@@ -18,6 +18,9 @@ export type GeneratedEndpoint =
   | {
       accountId: string;
       endpointId: string;
+      /** Written as `api.stage`, what `browserSocketUrl` takes. */
+      projectId?: string;
+      stageId?: string;
       projectSlug: string;
       stageSlug: string;
       /** Absent is treated as production, which keeps the bare webhook path. */
@@ -145,6 +148,9 @@ function apiFile(
     `  crons: ${aliasedIdMap("crons", ids.crons, aliases.cron)},\n` +
     `  skills: ${aliasedIdMap("skills", ids.skills, aliases.skill)},\n` +
     `  policies: ${aliasedIdMap("policies", ids.policies, aliases.policy)},\n` +
+    (endpoint?.projectId && endpoint.stageId
+      ? `  stage: { projectId: ${JSON.stringify(endpoint.projectId)}, stageId: ${JSON.stringify(endpoint.stageId)} },\n`
+      : "") +
     `} as const satisfies ResourceApi;\n`
   );
 }

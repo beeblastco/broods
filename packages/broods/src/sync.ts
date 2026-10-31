@@ -57,6 +57,9 @@ export interface RemoteManifestResponse {
   deployment?: {
     accountId: string;
     endpointId: string;
+    /** The ids a browser socket's path names; absent from an older server. */
+    projectId?: string;
+    stageId?: string;
     projectSlug: string;
     stageSlug: string;
     /** Decides the webhook URL shape; only production keeps the bare one. */
