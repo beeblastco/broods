@@ -190,6 +190,15 @@ describe("forwarding a gateway message", () => {
     expect(tokens).toEqual([derived, "token-a"]);
   });
 
+  it("still tries the raw token when the 401 lands on the last attempt", async (): Promise<void> => {
+    const seen = scriptFetch([503, 503, 401, 200]);
+    await withoutWaiting(
+      forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]),
+    );
+
+    expect(seen.calls).toBe(4);
+  });
+
   it("settles a 401 that the raw token does not cure", async (): Promise<void> => {
     const seen = scriptFetch([401, 401]);
     await withoutWaiting(

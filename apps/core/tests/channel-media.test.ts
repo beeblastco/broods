@@ -135,6 +135,7 @@ beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = "media-ticket-secret";
+  delete process.env.MEDIA_TICKET_TTL_SECONDS;
   process.env.PUBLIC_BASE_URL = "https://core.example";
   headS3ObjectMock.mockReset();
   readS3BytesMock.mockReset();

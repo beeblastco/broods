@@ -139,15 +139,21 @@ async function post(
         signal: AbortSignal.timeout(auth.timeoutMs),
       });
       if (response.ok) return true;
-      // A 401 on the primary token earns one retry with the fallback (see
-      // `ForwardAuth`). Any other 4xx answers the same way every time, except
-      // a timeout and a rate limit, so only those and a 5xx earn a retry.
-      const fallbackToken =
-        response.status === 401 && token !== auth.fallbackToken
-          ? auth.fallbackToken
-          : undefined;
+      // A 401 on the primary token is asked again at once with the fallback
+      // (see `ForwardAuth`). It is another credential, not a retry of this
+      // one, so it spends no attempt.
+      if (
+        response.status === 401 &&
+        auth.fallbackToken !== undefined &&
+        token !== auth.fallbackToken
+      ) {
+        token = auth.fallbackToken;
+        attempt -= 1;
+        continue;
+      }
+      // A 4xx answers the same way every time, except a timeout and a rate
+      // limit, so only those and a 5xx earn a retry.
       const retryable =
-        fallbackToken !== undefined ||
         response.status >= 500 ||
         response.status === 408 ||
         response.status === 429;
@@ -162,9 +168,6 @@ async function post(
         });
 
         return !retryable;
-      }
-      if (fallbackToken !== undefined) {
-        token = fallbackToken;
       }
       // Seconds only. The HTTP-date form parses to NaN and gets the backoff.
       retryAfterMs =

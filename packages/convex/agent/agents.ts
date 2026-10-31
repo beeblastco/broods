@@ -385,7 +385,7 @@ export const remove = internalMutation({
         const nodes: CanvasNode[] = layout.nodes;
         const removedIds = new Set(
           nodes
-            .filter((n) => n.data.agentConfigId === linkedConfig._id)
+            .filter((n) => n.data?.agentConfigId === linkedConfig._id)
             .map((n) => n.id),
         );
         if (removedIds.size > 0) {
