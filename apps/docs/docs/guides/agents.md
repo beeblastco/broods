@@ -54,7 +54,7 @@ provider: {
 model: { provider: "custom", modelId: "gpt-oss-120b" },
 ```
 
-`base_url` and `baseURL` both work. `baseUrl` fails the sync with an error. An endpoint that sometimes takes a request and never answers (a relay or tunnel in front of the model) can set `firstByteTimeoutMs: 90_000`: a streamed request with no response by then is sent again while `maxRetries` allows (the built-in loop only, not `config.harness`). Leave it unset for a server that is slow to start a stream, such as a cold self-hosted model. For vLLM-style servers, Broods folds several system messages into one and turns cumulative reasoning chunks into increments, so thinking text is not duplicated.
+`base_url` and `baseURL` both work. `baseUrl` fails the sync with an error. For vLLM-style servers, Broods folds several system messages into one and turns cumulative reasoning chunks into increments, so thinking text is not duplicated.
 
 `cloudflare` takes `accountId` and a Cloudflare API token as `apiKey`, and runs Workers AI models. Add `gatewayId` to send every request through that [AI Gateway](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) instead, where `modelId` names any model the gateway routes:
 
@@ -97,6 +97,10 @@ model: { provider: "chatgpt", modelId: "gpt-5.5" },
 One level in `model.reasoning` works across providers. The levels are `provider-default`, `none`, `minimal`, `low`, `medium`, `high` and `xhigh`.
 
 Provider-specific settings in `model.providerOptions` win over `reasoning` when both are set, for example `providerOptions.openai.reasoningEffort` or `providerOptions.anthropic.thinking`. If a model does not support the level you asked for, the run logs a `model.step.warnings` event and continues.
+
+## Timeouts
+
+`model.timeout` is the AI SDK's [`timeout`](https://ai-sdk.dev/docs/ai-sdk-core/settings#timeout) setting and reaches `streamText` as you set it. A number is the whole call in milliseconds. The object form takes `totalMs` (the whole call), `stepMs` (each step, with its retries and tools), `firstChunkMs` (from a step's response starting to its first output), `chunkMs` (between output chunks), `toolMs` (each tool) and `tools` for one tool, like `{ bashMs: 300_000 }`. `totalMs`, `stepMs`, `firstChunkMs` and `chunkMs` end the call when they pass and fail the run, they do not retry it. `firstChunkMs` starts only once the provider answers, so `stepMs` is what bounds a request that never gets a response. A tool past its limit is aborted and the model sees the error. Apart from these, Broods fails a run whose model is silent for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before a call's first chunk or `MODEL_CHUNK_TIMEOUT_MS` between chunks (300 s each, set per deployment in [operations](../internals/operations.md#core-runtime-limits)). That clock includes the wait for a response and pauses while a tool runs, so set the SDK limits below it for them to act first. `config.harness` ignores `model.timeout`.
 
 ## Structured output
 

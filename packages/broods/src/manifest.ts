@@ -1196,7 +1196,6 @@ const CANONICAL_PROVIDER_KEYS = new Set([
   "apiKey",
   "base_url",
   "baseURL",
-  "firstByteTimeoutMs",
   "gatewayId",
 ]);
 const KNOWN_HARNESS_KEYS = new Set([
@@ -1214,8 +1213,7 @@ const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
  * Suggest the canonical key for a common misspelling, else "". A setting the SDK
  * has never heard of is fine, since it reaches the provider's Vercel AI SDK
  * factory untouched. But a casing slip on one of the few keys broods reads
- * itself (`apiKey`, `base_url`, `firstByteTimeoutMs`, `gatewayId`) would do
- * nothing at all, so those
+ * itself (`apiKey`, `base_url`, `gatewayId`) would do nothing at all, so those
  * still throw.
  */
 function suggestProviderKey(key: string): string {
@@ -1225,7 +1223,6 @@ function suggestProviderKey(key: string): string {
   const canonical = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   if (canonical === "baseurl") return `"base_url" or "baseURL"`;
   if (canonical === "apikey") return `"apiKey"`;
-  if (canonical === "firstbytetimeoutms") return `"firstByteTimeoutMs"`;
   if (canonical === "gatewayid") return `"gatewayId"`;
 
   return "";

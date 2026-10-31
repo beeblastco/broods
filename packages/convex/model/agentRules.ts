@@ -184,6 +184,18 @@ export const MODEL_CONFIG_SETTING_KEYS = [
   "maxRetries",
   "timeout",
 ] as const;
+// The object form of the AI SDK's `TimeoutConfiguration` (ai 7). `tools` holds
+// per-tool limits named `{toolName}Ms`.
+const MODEL_TIMEOUT_KEYS = [
+  "totalMs",
+  "stepMs",
+  "firstChunkMs",
+  "chunkMs",
+  "toolMs",
+  "tools",
+] as const;
+// The longest delay setTimeout takes; a longer one overflows and fires at once.
+const MAX_TIMER_MS = 2_147_483_647;
 // Webhooks subscribe to agent-loop lifecycle events only. Code hooks use the
 // full AGENT_HOOK_EVENT_NAMES list (lifecycle + channel points).
 export const AGENT_LIFECYCLE_EVENT_NAMES = [
@@ -629,7 +641,11 @@ function normalizeHarnessDebugConfig(value: unknown): void {
   );
 }
 
-function normalizeModelConfig(value: unknown, label: string): void {
+/**
+ * Checks a model config's keys and values: the stored `config.model`, the
+ * subagent's, and a per-run `model` override.
+ */
+export function normalizeModelConfig(value: unknown, label: string): void {
   if (value == null) return;
   if (!isPlainObject(value))
     throw new ClientError(`${label} must be an object`);
@@ -666,6 +682,7 @@ function normalizeModelConfig(value: unknown, label: string): void {
   ) {
     throw new ClientError(`${label}.providerOptions must be an object`);
   }
+  assertOptionalModelTimeout(config.timeout, `${label}.timeout`);
   normalizeModelOutputConfig(config.output, label);
 }
 
@@ -732,12 +749,6 @@ function normalizeProviderSettings(
     throw new ClientError(
       `config.provider.${providerName}.gatewayId must be an AI Gateway id (letters, digits, - and _)`,
     );
-  // The stall watchdog ends a silent run at 300 s, so a longer bound never fires.
-  assertOptionalPositiveInteger(
-    config.firstByteTimeoutMs,
-    `config.provider.${providerName}.firstByteTimeoutMs`,
-    300_000,
-  );
   assertOptionalString(
     config.base_url,
     `config.provider.${providerName}.base_url`,
@@ -1769,6 +1780,46 @@ function assertPartitionAlias(value: unknown, name: string): void {
     throw new ClientError(
       `${name} must use only letters, numbers, dots, underscores, or hyphens`,
     );
+  }
+}
+
+/**
+ * Checks `model.timeout` against the AI SDK's `TimeoutConfiguration`: a total
+ * in ms, or an object of per-phase limits. Every limit is a positive integer.
+ */
+function assertOptionalModelTimeout(value: unknown, name: string): void {
+  if (value === undefined) return;
+  if (typeof value === "number") {
+    assertOptionalPositiveInteger(value, name, MAX_TIMER_MS);
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new ClientError(
+      `${name} must be a number of milliseconds or an object with ${MODEL_TIMEOUT_KEYS.join(", ")}`,
+    );
+  }
+  for (const [key, limit] of Object.entries(value)) {
+    if (key === "tools") continue;
+    if (!(MODEL_TIMEOUT_KEYS as readonly string[]).includes(key)) {
+      throw new ClientError(
+        `${name}.${key} is not supported; use one of: ${MODEL_TIMEOUT_KEYS.join(", ")}`,
+      );
+    }
+    assertOptionalPositiveInteger(limit, `${name}.${key}`, MAX_TIMER_MS);
+  }
+  if (value.tools === undefined) return;
+  if (!isPlainObject(value.tools)) {
+    throw new ClientError(
+      `${name}.tools must be an object of {toolName}Ms limits`,
+    );
+  }
+  for (const [key, limit] of Object.entries(value.tools)) {
+    if (!/^.+Ms$/.test(key)) {
+      throw new ClientError(
+        `${name}.tools.${key} must be named {toolName}Ms, like bashMs`,
+      );
+    }
+    assertOptionalPositiveInteger(limit, `${name}.tools.${key}`, MAX_TIMER_MS);
   }
 }
 

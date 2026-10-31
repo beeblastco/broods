@@ -16,6 +16,7 @@ import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { modelPrices } from "./model-prices.ts";
+import { modelTimeout } from "./model-timeout.ts";
 import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { productionRegion } from "./production-region.ts";
@@ -73,6 +74,7 @@ export const verifyCases: readonly VerifyCase[] = [
   productionRegion,
   projectUsage,
   modelPrices,
+  modelTimeout,
   mcpHeaderEnv,
   workToolWebhooks,
   webhookHandshake,

@@ -220,4 +220,24 @@ describe("publicHostFetch", () => {
       "https://93.184.216.35/v1/chat",
     ]);
   });
+
+  it("ends a lookup that never returns when the request's signal aborts", async () => {
+    const lookup = spyOn(dns, "lookup").mockImplementation(
+      (): ReturnType<typeof dns.lookup> => new Promise((): void => {}),
+    );
+    const controller = new AbortController();
+    try {
+      const pending = publicHostFetch("https://api.example.com/v1/chat", {
+        signal: controller.signal,
+      });
+      const reason = new Error("caller gave up");
+      controller.abort(reason);
+
+      expect(await pending.catch((error: unknown): unknown => error)).toBe(
+        reason,
+      );
+    } finally {
+      lookup.mockRestore();
+    }
+  });
 });

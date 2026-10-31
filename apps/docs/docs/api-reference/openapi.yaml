@@ -5581,16 +5581,6 @@ components:
             AI models (`@cf/...`) take the gateway's Workers AI route; any other
             `{provider}/{model}` id takes its OpenAI-compatible endpoint.
             Letters, digits, `-` and `_`.
-        firstByteTimeoutMs:
-          type: integer
-          minimum: 1
-          maximum: 300000
-          description: >-
-            A streamed model request whose response does not start within this
-            many milliseconds fails as retryable and is sent again while
-            `maxRetries` allows. Unset: no limit, for endpoints that take long
-            to start a stream, like a cold self-hosted model. Applies to the
-            built-in loop, not `config.harness`.
         headers:
           type: object
           additionalProperties:
@@ -5642,13 +5632,57 @@ components:
           items:
             type: string
         timeout:
-          description: Vercel AI SDK timeout setting in milliseconds or `{ totalMs }`
+          description: >-
+            The Vercel AI SDK `timeout` call setting, passed to `streamText` as
+            set: a total in milliseconds, or an object of per-phase limits.
+            `totalMs`, `stepMs`, `firstChunkMs` and `chunkMs` end the whole call
+            when they pass, with no retry; `toolMs` and `tools` abort only that
+            tool, and the model sees a tool error. The built-in loop only, not
+            `config.harness`.
           oneOf:
             - type: integer
+              minimum: 1
+              maximum: 2147483647
+              description: Total milliseconds for the call, the same as `totalMs`
             - type: object
+              additionalProperties: false
               properties:
                 totalMs:
                   type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: The whole call, every step, retry and tool included
+                stepMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: Each step, from the request through its retries and tool calls
+                firstChunkMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: >-
+                    From the start of a step's response to its first text,
+                    reasoning or tool output. The clock starts once the provider
+                    answers, so a request that never gets a response is bounded
+                    by `stepMs` or `totalMs`.
+                chunkMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: Between output chunks, until the model's response ends
+                toolMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: Each tool execution, through the tool's abort signal
+                tools:
+                  type: object
+                  description: Per-tool limits that override `toolMs`, keyed `{toolName}Ms`, like `bashMs`
+                  additionalProperties:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
         output:
           $ref: "#/components/schemas/OutputConfig"
         providerOptions:

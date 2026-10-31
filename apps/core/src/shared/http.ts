@@ -244,9 +244,8 @@ export async function publicHostFetch(
     tls: { serverName: hostname },
   }).catch((error: unknown): never => {
     // An address that will not connect must not be pinned for the rest of the
-    // TTL: the next call re-resolves and can reach another record. An abort
-    // says nothing about the address, so it stays.
-    if (!signal?.aborted) publicHosts.delete(hostname);
+    // TTL: the next call re-resolves and can reach another record.
+    publicHosts.delete(hostname);
     throw error;
   });
 }
