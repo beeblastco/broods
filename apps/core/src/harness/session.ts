@@ -50,6 +50,7 @@ import {
 } from "./channel-media.ts";
 import {
   COMPACTION_MARKER,
+  type CompactionResult,
   isCompactionSummaryMessage,
   summarizeConversation,
 } from "./compaction.ts";
@@ -693,9 +694,12 @@ export class Session {
   /**
    * Folds the stored history into a summary under the owner lease. Serves
    * /compact and the harness auto-compaction after a finished turn. Returns
-   * how many messages were summarized; 0 means there was nothing to compact.
+   * how many messages were summarized and what the summary cost; null means
+   * there was nothing to compact.
    */
-  async compactConversation(instructions: string): Promise<number> {
+  async compactConversation(
+    instructions: string,
+  ): Promise<CompactionResult | null> {
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
     const systemContextSnapshot = createSystemContextSnapshot(entries);
@@ -707,7 +711,7 @@ export class Session {
     );
     // Nothing said since the last summary leaves nothing to fold in.
     if (messages.length === 0 || hasPendingToolApprovalResponse(messages)) {
-      return 0;
+      return null;
     }
     const summary = await summarizeConversation({
       accountId: this.accountId,
@@ -720,11 +724,12 @@ export class Session {
       instructions: instructions,
     });
     if (!summary) {
-      return 0;
+      return null;
     }
-    await this.persistModelMessages([summary]);
+    const { message, ...cost } = summary;
+    await this.persistModelMessages([message]);
 
-    return messages.length;
+    return { ...cost, messageCount: messages.length };
   }
 
   async createEphemeralTurnContext(

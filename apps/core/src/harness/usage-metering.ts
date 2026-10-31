@@ -53,6 +53,21 @@ export function usageTokenTotals(
   };
 }
 
+/** Two token tallies added field by field, for usage spread over several calls. */
+export function addUsageTokenTotals(
+  a: UsageTokenTotals,
+  b: UsageTokenTotals,
+): UsageTokenTotals {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    reasoningTokens: a.reasoningTokens + b.reasoningTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+  };
+}
+
 // Cache-write tokens for one step; 0 when the provider doesn't break them out,
 // the field is absent, or metadata is missing. Never throws.
 export function extractCacheWriteTokens(
@@ -384,7 +399,8 @@ export function createStepTimingTracker(
 
 /**
  * One run's token totals for its usage row and root span: onStepEnd adds each
- * finished step, onEnd may replace the sum with the turn total, finalize reads.
+ * finished step, onEnd may replace the sum with the turn total, an
+ * auto-compaction adds its summary calls after that, finalize reads.
  */
 export interface TaskTotals {
   /**
@@ -400,6 +416,11 @@ export interface TaskTotals {
     stepTokens: UsageTokenTotals,
     cacheWriteTokensFallback: number,
   ) => number;
+  /**
+   * Folds in an auto-compaction's summary calls after the turn ends, so the
+   * run's usage row and root span count what the summary cost. Not a step.
+   */
+  addCompaction: (tokens: UsageTokenTotals) => void;
   /**
    * onEnd: the turn total wins (a harness counts calls no step reported),
    * unless a stop thrown from prepareStep left it empty: then the step sum
@@ -418,32 +439,37 @@ export function createTaskTotals(): TaskTotals {
   let usage: LanguageModelUsage | undefined;
   let steps = 0;
   let cacheWriteTokens = 0;
+  const fold = (tokens: UsageTokenTotals): void => {
+    const sum = addUsageTokenTotals(usageTokenTotals(usage), tokens);
+    usage = {
+      inputTokens: sum.inputTokens,
+      inputTokenDetails: {
+        noCacheTokens: undefined,
+        cacheReadTokens: sum.cachedInputTokens,
+        cacheWriteTokens: sum.cacheWriteTokens,
+      },
+      outputTokens: sum.outputTokens,
+      outputTokenDetails: {
+        textTokens: undefined,
+        reasoningTokens: sum.reasoningTokens,
+      },
+      totalTokens: sum.totalTokens,
+    };
+  };
 
   return {
     addStep: (stepNumber, stepTokens, cacheWriteTokensFallback) => {
-      const soFar = usageTokenTotals(usage);
       const stepCacheWriteTokens =
         stepTokens.cacheWriteTokens || cacheWriteTokensFallback;
       cacheWriteTokens += stepCacheWriteTokens;
-      usage = {
-        inputTokens: soFar.inputTokens + stepTokens.inputTokens,
-        inputTokenDetails: {
-          noCacheTokens: undefined,
-          cacheReadTokens:
-            soFar.cachedInputTokens + stepTokens.cachedInputTokens,
-          cacheWriteTokens:
-            soFar.cacheWriteTokens + stepTokens.cacheWriteTokens,
-        },
-        outputTokens: soFar.outputTokens + stepTokens.outputTokens,
-        outputTokenDetails: {
-          textTokens: undefined,
-          reasoningTokens: soFar.reasoningTokens + stepTokens.reasoningTokens,
-        },
-        totalTokens: soFar.totalTokens + stepTokens.totalTokens,
-      };
+      fold(stepTokens);
       steps = stepNumber + 1;
 
       return stepCacheWriteTokens;
+    },
+    addCompaction: (tokens) => {
+      cacheWriteTokens += tokens.cacheWriteTokens;
+      fold(tokens);
     },
     finish: (turnUsage, stepCount) => {
       if (

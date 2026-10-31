@@ -20,6 +20,7 @@ import type {
   AgentLoopOptions,
   AgentLoopStream,
 } from "../src/harness/harness.ts";
+import type { CompactionResult } from "../src/harness/compaction.ts";
 import { pruneSessionMessages } from "../src/harness/pruning.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
@@ -3265,12 +3266,27 @@ describe("runAgentLoop", () => {
 });
 
 describe("auto-compaction after a turn", () => {
+  const compaction: CompactionResult = {
+    messageCount: 4,
+    modelCalls: 1,
+    modelProvider: "google",
+    modelId: "gemini-test",
+    usage: {
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 5,
+      totalTokens: 120,
+    },
+  };
+
   // Runs a turn on the real SDK loop with a session that records, in order,
   // every final reply and auto-compaction the harness asks for.
   async function runCompactingTurn(options: {
     scenario: "real-two-step" | "approval-request" | "context-overflow";
     autoCompaction: { enabled?: boolean; maxContextLength?: number };
-    compactConversation?: () => Promise<number>;
+    compactConversation?: () => Promise<CompactionResult | null>;
   }): Promise<{ stream: AgentLoopStream; order: string[] }> {
     installHarnessEnv();
     streamTextScenario = options.scenario;
@@ -3298,10 +3314,10 @@ describe("auto-compaction after a turn", () => {
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
         }),
-        compactConversation: async (): Promise<number> => {
+        compactConversation: async (): Promise<CompactionResult | null> => {
           order.push("compact");
 
-          return (options.compactConversation ?? (async () => 4))();
+          return (options.compactConversation ?? (async () => compaction))();
         },
       } as never,
       {
@@ -3341,6 +3357,29 @@ describe("auto-compaction after a turn", () => {
 
     expect(stream.didFail()).toBe(false);
     expect(order).toEqual(["final", "compact"]);
+  });
+
+  it("counts the summary's tokens in the run's usage row", async (): Promise<void> => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 11 },
+    });
+    await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+    });
+    const [plain, compacted] = writes;
+
+    expect(writes).toHaveLength(2);
+    expect(compacted).toMatchObject({
+      inputTokens: plain!.inputTokens + 100,
+      outputTokens: plain!.outputTokens + 20,
+      cacheWriteTokens: plain!.cacheWriteTokens + 5,
+      totalTokens: plain!.totalTokens + 120,
+      stepCount: plain!.stepCount,
+    });
   });
 
   it("does not compact below the threshold or when turned off", async () => {

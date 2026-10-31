@@ -96,6 +96,7 @@ import {
 import {
   readAgentFullStream,
   recordFailedTurn,
+  runCompactCommand,
   type ToolApprovalSummary,
 } from "./harness.ts";
 import {
@@ -3132,7 +3133,7 @@ async function commandOutcome(
       eventId: session.eventId,
       text: command.text,
       compact: (instructions: string): Promise<number> =>
-        session.compactConversation(instructions),
+        runCompactCommand(session, command.text, instructions),
     });
     const reply = result?.reply ?? "";
     if (send) {

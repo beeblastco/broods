@@ -73,6 +73,7 @@ import {
 import { useModelRates } from "@/app/hooks/useModelRates";
 import {
   formatUsd,
+  isModelCallSpan,
   modelKey,
   runModel,
   stepTokens,
@@ -1262,7 +1263,7 @@ export function taskCosts(
     );
     let cost: TaskCost | null | undefined;
     for (const step of group.spans) {
-      if (step.kind !== "model.step") continue;
+      if (!isModelCallSpan(step)) continue;
       const model = runModels.get(step.traceId);
       const rate = model ? rateByModel.get(modelKey(model)) : undefined;
       if (!rate && loading) continue;
@@ -2489,27 +2490,40 @@ function SpanDetails({
 
 /** A context prepare, cold start or wait: its name, the messages it loaded, the questions it asked. */
 function PhaseLine({
+  cost,
   isOpen,
   onToggle,
   span,
 }: {
+  cost: string | undefined;
   isOpen: boolean;
   onToggle: () => void;
   span: ObservabilitySpanRow;
 }): React.JSX.Element {
   const name = spanLabel(span);
   const Icon = span.name === WAIT_SPAN_NAME ? MessageCircleQuestionMark : Zap;
-  const historyRows = numericAttribute(span, "prepare.history_rows");
+  // The history a prepare read, or the messages a compaction folded.
+  const messages =
+    numericAttribute(span, "prepare.history_rows") ??
+    numericAttribute(span, "compaction.message_count");
+  // Only a phase that called the model, like a compaction, has tokens and a price.
+  const tokens = numericAttribute(span, "model.total_tokens");
   const line = (
     <TraceLine size="xs">
       <TraceIcon>
         <Icon />
       </TraceIcon>
       <TraceTitle>{name}</TraceTitle>
-      {historyRows !== undefined && (
+      {messages !== undefined && (
         <TraceDescription>
-          {historyRows.toLocaleString()} messages
+          {messages.toLocaleString()} messages
         </TraceDescription>
+      )}
+      {cost !== undefined && tokens !== undefined && (
+        <TraceDescription>{cost}</TraceDescription>
+      )}
+      {tokens !== undefined && (
+        <TraceDescription>{formatNumber(tokens)} tok</TraceDescription>
       )}
     </TraceLine>
   );
@@ -2561,7 +2575,9 @@ function SpanLine({
     return <ToolLine isOpen={isOpen} onToggle={onToggle} span={span} />;
   }
   if (span.kind === "phase") {
-    return <PhaseLine isOpen={isOpen} onToggle={onToggle} span={span} />;
+    return (
+      <PhaseLine cost={cost} isOpen={isOpen} onToggle={onToggle} span={span} />
+    );
   }
 
   return (

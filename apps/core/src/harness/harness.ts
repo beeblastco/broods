@@ -72,6 +72,7 @@ import {
   mintSpanId,
   mintTraceId,
   observabilityAttributes,
+  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
@@ -105,7 +106,11 @@ import {
   occupySandbox,
 } from "./sandbox/live-status.ts";
 import { configString } from "./sandbox/utils.ts";
-import { shouldAutoCompact } from "./compaction.ts";
+import {
+  type CompactionResult,
+  compactionSpanAttributes,
+  shouldAutoCompact,
+} from "./compaction.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
@@ -371,14 +376,7 @@ export async function runAgentLoop(
   // span row and Tempo span. A noop tracer (OTel not initialised) has all-zero
   // ids, so the live NATS path falls back to freshly minted ones.
   const runStartedAt = Date.now();
-  const observabilityScope = {
-    accountId: session.accountId ?? "",
-    project: session.projectSlug ?? "",
-    stage: session.stageSlug ?? "",
-    endpointId: session.endpointId ?? "",
-    agentId: session.agentId ?? "",
-    conversationKey: session.conversationKey,
-  };
+  const observabilityScope = sessionObservabilityScope(session);
   const resolvedWorkspaces = session.resolvedWorkspaces();
   const sandboxes = session.sandboxes();
   // A subagent run is its own top-level trace (kind "subtask"), a scheduler run
@@ -734,7 +732,7 @@ export async function runAgentLoop(
       return;
     }
     const startedMs = Date.now();
-    let compacted = 0;
+    let compacted: CompactionResult | null = null;
     try {
       compacted = await session.compactConversation("");
     } catch (err) {
@@ -743,9 +741,10 @@ export async function runAgentLoop(
         error: errorMessage(err),
       });
     }
-    if (compacted > 0) {
+    if (compacted) {
+      taskTotals.addCompaction(compacted.usage);
       spans.phase("phase.compaction", "Compaction", startedMs, Date.now(), {
-        "compaction.message_count": compacted,
+        ...compactionSpanAttributes(compacted),
         "compaction.input_tokens": lastInputTokens ?? 0,
       });
     }
@@ -1796,14 +1795,7 @@ export function recordFailedTurn(
 ): void {
   const context = getObservabilityContext();
   const traceId = context?.traceId ?? mintTraceId();
-  const scope = {
-    accountId: session.accountId ?? "",
-    project: session.projectSlug ?? "",
-    stage: session.stageSlug ?? "",
-    endpointId: session.endpointId ?? "",
-    agentId: session.agentId ?? "",
-    conversationKey: session.conversationKey,
-  };
+  const scope = sessionObservabilityScope(session);
   const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
   const name = `agent.${kind}`;
   const message = redactSensitiveText(
@@ -1845,6 +1837,53 @@ export function recordFailedTurn(
     attributes: { "task.state": "failed" },
     error: message,
   });
+}
+
+/**
+ * Runs /compact, which never enters runAgentLoop, and records it as the task
+ * it is: a root span with its compaction phase and a usage row, so Tracing and
+ * the Usage tab count what the summary cost. Nothing to fold calls no model
+ * and records nothing; a failed summary records a failed turn. Returns how
+ * many messages were folded.
+ */
+export function runCompactCommand(
+  session: Session,
+  input: string,
+  instructions: string,
+): Promise<number> {
+  const parent = getObservabilityContext();
+  const traceId = parent?.traceId ?? mintTraceId();
+  // Rooted on the trace id the command's log lines already carry, and routed
+  // to its deployment even on a direct run, which sets no scope of its own.
+  const otelContext = otelTraceApi.setSpanContext(otelContextApi.active(), {
+    traceId: traceId,
+    spanId: mintSpanId(),
+    traceFlags: TraceFlags.SAMPLED,
+  });
+
+  return runWithObservabilityScope(
+    async (): Promise<number> => {
+      const startedAt = Date.now();
+      let result: CompactionResult | null;
+      try {
+        result = await session.compactConversation(instructions);
+      } catch (err) {
+        recordFailedTurn(session, startedAt, err);
+        throw err;
+      }
+      if (result) {
+        await recordCompactionTask(session, input, startedAt, result);
+      }
+
+      return result?.messageCount ?? 0;
+    },
+    {
+      ...sessionObservabilityScope(session),
+      traceId: traceId,
+      otelContext: otelContext,
+      secretValues: parent?.secretValues ?? [],
+    },
+  );
 }
 
 // Tracing labels a run with this and its search matches on it. Only text parts
@@ -2563,5 +2602,109 @@ function toolOutputWithoutMediaBytes(
           }
         : part,
     ),
+  };
+}
+
+// A /compact's root span, its compaction phase and its usage row, settled by
+// the same finalizer as a model run so both read alike in Tracing and Usage.
+function recordCompactionTask(
+  session: Session,
+  input: string,
+  startedAt: number,
+  result: CompactionResult,
+): Promise<void> {
+  const context = getObservabilityContext();
+  const scope = sessionObservabilityScope(session);
+  const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
+  const name = `agent.${kind}`;
+  const tracer = getTracer();
+  const rootSpan = tracer.startSpan(
+    name,
+    { startTime: startedAt, attributes: observabilityAttributes(scope) },
+    context?.otelContext,
+  );
+  const ids = rootSpan.spanContext();
+  const traceId = /[^0]/.test(ids.traceId)
+    ? ids.traceId
+    : (context?.traceId ?? mintTraceId());
+  const rootSpanId = /[^0]/.test(ids.spanId) ? ids.spanId : mintSpanId();
+  const serialize = (value: unknown): string =>
+    redactSerialized(
+      value,
+      context?.secretValues ?? [],
+      MAX_TRACE_ATTRIBUTE_CHARS,
+    );
+  const taskInput = serialize(input).slice(0, MAX_TASK_INPUT_CHARS);
+  const spans = createRunSpanTracker({
+    tracer: tracer,
+    scope: scope,
+    traceId: traceId,
+    rootSpanId: rootSpanId,
+    rootOtelContext: otelTraceApi.setSpan(
+      context?.otelContext ?? otelContextApi.active(),
+      rootSpan,
+    ),
+    session: {
+      endpointId: session.endpointId,
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+    },
+    publish: publishSpan,
+  });
+  const endMs = Date.now();
+  spans.phase(
+    "phase.compaction",
+    "Compaction",
+    startedAt,
+    endMs,
+    compactionSpanAttributes(result),
+  );
+  const taskTotals = createTaskTotals();
+  taskTotals.addCompaction(result.usage);
+
+  return createRunFinalizer({
+    session: session,
+    root: {
+      span: rootSpan,
+      traceId: traceId,
+      spanId: rootSpanId,
+      name: name,
+      kind: kind,
+      startTimeMs: startedAt,
+    },
+    rootAttributes: (): Record<string, string> => ({
+      "task.id": session.eventId,
+      "task.delivery": session.delivery?.kind ?? "direct",
+      "task.input": taskInput,
+      "model.provider": result.modelProvider,
+      "model.id": result.modelId,
+    }),
+    modelProvider: result.modelProvider,
+    modelId: result.modelId,
+    taskInput: taskInput,
+    serialize: serialize,
+    spans: spans,
+    stepTiming: createStepTimingTracker(serialize),
+    taskTotals: taskTotals,
+    sandboxCpu: createSandboxCpuLedger(),
+    openWork: (): Promise<RunOpenWork> => Promise.resolve({ questions: [] }),
+    publish: publishSpan,
+    recordUsage: recordTaskUsage,
+    release: (): void => {},
+    restoreObservabilityContext: (): void => {},
+  }).finalize("completed", 0, endMs - startedAt);
+}
+
+// The deployment a session's spans and log lines route to.
+function sessionObservabilityScope(
+  session: Session,
+): Parameters<typeof observabilityAttributes>[0] {
+  return {
+    accountId: session.accountId ?? "",
+    project: session.projectSlug ?? "",
+    stage: session.stageSlug ?? "",
+    endpointId: session.endpointId ?? "",
+    agentId: session.agentId ?? "",
+    conversationKey: session.conversationKey,
   };
 }

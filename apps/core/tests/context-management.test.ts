@@ -28,9 +28,11 @@ const googleModelMock = mock((modelId: string) => ({
   modelId: modelId,
 }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
+const SUMMARY_USAGE = { inputTokens: 30, outputTokens: 6, totalTokens: 36 };
 const generateTextMock = mock(
   async (_options: { messages: Array<{ content: string }> }) => ({
     text: "Earlier context summary.",
+    usage: SUMMARY_USAGE,
   }),
 );
 const readS3TextMock = mock(
@@ -1350,7 +1352,18 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(3);
+      expect(await session.compactConversation("")).toEqual({
+        messageCount: 3,
+        modelCalls: 1,
+        modelProvider: "google",
+        modelId: "gemini-test",
+        usage: {
+          ...SUMMARY_USAGE,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      });
       expect(generateTextMock).toHaveBeenCalledTimes(1);
       expect(writes).toContain("appendConversationEvent");
     } finally {
@@ -1370,7 +1383,7 @@ describe("auto-compaction after a turn", () => {
       persist: false,
     });
 
-    expect(await ephemeral.compactConversation("")).toBe(0);
+    expect(await ephemeral.compactConversation("")).toBeNull();
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
@@ -1393,7 +1406,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(0);
+      expect(await session.compactConversation("")).toBeNull();
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();
@@ -1455,7 +1468,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(0);
+      expect(await session.compactConversation("")).toBeNull();
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();
@@ -1478,7 +1491,7 @@ describe("conversation summary", () => {
       agentConfig: compactingAgentConfig,
     });
 
-    expect(isCompactionSummaryMessage(result!)).toBe(true);
+    expect(isCompactionSummaryMessage(result!.message)).toBe(true);
     expect(createGoogleMock).toHaveBeenCalledWith({
       apiKey: "google-key",
       fetch: expect.any(Function),
@@ -1507,7 +1520,7 @@ describe("conversation summary", () => {
     });
 
     expect(result).toBeDefined();
-    expect(isCompactionSummaryMessage(result!)).toBe(true);
+    expect(isCompactionSummaryMessage(result!.message)).toBe(true);
     const options = generateTextMock.mock.calls[0]?.[0] as
       | { messages: Array<{ content: string }> }
       | undefined;
@@ -1563,7 +1576,10 @@ describe("conversation summary", () => {
           content.includes("newest-context") ? "[newest]" : "",
         ].join("");
 
-        return { text: `summary of ${content.length} characters ${covers}` };
+        return {
+          text: `summary of ${content.length} characters ${covers}`,
+          usage: SUMMARY_USAGE,
+        };
       },
     );
 
@@ -1600,7 +1616,15 @@ describe("conversation summary", () => {
           request.endsWith("keep the deploy decisions"),
         ),
       ).toBe(true);
-      expect(summary?.content).toContain("summary of");
+      expect(summary?.message.content).toContain("summary of");
+      // Every answered summary call is metered; a refused one is not.
+      const answered = requests.filter(
+        (request) => request.length <= 25_000,
+      ).length;
+      expect(summary?.modelCalls).toBe(answered);
+      expect(summary?.usage.totalTokens).toBe(
+        answered * SUMMARY_USAGE.totalTokens,
+      );
       // The older half's summary is labelled older, the newer half's newer.
       const merge = requests.find((request) =>
         request.startsWith("Older part:"),
@@ -1612,6 +1636,7 @@ describe("conversation summary", () => {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
@@ -1633,7 +1658,7 @@ describe("conversation summary", () => {
           });
         }
 
-        return { text: "half" };
+        return { text: "half", usage: SUMMARY_USAGE };
       },
     );
 
@@ -1653,6 +1678,7 @@ describe("conversation summary", () => {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
@@ -1687,6 +1713,7 @@ describe("conversation summary", () => {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
