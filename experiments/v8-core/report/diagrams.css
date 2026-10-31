@@ -322,3 +322,7 @@ pre.code {
   margin: 0;
   line-height: 1.6;
 }
+td .short {
+  color: var(--bad);
+  font-weight: 600;
+}

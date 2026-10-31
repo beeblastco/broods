@@ -52,13 +52,33 @@ ARMS = [
     ("isolate+v8", "Fresh isolate, all of core", "per-task router, 20.7 MB bundle, V8 sandbox"),
     ("isolate+v8-slim", "Fresh isolate, slim core", "per-task router, 2.9 MB bundle, V8 sandbox"),
 ]
-scripted = [r for r in rows("slim-d0.jsonl") if r.get("kind") == "batch"]
-audits = [r for r in rows("slim-d0.jsonl") if r.get("kind") == "audit"]
+main_rows = rows("slim-d0.jsonl")
+control_rows = rows("slim-d0-control.jsonl")
+scripted = [r for r in main_rows if r.get("kind") == "batch"]
+control = [r for r in control_rows if r.get("kind") == "batch"]
+audits = [r for r in main_rows + control_rows if r.get("kind") == "audit"]
+
+
+def audit_by_batch(all_rows):
+    """Each audit row follows its batch; pair them as (label, level) -> [written, expected]."""
+    out, last = {}, None
+    for r in all_rows:
+        if r.get("kind") == "batch":
+            last = (r["label"], r["level"])
+        elif r.get("kind") == "audit" and last:
+            got = out.setdefault(last, [0, 0])
+            got[0] += r["runsCompleted"]
+            got[1] += 3 * r["tasksStarted"]
+    return out
+
+
+AUDIT = audit_by_batch(main_rows)
+AUDIT_CONTROL = audit_by_batch(control_rows)
 LEVELS = sorted({r["level"] for r in scripted})
 
 
-def arm_level(label, level):
-    return [r for r in scripted if r["label"] == label and r["level"] == level]
+def arm_level(label, level, source=None):
+    return [r for r in (scripted if source is None else source) if r["label"] == label and r["level"] == level]
 
 
 def mean(values):
@@ -66,8 +86,8 @@ def mean(values):
     return statistics.fmean(values) if values else NAN
 
 
-def stat(label, level, key):
-    got = arm_level(label, level)
+def stat(label, level, key, source=None):
+    got = arm_level(label, level, source)
     if not got:
         return NAN
     if key == "tpm":
@@ -355,28 +375,37 @@ def table(head, body, cls=""):
     return f'<div class="tw"><table class="{cls}"><thead><tr>{th}</tr></thead><tbody>{tr}</tbody></table></div>'
 
 
-def scripted_table():
+def scripted_table(arms, source, audit):
     body = []
-    for label, name, detail in ARMS:
-        for level in LEVELS:
-            if not arm_level(label, level):
-                continue
-            ok = stat(label, level, "ok")
+    for label, name, detail in arms:
+        levels = sorted({r["level"] for r in source if r["label"] == label})
+        for level in levels:
+            ok = stat(label, level, "ok", source)
+            written = audit.get((label, level), [NAN, NAN])
+            short = written[0] < written[1]
             body.append([
-                f"<strong>{esc(name)}</strong><span class=sub>{esc(detail)}</span>" if level == LEVELS[0] else "",
+                f"<strong>{esc(name)}</strong><span class=sub>{esc(detail)}</span>" if level == levels[0] else "",
                 str(level),
-                num(stat(label, level, "tpm")),
-                num(stat(label, level, "exMcpP50") / 1000, 1),
-                num(stat(label, level, "cpu")),
-                num(stat(label, level, "mem")),
+                num(stat(label, level, "tpm", source)),
+                num(stat(label, level, "exMcpP50", source) / 1000, 1),
+                num(stat(label, level, "cpu", source)),
+                num(mean([r["sandboxCpuMs"] / r["level"] for r in arm_level(label, level, source)])),
+                num(stat(label, level, "mem", source)),
                 f"{ok[0]}/{ok[1]}",
+                f'<span class="{"short" if short else ""}">{written[0]}/{written[1]}</span>',
             ])
     return table(
         ["Setup", "Users at once", "Tasks per minute", "Task time without MCP, s", "Core CPU per task, ms",
-         "Core memory per task in flight, MB", "Passed"],
+         "Sandbox CPU per task, ms", "Core memory per task in flight, MB", "Passed", "Usage rows written"],
         body,
         "num",
     )
+
+
+CONTROL_ARMS = [
+    ("bun+v8", "Bun core, V8 sandbox", "long-lived core, same sandbox as the isolates"),
+    ("isolate+v8-slim", "Fresh isolate, slim core", "per-task router, 2.9 MB bundle, V8 sandbox"),
+]
 
 
 def real_table():
@@ -509,7 +538,7 @@ page = f"""<title>Broods task isolates</title>
 <h2>Measured</h2>
 <h3>Many users, scripted model</h3>
 <p>The model answers instantly from a script with the same tool calls, so this shows the platform's own cost. Each setup ran {len(arm_level("isolate+v8-slim", top_level))} rounds per level, taking turns. Today uses a machine sandbox; the isolates use the V8 sandbox, which is slower on CPU.</p>
-{scripted_table()}
+{scripted_table(ARMS, scripted, AUDIT)}
 <h3>Real model: Haiku 5.5, high effort</h3>
 {real_table()}
 <p>Across all {REAL_TASKS} real-model tasks so far, {num(MODEL_SHARE * 100)}% of the time was spent waiting on the model, and the tokens cost about US${num(USD_PER_TASK * 1e6)} per million tasks.</p>
