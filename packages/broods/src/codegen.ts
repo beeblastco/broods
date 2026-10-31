@@ -140,7 +140,7 @@ function apiFile(
     `import type { ResourceApi } from "broods";\n` +
     `import { ids } from "./ids";\n\n` +
     `/** Typed references for resources defined in broods/. */\n` +
-    `export const api = {\n` +
+    `export const api = resourceApi({\n` +
     `  agents: {\n${agentEntries}\n  },\n` +
     `  channels: {\n${channelEntries}\n  },\n` +
     `  workspaces: ${aliasedIdMap("workspaces", ids.workspaces, aliases.workspace)},\n` +
@@ -151,7 +151,12 @@ function apiFile(
     (endpoint?.projectId && endpoint.stageId
       ? `  stage: { projectId: ${JSON.stringify(endpoint.projectId)}, stageId: ${JSON.stringify(endpoint.stageId)} },\n`
       : "") +
-    `} as const satisfies ResourceApi;\n`
+    `} as const);\n\n` +
+    `/** Fails the build when generated output drifts from the SDK's contract,\n` +
+    ` * keeping the exact resource keys an annotation would widen. */\n` +
+    `function resourceApi<T extends ResourceApi>(resources: T): T {\n` +
+    `  return resources;\n` +
+    `}\n`
   );
 }
 

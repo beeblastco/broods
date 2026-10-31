@@ -173,7 +173,11 @@ function admit(
     idempotencyKey: eventId,
     payloadDigest: `digest:${eventId}`,
     events: USER_TURN,
-    delivery: { kind: "http" },
+    delivery: {
+      kind: "http",
+      publicEventId: eventId,
+      publicConversationKey: conversationKey,
+    },
     requestedMode: "followup",
     sizeBytes: 128,
     leaseTtlMs: leaseTtlMs,

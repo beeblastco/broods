@@ -40,7 +40,7 @@ export interface EdgeRouter {
   name: string;
   upstream: Upstream;
   limit: Limit;
-  /** The path itself is a credential, so the access log skips this router. */
+  /** The path or query carries a credential, so the access log skips this router. */
   secretPath?: true;
   rules: readonly EdgeRule[];
 }
@@ -107,15 +107,19 @@ export const ROUTERS: readonly EdgeRouter[] = [
       { path: `/v1/crons/${SEGMENT}/runs` },
     ],
   },
-  // Channel providers post from shared egress addresses, so no per-address limit.
+  // Channel providers post from shared egress addresses, so no per-address
+  // limit. Pancake signs nothing and carries its webhook secret as a `?secret=`
+  // query parameter, and the access log records the full URI, so the router is
+  // unlogged like the other credential-bearing URLs.
   {
     name: "webhooks",
     upstream: "core",
     limit: "none",
+    secretPath: true,
     rules: [{ path: "/v1/webhooks/.*[^/]" }],
   },
-  // A media link never expires and its ticket is the path. Channel providers
-  // fetch it from shared egress addresses, like webhooks.
+  // A media link's sealed ticket is the path and carries its own expiry.
+  // Channel providers fetch it from shared egress addresses, like webhooks.
   {
     name: "media",
     upstream: "core",

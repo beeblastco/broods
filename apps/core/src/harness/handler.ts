@@ -11,6 +11,7 @@ import type {
   ToolSet,
   UserModelMessage,
 } from "ai";
+import { stripUndefined } from "@broods/convex/model/objects";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
 import {
   extractText,
@@ -2174,49 +2175,38 @@ async function handleStatusRequest(
       (asyncResult.status === "processing" && result.status !== "failed"))
       ? asyncResult.status
       : result.status;
-  const conversationKey = result.conversationKey;
 
-  return jsonResponse(200, {
-    runId: event.runId,
-    eventId: event.publicEventId,
-    agentId: event.agentId,
-    conversationKey: eventPublicConversationKey(
-      conversationKey,
-      event.accountId,
-      event.agentId,
-    ),
-    status: status,
-    ...(result?.requestedMode !== undefined
-      ? { requestedMode: result.requestedMode }
-      : {}),
-    ...(result?.appliedMode !== undefined
-      ? { appliedMode: result.appliedMode }
-      : {}),
-    ...(result?.appliedToEventId !== undefined
-      ? {
-          appliedToEventId: publicEventIdForScope(
-            result.appliedToEventId,
-            event.accountId,
-            event.agentId,
-            event.publicEventId,
-          ),
-        }
-      : {}),
-    ...(result?.result !== undefined ? { result: result.result } : {}),
-    ...(result?.stoppedByUser ? { stoppedByUser: true } : {}),
-    ...(asyncResult?.response !== undefined
-      ? { response: asyncResult.response }
-      : {}),
-    ...(asyncResult?.approvals !== undefined
-      ? { approvals: asyncResult.approvals }
-      : {}),
-    ...(asyncResult?.questions !== undefined
-      ? { questions: asyncResult.questions }
-      : {}),
-    ...((result?.error ?? asyncResult?.error)
-      ? { error: result?.error ?? asyncResult?.error }
-      : {}),
-  });
+  return jsonResponse(
+    200,
+    stripUndefined({
+      runId: event.runId,
+      eventId: event.publicEventId,
+      agentId: event.agentId,
+      conversationKey: eventPublicConversationKey(
+        result.conversationKey,
+        event.accountId,
+        event.agentId,
+      ),
+      status: status,
+      requestedMode: result.requestedMode,
+      appliedMode: result.appliedMode,
+      appliedToEventId:
+        result.appliedToEventId !== undefined
+          ? publicEventIdForScope(
+              result.appliedToEventId,
+              event.accountId,
+              event.agentId,
+              event.publicEventId,
+            )
+          : undefined,
+      result: result.result,
+      stoppedByUser: result.stoppedByUser ? true : undefined,
+      response: asyncResult?.response,
+      approvals: asyncResult?.approvals,
+      questions: asyncResult?.questions,
+      error: (result.error ?? asyncResult?.error) || undefined,
+    }),
+  );
 }
 
 /** Appends a direct run's input and builds its turn context; settles and drains on failure. */
@@ -2409,10 +2399,11 @@ async function pushReplyToChannel(
 }
 
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
+  const invocation: AsyncWorkerInvocation = {
     kind: "direct-api-async-worker",
     event: event,
-  } satisfies AsyncWorkerInvocation);
+  };
+  await invokeHarnessWorker(invocation);
 }
 
 /** Runs a continuation on the worker kind its original request came in on. */
@@ -2447,10 +2438,11 @@ function onSocket(
 }
 
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
+  const invocation: NatsWorkerInvocation = {
     kind: "nats-worker",
     event: event,
-  } satisfies NatsWorkerInvocation);
+  };
+  await invokeHarnessWorker(invocation);
 }
 
 /**

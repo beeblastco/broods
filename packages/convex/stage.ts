@@ -551,9 +551,7 @@ export async function duplicateStageContents(
     )
     .unique();
   if (sourceLayout) {
-    const remappedNodes = (
-      sourceLayout.nodes as Array<Record<string, unknown>>
-    ).map((node) => {
+    const remappedNodes = sourceLayout.nodes.map((node) => {
       const data = asRecord(node.data);
       const oldConfigId = data.agentConfigId as Id<"agentConfigs"> | undefined;
       const newConfigId = oldConfigId

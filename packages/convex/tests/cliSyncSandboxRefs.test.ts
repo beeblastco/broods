@@ -5,7 +5,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { CanvasEdge, CanvasNode } from "../canvas";
+import type { CanvasEdge, CanvasNode } from "../model/canvasShapes";
 import { accountCipher } from "../model/accountKeys";
 import {
   assertBrowserSandboxes,

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import type { InboundMessage } from "../src/shared/channels.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
+import { discordForwarderToken } from "../src/shared/discord-wire.ts";
 
 const TEST_DISCORD_PUBLIC_KEY = "0".repeat(64);
 
@@ -431,25 +432,85 @@ describe("discord channel adapter", () => {
     expect(parsed.kind).toBe("ignore");
   });
 
-  it("authenticates gateway-forwarded events with the SDK gateway token header", async () => {
+  it("authenticates gateway-forwarded events with the derived forwarder credential", async () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
       null,
       null,
     );
+    const request = createGatewayRequest({
+      type: "GATEWAY_MESSAGE_CREATE",
+      data: {},
+    });
 
-    expect(
-      await adapter.authenticate(
-        createGatewayRequest({ type: "GATEWAY_MESSAGE_CREATE", data: {} }),
-      ),
-    ).toBe(true);
+    expect(discordForwarderToken("bot-token")).not.toBe("bot-token");
+    expect(await adapter.authenticate(request)).toBe(true);
     expect(
       await adapter.authenticate({
-        ...createGatewayRequest({ type: "GATEWAY_MESSAGE_CREATE", data: {} }),
+        ...request,
         headers: { "x-discord-gateway-token": "wrong-token" },
       }),
     ).toBe(false);
+  });
+
+  // The forwarder credential skips Discord's signature check, so it must only
+  // carry forwarded gateway events: an interaction body riding it would run
+  // slash commands unsigned.
+  it("refuses an interaction payload on the forwarder credential", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["channel-1"]),
+      null,
+    );
+
+    const parsed = await adapter.parse(
+      createGatewayRequest({
+        id: "interaction-9",
+        type: 2,
+        token: "token-9",
+        application_id: "app-1",
+        guild_id: "guild-1",
+        channel_id: "channel-1",
+        data: { name: "new" },
+        member: { user: { id: "user-1" } },
+      }),
+    );
+
+    if (parsed.kind !== "response") {
+      throw new Error("Expected the interaction to be refused");
+    }
+    expect(parsed.response.body).toContain("Unsupported interaction.");
+  });
+
+  it("still accepts the raw bot token and warns about the deprecation", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+      null,
+    );
+    const request = {
+      ...createGatewayRequest({ type: "GATEWAY_MESSAGE_CREATE", data: {} }),
+      headers: { "x-discord-gateway-token": "bot-token" },
+    };
+
+    const lines: string[] = [];
+    const write = spyOn(process.stdout, "write").mockImplementation(
+      (chunk): boolean => {
+        lines.push(String(chunk));
+
+        return true;
+      },
+    );
+    try {
+      expect(await adapter.authenticate(request)).toBe(true);
+    } finally {
+      write.mockRestore();
+    }
+
+    expect(lines.join("")).toContain("raw bot token");
   });
 
   it("accepts an upload with no message text and carries it as an attachment", async () => {
@@ -613,7 +674,8 @@ function createGatewayRequest(payload: Record<string, unknown>): {
     rawPath: "/v1/runs",
     rawQueryString: "",
     headers: {
-      "x-discord-gateway-token": "bot-token",
+      // The wire form the forwarder sends: derived, never the bot token.
+      "x-discord-gateway-token": discordForwarderToken("bot-token"),
     },
     body: JSON.stringify(payload),
   };

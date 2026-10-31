@@ -30,9 +30,11 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bun.lock ./
 COPY packages/convex ./packages/convex
 # Imported by relative path: core's env helpers and Matrix wire contract, and the
-# Discord forwarder's config, connection watch, backoff and log helpers. Rename
-# either core file and this build breaks.
+# Discord forwarder's config, connection watch, backoff and log helpers. Its
+# `forward.ts` pulls core's Discord wire contract too. Rename any core file here
+# and this build breaks.
 COPY apps/core/src/shared/env.ts ./apps/core/src/shared/env.ts
+COPY apps/core/src/shared/discord-wire.ts ./apps/core/src/shared/discord-wire.ts
 COPY apps/core/src/shared/matrix-wire.ts ./apps/core/src/shared/matrix-wire.ts
 COPY apps/discord-forwarder/src ./apps/discord-forwarder/src
 COPY apps/matrix-forwarder ./apps/matrix-forwarder

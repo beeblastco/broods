@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { DEPLOYMENT_REGIONS } from "./cli/types";
+import { canvasEdgeValidator, canvasNodeValidator } from "./model/canvasShapes";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
@@ -154,8 +155,8 @@ export const canvasLayoutsFields = {
   authId: v.string(),
   projectId: v.id("projects"),
   stageId: v.id("stages"),
-  nodes: v.array(v.any()),
-  edges: v.array(v.any()),
+  nodes: v.array(canvasNodeValidator),
+  edges: v.array(canvasEdgeValidator),
   updatedAt: v.number(),
 };
 
@@ -1263,6 +1264,76 @@ export const ingressConfigRefValidator = v.object({
     v.object({ channelName: v.string(), ...channelTargetRefsFields }),
   ),
 });
+/**
+ * Who sent a channel message, in provider-neutral terms: core's
+ * `ChannelIdentity` (apps/core/src/shared/channels.ts).
+ */
+export const channelIdentityValidator = v.object({
+  workspaceRef: v.optional(v.string()),
+  channelId: v.optional(v.string()),
+  threadId: v.optional(v.string()),
+  userId: v.optional(v.string()),
+  userName: v.optional(v.string()),
+  userRoles: v.optional(v.array(v.string())),
+});
+/**
+ * One ephemeral system instruction stored on an envelope: the AI SDK's
+ * `SystemModelMessage`. Every core producer parses the message with the SDK's
+ * own `systemModelMessageSchema` (or builds it literally) before it is stored.
+ */
+export const systemModelMessageValidator = v.object({
+  role: v.literal("system"),
+  content: v.string(),
+  providerOptions: v.optional(
+    v.record(v.string(), v.record(v.string(), v.any())),
+  ),
+});
+/** The public deployment scope a run was addressed through, for status URLs. */
+export const publicDeploymentIngressValidator = v.object({
+  accountId: v.string(),
+  endpointId: v.string(),
+  stageSlug: v.string(),
+  projectSlug: v.string(),
+});
+/** Where an envelope's run answers once dispatched: core's `IngressDelivery`. */
+export const ingressDeliveryValidator = v.union(
+  v.object({
+    kind: v.literal("http"),
+    publicEventId: v.string(),
+    publicConversationKey: v.string(),
+    statusUrl: v.optional(v.string()),
+    publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
+    /** The user token's end user, so a queued turn keeps who it runs for. */
+    endUser: v.optional(v.object({ userId: v.string() })),
+  }),
+  v.object({
+    kind: v.literal("async"),
+    publicEventId: v.string(),
+    publicConversationKey: v.string(),
+    statusUrl: v.string(),
+    publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
+    /** The user token's end user, so a queued turn keeps who it runs for. */
+    endUser: v.optional(v.object({ userId: v.string() })),
+  }),
+  v.object({
+    kind: v.literal("websocket"),
+    publicEventId: v.string(),
+    publicConversationKey: v.string(),
+    connectionId: v.string(),
+    statusUrl: v.optional(v.string()),
+    publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
+    /** The user token's end user, so a queued turn keeps who it runs for. */
+    endUser: v.optional(v.object({ userId: v.string() })),
+  }),
+  v.object({
+    kind: v.literal("channel"),
+    channel: v.string(),
+    /** Who sent the message, so a queued turn runs as its own sender. */
+    identity: v.optional(channelIdentityValidator),
+    /** Opaque reply routing (interaction tokens, response URLs); never typed. */
+    source: v.optional(v.record(v.string(), v.any())),
+  }),
+);
 
 /** One accepted transport-neutral ingress item in the conversation FIFO. */
 export const runtimeIngressEnvelopesFields = {
@@ -1281,14 +1352,14 @@ export const runtimeIngressEnvelopesFields = {
   idempotencyKey: v.string(),
   payloadDigest: v.string(),
   events: v.array(v.any()),
-  delivery: v.any(),
+  delivery: ingressDeliveryValidator,
   requestedMode: ingressModeValidator,
   ownerTaskId: v.optional(v.string()),
   // Per-request execution context so a queued envelope runs with its own
   // config and one-turn system, never the previous owner's. The config itself
   // is rebuilt from the ref at dispatch; it never sits here with its secrets.
   configRef: v.optional(ingressConfigRefValidator),
-  ephemeralSystem: v.optional(v.array(v.any())),
+  ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
   // The subagent or async tool result row a late resume delivers. A queued
   // resume marks it stored only when it is applied, so one that expires in
   // the queue leaves it for the recovery sweep.
@@ -1334,16 +1405,8 @@ export const asyncToolDeliveryValidator = v.union(
   v.object({
     kind: v.literal("channel"),
     channelName: v.string(),
-    identity: v.optional(
-      v.object({
-        workspaceRef: v.optional(v.string()),
-        channelId: v.optional(v.string()),
-        threadId: v.optional(v.string()),
-        userId: v.optional(v.string()),
-        userName: v.optional(v.string()),
-        userRoles: v.optional(v.array(v.string())),
-      }),
-    ),
+    identity: v.optional(channelIdentityValidator),
+    /** Opaque reply routing (interaction tokens, response URLs); never typed. */
     source: v.record(v.string(), v.any()),
   }),
 );
@@ -1356,6 +1419,37 @@ export const subagentTaskValidator = v.object({
   description: v.optional(v.string()),
   parentConversationKey: v.string(),
   parentDelivery: v.optional(asyncToolDeliveryValidator),
+});
+/**
+ * A tool call waiting on a person's approval, as the polling row lists it:
+ * core's `ToolApprovalSummary`. `input` is the model-generated tool input.
+ */
+export const toolApprovalSummaryValidator = v.object({
+  approvalId: v.string(),
+  toolCallId: v.string(),
+  toolName: v.string(),
+  input: v.any(),
+});
+/**
+ * One open ask_questions prompt while a run is awaiting_input: core's
+ * `PendingQuestionSummary` over its `ChannelQuestion` rows.
+ */
+export const pendingQuestionSummaryValidator = v.object({
+  statusId: v.string(),
+  questions: v.array(
+    v.object({
+      id: v.string(),
+      header: v.string(),
+      question: v.string(),
+      options: v.array(
+        v.object({
+          label: v.string(),
+          description: v.optional(v.string()),
+        }),
+      ),
+    }),
+  ),
+  answerBy: v.string(),
 });
 /** Public async-agent polling and approval state. */
 export const runtimeAsyncAgentResultsFields = {
@@ -1374,8 +1468,11 @@ export const runtimeAsyncAgentResultsFields = {
   ),
   response: v.optional(v.any()),
   error: v.optional(v.string()),
-  approvals: v.optional(v.array(v.any())),
-  // Open ask_questions prompts while status is awaiting_input.
+  approvals: v.optional(v.array(toolApprovalSummaryValidator)),
+  // Open ask_questions prompts while status is awaiting_input. Loose for one
+  // release: rows stored before ask_questions validated its input expire within
+  // 7 days of it shipping, then this narrows to pendingQuestionSummaryValidator.
+  // Writes are already held to it by runtime.ts's outcome args.
   questions: v.optional(v.array(v.any())),
   createdAt: v.string(),
   updatedAt: v.string(),
@@ -1403,7 +1500,7 @@ export const runtimeAsyncToolResultsFields = {
   ),
   response: v.optional(v.any()),
   error: v.optional(v.string()),
-  delivery: v.optional(v.any()),
+  delivery: v.optional(asyncToolDeliveryValidator),
   completionTokenHash: v.optional(v.string()),
   // Set once the row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),

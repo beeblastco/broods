@@ -56,13 +56,11 @@ const COMPUTER_ACTIONS = [
   "zoom",
 ] as const;
 
-/** Actions that only look, so they never need approval. */
-export const COMPUTER_READ_ACTIONS: ReadonlySet<string> = new Set([
-  "cursor_position",
-  "screenshot",
-  "wait",
-  "zoom",
-] as const satisfies readonly (typeof COMPUTER_ACTIONS)[number][]);
+/** Actions that only look, so they never need approval. The Set's element type
+ * holds each entry to a real COMPUTER_ACTIONS member. */
+export const COMPUTER_READ_ACTIONS: ReadonlySet<string> = new Set<
+  (typeof COMPUTER_ACTIONS)[number]
+>(["cursor_position", "screenshot", "wait", "zoom"]);
 
 // The holder's host in an `occupied` reason, cut on a byte boundary: a close reason
 // is capped at 123 bytes, and one cut mid-character reaches the daemon as 1007.
