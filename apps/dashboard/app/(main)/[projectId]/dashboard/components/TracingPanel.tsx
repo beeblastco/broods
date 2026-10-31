@@ -625,7 +625,7 @@ export function TracingPanel({
   // Desktop only: on a phone the list stacks above the trace, so a rail of
   // full-width dot rows saves nothing.
   const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
-  // Unfolded by hand while a span is open, until that span closes.
+  // Unfolded by hand while a span is open, until no span is open.
   const [listKept, setListKept] = useState(false);
   const isMobile = useIsMobile();
   // Whether a request's subagent rows list, where the person chose; with no
@@ -898,6 +898,9 @@ export function TracingPanel({
   const pickTask = useCallback(
     (root: ObservabilitySpanRow): void => {
       setSelectedTaskKey(spanKey(root));
+      // A picked run opens with no span, so returning to a run never
+      // reopens its old detail (and folds the list) under the click.
+      setSelectedKey(null);
       focusedRef.current = `${root.traceId}:${refocusNonce}`;
       void setFocusTraceId(root.traceId, {
         limitUrlUpdates: debounce(200),
