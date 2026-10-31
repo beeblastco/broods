@@ -1663,7 +1663,8 @@ describe("conversation summary", () => {
     );
 
     try {
-      expect(
+      // Both halves were answered, and billed, before the merge was refused.
+      await expect(
         summarizeConversation({
           conversationKey: "conversation",
           priorSummaries: [],
@@ -1673,7 +1674,13 @@ describe("conversation summary", () => {
           ],
           agentConfig: compactingAgentConfig,
         }),
-      ).rejects.toThrow("prompt is too long");
+      ).rejects.toMatchObject({
+        message: expect.stringContaining("prompt is too long"),
+        spent: {
+          modelCalls: 2,
+          usage: { totalTokens: 2 * SUMMARY_USAGE.totalTokens },
+        },
+      });
     } finally {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({

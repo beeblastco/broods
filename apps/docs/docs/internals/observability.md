@@ -181,6 +181,7 @@ Core writes compact JSON lines for metric-bearing events, so CloudWatch Logs Ins
 | `model.invocation.finished`, `.failed` | status, run `durationMs`, total `usage`, step and tool counts, `toolsUsed`, `toolUsage`        |
 | `tool.call.finished`, `.failed`        | `toolName`, `toolCallId`, `durationMs`                                                         |
 | `model.step.warnings`                  | provider warnings                                                                              |
+| `session.compacted`                    | summary `usage` over all its calls, `modelCalls`, messages folded, `durationMs`                |
 
 Common fields: `accountId`, `agentId`, `conversationKey`, `eventId`, `modelProvider`, `modelId`, `stepNumber`, `durationMs`.
 

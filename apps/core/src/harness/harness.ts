@@ -109,6 +109,7 @@ import {
 } from "./sandbox/live-status.ts";
 import { configString } from "./sandbox/utils.ts";
 import {
+  CompactionError,
   type CompactionResult,
   compactionSpanAttributes,
   shouldAutoCompact,
@@ -228,6 +229,9 @@ type ToolCallSummary = {
   durationMs?: number;
   success?: boolean;
 };
+
+/** How a /compact with history to fold ended: its summary, or what stopped it. */
+type CompactionOutcome = { result: CompactionResult } | { error: Error };
 
 /** A run's root OTel span, the ids its live rows reuse, and its child-span tracker. */
 interface RunRoot {
@@ -723,6 +727,10 @@ export async function runAgentLoop(
     try {
       compacted = await session.compactConversation("");
     } catch (err) {
+      // The summary calls that finished before the failure are still billed.
+      if (err instanceof CompactionError) {
+        taskTotals.addCompaction(err.spent.usage);
+      }
       logError("Auto-compaction failed; the turn keeps its full history", {
         ...logContext,
         error: errorMessage(err),
@@ -1825,48 +1833,59 @@ export function recordFailedTurn(
 }
 
 /**
- * Runs /compact, which never enters runAgentLoop, and records it as the task
- * it is: a root span with its compaction phase and a usage row, so Tracing and
- * the Usage tab count what the summary cost. Nothing to fold calls no model
- * and records nothing; a failed summary records a failed turn. Returns how
- * many messages were folded.
+ * Runs /compact, which never enters runAgentLoop, as a run of its own: a
+ * fresh trace whose root holds the compaction phase, and a usage row, so
+ * Tracing and the Usage tab count what the summary cost. Nothing to fold calls
+ * no model and records nothing. Recording is best-effort and never fails the
+ * command. Returns how many messages were folded.
  */
 export function runCompactCommand(
   session: Session,
   input: string,
   instructions: string,
 ): Promise<number> {
-  const parent = getObservabilityContext();
-  const traceId = parent?.traceId ?? mintTraceId();
-  // Rooted on the trace id the command's log lines already carry, and routed
-  // to its deployment even on a direct run, which sets no scope of its own.
-  const otelContext = otelTraceApi.setSpanContext(otelContextApi.active(), {
-    traceId: traceId,
-    spanId: mintSpanId(),
-    traceFlags: TraceFlags.SAMPLED,
-  });
+  const startedAt = Date.now();
+  const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
+  const root = startRunRoot(session, `agent.${kind}`, startedAt);
 
+  // Its own scope, so the command's log lines carry its trace and route to
+  // its deployment even on a direct run, which sets no scope of its own.
   return runWithObservabilityScope(
     async (): Promise<number> => {
-      const startedAt = Date.now();
-      let result: CompactionResult | null;
+      let outcome: CompactionOutcome | undefined;
       try {
-        result = await session.compactConversation(instructions);
+        const result = await session.compactConversation(instructions);
+        outcome = result ? { result: result } : undefined;
       } catch (err) {
-        recordFailedTurn(session, startedAt, err);
-        throw err;
+        outcome = {
+          error: err instanceof Error ? err : new Error(errorMessage(err)),
+        };
       }
-      if (result) {
-        await recordCompactionTask(session, input, startedAt, result);
+      // An unended root is never exported, so a no-op leaves no trace.
+      if (outcome) {
+        await recordCompactionTask(
+          session,
+          input,
+          kind,
+          root,
+          startedAt,
+          outcome,
+        ).catch((err: unknown): void => {
+          logError("Recording the /compact run failed", {
+            conversationKey: session.conversationKey,
+            error: errorMessage(err),
+          });
+        });
       }
+      if (outcome && "error" in outcome) throw outcome.error;
 
-      return result?.messageCount ?? 0;
+      return outcome?.result.messageCount ?? 0;
     },
     {
       ...sessionObservabilityScope(session),
-      traceId: traceId,
-      otelContext: otelContext,
-      secretValues: parent?.secretValues ?? [],
+      traceId: root.traceId,
+      otelContext: root.otelContext,
+      secretValues: getObservabilityContext()?.secretValues ?? [],
     },
   );
 }
@@ -2590,19 +2609,18 @@ function toolOutputWithoutMediaBytes(
   };
 }
 
-// A /compact's root span, its compaction phase and its usage row, settled by
-// the same finalizer as a model run so both read alike in Tracing and Usage.
+// Settles a /compact's root with its compaction phase and usage row through
+// the same finalizer as a model run, so both read alike in Tracing and Usage.
+// A failed summary settles failed, with whatever its finished calls spent.
 function recordCompactionTask(
   session: Session,
   input: string,
+  kind: ObservabilitySpanRow["kind"],
+  root: RunRoot,
   startedAt: number,
-  result: CompactionResult,
+  outcome: CompactionOutcome,
 ): Promise<void> {
   const context = getObservabilityContext();
-  const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
-  const name = `agent.${kind}`;
-  // Under the scope runCompactCommand opened, so the root lands on its trace.
-  const root = startRunRoot(session, name, startedAt, context?.otelContext);
   const serialize = (value: unknown): string =>
     redactSerialized(
       value,
@@ -2611,15 +2629,25 @@ function recordCompactionTask(
     );
   const taskInput = serialize(input).slice(0, MAX_TASK_INPUT_CHARS);
   const endMs = Date.now();
-  root.spans.phase(
-    "phase.compaction",
-    "Compaction",
-    startedAt,
-    endMs,
-    compactionSpanAttributes(result),
-  );
+  const spent =
+    "result" in outcome
+      ? outcome.result
+      : outcome.error instanceof CompactionError
+        ? outcome.error.spent
+        : undefined;
+  if ("result" in outcome) {
+    root.spans.phase(
+      "phase.compaction",
+      "Compaction",
+      startedAt,
+      endMs,
+      compactionSpanAttributes(outcome.result),
+    );
+  }
   const taskTotals = createTaskTotals();
-  taskTotals.addCompaction(result.usage);
+  if (spent) taskTotals.addCompaction(spent.usage);
+  const modelProvider = spent?.modelProvider ?? "unknown";
+  const modelId = spent?.modelId ?? "unknown";
 
   return createRunFinalizer({
     session: session,
@@ -2627,7 +2655,7 @@ function recordCompactionTask(
       span: root.span,
       traceId: root.traceId,
       spanId: root.spanId,
-      name: name,
+      name: `agent.${kind}`,
       kind: kind,
       startTimeMs: startedAt,
     },
@@ -2636,11 +2664,11 @@ function recordCompactionTask(
       "task.id": session.eventId,
       "task.delivery": session.delivery?.kind ?? "direct",
       "task.input": taskInput,
-      "model.provider": result.modelProvider,
-      "model.id": result.modelId,
+      "model.provider": modelProvider,
+      "model.id": modelId,
     }),
-    modelProvider: result.modelProvider,
-    modelId: result.modelId,
+    modelProvider: modelProvider,
+    modelId: modelId,
     taskInput: taskInput,
     serialize: serialize,
     spans: root.spans,
@@ -2652,7 +2680,12 @@ function recordCompactionTask(
     recordUsage: recordTaskUsage,
     release: (): void => {},
     restoreObservabilityContext: (): void => {},
-  }).finalize("completed", 0, endMs - startedAt);
+  }).finalize(
+    "result" in outcome ? "completed" : "failed",
+    0,
+    endMs - startedAt,
+    "error" in outcome ? outcome.error : undefined,
+  );
 }
 
 // Opens a run's root span under `parent` and the tracker its model.step,

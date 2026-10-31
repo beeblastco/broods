@@ -3317,7 +3317,10 @@ describe("auto-compaction after a turn", () => {
         compactConversation: async (): Promise<CompactionResult | null> => {
           order.push("compact");
 
-          return (options.compactConversation ?? (async () => compaction))();
+          return (
+            options.compactConversation ??
+            (async (): Promise<CompactionResult> => compaction)
+          )();
         },
       } as never,
       {

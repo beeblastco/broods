@@ -910,7 +910,8 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     if (!isModelCallSpan(span) || !root) continue;
     const usage = stepTokens(span);
     const model = runModel(root);
-    totals.modelCalls += 1;
+    // Calls are steps, as on the usage row (`stepCount`); a compaction only adds tokens.
+    if (span.kind === "model.step") totals.modelCalls += 1;
     totals.inputTokens += usage.inputTokens;
     totals.outputTokens += usage.outputTokens;
     totals.reasoningTokens += numberAttribute(span, "model.reasoning_tokens");

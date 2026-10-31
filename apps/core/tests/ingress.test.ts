@@ -24,7 +24,10 @@ import {
   type ConversationDispatchTarget,
   type IngressCandidate,
 } from "../src/harness/ingress.ts";
-import type { CompactionResult } from "../src/harness/compaction.ts";
+import {
+  CompactionError,
+  type CompactionResult,
+} from "../src/harness/compaction.ts";
 import * as harness from "../src/harness/harness.ts";
 import type { AgentReplyHooks } from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
@@ -1342,9 +1345,11 @@ describe("queued /compact on an async run", (): void => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    // The merge failed after one half summary was billed.
     spyOn(Session.prototype, "compactConversation").mockRejectedValue(
-      new Error("summary model down"),
+      new CompactionError(new Error("summary model down"), compaction(0)),
     );
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
 
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
@@ -1354,6 +1359,10 @@ describe("queued /compact on an async run", (): void => {
       asyncResult: {
         outcome: { status: "failed", error: "summary model down" },
       },
+    });
+    expect(usage.mock.calls[0]?.[0]).toMatchObject({
+      status: "failed",
+      totalTokens: 120,
     });
   });
 

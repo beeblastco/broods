@@ -53,6 +53,19 @@ export interface CompactionResult extends CompactionUsage {
   messageCount: number;
 }
 
+/**
+ * A compaction that failed after its model was resolved. `spent` is what the
+ * summary calls that did finish cost, so a failed split is still metered.
+ */
+export class CompactionError extends Error {
+  readonly spent: CompactionUsage;
+
+  constructor(cause: unknown, spent: CompactionUsage) {
+    super(toErrorMessage(cause), { cause: cause });
+    this.spent = spent;
+  }
+}
+
 export interface SummarizeConversationInput {
   accountId?: string;
   conversationKey: string;
@@ -168,10 +181,21 @@ export async function summarizeConversation(
 
     return result.text;
   };
-  const text = await summarizeBlocks(
-    formatMessagesForCompaction(compactableContext),
-    requestSummary,
-  );
+  const spent = (): CompactionUsage => ({
+    usage: usage,
+    modelCalls: modelCalls,
+    modelProvider: configuredModel.providerName,
+    modelId: configuredModel.model.modelId,
+  });
+  let text: string;
+  try {
+    text = await summarizeBlocks(
+      formatMessagesForCompaction(compactableContext),
+      requestSummary,
+    );
+  } catch (error) {
+    throw new CompactionError(error, spent());
+  }
 
   const durationMs = Date.now() - startedAt;
   logInfo(
@@ -179,23 +203,14 @@ export async function summarizeConversation(
     {
       eventType: "session.compacted",
       conversationKey: input.conversationKey,
-      modelProvider: configuredModel.providerName,
-      modelId: configuredModel.model.modelId,
+      ...spent(),
       messageCount: input.messages.length,
       compactedMessageCount: compactableContext.length,
-      modelCalls: modelCalls,
-      usage: usage,
       durationMs: durationMs,
     },
   );
 
-  return {
-    message: createCompactionSummaryMessage(text),
-    usage: usage,
-    modelCalls: modelCalls,
-    modelProvider: configuredModel.providerName,
-    modelId: configuredModel.model.modelId,
-  };
+  return { ...spent(), message: createCompactionSummaryMessage(text) };
 }
 
 function createCompactionSummaryMessage(summary: string): SystemModelMessage {
