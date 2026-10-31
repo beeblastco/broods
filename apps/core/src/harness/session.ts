@@ -921,6 +921,11 @@ export class Session {
     return this.resolvedRuntime?.sandboxes ?? [];
   }
 
+  // The `scope: "user"` machines of config.sandboxes, for the browser tool only.
+  browsers(): ResolvedAgentSandbox[] {
+    return this.resolvedRuntime?.browsers ?? [];
+  }
+
   // Namespace of the default (first) workspace, used for memory/skill staging
   // S3 reads. Empty string when no workspace is attached.
   filesystemNamespace(): string {

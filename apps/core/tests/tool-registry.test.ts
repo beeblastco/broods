@@ -73,6 +73,31 @@ describe("createTools", () => {
     expect(Object.keys(tools)).toContain("computer");
   });
 
+  it("gives a scope-user machine the browser tool and nothing that runs on it", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        browsers: [
+          {
+            name: "browser",
+            sandbox: {
+              provider: "machine",
+              permissionMode: "ask",
+              options: {
+                scope: "user",
+                allowedExtensionIds: ["abcdefghijklmnopabcdefghijklmnop"],
+              },
+            },
+          },
+        ],
+      },
+      {},
+    );
+
+    expect(Object.keys(tools)).toEqual(["browser"]);
+  });
+
   it("registers browse only with config.browser on an Obscura sandbox", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const sandboxes = [

@@ -441,7 +441,8 @@ export function bashSandboxTarget(value: unknown): string | undefined {
 }
 
 /**
- * The machine a `computer` call lands on. A name always decides, even when only
+ * The machine a `computer` or `browser` call lands on, out of the ones that tool
+ * reaches. A name always decides, even when only
  * one computer is reachable: the schema drops the field in that case, but a
  * replayed approval still carries the input as it was stored, so a name from when
  * the list was longer can arrive after it shrank. Honouring it there is what stops
@@ -449,7 +450,7 @@ export function bashSandboxTarget(value: unknown): string | undefined {
  * falls back, and only when there is no choice to make; anything else resolves to
  * nothing, which the tool refuses and the approval gate reads as "ask".
  */
-export function computerSandboxTarget(
+export function machineSandboxTarget(
   machines: ResolvedAgentSandbox[],
   requested: unknown,
 ): ResolvedAgentSandbox | undefined {

@@ -217,6 +217,7 @@ async function runHarnessTurn(
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
         sandboxes: () => [{ sandbox: { provider: "lambda" } }],
+        browsers: () => [],
         environmentText: () => "<environment>",
         persistModelMessages: async () => {},
         flushPendingStoredEvents: async () => {},

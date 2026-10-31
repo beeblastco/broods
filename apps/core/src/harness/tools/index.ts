@@ -50,6 +50,7 @@ import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import browseTool from "./browse.tool.ts";
+import browserTool from "./browser.tool.ts";
 import computerTool from "./computer.tool.ts";
 import {
   sendFilesTool,
@@ -106,8 +107,10 @@ export interface ToolContext {
   // Each workspace carries its own effective sandbox + permissionMode (or no
   // sandbox => read-only). See resolveAgentRuntime.
   workspaces?: ResolvedWorkspace[];
-  // Resolved config.sandboxes; the first is the default.
+  // Resolved config.sandboxes but browsers; the first is the default.
   sandboxes?: ResolvedAgentSandbox[];
+  // The `scope: "user"` machines; only the browser tool reaches them.
+  browsers?: ResolvedAgentSandbox[];
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
@@ -216,6 +219,16 @@ export async function createTools(
   const machines = machineSandboxes(sandboxes);
   if (machines.length > 0) {
     Object.assign(sandboxTools, computerTool(machines));
+  }
+  // browser: each scope-user machine drives the browser of this run's end user
+  // and nobody else's. Nothing else reaches those sandboxes: they are not in
+  // `sandboxes`, so no bash, computer or machine MCP lands on them.
+  const browsers = context.browsers ?? [];
+  if (browsers.length > 0) {
+    Object.assign(
+      sandboxTools,
+      browserTool(browsers, () => context.session?.principal?.endUser),
+    );
   }
   // browse: opt-in, on the agent's first sandbox. A sandbox without Obscura fails
   // the run here rather than handing the model a tool that cannot work.

@@ -145,6 +145,7 @@ import {
   type RunOpenWork,
 } from "./questions.ts";
 import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
+import { BROWSER_TOOL_NAME } from "./tools/browser.tool.ts";
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
@@ -572,6 +573,7 @@ export async function runAgentLoop(
         conversationKey: session.conversationKey,
         workspaces: resolvedWorkspaces,
         sandboxes: sandboxes,
+        browsers: session.browsers(),
         modelProviderName: configuredModel.providerName,
         modelProvider: configuredModel.provider,
         session: session,
@@ -627,11 +629,15 @@ export async function runAgentLoop(
   };
   // Hooks let tool.call.started deny or edit args and tool.result transform
   // output; the owner fence rechecks conversation ownership before each call.
-  // Computer actions in one step share a screen, so they run in the model's
-  // order, reserved in onToolExecutionStart.
-  const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
+  // Computer actions in one step share a screen, and browser actions a page,
+  // so each runs in the model's order, reserved in onToolExecutionStart.
+  const computerTurns = serializeToolCalls(
     wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
     COMPUTER_TOOL_NAME,
+  );
+  const { tools, reserve: reserveBrowserTurn } = serializeToolCalls(
+    computerTurns.tools,
+    BROWSER_TOOL_NAME,
   );
   const policyToolApproval = await createPolicyToolApproval(
     agentConfig,
@@ -663,6 +669,7 @@ export async function runAgentLoop(
       configuredApprovals: configuredApprovals,
       workspaces: resolvedWorkspaces,
       sandboxes: sandboxes,
+      browsers: session.browsers(),
       ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
     });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
@@ -1033,7 +1040,8 @@ export async function runAgentLoop(
     },
     onToolExecutionStart: async ({ toolCall }) => {
       // Before any await: the SDK gets here in the model's call order.
-      reserveComputerTurn(toolCall);
+      computerTurns.reserve(toolCall);
+      reserveBrowserTurn(toolCall);
       const stepNumber = stepTiming.activeStep();
       const now = Date.now();
       if (

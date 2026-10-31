@@ -12,7 +12,10 @@
  */
 
 import { supportsS3WorkspaceMount } from "@broods/convex/model/sandboxProviders";
-import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
+import {
+  assertNoRetiredImageOptions,
+  browserMachineScope,
+} from "@broods/convex/model/sandboxRules";
 import type { ChannelPartition, AgentConfig } from "./domain/agent-config.ts";
 import type {
   SandboxConfig,
@@ -74,8 +77,11 @@ export interface ResolvedAgentSandbox {
 }
 
 export interface ResolvedAgentRuntime {
-  // Resolved config.sandboxes; the first is the default.
+  // Resolved config.sandboxes but browsers; the first is the default.
   sandboxes: ResolvedAgentSandbox[];
+  // The `scope: "user"` machines of config.sandboxes. Only the browser tool
+  // reaches them: no bash, computer, machine MCP or workspace ever does.
+  browsers: ResolvedAgentSandbox[];
   workspaces: ResolvedWorkspace[];
 }
 
@@ -212,6 +218,7 @@ export async function resolveAgentRuntime(
 ): Promise<ResolvedAgentRuntime> {
   const accountId = identity.accountId;
   const storage = getStorage();
+  const sandboxIds = agentConfig.sandboxes ?? [];
   // Keyed on the in-flight fetch, so a record the agent list and a workspace share
   // is fetched once even while both resolve concurrently.
   const sandboxCache = new Map<string, Promise<LoadedSandbox>>();
@@ -275,12 +282,21 @@ export async function resolveAgentRuntime(
     return loading;
   }
 
-  async function loadWorkspaces(
-    defaultSandboxId: string | undefined,
-  ): Promise<ResolvedWorkspace[]> {
-    const sandbox = defaultSandboxId
-      ? (await loadSandbox(defaultSandboxId)).sandbox
-      : undefined;
+  // A browser serves no workspace, so the default a workspace inherits is the
+  // first sandbox that is not one. The loads are already in flight.
+  async function defaultWorkspaceSandbox(): Promise<
+    WorkspaceSandboxConfig | undefined
+  > {
+    for (const sandboxId of sandboxIds) {
+      const { sandbox } = await loadSandbox(sandboxId);
+      if (!browserMachineScope(sandbox)) return sandbox;
+    }
+
+    return undefined;
+  }
+
+  async function loadWorkspaces(): Promise<ResolvedWorkspace[]> {
+    const sandbox = await defaultWorkspaceSandbox();
     const workspaces: ResolvedWorkspace[] = [];
     for (const ref of agentConfig.workspaces ?? []) {
       if (!accountId) {
@@ -350,15 +366,19 @@ export async function resolveAgentRuntime(
     return workspaces;
   }
 
-  const sandboxIds = agentConfig.sandboxes ?? [];
-  const [sandboxes, workspaces] = await Promise.all([
+  const [resolved, workspaces] = await Promise.all([
     Promise.all(sandboxIds.map(loadAgentSandbox)),
-    loadWorkspaces(sandboxIds[0]),
+    loadWorkspaces(),
   ]);
-  assertDistinctSandboxNames(sandboxes);
+  assertDistinctSandboxNames(resolved);
 
   return {
-    sandboxes: sandboxes,
+    sandboxes: resolved.filter(
+      (entry): boolean => browserMachineScope(entry.sandbox) === null,
+    ),
+    browsers: resolved.filter(
+      (entry): boolean => browserMachineScope(entry.sandbox) !== null,
+    ),
     workspaces: workspaces,
   };
 }

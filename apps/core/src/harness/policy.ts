@@ -28,7 +28,10 @@ import type {
 import { optionalEnv } from "../shared/env.ts";
 import { waitUntil } from "../shared/in-flight.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
-import { COMPUTER_READ_ACTIONS } from "../shared/machine-socket.ts";
+import {
+  BROWSER_READ_ACTIONS,
+  COMPUTER_READ_ACTIONS,
+} from "../shared/machine-socket.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import { getStorage } from "../shared/storage.ts";
 import type {
@@ -39,13 +42,14 @@ import { toLifecycleValue } from "./lifecycle.ts";
 import {
   bashNeedsApproval,
   bashSandboxTarget,
-  computerSandboxTarget,
+  machineSandboxTarget,
   editNeedsApproval,
   machineSandboxes,
   resolveWorkspace,
   targetsAgentSandbox,
   toWorkspaceRelative,
 } from "./tools/filesystem-utils.ts";
+import { BROWSER_TOOL_NAME } from "./tools/browser.tool.ts";
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
@@ -113,6 +117,7 @@ export function compatibilityApprovalStatus(
     configuredApprovals: ReadonlyMap<string, true>;
     workspaces: ResolvedWorkspace[];
     sandboxes?: ResolvedAgentSandbox[];
+    browsers?: ResolvedAgentSandbox[];
   },
 ): ToolApprovalStatus {
   const record =
@@ -137,17 +142,16 @@ export function compatibilityApprovalStatus(
       : undefined;
   }
 
-  // Looking is free; any other action asks like bash does, on the computer the
-  // call names rather than on whatever the agent's own sandbox happens to be.
-  // createRuntimeToolApproval still holds a look behind an action that asks.
-  if (toolName === COMPUTER_TOOL_NAME) {
-    if (COMPUTER_READ_ACTIONS.has(String(record.action))) {
+  // Looking is free; any other action asks like bash does, on the computer or
+  // browser the call names rather than on whatever the agent's own sandbox
+  // happens to be. createRuntimeToolApproval still holds a look behind an
+  // action that asks.
+  const actions = machineActions(toolName, options);
+  if (actions) {
+    if (actions.looks.has(String(record.action))) {
       return undefined;
     }
-    const machine = computerSandboxTarget(
-      machineSandboxes(options.sandboxes),
-      record.sandbox,
-    );
+    const machine = machineSandboxTarget(actions.targets, record.sandbox);
 
     return machine?.sandbox.permissionMode !== "bypass"
       ? "user-approval"
@@ -304,22 +308,25 @@ export async function createPolicyToolApproval(
 }
 
 // The run's tool approval. A policy deny stands even where ask mode would only
-// ask. A computer call after one in the same step that waits for a person also
-// asks, so it never runs first. `startStep` opens the next step; the harness
-// calls it from onStepStart.
+// ask. A computer or browser call after one of the same tool in the step that
+// waits for a person also asks, so it never runs first. `startStep` opens the
+// next step; the harness calls it from onStepStart.
 export function createRuntimeToolApproval(options: {
   configuredApprovals: ReadonlyMap<string, true>;
   workspaces: ResolvedWorkspace[];
   sandboxes?: ResolvedAgentSandbox[];
+  browsers?: ResolvedAgentSandbox[];
   policyApproval?: RuntimeToolApproval;
 }): { approval: RuntimeToolApproval | undefined; startStep: () => void } {
   const hasCompatibilityApprovals =
     options.configuredApprovals.size > 0 ||
     options.workspaces.some((workspace) => workspace.sandbox) ||
-    (options.sandboxes?.length ?? 0) > 0;
-  let computerWaits = false;
+    (options.sandboxes?.length ?? 0) > 0 ||
+    (options.browsers?.length ?? 0) > 0;
+  // The ordered tools whose call in this step waits for a person.
+  const waiting = new Set<string>();
   const startStep = (): void => {
-    computerWaits = false;
+    waiting.clear();
   };
 
   if (!hasCompatibilityApprovals && !options.policyApproval) {
@@ -337,14 +344,17 @@ export function createRuntimeToolApproval(options: {
               event.toolCall.input,
               options,
             ) ?? policy);
-      if (event.toolCall.toolName !== COMPUTER_TOOL_NAME) return status;
+      const toolName = event.toolCall.toolName;
+      if (toolName !== COMPUTER_TOOL_NAME && toolName !== BROWSER_TOOL_NAME) {
+        return status;
+      }
       const decision = approvalDecision(status);
       if (decision === "user-approval") {
-        computerWaits = true;
-      } else if (computerWaits && decision !== "denied") {
+        waiting.add(toolName);
+      } else if (waiting.has(toolName) && decision !== "denied") {
         return {
           type: "user-approval",
-          reason: `Waits for the ${COMPUTER_TOOL_NAME} call before it, which needs approval.`,
+          reason: `Waits for the ${toolName} call before it, which needs approval.`,
         };
       }
 
@@ -616,6 +626,27 @@ async function loadPolicyDocuments(
   }
 
   return records.map((record) => record?.document ?? UNRESOLVED_POLICY);
+}
+
+// The actions that only look, and the machines a call picks from, for the two
+// tools that drive a machine: the computer and a person's browser.
+function machineActions(
+  toolName: string,
+  options: {
+    sandboxes?: ResolvedAgentSandbox[];
+    browsers?: ResolvedAgentSandbox[];
+  },
+): { looks: ReadonlySet<string>; targets: ResolvedAgentSandbox[] } | null {
+  if (toolName === COMPUTER_TOOL_NAME) {
+    return {
+      looks: COMPUTER_READ_ACTIONS,
+      targets: machineSandboxes(options.sandboxes),
+    };
+  }
+
+  return toolName === BROWSER_TOOL_NAME
+    ? { looks: BROWSER_READ_ACTIONS, targets: options.browsers ?? [] }
+    : null;
 }
 
 function policyClient(): PolicyClient {

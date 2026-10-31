@@ -14,7 +14,7 @@ import {
 } from "../../shared/machine-socket.ts";
 import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 import { runMachineComputerAction } from "../sandbox/machine-executor.ts";
-import { computerSandboxTarget } from "./filesystem-utils.ts";
+import { machineSandboxTarget } from "./filesystem-utils.ts";
 import { toolError } from "./utils.ts";
 
 export const COMPUTER_TOOL_NAME = "computer";
@@ -56,7 +56,7 @@ export default function computerTool(
       execute: async function (input): Promise<ToolResultOutput> {
         // `sandbox` picks the machine; it is core's routing, never the daemon's.
         const { sandbox: requested, ...action } = input as ComputerCall;
-        const machine = computerSandboxTarget(machines, requested);
+        const machine = machineSandboxTarget(machines, requested);
         if (!machine) {
           return toolError(
             `Error: pass sandbox with the computer to act on: ${names.join(", ")}`,
