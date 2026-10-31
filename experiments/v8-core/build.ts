@@ -2,6 +2,13 @@
  * Bundles entry.ts for workerd with Bun's bundler: core's dependencies use
  * Bun-only import attributes (`with { type: "file" }`) that esbuild refuses.
  * Node built-ins stay external; workerd's nodejs_compat provides them.
+ * Usage: [SLIM=1] [SOURCEMAP=1] bun build.ts [entry] [outdir] (default ./entry.ts into ./dist).
+ *
+ * SLIM=1 swaps the packages the benchmark agent never uses (chat channels,
+ * other sandbox and model providers, coding-agent harnesses) for a stub that
+ * throws as soon as anything calls or constructs it. A task that still passes
+ * on a slim bundle therefore never needed them; it is how small a task-only
+ * runtime could be, not a build to ship.
  */
 
 import { builtinModules } from "node:module";
@@ -43,12 +50,17 @@ function storePackage(name: string): string {
 const shim = new URL("./bun-shim.ts", import.meta.url).pathname;
 const processShim = new URL("./process-shim.ts", import.meta.url).pathname;
 const NOT_EXTERNAL = new Set(["process", "node:process"]);
+const SLIM_STUBBED =
+  /^(discord\.js|discord-api-types|@discordjs\/[^/]+|@slack\/[^/]+|@microsoft\/teams\.[^/]+|@chat-adapter\/[^/]+|@linear\/sdk|@octokit\/[^/]+|@daytona\/[^/]+|e2b|@vercel\/sandbox|@aws-sdk\/[^/]+|@earendil-works\/[^/]+|jiti|highlight\.js|@ai-sdk\/harness[^/]*|ai-sdk-ollama|@google\/genai|@ai-sdk\/(openai|google|xai|gateway|openai-compatible)|openai|@openrouter\/[^/]+|google-auth-library|@azure\/msal-node)(\/.*)?$/;
+const stub = new URL("./slim-stub.cjs", import.meta.url).pathname;
 const result = await Bun.build({
-  entrypoints: ["./entry.ts"],
-  outdir: "./dist",
+  entrypoints: [process.argv[2] ?? "./entry.ts"],
+  outdir: process.argv[3] ?? "./dist",
   target: "node",
   format: "esm",
   minify: true,
+  // SOURCEMAP=1 writes <bundle>.js.map for bench/bundle-sizes.mjs.
+  sourcemap: process.env.SOURCEMAP === "1" ? "external" : "none",
   // workerd leaves import.meta.url undefined; createRequire needs a file URL.
   define: { "import.meta.url": JSON.stringify("file:///bundle/entry.js") },
   conditions: ["workerd", "worker", "browser"],
@@ -60,6 +72,16 @@ const result = await Bun.build({
     {
       name: "bun-shim",
       setup: function (build) {
+        if (process.env.SLIM === "1") {
+          build.onResolve({ filter: SLIM_STUBBED }, (args) => ({
+            path: args.path,
+            namespace: "slim",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "slim" }, (args) => ({
+            contents: `module.exports = require(${JSON.stringify(stub)})(${JSON.stringify(args.path)});`,
+            loader: "js",
+          }));
+        }
         build.onResolve({ filter: /^bun$/ }, () => ({ path: shim }));
         build.onResolve({ filter: /^(node:)?process$/ }, () => ({
           path: processShim,

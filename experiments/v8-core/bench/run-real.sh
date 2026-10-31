@@ -9,6 +9,8 @@
 # logs to <log-dir>/isolate-core-real.log.
 set -euo pipefail
 out=$1 logs=$2 rounds=$3 levels=$4
+# PER_TASK_CONFIG=slimConfig runs the isolate arm on the SLIM=1 bundle (dist-slim/).
+config=${PER_TASK_CONFIG:-perTaskConfig}
 : "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY}"
 bun_pid=$(pgrep -f "^bun src/server.ts" | head -1)
 workerd_pid=$(pgrep -f "[v]8-core/workerd.capnp config")
@@ -25,19 +27,19 @@ restart_sandbox() {
 }
 restart_router() {
   local old
-  old=$(pgrep -f "[v]8-core/workerd.capnp perTaskConfig" || true)
+  old=$(pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig)" || true)
   if [ -n "$old" ]; then
     kill $old
-    while pgrep -f "[v]8-core/workerd.capnp perTaskConfig" >/dev/null; do sleep 0.2; done
+    while pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig)" >/dev/null; do sleep 0.2; done
   fi
   CLOUDFLARE_WORKER_URL=http://127.0.0.1:8790 CLOUDFLARE_WORKER_API_KEY=$(cat "$logs/worker-sandbox.key") \
     BENCH_SCRIPTED_MODEL=0 BENCH_MODEL_DELAY_MS=0 \
-    nohup "$here/../start-per-task.sh" 4321 bench-isolate >> "$logs/isolate-core-real.log" 2>&1 &
+    nohup "$here/../start-per-task.sh" 4321 bench-isolate "$config" >> "$logs/isolate-core-real.log" 2>&1 &
   for _ in $(seq 1 100); do
     [ "$(curl -s -m 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:4321/healthz)" = "200" ] && break
     sleep 0.3
   done
-  isolate_pid=$(pgrep -f "[v]8-core/workerd.capnp perTaskConfig")
+  isolate_pid=$(pgrep -f "[v]8-core/workerd.capnp $config")
 }
 # AGENT_PER_TASK=1 gives each task slot its own agent and sandbox files;
 # SHARED_FILES=1 lets a parent and its subagent share their V8 sandbox files.

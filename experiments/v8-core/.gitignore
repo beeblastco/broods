@@ -1,3 +1,7 @@
 dist/
 node_modules/
 .wrangler/
+dist-task/
+dist-slim/
+dist-slim-task/
+logs/

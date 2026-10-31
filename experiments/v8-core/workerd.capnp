@@ -55,7 +55,10 @@ const perTaskRouter :Workerd.Worker = (
   compatibilityDate = "2026-09-30",
   compatibilityFlags = ["nodejs_compat"],
   globalOutbound = "net",
-  bindings = [
+  bindings = .perTaskBindings,
+);
+
+const perTaskBindings :List(Workerd.Worker.Binding) = [
     (name = "LOADER", workerLoader = ()),
     (name = "ACCOUNT_CONFIG_ENCRYPTION_SECRET", fromEnvironment = "ACCOUNT_CONFIG_ENCRYPTION_SECRET"),
     (name = "ADMIN_ACCOUNT_SECRET", fromEnvironment = "ADMIN_ACCOUNT_SECRET"),
@@ -73,7 +76,28 @@ const perTaskRouter :Workerd.Worker = (
     (name = "SERVICE_NAME", fromEnvironment = "SERVICE_NAME"),
     (name = "STAGE_TICKET_SECRET", fromEnvironment = "STAGE_TICKET_SECRET"),
     (name = "TERMINAL_TICKET_SECRET", fromEnvironment = "TERMINAL_TICKET_SECRET"),
+  ];
+
+# The same router holding core built with SLIM=1 (dist-slim/entry.js, the
+# packages this agent never calls swapped for throwing stubs), on 4341
+# (`workerd serve workerd.capnp slimConfig`).
+const slimConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .slimRouter),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
   ],
+  sockets = [ (name = "http", address = "127.0.0.1:4341", http = (), service = "router") ],
+);
+
+const slimRouter :Workerd.Worker = (
+  modules = [
+    (name = "router.js", esModule = embed "per-task/router.js"),
+    (name = "bundle", text = embed "dist-slim/entry.js"),
+  ],
+  compatibilityDate = "2026-09-30",
+  compatibilityFlags = ["nodejs_compat"],
+  globalOutbound = "net",
+  bindings = .perTaskBindings,
 );
 
 # The same per-request router holding an empty worker instead of core, on

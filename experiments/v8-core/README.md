@@ -14,7 +14,19 @@ runs on the local stack only and changes nothing in production.
 | Fresh isolate per task | `per-task/router.js` loads all of core into a new isolate for every request (`start-per-task.sh`, 4321) | the V8 sandbox                                                      |
 
 `workerd.capnp` also has `floorConfig` (4331): the same per-request router
-holding an empty worker, the floor a fresh isolate costs.
+holding an empty worker, the floor a fresh isolate costs, and `slimConfig`
+(4341): the router holding core built with `SLIM=1` (`dist-slim/entry.js`).
+
+## Slim core
+
+`SLIM=1 bun build.ts ./entry.ts ./dist-slim` swaps the packages the benchmark
+agent never uses (chat channels, other sandbox and model providers, the
+coding-agent harnesses) for `slim-stub.cjs`, which throws as soon as a running
+task calls or constructs one; while the isolate loads it stays quiet, because
+core builds some channel helpers at load. The bundle drops from 20.7 MB to
+2.9 MB. `PER_TASK_CONFIG=slimConfig` makes `run-isolate.sh` and `run-real.sh`
+use it. `bench/bundle-sizes.mjs` sums a bundle's bytes per source package from
+its source map (build with `sourcemap: "external"`).
 
 Core needed two patches to load in a V8 isolate: `shared/cache-digest.ts`
 draws its key on first use, and `shared/http.ts` fetches by hostname on
@@ -64,6 +76,8 @@ otherwise idle while a run is going; the scripts read CPU from `/proc`.
 found. `SHARED_FILES=1` pins each agent's V8 sandbox to one reservation key so a
 subagent sees its parent's files, as it does on a machine.
 
-`report/` builds the published page from `results/`:
-`python3 report/gen.py results report.html`. Every number on it is read from
+`report/` builds the published pages from `results/`:
+`python3 report/gen.py results report.html` for the benchmark report and
+`python3 report/diagrams.py results page.html` for the diagrams and slim-core
+results. Every number on it is read from
 the rows; only prices and the bundle size are typed in.

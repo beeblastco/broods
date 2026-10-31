@@ -33,6 +33,8 @@ export default {
     _env: unknown,
     ctx: { waitUntil(promise: Promise<unknown>): void },
   ): Promise<Response> {
+    // Only SLIM=1 builds read this: from here on a stubbed package throws.
+    (globalThis as { __slimServing?: boolean }).__slimServing = true;
     const response = await route(
       request,
       request.headers.get("cf-connecting-ip") ?? undefined,
