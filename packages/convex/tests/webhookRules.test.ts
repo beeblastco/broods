@@ -18,7 +18,13 @@ const modules = import.meta.glob("../**/*.ts");
 
 type T = TestConvex<typeof schema>;
 
-test("addAgentWebhook refuses a non-https URL", async () => {
+interface FixtureIds {
+  configId: Id<"agentConfigs">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}
+
+test("addAgentWebhook refuses a non-https URL", async (): Promise<void> => {
   const { caller, configId } = await setup();
   await expect(
     caller.mutation(api.webhooks.addAgentWebhook, {
@@ -29,7 +35,7 @@ test("addAgentWebhook refuses a non-https URL", async () => {
   ).rejects.toThrow(/https/i);
 });
 
-test("addAgentWebhook keeps a valid webhook", async () => {
+test("addAgentWebhook keeps a valid webhook", async (): Promise<void> => {
   const { caller, configId, projectId, stageId } = await setup();
   await caller.mutation(api.webhooks.addAgentWebhook, {
     agentConfigId: configId,
@@ -53,7 +59,7 @@ test("addAgentWebhook keeps a valid webhook", async () => {
   ]);
 });
 
-test("a stored legacy row can be disabled and removed, but not re-enabled", async () => {
+test("a stored legacy row can be disabled and removed, but not re-enabled", async (): Promise<void> => {
   const { t, caller, configId, projectId, stageId } = await setup();
   // Seed a row that predates the https rule, bypassing the mutations.
   await t.run(async (ctx): Promise<void> => {
@@ -95,13 +101,38 @@ test("a stored legacy row can be disabled and removed, but not re-enabled", asyn
   expect(listed[0]?.webhooks).toEqual([]);
 });
 
-async function setup(): Promise<{
-  t: T;
-  caller: ReturnType<T["withIdentity"]>;
-  configId: Id<"agentConfigs">;
-  projectId: Id<"projects">;
-  stageId: Id<"stages">;
-}> {
+/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
+async function seedAuthUser(t: T): Promise<void> {
+  const now = new Date().toISOString();
+  await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
+    event: {
+      id: "evt_webhook_rules_signup",
+      event: "user.created",
+      createdAt: now,
+      data: {
+        id: AUTH_ID,
+        email: "webhook-rules@example.invalid",
+        emailVerified: true,
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+  });
+  await t.run(async (ctx): Promise<void> => {
+    await ctx.db.insert("users", {
+      authId: AUTH_ID,
+      email: "webhook-rules@example.invalid",
+      name: "Webhook rules owner",
+      plan: "free",
+    });
+  });
+}
+
+/** A signed-in org owner with one agent config on a fresh project and stage. */
+async function setup(): Promise<
+  FixtureIds & { t: T; caller: ReturnType<T["withIdentity"]> }
+> {
   const t = convexTest(schema, modules);
   workosTest.register(t);
   await seedAuthUser(t);
@@ -109,7 +140,7 @@ async function setup(): Promise<{
   const orgId = await caller.mutation(api.org.orgs.create, {
     name: "Webhook rules fixture",
   });
-  const ids = await t.run(async (ctx) => {
+  const ids = await t.run(async (ctx): Promise<FixtureIds> => {
     const now = Date.now();
     const projectId = await ctx.db.insert("projects", {
       authId: AUTH_ID,
@@ -138,32 +169,4 @@ async function setup(): Promise<{
   });
 
   return { t: t, caller: caller, ...ids };
-}
-
-/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
-async function seedAuthUser(t: T): Promise<void> {
-  const now = new Date().toISOString();
-  await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-    event: {
-      id: "evt_webhook_rules_signup",
-      event: "user.created",
-      createdAt: now,
-      data: {
-        id: AUTH_ID,
-        email: "webhook-rules@example.invalid",
-        emailVerified: true,
-        metadata: {},
-        createdAt: now,
-        updatedAt: now,
-      },
-    },
-  });
-  await t.run(async (ctx): Promise<void> => {
-    await ctx.db.insert("users", {
-      authId: AUTH_ID,
-      email: "webhook-rules@example.invalid",
-      name: "Webhook rules owner",
-      plan: "free",
-    });
-  });
 }

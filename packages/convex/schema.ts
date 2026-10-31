@@ -1458,8 +1458,11 @@ export const runtimeAsyncAgentResultsFields = {
   response: v.optional(v.any()),
   error: v.optional(v.string()),
   approvals: v.optional(v.array(toolApprovalSummaryValidator)),
-  // Open ask_questions prompts while status is awaiting_input.
-  questions: v.optional(v.array(pendingQuestionSummaryValidator)),
+  // Open ask_questions prompts while status is awaiting_input. Loose for one
+  // release: rows stored before ask_questions validated its input expire within
+  // 7 days of it shipping, then this narrows to pendingQuestionSummaryValidator.
+  // Writes are already held to it by runtime.ts's outcome args.
+  questions: v.optional(v.array(v.any())),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),

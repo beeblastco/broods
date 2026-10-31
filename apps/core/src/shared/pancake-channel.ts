@@ -479,14 +479,10 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
-  if (
-    message.is_hidden ||
-    message.is_removed ||
-    message.from?.id === pageId ||
-    !message.from?.page_customer_id
-  ) {
+  const dropReason = pancakeDropReason(message, pageId);
+  if (dropReason) {
     logDebug("Pancake webhook ignored", {
-      reason: pancakeDropReason(message, pageId),
+      reason: dropReason,
       pageId: payload.page_id,
       conversationId: conversation.id,
       messageId: message.id,
@@ -561,7 +557,11 @@ function parsePancakeWebhook(
  * Why a messaging delivery from the right page still is not a customer
  * message, for the ignore log.
  */
-function pancakeDropReason(message: PancakeMessage, pageId: string): string {
+// Why a message is not one the agent should answer, or undefined when it is.
+function pancakeDropReason(
+  message: PancakeMessage,
+  pageId: string,
+): string | undefined {
   if (message.is_hidden) {
     return "hidden_message";
   }
@@ -571,8 +571,11 @@ function pancakeDropReason(message: PancakeMessage, pageId: string): string {
   if (message.from?.id === pageId) {
     return "page_originated_message";
   }
+  if (!message.from?.page_customer_id) {
+    return "missing_page_customer_id";
+  }
 
-  return "missing_page_customer_id";
+  return undefined;
 }
 
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {

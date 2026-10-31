@@ -299,15 +299,10 @@ export async function readS3Bytes(
 /**
  * @param bucket source bucket
  * @param key object key
- * @param access optional overrides for a bring-your-own bucket
  * @returns the object body decoded as text
  */
-export async function readS3Text(
-  bucket: string,
-  key: string,
-  access?: S3Access,
-): Promise<string> {
-  return new TextDecoder().decode(await readS3Bytes(bucket, key, access));
+export async function readS3Text(bucket: string, key: string): Promise<string> {
+  return new TextDecoder().decode(await readS3Bytes(bucket, key));
 }
 
 /**

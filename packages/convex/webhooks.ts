@@ -57,20 +57,25 @@ export const addAgentWebhook = mutation({
     { agentConfigId, url, secret, events, enabled },
   ): Promise<null> => {
     const user = await requireUser(ctx);
-    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => {
-      // The config plane's rules are the only validation copy: without this,
-      // the dashboard could store an http:// or unknown-event webhook the API
-      // refuses (public-https URL, lifecycle-event whitelist).
-      const webhook = {
-        enabled: enabled !== false,
-        url: url.trim(),
-        secret: secret.trim(),
-        events: events ?? [],
-      };
-      normalizeWebhookHookConfig(webhook, "webhook");
+    await mutateAgentWebhooks(
+      ctx,
+      user.id,
+      agentConfigId,
+      (webhooks): Record<string, unknown>[] => {
+        // The config plane's rules are the only validation copy: without this,
+        // the dashboard could store an http:// or unknown-event webhook the API
+        // refuses (public-https URL, lifecycle-event whitelist).
+        const webhook = {
+          enabled: enabled !== false,
+          url: url.trim(),
+          secret: secret.trim(),
+          events: events ?? [],
+        };
+        normalizeWebhookHookConfig(webhook, "webhook");
 
-      return [...webhooks, webhook];
-    });
+        return [...webhooks, webhook];
+      },
+    );
     await recordWebhookAudit(
       ctx,
       dashboardAuditActor(user),
@@ -178,7 +183,7 @@ export const setAgentWebhookEnabled = mutation({
   handler: async (ctx, { agentConfigId, index, enabled }): Promise<null> => {
     const user = await requireUser(ctx);
     await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
-      webhooks.map((webhook, i) => {
+      webhooks.map((webhook, i): Record<string, unknown> => {
         if (i !== index) {
           return webhook;
         }

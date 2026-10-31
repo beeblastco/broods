@@ -2,15 +2,8 @@
  * Durable media links. A channel tool seals one when it hands a workspace file
  * to a chat provider, and inbound media seals one for the copy kept in the
  * attachment store; the media route opens it to learn which file to stream.
- * Every ticket expires: seal stamps `exp` from `MEDIA_TICKET_TTL_SECONDS`
- * (default `DEFAULT_MEDIA_TICKET_TTL_SECONDS`), open refuses a ticket past it,
- * and a legacy pre-expiry token ("ml1") is refused outright, so links sealed
- * before the cutover die with it. Providers that re-fetch lazily
- * (Zalo, on every view) lose an expired link in old chat history, and a
- * conversation replayed past the TTL loses the media its stored links named.
- * Dropping a secret from `MEDIA_TICKET_SECRET` stops every link it sealed at
- * the origin; copies a CDN fetched in time live on until the media route's
- * immutable cache-control (one year) runs out on them.
+ * Every ticket expires after `MEDIA_TICKET_TTL_SECONDS`; what an expired or
+ * revoked link costs is in apps/docs/docs/internals/channels.md.
  */
 
 import {

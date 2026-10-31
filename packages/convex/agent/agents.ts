@@ -17,6 +17,7 @@ import {
   mirrorAgentRowOntoConfig,
 } from "../model/agentSync";
 import { syncApiAgentCanvasWiring } from "../model/apiCanvasSync";
+import type { CanvasNode } from "../model/canvasShapes";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getProjectForRole } from "../model/ownership/project";
 import { agentsInProject, agentsInStage } from "../model/projectScope";
@@ -381,16 +382,17 @@ export const remove = internalMutation({
         )
         .unique();
       if (layout) {
+        const nodes: CanvasNode[] = layout.nodes;
         const removedIds = new Set(
-          layout.nodes
-            .filter((n) => n.data?.agentConfigId === linkedConfig._id)
+          nodes
+            .filter((n) => n.data.agentConfigId === linkedConfig._id)
             .map((n) => n.id),
         );
         if (removedIds.size > 0) {
           // A deleted node takes its incident edges with it. A dangling edge
           // would survive every later reconciliation pass.
           await ctx.db.patch(layout._id, {
-            nodes: layout.nodes.filter((n) => !removedIds.has(n.id)),
+            nodes: nodes.filter((n) => !removedIds.has(n.id)),
             edges: layout.edges.filter(
               (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
             ),

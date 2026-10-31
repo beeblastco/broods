@@ -16,6 +16,8 @@ export interface Shortcut {
   scope: ShortcutScope;
 }
 
+export type ShortcutId = (typeof SHORTCUT_DEFS)[number]["id"];
+
 // The rows, const-typed so `ShortcutId` stays the exact id union; the annotated
 // `SHORTCUTS` export holds every row to the `Shortcut` shape.
 const SHORTCUT_DEFS = [
@@ -188,8 +190,6 @@ const TOKEN_GLYPHS: Record<string, string> = {
   shift: "⇧",
 };
 
-export type ShortcutId = (typeof SHORTCUT_DEFS)[number]["id"];
-
 /**
  * True when the press would have activated the focused control. Enter and Space
  * are how a keyboard clicks a button or follows a link, so a bare binding must
@@ -257,9 +257,7 @@ export function matchShortcut(
 ): Shortcut | undefined {
   const combo = eventCombo(event, isMac);
 
-  return SHORTCUTS.find((shortcut) =>
-    (shortcut.combos as readonly string[]).includes(combo),
-  );
+  return SHORTCUTS.find((shortcut) => shortcut.combos.includes(combo));
 }
 
 /** Section heading for a scope. */

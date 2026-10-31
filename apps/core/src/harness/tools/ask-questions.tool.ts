@@ -120,7 +120,8 @@ The tool returns a statusId at once and the answer is delivered into this conver
         const blocking = input.blocking === true;
         const resultId = `async_tool_${crypto.randomUUID()}`;
         const answerBy = new Date(
-          Date.now() + clampTimeout(input.timeoutSeconds) * 1000,
+          Date.now() +
+            (input.timeoutSeconds ?? DEFAULT_ANSWER_TIMEOUT_SECONDS) * 1000,
         ).toISOString();
         const pending: PendingQuestionInput = {
           questions: input.questions,
@@ -175,17 +176,6 @@ The tool returns a statusId at once and the answer is delivered into this conver
       },
     }),
   };
-}
-
-function clampTimeout(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return DEFAULT_ANSWER_TIMEOUT_SECONDS;
-  }
-
-  return Math.min(
-    MAX_ANSWER_TIMEOUT_SECONDS,
-    Math.max(MIN_ANSWER_TIMEOUT_SECONDS, Math.floor(value)),
-  );
 }
 
 // The failure reason, or null once the prompt is out.

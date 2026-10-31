@@ -25,11 +25,11 @@ const ATTACHMENT_TICKET: MediaTicket = {
   path: "media/ab12/0-photo.png",
 };
 
-afterEach(() => {
+afterEach((): void => {
   process.env = { ...ORIGINAL_ENV };
 });
 
-describe("sealMediaTicket / openMediaTicket", () => {
+describe("sealMediaTicket / openMediaTicket", (): void => {
   it("opens a fresh ticket, both shapes", (): void => {
     for (const ticket of [WORKSPACE_TICKET, ATTACHMENT_TICKET]) {
       const token = sealMediaTicket(ticket, SECRET);

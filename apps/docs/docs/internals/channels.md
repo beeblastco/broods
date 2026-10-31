@@ -213,7 +213,7 @@ sequenceDiagram
 | Twilio                                        | fetches the URL (MMS)             | none                              | one per message         |
 | Teams, Google Chat, Messenger, GitHub, Linear | none                              | none                              | text links only         |
 
-The link expires: the sealed ticket carries an expiry, `MEDIA_TICKET_TTL_SECONDS` (default 30 days) from sealing. Some providers re-fetch on every view and Zalo stores the URL itself, so an expired link 404s in old chat history; the route's immutable cache headers let a provider CDN keep bytes it fetched in time. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it at once. A caption rides the first message only. Rejection reasons go to the log, not the chat.
+The link expires: the sealed ticket carries an expiry, `MEDIA_TICKET_TTL_SECONDS` (default 30 days) from sealing, and a pre-expiry `ml1` link is refused outright. Some providers re-fetch on every view and Zalo stores the URL itself, so an expired link 404s in old chat history; the route's immutable cache headers let a provider CDN keep bytes it fetched in time. A conversation replayed past the expiry shows the model `[a linked file is no longer available]` in place of the file. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` stops every link sealed with it at the origin; a CDN copy fetched in time lives out its cache headers. A caption rides the first message only. Rejection reasons go to the log, not the chat.
 
 ## Inbound attachments
 

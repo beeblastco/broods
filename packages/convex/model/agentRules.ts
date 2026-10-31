@@ -464,6 +464,46 @@ export function mergeCanvasSandboxes(
   return [...new Set([...canvas, ...hidden])];
 }
 
+/**
+ * Checks one outbound webhook entry against the config plane's rules. Agent
+ * config normalization runs it on every `hooks.webhooks` row, and the
+ * dashboard's webhook mutations run it on the row they add or re-enable.
+ */
+export function normalizeWebhookHookConfig(value: unknown, path: string): void {
+  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, `${path}.enabled`);
+  assertOptionalNonEmptyString(config.url, `${path}.url`);
+  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
+  if (
+    config.events !== undefined &&
+    (!Array.isArray(config.events) ||
+      !config.events.every(
+        (event) =>
+          typeof event === "string" &&
+          AGENT_LIFECYCLE_EVENT_NAMES.includes(
+            event as (typeof AGENT_LIFECYCLE_EVENT_NAMES)[number],
+          ),
+      ))
+  ) {
+    throw new ClientError(
+      `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
+    );
+  }
+  if (config.enabled === true) {
+    if (typeof config.url !== "string" || config.url.trim().length === 0)
+      throw new ClientError(
+        `${path}.url is required when ${path}.enabled is true`,
+      );
+    if (typeof config.secret !== "string" || config.secret.trim().length === 0)
+      throw new ClientError(
+        `${path}.secret is required when ${path}.enabled is true`,
+      );
+  }
+  if (typeof config.url === "string" && config.url.trim().length > 0)
+    assertPublicHttpsUrl(config.url, `${path}.url`);
+}
+
 function normalizeAgentBehaviorConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
@@ -905,41 +945,6 @@ function normalizeCodeHookConfig(value: unknown, path: string): void {
       `${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
     );
   }
-}
-
-export function normalizeWebhookHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `${path}.enabled`);
-  assertOptionalNonEmptyString(config.url, `${path}.url`);
-  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
-  if (
-    config.events !== undefined &&
-    (!Array.isArray(config.events) ||
-      !config.events.every(
-        (event) =>
-          typeof event === "string" &&
-          AGENT_LIFECYCLE_EVENT_NAMES.includes(
-            event as (typeof AGENT_LIFECYCLE_EVENT_NAMES)[number],
-          ),
-      ))
-  ) {
-    throw new ClientError(
-      `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
-    );
-  }
-  if (config.enabled === true) {
-    if (typeof config.url !== "string" || config.url.trim().length === 0)
-      throw new ClientError(
-        `${path}.url is required when ${path}.enabled is true`,
-      );
-    if (typeof config.secret !== "string" || config.secret.trim().length === 0)
-      throw new ClientError(
-        `${path}.secret is required when ${path}.enabled is true`,
-      );
-  }
-  if (typeof config.url === "string" && config.url.trim().length > 0)
-    assertPublicHttpsUrl(config.url, `${path}.url`);
 }
 
 function normalizeToolsConfig(value: unknown): void {

@@ -173,14 +173,14 @@ describe("runtime ingress", () => {
         delivery: {
           kind: "channel",
           channel: "slack",
+          // @ts-expect-error the channel variant carries no provenance
           publicDeploymentIngress: {
             accountId: accountId,
             endpointId: "endpoint-one",
             stageSlug: "development",
             projectSlug: "demo",
           },
-          // The channel variant carries no provenance; the validator refuses it.
-        } as never,
+        },
       }),
     ).rejects.toThrow(/Validator error/);
   });

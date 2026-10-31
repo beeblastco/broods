@@ -49,6 +49,32 @@ export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
   "output",
   "apiKey",
 ] as const;
+// The config branches a run reads; everything else the stored row carries is
+// dropped. `sandbox` and `policy` predate `sandboxes` and `policies`: a stored
+// config from before either rename would otherwise lose the key here and run
+// without it, so both are carried through for the normalizer to refuse by name.
+const RUNTIME_CONFIG_KEYS = [
+  "agent",
+  "harness",
+  "model",
+  "policy",
+  "provider",
+  "sandbox",
+  "sandboxes",
+  "workspaces",
+  "session",
+  "hooks",
+  "tools",
+  "mcp",
+  "denyTools",
+  "skills",
+  "subagent",
+  "scheduler",
+  "browser",
+  "policies",
+  "publicAccess",
+  "allowRunOverrides",
+] as const;
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
@@ -822,41 +848,14 @@ export function toChannelRuntimeAgentConfig(
   };
 }
 
-// The config branches a run reads; everything else the stored row carries is
-// dropped. `sandbox` and `policy` predate `sandboxes` and `policies`: a stored
-// config from before either rename would otherwise lose the key here and run
-// without it, so both are carried through for the normalizer to refuse by name.
-const RUNTIME_CONFIG_KEYS = [
-  "agent",
-  "harness",
-  "model",
-  "policy",
-  "provider",
-  "sandbox",
-  "sandboxes",
-  "workspaces",
-  "session",
-  "hooks",
-  "tools",
-  "mcp",
-  "denyTools",
-  "skills",
-  "subagent",
-  "scheduler",
-  "browser",
-  "policies",
-  "publicAccess",
-  "allowRunOverrides",
-] as const;
-
 /**
  * The stored config cut down to the branches a run reads, re-checked with the
  * config plane's rules so a row written before a rule tightened fails by name.
  */
 export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   const runtimeBranches = Object.fromEntries(
-    RUNTIME_CONFIG_KEYS.filter((key) => config[key] !== undefined).map(
-      (key) => [key, config[key]],
+    RUNTIME_CONFIG_KEYS.filter((key): boolean => config[key] !== undefined).map(
+      (key): [string, unknown] => [key, config[key]],
     ),
   );
 

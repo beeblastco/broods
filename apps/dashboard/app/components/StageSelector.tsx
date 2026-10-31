@@ -46,7 +46,6 @@ import { useEffect, useState } from "react";
 
 type StageKind = Doc<"stages">["kind"];
 
-// A region is selectable once it is live, the same list a deploy checks.
 const regionEntries: Array<{
   value: DeploymentRegion;
   label: string;
@@ -57,6 +56,7 @@ const regionEntries: Array<{
   { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸" },
 ];
 
+// A region is selectable once it is live, the same list a deploy checks.
 const regionOptions = regionEntries.map((option) => ({
   ...option,
   enabled: LIVE_DEPLOYMENT_REGIONS.includes(option.value),
