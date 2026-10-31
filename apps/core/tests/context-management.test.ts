@@ -1663,18 +1663,18 @@ describe("conversation summary", () => {
     );
 
     try {
+      const failure: unknown = await summarizeConversation({
+        conversationKey: "conversation",
+        priorSummaries: [],
+        messages: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: "second" },
+        ],
+        agentConfig: compactingAgentConfig,
+      }).catch((error: unknown): unknown => error);
+
       // Both halves were answered, and billed, before the merge was refused.
-      await expect(
-        summarizeConversation({
-          conversationKey: "conversation",
-          priorSummaries: [],
-          messages: [
-            { role: "user", content: "first" },
-            { role: "assistant", content: "second" },
-          ],
-          agentConfig: compactingAgentConfig,
-        }),
-      ).rejects.toMatchObject({
+      expect(failure).toMatchObject({
         message: expect.stringContaining("prompt is too long"),
         spent: {
           modelCalls: 2,
