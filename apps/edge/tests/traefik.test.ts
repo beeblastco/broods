@@ -116,13 +116,25 @@ test("the cluster limits every config route by peer address", (): void => {
   );
 });
 
-// Download and media links carry their credential in the path.
-test("download and media links stay out of the access log", (): void => {
+// Download and media links carry their credential in the path; a Pancake
+// webhook carries its secret in the query string the access log would record.
+test("credential-bearing routers stay out of the access log", (): void => {
   const unlogged = Object.entries(renderFileConfig(UPSTREAMS).http.routers)
     .filter(([, router]) => router.observability?.accessLogs === false)
     .map(([name]) => name);
 
-  expect(unlogged).toEqual(["broods-edge-downloads", "broods-edge-media"]);
+  expect(unlogged).toEqual([
+    "broods-edge-downloads",
+    "broods-edge-webhooks",
+    "broods-edge-media",
+  ]);
+  // The cluster render carries the same switch on the same routers.
+  const clusterUnlogged = clusterRoutes()
+    .filter((route) => route.observability?.accessLogs === false)
+    .map((route) => route.match);
+
+  expect(clusterUnlogged).toHaveLength(3);
+  expect(clusterUnlogged.join()).toMatch(/webhooks/);
 });
 
 test("a self-hosted install allows its own origins", (): void => {

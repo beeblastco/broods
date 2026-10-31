@@ -179,7 +179,7 @@ flowchart LR
   A["Prepend new value"] --> B["Roll the pods"] --> C["Drop the old value"]
 ```
 
-- `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`: the steps above. A media link never expires, so dropping a value is what revokes the links it sealed.
+- `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`: the steps above. A media link expires on its own after `MEDIA_TICKET_TTL_SECONDS` (default 30 days); dropping a value stops every link it sealed at the origin, though a CDN that fetched the bytes in time can serve its copy until the route's one-year immutable cache-control runs out.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: follow the [rotation runbook](security.md#rotation-runbook). It adds a `rewrapAllKeys` step; dropping a value before the rewrap finishes makes every config it wrapped unreadable.
 - `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`: change core and Convex together. Rotating the stage secret logs out open dashboard log streams and `broods logs` until they mint a new ticket.
 - `ANALYTICS_ID_SECRET`: never rotate it for security; it guards nothing. A new value makes every user and AI session look new in PostHog.
@@ -248,7 +248,7 @@ stateDiagram-v2
 
 - Discord resets a token after 1000 IDENTIFYs in 24 hours. `DISCORD_IDENTIFY_LIMIT` (default 500) parks the socket first. The counter is in memory, so a crash loop defeats it.
 - A RESUME spends no IDENTIFY and only dials a host under `.discord.gg`, so the bot token cannot be sent elsewhere.
-- Events go out as `GATEWAY_MESSAGE_CREATE` with the token in `x-discord-gateway-token`, plus `thread` for a message in a thread.
+- Events go out as `GATEWAY_MESSAGE_CREATE` with a credential derived from the bot token (`discordForwarderToken` in `apps/core/src/shared/discord-wire.ts`) in `x-discord-gateway-token`, plus `thread` for a message in a thread. The bot token itself never crosses the edge; core still accepts it there with a deprecation warning until the forwarder release with the derivation has rolled.
 
 Matrix:
 

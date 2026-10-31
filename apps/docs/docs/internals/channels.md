@@ -213,7 +213,7 @@ sequenceDiagram
 | Twilio                                        | fetches the URL (MMS)             | none                              | one per message         |
 | Teams, Google Chat, Messenger, GitHub, Linear | none                              | none                              | text links only         |
 
-The link has no expiry because some providers re-fetch on every view, and Zalo stores the URL itself. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it. A caption rides the first message only. Rejection reasons go to the log, not the chat.
+The link expires: the sealed ticket carries an expiry, `MEDIA_TICKET_TTL_SECONDS` (default 30 days) from sealing, and a pre-expiry `ml1` link is refused outright. Some providers re-fetch on every view and Zalo stores the URL itself, so an expired link 404s in old chat history; the route's immutable cache headers let a provider CDN keep bytes it fetched in time. A conversation replayed past the expiry shows the model `[a linked file is no longer available]` in place of the file. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` stops every link sealed with it at the origin; a CDN copy fetched in time lives out its cache headers. A caption rides the first message only. Rejection reasons go to the log, not the chat.
 
 ## Inbound attachments
 
@@ -271,7 +271,7 @@ sequenceDiagram
 
 Media skips the forwarder: the attachment key rides the decrypted event, so core downloads, decrypts, encrypts and uploads against the homeserver itself. Replies carry the `app.broods.bot` marker (`MATRIX_BOT_MARKER`) so core never answers its own events.
 
-Core's Discord adapter takes interactions and forwarded messages on one URL and tells them apart by `x-discord-gateway-token`. A deployment without the forwarder can post `MESSAGE_CREATE` events itself in the same wrapper. An absent `author.bot` means a human. For a thread message add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits the parent. Deployment constraints are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
+Core's Discord adapter takes interactions and forwarded messages on one URL and tells them apart by `x-discord-gateway-token`, whose value is `discordForwarderToken(botToken)` from `apps/core/src/shared/discord-wire.ts` (the raw bot token is still accepted with a deprecation warning). A deployment without the forwarder can post `MESSAGE_CREATE` events itself in the same wrapper. An absent `author.bot` means a human. For a thread message add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits the parent. Deployment constraints are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
 
 ## Add a channel
 

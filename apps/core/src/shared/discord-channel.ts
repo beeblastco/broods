@@ -15,6 +15,10 @@ import {
 } from "./channels.ts";
 import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
+import {
+  DISCORD_GATEWAY_TOKEN_HEADER,
+  discordForwarderToken,
+} from "./discord-wire.ts";
 import { channelApiFetch, publicHostFetch } from "./http.ts";
 import { logWarn } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
@@ -236,18 +240,28 @@ export function createDiscordChannel(
     canHandle: function (req) {
       return (
         "x-signature-ed25519" in req.headers ||
-        "x-discord-gateway-token" in req.headers
+        DISCORD_GATEWAY_TOKEN_HEADER in req.headers
       );
     },
 
     authenticate: function (req) {
-      if ("x-discord-gateway-token" in req.headers) {
-        const provided = req.headers["x-discord-gateway-token"];
+      if (DISCORD_GATEWAY_TOKEN_HEADER in req.headers) {
+        const provided = req.headers[DISCORD_GATEWAY_TOKEN_HEADER];
+        if (typeof provided !== "string") return false;
+        if (timingSafeStringEqual(provided, discordForwarderToken(botToken))) {
+          return true;
+        }
+        // Transition: see apps/discord-forwarder/AGENTS.md for when this goes.
+        if (timingSafeStringEqual(provided, botToken)) {
+          logWarn("Discord forward authenticated with the raw bot token", {
+            deprecation: "send discordForwarderToken(botToken) instead",
+            tokenHint: `…${botToken.slice(-4)}`,
+          });
 
-        return (
-          typeof provided === "string" &&
-          timingSafeStringEqual(provided, botToken)
-        );
+          return true;
+        }
+
+        return false;
       }
 
       return discord.verifyRequestSignature(
@@ -275,6 +289,12 @@ export function createDiscordChannel(
       );
       if (gatewayEvent) {
         return gatewayEvent;
+      }
+      // A request on the forwarder credential skipped Discord's signature
+      // check, so it may only carry forwarded gateway events: an unsigned
+      // interaction body on that header must not reach the command paths.
+      if (DISCORD_GATEWAY_TOKEN_HEADER in req.headers) {
+        return unsupportedInteractionResponse();
       }
 
       if (payload.type === 1) {

@@ -1,7 +1,8 @@
 /**
  * The provider registry is the one place a model provider is declared. These
  * tests pin it to the shared name list and check that every entry really
- * resolves to a Vercel AI SDK factory, which `satisfies` alone cannot prove.
+ * resolves to a Vercel AI SDK factory, which the registry's declared return
+ * type alone cannot prove.
  */
 
 import { describe, expect, it } from "bun:test";
