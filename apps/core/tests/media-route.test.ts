@@ -102,6 +102,21 @@ describe("handleMediaRequest", () => {
     expect(readS3BytesMock).not.toHaveBeenCalled();
   });
 
+  // A cache in front of this route must not keep serving a link the route
+  // itself would refuse.
+  it("lets a cache hold the file only until the ticket expires", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    process.env.MEDIA_TICKET_TTL_SECONDS = "60";
+
+    const response = await handleMediaRequest(mediaRequest(ticket()));
+    const maxAge = Number(
+      /max-age=(\d+)/.exec(response.headers.get("cache-control") ?? "")?.[1],
+    );
+
+    expect(maxAge).toBeGreaterThanOrEqual(59);
+    expect(maxAge).toBeLessThanOrEqual(60);
+  });
+
   it("refuses a ticket sealed with another secret", async (): Promise<void> => {
     const { handleMediaRequest } = await import("../src/media.ts");
     process.env.SERVICE_AUTH_SECRET = "service-secret";

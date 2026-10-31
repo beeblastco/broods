@@ -34,7 +34,7 @@ describe("sealMediaTicket / openMediaTicket", (): void => {
     for (const ticket of [WORKSPACE_TICKET, ATTACHMENT_TICKET]) {
       const token = sealMediaTicket(ticket, SECRET);
 
-      expect(openMediaTicket(token, [SECRET])).toEqual(ticket);
+      expect(openMediaTicket(token, [SECRET])).toMatchObject(ticket);
     }
   });
 
@@ -44,9 +44,10 @@ describe("sealMediaTicket / openMediaTicket", (): void => {
     const token = sealMediaTicket(WORKSPACE_TICKET, SECRET, sealedAt);
     const expiry = sealedAt + DEFAULT_MEDIA_TICKET_TTL_SECONDS * 1000;
 
-    expect(openMediaTicket(token, [SECRET], expiry - 1000)).toEqual(
-      WORKSPACE_TICKET,
-    );
+    expect(openMediaTicket(token, [SECRET], expiry - 1000)).toEqual({
+      ...WORKSPACE_TICKET,
+      exp: Math.floor(expiry / 1000),
+    });
     expect(openMediaTicket(token, [SECRET], expiry)).toBeNull();
   });
 
@@ -55,7 +56,7 @@ describe("sealMediaTicket / openMediaTicket", (): void => {
     const sealedAt = Date.now();
     const token = sealMediaTicket(ATTACHMENT_TICKET, SECRET, sealedAt);
 
-    expect(openMediaTicket(token, [SECRET], sealedAt + 59_000)).toEqual(
+    expect(openMediaTicket(token, [SECRET], sealedAt + 59_000)).toMatchObject(
       ATTACHMENT_TICKET,
     );
     expect(openMediaTicket(token, [SECRET], sealedAt + 61_000)).toBeNull();

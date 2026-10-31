@@ -45,6 +45,7 @@ const SAMPLES = [
   "/v1/media/ml1abc",
   "/v1/media//",
   "/v1/webhooks/acct/slack",
+  "/v1/webhooks/acct/dev/e1/pancake/",
   "/v1/webhooks//",
   "/v1/runs",
   "/v2/agents",
@@ -117,7 +118,8 @@ test("the cluster limits every config route by peer address", (): void => {
 });
 
 // Download and media links carry their credential in the path; a Pancake
-// webhook carries its secret in the query string the access log would record.
+// delivery and a Meta verification GET carry one in the query string the
+// access log would record.
 test("credential-bearing routers stay out of the access log", (): void => {
   const unlogged = Object.entries(renderFileConfig(UPSTREAMS).http.routers)
     .filter(([, router]) => router.observability?.accessLogs === false)
@@ -125,7 +127,7 @@ test("credential-bearing routers stay out of the access log", (): void => {
 
   expect(unlogged).toEqual([
     "broods-edge-downloads",
-    "broods-edge-webhooks",
+    "broods-edge-secret-webhooks",
     "broods-edge-media",
   ]);
   // The cluster render carries the same switch on the same routers.
@@ -134,7 +136,20 @@ test("credential-bearing routers stay out of the access log", (): void => {
     .map((route) => route.match);
 
   expect(clusterUnlogged).toHaveLength(3);
-  expect(clusterUnlogged.join()).toMatch(/webhooks/);
+  expect(clusterUnlogged.join()).toMatch(/pancake/);
+});
+
+test("only webhook requests that carry a credential skip the access log", (): void => {
+  const unlogged = (method: string, path: string): boolean | undefined =>
+    resolveRouter(method, path)?.secretPath;
+
+  expect(unlogged("POST", "/v1/webhooks/acct/pancake")).toBe(true);
+  expect(unlogged("POST", "/v1/webhooks/acct/dev/e1/pancake")).toBe(true);
+  expect(unlogged("GET", "/v1/webhooks/acct/whatsapp")).toBe(true);
+  expect(unlogged("GET", "/v1/webhooks/acct/dev/e1/messenger")).toBe(true);
+  expect(unlogged("POST", "/v1/webhooks/acct/whatsapp")).toBeUndefined();
+  expect(unlogged("POST", "/v1/webhooks/acct/slack")).toBeUndefined();
+  expect(unlogged("POST", "/v1/webhooks/acct/dev/e1/telegram")).toBeUndefined();
 });
 
 test("a self-hosted install allows its own origins", (): void => {
