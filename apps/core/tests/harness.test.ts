@@ -1,13 +1,4 @@
-import { dns } from "bun";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  mock,
-  spyOn,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import { requestBodyText } from "./helpers/http.ts";
 import { loopbackTransport, TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
@@ -25,10 +16,6 @@ import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import * as actualOpenAI from "@ai-sdk/openai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
-import type {
-  OpenAICompatibleProvider,
-  OpenAICompatibleProviderSettings,
-} from "@ai-sdk/openai-compatible";
 import type {
   AgentLoopOptions,
   AgentLoopStream,
@@ -50,8 +37,6 @@ import type {
 const realStreamText = actualAi.streamText;
 const realCreateAnthropic = actualAnthropic.createAnthropic;
 const realCreateOpenAI = actualOpenAI.createOpenAI;
-const realCreateOpenAICompatible =
-  actualOpenAICompatible.createOpenAICompatible;
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
@@ -77,10 +62,7 @@ const openAICompatibleModelMock = mock((modelId: string) => ({
   modelId: modelId,
 }));
 const createOpenAICompatibleMock = mock(
-  (
-    _options: OpenAICompatibleProviderSettings,
-  ): OpenAICompatibleProvider | typeof openAICompatibleModelMock =>
-    openAICompatibleModelMock,
+  (_options: unknown) => openAICompatibleModelMock,
 );
 const anthropicModelMock = mock((modelId: string) => ({
   provider: "anthropic",
@@ -114,8 +96,7 @@ type StreamTextScenario =
   | "tool-run"
   | "delivery-tool-then-empty"
   | "multi-step-text"
-  | "real-two-step"
-  | "real-model";
+  | "real-two-step";
 let streamTextScenario: StreamTextScenario = "empty";
 // Scenarios whose first model call fails before any step finishes, by error.
 const NO_FINISH_ERRORS: Partial<Record<StreamTextScenario, string>> = {
@@ -235,10 +216,6 @@ const streamTextMock = mock(
         model: twoStepModelInUse,
         tools: { weather: weatherTool },
       });
-    }
-
-    if (streamTextScenario === "real-model") {
-      return realStreamText(options as Parameters<typeof realStreamText>[0]);
     }
 
     let consumed = false;
@@ -1002,104 +979,6 @@ describe("runAgentLoop", () => {
       true,
     );
   });
-
-  // A provider that never answers, or whose host never resolves: either way the first request is sent again.
-  it.each(["response", "dns"] as const)(
-    "sends a model request again when the %s never comes",
-    async (stall): Promise<void> => {
-      installHarnessEnv();
-      // The retry waits out the SDK's 2s backoff, well inside the stall watchdog.
-      process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "5000";
-      streamTextScenario = "real-model";
-      createOpenAICompatibleMock.mockImplementationOnce(
-        realCreateOpenAICompatible,
-      );
-      const resolved: Awaited<ReturnType<typeof dns.lookup>> = [
-        { address: "93.184.216.34", family: 4, ttl: 30 },
-      ];
-      const lookup = spyOn(dns, "lookup").mockResolvedValue(resolved);
-      if (stall === "dns") {
-        lookup.mockImplementationOnce(
-          (): Promise<typeof resolved> => new Promise((): void => {}),
-        );
-      }
-      const answer = [
-        { choices: [{ index: 0, delta: { content: "hello back" } }] },
-        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
-      ]
-        .map((chunk): string => `data: ${JSON.stringify(chunk)}\n\n`)
-        .join("");
-      let requests = 0;
-      // The first request is held like a provider that never answers.
-      globalThis.fetch = Object.assign(
-        async (
-          _input: string | URL | Request,
-          init?: RequestInit,
-        ): Promise<Response> => {
-          requests += 1;
-          if (stall === "response" && requests === 1) {
-            return new Promise<Response>((_resolve, reject): void => {
-              init?.signal?.addEventListener("abort", (): void =>
-                reject(init.signal?.reason),
-              );
-            });
-          }
-
-          return new Response(`${answer}data: [DONE]\n\n`, {
-            headers: { "content-type": "text/event-stream" },
-          });
-        },
-        { preconnect: originalFetch.preconnect },
-      );
-      const { runAgentLoop } = await import("../src/harness/harness.ts");
-      try {
-        const stream = await runAgentLoop(
-          {
-            conversationKey: "direct:conversation",
-            eventId: "direct-event",
-            filesystemNamespace: () => "fs-test",
-            resolvedWorkspaces: () => [],
-            sandboxes: () => [],
-            environmentText: () => "<environment>",
-            persistModelMessages: async () => [],
-            stepBoundary: async () => ({ renewal: "renewed", steering: null }),
-            loadRefreshedSystemPromptParts: async () => ({
-              systemContextSnapshot: { cursor: null, messages: [] },
-              system: [],
-            }),
-          } as never,
-          {
-            messages: [{ role: "user", content: "hello" }],
-            system: [],
-            ephemeralSystem: [],
-            systemContextSnapshot: { cursor: null, messages: [] },
-          },
-          {
-            provider: {
-              custom: {
-                apiKey: "custom-key",
-                base_url: `https://${stall}.llm.example/v1`,
-                firstByteTimeoutMs: 100,
-              },
-            },
-            model: { provider: "custom", modelId: "gpt-oss-120b" },
-          },
-          { onFinalText: async () => {}, onErrorText: async () => {} },
-        );
-        await stream.consumeStream();
-
-        expect(stream.failureText()).toBeNull();
-        expect(stream.didFail()).toBe(false);
-        expect(await stream.text).toBe("hello back");
-        // The lookup that never finished ran again.
-        if (stall === "dns") expect(lookup).toHaveBeenCalledTimes(2);
-        expect(requests).toBe(stall === "response" ? 2 : 1);
-      } finally {
-        lookup.mockRestore();
-      }
-    },
-    10_000,
-  );
 
   it("fails the run when the worker pool aborts it", async () => {
     weatherDelayMs = 900;

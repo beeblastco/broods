@@ -43,7 +43,7 @@ test("rejects the camel `baseUrl` typo with a did-you-mean hint", () => {
   );
 });
 
-test("passes provider-owned settings through and still catches typos of keys broods reads", () => {
+test("passes provider-owned settings through and still catches apiKey typos", () => {
   // Anything the provider's own AI SDK factory accepts is not the SDK's business.
   expect(() =>
     validateProviderConfig("a", {
@@ -55,11 +55,6 @@ test("passes provider-owned settings through and still catches typos of keys bro
       custom: { api_key: "k", baseURL: "https://x/v1" },
     }),
   ).toThrow(`Did you mean "apiKey"?`);
-  expect(() =>
-    validateProviderConfig("a", {
-      custom: { baseURL: "https://x/v1", firstByteTimeoutMS: 90_000 },
-    }),
-  ).toThrow(`Did you mean "firstByteTimeoutMs"?`);
 });
 
 test("supports every provider on the shared list, deepseek included", () => {

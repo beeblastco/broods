@@ -732,12 +732,6 @@ function normalizeProviderSettings(
     throw new ClientError(
       `config.provider.${providerName}.gatewayId must be an AI Gateway id (letters, digits, - and _)`,
     );
-  // The stall watchdog ends a silent run at 300 s, so a longer bound never fires.
-  assertOptionalPositiveInteger(
-    config.firstByteTimeoutMs,
-    `config.provider.${providerName}.firstByteTimeoutMs`,
-    300_000,
-  );
   assertOptionalString(
     config.base_url,
     `config.provider.${providerName}.base_url`,
