@@ -6,7 +6,7 @@ import {
   type DetailRow,
   PayloadBody,
 } from "@/app/components/DetailSections";
-import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
+import { DetailSplit } from "@/app/components/DetailSplit";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import {
   STATUS_TONE_BG,
@@ -62,6 +62,7 @@ import {
   Terminal,
   TriangleAlert,
   Wrench,
+  X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -380,9 +381,9 @@ const STATUS_ALIASES: Readonly<Record<string, SpanStatus>> = {
   needs_input: "needs_input",
 };
 
-// The task list (w-80) plus the waterfall's min-w-xl, so dragging the detail
-// divider never pushes the waterfall's columns out of view.
-const TRACE_TABLE_MIN_WIDTH = 896;
+// The waterfall's min-w-xl, so dragging the detail divider never pushes the
+// waterfall's columns out of view.
+const WATERFALL_MIN_WIDTH = 576;
 
 // Where the browser remembers that the task list is folded to its rail.
 const LIST_RAIL_KEY = "tracing:list-rail";
@@ -624,8 +625,9 @@ export function TracingPanel({
   // Desktop only: on a phone the list stacks above the trace, so a rail of
   // full-width dot rows saves nothing.
   const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
+  // Unfolded by hand while a span is open, until no span is open.
+  const [listKept, setListKept] = useState(false);
   const isMobile = useIsMobile();
-  const rail = railChosen && !isMobile;
   // Whether a request's subagent rows list, where the person chose; with no
   // choice they list while the selected run is that request or under it.
   const [stackChoices, setStackChoices] = useState<
@@ -765,6 +767,11 @@ export function TracingPanel({
   // it tracks live updates and closes when its run leaves the view.
   const selectedSpan =
     selectedGroup?.spans.find((span) => spanKey(span) === selectedKey) ?? null;
+  // An open span folds the list to its rail, so the waterfall keeps its width
+  // beside the detail. Render-time adjustment, not an effect.
+  if (!selectedSpan && listKept) setListKept(false);
+  const rail =
+    !isMobile && (railChosen || (selectedSpan !== null && !listKept));
   // The selected run's chain, a request down to the subagent on screen.
   const chain = useMemo(
     () => (selectedGroup ? chainFor(selectedGroup, groupByTrace) : []),
@@ -891,6 +898,9 @@ export function TracingPanel({
   const pickTask = useCallback(
     (root: ObservabilitySpanRow): void => {
       setSelectedTaskKey(spanKey(root));
+      // A picked run opens with no span, so returning to a run never
+      // reopens its old detail (and folds the list) under the click.
+      setSelectedKey(null);
       focusedRef.current = `${root.traceId}:${refocusNonce}`;
       void setFocusTraceId(root.traceId, {
         limitUrlUpdates: debounce(200),
@@ -1058,97 +1068,74 @@ export function TracingPanel({
         </p>
       )}
 
-      <DetailSplit
-        flush
-        tableMinWidth={TRACE_TABLE_MIN_WIDTH}
-        detail={
-          selectedSpan &&
-          selectedGroup && (
-            <DetailPanel
-              key={selectedKey}
-              title={spanLabel(selectedSpan)}
-              meta={
-                <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
-                  {selectedSpan.status !== "ok" && (
-                    <StatusDot
-                      tone={
-                        isStale(selectedSpan, isTaskRunning(selectedGroup.root))
-                          ? "ended"
-                          : STATUS_TONE[selectedSpan.status]
-                      }
-                      label={selectedSpan.status}
-                    />
-                  )}
-                  <span className="font-mono">
-                    {spanMetaLine(selectedSpan)}
-                  </span>
-                </div>
-              }
-              onClose={() => setSelectedKey(null)}
-            >
-              <SpanDetails span={selectedSpan} />
-            </DetailPanel>
-          )
-        }
-      >
-        <div className="flex h-full min-h-0 flex-col md:flex-row">
-          <TaskListPane
-            // An empty list opens with its message: with no trace selected
-            // there is no header holding the fold to open it again.
-            rail={rail && listRows.length > 0}
-            rows={listRows}
-            selectedGroup={selectedGroup}
-            stackChoices={stackChoices}
-            onSelect={pickTask}
-            onToggleStack={toggleStack}
-            costs={costs}
-            emptyMessage={
-              entries.length === 0
-                ? emptyStreamMessage(history, error, "traces", "7 days")
-                : "No tasks match the current filters."
-            }
-            shown={groups.length}
-            total={allGroups.length}
-            remaining={remaining}
-            onLoadMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
-          />
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <TaskListPane
+          // An empty list opens with its message: with no trace selected
+          // there is no header holding the fold to open it again.
+          rail={rail && listRows.length > 0}
+          rows={listRows}
+          selectedGroup={selectedGroup}
+          stackChoices={stackChoices}
+          onSelect={pickTask}
+          onToggleStack={toggleStack}
+          costs={costs}
+          emptyMessage={
+            entries.length === 0
+              ? emptyStreamMessage(history, error, "traces", "7 days")
+              : "No tasks match the current filters."
+          }
+          shown={groups.length}
+          total={allGroups.length}
+          remaining={remaining}
+          onLoadMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
+        />
 
-          <div
-            data-scroll-pane
-            className="min-h-0 min-w-0 flex-1 overflow-auto"
-          >
-            {selectedGroup && (
-              <TaskWaterfall
-                key={spanKey(selectedGroup.root)}
-                attempt={continueAttempts.get(selectedGroup.root.traceId)}
-                chain={chain}
-                cost={costLabel(costs.get(spanKey(selectedGroup.root)))}
-                projectSlug={projectSlug}
-                stageSlug={stageSlug}
-                onContinue={() => void continueTask(selectedGroup.root)}
-                onPickRun={pickTask}
-                fold={
-                  <TaskListFold
-                    rail={rail}
-                    onToggle={() => setRail(!railChosen)}
-                  />
-                }
-                view={{
-                  costs: costs,
-                  focusTraceId: focusTraceId,
-                  group: selectedGroup,
-                  onFocusTrace: focusTrace,
-                  onSelect: (key) =>
-                    setSelectedKey((current) => (current === key ? null : key)),
-                  selectedKey: selectedKey,
-                  toggle: toggle,
-                  toggled: toggled,
-                }}
-              />
-            )}
-          </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {selectedGroup && (
+            <TaskWaterfall
+              key={spanKey(selectedGroup.root)}
+              attempt={continueAttempts.get(selectedGroup.root.traceId)}
+              chain={chain}
+              cost={costLabel(costs.get(spanKey(selectedGroup.root)))}
+              detail={
+                selectedSpan && (
+                  <div
+                    key={selectedKey}
+                    className="min-h-0 flex-1 animate-in overflow-auto p-3 duration-150 fade-in slide-in-from-right-2 motion-reduce:animate-none"
+                  >
+                    <SpanDetails span={selectedSpan} />
+                  </div>
+                )
+              }
+              onCloseDetail={() => setSelectedKey(null)}
+              projectSlug={projectSlug}
+              stageSlug={stageSlug}
+              onContinue={() => void continueTask(selectedGroup.root)}
+              onPickRun={pickTask}
+              fold={
+                <TaskListFold
+                  rail={rail}
+                  onToggle={() => {
+                    setRail(!rail);
+                    setListKept(rail);
+                  }}
+                />
+              }
+              view={{
+                costs: costs,
+                focusTraceId: focusTraceId,
+                group: selectedGroup,
+                onFocusTrace: focusTrace,
+                onSelect: (key) =>
+                  setSelectedKey((current) => (current === key ? null : key)),
+                selectedKey: selectedKey,
+                toggle: toggle,
+                toggled: toggled,
+              }}
+            />
+          )}
         </div>
-      </DetailSplit>
+      </div>
     </div>
   );
 }
@@ -1797,17 +1784,6 @@ function spanLabel(span: ObservabilitySpanRow): string {
   const taskId = span.attributes?.["task.id"];
 
   return typeof taskId === "string" ? taskId : span.traceId;
-}
-
-/** Duration, total tokens when the span has them, and start time. */
-function spanMetaLine(span: ObservabilitySpanRow): string {
-  const tokens = spanTokens(span);
-
-  return [
-    span.durationMs > 0 ? formatDuration(span.durationMs) : "—",
-    ...(tokens === undefined ? [] : [`${formatNumber(tokens)} tokens`]),
-    formatDateTime(span.startTimeMs),
-  ].join(" · ");
 }
 
 // Lowercased search text, built once per span object. The stream replaces a
@@ -3170,7 +3146,9 @@ function TaskWaterfall({
   attempt,
   chain,
   cost,
+  detail,
   fold,
+  onCloseDetail,
   onContinue,
   onPickRun,
   projectSlug,
@@ -3181,8 +3159,11 @@ function TaskWaterfall({
   chain: SpanGroup[];
   /** The run's price, see costLabel; undefined before any model step. */
   cost: string | undefined;
+  /** The open span's details, beside the waterfall under the header. */
+  detail: ReactNode;
   /** The task list's fold button, first in the header. */
   fold: React.ReactNode;
+  onCloseDetail: () => void;
   onContinue: () => void;
   onPickRun: (root: ObservabilitySpanRow) => void;
   projectSlug: string | undefined;
@@ -3327,36 +3308,48 @@ function TaskWaterfall({
             onFocusTrace={view.onFocusTrace}
           />
         )}
+        {detail && (
+          <button
+            type="button"
+            onClick={onCloseDetail}
+            aria-label="Close details"
+            className="-m-1 ml-auto cursor-pointer rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        )}
       </div>
-      <TimelineClock group={group} live={live}>
-        <div
-          className="@container relative min-w-xl"
-          style={{ "--timeline-width": TIMELINE_WIDTH }}
-        >
-          <table className="w-full table-fixed text-xs">
-            <colgroup>
-              <col className="w-22" />
-              <col />
-              <col className="w-20" />
-              <col className="w-19" />
-              <col className="w-(--timeline-width)" />
-            </colgroup>
-            <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
-              <tr className="text-left text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Started</th>
-                <th className="px-3 py-2 font-medium">Span</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 text-right font-medium">Duration</th>
-                <th className="px-3 py-2">
-                  <TimelineAxis issues={issues.all} onPick={showSpan} />
-                </th>
-              </tr>
-            </thead>
-            <tbody>{renderSpanRows(root, 0, live, view, undefined)}</tbody>
-          </table>
-          <TimelineLines issues={issues.all} />
-        </div>
-      </TimelineClock>
+      <DetailSplit flush tableMinWidth={WATERFALL_MIN_WIDTH} detail={detail}>
+        <TimelineClock group={group} live={live}>
+          <div
+            className="@container relative min-w-xl"
+            style={{ "--timeline-width": TIMELINE_WIDTH }}
+          >
+            <table className="w-full table-fixed text-xs">
+              <colgroup>
+                <col className="w-22" />
+                <col />
+                <col className="w-20" />
+                <col className="w-19" />
+                <col className="w-(--timeline-width)" />
+              </colgroup>
+              <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
+                <tr className="text-left text-muted-foreground">
+                  <th className="px-3 py-2 font-medium">Started</th>
+                  <th className="px-3 py-2 font-medium">Span</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 text-right font-medium">Duration</th>
+                  <th className="px-3 py-2">
+                    <TimelineAxis issues={issues.all} onPick={showSpan} />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>{renderSpanRows(root, 0, live, view, undefined)}</tbody>
+            </table>
+            <TimelineLines issues={issues.all} />
+          </div>
+        </TimelineClock>
+      </DetailSplit>
     </>
   );
 }
