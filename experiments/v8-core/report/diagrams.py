@@ -101,7 +101,9 @@ def stat(label, level, key, source=None):
     return mean([r[key] for r in got])
 
 
-real = rows("real-slim.analysis.json") and json.loads((RESULTS / "real-slim.analysis.json").read_text())
+REAL_PATH = RESULTS / "real-slim.analysis.json"
+real = json.loads(REAL_PATH.read_text()) if REAL_PATH.exists() else []
+real_batches = [r for r in rows("real-slim.jsonl") if r.get("kind") == "batch"]
 REAL_ARMS = [
     ("bun+machine/haiku-slim", "Today"),
     ("isolate+v8/haiku-slim", "Fresh isolate, slim core"),
@@ -118,7 +120,7 @@ def real_stat(label, key):
     if key == "ok":
         return total, sum(r["ok"] + r["failed"] for r in got)
     if key == "p50":
-        return statistics.median([r["p50"] for r in got for _ in range(r["ok"])])
+        return statistics.median([t for r in real_batches if r["label"] == label for t in r["taskMs"]])
     return sum(r[key] * r["ok"] for r in got) / total
 
 
@@ -178,7 +180,7 @@ def services(from_y, xs=None):
 
 def svg(body, label):
     return (
-        f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="{esc(label)}" class="diag">{body}</svg>'
+        f'<div class="sx"><svg viewBox="0 0 {W} {H}" role="img" aria-label="{esc(label)}" class="diag">{body}</svg></div>'
     )
 
 
@@ -561,6 +563,7 @@ page = f"""<title>Broods task isolates</title>
 {scripted_table(CONTROL_ARMS, control, AUDIT_CONTROL)}
 <h3>Real model: Haiku 5.5, high effort</h3>
 {real_table()}
+<p>Every real task passed and the idle runtime ran none of their model steps. With the real model, the slim isolate took {num(real_slim - real_today, 1)} s longer per task at the median. On average, tools and core took {num((real_stat("isolate+v8/haiku-slim", "toolMsPerTask") - real_stat("bun+machine/haiku-slim", "toolMsPerTask")) / 1000, 1)} s longer, where the V8 sandbox is slower than a machine, and the model {num((real_stat("isolate+v8/haiku-slim", "modelMsPerTask") - real_stat("bun+machine/haiku-slim", "modelMsPerTask")) / 1000, 1)} s longer, because it took {num(real_stat("isolate+v8/haiku-slim", "stepsPerTask"), 1)} steps per task against {num(real_stat("bun+machine/haiku-slim", "stepsPerTask"), 1)}. The extra steps also made it {real_stat("isolate+v8/haiku-slim", "usdPerTask") * 100 - real_stat("bun+machine/haiku-slim", "usdPerTask") * 100:.2f}¢ dearer per task; nothing in the runtime changes the price of a step.</p>
 <p>Across all {REAL_TASKS} real-model tasks so far, {num(MODEL_SHARE * 100)}% of the time was spent waiting on the model, and the tokens cost about US${num(USD_PER_TASK * 1e6)} per million tasks.</p>
 </section>
 

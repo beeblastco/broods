@@ -77,7 +77,7 @@ found. `SHARED_FILES=1` pins each agent's V8 sandbox to one reservation key so a
 subagent sees its parent's files, as it does on a machine.
 
 `report/` builds the published pages from `results/`:
-`python3 report/gen.py results report.html` for the benchmark report and
+`python3 report/gen.py results report.html` for the benchmark report (https://claude.ai/artifact/BE46ta7uPrZRwJ7BqvcVbG) and
 `python3 report/diagrams.py results page.html` for the diagrams and slim-core
-results. Every number on it is read from
+results (https://claude.ai/artifact/2qS6mM9RgPqgnrAeuSLCnt). Every number on it is read from
 the rows; only prices and the bundle size are typed in.

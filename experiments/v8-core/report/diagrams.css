@@ -326,3 +326,11 @@ td .short {
   color: var(--bad);
   font-weight: 600;
 }
+.sx {
+  overflow-x: auto;
+}
+@media (max-width: 560px) {
+  .sx svg.diag {
+    min-width: 460px;
+  }
+}
