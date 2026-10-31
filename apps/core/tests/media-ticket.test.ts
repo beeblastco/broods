@@ -39,6 +39,7 @@ describe("sealMediaTicket / openMediaTicket", () => {
   });
 
   it("opens right up to the default TTL and refuses past it", (): void => {
+    delete process.env.MEDIA_TICKET_TTL_SECONDS;
     const sealedAt = Date.now();
     const token = sealMediaTicket(WORKSPACE_TICKET, SECRET, sealedAt);
     const expiry = sealedAt + DEFAULT_MEDIA_TICKET_TTL_SECONDS * 1000;

@@ -47,6 +47,7 @@ beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = SECRET;
+  delete process.env.MEDIA_TICKET_TTL_SECONDS;
   headS3ObjectMock.mockClear();
   readS3BytesMock.mockClear();
   headS3ObjectMock.mockImplementation(async () => ({

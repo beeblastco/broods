@@ -6,10 +6,11 @@
  * (default `DEFAULT_MEDIA_TICKET_TTL_SECONDS`), open refuses a ticket past it,
  * and a legacy pre-expiry token ("ml1") is refused outright, so links sealed
  * before the cutover die with it. Providers that re-fetch lazily
- * (Zalo, on every view) lose an expired link in old chat history; the media
- * route's immutable cache-control lets their CDNs keep bytes fetched in time.
- * Dropping a secret from `MEDIA_TICKET_SECRET` still revokes every link sealed
- * with it at once.
+ * (Zalo, on every view) lose an expired link in old chat history, and a
+ * conversation replayed past the TTL loses the media its stored links named.
+ * Dropping a secret from `MEDIA_TICKET_SECRET` stops every link it sealed at
+ * the origin; copies a CDN fetched in time live on until the media route's
+ * immutable cache-control (one year) runs out on them.
  */
 
 import {

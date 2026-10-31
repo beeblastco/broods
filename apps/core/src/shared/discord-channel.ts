@@ -296,6 +296,12 @@ export function createDiscordChannel(
       if (gatewayEvent) {
         return gatewayEvent;
       }
+      // A request on the forwarder credential skipped Discord's signature
+      // check, so it may only carry forwarded gateway events: an unsigned
+      // interaction body on that header must not reach the command paths.
+      if (DISCORD_GATEWAY_TOKEN_HEADER in req.headers) {
+        return unsupportedInteractionResponse();
+      }
 
       if (payload.type === 1) {
         return {

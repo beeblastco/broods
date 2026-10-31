@@ -454,6 +454,36 @@ describe("discord channel adapter", () => {
     ).toBe(false);
   });
 
+  // The forwarder credential skips Discord's signature check, so it must only
+  // carry forwarded gateway events: an interaction body riding it would run
+  // slash commands unsigned.
+  it("refuses an interaction payload on the forwarder credential", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["channel-1"]),
+      null,
+    );
+
+    const parsed = await adapter.parse(
+      createGatewayRequest({
+        id: "interaction-9",
+        type: 2,
+        token: "token-9",
+        application_id: "app-1",
+        guild_id: "guild-1",
+        channel_id: "channel-1",
+        data: { name: "new" },
+        member: { user: { id: "user-1" } },
+      }),
+    );
+
+    if (parsed.kind !== "response") {
+      throw new Error("Expected the interaction to be refused");
+    }
+    expect(parsed.response.body).toContain("Unsupported interaction.");
+  });
+
   it("still accepts the raw bot token and warns about the deprecation", async () => {
     const adapter = createDiscordChannel(
       "bot-token",

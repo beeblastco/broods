@@ -169,6 +169,40 @@ describe("ask_questions tool", () => {
     expect(mutations).toHaveLength(0);
   });
 
+  // The SDK's `jsonSchema` enforces nothing at runtime, so a shape the model
+  // got wrong must fail here as a retryable tool error: stored as-is it would
+  // fail `pendingQuestionSummaryValidator` on the run's outcome write instead.
+  it("rejects a question shape the outcome validator would refuse", async () => {
+    stubMutations();
+    const execute = toolExecute(
+      askQuestionsTool({
+        conversationKey: CONVERSATION_KEY,
+        eventId: "event-1",
+      }),
+    );
+    const extraKey = { ...QUESTION, hint: "never stored" };
+    const missingHeader = {
+      id: "stage",
+      question: "Which stage?",
+      options: QUESTION.options,
+    };
+    const extraOptionKey = {
+      ...QUESTION,
+      options: [{ label: "dev", icon: "d" }, { label: "prod" }],
+    };
+
+    expect(
+      execute({ questions: [extraKey] as ChannelQuestion[] }),
+    ).rejects.toThrow('unknown key "hint"');
+    expect(
+      execute({ questions: [missingHeader] as ChannelQuestion[] }),
+    ).rejects.toThrow("missing its id, header or question text");
+    expect(
+      execute({ questions: [extraOptionKey] as ChannelQuestion[] }),
+    ).rejects.toThrow('unknown key "icon"');
+    expect(mutations).toHaveLength(0);
+  });
+
   it("fails the row when the outbound hook blocks the prompt", async () => {
     stubMutations();
     const execute = toolExecute(

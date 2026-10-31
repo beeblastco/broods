@@ -9,6 +9,7 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
 import type { ChannelQuestion } from "../../shared/channels.ts";
 import { logInfo } from "../../shared/log.ts";
+import { isPlainObject } from "../../shared/object.ts";
 import {
   createDetachedAsyncToolResult,
   markAsyncToolResultFailed,
@@ -30,6 +31,9 @@ import type { ChannelToolContext } from "./channel.tool.ts";
 import { toolError } from "./utils.ts";
 
 const MAX_HEADER_LENGTH = 12;
+// The exact shapes `pendingQuestionSummaryValidator` stores.
+const QUESTION_KEYS = new Set(["id", "header", "question", "options"]);
+const OPTION_KEYS = new Set(["label", "description"]);
 
 export interface AskQuestionsContext {
   conversationKey: string;
@@ -223,14 +227,25 @@ async function postToChannel(
   return null;
 }
 
-// Only what the JSON schema cannot say: counts the SDK does not enforce at
-// runtime, and id uniqueness.
+// The JSON schema only steers the model: `jsonSchema` carries no runtime
+// validator, so every rule has to hold here, before a row is stored. A shape
+// the model got wrong must come back as a tool error it can retry, not fail
+// `pendingQuestionSummaryValidator` on the Convex write after the question
+// already posted.
 function validateQuestions(questions: ChannelQuestion[]): string | null {
-  if (questions.length === 0 || questions.length > MAX_QUESTIONS) {
+  if (
+    !Array.isArray(questions) ||
+    questions.length === 0 ||
+    questions.length > MAX_QUESTIONS
+  ) {
     return `ask_questions takes 1 to ${MAX_QUESTIONS} questions`;
   }
   const ids = new Set<string>();
   for (const question of questions) {
+    const malformed = malformedQuestion(question);
+    if (malformed) {
+      return malformed;
+    }
     if (ids.has(question.id)) {
       return `question id "${question.id}" is used twice`;
     }
@@ -240,6 +255,52 @@ function validateQuestions(questions: ChannelQuestion[]): string | null {
       question.options.length > MAX_OPTIONS
     ) {
       return `question "${question.id}" needs ${MIN_OPTIONS} to ${MAX_OPTIONS} options`;
+    }
+  }
+
+  return null;
+}
+
+// Shape check on the model's JSON, matching `pendingQuestionSummaryValidator`
+// exactly: that validator rejects an unknown key or a missing field just as
+// hard, so anything it would refuse must be refused here first.
+function malformedQuestion(candidate: ChannelQuestion): string | null {
+  const question: unknown = candidate;
+  if (!isPlainObject(question)) {
+    return "each question must be an object";
+  }
+  const extra = Object.keys(question).find((key) => !QUESTION_KEYS.has(key));
+  if (extra !== undefined) {
+    return `a question carries an unknown key "${extra}"`;
+  }
+  if (
+    typeof question.id !== "string" ||
+    typeof question.header !== "string" ||
+    typeof question.question !== "string"
+  ) {
+    return "a question is missing its id, header or question text";
+  }
+  if (!Array.isArray(question.options)) {
+    return `question "${question.id}" is missing its options`;
+  }
+  for (const option of question.options as unknown[]) {
+    if (!isPlainObject(option)) {
+      return `question "${question.id}" has a malformed option`;
+    }
+    const extraOption = Object.keys(option).find(
+      (key) => !OPTION_KEYS.has(key),
+    );
+    if (extraOption !== undefined) {
+      return `an option on "${question.id}" carries an unknown key "${extraOption}"`;
+    }
+    if (typeof option.label !== "string") {
+      return `an option on "${question.id}" is missing its label`;
+    }
+    if (
+      option.description !== undefined &&
+      typeof option.description !== "string"
+    ) {
+      return `an option on "${question.id}" has a non-string description`;
     }
   }
 
