@@ -78,6 +78,12 @@ export async function handleMediaRequest(
     return errorResponse(413, "Payload too large");
   }
 
+  // Read before the headers, so the cache lifetime below counts from when the
+  // response leaves, not from before a slow read.
+  const bytes =
+    request.method.toUpperCase() === "HEAD"
+      ? null
+      : await readMediaObject(object, ticket);
   // The extension is the only source. An account on a bring-your-own bucket sets
   // the stored content type itself, so that value is request input, not metadata.
   const contentType = contentTypeForPath(ticket.path);
@@ -104,11 +110,6 @@ export async function handleMediaRequest(
     contentLength: object.head.contentLength,
     method: request.method,
   });
-  if (request.method.toUpperCase() === "HEAD") {
-    return new Response(null, { status: 200, headers: headers });
-  }
-
-  const bytes = await readMediaObject(object, ticket);
 
   return new Response(bytes, { status: 200, headers: headers });
 }
