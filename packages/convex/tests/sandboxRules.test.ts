@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { toPublicSandboxConfigResponse } from "../model/responses";
 import {
+  browserHostAllowed,
+  browserMachineScope,
   browserSandboxRefusal,
   normalizeCreateSandboxConfigInput,
   normalizeSandboxConfig,
@@ -925,5 +927,101 @@ describe("browser sandbox", () => {
       browserSandboxRefusal({ ...obscura, network: { mode: "deny-all" } }),
     ).toContain("network.mode to allow-all");
     expect(browserSandboxRefusal(undefined)).toContain('image: "obscura"');
+  });
+});
+
+describe("browser machine (scope: user)", () => {
+  const EXTENSION = "abcdefghijklmnopabcdefghijklmnop";
+  const browser = (options: Record<string, unknown>): SandboxConfig =>
+    normalizeSandboxConfig({
+      provider: "machine",
+      network: { mode: "allow-all" },
+      options: options,
+    });
+
+  it("stores a valid scope and reads it back", () => {
+    const config = browser({
+      scope: "user",
+      allowedExtensionIds: [EXTENSION],
+      allowedDomains: ["example.com", "*.example.org"],
+    });
+
+    expect(browserMachineScope(config)).toEqual({
+      allowedExtensionIds: [EXTENSION],
+      allowedDomains: ["example.com", "*.example.org"],
+    });
+    expect(
+      browserMachineScope({ provider: "machine", options: {} }),
+    ).toBeNull();
+  });
+
+  it("requires Chrome extension ids", () => {
+    expect(() => browser({ scope: "user" })).toThrow(
+      "allowedExtensionIds is required",
+    );
+    expect(() => browser({ scope: "user", allowedExtensionIds: [] })).toThrow(
+      "allowedExtensionIds is required",
+    );
+    expect(() =>
+      browser({ scope: "user", allowedExtensionIds: ["not-an-extension"] }),
+    ).toThrow("is not a Chrome extension id");
+    expect(() =>
+      browser({
+        scope: "user",
+        allowedExtensionIds: [EXTENSION.toUpperCase()],
+      }),
+    ).toThrow("is not a Chrome extension id");
+  });
+
+  it("holds allowedDomains to lowercase host patterns", () => {
+    for (const domain of ["https://example.com", "Example.com", "*.", "a b"]) {
+      expect(() =>
+        browser({
+          scope: "user",
+          allowedExtensionIds: [EXTENSION],
+          allowedDomains: [domain],
+        }),
+      ).toThrow("must be a lowercase host");
+    }
+    expect(() =>
+      browser({
+        scope: "user",
+        allowedExtensionIds: [EXTENSION],
+        allowedDomains: [],
+      }),
+    ).toThrow("omit it to allow any https host");
+  });
+
+  it("refuses browser options off a scope-user machine", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "custom",
+        network: { mode: "allow-all" },
+        options: { endpoint: "https://sandbox.example.com", scope: "user" },
+      }),
+    ).toThrow("only read by the machine provider");
+    expect(() => browser({ scope: "team" })).toThrow('must be "user"');
+    expect(() => browser({ allowedExtensionIds: [EXTENSION] })).toThrow(
+      'only applies with config.options.scope: "user"',
+    );
+    expect(() =>
+      browser({
+        scope: "user",
+        allowedExtensionIds: [EXTENSION],
+        cwd: "/tmp",
+      }),
+    ).toThrow("a browser runs no commands");
+  });
+
+  it("matches a host exactly, or any subdomain under a wildcard", () => {
+    const patterns = ["example.com", "*.example.org"];
+
+    expect(browserHostAllowed("example.com", patterns)).toBe(true);
+    expect(browserHostAllowed("www.example.com", patterns)).toBe(false);
+    expect(browserHostAllowed("app.example.org", patterns)).toBe(true);
+    expect(browserHostAllowed("example.org", patterns)).toBe(false);
+    expect(browserHostAllowed("evilexample.org", patterns)).toBe(false);
+    expect(browserHostAllowed("anything.test", undefined)).toBe(true);
+    expect(browserHostAllowed("anything.test", [])).toBe(false);
   });
 });

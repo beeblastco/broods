@@ -126,7 +126,8 @@ export type ResourceInput<Name extends string, Config> = {
  * Keys are scoped to the account, so they cannot reach another account's machine.
  * A `custom` sandbox names its server with `endpoint` (https, required), an
  * optional bearer `token` and extra static `headers`; a credential header's
- * value is an `env("NAME")` ref.
+ * value is an `env("NAME")` ref. A `machine` sandbox with `scope: "user"` is
+ * one browser per end user instead of one daemon: see `scope`.
  */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
   reservationKey?: string;
@@ -135,6 +136,20 @@ export type SandboxDefinitionOptions = Record<string, unknown> & {
   endpoint?: string;
   token?: string | EnvRef;
   headers?: Record<string, string | EnvRef>;
+  /**
+   * machine: `"user"` makes this sandbox each end user's own browser. Their
+   * extension connects with a `signBrowserTicket` ticket (`connectBrowser`),
+   * and a run started with that user's token drives only their browser,
+   * through the `browser` tool. No bash, computer tool or machine MCP runs here.
+   */
+  scope?: "user";
+  /** With `scope: "user"`, required: the Chrome extension ids (32 letters a-p) that may connect. */
+  allowedExtensionIds?: string[];
+  /**
+   * With `scope: "user"`: hosts `navigate` and `upload_file` may reach, like
+   * `example.com` or `*.example.com` for its subdomains. Omitted, any https host.
+   */
+  allowedDomains?: string[];
 };
 
 /**

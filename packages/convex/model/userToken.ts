@@ -28,10 +28,13 @@ export const USER_CONVERSATION_PREFIX = "bsu:";
 export const USER_TOKEN_DEFAULT_TTL_MS = 10 * 60 * 1000;
 /** A token naming a later expiry is refused: it is a bearer for its whole life. */
 export const USER_TOKEN_MAX_TTL_MS = 60 * 60 * 1000;
+/**
+ * No `:` so `bsu:<userId>:` splits one way only. Emails and UUIDs fit. A
+ * browser ticket names its user under the same rule.
+ */
+export const USER_ID_PATTERN = /^[A-Za-z0-9._@+=-]{1,128}$/;
 
 const KEY_CONTEXT = "broods-user-token:";
-/** No `:` so `bsu:<userId>:` splits one way only. Emails and UUIDs fit. */
-const USER_ID_PATTERN = /^[A-Za-z0-9._@+=-]{1,128}$/;
 const MAX_CONVERSATIONS = 100;
 const MAX_CONVERSATION_KEY_LENGTH = 256;
 /** The signer's clock may run ahead of core's by this much. */

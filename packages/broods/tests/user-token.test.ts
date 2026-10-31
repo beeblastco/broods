@@ -1,7 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
+import { openBrowserTicket } from "../../convex/model/browserTicket.ts";
 import { openUserToken } from "../../convex/model/userToken.ts";
 import { BroodsClient } from "../src/client.ts";
-import { signUserToken, USER_TOKEN_HEADER } from "../src/user-token.ts";
+import {
+  signBrowserTicket,
+  signUserToken,
+  USER_TOKEN_HEADER,
+} from "../src/user-token.ts";
 import { webSocketSubprotocols } from "../src/websocket.ts";
 
 const SECRET = "bsig_sdk-test-secret";
@@ -22,6 +27,30 @@ test("signUserToken signs a token core opens with the same secret", async () => 
     conversations: ["chat-1"],
   });
   expect(await openUserToken(token, "bsig_other")).toBeNull();
+});
+
+test("signBrowserTicket signs a ticket core opens, one fresh jti each time", async () => {
+  process.env.BROODS_USER_TOKEN_SECRET = SECRET;
+  const first = await signBrowserTicket({ userId: "user_123", sandbox: "web" });
+  const second = await signBrowserTicket({
+    userId: "user_123",
+    sandbox: "web",
+  });
+  const opened = await openBrowserTicket(first, SECRET);
+
+  expect(opened).toMatchObject({ userId: "user_123", sandbox: "web" });
+  expect(opened?.jti).not.toBe((await openBrowserTicket(second, SECRET))?.jti);
+  expect(await openUserToken(first, SECRET)).toBeNull();
+  expect(
+    await signBrowserTicket({
+      userId: "user_123",
+      sandbox: "web",
+      ttlMs: 16 * 60_000,
+    }).then(
+      (): string => "signed",
+      (error: unknown): string => String(error),
+    ),
+  ).toContain("Invalid browser ticket");
 });
 
 test("signUserToken refuses without a secret, with the runtime key, or past an hour", async () => {

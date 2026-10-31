@@ -622,10 +622,19 @@ export async function syncSandboxResources(
       envNames,
     );
     // Same rules as the config API for a custom server, on the placeholder
-    // form its credential headers are written in.
+    // form its credential headers are written in, and for a browser machine,
+    // whose extension ids and hosts core trusts as stored.
+    const options = sourceConfig.options;
+    const browserOptions =
+      typeof options === "object" &&
+      options !== null &&
+      ["scope", "allowedExtensionIds", "allowedDomains"].some(
+        (key): boolean => key in options,
+      );
     if (
       sourceConfig.provider === "custom" ||
-      sourceConfig.fallbackProvider === "custom"
+      sourceConfig.fallbackProvider === "custom" ||
+      browserOptions
     ) {
       normalizeSandboxConfig(sourceConfig);
     }

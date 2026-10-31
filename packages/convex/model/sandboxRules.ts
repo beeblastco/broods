@@ -51,6 +51,12 @@ export const SANDBOX_SIZE_NAMES = [
   "large",
 ] as const;
 
+// A Chrome extension id: 32 letters a-p, the base-16 hash Chrome derives from its key.
+const CHROME_EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
+// `example.com`, or `*.example.com` for its subdomains, lowercase.
+const HOST_PATTERN_SYNTAX =
+  /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
+
 export const DEFAULT_TIMEOUT_SECONDS = 30;
 export const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
@@ -146,6 +152,17 @@ export interface SandboxConfig {
 export interface WorkspaceSandboxLimits {
   maxTimeoutSeconds: number;
   maxOutputLimitBytes: number;
+}
+
+/**
+ * Who may connect to a `scope: "user"` machine sandbox and where its agent may
+ * send the browser. Read back by `browserMachineScope`.
+ */
+export interface BrowserMachineScope {
+  /** Chrome extension ids whose `chrome-extension://<id>` origin may open a socket. */
+  allowedExtensionIds: string[];
+  /** Host patterns `navigate` and `upload_file` may reach; absent admits any https host. */
+  allowedDomains?: string[];
 }
 
 /**
@@ -355,6 +372,50 @@ export function browserSandboxRefusal(
 }
 
 /**
+ * Whether `hostname` (lowercase, as `URL` gives it) matches a browser sandbox's
+ * host patterns: `example.com` exactly, `*.example.com` any subdomain of it.
+ * No patterns admits every host; an empty list admits none.
+ */
+export function browserHostAllowed(
+  hostname: string,
+  allowedDomains: readonly string[] | undefined,
+): boolean {
+  if (allowedDomains === undefined) return true;
+
+  return allowedDomains.some((pattern): boolean =>
+    pattern.startsWith("*.")
+      ? hostname.endsWith(pattern.slice(1))
+      : hostname === pattern,
+  );
+}
+
+/**
+ * The browser scope of a `scope: "user"` machine sandbox, or null for any other
+ * sandbox. Core splits these out of the sandboxes bash, the computer tool and
+ * machine MCP reach. A stored list that does not read as strings admits
+ * nothing, so a bad row fails closed.
+ * @param config the sandbox's provider and options as stored
+ */
+export function browserMachineScope(
+  config:
+    | { provider?: string; options?: Readonly<Record<string, unknown>> }
+    | undefined,
+): BrowserMachineScope | null {
+  const options = config?.options;
+  if (config?.provider !== "machine" || options?.scope !== "user") {
+    return null;
+  }
+  const domains = options.allowedDomains;
+
+  return {
+    allowedExtensionIds: storedStrings(options.allowedExtensionIds),
+    ...(domains === undefined
+      ? {}
+      : { allowedDomains: storedStrings(domains) }),
+  };
+}
+
+/**
  * Why a sandbox may not boot a registered snapshot, or null when it may. A
  * snapshot is a copy of another sandbox's disk, so it boots only in the
  * account and stage it was taken from, whoever asks. One taken before
@@ -424,6 +485,77 @@ function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) throw new ClientError("config must be an object");
 
   return value;
+}
+
+// Host patterns a browser sandbox may send the page to; core matches them with
+// `browserHostAllowed`.
+function assertBrowserDomains(domains: unknown): void {
+  if (!Array.isArray(domains) || domains.length === 0) {
+    throw new ClientError(
+      "config.options.allowedDomains must be a non-empty array of hosts; omit it to allow any https host",
+    );
+  }
+  for (const domain of domains) {
+    if (
+      typeof domain !== "string" ||
+      domain.length > 253 ||
+      !HOST_PATTERN_SYNTAX.test(domain)
+    ) {
+      throw new ClientError(
+        `config.options.allowedDomains entry ${JSON.stringify(domain)} must be a lowercase host like example.com or *.example.com`,
+      );
+    }
+  }
+}
+
+// `scope: "user"` turns a machine into one browser per end user, so it runs no
+// command: `cwd` has nothing to apply to. Its extension ids and host patterns
+// are stored lowercase as given, which is what core compares against.
+function assertBrowserScopeOptions(
+  provider: SandboxProvider,
+  options: Record<string, unknown>,
+): void {
+  const scoped = options.scope !== undefined;
+  if (scoped && provider !== "machine") {
+    throw new ClientError(
+      "config.options.scope is only read by the machine provider",
+    );
+  }
+  if (scoped && options.scope !== "user") {
+    throw new ClientError('config.options.scope must be "user"');
+  }
+  if (!scoped) {
+    for (const key of ["allowedExtensionIds", "allowedDomains"]) {
+      if (key in options) {
+        throw new ClientError(
+          `config.options.${key} only applies with config.options.scope: "user"`,
+        );
+      }
+    }
+
+    return;
+  }
+  if ("cwd" in options) {
+    throw new ClientError(
+      'config.options.cwd does not apply with config.options.scope: "user": a browser runs no commands',
+    );
+  }
+  const ids = options.allowedExtensionIds;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new ClientError(
+      'config.options.allowedExtensionIds is required with config.options.scope: "user": a non-empty array of the Chrome extension ids whose sockets may connect',
+    );
+  }
+  for (const id of ids) {
+    if (typeof id !== "string" || !CHROME_EXTENSION_ID_PATTERN.test(id)) {
+      throw new ClientError(
+        `config.options.allowedExtensionIds entry ${JSON.stringify(id)} is not a Chrome extension id (32 letters a-p)`,
+      );
+    }
+  }
+  if (options.allowedDomains !== undefined) {
+    assertBrowserDomains(options.allowedDomains);
+  }
 }
 
 // A custom server is reached by one URL and nothing else, so the endpoint is
@@ -849,6 +981,14 @@ function requireString(value: unknown, name: string): string {
   return value.trim();
 }
 
+// A string list as validation stored it; anything else reads as empty.
+function storedStrings(value: unknown): string[] {
+  return Array.isArray(value) &&
+    value.every((entry): entry is string => typeof entry === "string")
+    ? [...value]
+    : [];
+}
+
 function validateProviderOptions(
   provider: SandboxProvider,
   options: unknown,
@@ -902,6 +1042,7 @@ function validateProviderOptions(
   if (provider === "machine" && "cwd" in options) {
     requireString(options.cwd, "config.options.cwd");
   }
+  assertBrowserScopeOptions(provider, options);
   if ("s3Endpoint" in options) {
     assertStorageEndpoint(
       requireString(options.s3Endpoint, "config.options.s3Endpoint"),
