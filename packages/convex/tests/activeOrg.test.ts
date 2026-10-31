@@ -112,8 +112,8 @@ describe("home bootstrap", () => {
       const projectId = await ctx.db.insert("projects", {
         authId: "auth_victim",
         orgId: orgId,
-        name: "Tracy",
-        slug: "tracy",
+        name: "Support",
+        slug: "support",
         updatedAt: 1,
       });
       const stage = async (
@@ -139,7 +139,7 @@ describe("home bootstrap", () => {
 
     expect(
       await t.mutation(api.project.openHome, {
-        project: "tracy",
+        project: "support",
         stage: "Production",
       }),
     ).toEqual({

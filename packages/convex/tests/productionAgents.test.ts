@@ -76,8 +76,8 @@ async function seed(
     const projectId = await ctx.db.insert("projects", {
       authId: "auth_owner@example.com",
       orgId: orgId,
-      name: "tracy",
-      slug: "tracy",
+      name: "support",
+      slug: "support",
       updatedAt: now,
     });
     const agentIds: Record<string, Id<"agents">> = {};
@@ -112,7 +112,7 @@ async function seed(
           stageId: stageId,
           status: entry.deployment,
           endpointId: `ep_${index}`,
-          projectSlug: "tracy",
+          projectSlug: "support",
           stageSlug: entry.kind,
           apiKeyHash: `hash-${index}`,
           keyHint: "bsk_…abcd",
