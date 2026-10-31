@@ -118,16 +118,6 @@ export interface ResourceApi {
   readonly policies?: Record<string, unknown>;
 }
 
-/**
- * Constrains the generated `broods/_generated/api.ts` resource map to
- * `ResourceApi` at build time while keeping its exact keys, so a reference to
- * an agent that does not exist stays a type error. Annotating or intersecting
- * with `ResourceApi` would admit any string key through its index signatures.
- */
-export function resourceApi<T extends ResourceApi>(resources: T): T {
-  return resources;
-}
-
 export interface BroodsClientOptions {
   /**
    * Base URL of the core service to call directly. Use `https://gateway.broods.app`
