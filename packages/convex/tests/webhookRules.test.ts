@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 /**
  * The dashboard webhook mutations run the config plane's hook rules
- * (model/agentRules.ts): a non-https URL or an unknown lifecycle event is
- * refused on the dashboard path exactly as the config HTTP surface refuses it.
+ * (model/agentRules.ts, rule details covered in agentRules.test.ts): a bad row
+ * is refused on the dashboard path exactly as the config HTTP surface refuses
+ * it, while a stored legacy row stays removable.
  */
 
 import workosTest from "@convex-dev/workos-authkit/test";
@@ -26,29 +27,6 @@ test("addAgentWebhook refuses a non-https URL", async () => {
       secret: "fixture-secret",
     }),
   ).rejects.toThrow(/https/i);
-});
-
-test("addAgentWebhook refuses a private host", async () => {
-  const { caller, configId } = await setup();
-  await expect(
-    caller.mutation(api.webhooks.addAgentWebhook, {
-      agentConfigId: configId,
-      url: "https://10.0.0.8/hook",
-      secret: "fixture-secret",
-    }),
-  ).rejects.toThrow(/private or internal/);
-});
-
-test("addAgentWebhook refuses an unknown event name", async () => {
-  const { caller, configId } = await setup();
-  await expect(
-    caller.mutation(api.webhooks.addAgentWebhook, {
-      agentConfigId: configId,
-      url: "https://example.invalid/hook",
-      secret: "fixture-secret",
-      events: ["not.an.event"],
-    }),
-  ).rejects.toThrow(/events must be an array of/);
 });
 
 test("addAgentWebhook keeps a valid webhook", async () => {

@@ -512,53 +512,13 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
-  return pancakeMessageResult({
-    pageId: pageId,
-    postId: payload.data?.post?.id,
-    conversation: conversation,
-    conversationId: conversation.id,
-    message: message,
-    messageId: message.id,
-    messageType: message.type,
-    text: text,
-    attachments: attachments,
-    fromId: fromId,
-  });
-}
-
-/**
- * Builds the accepted-delivery result once every gate has passed: the inbound
- * message plus the PancakeSource replies route on.
- */
-function pancakeMessageResult(options: {
-  pageId: string;
-  postId: string | undefined;
-  conversation: PancakeConversation;
-  conversationId: string;
-  message: PancakeMessage;
-  messageId: string;
-  messageType: "INBOX" | "COMMENT";
-  text: string | undefined;
-  attachments: ReturnType<typeof pancakeAttachments>;
-  fromId: string | undefined;
-}): ChannelParseResult {
-  const {
-    pageId,
-    conversation,
-    conversationId,
-    message,
-    messageId,
-    text,
-    attachments,
-  } = options;
-  const fromId = options.fromId;
   const fromName = message.from?.name ?? conversation.from?.name;
   const tagIds = normalizePancakeTagIds(conversation.tags);
   logInfo("Pancake webhook accepted", {
     pageId: pageId,
-    conversationId: conversationId,
-    messageId: messageId,
-    messageType: options.messageType,
+    conversationId: conversation.id,
+    messageId: message.id,
+    messageType: message.type,
     textLength: text?.length ?? 0,
     attachmentCount: attachments.length,
     tagIds: tagIds,
@@ -566,10 +526,10 @@ function pancakeMessageResult(options: {
 
   const source: PancakeSource = {
     pageId: pageId,
-    conversationId: conversationId,
-    messageId: messageId,
-    messageType: options.messageType,
-    postId: options.postId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    messageType: message.type,
+    postId: payload.data?.post?.id,
     fromId: fromId,
     fromName: fromName,
     pageCustomerId: message.from?.page_customer_id,
@@ -580,8 +540,8 @@ function pancakeMessageResult(options: {
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${messageId}:${hashEventContent(text, attachments)}`,
-      conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversationId}`,
+      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventContent(text, attachments)}`,
+      conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
       channelName: "pancake",
       content: [{ type: "text", text: text ?? "" }],
       ...(attachments.length > 0 ? { attachments: attachments } : {}),

@@ -10,6 +10,7 @@ import {
   normalizeCreateAgentInput,
   mergeCanvasSandboxes,
   normalizeUpdateAgentInput,
+  normalizeWebhookHookConfig,
 } from "../model/agentRules";
 import { redactConfigSecrets } from "../model/configValues";
 import {
@@ -1186,5 +1187,20 @@ describe("isProviderToolName", () => {
       expect(isProviderToolName(name)).toBe(false);
     }
     expect(isProviderToolName("web_search")).toBe(true);
+  });
+});
+
+describe("normalizeWebhookHookConfig", () => {
+  it("holds a webhook row to a public https URL and known events", () => {
+    const row = { enabled: true, secret: "s", url: "https://10.0.0.8/hook" };
+    expect(() => normalizeWebhookHookConfig(row, "webhook")).toThrow(
+      /private or internal/,
+    );
+    expect(() =>
+      normalizeWebhookHookConfig(
+        { ...row, url: "https://example.invalid/hook", events: ["nope"] },
+        "webhook",
+      ),
+    ).toThrow(/events must be an array of/);
   });
 });

@@ -93,11 +93,10 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           const ws = onAgentSandbox
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
-          const ignoredWorkspace = ignoredWorkspaceNote(
-            onAgentSandbox,
-            workspace,
-            picked?.name,
-          );
+          const ignoredWorkspace =
+            onAgentSandbox && workspace !== undefined
+              ? `Note: ran on sandbox ${picked?.name} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
+              : "";
           // A read-only workspace must not fall through to the default sandbox: the
           // approval gate skipped it expecting this refusal.
           const sandbox = ws ? ws.sandbox : picked?.sandbox;
@@ -152,19 +151,6 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
       },
     }),
   };
-}
-
-// Names the workspace the model asked for when a named sandbox made it moot.
-function ignoredWorkspaceNote(
-  onAgentSandbox: boolean,
-  workspace: string | undefined,
-  sandboxName: string | undefined,
-): string {
-  if (!onAgentSandbox || workspace === undefined) {
-    return "";
-  }
-
-  return `Note: ran on sandbox ${sandboxName} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`;
 }
 
 // Background jobs need a persistent workspace sandbox (to outlive the request)

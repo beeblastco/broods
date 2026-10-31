@@ -3,9 +3,9 @@
  * to a chat provider, and inbound media seals one for the copy kept in the
  * attachment store; the media route opens it to learn which file to stream.
  * Every ticket expires: seal stamps `exp` from `MEDIA_TICKET_TTL_SECONDS`
- * (default `DEFAULT_MEDIA_TICKET_TTL_SECONDS`), open refuses a ticket past it
- * as "expired", and a legacy pre-expiry token ("ml1") is refused outright, so
- * links sealed before the cutover die with it. Providers that re-fetch lazily
+ * (default `DEFAULT_MEDIA_TICKET_TTL_SECONDS`), open refuses a ticket past it,
+ * and a legacy pre-expiry token ("ml1") is refused outright, so links sealed
+ * before the cutover die with it. Providers that re-fetch lazily
  * (Zalo, on every view) lose an expired link in old chat history; the media
  * route's immutable cache-control lets their CDNs keep bytes fetched in time.
  * Dropping a secret from `MEDIA_TICKET_SECRET` still revokes every link sealed
@@ -58,13 +58,6 @@ export interface WorkspaceMediaTicket {
 
 export type MediaTicket = AttachmentMediaTicket | WorkspaceMediaTicket;
 
-/** Why a token did not open: authenticated but past `exp`, or anything else. */
-export type MediaTicketRefusal = "expired" | "invalid";
-
-export type MediaTicketOutcome =
-  | { ticket: MediaTicket }
-  | { refusal: MediaTicketRefusal };
-
 export function attachmentStoreKey(ticket: AttachmentMediaTicket): string {
   return `${ATTACHMENT_STORE_ROOT}${encodeURIComponent(ticket.accountId)}/${ticket.path}`;
 }
@@ -77,39 +70,21 @@ export function attachmentStorePrefix(accountId: string): string {
 /**
  * Tries every live secret. Returns null (never throws) on any tamper,
  * wrong-secret or expiry failure, so the route answers 404 rather than leaking
- * the reason; `resolveMediaTicket` names it for logs and tests.
+ * the reason.
  */
 export function openMediaTicket(
   token: string,
   secrets: string[],
   now = Date.now(),
 ): MediaTicket | null {
-  const outcome = resolveMediaTicket(token, secrets, now);
-
-  return "ticket" in outcome ? outcome.ticket : null;
-}
-
-/**
- * `openMediaTicket` with the refusal named: "expired" only when a live secret
- * authenticated the token, "invalid" for every tamper, wrong-secret or legacy
- * no-expiry token. The route's answer stays 404 either way.
- */
-export function resolveMediaTicket(
-  token: string,
-  secrets: string[],
-  now = Date.now(),
-): MediaTicketOutcome {
-  let expired = false;
   for (const secret of secrets) {
-    const outcome = openWithSecret(token, secret, now);
-    if (outcome === "expired") {
-      expired = true;
-    } else if (outcome !== "invalid") {
-      return { ticket: outcome };
+    const ticket = openWithSecret(token, secret, now);
+    if (ticket) {
+      return ticket;
     }
   }
 
-  return { refusal: expired ? "expired" : "invalid" };
+  return null;
 }
 
 export function sealMediaTicket(
@@ -141,7 +116,7 @@ function openWithSecret(
   token: string,
   secret: string,
   now: number,
-): MediaTicket | MediaTicketRefusal {
+): MediaTicket | null {
   const [version, iv, tag, ciphertext, extra] = token.split(".");
   if (
     version !== TICKET_VERSION ||
@@ -150,7 +125,7 @@ function openWithSecret(
     !ciphertext ||
     extra !== undefined
   )
-    return "invalid";
+    return null;
   try {
     const decipher = createDecipheriv(
       TICKET_ALGORITHM,
@@ -163,20 +138,20 @@ function openWithSecret(
       decipher.final(),
     ]).toString("utf-8");
     const parsed: unknown = JSON.parse(plaintext);
-    if (!isPlainObject(parsed)) return "invalid";
+    if (!isPlainObject(parsed)) return null;
     const { accountId, workspaceId, namespace, path, exp } = parsed;
     if (
       typeof accountId !== "string" ||
       typeof path !== "string" ||
-      typeof exp !== "number"
+      typeof exp !== "number" ||
+      exp * 1000 <= now
     )
-      return "invalid";
-    if (exp * 1000 <= now) return "expired";
+      return null;
     if (workspaceId === undefined && namespace === undefined) {
       return { accountId: accountId, path: path };
     }
     if (typeof workspaceId !== "string" || typeof namespace !== "string") {
-      return "invalid";
+      return null;
     }
 
     return {
@@ -186,7 +161,7 @@ function openWithSecret(
       path: path,
     };
   } catch {
-    return "invalid";
+    return null;
   }
 }
 

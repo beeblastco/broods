@@ -57,15 +57,20 @@ export const addAgentWebhook = mutation({
     { agentConfigId, url, secret, events, enabled },
   ): Promise<null> => {
     const user = await requireUser(ctx);
-    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => [
-      ...webhooks,
-      {
+    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => {
+      // The config plane's rules are the only validation copy: without this,
+      // the dashboard could store an http:// or unknown-event webhook the API
+      // refuses (public-https URL, lifecycle-event whitelist).
+      const webhook = {
         enabled: enabled !== false,
         url: url.trim(),
         secret: secret.trim(),
         events: events ?? [],
-      },
-    ]);
+      };
+      normalizeWebhookHookConfig(webhook, "webhook");
+
+      return [...webhooks, webhook];
+    });
     await recordWebhookAudit(
       ctx,
       dashboardAuditActor(user),
@@ -173,9 +178,19 @@ export const setAgentWebhookEnabled = mutation({
   handler: async (ctx, { agentConfigId, index, enabled }): Promise<null> => {
     const user = await requireUser(ctx);
     await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
-      webhooks.map((webhook, i) =>
-        i === index ? { ...webhook, enabled: enabled } : webhook,
-      ),
+      webhooks.map((webhook, i) => {
+        if (i !== index) {
+          return webhook;
+        }
+        const next = { ...webhook, enabled: enabled };
+        // A stored row that predates a tightened rule can still be disabled
+        // or removed, but not re-enabled until it is fixed.
+        if (enabled) {
+          normalizeWebhookHookConfig(next, "webhook");
+        }
+
+        return next;
+      }),
     );
     await recordWebhookAudit(
       ctx,
@@ -217,10 +232,7 @@ async function mutateAgentWebhooks(
   const hooks: Record<string, unknown> = isPlainObject(extra.hooks)
     ? { ...extra.hooks }
     : {};
-  const previous = readWebhooks(config.extraConfig);
-  const nextWebhooks = mutate(previous);
-  hooks.webhooks = nextWebhooks;
-  assertNewWebhooksFollowRules(previous, nextWebhooks);
+  hooks.webhooks = mutate(readWebhooks(config.extraConfig));
   extra.hooks = hooks;
 
   await ctx.db.patch(agentConfigId, {
@@ -232,39 +244,6 @@ async function mutateAgentWebhooks(
     await ensureAgentsRowForConfig(ctx, agentConfigId, authId, accountId);
     await pushEncryptedConfigToAgentRow(ctx, agentConfigId, accountId);
   }
-}
-
-/**
- * Runs the config plane's hook rules (the only validation copy) on the rows a
- * mutation added, edited, or newly enabled: without this, the dashboard path
- * could store an http:// or unknown-event webhook the API refuses. A stored
- * row that predates a tightened rule can still be toggled off or removed, but
- * not re-enabled until it is fixed.
- */
-function assertNewWebhooksFollowRules(
-  previous: Record<string, unknown>[],
-  next: Record<string, unknown>[],
-): void {
-  const seen = new Map<string, boolean>();
-  for (const row of previous) {
-    const identity = webhookIdentity(row);
-    seen.set(identity, seen.get(identity) === true || row.enabled === true);
-  }
-  next.forEach((row, index) => {
-    const wasEnabled = seen.get(webhookIdentity(row));
-    const unchanged =
-      wasEnabled !== undefined && (row.enabled !== true || wasEnabled);
-    if (!unchanged) {
-      normalizeWebhookHookConfig(row, `webhooks[${index}]`);
-    }
-  });
-}
-
-/** A row's validated identity: everything but the enabled flag. */
-function webhookIdentity(row: Record<string, unknown>): string {
-  const { enabled: _enabled, ...rest } = row;
-
-  return JSON.stringify(rest);
 }
 
 /** Reads the `hooks.webhooks` array out of an agent config's `extraConfig` blob. */

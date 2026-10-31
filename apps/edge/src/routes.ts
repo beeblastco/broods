@@ -116,8 +116,8 @@ export const ROUTERS: readonly EdgeRouter[] = [
     secretPath: true,
     rules: [{ path: "/v1/webhooks/.*[^/]" }],
   },
-  // A media link never expires and its ticket is the path. Channel providers
-  // fetch it from shared egress addresses, like webhooks.
+  // A media link's sealed ticket is the path and carries its own expiry.
+  // Channel providers fetch it from shared egress addresses, like webhooks.
   {
     name: "media",
     upstream: "core",

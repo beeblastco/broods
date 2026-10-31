@@ -151,12 +151,7 @@ const stepBoundaryResultValidator = v.object({
   steering: v.union(appliedEnvelopeValidator, v.null()),
 });
 
-type PublicDeploymentIngress = {
-  accountId: string;
-  endpointId: string;
-  stageSlug: string;
-  projectSlug: string;
-};
+type PublicDeploymentIngress = Infer<typeof publicDeploymentIngressValidator>;
 
 /**
  * Atomically admits an ingress candidate, binds idempotency, and either owns or queues it.

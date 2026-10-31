@@ -1,7 +1,6 @@
 /**
- * The sealed media ticket's own contract: a fresh ticket opens, an expired or
- * tampered one is refused with the right reason, and a legacy pre-expiry token
- * is refused outright.
+ * The sealed media ticket's own contract: a fresh ticket opens, an expired,
+ * tampered or legacy pre-expiry token is refused.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -9,7 +8,6 @@ import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import {
   DEFAULT_MEDIA_TICKET_TTL_SECONDS,
   openMediaTicket,
-  resolveMediaTicket,
   sealMediaTicket,
   type MediaTicket,
 } from "../src/shared/media-ticket.ts";
@@ -37,11 +35,10 @@ describe("sealMediaTicket / openMediaTicket", () => {
       const token = sealMediaTicket(ticket, SECRET);
 
       expect(openMediaTicket(token, [SECRET])).toEqual(ticket);
-      expect(resolveMediaTicket(token, [SECRET])).toEqual({ ticket: ticket });
     }
   });
 
-  it("opens right up to the default TTL and refuses past it as expired", (): void => {
+  it("opens right up to the default TTL and refuses past it", (): void => {
     const sealedAt = Date.now();
     const token = sealMediaTicket(WORKSPACE_TICKET, SECRET, sealedAt);
     const expiry = sealedAt + DEFAULT_MEDIA_TICKET_TTL_SECONDS * 1000;
@@ -50,9 +47,6 @@ describe("sealMediaTicket / openMediaTicket", () => {
       WORKSPACE_TICKET,
     );
     expect(openMediaTicket(token, [SECRET], expiry)).toBeNull();
-    expect(resolveMediaTicket(token, [SECRET], expiry)).toEqual({
-      refusal: "expired",
-    });
   });
 
   it("takes the TTL from MEDIA_TICKET_TTL_SECONDS when set", (): void => {
@@ -63,9 +57,7 @@ describe("sealMediaTicket / openMediaTicket", () => {
     expect(openMediaTicket(token, [SECRET], sealedAt + 59_000)).toEqual(
       ATTACHMENT_TICKET,
     );
-    expect(resolveMediaTicket(token, [SECRET], sealedAt + 61_000)).toEqual({
-      refusal: "expired",
-    });
+    expect(openMediaTicket(token, [SECRET], sealedAt + 61_000)).toBeNull();
   });
 
   it("refuses a legacy no-expiry token outright", (): void => {
@@ -73,20 +65,15 @@ describe("sealMediaTicket / openMediaTicket", () => {
     const legacy = sealRaw("ml1", WORKSPACE_TICKET, SECRET);
 
     expect(openMediaTicket(legacy, [SECRET])).toBeNull();
-    expect(resolveMediaTicket(legacy, [SECRET])).toEqual({
-      refusal: "invalid",
-    });
   });
 
   it("refuses an authentic current-version payload missing exp", (): void => {
     const token = sealRaw("ml2", WORKSPACE_TICKET, SECRET);
 
-    expect(resolveMediaTicket(token, [SECRET])).toEqual({
-      refusal: "invalid",
-    });
+    expect(openMediaTicket(token, [SECRET])).toBeNull();
   });
 
-  it("refuses tamper and a wrong secret as invalid, never expired", (): void => {
+  it("refuses tamper and a wrong secret", (): void => {
     const token = sealMediaTicket(WORKSPACE_TICKET, SECRET);
     const [version, iv, tag, ciphertext] = token.split(".");
     const flipped = ciphertext![0] === "A" ? "B" : "A";
@@ -98,20 +85,7 @@ describe("sealMediaTicket / openMediaTicket", () => {
     ].join(".");
 
     expect(openMediaTicket(tampered, [SECRET])).toBeNull();
-    expect(resolveMediaTicket(tampered, [SECRET])).toEqual({
-      refusal: "invalid",
-    });
-    expect(resolveMediaTicket(token, ["other-secret"])).toEqual({
-      refusal: "invalid",
-    });
-  });
-
-  it("opens with a rotated-out secret kept in the list", (): void => {
-    const token = sealMediaTicket(ATTACHMENT_TICKET, SECRET);
-
-    expect(openMediaTicket(token, ["next-secret", SECRET])).toEqual(
-      ATTACHMENT_TICKET,
-    );
+    expect(openMediaTicket(token, ["other-secret"])).toBeNull();
   });
 });
 

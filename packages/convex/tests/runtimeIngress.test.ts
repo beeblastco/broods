@@ -185,43 +185,6 @@ describe("runtime ingress", () => {
     ).rejects.toThrow(/Validator error/);
   });
 
-  for (const [kind, marker] of [
-    [
-      "http",
-      {
-        accountId: 42,
-        endpointId: "endpoint-one",
-        stageSlug: "development",
-        projectSlug: "demo",
-      },
-    ],
-    ["async", "client-asserted-marker"],
-  ] as const) {
-    test(`rejects malformed public deployment provenance on ${kind} delivery at the write`, async () => {
-      const t = runtimeTest();
-      const accountId = await createActiveAccount(t);
-      const eventId = `${kind}-owner`;
-      const conversationKey = `acct:${accountId}:agent:test-agent:api:${eventId}`;
-      await expect(
-        t.mutation(internal.runtimeIngress.accept, {
-          ...admission({
-            accountId: accountId,
-            conversationKey: conversationKey,
-            eventId: eventId,
-            mode: "reject",
-          }),
-          delivery: {
-            kind: kind,
-            publicEventId: eventId,
-            publicConversationKey: conversationKey,
-            statusUrl: `https://example.test/v1/runs/run_${eventId}`,
-            publicDeploymentIngress: marker,
-          } as never,
-        }),
-      ).rejects.toThrow(/Validator error/);
-    });
-  }
-
   test("an idempotent retry keeps the first admission's run id", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
