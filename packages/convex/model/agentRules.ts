@@ -692,11 +692,11 @@ function normalizeProviderSettings(
     throw new ClientError(
       `config.provider.${providerName}.gatewayId must be an AI Gateway id (letters, digits, - and _)`,
     );
-  // A bound past the 10 min run budget could never fire.
+  // The stall watchdog ends a silent run at 300 s, so a longer bound never fires.
   assertOptionalPositiveInteger(
     config.firstByteTimeoutMs,
     `config.provider.${providerName}.firstByteTimeoutMs`,
-    600_000,
+    300_000,
   );
   assertOptionalString(
     config.base_url,

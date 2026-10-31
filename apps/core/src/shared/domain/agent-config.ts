@@ -236,7 +236,7 @@ export interface AgentProviderSettings {
   baseURL?: string;
   /** Cloudflare AI Gateway id (`cloudflare`). Set, requests go through the gateway. */
   gatewayId?: string;
-  /** A streamed model request with no response headers within this many ms is sent again. Unset: no limit. */
+  /** A streamed model request with no response within this many ms is sent again. Unset: no limit. */
   firstByteTimeoutMs?: number;
   headers?: Record<string, string>;
   /** Endpoint label; becomes the provider id and the pi harness env prefix. */

@@ -417,7 +417,7 @@ describe("agent rules", () => {
         provider: { cloudflare: { gatewayId: "broods-dev_1" } },
       }),
     ).not.toThrow();
-    for (const firstByteTimeoutMs of [0, -1, 1.5, "90000", 600_001]) {
+    for (const firstByteTimeoutMs of [0, -1, 1.5, "90000", 300_001]) {
       expect(() =>
         normalizeAgentConfig({
           provider: {
@@ -428,7 +428,7 @@ describe("agent rules", () => {
           },
         }),
       ).toThrow(
-        "config.provider.custom.firstByteTimeoutMs must be an integer from 1 to 600000",
+        "config.provider.custom.firstByteTimeoutMs must be an integer from 1 to 300000",
       );
     }
     expect(() =>

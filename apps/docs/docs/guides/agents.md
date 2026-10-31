@@ -54,7 +54,7 @@ provider: {
 model: { provider: "custom", modelId: "gpt-oss-120b" },
 ```
 
-`base_url` and `baseURL` both work. `baseUrl` fails the sync with an error. An endpoint that sometimes takes a request and never answers (a relay or tunnel in front of the model) can set `firstByteTimeoutMs: 90_000`: a streamed request with no response headers by then is sent again. Leave it unset for a server that is slow to start a stream, such as a cold self-hosted model. For vLLM-style servers, Broods folds several system messages into one and turns cumulative reasoning chunks into increments, so thinking text is not duplicated.
+`base_url` and `baseURL` both work. `baseUrl` fails the sync with an error. An endpoint that sometimes takes a request and never answers (a relay or tunnel in front of the model) can set `firstByteTimeoutMs: 90_000`: a streamed request with no response by then is sent again while `maxRetries` allows (the built-in loop only, not `config.harness`). Leave it unset for a server that is slow to start a stream, such as a cold self-hosted model. For vLLM-style servers, Broods folds several system messages into one and turns cumulative reasoning chunks into increments, so thinking text is not duplicated.
 
 `cloudflare` takes `accountId` and a Cloudflare API token as `apiKey`, and runs Workers AI models. Add `gatewayId` to send every request through that [AI Gateway](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) instead, where `modelId` names any model the gateway routes:
 

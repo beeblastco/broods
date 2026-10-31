@@ -849,6 +849,8 @@ export interface ProviderSettingsInput {
   apiKey?: string | EnvRef;
   base_url?: string | EnvRef;
   baseURL?: string | EnvRef;
+  /** A streamed model request with no response within this many ms is sent again. */
+  firstByteTimeoutMs?: number;
   /** `cloudflare` only: the AI Gateway every request goes through. */
   gatewayId?: string;
   headers?: Record<string, string | EnvRef>;

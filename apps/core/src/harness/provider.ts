@@ -33,6 +33,7 @@ import {
   type LanguageModelV4FilePart,
   type LanguageModelV4Message,
   type LanguageModelV4StreamPart,
+  type LanguageModelV4StreamResult,
   type LanguageModelV4ToolResultOutput,
   type SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
@@ -264,6 +265,7 @@ export function resolveConfiguredModel(
     model: wrapLanguageModel({
       model: model,
       middleware: [
+        ...firstByteTimeout(providerConfig),
         dropUnsupportedMediaMiddleware,
         ...(STORED_ITEM_PROVIDERS.has(providerName)
           ? [retryWithoutStoredItemsMiddleware]
@@ -623,6 +625,50 @@ export function attemptRecordingMiddleware(
       }
     },
   };
+}
+
+// A relay can take a streamed request and never answer, which would hold the
+// run until the stall watchdog. With `firstByteTimeoutMs` set, a stream that
+// does not start in time fails as a retryable 408 so the SDK sends it again.
+// It goes first in the middleware list, so every attempt below it is bounded.
+export function firstByteTimeout(
+  settings: AgentProviderSettings,
+): LanguageModelMiddleware[] {
+  const ms = settings.firstByteTimeoutMs;
+  if (!ms) return [];
+
+  return [
+    {
+      wrapStream: async ({
+        model,
+        params,
+      }): Promise<LanguageModelV4StreamResult> => {
+        const firstByte = new AbortController();
+        const timer = setTimeout((): void => firstByte.abort(), ms);
+        const callerSignal = params.abortSignal;
+        try {
+          return await model.doStream({
+            ...params,
+            abortSignal: callerSignal
+              ? AbortSignal.any([callerSignal, firstByte.signal])
+              : firstByte.signal,
+          });
+        } catch (error) {
+          if (!firstByte.signal.aborted || callerSignal?.aborted) throw error;
+          throw new APICallError({
+            message: `The model sent no response within ${Math.ceil(ms / 1000)}s`,
+            url: `${model.provider}/${model.modelId}`,
+            requestBodyValues: undefined,
+            statusCode: 408,
+            cause: error,
+            isRetryable: true,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    },
+  ];
 }
 
 // A file part the provider's converter refuses fails the turn during prompt
@@ -1032,6 +1078,7 @@ function resolveOpenAICompatibleModel(
       // and only drops images when that is refused too. The cache mark comes
       // last, so a retry above marks its own latest message.
       middleware: [
+        ...firstByteTimeout(providerConfig),
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
         dropRefusedImagesMiddleware,
@@ -1128,10 +1175,7 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
  * connection that stays silent for 300s, and a busy provider can hold a stream
  * that long, so a model call ends on the provider's own error or the run's
  * abort signal, which `watchModelStream` in harness.ts fires on a silent
- * stream. When the provider sets `firstByteTimeoutMs`, a streamed request
- * whose response headers do not arrive within it is aborted and fails as a
- * retryable 408, so the SDK's retry sends it again instead of the whole run
- * waiting on the stall watchdog. A provider with any tenant-supplied endpoint also gets the
+ * stream. A provider with any tenant-supplied endpoint also gets the
  * resolve-then-connect `fetch`.
  */
 function withModelFetch<T extends AgentProviderSettings>(
@@ -1140,46 +1184,16 @@ function withModelFetch<T extends AgentProviderSettings>(
   const guarded = Object.entries(settings).some(
     ([key, value]) => PROVIDER_ENDPOINT_SETTING.test(key) && Boolean(value),
   );
-  const modelFetch = async (
+  const modelFetch = (
     input: string | URL | Request,
     init?: BunFetchRequestInit,
   ): Promise<Response> => {
-    const firstByteMs = settings.firstByteTimeoutMs;
-    const firstByte = new AbortController();
-    // Only a streamed answer sends its headers at once. A whole answer (compaction's generateText) sends them when it is done, however long that takes.
-    const streamed =
-      typeof init?.body === "string" && /"stream"\s*:\s*true/.test(init.body);
-    const timer =
-      streamed && firstByteMs
-        ? setTimeout((): void => firstByte.abort(), firstByteMs)
-        : undefined;
-    // The caller's signal rides init, or the Request itself when init has none.
-    const callerSignal =
-      init?.signal ?? (input instanceof Request ? input.signal : undefined);
-    const signal = callerSignal
-      ? AbortSignal.any([callerSignal, firstByte.signal])
-      : firstByte.signal;
-    const unbounded = { ...init, signal: signal, timeout: false };
-    let response: Response;
-    try {
-      response = guarded
-        ? await publicHostFetch(input, unbounded)
-        : await fetch(input, unbounded);
-    } catch (error) {
-      if (!firstByte.signal.aborted || callerSignal?.aborted) throw error;
-      throw new APICallError({
-        message: `The model sent no response within ${Math.ceil((firstByteMs ?? 0) / 1000)}s`,
-        url: input instanceof Request ? input.url : String(input),
-        requestBodyValues: undefined,
-        statusCode: 408,
-        cause: error,
-        isRetryable: true,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+    const unbounded = { ...init, timeout: false };
+    const response = guarded
+      ? publicHostFetch(input, unbounded)
+      : fetch(input, unbounded);
 
-    return withRateLimitRetryHeader(response);
+    return response.then(withRateLimitRetryHeader);
   };
 
   return { ...settings, fetch: modelFetch as typeof fetch };

@@ -1017,16 +1017,12 @@ describe("runAgentLoop", () => {
       const resolved: Awaited<ReturnType<typeof dns.lookup>> = [
         { address: "93.184.216.34", family: 4, ttl: 30 },
       ];
-      let lookups = 0;
-      const lookup = spyOn(dns, "lookup").mockImplementation(
-        (): Promise<typeof resolved> => {
-          lookups += 1;
-
-          return stall === "dns" && lookups === 1
-            ? new Promise<typeof resolved>((): void => {})
-            : Promise.resolve(resolved);
-        },
-      );
+      const lookup = spyOn(dns, "lookup").mockResolvedValue(resolved);
+      if (stall === "dns") {
+        lookup.mockImplementationOnce(
+          (): Promise<typeof resolved> => new Promise((): void => {}),
+        );
+      }
       const answer = [
         { choices: [{ index: 0, delta: { content: "hello back" } }] },
         { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
@@ -1096,7 +1092,7 @@ describe("runAgentLoop", () => {
         expect(stream.didFail()).toBe(false);
         expect(await stream.text).toBe("hello back");
         // The lookup that never finished ran again.
-        if (stall === "dns") expect(lookups).toBe(2);
+        if (stall === "dns") expect(lookup).toHaveBeenCalledTimes(2);
         expect(requests).toBe(stall === "response" ? 2 : 1);
       } finally {
         lookup.mockRestore();
