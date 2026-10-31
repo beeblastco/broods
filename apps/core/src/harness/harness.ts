@@ -1885,7 +1885,8 @@ export function runCompactCommand(
       ...sessionObservabilityScope(session),
       traceId: root.traceId,
       otelContext: root.otelContext,
-      secretValues: getObservabilityContext()?.secretValues ?? [],
+      // A direct run's caller has no scope, so its secrets come from here.
+      secretValues: session.secretValues(),
     },
   );
 }

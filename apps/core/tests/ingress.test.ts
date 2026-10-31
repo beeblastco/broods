@@ -1341,6 +1341,29 @@ describe("queued /compact on an async run", (): void => {
     expect(takeNext).toHaveBeenCalledTimes(1);
   });
 
+  it("drops the agent's secrets from a direct /compact's usage row", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(Session.prototype, "compactConversation").mockResolvedValue(
+      compaction(2),
+    );
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: compactEvent({
+        events: [{ role: "user", content: "/compact keep google-key-4821" }],
+        agentConfig: { provider: { google: { apiKey: "google-key-4821" } } },
+      }),
+    });
+
+    expect(usage.mock.calls[0]?.[0]?.inputPreview).toContain("/compact keep");
+    expect(usage.mock.calls[0]?.[0]?.inputPreview).not.toContain(
+      "google-key-4821",
+    );
+  });
+
   it("fails the run with the summary's own error", async (): Promise<void> => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);

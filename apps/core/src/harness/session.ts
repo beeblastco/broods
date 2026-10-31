@@ -29,7 +29,7 @@ import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
-import { logDebug, logError } from "../shared/log.ts";
+import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
@@ -935,6 +935,15 @@ export class Session {
   /** Resolved workspaces for this turn (first is the default). Empty when none. */
   resolvedWorkspaces(): ResolvedWorkspace[] {
     return this.resolvedRuntime?.workspaces ?? [];
+  }
+
+  /** The agent's own secret values, which every log line and span of its runs drops. */
+  secretValues(): string[] {
+    return collectSecretValues([
+      this.agentConfig,
+      this.sandboxes(),
+      this.resolvedWorkspaces(),
+    ]);
   }
 
   /** One append mutation, fenced against the owner generation when there is one. */
