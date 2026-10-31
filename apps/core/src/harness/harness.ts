@@ -13,6 +13,8 @@ import {
   trace as otelTraceApi,
   SpanStatusCode,
   TraceFlags,
+  type Context as OtelContext,
+  type Span,
 } from "@opentelemetry/api";
 import {
   isStepCount,
@@ -135,7 +137,7 @@ import {
 import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import { createRunFinalizer } from "./run-finalizer.ts";
-import { createRunSpanTracker } from "./run-spans.ts";
+import { createRunSpanTracker, type RunSpanTracker } from "./run-spans.ts";
 import {
   stripEnvelopeFieldsFromMessages,
   type ConversationIngressEvent,
@@ -164,6 +166,7 @@ import {
   createStepTimingTracker,
   createTaskTotals,
   extractCacheWriteTokens,
+  modelTokenAttributes,
   usageTokenTotals,
 } from "./usage-metering.ts";
 
@@ -225,6 +228,15 @@ type ToolCallSummary = {
   durationMs?: number;
   success?: boolean;
 };
+
+/** A run's root OTel span, the ids its live rows reuse, and its child-span tracker. */
+interface RunRoot {
+  span: Span;
+  traceId: string;
+  spanId: string;
+  otelContext: OtelContext;
+  spans: RunSpanTracker;
+}
 
 /** A tool call waiting on a person's approval, handed to `onApprovalRequired`. */
 export type ToolApprovalSummary = Pick<ApprovalRequestOutput, "approvalId"> & {
@@ -373,8 +385,7 @@ export async function runAgentLoop(
   const sandboxCpu = createSandboxCpuLedger();
 
   // Start the root span up front so one trace id is on every log line, NATS
-  // span row and Tempo span. A noop tracer (OTel not initialised) has all-zero
-  // ids, so the live NATS path falls back to freshly minted ones.
+  // span row and Tempo span.
   const runStartedAt = Date.now();
   const observabilityScope = sessionObservabilityScope(session);
   const resolvedWorkspaces = session.resolvedWorkspaces();
@@ -387,37 +398,13 @@ export async function runAgentLoop(
     ? "subtask"
     : (session.trigger ?? "task");
   const rootSpanName = `agent.${rootSpanKind}`;
-  const tracer = getTracer();
-  const otelRootSpan = tracer.startSpan(rootSpanName, {
-    startTime: runStartedAt,
-    attributes: observabilityAttributes(observabilityScope),
-  });
-  const otelSpanCtx = otelRootSpan.spanContext();
-  const traceId = /[^0]/.test(otelSpanCtx.traceId)
-    ? otelSpanCtx.traceId
-    : mintTraceId();
-  const rootSpanId = /[^0]/.test(otelSpanCtx.spanId)
-    ? otelSpanCtx.spanId
-    : mintSpanId();
-  const rootOtelContext = otelTraceApi.setSpan(
-    otelContextApi.active(),
-    otelRootSpan,
-  );
-  // The run's model.step, tool.call and phase spans under that root, each an
-  // OTel span and a live NATS row.
-  const spans = createRunSpanTracker({
-    tracer: tracer,
-    scope: observabilityScope,
-    traceId: traceId,
-    rootSpanId: rootSpanId,
-    rootOtelContext: rootOtelContext,
-    session: {
-      endpointId: session.endpointId,
-      agentId: session.agentId,
-      conversationKey: session.conversationKey,
-    },
-    publish: publishSpan,
-  });
+  const {
+    span: otelRootSpan,
+    traceId,
+    spanId: rootSpanId,
+    otelContext: rootOtelContext,
+    spans,
+  } = startRunRoot(session, rootSpanName, runStartedAt);
   // The invoking run's identity, mirrored onto any sandbox it reserves so the
   // dashboard activity links back to this trace and task. Shared by the tool
   // registry and the resident-harness reservation.
@@ -1280,12 +1267,10 @@ export async function runAgentLoop(
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
           ...stepTiming.closeStep(stepNumber, stepEndMs),
-          "model.input_tokens": stepTokens.inputTokens,
-          "model.output_tokens": stepTokens.outputTokens,
-          "model.reasoning_tokens": stepTokens.reasoningTokens,
-          "model.cached_input_tokens": stepTokens.cachedInputTokens,
-          "model.cache_write_tokens": stepCacheWriteTokens,
-          "model.total_tokens": stepTokens.totalTokens,
+          ...modelTokenAttributes({
+            ...stepTokens,
+            cacheWriteTokens: stepCacheWriteTokens,
+          }),
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),
           "model.tool_calls": traceAttribute(toolCalls),
@@ -2614,20 +2599,10 @@ function recordCompactionTask(
   result: CompactionResult,
 ): Promise<void> {
   const context = getObservabilityContext();
-  const scope = sessionObservabilityScope(session);
   const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
   const name = `agent.${kind}`;
-  const tracer = getTracer();
-  const rootSpan = tracer.startSpan(
-    name,
-    { startTime: startedAt, attributes: observabilityAttributes(scope) },
-    context?.otelContext,
-  );
-  const ids = rootSpan.spanContext();
-  const traceId = /[^0]/.test(ids.traceId)
-    ? ids.traceId
-    : (context?.traceId ?? mintTraceId());
-  const rootSpanId = /[^0]/.test(ids.spanId) ? ids.spanId : mintSpanId();
+  // Under the scope runCompactCommand opened, so the root lands on its trace.
+  const root = startRunRoot(session, name, startedAt, context?.otelContext);
   const serialize = (value: unknown): string =>
     redactSerialized(
       value,
@@ -2635,24 +2610,8 @@ function recordCompactionTask(
       MAX_TRACE_ATTRIBUTE_CHARS,
     );
   const taskInput = serialize(input).slice(0, MAX_TASK_INPUT_CHARS);
-  const spans = createRunSpanTracker({
-    tracer: tracer,
-    scope: scope,
-    traceId: traceId,
-    rootSpanId: rootSpanId,
-    rootOtelContext: otelTraceApi.setSpan(
-      context?.otelContext ?? otelContextApi.active(),
-      rootSpan,
-    ),
-    session: {
-      endpointId: session.endpointId,
-      agentId: session.agentId,
-      conversationKey: session.conversationKey,
-    },
-    publish: publishSpan,
-  });
   const endMs = Date.now();
-  spans.phase(
+  root.spans.phase(
     "phase.compaction",
     "Compaction",
     startedAt,
@@ -2665,13 +2624,14 @@ function recordCompactionTask(
   return createRunFinalizer({
     session: session,
     root: {
-      span: rootSpan,
-      traceId: traceId,
-      spanId: rootSpanId,
+      span: root.span,
+      traceId: root.traceId,
+      spanId: root.spanId,
       name: name,
       kind: kind,
       startTimeMs: startedAt,
     },
+    // The dashboard prices a trace by the model its root names (`runModel`).
     rootAttributes: (): Record<string, string> => ({
       "task.id": session.eventId,
       "task.delivery": session.delivery?.kind ?? "direct",
@@ -2683,7 +2643,7 @@ function recordCompactionTask(
     modelId: result.modelId,
     taskInput: taskInput,
     serialize: serialize,
-    spans: spans,
+    spans: root.spans,
     stepTiming: createStepTimingTracker(serialize),
     taskTotals: taskTotals,
     sandboxCpu: createSandboxCpuLedger(),
@@ -2693,6 +2653,48 @@ function recordCompactionTask(
     release: (): void => {},
     restoreObservabilityContext: (): void => {},
   }).finalize("completed", 0, endMs - startedAt);
+}
+
+// Opens a run's root span under `parent` and the tracker its model.step,
+// tool.call and phase spans hang from. A noop tracer (OTel not initialised)
+// has all-zero ids, so the live NATS rows fall back to freshly minted ones.
+function startRunRoot(
+  session: Session,
+  name: string,
+  startedAt: number,
+  parent: OtelContext = otelContextApi.active(),
+): RunRoot {
+  const tracer = getTracer();
+  const scope = sessionObservabilityScope(session);
+  const span = tracer.startSpan(
+    name,
+    { startTime: startedAt, attributes: observabilityAttributes(scope) },
+    parent,
+  );
+  const ids = span.spanContext();
+  const traceId = /[^0]/.test(ids.traceId) ? ids.traceId : mintTraceId();
+  const spanId = /[^0]/.test(ids.spanId) ? ids.spanId : mintSpanId();
+  const otelContext = otelTraceApi.setSpan(parent, span);
+
+  return {
+    span: span,
+    traceId: traceId,
+    spanId: spanId,
+    otelContext: otelContext,
+    spans: createRunSpanTracker({
+      tracer: tracer,
+      scope: scope,
+      traceId: traceId,
+      rootSpanId: spanId,
+      rootOtelContext: otelContext,
+      session: {
+        endpointId: session.endpointId,
+        agentId: session.agentId,
+        conversationKey: session.conversationKey,
+      },
+      publish: publishSpan,
+    }),
+  };
 }
 
 // The deployment a session's spans and log lines route to.

@@ -18,6 +18,7 @@ import { stripReasoningFromMessages } from "./pruning.ts";
 import {
   addUsageTokenTotals,
   extractCacheWriteTokens,
+  modelTokenAttributes,
   usageTokenTotals,
   type UsageTokenTotals,
 } from "./usage-metering.ts";
@@ -82,22 +83,14 @@ export function shouldAutoCompact(
   return lastInputTokens >= configuredMax;
 }
 
-/**
- * A compaction's phase span attributes. Tokens use the model.step names so the
- * dashboard prices a compaction the way it prices a step.
- */
+/** A compaction's phase span attributes, its tokens named as a model.step's. */
 export function compactionSpanAttributes(
   result: CompactionResult,
 ): Record<string, number> {
   return {
     "compaction.message_count": result.messageCount,
     "compaction.model_calls": result.modelCalls,
-    "model.input_tokens": result.usage.inputTokens,
-    "model.output_tokens": result.usage.outputTokens,
-    "model.reasoning_tokens": result.usage.reasoningTokens,
-    "model.cached_input_tokens": result.usage.cachedInputTokens,
-    "model.cache_write_tokens": result.usage.cacheWriteTokens,
-    "model.total_tokens": result.usage.totalTokens,
+    ...modelTokenAttributes(result.usage),
   };
 }
 

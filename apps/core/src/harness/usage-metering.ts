@@ -68,6 +68,23 @@ export function addUsageTokenTotals(
   };
 }
 
+/**
+ * One model call's tokens as span attributes. The dashboard prices a model.step
+ * and a compaction phase by these names (`stepTokens`, `isModelCallSpan`).
+ */
+export function modelTokenAttributes(
+  tokens: UsageTokenTotals,
+): Record<string, number> {
+  return {
+    "model.input_tokens": tokens.inputTokens,
+    "model.output_tokens": tokens.outputTokens,
+    "model.reasoning_tokens": tokens.reasoningTokens,
+    "model.cached_input_tokens": tokens.cachedInputTokens,
+    "model.cache_write_tokens": tokens.cacheWriteTokens,
+    "model.total_tokens": tokens.totalTokens,
+  };
+}
+
 // Cache-write tokens for one step; 0 when the provider doesn't break them out,
 // the field is absent, or metadata is missing. Never throws.
 export function extractCacheWriteTokens(

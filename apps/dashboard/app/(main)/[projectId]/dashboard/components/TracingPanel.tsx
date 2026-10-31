@@ -2507,7 +2507,7 @@ function PhaseLine({
     numericAttribute(span, "prepare.history_rows") ??
     numericAttribute(span, "compaction.message_count");
   // Only a phase that called the model, like a compaction, has tokens and a price.
-  const tokens = numericAttribute(span, "model.total_tokens");
+  const tokens = spanTokens(span);
   const line = (
     <TraceLine size="xs">
       <TraceIcon>
@@ -2519,9 +2519,7 @@ function PhaseLine({
           {messages.toLocaleString()} messages
         </TraceDescription>
       )}
-      {cost !== undefined && tokens !== undefined && (
-        <TraceDescription>{cost}</TraceDescription>
-      )}
+      {cost !== undefined && <TraceDescription>{cost}</TraceDescription>}
       {tokens !== undefined && (
         <TraceDescription>{formatNumber(tokens)} tok</TraceDescription>
       )}
