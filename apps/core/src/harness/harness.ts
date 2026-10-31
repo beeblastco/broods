@@ -167,6 +167,7 @@ import {
   createStepTimingTracker,
   createTaskTotals,
   extractCacheWriteTokens,
+  MODEL_CONTENT_CHUNK_TYPES,
   modelTokenAttributes,
   usageTokenTotals,
 } from "./usage-metering.ts";
@@ -2166,15 +2167,17 @@ function harnessReadsMedia(part: ImagePart | FilePart): boolean {
 }
 
 /**
- * Fails the run when its model goes silent: no first chunk of a model call
- * within MODEL_FIRST_CHUNK_TIMEOUT_MS, or no chunk within MODEL_CHUNK_TIMEOUT_MS
- * of the last. The clock stops while a tool call is open, so a long tool never
- * reads as a stalled model. A provider-executed call only stops it on a
- * harness, whose native tools (bash) are provider-executed; on streamText its
- * result streams back from the model itself. It reads its own copy of the
- * stream rather than the SDK's `timeout` option, whose `firstChunkMs` starts
- * only once a response arrives and which HarnessAgent ignores. An agent's own
- * `model.timeout` still reaches streamText as set.
+ * Fails the run when its model goes silent: no output of a model call within
+ * MODEL_FIRST_CHUNK_TIMEOUT_MS of its start, or none within
+ * MODEL_CHUNK_TIMEOUT_MS of the last. Output is a MODEL_CONTENT_CHUNK_TYPES
+ * part; a stream that only carries keep-alives, errors or other parts with no
+ * model content is silent. The clock stops while a tool call is open, so a
+ * long tool never reads as a stalled model. A provider-executed call only
+ * stops it on a harness, whose native tools (bash) are provider-executed; on
+ * streamText its result streams back from the model itself. It reads its own
+ * copy of the stream rather than the SDK's `timeout` option, whose
+ * `firstChunkMs` starts only once a response arrives and which HarnessAgent
+ * ignores. An agent's own `model.timeout` still reaches streamText as set.
  */
 async function watchModelStream(
   parts: AsyncIterable<TextStreamPart<ToolSet>>,
@@ -2220,9 +2223,11 @@ async function watchModelStream(
       ) {
         openToolCalls.delete(part.toolCallId);
       }
-      arm(
-        MODEL_CALL_BOUNDARY_PART_TYPES.has(part.type) ? firstChunkMs : chunkMs,
-      );
+      if (MODEL_CALL_BOUNDARY_PART_TYPES.has(part.type)) {
+        arm(firstChunkMs);
+      } else if (MODEL_CONTENT_CHUNK_TYPES.has(part.type)) {
+        arm(chunkMs);
+      }
     }
   } catch {
     // The run's own reader reports a failed stream.
