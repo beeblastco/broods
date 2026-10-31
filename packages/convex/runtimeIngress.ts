@@ -156,8 +156,12 @@ const stepBoundaryResultValidator = v.object({
   steering: v.union(appliedEnvelopeValidator, v.null()),
 });
 
-// The part of a channel delivery that names who sent the message.
-type DeliverySender = { identity?: { userId?: string } } | null | undefined;
+// The part of a delivery that names who sent the message: a channel's sender,
+// or the end user a direct turn's user token named.
+type DeliverySender =
+  | { identity?: { userId?: string }; endUser?: { userId?: string } }
+  | null
+  | undefined;
 
 type PublicDeploymentIngress = {
   accountId: string;
@@ -1427,8 +1431,8 @@ function isPlainUserText(event: unknown): boolean {
 }
 
 /**
- * The leading run of rows that share the first row's requestedMode and the
- * sender's userId, so one turn never runs two people's messages.
+ * The leading run of rows that share the first row's requestedMode, the
+ * sender's userId and the end user, so one turn never runs two people's messages.
  */
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
@@ -1440,7 +1444,8 @@ function contiguousModePrefix(
 
     return (
       row.requestedMode !== rows[0]!.requestedMode ||
-      delivery?.identity?.userId !== sender?.identity?.userId
+      delivery?.identity?.userId !== sender?.identity?.userId ||
+      delivery?.endUser?.userId !== sender?.endUser?.userId
     );
   });
 

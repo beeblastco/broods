@@ -7,6 +7,7 @@
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
+import type { EndUser } from "../shared/domain/principal.ts";
 import { queuedCommand } from "../shared/commands.ts";
 import {
   applyRunOverrides,
@@ -160,6 +161,8 @@ export type RunSessionMessageDispatch = (
   input: SessionMessageInput,
 ) => Promise<SessionMessageResult>;
 
+// `endUser` on a direct delivery is the user token's user, stored with the
+// envelope so a queued turn runs as that user and never coalesces with another's.
 export type IngressDelivery =
   | {
       kind: "http";
@@ -167,6 +170,7 @@ export type IngressDelivery =
       publicConversationKey: string;
       statusUrl?: string;
       publicDeploymentIngress?: PublicDeploymentIngress;
+      endUser?: EndUser;
     }
   | {
       kind: "async";
@@ -174,6 +178,7 @@ export type IngressDelivery =
       publicConversationKey: string;
       statusUrl: string;
       publicDeploymentIngress?: PublicDeploymentIngress;
+      endUser?: EndUser;
     }
   | {
       kind: "websocket";
@@ -182,6 +187,7 @@ export type IngressDelivery =
       connectionId: string;
       statusUrl?: string;
       publicDeploymentIngress?: PublicDeploymentIngress;
+      endUser?: EndUser;
     }
   | {
       kind: "channel";

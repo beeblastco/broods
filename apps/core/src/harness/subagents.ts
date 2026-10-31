@@ -865,12 +865,14 @@ export class SubagentCoordinator {
       trigger: this.parentSession.trigger,
       persist: task.persistent,
       policyDelivery: this.parentSession.policyDelivery,
-      // The child acts as its own agent, delegated to by the parent's chain.
+      // The child acts as its own agent, delegated to by the parent's chain,
+      // for the same end user, so it reaches that user's browser and no other.
       principal: this.parentSession.principal
         ? runPrincipal(
             {
               accountId: this.parentSession.principal.accountId,
               agentId: task.agentId,
+              endUser: this.parentSession.principal.endUser,
             },
             delegatedChain(this.parentSession.principal),
           )
@@ -1172,6 +1174,9 @@ export class SubagentCoordinator {
         publicEventId: task.taskId,
         publicConversationKey: task.publicConversationKey,
         statusUrl: subagentStatusPath(task),
+        ...(this.parentSession.principal?.endUser
+          ? { endUser: this.parentSession.principal.endUser }
+          : {}),
       },
     });
     if (

@@ -80,6 +80,22 @@ describe("principal chain", () => {
     );
     expect(runPrincipal({ ...RUN, agentId: undefined }, [])).toBeUndefined();
   });
+
+  it("keeps the run's end user, and a subagent built from it keeps the same one", () => {
+    const parent = runPrincipal(
+      { ...RUN, endUser: { userId: "alice" } },
+      directPrincipalChain({}),
+    )!;
+    // What subagents.ts builds for a child of that run.
+    const child = runPrincipal(
+      { ...RUN, agentId: "agent_2", endUser: parent.endUser },
+      delegatedChain(parent),
+    )!;
+
+    expect(parent.endUser).toEqual({ userId: "alice" });
+    expect(child.endUser).toEqual({ userId: "alice" });
+    expect(runPrincipal(RUN, undefined)?.endUser).toBeUndefined();
+  });
 });
 
 describe("run token", () => {

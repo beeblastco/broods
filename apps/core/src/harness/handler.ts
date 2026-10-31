@@ -952,6 +952,7 @@ async function handleDirectRequest(
         ...(event.publicDeploymentIngress
           ? { publicDeploymentIngress: event.publicDeploymentIngress }
           : {}),
+        ...(event.endUser ? { endUser: event.endUser } : {}),
       }
     : {
         kind: "http",
@@ -963,6 +964,7 @@ async function handleDirectRequest(
         ...(event.publicDeploymentIngress
           ? { publicDeploymentIngress: event.publicDeploymentIngress }
           : {}),
+        ...(event.endUser ? { endUser: event.endUser } : {}),
       };
   const admission = await acceptIngress({
     accountId: event.accountId,
@@ -1172,6 +1174,7 @@ async function handleAsyncRequest(
       ...(event.publicDeploymentIngress
         ? { publicDeploymentIngress: event.publicDeploymentIngress }
         : {}),
+      ...(event.endUser ? { endUser: event.endUser } : {}),
     },
     configRef: event.configRef,
     ...(event.ephemeralSystem
@@ -2493,6 +2496,11 @@ export async function dispatchAppliedIngress(
     ...(delivery.kind === "websocket"
       ? { connectionId: delivery.connectionId }
       : {}),
+    // Stored at admission from the verified token, so the queued turn runs as
+    // the same end user; the conversation key is never read for it.
+    ...(delivery.kind !== "channel" && delivery.endUser
+      ? { endUser: delivery.endUser }
+      : {}),
     ...(delivery.kind === "channel"
       ? {
           replyTarget: {
@@ -2704,6 +2712,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
       publicConversationKey: event.publicConversationKey,
       connectionId: event.connectionId,
       ...(directStatusUrl(event) ? { statusUrl: directStatusUrl(event)! } : {}),
+      ...(event.endUser ? { endUser: event.endUser } : {}),
     };
   }
   if (event.replyTarget) {
@@ -2724,6 +2733,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
     publicEventId: event.publicEventId,
     publicConversationKey: event.publicConversationKey,
     statusUrl: statusUrl,
+    ...(event.endUser ? { endUser: event.endUser } : {}),
   };
 }
 

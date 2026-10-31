@@ -54,7 +54,7 @@ import {
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
-import type { PrincipalLink } from "../shared/domain/principal.ts";
+import type { EndUser, PrincipalLink } from "../shared/domain/principal.ts";
 import {
   channelActorRoles,
   channelRecordMatchesWorkspace,
@@ -295,6 +295,9 @@ export interface DirectInboundEvent {
   // Who asked, as the router authenticated it, or the chain of the run that
   // sent a session message. Absent on a rebuilt envelope: nothing is guessed.
   principalChain?: PrincipalLink[];
+  // The user a verified user token named, the one whose browser the run may
+  // drive. A queued envelope keeps it on its delivery; a cron run has none.
+  endUser?: EndUser;
   // Answers to open ask_questions prompts. A request carrying these settles
   // the prompts and resumes the conversation; it runs no turn of its own.
   answers?: QuestionAnswer[];
@@ -922,6 +925,9 @@ async function handleHttpRequest(
             stageSlug: deployment.stageSlug,
             publicDeploymentIngress: publicDeploymentIngress(deployment),
           }
+        : {}),
+      ...(deployment?.user
+        ? { endUser: { userId: deployment.user.userId } }
         : {}),
     };
     if (!parsed.background) {

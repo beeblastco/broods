@@ -12,6 +12,14 @@ import type { ChannelIdentity } from "../channels.ts";
 
 export type { PrincipalLink } from "@broods/convex/model/principal";
 
+/**
+ * The customer's signed-in user a run belongs to, from the user token its
+ * request carried. The browser tool drives only this user's browser.
+ */
+export interface EndUser {
+  userId: string;
+}
+
 export interface Principal {
   kind: "agent";
   accountId: string;
@@ -22,6 +30,12 @@ export interface Principal {
    * ledger hashes it.
    */
   chain?: PrincipalLink[];
+  /**
+   * Set only from a verified user token, and passed down to subagents. Absent
+   * for a cron run, a run without a user token, and anything core rebuilt
+   * without one: it is never read off a conversation key.
+   */
+  endUser?: EndUser;
 }
 
 /** The requester of a channel turn: the sender, when the adapter identified one. */
@@ -82,7 +96,7 @@ export function principalChainLabel(principal: Principal): string | undefined {
 
 /** The principal a run acts as; undefined until the run names an account and an agent. */
 export function runPrincipal(
-  run: { accountId?: string; agentId?: string },
+  run: { accountId?: string; agentId?: string; endUser?: EndUser },
   chain: PrincipalLink[] | undefined,
 ): Principal | undefined {
   if (!run.accountId || !run.agentId) return undefined;
@@ -92,6 +106,7 @@ export function runPrincipal(
     accountId: run.accountId,
     agentId: run.agentId,
     ...(chain ? { chain: chain } : {}),
+    ...(run.endUser ? { endUser: { userId: run.endUser.userId } } : {}),
   };
 }
 
