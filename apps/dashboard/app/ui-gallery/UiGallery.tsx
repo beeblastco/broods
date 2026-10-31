@@ -155,7 +155,7 @@ const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
 );
 
 /**
- * Tracy's stage as the frames canvas draws it: a cloud sandbox alone as a
+ * The support agent's stage as the frames canvas draws it: a cloud sandbox alone as a
  * card and two computers framed, one connected and one offline; a mounted and
  * an inherited workspace framed, and two read-only ones shared with a coder
  * sub-agent; MCP servers on each transport, the url ones disabled;
@@ -167,14 +167,14 @@ const FRAME_MCP_SERVERS: StageMcpServer[] = [
   fixtureServer("github", "http", null, true),
   fixtureServer("linear", "http", null, true),
   fixtureServer("search", "hosted", null, false),
-  fixtureServer("blender", "machine", "kien-mac", false),
+  fixtureServer("blender", "machine", "laptop-mac", false),
 ];
 
 const FRAME_EDGES: Edge[] = [
   ...[
     "internal-sandbox",
-    "kien-mac",
-    "phicks-mac",
+    "laptop-mac",
+    "office-mac",
     "notes",
     "repos",
     "handbook",
@@ -183,7 +183,7 @@ const FRAME_EDGES: Edge[] = [
     "linear",
     "search",
     "blender",
-  ].map((target) => fixtureEdge("tracy", target)),
+  ].map((target) => fixtureEdge("support", target)),
   fixtureEdge("coder", "handbook"),
   fixtureEdge("coder", "playbook"),
   {
@@ -197,9 +197,9 @@ const FRAME_EDGES: Edge[] = [
   // Code-managed: the canvas marks it undeletable when it loads it.
   {
     deletable: false,
-    id: "subagent:tracy-right-coder-left",
+    id: "subagent:support-right-coder-left",
     reconnectable: false,
-    source: "tracy",
+    source: "support",
     sourceHandle: "right",
     target: "coder",
     targetHandle: "left",
@@ -217,16 +217,16 @@ const FRAME_EDGES: Edge[] = [
 
 const FRAME_NODES: Node[] = applyTidyLayout(
   [
-    fixtureNode("tracy", "agent", {
-      sandboxOrder: ["internal-sandbox", "kien-mac", "phicks-mac"],
+    fixtureNode("support", "agent", {
+      sandboxOrder: ["internal-sandbox", "laptop-mac", "office-mac"],
     }),
     fixtureNode("coder", "agent"),
     fixtureNode("reviewer", "agent"),
     fixtureNode("internal-sandbox", "sandbox", {
       config: { provider: "sandbox" },
     }),
-    fixtureNode("kien-mac", "sandbox", { config: { provider: "machine" } }),
-    fixtureNode("phicks-mac", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("laptop-mac", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("office-mac", "sandbox", { config: { provider: "machine" } }),
     fixtureNode("notes", "workspace"),
     fixtureNode("repos", "workspace"),
     fixtureNode("handbook", "workspace", { readOnly: true }),
@@ -268,22 +268,22 @@ const CONNECT_NODES: Node[] = applyTidyLayout(
 const CONNECT_ANALYSIS = analyzeCanvasInfra(CONNECT_NODES, CONNECT_EDGES);
 
 /**
- * The drag-to-group fixture: `tracy` owns a two-chip cloud frame, `notes` is a
+ * The drag-to-group fixture: `support` owns a two-chip cloud frame, `notes` is a
  * workspace of its own, `other` owns the single sandbox `solo`, and `spare` is a
  * cloud sandbox nobody wired. Dragging `spare` onto the frame joins it at the
  * slot it is dropped on, and onto `solo` forms a new group from the two cards.
  * Dragging `notes` onto the frame is refused: no group holds both kinds.
  */
 const DROP_EDGES: Edge[] = [
-  fixtureEdge("tracy", "box-one"),
-  fixtureEdge("tracy", "box-two"),
-  fixtureEdge("tracy", "notes"),
+  fixtureEdge("support", "box-one"),
+  fixtureEdge("support", "box-two"),
+  fixtureEdge("support", "notes"),
   fixtureEdge("other", "solo"),
 ];
 
 const DROP_NODES: Node[] = applyTidyLayout(
   [
-    fixtureNode("tracy", "agent", { sandboxOrder: ["box-one", "box-two"] }),
+    fixtureNode("support", "agent", { sandboxOrder: ["box-one", "box-two"] }),
     fixtureNode("box-one", "sandbox"),
     fixtureNode("box-two", "sandbox"),
     fixtureNode("notes", "workspace"),
@@ -296,7 +296,7 @@ const DROP_NODES: Node[] = applyTidyLayout(
 );
 
 /** The url MCP frame starts collapsed, so the fixture shows both frame states. */
-const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";
+const COLLAPSED_FIXTURE_FRAME = "frame:support:mcp:http";
 
 // What a production client receives when a Convex action throws a plain Error.
 const CONVEX_SERVER_ERROR = new Error(
@@ -1019,8 +1019,8 @@ function CanvasFramesFixture(): React.JSX.Element {
       canWrite: true,
       expandedMemberId: expandedMemberId,
       machineConnections: [
-        fixtureConnection("kien-mac", Date.now(), undefined),
-        fixtureConnection("phicks-mac", Date.now() - 3_600_000, Date.now()),
+        fixtureConnection("laptop-mac", Date.now(), undefined),
+        fixtureConnection("office-mac", Date.now() - 3_600_000, Date.now()),
       ],
       mcpServers: serversByNode(FRAME_MCP_SERVERS),
       mountTargetsOf: (workspaceId) =>

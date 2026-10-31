@@ -206,7 +206,7 @@ test("a daemon that hangs up while its claim is looked up leaves the record free
 test("another daemon is refused naming the holder, even on the same host, and --force takes over", async () => {
   const server = core();
   const holder = await connectDaemon(server, "my-mac", () => {}, {
-    hostname: "phicks-mac",
+    hostname: "office-mac",
   });
   const hello = (extra: Record<string, unknown>): string =>
     JSON.stringify({ type: "hello", sandbox: "my-mac", ...extra });
@@ -215,11 +215,11 @@ test("another daemon is refused naming the holder, even on the same host, and --
   // would have let through.
   const local = openSocket(server);
   local.onopen = (): void =>
-    local.send(hello({ hostname: "phicks-mac", instance: "second-daemon" }));
+    local.send(hello({ hostname: "office-mac", instance: "second-daemon" }));
   const refused = await closeOf(local);
 
   expect(refused.code).toBe(MACHINE_CLOSE.occupied.code);
-  expect(refused.reason).toBe(occupiedReason("phicks-mac"));
+  expect(refused.reason).toBe(occupiedReason("office-mac"));
 
   // No instance is not the same daemon.
   const anonymous = openSocket(server);
@@ -230,7 +230,7 @@ test("another daemon is refused naming the holder, even on the same host, and --
   const holderClosed = closeOf(holder.socket);
   await connectDaemon(server, "my-mac", () => {}, {
     force: true,
-    hostname: "kien-mac",
+    hostname: "laptop-mac",
     instance: "second-daemon",
   });
 

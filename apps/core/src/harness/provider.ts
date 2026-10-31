@@ -91,7 +91,7 @@ const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 // `gpt-5.6` or the fine-tune `ft:gpt-6-luna:org::id`.
 const GPT_VERSION_PATTERN = /^(?:ft:)?gpt-(\d+)(?:\.(\d+))?(?:[-:]|$)/i;
 
-// A Claude model id after any router prefix like `cc/`, Bedrock-style
+// A Claude model id after any router prefix like `anthropic/`, Bedrock-style
 // `us.anthropic.claude-` ones included.
 const CLAUDE_MODEL_PATTERN = /(?:^|\.)claude-/i;
 
@@ -328,7 +328,7 @@ export function modelSettingsFromModelConfig(
  * on the ends of the system prompt and the history), OpenAI (and ChatGPT,
  * where a cached prefix spends less of the plan) a promptCacheKey
  * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
- * A custom endpoint serving a GPT model, like a proxy's `cx/gpt-6-luna`, gets
+ * A custom endpoint serving a GPT model, like a proxy's `openai/gpt-6-luna`, gets
  * that key as `prompt_cache_key` in the request body; without it a long run
  * lands on a server holding only the shared system prompt every few steps.
  * A call without a conversation, like compaction, gets neither: a one-shot
@@ -1324,7 +1324,7 @@ function promptCacheKey(conversationKey: string): string {
     .slice(0, 32);
 }
 
-// The model id the endpoint serves, without a router prefix like `cx/`.
+// The model id the endpoint serves, without a router prefix like `openai/`.
 function servedModelId(modelId: string | undefined): string {
   return modelId?.split("/").at(-1) ?? "";
 }

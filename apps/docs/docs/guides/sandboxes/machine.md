@@ -69,8 +69,8 @@ An agent drives every `machine` sandbox in its `sandboxes`, wherever it sits in 
 
 ```ts
 defineAgent({
-  name: "tracy",
-  sandboxes: [kienMac, phicksMac],
+  name: "support",
+  sandboxes: [laptopMac, officeMac],
 });
 ```
 

@@ -2168,7 +2168,7 @@ describe("runAgentLoop", () => {
     expect(first.cache_control).toEqual(breakpoint);
     // This run's ephemeral system is never stored, so the mark goes before it.
     expect(first.system).toEqual([
-      { type: "text", text: "You are Tracy." },
+      { type: "text", text: "You are a support agent." },
       { type: "text", text: "Memory index.", cache_control: breakpoint },
       { type: "text", text: "Reply in Dutch." },
     ]);
@@ -2224,7 +2224,7 @@ describe("runAgentLoop", () => {
     // OpenAI's own breakpoint ends the latest message, after the environment;
     // these mark what the next run sends again.
     expect(first.input).toEqual([
-      { role: "developer", content: "You are Tracy." },
+      { role: "developer", content: "You are a support agent." },
       {
         role: "developer",
         content: [
@@ -2324,7 +2324,7 @@ describe("runAgentLoop", () => {
 
     expect(call).toMatchObject({
       instructions: [
-        { role: "system", content: "You are Tracy." },
+        { role: "system", content: "You are a support agent." },
         { role: "system", content: "Memory index." },
         { role: "system", content: "Reply in Dutch." },
       ],
@@ -3946,7 +3946,7 @@ async function firstStepCall(
     { role: "system", content: "Reply in Dutch." },
   ];
   const system: SystemModelMessage[] = [
-    { role: "system", content: "You are Tracy." },
+    { role: "system", content: "You are a support agent." },
     { role: "system", content: "Memory index." },
     ...ephemeralSystem,
   ];

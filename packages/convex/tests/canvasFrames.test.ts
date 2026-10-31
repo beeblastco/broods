@@ -200,26 +200,26 @@ describe("deriveCanvasGroups", () => {
 describe("machine MCP members", () => {
   it("line up with the order of the computers they run on", () => {
     const nodes = [
-      node("a1", "agent", { sandboxOrder: ["phicks", "kien"] }),
-      node("kien", "sandbox", { config: { provider: "machine" } }),
-      node("phicks", "sandbox", { config: { provider: "machine" } }),
+      node("a1", "agent", { sandboxOrder: ["office", "laptop"] }),
+      node("laptop", "sandbox", { config: { provider: "machine" } }),
+      node("office", "sandbox", { config: { provider: "machine" } }),
       node("blender", "mcp"),
       node("photos", "mcp"),
     ];
     const edges = [
-      edge("a1", "kien"),
-      edge("a1", "phicks"),
+      edge("a1", "laptop"),
+      edge("a1", "office"),
       edge("a1", "blender"),
       edge("a1", "photos"),
     ];
     const servers: McpServersByNode = new Map([
-      ["blender", { sandbox: "kien", transport: "machine" }],
-      ["photos", { sandbox: "phicks", transport: "machine" }],
+      ["blender", { sandbox: "laptop", transport: "machine" }],
+      ["photos", { sandbox: "office", transport: "machine" }],
     ]);
     const frames = framesOf(deriveCanvasGroups(nodes, edges, servers));
 
     expect(frames.map((frame) => frame.memberIds)).toEqual([
-      ["phicks", "kien"],
+      ["office", "laptop"],
       ["photos", "blender"],
     ]);
   });
@@ -321,12 +321,12 @@ describe("agentRefCounts", () => {
 describe("runsOnSandboxIds", () => {
   it("finds a machine server's sandbox by mount name or label", () => {
     const nodes = [
-      node("mac", "sandbox", { mountName: "kien-mac" }),
+      node("mac", "sandbox", { mountName: "laptop-mac" }),
       node("m1", "mcp"),
       node("m2", "mcp"),
     ];
     const servers: McpServersByNode = new Map([
-      ["m1", { sandbox: "kien-mac", transport: "machine" }],
+      ["m1", { sandbox: "laptop-mac", transport: "machine" }],
       ["m2", { sandbox: null, transport: "http" }],
     ]);
 

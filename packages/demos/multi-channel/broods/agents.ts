@@ -2,7 +2,6 @@ import {
   defineAgent,
   defineGitHubConnection,
   defineSandbox,
-  defineSkill,
   defineSlackChannel,
   defineSlackConnection,
   defineTelegramChannel,
@@ -82,11 +81,6 @@ export const github = defineGitHubConnection({
   triggerOnPROpen: false,
 });
 
-export const hubSpotSkill = defineSkill({
-  name: "hubspot",
-  path: "./skills/hubspot",
-});
-
 export const sandbox = defineSandbox({
   name: "lambda-sandbox",
   provider: "lambda",
@@ -100,8 +94,6 @@ export const sandbox = defineSandbox({
   onCreate: [setupGitDevEnvironment],
   onResume: [setupGitDevEnvironment],
   envVars: {
-    HUBSPOT_API_TOKEN: env("HUBSPOT_API_TOKEN"),
-    HUBSPOT_BASE_URL: "https://api.hubapi.com",
     GITHUB_APP_ID: env("GITHUB_APP_ID"),
     GITHUB_PRIVATE_KEY: env("GITHUB_PRIVATE_KEY"),
     GITHUB_API_URL: "https://api.github.com",
@@ -137,7 +129,7 @@ export const agent = defineAgent({
   },
   agent: {
     system: instructions,
-    // 0 = no step cap. Tracy runs long multi-tool jobs; a cut-off turn can be
+    // 0 = no step cap. The agent runs long multi-tool jobs; a cut-off turn can be
     // resumed from the dashboard Tracing tab, but better not to cut it.
     maxTurn: 0,
   },
@@ -148,8 +140,4 @@ export const agent = defineAgent({
     enabled: true,
   },
   publicAccess: true,
-  skills: {
-    enabled: true,
-    allowed: [hubSpotSkill],
-  },
 });

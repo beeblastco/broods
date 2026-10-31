@@ -322,7 +322,7 @@ describe("buildFramedGraph", () => {
     expect(Math.abs(fans[0] - fans[1])).toBeGreaterThanOrEqual(8);
   });
 
-  test.each(["tracy", "tracymac", "macmount", "single", "large"] as const)(
+  test.each(["support", "supportmac", "macmount", "single", "large"] as const)(
     "the tidy layout of the deployed %s stage draws no edge through a box or over another",
     (stage) => {
       const { edges, mcpServers, nodes } = deployedStages[stage];
