@@ -43,7 +43,7 @@ it("records a failed task on the trace id the turn's logs carry", async () => {
     accountId: "acct_1",
     agentId: "agent_1",
     endpointId: "ep_1",
-    projectSlug: "tracy",
+    projectSlug: "support",
     stageSlug: "development",
   });
   const startedAt = Date.now() - 250;
@@ -51,7 +51,7 @@ it("records a failed task on the trace id the turn's logs carry", async () => {
   await runWithObservabilityScope(async () => {
     setObservabilityContext({
       accountId: "acct_1",
-      project: "tracy",
+      project: "support",
       stage: "development",
       endpointId: "ep_1",
       agentId: "agent_1",
@@ -77,7 +77,7 @@ it("records a failed task on the trace id the turn's logs carry", async () => {
   });
   expect(span?.attributes).toMatchObject({
     account_id: "acct_1",
-    project: "tracy",
+    project: "support",
     stage: "development",
     "task.state": "failed",
   });

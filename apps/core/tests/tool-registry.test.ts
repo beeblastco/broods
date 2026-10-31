@@ -62,7 +62,7 @@ describe("createTools", () => {
             sandbox: { provider: "lambda", permissionMode: "ask" },
           },
           {
-            name: "kien-mac",
+            name: "laptop-mac",
             sandbox: { provider: "machine", permissionMode: "ask" },
           },
         ],

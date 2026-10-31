@@ -358,7 +358,7 @@ broods project delete abandoned-e2e [--yes]
 
 ```text
 Projects:
-  tracy: 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
+  support: 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
   abandoned-e2e: empty
 ```
 

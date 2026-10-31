@@ -517,7 +517,7 @@ export interface AgentTelegramChannelConfig {
   webhookSecret?: string;
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
-  /** Bot's @username, e.g. `tracy_bot`. Set it to answer only when the agent is mentioned. */
+  /** Bot's @username, e.g. `support_bot`. Set it to answer only when the agent is mentioned. */
   botUsername?: string;
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";

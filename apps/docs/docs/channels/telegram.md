@@ -101,7 +101,7 @@ A bare `/command` counts as addressing the agent, since Telegram appends `@name`
 A Telegram reply shows the quoted message, but the agent reads a flat history. So a reply reaches the agent with the quoted text framed above it:
 
 ```text
-<replying-to from="Tracy">
+<replying-to from="Support">
 here is the template
 </replying-to>
 

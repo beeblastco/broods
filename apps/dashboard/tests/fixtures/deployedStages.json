@@ -1,5 +1,5 @@
 {
-  "tracy": {
+  "support": {
     "nodes": [
       {
         "id": "cli-agent-coder",
@@ -13,15 +13,15 @@
         }
       },
       {
-        "id": "cli-agent-tracy",
+        "id": "cli-agent-support",
         "type": "agent",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "tracy",
+          "label": "support",
           "sandboxOrder": [
             "cli-sandbox-internal-sandbox",
-            "cli-sandbox-kien-mac",
-            "cli-sandbox-phicks-mac"
+            "cli-sandbox-laptop-mac",
+            "cli-sandbox-office-mac"
           ],
           "managedBy": "cli",
           "status": "idle"
@@ -52,24 +52,24 @@
         }
       },
       {
-        "id": "cli-sandbox-kien-mac",
+        "id": "cli-sandbox-laptop-mac",
         "type": "sandbox",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "kien-mac",
-          "mountName": "kien-mac",
+          "label": "laptop-mac",
+          "mountName": "laptop-mac",
           "managedBy": "cli",
           "status": "idle",
           "config": { "provider": "machine" }
         }
       },
       {
-        "id": "cli-sandbox-phicks-mac",
+        "id": "cli-sandbox-office-mac",
         "type": "sandbox",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "phicks-mac",
-          "mountName": "phicks-mac",
+          "label": "office-mac",
+          "mountName": "office-mac",
           "managedBy": "cli",
           "status": "idle",
           "config": { "provider": "machine" }
@@ -187,23 +187,23 @@
         "target": "cli-workspace-scratch"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-internal-sandbox",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-sandbox-internal-sandbox",
+        "source": "cli-agent-support",
         "target": "cli-sandbox-internal-sandbox"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-kien-mac",
-        "source": "cli-agent-tracy",
-        "target": "cli-sandbox-kien-mac"
+        "id": "xy-edge__cli-agent-support-cli-sandbox-laptop-mac",
+        "source": "cli-agent-support",
+        "target": "cli-sandbox-laptop-mac"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-phicks-mac",
-        "source": "cli-agent-tracy",
-        "target": "cli-sandbox-phicks-mac"
+        "id": "xy-edge__cli-agent-support-cli-sandbox-office-mac",
+        "source": "cli-agent-support",
+        "target": "cli-sandbox-office-mac"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-notes",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-notes",
+        "source": "cli-agent-support",
         "target": "cli-workspace-notes"
       },
       {
@@ -212,48 +212,48 @@
         "target": "cli-sandbox-internal-sandbox"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-repos",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-repos",
+        "source": "cli-agent-support",
         "target": "cli-workspace-repos"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-handbook",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-handbook",
+        "source": "cli-agent-support",
         "target": "cli-workspace-handbook"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-playbook",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-playbook",
+        "source": "cli-agent-support",
         "target": "cli-workspace-playbook"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-scratch",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-scratch",
+        "source": "cli-agent-support",
         "target": "cli-workspace-scratch"
       },
       {
-        "id": "subagent:cli-agent-tracy-right-cli-agent-coder-left",
-        "source": "cli-agent-tracy",
+        "id": "subagent:cli-agent-support-right-cli-agent-coder-left",
+        "source": "cli-agent-support",
         "target": "cli-agent-coder"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-github",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-github",
+        "source": "cli-agent-support",
         "target": "cli-mcp-github"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-blender",
+        "source": "cli-agent-support",
         "target": "cli-mcp-blender"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-linear",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-linear",
+        "source": "cli-agent-support",
         "target": "cli-mcp-linear"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-sculpt",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-sculpt",
+        "source": "cli-agent-support",
         "target": "cli-mcp-sculpt"
       }
     ],
@@ -262,7 +262,7 @@
         "nodeId": "cli-mcp-sculpt",
         "name": "sculpt",
         "transport": "machine",
-        "sandbox": "kien-mac",
+        "sandbox": "laptop-mac",
         "disabled": false
       },
       {
@@ -283,23 +283,23 @@
         "nodeId": "cli-mcp-blender",
         "name": "blender",
         "transport": "machine",
-        "sandbox": "kien-mac",
+        "sandbox": "laptop-mac",
         "disabled": false
       }
     ]
   },
-  "tracymac": {
+  "supportmac": {
     "nodes": [
       {
-        "id": "cli-agent-tracy",
+        "id": "cli-agent-support",
         "type": "agent",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "tracy",
+          "label": "support",
           "sandboxOrder": [
-            "cli-sandbox-phicks-mac",
+            "cli-sandbox-office-mac",
             "cli-sandbox-internal-sandbox",
-            "cli-sandbox-kien-mac"
+            "cli-sandbox-laptop-mac"
           ],
           "managedBy": "cli",
           "status": "idle"
@@ -318,24 +318,24 @@
         }
       },
       {
-        "id": "cli-sandbox-kien-mac",
+        "id": "cli-sandbox-laptop-mac",
         "type": "sandbox",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "kien-mac",
-          "mountName": "kien-mac",
+          "label": "laptop-mac",
+          "mountName": "laptop-mac",
           "managedBy": "cli",
           "status": "idle",
           "config": { "provider": "machine" }
         }
       },
       {
-        "id": "cli-sandbox-phicks-mac",
+        "id": "cli-sandbox-office-mac",
         "type": "sandbox",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "phicks-mac",
-          "mountName": "phicks-mac",
+          "label": "office-mac",
+          "mountName": "office-mac",
           "managedBy": "cli",
           "status": "idle",
           "config": { "provider": "machine" }
@@ -382,38 +382,38 @@
     ],
     "edges": [
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-phicks-mac",
-        "source": "cli-agent-tracy",
-        "target": "cli-sandbox-phicks-mac"
+        "id": "xy-edge__cli-agent-support-cli-sandbox-office-mac",
+        "source": "cli-agent-support",
+        "target": "cli-sandbox-office-mac"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-internal-sandbox",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-sandbox-internal-sandbox",
+        "source": "cli-agent-support",
         "target": "cli-sandbox-internal-sandbox"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-kien-mac",
-        "source": "cli-agent-tracy",
-        "target": "cli-sandbox-kien-mac"
+        "id": "xy-edge__cli-agent-support-cli-sandbox-laptop-mac",
+        "source": "cli-agent-support",
+        "target": "cli-sandbox-laptop-mac"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-notes",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-notes",
+        "source": "cli-agent-support",
         "target": "cli-workspace-notes"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-repos",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-repos",
+        "source": "cli-agent-support",
         "target": "cli-workspace-repos"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-photos",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-photos",
+        "source": "cli-agent-support",
         "target": "cli-mcp-photos"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-blender",
+        "source": "cli-agent-support",
         "target": "cli-mcp-blender"
       }
     ],
@@ -422,14 +422,14 @@
         "nodeId": "cli-mcp-photos",
         "name": "photos",
         "transport": "machine",
-        "sandbox": "phicks-mac",
+        "sandbox": "office-mac",
         "disabled": false
       },
       {
         "nodeId": "cli-mcp-blender",
         "name": "blender",
         "transport": "machine",
-        "sandbox": "kien-mac",
+        "sandbox": "laptop-mac",
         "disabled": false
       }
     ]
@@ -437,15 +437,15 @@
   "macmount": {
     "nodes": [
       {
-        "id": "cli-agent-tracy",
+        "id": "cli-agent-support",
         "type": "agent",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "tracy",
+          "label": "support",
           "sandboxOrder": [
-            "cli-sandbox-phicks-mac",
+            "cli-sandbox-office-mac",
             "cli-sandbox-internal-sandbox",
-            "cli-sandbox-kien-mac"
+            "cli-sandbox-laptop-mac"
           ],
           "managedBy": "cli",
           "status": "idle"
@@ -464,24 +464,24 @@
         }
       },
       {
-        "id": "cli-sandbox-kien-mac",
+        "id": "cli-sandbox-laptop-mac",
         "type": "sandbox",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "kien-mac",
-          "mountName": "kien-mac",
+          "label": "laptop-mac",
+          "mountName": "laptop-mac",
           "managedBy": "cli",
           "status": "idle",
           "config": { "provider": "machine" }
         }
       },
       {
-        "id": "cli-sandbox-phicks-mac",
+        "id": "cli-sandbox-office-mac",
         "type": "sandbox",
         "position": { "x": 0, "y": 0 },
         "data": {
-          "label": "phicks-mac",
-          "mountName": "phicks-mac",
+          "label": "office-mac",
+          "mountName": "office-mac",
           "managedBy": "cli",
           "status": "idle",
           "config": { "provider": "machine" }
@@ -541,48 +541,48 @@
     ],
     "edges": [
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-phicks-mac",
-        "source": "cli-agent-tracy",
-        "target": "cli-sandbox-phicks-mac"
+        "id": "xy-edge__cli-agent-support-cli-sandbox-office-mac",
+        "source": "cli-agent-support",
+        "target": "cli-sandbox-office-mac"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-internal-sandbox",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-sandbox-internal-sandbox",
+        "source": "cli-agent-support",
         "target": "cli-sandbox-internal-sandbox"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-sandbox-kien-mac",
-        "source": "cli-agent-tracy",
-        "target": "cli-sandbox-kien-mac"
+        "id": "xy-edge__cli-agent-support-cli-sandbox-laptop-mac",
+        "source": "cli-agent-support",
+        "target": "cli-sandbox-laptop-mac"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-notes",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-notes",
+        "source": "cli-agent-support",
         "target": "cli-workspace-notes"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-repos",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-repos",
+        "source": "cli-agent-support",
         "target": "cli-workspace-repos"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-photos",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-photos",
+        "source": "cli-agent-support",
         "target": "cli-mcp-photos"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-mcp-blender",
+        "source": "cli-agent-support",
         "target": "cli-mcp-blender"
       },
       {
-        "id": "mount:cli-workspace-notes-left-cli-sandbox-phicks-mac-right",
+        "id": "mount:cli-workspace-notes-left-cli-sandbox-office-mac-right",
         "source": "cli-workspace-notes",
-        "target": "cli-sandbox-phicks-mac"
+        "target": "cli-sandbox-office-mac"
       },
       {
-        "id": "xy-edge__cli-agent-tracy-cli-workspace-inbox",
-        "source": "cli-agent-tracy",
+        "id": "xy-edge__cli-agent-support-cli-workspace-inbox",
+        "source": "cli-agent-support",
         "target": "cli-workspace-inbox"
       }
     ],
@@ -591,14 +591,14 @@
         "nodeId": "cli-mcp-photos",
         "name": "photos",
         "transport": "machine",
-        "sandbox": "phicks-mac",
+        "sandbox": "office-mac",
         "disabled": false
       },
       {
         "nodeId": "cli-mcp-blender",
         "name": "blender",
         "transport": "machine",
-        "sandbox": "kien-mac",
+        "sandbox": "laptop-mac",
         "disabled": false
       }
     ]
