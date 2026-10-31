@@ -35,6 +35,15 @@ export interface AgentDeploymentScope {
   stageSlug: string;
 }
 
+/** A stage's scope with its active account and its signing secret, still sealed. */
+export interface SealedAgentDeployment extends AgentDeploymentScope {
+  account: AccountRecord;
+  projectId: string;
+  stageId: string;
+  /** The stage's user-token signing secret; absent until one is minted. */
+  userTokenSecret?: EncryptedBlob;
+}
+
 /**
  * Raw counts for one finished agent task. No dollar amounts, because pricing is
  * computed at render time from a shared hardcoded table (plan §6d, §10a).
@@ -87,12 +96,14 @@ export interface TaskUsageInput {
   inputPreview?: string;
 }
 
-/** Identifies one daemon connection of a `machine` sandbox. */
+/** Identifies one daemon or browser connection of a `machine` sandbox. */
 export interface MachineConnectionRef {
   accountId: string;
   /** New on every connect, so a replaced connection's late writes miss. */
   connectionId: string;
   sandboxConfigId: string;
+  /** The end user a browser connection serves; absent for a daemon. */
+  subject?: string;
 }
 
 export interface MachineConnectionRecord extends MachineConnectionRef {
@@ -167,14 +178,15 @@ interface ChannelRecordStore {
  */
 interface AgentDeploymentStore {
   /** The key's scope with its account, null when either is inactive. */
-  getByApiKeyHash(apiKeyHash: string): Promise<
-    | (AgentDeploymentScope & {
-        account: AccountRecord;
-        /** The stage's user-token signing secret, still sealed; absent until one is minted. */
-        userTokenSecret?: EncryptedBlob;
-      })
-    | null
-  >;
+  getByApiKeyHash(apiKeyHash: string): Promise<SealedAgentDeployment | null>;
+  /**
+   * The stage a browser socket's path names, by its project and stage ids,
+   * null when it has no active deployment or its account is inactive.
+   */
+  getByStageIds(
+    projectId: string,
+    stageId: string,
+  ): Promise<SealedAgentDeployment | null>;
   /** Stamp the key's lastUsedAt for the dashboard. Callers throttle it. */
   touchLastUsed(apiKeyHash: string, usedAt: number): Promise<void>;
   /** Resolve the stage deployment containing one linked runtime agent. */

@@ -35,6 +35,7 @@ const SAMPLES = [
   "/v1/sandboxes/terminal/ws",
   "/v1/sandboxes/s",
   "/v1/machines/ws",
+  "/v1/projects/p/stages/s/browsers/ws",
   "/v1/env/NAME",
   "/v1/downloads/t",
   "/v1/workspaces/w/download-links",

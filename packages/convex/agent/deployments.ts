@@ -68,6 +68,15 @@ const agentDeploymentScopeValidator = v.object({
   stageSlug: v.string(),
 });
 
+/** A stage's scope, its active account, and its signing secret still sealed. */
+const sealedDeploymentValidator = v.object({
+  ...agentDeploymentScopeValidator.fields,
+  account: accountDoc,
+  userTokenSecret: v.optional(
+    v.object({ ciphertext: v.string(), iv: v.string(), tag: v.string() }),
+  ),
+});
+
 const ensureReturn = v.object({
   _id: v.id("agentDeployments"),
   endpointId: v.string(),
@@ -184,46 +193,39 @@ export const getByApiKeyHash = internalQuery({
   // The account rides along so core authenticates a runtime key in one call,
   // and the signing secret too, still sealed: core opens it only when a
   // request carries a user token.
-  returns: v.union(
-    v.object({
-      ...agentDeploymentScopeValidator.fields,
-      account: accountDoc,
-      userTokenSecret: v.optional(
-        v.object({ ciphertext: v.string(), iv: v.string(), tag: v.string() }),
-      ),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, { apiKeyHash }) => {
+  returns: v.union(sealedDeploymentValidator, v.null()),
+  handler: async (
+    ctx,
+    { apiKeyHash },
+  ): Promise<Infer<typeof sealedDeploymentValidator> | null> => {
     const deployment = await ctx.db
       .query("agentDeployments")
       .withIndex("by_apiKeyHash", (q) => q.eq("apiKeyHash", apiKeyHash))
       .unique();
     if (!deployment || deployment.status !== "active") return null;
 
-    const account = await ctx.db.get(deployment.accountId);
-    if (!account || account.status !== "active") return null;
+    return await withSealedSecret(ctx, deployment);
+  },
+});
 
-    return {
-      accountId: deployment.accountId,
-      projectId: deployment.projectId,
-      stageId: deployment.stageId,
-      endpointId: deployment.endpointId,
-      projectSlug: deployment.projectSlug,
-      stageSlug: deployment.stageSlug,
-      account: account,
-      ...(deployment.userTokenSecretCiphertext &&
-      deployment.userTokenSecretIv &&
-      deployment.userTokenSecretTag
-        ? {
-            userTokenSecret: {
-              ciphertext: deployment.userTokenSecretCiphertext,
-              iv: deployment.userTokenSecretIv,
-              tag: deployment.userTokenSecretTag,
-            },
-          }
-        : {}),
-    };
+/**
+ * The stage a browser socket's path names, with its sealed signing secret,
+ * so core can open the `bbt_` ticket the socket carries. The ids come from a
+ * path anyone can send, so one that names no row is null, not an error.
+ */
+export const getByStageIds = internalQuery({
+  args: { projectId: v.string(), stageId: v.string() },
+  returns: v.union(sealedDeploymentValidator, v.null()),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof sealedDeploymentValidator> | null> => {
+    const projectId = ctx.db.normalizeId("projects", args.projectId);
+    const stageId = ctx.db.normalizeId("stages", args.stageId);
+    if (!projectId || !stageId) return null;
+    const deployment = await activeDeployment(ctx, projectId, stageId);
+
+    return deployment ? await withSealedSecret(ctx, deployment) : null;
   },
 });
 
@@ -738,6 +740,36 @@ async function activeDeployment(
         .eq("status", "active"),
     )
     .first();
+}
+
+// The deployment's scope and sealed secret, or null when its account is not active.
+async function withSealedSecret(
+  ctx: QueryCtx,
+  deployment: Doc<"agentDeployments">,
+): Promise<Infer<typeof sealedDeploymentValidator> | null> {
+  const account = await ctx.db.get(deployment.accountId);
+  if (!account || account.status !== "active") return null;
+
+  return {
+    accountId: deployment.accountId,
+    projectId: deployment.projectId,
+    stageId: deployment.stageId,
+    endpointId: deployment.endpointId,
+    projectSlug: deployment.projectSlug,
+    stageSlug: deployment.stageSlug,
+    account: account,
+    ...(deployment.userTokenSecretCiphertext &&
+    deployment.userTokenSecretIv &&
+    deployment.userTokenSecretTag
+      ? {
+          userTokenSecret: {
+            ciphertext: deployment.userTokenSecretCiphertext,
+            iv: deployment.userTokenSecretIv,
+            tag: deployment.userTokenSecretTag,
+          },
+        }
+      : {}),
+  };
 }
 
 /** Stable opaque endpoint handle for a stage's runtime API. */

@@ -297,6 +297,9 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
     v.object({
       accountId: v.id("accounts"),
       endpointId: v.string(),
+      // What a browser socket's path names, so codegen can hand them to the app.
+      projectId: v.id("projects"),
+      stageId: v.id("stages"),
       projectSlug: v.string(),
       stageSlug: v.string(),
       stageKind: v.union(
@@ -364,6 +367,8 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
     return {
       accountId: account._id,
       endpointId: result.endpointId,
+      projectId: projectDoc._id,
+      stageId: stageDoc._id,
       projectSlug: result.projectSlug,
       stageSlug: result.stageSlug,
       stageKind: stageDoc.kind,

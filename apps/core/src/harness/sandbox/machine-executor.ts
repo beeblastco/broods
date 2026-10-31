@@ -1,8 +1,11 @@
 /**
  * The "machine" provider: bash, the computer tool and local MCP servers run on
  * the user's own computer through the WebSocket its `broods machine` daemon
- * keeps open. Live daemons are held in memory; each connection is mirrored to
- * Convex for the dashboard.
+ * keeps open. A `scope: "user"` machine is instead one browser per end user:
+ * each user's extension holds its own socket, opened with a `bbt_` ticket the
+ * customer's backend signed, and serves only the browser tool for runs of
+ * that same user. Live sockets are held in memory; each connection is
+ * mirrored to Convex for the dashboard.
  */
 
 import {
@@ -11,17 +14,34 @@ import {
   type ApiResource,
   type RolePrincipal,
 } from "@broods/convex/model/apiAuthorization";
-import { resolveBearerAuth } from "../../shared/auth.ts";
+import {
+  openBrowserTicket,
+  type BrowserTicket,
+} from "@broods/convex/model/browserTicket";
+import {
+  browserHostAllowed,
+  browserMachineScope,
+  type BrowserMachineScope,
+} from "@broods/convex/model/sandboxRules";
+import { extractBearerToken, resolveBearerAuth } from "../../shared/auth.ts";
+import { decryptAccountBlob } from "../../shared/convex/account-keys.ts";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
+import type { SandboxConfigRecord } from "../../shared/domain/sandbox-config.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logInfo, logWarn } from "../../shared/log.ts";
 import {
+  browserAction,
   MACHINE_CLOSE,
   MACHINE_MAX_FRAME_BYTES,
   MACHINE_WEBSOCKET_PATH,
+  matchBrowserSocketPath,
   occupiedReason,
   parseDaemonFrame,
+  type BrowserAction,
+  type BrowserInput,
   type ComputerInput,
+  type MachineBrowserFrame,
+  type MachineBrowserResultFrame,
   type MachineComputerFrame,
   type MachineComputerResultFrame,
   type MachineExecFrame,
@@ -33,7 +53,11 @@ import {
   type MachineReadyFrame,
   type MachineResultFrame,
 } from "../../shared/machine-socket.ts";
-import { getStorage, type MachineConnectionRef } from "../../shared/storage.ts";
+import {
+  getStorage,
+  type MachineConnectionRef,
+  type SealedAgentDeployment,
+} from "../../shared/storage.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -42,6 +66,19 @@ import type {
 } from "./types.ts";
 import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 
+// The page read or acted on before the extension answers; a slow page load counts.
+const BROWSER_REPLY_MS = 30_000;
+// Per end user and sandbox, so one run cannot flood a person's browser.
+const BROWSER_ACTIONS_PER_SECOND = 20;
+// Base64 of a screenshot, kept well under the 4 MB frame and what a model takes.
+const BROWSER_MAX_IMAGE_CHARS = 3 * 1024 * 1024;
+const BROWSER_MAX_TEXT_BYTES = 256 * 1024;
+const BROWSER_IMAGE_TYPES: ReadonlySet<string> = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+const CHROME_EXTENSION_ORIGIN = "chrome-extension://";
 // The helper bounds a desktop action; a wait or hold adds its own duration.
 const COMPUTER_REPLY_MS = 30_000;
 // The dashboard reads a computer as offline once its heartbeat goes quiet.
@@ -51,23 +88,66 @@ const MCP_REPLY_MS = 60_000;
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
 // Keyed by registryKey; a record's daemon holds it until it disconnects, reconnects
-// with the same instance, or is taken over with --force.
+// with the same instance, or is taken over with --force. A browser holds
+// browserKey: its user's newer socket always replaces it.
 const connections = new Map<string, MachineConnection>();
+// `stageId:jti` of every ticket that opened a socket, until it expires: a
+// ticket copied out of a log cannot open a second socket and push the real
+// one out. In memory, because core runs one replica.
+const spentTickets = new Map<string, number>();
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 
 type MachineReply =
+  | MachineBrowserResultFrame
   | MachineComputerResultFrame
   | MachineMcpResultFrame
   | MachineMcpToolsFrame
   | MachineResultFrame;
 
 type MachineRequest =
+  | MachineBrowserFrame
   | MachineComputerFrame
   | MachineExecFrame
   | MachineMcpCallFrame
   | MachineMcpListFrame;
 
+/** What a browser socket's path, ticket and Origin resolved to at the upgrade. */
+interface BrowserSocketScope {
+  /** The upgrade's `Origin`, checked again against the sandbox every heartbeat. */
+  origin: string;
+  projectId: string;
+  sandboxConfigId: string;
+  stageId: string;
+  /** The user and sandbox the socket opened for; a refresh must name the same. */
+  ticket: BrowserTicket;
+  /** The ticket as sent, opened again every heartbeat. */
+  token: string;
+}
+
+/** A browser's end user, its one action in flight, and its rate window. */
+interface BrowserSlot {
+  /** Settles once the action in flight is answered; the next one waits on it. */
+  idle: Promise<void>;
+  userId: string;
+  windowCount: number;
+  windowStartedAt: number;
+}
+
+/** A stage's deployment and its signing secret, opened. */
+interface BrowserStage {
+  deployment: SealedAgentDeployment;
+  secret: string;
+}
+
+/** One heartbeat sweep's lookups, shared by every browser it revalidates. */
+interface BrowserSweep {
+  records: Map<string, Promise<SandboxConfigRecord | null>>;
+  stages: Map<string, Promise<BrowserStage | null>>;
+}
+
 interface MachineConnection {
+  /** Set on a browser socket, never on a daemon's. */
+  browser?: BrowserSlot;
   computer: boolean;
   hostname?: string;
   instance?: string;
@@ -83,6 +163,8 @@ export interface MachineSocketData {
   accountId?: string;
   /** The bearer it upgraded with, resolved again every heartbeat. */
   authorization?: string;
+  /** Set for a browser socket, which a `bbt_` ticket opened. */
+  browser?: BrowserSocketScope;
   claimed?: boolean;
   /** Set once the socket closes, so a claim still awaiting its lookup drops it. */
   closed?: boolean;
@@ -93,6 +175,8 @@ export interface MachineSocketData {
   expiresAt?: number;
   expiry?: ReturnType<typeof setTimeout>;
   key?: string;
+  /** A browser upgrade core refused: the open handler closes with it at once. */
+  refusal?: { code: number; reason: string };
   /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
   /** The sandbox a role session claimed, checked again on every heartbeat. */
@@ -154,18 +238,30 @@ export class MachineSandboxExecutor implements SandboxExecutor {
   }
 }
 
+/** A socket upgrade core serves: a daemon's, or a browser's on its stage path. */
 export function isMachineUpgrade(request: Request): boolean {
+  const pathname = new URL(request.url).pathname;
+
   return (
     request.method === "GET" &&
     request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
-    new URL(request.url).pathname === MACHINE_WEBSOCKET_PATH
+    (pathname === MACHINE_WEBSOCKET_PATH ||
+      matchBrowserSocketPath(pathname) !== null)
   );
 }
 
 export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
   {
     maxPayloadLength: MACHINE_MAX_FRAME_BYTES,
-    open: armExpiry,
+    open: function (socket): void {
+      const refusal = socket.data.refusal;
+      if (refusal) {
+        socket.close(refusal.code, refusal.reason);
+
+        return;
+      }
+      armExpiry(socket);
+    },
     message: function (socket, raw): void {
       const accountId = socket.data.accountId;
       if (!accountId) {
@@ -186,8 +282,26 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
 
         return;
       }
+      // A browser's keepalive: Chrome stops an extension's service worker
+      // after 30 idle seconds, and only traffic on the socket counts.
+      if (frame.type === "ping") return;
+      const browser = socket.data.browser;
+      // A ticket or a role decides what a socket may claim, never its hello.
+      if (
+        frame.type === "hello" &&
+        (frame.browser === true) !== Boolean(browser)
+      ) {
+        socket.close(
+          MACHINE_CLOSE.badFrame.code,
+          MACHINE_CLOSE.badFrame.reason,
+        );
+
+        return;
+      }
       if (frame.type === "credential") {
-        void refreshCredential(socket, frame.token);
+        void (browser
+          ? refreshBrowserTicket(socket, browser, frame.token)
+          : refreshCredential(socket, frame.token));
 
         return;
       }
@@ -197,6 +311,11 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
         return;
       }
       socket.data.claimed = true;
+      if (browser) {
+        claimBrowser(socket, accountId, browser, frame);
+
+        return;
+      }
       claimSandbox(socket, accountId, frame).catch((error: unknown): void => {
         logWarn("Machine sandbox claim failed", {
           accountId: accountId,
@@ -231,6 +350,65 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
       });
     },
   };
+
+/**
+ * One browser action on the browser `userId` holds open for this sandbox, and
+ * no one else's. Core checks the call before it leaves: the action's own
+ * fields, and an https URL inside the sandbox's `allowedDomains` for navigate
+ * and upload_file. A user's actions run one at a time, at most
+ * BROWSER_ACTIONS_PER_SECOND, and the answer comes back capped.
+ * @throws when the input is refused, the browser is not connected, or it does not answer
+ */
+export async function runBrowserAction(
+  config: SandboxExecutorConfig,
+  userId: string,
+  input: BrowserInput,
+): Promise<MachineBrowserResultFrame> {
+  const plane = config.controlPlane;
+  const scope = browserMachineScope(config);
+  if (!plane?.sandboxConfigId || !scope) {
+    throw new Error('the browser tool needs a scope: "user" machine sandbox');
+  }
+  const action = checkedBrowserAction(input, scope);
+  const key = browserKey(plane.accountId, plane.sandboxConfigId, userId);
+  const offline = `the browser of the person this run belongs to is not connected to "${plane.name}". They need the extension open and signed in.`;
+  const connection = connections.get(key);
+  const slot = connection?.browser;
+  if (!connection || !slot) throw new Error(offline);
+  const now = Date.now();
+  if (now - slot.windowStartedAt >= 1000) {
+    slot.windowStartedAt = now;
+    slot.windowCount = 0;
+  }
+  slot.windowCount += 1;
+  if (slot.windowCount > BROWSER_ACTIONS_PER_SECOND) {
+    throw new Error(
+      `more than ${BROWSER_ACTIONS_PER_SECOND} browser actions a second; slow down`,
+    );
+  }
+  const frame: MachineBrowserFrame = {
+    type: "browser",
+    id: crypto.randomUUID(),
+    input: action,
+  };
+  // Queued behind the action in flight, so the page sees one at a time. A
+  // socket replaced or closed meanwhile gets nothing more.
+  const answer = slot.idle.then((): Promise<MachineReply> => {
+    if (connections.get(key) !== connection) throw new Error(offline);
+
+    return sendFrame(connection, frame, BROWSER_REPLY_MS);
+  });
+  slot.idle = answer.then(
+    (): void => undefined,
+    (): void => undefined,
+  );
+  const reply = await answer;
+  if (reply.type !== "browser-result") {
+    throw new Error(`browser answered a browser action with ${reply.type}`);
+  }
+
+  return cappedBrowserResult(reply);
+}
 
 export async function runMachineComputerAction(
   config: SandboxExecutorConfig,
@@ -317,6 +495,14 @@ export async function upgradeMachineSocket(
   request: Request,
   server: Bun.Server<MachineSocketData>,
 ): Promise<Response | undefined> {
+  const browserPath = matchBrowserSocketPath(new URL(request.url).pathname);
+  if (browserPath) {
+    const data = await browserSocketData(request, browserPath);
+
+    return server.upgrade(request, { data: data })
+      ? undefined
+      : Response.json({ error: "WebSocket upgrade failed" }, { status: 400 });
+  }
   const auth = await resolveBearerAuth({
     authorization: request.headers.get("authorization") ?? "",
   });
@@ -373,15 +559,270 @@ function armExpiry(socket: Bun.ServerWebSocket<MachineSocketData>): void {
   );
 }
 
+// No `:` in a user id, so the key splits one way only.
+function browserKey(
+  accountId: string,
+  sandboxConfigId: string,
+  userId: string,
+): string {
+  return `${accountId}:${sandboxConfigId}:${userId}`;
+}
+
+// The stage's own scope-user record of that name, else an account-level one,
+// as a daemon claims: never another stage's.
+async function browserSandboxRecord(
+  deployment: SealedAgentDeployment,
+  name: string,
+): Promise<SandboxConfigRecord | null> {
+  const named = (
+    await getStorage().sandboxConfigs.list(deployment.accountId)
+  ).filter(
+    (entry): boolean =>
+      entry.name === name && browserMachineScope(entry.config) !== null,
+  );
+
+  return (
+    named.find(
+      (entry): boolean =>
+        entry.projectId === deployment.projectId &&
+        entry.stageId === deployment.stageId,
+    ) ??
+    named.find(
+      (entry): boolean =>
+        entry.projectId === undefined && entry.stageId === undefined,
+    ) ??
+    null
+  );
+}
+
+// Everything is checked here, before the socket opens: the stage the path
+// names, the ticket under its signing secret (once only), the sandbox it
+// names, and the Origin against that sandbox's extensions. A refusal still
+// upgrades, so the extension reads a close code through the gateway relay.
+async function browserSocketData(
+  request: Request,
+  path: { projectId: string; stageId: string },
+): Promise<MachineSocketData> {
+  const token =
+    extractBearerToken(request.headers.get("authorization") ?? undefined) ?? "";
+  const origin = request.headers.get("origin");
+  const refuse = (close: {
+    code: number;
+    reason: string;
+  }): MachineSocketData => ({
+    refusal: { code: close.code, reason: close.reason },
+  });
+  try {
+    const stage = await browserStage(path.projectId, path.stageId);
+    const ticket = stage && (await openBrowserTicket(token, stage.secret));
+    if (!stage || !ticket || !spendTicket(path.stageId, ticket)) {
+      return refuse(MACHINE_CLOSE.ticketRefused);
+    }
+    const record = await browserSandboxRecord(stage.deployment, ticket.sandbox);
+    const scope = record && browserMachineScope(record.config);
+    if (!record || !scope) return refuse(MACHINE_CLOSE.unknownBrowser);
+    if (!origin || !originAllowed(origin, scope)) {
+      logWarn("Browser socket refused for its origin", {
+        accountId: stage.deployment.accountId,
+        sandbox: ticket.sandbox,
+        origin: origin ?? "none",
+      });
+
+      return refuse(MACHINE_CLOSE.originRefused);
+    }
+
+    return {
+      accountId: stage.deployment.accountId,
+      expiresAt: ticket.expiresAt,
+      browser: {
+        origin: origin,
+        projectId: path.projectId,
+        sandboxConfigId: record.sandboxId,
+        stageId: path.stageId,
+        ticket: ticket,
+        token: token,
+      },
+    };
+  } catch (error: unknown) {
+    logWarn("Browser socket lookup failed", { error: toErrorMessage(error) });
+
+    return refuse({ code: 1011, reason: "browser lookup failed" });
+  }
+}
+
+// The stage's deployment with its signing secret opened, or null when it has
+// no active deployment, an inactive account or no secret yet.
+async function browserStage(
+  projectId: string,
+  stageId: string,
+): Promise<BrowserStage | null> {
+  const deployment = await getStorage().agentDeployments.getByStageIds(
+    projectId,
+    stageId,
+  );
+  if (!deployment?.userTokenSecret) return null;
+  const { value } = await decryptAccountBlob(
+    deployment.accountId,
+    "agentDeployments:userTokenSecretCiphertext",
+    deployment.userTokenSecret,
+  );
+
+  return typeof value === "string"
+    ? { deployment: deployment, secret: value }
+    : null;
+}
+
+// Why core will not send the browser to `url`: https only, so never chrome:,
+// file:, javascript: or data:, and inside allowedDomains when the sandbox sets it.
+function browserUrlRefusal(
+  url: string,
+  scope: BrowserMachineScope,
+): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return `${JSON.stringify(url)} is not a URL`;
+  }
+  if (parsed.protocol !== "https:") {
+    return `only https URLs reach the browser, not ${parsed.protocol}`;
+  }
+  if (parsed.username || parsed.password) {
+    return "a URL for the browser must not carry credentials";
+  }
+  if (!browserHostAllowed(parsed.hostname, scope.allowedDomains)) {
+    return `${parsed.hostname} is outside this sandbox's allowedDomains`;
+  }
+
+  return null;
+}
+
+// The extension's answer within what a model may be handed: page text cut at
+// BROWSER_MAX_TEXT_BYTES, and a screenshot only of a known type and size.
+function cappedBrowserResult(
+  reply: MachineBrowserResultFrame,
+): MachineBrowserResultFrame {
+  const image =
+    reply.image &&
+    BROWSER_IMAGE_TYPES.has(reply.image.mediaType) &&
+    reply.image.data.length <= BROWSER_MAX_IMAGE_CHARS
+      ? reply.image
+      : undefined;
+  const error =
+    reply.error ??
+    (reply.image && !image
+      ? "the browser's screenshot was dropped: it must be png, jpeg or webp and at most 3 MB of base64"
+      : undefined);
+
+  return {
+    type: "browser-result",
+    id: reply.id,
+    ...(reply.text === undefined
+      ? {}
+      : { text: truncateText(reply.text, BROWSER_MAX_TEXT_BYTES).value }),
+    ...(image ? { image: image } : {}),
+    ...(error ? { error: error } : {}),
+  };
+}
+
+// The call as the extension receives it: only the fields its action reads,
+// each in range, and any URL one core may send. Throws the reason otherwise.
+function checkedBrowserAction(
+  input: BrowserInput,
+  scope: BrowserMachineScope,
+): BrowserAction {
+  const parsed = browserAction.safeParse(input);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map(
+      (issue): string => `${issue.path.join(".") || "input"}: ${issue.message}`,
+    );
+    throw new Error(`invalid ${input.action} call (${issues.join("; ")})`);
+  }
+  const action = parsed.data;
+  if (action.action === "navigate" || action.action === "upload_file") {
+    const refusal = browserUrlRefusal(action.url, scope);
+    if (refusal) throw new Error(refusal);
+  }
+
+  return action;
+}
+
+// A browser's hello claims the slot of the user its ticket names, on the
+// sandbox the upgrade resolved. That user's newer socket replaces the older
+// one; another user's socket is another slot and never meets this one.
+function claimBrowser(
+  socket: Bun.ServerWebSocket<MachineSocketData>,
+  accountId: string,
+  scope: BrowserSocketScope,
+  hello: MachineHelloFrame,
+): void {
+  if (hello.sandbox !== scope.ticket.sandbox) {
+    socket.close(MACHINE_CLOSE.forbidden.code, MACHINE_CLOSE.forbidden.reason);
+
+    return;
+  }
+  const userId = scope.ticket.userId;
+  const key = browserKey(accountId, scope.sandboxConfigId, userId);
+  const previous = connections.get(key);
+  if (previous) {
+    rejectPending(previous, MACHINE_CLOSE.replaced.reason);
+    previous.socket.close(
+      MACHINE_CLOSE.replaced.code,
+      MACHINE_CLOSE.replaced.reason,
+    );
+  }
+  socket.data.key = key;
+  const ref: MachineConnectionRef = {
+    accountId: accountId,
+    connectionId: crypto.randomUUID(),
+    sandboxConfigId: scope.sandboxConfigId,
+    subject: userId,
+  };
+  connections.set(key, {
+    browser: {
+      idle: Promise.resolve(),
+      userId: userId,
+      windowCount: 0,
+      windowStartedAt: 0,
+    },
+    computer: false,
+    ...(hello.hostname ? { hostname: hello.hostname } : {}),
+    ...(hello.instance ? { instance: hello.instance } : {}),
+    mcp: new Set(),
+    name: hello.sandbox,
+    pending: new Map(),
+    ref: ref,
+    socket: socket,
+  });
+  sendReady(socket, scope.sandboxConfigId);
+  mirrorConnection(() =>
+    getStorage().machineConnections.connected({
+      ...ref,
+      computer: false,
+      hostname: hello.hostname,
+      mcp: [],
+      platform: hello.platform,
+    }),
+  );
+  heartbeat ??= setInterval(sendHeartbeats, HEARTBEAT_MS);
+  logInfo("Browser connected", {
+    accountId: accountId,
+    sandbox: hello.sandbox,
+  });
+}
+
 async function claimSandbox(
   socket: Bun.ServerWebSocket<MachineSocketData>,
   accountId: string,
   hello: MachineHelloFrame,
 ): Promise<void> {
   const stage = socket.data.stage;
+  // A `scope: "user"` machine runs no daemon: only its users' browsers connect.
   const named = (await getStorage().sandboxConfigs.list(accountId)).filter(
     (entry) =>
-      entry.name === hello.sandbox && entry.config.provider === "machine",
+      entry.name === hello.sandbox &&
+      entry.config.provider === "machine" &&
+      browserMachineScope(entry.config) === null,
   );
   // A socket that closed during the lookup already ran its close handler, so
   // registering it now would leave a dead holder that refuses the next daemon.
@@ -529,6 +970,7 @@ function machineServingMcp(record: McpRecord): MachineConnection {
   const sandbox = record.sandbox ?? "";
   const connection = [...connections.values()].find(
     (entry) =>
+      entry.browser === undefined &&
       entry.socket.data.accountId === record.accountId &&
       entry.name === sandbox,
   );
@@ -555,6 +997,73 @@ function mirrorConnection(write: () => Promise<void>): void {
         error: toErrorMessage(error),
       });
     });
+}
+
+// `chrome-extension://<id>` with `<id>` one the sandbox lists. A page, another
+// extension, or a request with no Origin never reaches a person's browser.
+function originAllowed(origin: string, scope: BrowserMachineScope): boolean {
+  return (
+    origin.startsWith(CHROME_EXTENSION_ORIGIN) &&
+    scope.allowedExtensionIds.includes(
+      origin.slice(CHROME_EXTENSION_ORIGIN.length),
+    )
+  );
+}
+
+// A fresh ticket moves a browser's deadline only when it opens under the
+// stage's current secret, has not opened anything before, and names the same
+// user and sandbox: another user or sandbox closes the socket with 4403. An
+// outage keeps the old deadline and the extension tries again.
+async function refreshBrowserTicket(
+  socket: Bun.ServerWebSocket<MachineSocketData>,
+  scope: BrowserSocketScope,
+  token: string,
+): Promise<void> {
+  let ticket: BrowserTicket | null;
+  try {
+    const stage = await browserStage(scope.projectId, scope.stageId);
+    ticket = stage && (await openBrowserTicket(token, stage.secret));
+  } catch (error: unknown) {
+    logWarn("Browser ticket refresh failed", {
+      accountId: socket.data.accountId,
+      error: toErrorMessage(error),
+    });
+
+    return;
+  }
+  const current = socket.data.browser;
+  if (socket.data.closed || !current) return;
+  if (!ticket || !spendTicket(current.stageId, ticket)) {
+    socket.close(
+      MACHINE_CLOSE.ticketRefused.code,
+      MACHINE_CLOSE.ticketRefused.reason,
+    );
+
+    return;
+  }
+  if (
+    ticket.userId !== current.ticket.userId ||
+    ticket.sandbox !== current.ticket.sandbox
+  ) {
+    logWarn("Browser ticket refresh named another user or sandbox", {
+      accountId: socket.data.accountId,
+      sandbox: current.ticket.sandbox,
+    });
+    socket.close(MACHINE_CLOSE.forbidden.code, MACHINE_CLOSE.forbidden.reason);
+
+    return;
+  }
+  // Two refreshes can resolve out of order; the older ticket never wins.
+  if (ticket.expiresAt <= (socket.data.expiresAt ?? 0)) return;
+  socket.data.browser = { ...current, ticket: ticket, token: token };
+  socket.data.expiresAt = ticket.expiresAt;
+  armExpiry(socket);
+  const connection = socket.data.key
+    ? connections.get(socket.data.key)
+    : undefined;
+  if (connection?.socket === socket) {
+    sendReady(socket, current.sandboxConfigId);
+  }
 }
 
 // Only a ticket socket's own account and stage, still allowed to write its
@@ -665,11 +1174,16 @@ function sendFrame(
 }
 
 function sendHeartbeats(): void {
+  // One stage and sandbox lookup per sweep, however many browsers share them.
+  const sweep: BrowserSweep = { records: new Map(), stages: new Map() };
   for (const connection of connections.values()) {
     mirrorConnection(() =>
       getStorage().machineConnections.seen(connection.ref),
     );
-    void revalidate(connection.socket);
+    const browser = connection.socket.data.browser;
+    void (browser
+      ? revalidateBrowser(connection.socket, browser, sweep)
+      : revalidate(connection.socket));
   }
 }
 
@@ -714,6 +1228,79 @@ async function revalidate(
   socket.close(close.code, close.reason);
 }
 
+// A browser keeps its socket only while its ticket still opens under the
+// stage's current secret (a rotation closes every browser), and its sandbox
+// is still a scope-user machine that lists its Origin. An outage keeps it.
+async function revalidateBrowser(
+  socket: Bun.ServerWebSocket<MachineSocketData>,
+  scope: BrowserSocketScope,
+  sweep: BrowserSweep,
+): Promise<void> {
+  const stageKey = `${scope.projectId}:${scope.stageId}`;
+  let stage: BrowserStage | null;
+  let record: SandboxConfigRecord | null = null;
+  try {
+    let stageLookup = sweep.stages.get(stageKey);
+    if (!stageLookup) {
+      stageLookup = browserStage(scope.projectId, scope.stageId);
+      sweep.stages.set(stageKey, stageLookup);
+    }
+    stage = await stageLookup;
+    if (stage) {
+      const recordKey = `${stageKey}:${scope.ticket.sandbox}`;
+      let recordLookup = sweep.records.get(recordKey);
+      if (!recordLookup) {
+        recordLookup = browserSandboxRecord(
+          stage.deployment,
+          scope.ticket.sandbox,
+        );
+        sweep.records.set(recordKey, recordLookup);
+      }
+      record = await recordLookup;
+    }
+  } catch (error: unknown) {
+    logWarn("Browser revalidation failed", {
+      accountId: socket.data.accountId,
+      error: toErrorMessage(error),
+    });
+
+    return;
+  }
+  // A refresh that landed meanwhile is the ticket to judge now.
+  const current = socket.data.browser;
+  if (socket.data.closed || !current) return;
+  const opened =
+    stage && (await openBrowserTicket(current.token, stage.secret));
+  if (socket.data.closed) return;
+  if (!opened) {
+    const close =
+      (socket.data.expiresAt ?? 0) <= Date.now()
+        ? MACHINE_CLOSE.expired
+        : MACHINE_CLOSE.ticketRefused;
+    socket.close(close.code, close.reason);
+
+    return;
+  }
+  const browserScope =
+    record?.sandboxId === current.sandboxConfigId
+      ? browserMachineScope(record.config)
+      : null;
+  if (!browserScope) {
+    socket.close(
+      MACHINE_CLOSE.unknownBrowser.code,
+      MACHINE_CLOSE.unknownBrowser.reason,
+    );
+
+    return;
+  }
+  if (!originAllowed(current.origin, browserScope)) {
+    socket.close(
+      MACHINE_CLOSE.originRefused.code,
+      MACHINE_CLOSE.originRefused.reason,
+    );
+  }
+}
+
 // A ticket socket learns how long it has, so the daemon refreshes in time.
 function sendReady(
   socket: Bun.ServerWebSocket<MachineSocketData>,
@@ -739,4 +1326,18 @@ function settleReply(key: string, reply: MachineReply): void {
   clearTimeout(pending.timer);
   connection.pending.delete(reply.id);
   pending.resolve(reply);
+}
+
+// Records a ticket's first use, and drops the expired ones; false when it
+// opened a socket or a refresh before.
+function spendTicket(stageId: string, ticket: BrowserTicket): boolean {
+  const now = Date.now();
+  for (const [spent, expiresAt] of spentTickets) {
+    if (expiresAt <= now) spentTickets.delete(spent);
+  }
+  const key = `${stageId}:${ticket.jti}`;
+  if (spentTickets.has(key)) return false;
+  spentTickets.set(key, ticket.expiresAt);
+
+  return true;
 }

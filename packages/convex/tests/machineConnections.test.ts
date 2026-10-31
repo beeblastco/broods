@@ -97,3 +97,60 @@ test("a replaced connection's late heartbeat and disconnect leave its successor'
 
   expect(third?.specs).toBeUndefined();
 });
+
+test("each end user's browser keeps its own row, and one disconnect leaves the others", async () => {
+  const t = convexTest(schema, modules);
+  const { accountId, sandboxConfigId } = await t.run(async (ctx) => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner@example.com",
+      plan: "free" as const,
+      createdAt: now,
+    });
+    const accountId = await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "browsers",
+      secretHash: "hash-browser-connections",
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const sandboxConfigId = await ctx.db.insert("sandboxConfigs", {
+      accountId: accountId,
+      name: "browser",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return { accountId: accountId, sandboxConfigId: sandboxConfigId };
+  });
+  const alice = {
+    accountId: accountId,
+    sandboxConfigId: sandboxConfigId,
+    connectionId: "alice-1",
+    subject: "alice",
+  };
+  const bob = { ...alice, connectionId: "bob-1", subject: "bob" };
+
+  for (const ref of [alice, bob]) {
+    await t.mutation(internal.sandbox.machines.connected, {
+      ...ref,
+      computer: false,
+      mcp: [],
+    });
+  }
+  await t.mutation(internal.sandbox.machines.disconnected, alice);
+  const rows = await t.run(
+    async (ctx) => await ctx.db.query("machineConnections").collect(),
+  );
+
+  expect(rows).toHaveLength(2);
+  expect(rows.find((row) => row.subject === "alice")?.disconnectedAt).toEqual(
+    expect.any(Number),
+  );
+  expect(
+    rows.find((row) => row.subject === "bob")?.disconnectedAt,
+  ).toBeUndefined();
+});

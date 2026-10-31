@@ -1,11 +1,40 @@
 /**
- * Frames between the `broods machine` daemon and core. The gateway relays
- * them unchanged and the CLI bundles this file. `computerInput` is also the
- * computer tool's input schema, so the model and the wire share one shape. MCP
- * replies carry the SDK's JSON as is; core parses them with the SDK's schemas.
+ * Frames between the `broods machine` daemon and core, and between an end
+ * user's browser extension and core on a `scope: "user"` machine sandbox. The
+ * gateway relays them unchanged and the CLI bundles this file. `computerInput`
+ * is also the computer tool's input schema, so the model and the wire share
+ * one shape; `browserInput` is the browser tool's, and `browserAction` what
+ * the extension receives once core has checked it. MCP replies carry the
+ * SDK's JSON as is; core parses them with the SDK's schemas.
  */
 
 import { z } from "zod";
+
+const BROWSER_ACTIONS = [
+  "click",
+  "fill",
+  "navigate",
+  "press_key",
+  "read_page",
+  "screenshot",
+  "type",
+  "upload_file",
+] as const;
+
+/** Browser actions that only look, so they never need approval. */
+export const BROWSER_READ_ACTIONS: ReadonlySet<string> = new Set([
+  "read_page",
+  "screenshot",
+] as const satisfies readonly (typeof BROWSER_ACTIONS)[number][]);
+
+// `/v1/projects/{projectId}/stages/{stageId}/browsers/ws`, the ids as Convex
+// writes them: a browser holds no account credential, so its path names the
+// stage whose signing secret opens its ticket.
+const BROWSER_WEBSOCKET_PATTERN =
+  /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/browsers\/ws$/;
+const BROWSER_REF_MAX = 256;
+const BROWSER_TEXT_MAX = 32 * 1024;
+const BROWSER_URL_MAX = 2048;
 
 const COMPUTER_ACTIONS = [
   "cursor_position",
@@ -43,9 +72,25 @@ export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
   // Not fatal: the daemon reconnects with a fresh credential.
   expired: { code: 4419, reason: "Credential expired" },
+  // A browser's hello or fresh ticket names another user or sandbox than the
+  // ticket it opened with. Fatal: a reconnect would only repeat it.
+  forbidden: {
+    code: 4403,
+    reason: "Ticket is for another user or sandbox than this socket",
+  },
   occupied: { code: 4423, reason: "Already connected from another daemon" },
+  originRefused: {
+    code: 4403,
+    reason: "Origin is not an extension this sandbox allows",
+  },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
+  // Not fatal for a browser: the extension asks its backend for a new ticket.
+  ticketRefused: { code: 4401, reason: "Invalid or expired browser ticket" },
   unauthorized: { code: 4401, reason: "Unauthorized; run broods login" },
+  unknownBrowser: {
+    code: 4404,
+    reason: 'No scope: "user" machine sandbox with that name in this stage',
+  },
   unknownSandbox: {
     code: 4404,
     reason: "No machine sandbox with that name in this account",
@@ -56,6 +101,85 @@ export const MACHINE_CLOSE = {
 export const MACHINE_MAX_FRAME_BYTES = 4 * 1024 * 1024;
 
 export const MACHINE_WEBSOCKET_PATH = "/v1/machines/ws";
+
+const elementRef = z.string().min(1).max(BROWSER_REF_MAX);
+
+/** One browser action as the extension receives it, after core checked it. */
+export const browserAction = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("click"), ref: elementRef }),
+  z.object({
+    action: z.literal("fill"),
+    fields: z
+      .array(
+        z.object({ ref: elementRef, value: z.string().max(BROWSER_TEXT_MAX) }),
+      )
+      .min(1)
+      .max(50),
+  }),
+  z.object({
+    action: z.literal("navigate"),
+    url: z.string().min(1).max(BROWSER_URL_MAX),
+  }),
+  z.object({ action: z.literal("press_key"), key: z.string().min(1).max(64) }),
+  z.object({ action: z.literal("read_page") }),
+  z.object({ action: z.literal("screenshot") }),
+  z.object({
+    action: z.literal("type"),
+    text: z.string().min(1).max(BROWSER_TEXT_MAX),
+  }),
+  z.object({
+    action: z.literal("upload_file"),
+    ref: elementRef,
+    url: z.string().min(1).max(BROWSER_URL_MAX),
+    name: z.string().min(1).max(255),
+  }),
+]);
+
+// The browser tool's input: one flat object, because a provider takes only an
+// object schema at the top of a tool. Which fields an action needs is
+// `browserAction`'s to say; core parses a call with it before sending.
+export const browserInput = z.object({
+  action: z.enum(BROWSER_ACTIONS),
+  ref: z
+    .string()
+    .max(BROWSER_REF_MAX)
+    .optional()
+    .describe(
+      "Element ref from the latest read_page, for click and upload_file.",
+    ),
+  fields: z
+    .array(
+      z.object({
+        ref: z.string().max(BROWSER_REF_MAX),
+        value: z.string().max(BROWSER_TEXT_MAX),
+      }),
+    )
+    .max(50)
+    .optional()
+    .describe("For fill: each element ref with the value to put in it."),
+  text: z
+    .string()
+    .max(BROWSER_TEXT_MAX)
+    .optional()
+    .describe("For type: text sent to the focused element."),
+  key: z
+    .string()
+    .max(64)
+    .optional()
+    .describe('For press_key: "Enter", "Tab", "Escape", "Control+a".'),
+  url: z
+    .string()
+    .max(BROWSER_URL_MAX)
+    .optional()
+    .describe(
+      "An https URL: the page for navigate, or the file upload_file attaches.",
+    ),
+  name: z
+    .string()
+    .max(255)
+    .optional()
+    .describe("For upload_file: the file name the page sees."),
+});
 
 // Anthropic's computer-use field names. Arrays, not tuples: some providers
 // reject JSON Schema tuple items.
@@ -104,6 +228,22 @@ export const computerInput = z.object({
     .describe("How many times to press the key."),
 });
 
+const browserFrame = z.object({
+  type: z.literal("browser"),
+  id: z.string(),
+  input: browserAction,
+});
+
+// Page text and a screenshot are what the page says, never instructions; core
+// caps both before the model sees them.
+const browserResultFrame = z.object({
+  type: z.literal("browser-result"),
+  id: z.string(),
+  text: z.string().optional(),
+  image: z.object({ data: z.string(), mediaType: z.string() }).optional(),
+  error: z.string().optional(),
+});
+
 const computerFrame = computerInput.extend({
   type: z.literal("computer"),
   id: z.string(),
@@ -140,6 +280,8 @@ const execFrame = z.object({
 const helloFrame = z.object({
   type: z.literal("hello"),
   sandbox: z.string().min(1),
+  // A browser extension on a `scope: "user"` sandbox, never a daemon.
+  browser: z.boolean().optional(),
   hostname: z.string().optional(),
   platform: z.string().optional(),
   computer: z.boolean().optional(),
@@ -199,6 +341,10 @@ const mcpToolsFrame = z.object({
   error: z.string().optional(),
 });
 
+// A browser extension's keepalive, which core ignores: Chrome stops a service
+// worker after 30 idle seconds, and only traffic on its socket counts.
+const pingFrame = z.object({ type: z.literal("ping") });
+
 // Sent again each time core takes a fresh credential frame.
 const readyFrame = z.object({
   type: z.literal("ready"),
@@ -220,6 +366,7 @@ const resultFrame = z.object({
 });
 
 const coreFrame = z.discriminatedUnion("type", [
+  browserFrame,
   computerFrame,
   execFrame,
   mcpCallFrame,
@@ -228,15 +375,21 @@ const coreFrame = z.discriminatedUnion("type", [
 ]);
 
 const daemonFrame = z.discriminatedUnion("type", [
+  browserResultFrame,
   computerResultFrame,
   credentialFrame,
   helloFrame,
   mcpResultFrame,
   mcpToolsFrame,
+  pingFrame,
   resultFrame,
 ]);
 
+export type BrowserAction = z.infer<typeof browserAction>;
+export type BrowserInput = z.infer<typeof browserInput>;
 export type ComputerInput = z.infer<typeof computerInput>;
+export type MachineBrowserFrame = z.infer<typeof browserFrame>;
+export type MachineBrowserResultFrame = z.infer<typeof browserResultFrame>;
 export type MachineComputerFrame = z.infer<typeof computerFrame>;
 export type MachineComputerResultFrame = z.infer<typeof computerResultFrame>;
 export type MachineCoreFrame = z.infer<typeof coreFrame>;
@@ -261,8 +414,25 @@ export function occupiedReason(holder: string | undefined): string {
   return `${MACHINE_CLOSE.occupied.reason} (${host}); pass --force to take it over`;
 }
 
-export function machineSocketUrl(baseUrl: string): string {
-  const url = new URL(MACHINE_WEBSOCKET_PATH, baseUrl);
+/**
+ * The project and stage ids a browser socket path names, or null for any other
+ * path. Convex ids need no escaping, so the segments are taken as sent.
+ */
+export function matchBrowserSocketPath(
+  pathname: string,
+): { projectId: string; stageId: string } | null {
+  const match = BROWSER_WEBSOCKET_PATTERN.exec(pathname);
+
+  return match?.[1] && match[2]
+    ? { projectId: match[1], stageId: match[2] }
+    : null;
+}
+
+export function machineSocketUrl(
+  baseUrl: string,
+  path: string = MACHINE_WEBSOCKET_PATH,
+): string {
+  const url = new URL(path, baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 
   return url.toString();

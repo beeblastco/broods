@@ -408,6 +408,44 @@ test("a machine daemon upgrade needs a credential and is relayed to core's socke
   ]);
 });
 
+test("a browser extension's upgrade skips the page allowlist and reaches core with its Origin", async () => {
+  const gateway = createGateway(gatewayConfig());
+  const { server, upgrades } = fakeServer();
+  const path = "/v1/projects/proj_1/stages/stage_1/browsers/ws";
+  const origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
+
+  const refused = await gateway.fetch(
+    upgradeRequest(path, { origin: origin }),
+    server,
+  );
+  expect(refused?.status).toBe(401);
+
+  const upgraded = await gateway.fetch(
+    upgradeRequest(path, {
+      origin: origin,
+      subprotocols: ["broods.v1", "broods.token.bbt_ticket"],
+    }),
+    server,
+  );
+  expect(upgraded).toBeUndefined();
+  expect(upgrades).toEqual([
+    {
+      kind: "machine",
+      ticket: {
+        url: `wss://core.example${path}`,
+        authorization: "Bearer bbt_ticket",
+      },
+      origin: origin,
+    },
+  ]);
+  // Any other socket still holds a page origin to the allowlist.
+  const agent = await gateway.fetch(
+    upgradeRequest("/v1/agents/endpoint-1/ws", { origin: origin }),
+    server,
+  );
+  expect(agent?.status).toBe(403);
+});
+
 test("a terminal ticket in the subprotocol opens one socket, and a replay spends auth budget", async () => {
   const authFailureLimiter = new RateLimiter(1, 60_000);
   const gateway = createGateway(

@@ -36,6 +36,9 @@ const CASES: [string, string, Upstream | null][] = [
   ["GET", "/v1/projects/p/stages/s/observability/ws", "gateway"],
   ["GET", "/v1/sandboxes/terminal/ws", "gateway"],
   ["GET", "/v1/machines/ws", "gateway"],
+  ["GET", "/v1/projects/p/stages/s/browsers/ws", "gateway"],
+  ["GET", "/v1/projects/p/stages/s/browsers", "core"],
+  ["GET", "/v1/projects/p/browsers/ws", "core"],
   ["GET", "/v1/demo/agents/development/env_123/ws", "core"],
 
   // The config plane, method by method; a method miss falls through to core.

@@ -116,10 +116,14 @@ describe("runtime key wire", () => {
       "apiKey",
       "endpointId",
       "keyHint",
+      "projectId",
       "projectSlug",
+      "stageId",
       "stageKind",
       "stageSlug",
     ]);
+    // What a browser socket's path names.
+    expect(deployment!.stageId).toBe(seeded.stageId);
     expect(deployment!.stageSlug).toBe("production");
     expect(deployment!.projectSlug).toBe("demo-app");
     expect(deployment!.endpointId).toBe(`stage-${seeded.stageId.slice(-8)}`);

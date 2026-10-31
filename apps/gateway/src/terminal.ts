@@ -28,10 +28,15 @@ export type TerminalGatewayData = {
   ticket: TerminalTicket | null;
 };
 
-/** A `broods machine` daemon, relayed to core, which checks its bearer. */
+/**
+ * A `broods machine` daemon, or an end user's browser extension, relayed to
+ * core, which checks its bearer. A browser's `origin` goes along, because
+ * core holds it to the sandbox's allowed extension ids.
+ */
 export type MachineGatewayData = {
   kind: "machine";
   ticket: Pick<TerminalTicket, "url" | "authorization" | "authorizationHeader">;
+  origin?: string;
 };
 
 export type RelayGatewayData = MachineGatewayData | TerminalGatewayData;
@@ -166,6 +171,9 @@ export function openTerminalUpstream(
         [ticket.authorizationHeader ?? "authorization"]: ticket.authorization,
         ...(socket.data.kind === "machine"
           ? { [VIA_GATEWAY_HEADER]: "1" }
+          : {}),
+        ...(socket.data.kind === "machine" && socket.data.origin
+          ? { origin: socket.data.origin }
           : {}),
       },
     } as unknown as string[]);

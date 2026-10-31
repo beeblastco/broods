@@ -1,9 +1,11 @@
 /**
  * Connection state of `machine` sandboxes. Core holds each `broods machine`
- * daemon's socket and mirrors its connect, a heartbeat every minute and its
+ * daemon's socket, and each end user's browser socket on a `scope: "user"`
+ * sandbox, and mirrors its connect, a heartbeat every minute and its
  * disconnect here, so the dashboard can list the computer beside the cloud
- * instances. `connectionId` changes on every connect: a replaced socket's late
- * heartbeat or disconnect names the old id and changes nothing.
+ * instances. A daemon's row has no `subject`; a browser's row names its end
+ * user, one row per user. `connectionId` changes on every connect: a replaced
+ * socket's late heartbeat or disconnect names the old id and changes nothing.
  */
 
 import { v, type ObjectType } from "convex/values";
@@ -21,6 +23,7 @@ const connectionRef = {
   accountId: v.id("accounts"),
   sandboxConfigId: v.id("sandboxConfigs"),
   connectionId: v.string(),
+  subject: machineConnectionsFields.subject,
 };
 
 const namedConnection = v.object({
@@ -34,7 +37,7 @@ type ConnectionRef = ObjectType<typeof connectionRef>;
 
 type NamedConnection = Doc<"machineConnections"> & { name: string };
 
-/** A daemon claimed its sandbox; it takes the row over from any earlier connection. */
+/** A daemon claimed its sandbox, or a browser its user's slot; it takes the row over from any earlier connection. */
 export const connected = internalMutation({
   args: {
     ...connectionRef,
@@ -60,7 +63,11 @@ export const connected = internalMutation({
       lastSeenAt: now,
       disconnectedAt: undefined,
     };
-    const existing = await connectionFor(ctx, args.sandboxConfigId);
+    const existing = await connectionFor(
+      ctx,
+      args.sandboxConfigId,
+      args.subject,
+    );
     if (existing) {
       await ctx.db.patch(existing._id, row);
     } else {
@@ -82,7 +89,10 @@ export const disconnected = internalMutation({
   },
 });
 
-/** The stage's computers that ever connected, named after their current sandbox config. */
+/**
+ * The stage's computers that ever connected, named after their current
+ * sandbox config. Daemons only: a browser row per end user would crowd them out.
+ */
 export const listForActiveOrg = query({
   args: {
     projectId: v.id("projects"),
@@ -103,11 +113,12 @@ export const listForActiveOrg = query({
     if (!stage) return [];
     const rows = await ctx.db
       .query("machineConnections")
-      .withIndex("by_accountId_projectId_and_stageId", (q) =>
+      .withIndex("by_accountId_projectId_stageId_and_subject", (q) =>
         q
           .eq("accountId", account._id)
           .eq("projectId", args.projectId)
-          .eq("stageId", stage._id),
+          .eq("stageId", stage._id)
+          .eq("subject", undefined),
       )
       .take(100);
     const named = await Promise.all(
@@ -136,11 +147,12 @@ export const seen = internalMutation({
 async function connectionFor(
   ctx: MutationCtx,
   sandboxConfigId: Id<"sandboxConfigs">,
+  subject: string | undefined,
 ): Promise<Doc<"machineConnections"> | null> {
   return await ctx.db
     .query("machineConnections")
-    .withIndex("by_sandboxConfigId", (q) =>
-      q.eq("sandboxConfigId", sandboxConfigId),
+    .withIndex("by_sandboxConfigId_and_subject", (q) =>
+      q.eq("sandboxConfigId", sandboxConfigId).eq("subject", subject),
     )
     .unique();
 }
@@ -150,7 +162,7 @@ async function heldConnection(
   ctx: MutationCtx,
   ref: ConnectionRef,
 ): Promise<Doc<"machineConnections"> | null> {
-  const row = await connectionFor(ctx, ref.sandboxConfigId);
+  const row = await connectionFor(ctx, ref.sandboxConfigId, ref.subject);
 
   return row?.accountId === ref.accountId &&
     row.connectionId === ref.connectionId

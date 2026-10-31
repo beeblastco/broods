@@ -25,9 +25,10 @@ inductive Pat where
   | lit (s : String)
   | any
 
-/-- WebSocket surfaces the gateway terminates. -/
+/-- WebSocket surfaces the gateway terminates. `browser` is an end user's
+extension on a `scope: "user"` machine sandbox, relayed to core like `machine`. -/
 inductive Socket where
-  | terminal | machine | observability | agent
+  | terminal | machine | browser | observability | agent
   deriving DecidableEq, Repr
 
 /-- Where `resolveRouter` sends a request: the gateway (`health` and the
@@ -103,6 +104,8 @@ where
     if p == ["v1", "sandboxes", "terminal", "ws"] then some .terminal
     else if p == ["v1", "machines", "ws"] then some .machine
     else if shape [.lit "v1", .lit "projects", .any, .lit "stages", .any,
+        .lit "browsers", .lit "ws"] p then some .browser
+    else if shape [.lit "v1", .lit "projects", .any, .lit "stages", .any,
         .lit "observability", .lit "ws"] p then some .observability
     else if shape [.lit "v1", .lit "projects", .any, .lit "stages", .any,
         .lit "agents", .any, .lit "ws"] p ||
@@ -172,6 +175,11 @@ example : route .get ["healthz", ""] = .health := by decide
 /-- A socket path reaches the gateway for any method; the gateway refuses a
 non-upgrade itself. -/
 example : route .post ["v1", "agents", "a", "ws"] = .socket .agent := by decide
+
+/-- A browser socket is a stage path, so a stage path that is not one stays on core. -/
+example : route .get ["v1", "projects", "p", "stages", "s", "browsers", "ws"] =
+    .socket .browser := by decide
+example : route .get ["v1", "projects", "p", "stages", "s", "browsers"] = .core := by decide
 
 /-- In-cluster paths reach core, which refuses them without the service token. -/
 example : route .post ["v1", "cron-runs"] = .core := by decide

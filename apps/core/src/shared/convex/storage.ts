@@ -268,6 +268,15 @@ const agentDeployments: Storage["agentDeployments"] = {
 
     return doc && account ? { ...doc, account: account } : null;
   },
+  getByStageIds: async function (projectId, stageId) {
+    const doc = await adminQuery(internal.agent.deployments.getByStageIds, {
+      projectId: projectId,
+      stageId: stageId,
+    });
+    const account = accountFromConvex(doc?.account ?? null);
+
+    return doc && account ? { ...doc, account: account } : null;
+  },
   touchLastUsed: async function (apiKeyHash, usedAt) {
     await adminMutation(internal.agent.deployments.touchLastUsed, {
       apiKeyHash: apiKeyHash,

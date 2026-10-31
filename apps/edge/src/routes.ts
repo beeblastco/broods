@@ -60,6 +60,8 @@ export const ROUTERS: readonly EdgeRouter[] = [
     rules: [
       { path: "/v1/sandboxes/terminal/ws" },
       { path: "/v1/machines/ws" },
+      // An end user's browser extension on a `scope: "user"` machine sandbox.
+      { path: `/v1/projects/${SEGMENT}/stages/${SEGMENT}/browsers/ws` },
       { path: `/v1/projects/${SEGMENT}/stages/${SEGMENT}/observability/ws` },
       {
         path: `/v1/(?:projects/${SEGMENT}/stages/${SEGMENT}/)?agents/${SEGMENT}/ws`,

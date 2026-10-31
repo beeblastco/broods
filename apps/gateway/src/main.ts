@@ -6,6 +6,7 @@ import {
   MACHINE_MAX_FRAME_BYTES,
   MACHINE_WEBSOCKET_PATH,
   machineSocketUrl,
+  matchBrowserSocketPath,
 } from "../../core/src/shared/machine-socket.ts";
 import { requireSecretsEnv } from "../../core/src/shared/env.ts";
 import {
@@ -122,7 +123,12 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
     }
 
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      // A browser extension connects from `chrome-extension://<id>`, which no
+      // page allowlist names: core holds it to the sandbox's own extension
+      // ids, so this path skips the page check and forwards the Origin.
+      const browserPath = matchBrowserSocketPath(pathname) !== null;
       if (
+        !browserPath &&
         !isOriginAllowed(request.headers.get("origin"), config.allowedOrigins)
       ) {
         return jsonError(403, "Origin is not allowed");
@@ -170,17 +176,20 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           // and reason the browser can show, where a 401 here would be a mute 1006.
           if (!ticket) config.authFailureLimiter.allow(ip);
           data = { kind: "terminal", ticket: ticket };
-        } else if (pathname === MACHINE_WEBSOCKET_PATH) {
-          // Core checks the daemon's bearer and refuses with a close code.
+        } else if (pathname === MACHINE_WEBSOCKET_PATH || browserPath) {
+          // Core checks the daemon's bearer, or the browser's `bbt_` ticket
+          // and its Origin, and refuses with a close code.
           const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
+          const origin = browserPath ? request.headers.get("origin") : null;
 
           data = {
             kind: "machine",
             ticket: {
-              url: machineSocketUrl(config.coreBaseUrl),
+              url: machineSocketUrl(config.coreBaseUrl, pathname),
               authorization: `Bearer ${token}`,
             },
+            ...(origin ? { origin: origin } : {}),
           };
         } else if (observabilityPath || agentWebSocketPath) {
           const token = websocketToken(request);

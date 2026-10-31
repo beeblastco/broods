@@ -1569,6 +1569,7 @@ export declare const api: {
           sandboxConfigId: Id<"sandboxConfigs">;
           specs?: { memoryMb: number; storageGb?: number; vcpu: number };
           stageId?: Id<"stages">;
+          subject?: string;
         }>
       >;
     };
@@ -3968,6 +3969,36 @@ export declare const internal: {
           userTokenSecret?: { ciphertext: string; iv: string; tag: string };
         } | null
       >;
+      getByStageIds: FunctionReference<
+        "query",
+        "internal",
+        { projectId: string; stageId: string },
+        {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
+          accountId: Id<"accounts">;
+          endpointId: string;
+          projectId: Id<"projects">;
+          projectSlug: string;
+          stageId: Id<"stages">;
+          stageSlug: string;
+          userTokenSecret?: { ciphertext: string; iv: string; tag: string };
+        } | null
+      >;
       touchLastUsed: FunctionReference<
         "mutation",
         "internal",
@@ -5114,7 +5145,9 @@ export declare const internal: {
           apiKey: string;
           endpointId: string;
           keyHint: string;
+          projectId: Id<"projects">;
           projectSlug: string;
+          stageId: Id<"stages">;
           stageKind: "development" | "production" | "custom";
           stageSlug: string;
           userTokenSecretHint?: string;
@@ -7037,6 +7070,7 @@ export declare const internal: {
           platform?: string;
           sandboxConfigId: Id<"sandboxConfigs">;
           specs?: { memoryMb: number; storageGb?: number; vcpu: number };
+          subject?: string;
         },
         null
       >;
@@ -7047,6 +7081,7 @@ export declare const internal: {
           accountId: Id<"accounts">;
           connectionId: string;
           sandboxConfigId: Id<"sandboxConfigs">;
+          subject?: string;
         },
         null
       >;
@@ -7057,6 +7092,7 @@ export declare const internal: {
           accountId: Id<"accounts">;
           connectionId: string;
           sandboxConfigId: Id<"sandboxConfigs">;
+          subject?: string;
         },
         null
       >;

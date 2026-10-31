@@ -760,6 +760,11 @@ export const machineConnectionsFields = {
   mcp: v.array(v.string()),
   /** The computer's hardware as the daemon reported it; absent from an older daemon. */
   specs: v.optional(sandboxSpecsValidator),
+  /**
+   * The end user whose browser holds this row, on a `scope: "user"` sandbox,
+   * which has one row per user. Absent for a `broods machine` daemon.
+   */
+  subject: v.optional(v.string()),
   connectedAt: v.number(),
   lastSeenAt: v.number(),
   disconnectedAt: v.optional(v.number()),
@@ -1849,13 +1854,16 @@ export default defineSchema({
     .index("by_ephemeral_and_lastUsedAt", ["ephemeral", "lastUsedAt"])
     .index("by_reservationKey", ["reservationKey"])
     .index("by_sandboxConfigId", ["sandboxConfigId"]),
+  // `subject` closes both indexes, so a daemon's row (no subject) reads
+  // apart from the browser rows a scope-user sandbox holds per end user.
   machineConnections: defineTable(machineConnectionsFields)
-    .index("by_accountId_projectId_and_stageId", [
+    .index("by_accountId_projectId_stageId_and_subject", [
       "accountId",
       "projectId",
       "stageId",
+      "subject",
     ])
-    .index("by_sandboxConfigId", ["sandboxConfigId"]),
+    .index("by_sandboxConfigId_and_subject", ["sandboxConfigId", "subject"]),
   sandboxSnapshots: defineTable(sandboxSnapshotsFields)
     .index("by_accountId_and_name", ["accountId", "name"])
     .index("by_externalImageId_and_accountId", ["externalImageId", "accountId"])
