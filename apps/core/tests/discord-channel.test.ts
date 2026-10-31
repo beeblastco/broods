@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import type { InboundMessage } from "../src/shared/channels.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { discordForwarderToken } from "../src/shared/discord-wire.ts";
@@ -484,7 +484,7 @@ describe("discord channel adapter", () => {
     expect(parsed.response.body).toContain("Unsupported interaction.");
   });
 
-  it("still accepts the raw bot token and warns about the deprecation", async () => {
+  it("refuses the raw bot token in place of the derived credential", async () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
@@ -496,21 +496,7 @@ describe("discord channel adapter", () => {
       headers: { "x-discord-gateway-token": "bot-token" },
     };
 
-    const lines: string[] = [];
-    const write = spyOn(process.stdout, "write").mockImplementation(
-      (chunk): boolean => {
-        lines.push(String(chunk));
-
-        return true;
-      },
-    );
-    try {
-      expect(await adapter.authenticate(request)).toBe(true);
-    } finally {
-      write.mockRestore();
-    }
-
-    expect(lines.join("")).toContain("raw bot token");
+    expect(await adapter.authenticate(request)).toBe(false);
   });
 
   it("accepts an upload with no message text and carries it as an attachment", async () => {

@@ -248,20 +248,8 @@ export function createDiscordChannel(
       if (DISCORD_GATEWAY_TOKEN_HEADER in req.headers) {
         const provided = req.headers[DISCORD_GATEWAY_TOKEN_HEADER];
         if (typeof provided !== "string") return false;
-        if (timingSafeStringEqual(provided, discordForwarderToken(botToken))) {
-          return true;
-        }
-        // Transition: see apps/discord-forwarder/AGENTS.md for when this goes.
-        if (timingSafeStringEqual(provided, botToken)) {
-          logWarn("Discord forward authenticated with the raw bot token", {
-            deprecation: "send discordForwarderToken(botToken) instead",
-            tokenHint: `…${botToken.slice(-4)}`,
-          });
 
-          return true;
-        }
-
-        return false;
+        return timingSafeStringEqual(provided, discordForwarderToken(botToken));
       }
 
       return discord.verifyRequestSignature(

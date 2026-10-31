@@ -5780,7 +5780,16 @@ export declare const internal: {
         eventId: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
-        questions?: Array<any>;
+        questions?: Array<{
+          answerBy: string;
+          questions: Array<{
+            header: string;
+            id: string;
+            options: Array<{ description?: string; label: string }>;
+            question: string;
+          }>;
+          statusId: string;
+        }>;
         response?: any;
         status:
           | "processing"
@@ -6095,7 +6104,16 @@ export declare const internal: {
           eventId: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
-          questions?: Array<any>;
+          questions?: Array<{
+            answerBy: string;
+            questions: Array<{
+              header: string;
+              id: string;
+              options: Array<{ description?: string; label: string }>;
+              question: string;
+            }>;
+            statusId: string;
+          }>;
           response?: any;
           status:
             | "processing"
