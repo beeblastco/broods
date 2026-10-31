@@ -216,7 +216,7 @@ def panel_built():
         b.append(arrow(cx, 40, cx, 68))
         b.append(rect(x, 70, 148, 182, "box"))
         b.append(text(x + 12, 92, f"isolate · task {'ABC'[i]}", "t b"))
-        b.append(text(x + 12, 112, f"all of core · {num(BUNDLE_MB, 1)} MB", "t s"))
+        b.append(text(x + 12, 112, f"all of core · {num(FULL_MB, 1)} MB", "t s"))
         b.append(text(x + 12, 128, f"start {num(full_s, 1)} s · {num(full_mb)} MB", "t s"))
         for j, name in enumerate(("own run queue", "own sandbox lock", "own usage writer")):
             b.append(chip(x + 12, 142 + j * 34, 124, name, "bad"))
@@ -333,16 +333,16 @@ ACTIVITY = """flowchart TD
   L -- no --> Z([task done])
   classDef shared stroke:#c2410c,stroke-width:2px"""
 
-STATES = """stateDiagram-v2
+STATES = f"""stateDiagram-v2
   [*] --> Received
   Received --> Loading: gateway starts a function
   Loading --> ParentRun: isolate ready
-  state ParentRun {
+  state ParentRun {{
     [*] --> ModelStep
     ModelStep --> ToolCall: tool call
     ToolCall --> ModelStep: tool result
     ModelStep --> [*]: answer
-  }
+  }}
   ParentRun --> Waiting: run_subagent async, parent run completed
   Waiting --> ChildRun: child run starts
   ChildRun --> ResultOwed: child run completed
@@ -354,8 +354,8 @@ STATES = """stateDiagram-v2
   Done --> [*]
   Failed --> [*]
   note right of Loading
-    all of core: 2.1 s, 114 MB
-    slim core: 0.32 s, 24 MB
+    all of core: {num(COLD_FULL.get("p50Ms", NAN) / 1000, 1)} s, {num(COLD_FULL.get("rssPerRequestMb", NAN))} MB
+    slim core: {num(COLD_SLIM.get("p50Ms", NAN) / 1000, 2)} s, {num(COLD_SLIM.get("rssPerRequestMb", NAN))} MB
   end note
   note right of Waiting
     today and as built: core holds the task in memory
@@ -449,7 +449,24 @@ mem_full = stat("isolate+v8", top_level, "mem")
 mem_slim = stat("isolate+v8-slim", top_level, "mem")
 real_today = real_stat("bun+machine/haiku-slim", "p50") / 1000
 real_slim = real_stat("isolate+v8/haiku-slim", "p50") / 1000
-AUDIT_SHORT = sorted({a["label"] for a in audits if abs(a["runsPerTask"] - 3) > 1e-9})
+tpm_control = stat("bun+v8", top_level, "tpm", control)
+tpm_slim_c = stat("isolate+v8-slim", top_level, "tpm", control)
+cpu_control = stat("bun+v8", top_level, "cpu", control)
+sandbox_today = mean([r["sandboxCpuMs"] / r["level"] for r in arm_level("bun+machine", top_level)])
+sandbox_v8 = mean([r["sandboxCpuMs"] / r["level"] for r in arm_level("isolate+v8-slim", top_level)])
+
+
+def lost_rows(prefix):
+    got = [v for audit in (AUDIT, AUDIT_CONTROL) for (label, _), v in audit.items() if label.startswith(prefix)]
+    return sum(v[1] - v[0] for v in got), sum(v[1] for v in got)
+
+
+lost_iso, expected_iso = lost_rows("isolate")
+lost_bun, expected_bun = lost_rows("bun")
+all_batches = scripted + control
+PASSED = sum(r["ok"] for r in all_batches)
+STARTED = sum(r["level"] for r in all_batches)
+OTHER_CALLS = sum(r["otherRuntimeModelCalls"] for r in all_batches)
 AUDIT_BATCHES = len(audits)
 
 bundle_items = [
@@ -474,8 +491,8 @@ page = f"""<title>Broods task isolates</title>
 <header>
 <p class="eyebrow">Broods · experiments/v8-core · 31 Oct 2026</p>
 <h1>Broods task isolates</h1>
-<p class="lede">You were right that it should improve, and the first test did not show your design. The run I called "V8 core" moved core into one always-on V8 isolate, which is the same architecture as today. The "fresh isolate per task" run was your idea, but every task loaded all of core: {num(BUNDLE_MB, 1)} MB, of which Broods' own code is {num(OWN_MB, 1)} MB. The rest is SDKs this agent never calls.</p>
-<p class="lede">So I built the slim version: the same core with those SDKs left out ({num(SLIM_MB, 1)} MB). A fresh isolate now starts in {num(slim_start / 1000, 2)} s instead of {num(full_start / 1000, 1)} s, and at {top_level} users it handles {num(tpm_slim)} tasks a minute against {num(tpm_full)} for the full-core isolate and {num(tpm_today)} for today's core. The full agent task passes on it with no stubbed package touched.</p>
+<p class="lede"><strong>Partly, yes.</strong> The run I called "V8 core" put core inside one always-on V8 isolate. That is the same architecture as today, so it could not improve. The "fresh isolate per task" run was your design, but each task loaded all of core: {num(FULL_MB, 1)} MB, of which Broods' own code is {num(OWN_MB, 1)} MB. The rest is SDKs this agent never calls, and loading them cost {num(full_start / 1000, 1)} s and {num(COLD_FULL.get('rssPerRequestMb', NAN))} MB per task.</p>
+<p class="lede">With those SDKs left out ({num(SLIM_MB, 1)} MB), a fresh isolate starts in {num(slim_start / 1000, 2)} s and {num(COLD_SLIM.get('rssPerRequestMb', NAN))} MB. At {top_level} users at once it now finishes {num(tpm_slim)} tasks a minute, against {num(tpm_full)} before. Today's core still does {num(tpm_today)} on this machine. Most of that gap is the V8 sandbox: Bun core on the same V8 sandbox does {num(tpm_control)}.</p>
 </header>
 
 <section>
@@ -499,15 +516,15 @@ page = f"""<title>Broods task isolates</title>
 {svg(panel_intended(), "Your design: a thin gateway starts small task functions; the run queue, sandbox lease and usage writer are shared services; nothing runs while a task waits.")}
 </figure>
 </div>
-<p class="note">What broke in drawing 3: two isolates each took their own lock on one sandbox (HTTP 409), their usage writers collided on the same Convex row (231 of 240 usage rows written at 20 users), and a subagent could not see its parent's files until both were pinned to one sandbox key.</p>
+<p class="note">What broke in drawing 3: two isolates each took their own lock on one sandbox (HTTP 409), and a subagent could not see its parent's files until both were pinned to one sandbox key. Separate usage writers also collide in Convex: in these runs the isolates wrote {expected_iso - lost_iso} of {expected_iso} usage rows, Bun core wrote {expected_bun - lost_bun} of {expected_bun}.</p>
 </section>
 
 <section>
-<h2>What is in the {num(BUNDLE_MB, 1)} MB</h2>
+<h2>What is in the {num(FULL_MB, 1)} MB</h2>
 <p>Core's harness route bundled on its own, measured from its source map. An agent run imports nearly all of core because core loads every channel, provider and harness adapter when it starts (for example <code>twilio-channel.ts</code> builds a formatter at load).</p>
 <figure class="wide">
 {bars(bundle_items, "MB", 2, {"Broods’ own code"}, "Bundle bytes by group: coding-agent harnesses, chat channels and provider SDKs fill most of it; Broods' own code is 0.67 MB.")}
-<figcaption>Hover a bar for its biggest packages. The model, MCP and sandbox clients this agent uses are inside the provider and NATS/MCP groups.</figcaption>
+<figcaption>Hover a bar for its biggest packages. The source map counts characters, so the bars add up to {num(BUNDLE_MB, 1)} MB. The model, MCP and sandbox clients this agent does use sit in the provider and NATS/MCP groups.</figcaption>
 </figure>
 <h3>Start-up of one fresh isolate</h3>
 <figure class="wide">
@@ -537,8 +554,11 @@ page = f"""<title>Broods task isolates</title>
 <section>
 <h2>Measured</h2>
 <h3>Many users, scripted model</h3>
-<p>The model answers instantly from a script with the same tool calls, so this shows the platform's own cost. Each setup ran {len(arm_level("isolate+v8-slim", top_level))} rounds per level, taking turns. Today uses a machine sandbox; the isolates use the V8 sandbox, which is slower on CPU.</p>
+<p>The model answers instantly from a script with the same tool calls, so this shows the platform's own cost. Each setup ran {len(arm_level("isolate+v8-slim", top_level))} rounds per level, taking turns. Today uses a machine sandbox; the isolates can't, because a machine holds a live connection to one core process, so they use the V8 sandbox.</p>
 {scripted_table(ARMS, scripted, AUDIT)}
+<h3>Same sandbox: Bun core against the slim isolate</h3>
+<p>Run right after, again taking turns, so the only difference is the runtime.</p>
+{scripted_table(CONTROL_ARMS, control, AUDIT_CONTROL)}
 <h3>Real model: Haiku 5.5, high effort</h3>
 {real_table()}
 <p>Across all {REAL_TASKS} real-model tasks so far, {num(MODEL_SHARE * 100)}% of the time was spent waiting on the model, and the tokens cost about US${num(USD_PER_TASK * 1e6)} per million tasks.</p>
@@ -547,10 +567,11 @@ page = f"""<title>Broods task isolates</title>
 <section>
 <h2>What improves, and what can't</h2>
 <ul class="points">
-<li><strong>Start-up.</strong> Loading only what a run needs cuts a fresh isolate from {num(full_start / 1000, 1)} s to {num(slim_start / 1000, 2)} s and from {num(COLD_FULL.get('rssPerRequestMb', NAN))} MB to {num(COLD_SLIM.get('rssPerRequestMb', NAN))} MB.</li>
-<li><strong>Throughput.</strong> At {top_level} users: {num(tpm_slim)} tasks a minute slim, {num(tpm_full)} with all of core, {num(tpm_today)} today. The rest of the gap to today is the V8 sandbox, which spends far more CPU on bash than a machine does.</li>
-<li><strong>Waiting costs nothing.</strong> Not built yet. Today a task stays in memory while its subagent works. Ending the function in that state is where the per-task design saves memory and lets one server hold far more agents.</li>
-<li><strong>Isolation.</strong> One customer's task can no longer crash or slow another's, and tasks can spread over many small machines.</li>
+<li><strong>Start-up is {num(full_start / slim_start, 1)} times faster.</strong> Loading only what a run needs cuts a fresh isolate from {num(full_start / 1000, 1)} s to {num(slim_start / 1000, 2)} s and from {num(COLD_FULL.get('rssPerRequestMb', NAN))} MB to {num(COLD_SLIM.get('rssPerRequestMb', NAN))} MB. Per task, core CPU fell from {num(cpu_full)} ms to {num(cpu_slim)} ms at {top_level} users.</li>
+<li><strong>It still costs more CPU than a long-lived core.</strong> Bun core spends {num(cpu_control)} ms of CPU per task on the same work. The difference is mostly the start-up each fresh isolate pays.</li>
+<li><strong>The sandbox matters more than the runtime.</strong> The V8 sandbox spent {num(sandbox_v8)} ms of CPU per task on bash, a machine spent {num(sandbox_today)} ms. That is why today's core is still faster here.</li>
+<li><strong>Memory per task is higher, not lower.</strong> Today's process adds about {num(mem_today)} MB per task in flight; a slim isolate adds about {num(mem_slim)} MB. Your design only wins on memory if a task holds nothing while it waits on the model, a subagent or an approval.</li>
+<li><strong>What it does give.</strong> One customer's task can't crash or slow another's, nothing runs when no one is using Broods, and tasks can spread over many small machines once the shared pieces below live outside core.</li>
 <li><strong>Not the model.</strong> {num(MODEL_SHARE * 100)}% of a real task is waiting on the model, and the model is nearly all of the bill. No runtime change speeds that up.</li>
 </ul>
 <h3>What it takes to ship your design</h3>
@@ -564,7 +585,7 @@ page = f"""<title>Broods task isolates</title>
 
 <section class="repro">
 <h2>Checks and how to rerun</h2>
-<p>A task passes only if a bash result holds a sha256 and the final answer holds 3245 and 29989. {"All " + str(AUDIT_BATCHES) + " scripted batches wrote exactly 3 audit rows per task" if not AUDIT_SHORT else "Batches short of 3 audit rows per task: " + esc(", ".join(AUDIT_SHORT))}, and the other runtime made no model calls in any batch ({sum(r["otherRuntimeModelCalls"] for r in scripted)} in total). The slim build swaps each left-out package for a stub that throws the moment a running task calls it; none did.</p>
+<p>A task passes only if a bash result holds a sha256 and the final answer holds 3245 and 29989: {PASSED} of {STARTED} scripted tasks passed. Each task should write 3 usage rows (one per run): Bun core wrote {expected_bun - lost_bun} of {expected_bun}, the isolates {expected_iso - lost_iso} of {expected_iso}, losing the rest to Convex write conflicts at 10 and 20 users. The idle runtime made {OTHER_CALLS} model calls, so no work leaked to it. The slim build swaps each left-out package for a stub that throws the moment a running task calls it; none did.</p>
 <pre class="code">cd experiments/v8-core
 SLIM=1 bun build.ts ./entry.ts ./dist-slim
 PER_TASK_CONFIG=slimConfig AGENT_PER_TASK=1 bench/run-isolate.sh results/slim-d0.jsonl logs 2 1,5,10,20 -slim
