@@ -570,29 +570,8 @@ function deploymentEnvEntries(state: InstanceState): Record<string, string> {
     BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
     BROODS_AUTH_PROVIDER: "self-host",
     BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk(signingKey)] }),
-    ...githubAppEnv(state),
     SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     STAGE_TICKET_SECRET: state.secrets.stageTicket,
-  };
-}
-
-// The Broods GitHub App, pointed at the fake the `github-repo` case serves.
-// The env file is one line per var, so the PEM's newlines go in escaped.
-function githubAppEnv(state: InstanceState): Record<string, string> {
-  const github = `http://host.docker.internal:${ports(state).github}`;
-
-  return {
-    GITHUB_API_URL: github,
-    GITHUB_APP_CLIENT_ID: LOCAL_GITHUB_APP.clientId,
-    GITHUB_APP_CLIENT_SECRET: LOCAL_GITHUB_APP.clientSecret,
-    GITHUB_APP_ID: LOCAL_GITHUB_APP.appId,
-    GITHUB_APP_PRIVATE_KEY: (state.secrets.githubAppKey ?? "").replace(
-      /\n/g,
-      "\\n",
-    ),
-    GITHUB_APP_SLUG: LOCAL_GITHUB_APP.slug,
-    GITHUB_APP_WEBHOOK_SECRET: state.secrets.githubWebhook ?? "",
-    GITHUB_WEB_URL: github,
   };
 }
 

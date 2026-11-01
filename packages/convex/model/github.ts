@@ -32,8 +32,6 @@ export const DEPLOY_TOKEN_SECRETS = {
 const ENVIRONMENT_SECRET = "BROODS_TOKEN";
 
 const GITHUB_TIMEOUT_MS = 15_000;
-const SETUP_BRANCH = "broods/deploy-workflow";
-const REPO_LIST_MAX_PAGES = 10;
 
 const INSTALL: Record<PackageManager, string> = {
   bun: "bun install --frozen-lockfile",
@@ -273,7 +271,8 @@ export async function listInstallationRepos(
 ): Promise<GitHubRepo[]> {
   const token = await installationToken(app, installationId);
   const repos: GitHubRepo[] = [];
-  for (let page = 1; page <= REPO_LIST_MAX_PAGES; page += 1) {
+  // Every page until total_count, so the picker never silently drops a repo.
+  for (let page = 1; ; page += 1) {
     const body = await githubRequest<{
       total_count: number;
       repositories: RawRepo[];
@@ -320,12 +319,19 @@ export async function findBroodsRoots(
 ): Promise<BroodsRoot[]> {
   const body = await githubRequest<{
     tree: Array<{ path: string; type: string }>;
+    truncated: boolean;
   }>(
     app,
     token,
     "GET",
     `/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
   );
+  // A partial tree could miss a root or the lockfile, so it is never answered as complete.
+  if (body.truncated) {
+    throw new ClientError(
+      `${fullName} is too large for GitHub to list in one scan, so Broods cannot find its broods/ folder.`,
+    );
+  }
 
   return broodsRootsFromPaths(
     body.tree.filter((entry) => entry.type === "blob").map((e) => e.path),
@@ -361,7 +367,8 @@ export function deployWorkflow(target: WorkflowTarget): string {
   const branches = [target.productionBranch, target.developmentBranch].filter(
     (branch): branch is string => Boolean(branch),
   );
-  const isProduction = `github.ref_name == '${target.productionBranch}'`;
+  // An expression string doubles a single quote, which a branch name may hold.
+  const isProduction = `github.ref_name == '${target.productionBranch.replace(/'/g, "''")}'`;
   const setup =
     target.manager === "bun"
       ? ["      - uses: oven-sh/setup-bun@v2"]
@@ -439,6 +446,8 @@ export async function commitWorkflow(
       throw error;
     }
   }
+  // One setup branch per target, so each PR carries only its own base's history.
+  const setupBranch = `broods/deploy-workflow-${branch}`;
   const head = await githubRequest<{ object: { sha: string } }>(
     app,
     token,
@@ -446,14 +455,14 @@ export async function commitWorkflow(
     `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
   );
   await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
-    ref: `refs/heads/${SETUP_BRANCH}`,
+    ref: `refs/heads/${setupBranch}`,
     sha: head.object.sha,
   }).catch(ignoreStatus(422));
   await putFile(
     app,
     token,
     fullName,
-    SETUP_BRANCH,
+    setupBranch,
     WORKFLOW_PATH,
     workflow,
     message,
@@ -463,7 +472,7 @@ export async function commitWorkflow(
     app,
     token,
     "GET",
-    `/repos/${fullName}/pulls?state=open&base=${encodeURIComponent(branch)}&head=${encodeURIComponent(`${owner}:${SETUP_BRANCH}`)}`,
+    `/repos/${fullName}/pulls?state=open&base=${encodeURIComponent(branch)}&head=${encodeURIComponent(`${owner}:${setupBranch}`)}`,
   );
   if (open[0]) return open[0].html_url;
   const pull = await githubRequest<{ html_url: string }>(
@@ -473,7 +482,7 @@ export async function commitWorkflow(
     `/repos/${fullName}/pulls`,
     {
       title: "Deploy broods/ on push",
-      head: SETUP_BRANCH,
+      head: setupBranch,
       base: branch,
       body: `${branch} is protected, so Broods could not commit \`${WORKFLOW_PATH}\` directly. Merge this to deploy on every push.`,
     },

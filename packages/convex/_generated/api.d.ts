@@ -1166,6 +1166,7 @@ export declare const api: {
           rootDirectory: string;
           setupPullRequestUrl?: string;
         };
+        webUrl?: string;
       }
     >;
     unlinkRepo: FunctionReference<
@@ -1517,6 +1518,7 @@ export declare const api: {
         _id: Id<"projects">;
         authId: string;
         description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
         name: string;
         orgId: Id<"orgs">;
         repo?: {
@@ -1543,6 +1545,7 @@ export declare const api: {
         _id: Id<"projects">;
         authId: string;
         description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
         name: string;
         orgId: Id<"orgs">;
         repo?: {
@@ -5571,6 +5574,7 @@ export declare const internal: {
         development: string;
         keyIds: Array<Id<"deployKeys">>;
         production: string;
+        projectId: Id<"projects">;
         projectSlug: string;
       }
     >;
@@ -5603,7 +5607,7 @@ export declare const internal: {
     revokeKeys: FunctionReference<
       "mutation",
       "internal",
-      { keyIds: Array<Id<"deployKeys">> },
+      { keyIds: Array<Id<"deployKeys">>; projectId: Id<"projects"> },
       null
     >;
     saveLink: FunctionReference<

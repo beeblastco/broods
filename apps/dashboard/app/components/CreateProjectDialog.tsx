@@ -86,13 +86,14 @@ export function CreateProjectDialog({
 
     randomProjectName()
       .then((generatedName) => {
+        // A repo picked before the name resolved keeps its name.
         if (!isCancelled) {
-          setName(generatedName);
+          setName((current) => current || generatedName);
         }
       })
       .catch(() => {
         if (!isCancelled) {
-          setName("new-project");
+          setName((current) => current || "new-project");
         }
       });
 
@@ -223,6 +224,8 @@ export function CreateProjectDialog({
               id="create-project-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              // A retry reuses the project already made under this name.
+              disabled={createdId !== null}
               autoFocus
             />
             {source === "new" && (

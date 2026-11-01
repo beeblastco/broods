@@ -58,6 +58,10 @@ export const projectsFields = {
   slug: v.string(),
   /** The GitHub repo whose pushes deploy this project, when one is linked. */
   repo: v.optional(projectRepoValidator),
+  /** A link in flight holding its repo, so two projects never set up one repo at once. */
+  linkClaim: v.optional(
+    v.object({ repoId: v.number(), expiresAt: v.number() }),
+  ),
   updatedAt: v.number(),
 };
 
@@ -1881,7 +1885,8 @@ export default defineSchema({
   // needs newest-first sorts by `updatedAt`.
   projects: defineTable(projectsFields)
     .index("by_orgId_and_slug", ["orgId", "slug"])
-    .index("by_repoId", ["repo.repoId"]),
+    .index("by_repoId", ["repo.repoId"])
+    .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
   agentConfigs: defineTable(agentConfigsFields)

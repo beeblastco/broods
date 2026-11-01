@@ -106,7 +106,9 @@ export async function githubRepo(context: VerifyContext): Promise<void> {
   const orgId = String(
     await asAdmin("org/orgs:create", { name: `github-${context.runId}` }),
   );
+  const appEnv = githubAppEnv(context);
   try {
+    await setAppEnv(run, appEnv);
     await asAdmin("org/orgs:setActive", { orgId: orgId });
     context.convex([
       "run",
@@ -121,6 +123,10 @@ export async function githubRepo(context: VerifyContext): Promise<void> {
     await uninstall(run, created);
   } finally {
     github.stop();
+    // The fake is gone, so the standing stack must not offer GitHub.
+    for (const name of Object.keys(appEnv)) {
+      await context.convexAsync(["env", "remove", name]);
+    }
     rmSync(run.workspace, { recursive: true, force: true });
     if (previous) await asAdmin("org/orgs:setActive", { orgId: previous._id });
     await asAdmin("org/orgs:remove", { orgId: orgId });
@@ -159,7 +165,10 @@ async function connect(run: Run, projectId: string): Promise<void> {
     JSON.stringify(fresh),
   );
 
-  const install = (await asAdmin("github:begin", {})) as { url: string };
+  // A return path a URL parser resolves to another origin is dropped.
+  const install = (await asAdmin("github:begin", {
+    returnTo: "/\\evil.example/x",
+  })) as { url: string };
   const state = new URL(install.url).searchParams.get("state") ?? "";
   assertStep(
     "connect opens the App's install page",
@@ -167,12 +176,19 @@ async function connect(run: Run, projectId: string): Promise<void> {
       `/apps/${context.github.slug}/installations/new` && state.length > 0,
     install.url,
   );
-  await context.measure("finish the GitHub install", async () =>
-    asAdmin("github:finish", {
-      state: state,
-      code: USER.code,
-      installationId: ORG_INSTALLATION,
-    }),
+  const finished = (await context.measure(
+    "finish the GitHub install",
+    async () =>
+      asAdmin("github:finish", {
+        state: state,
+        code: USER.code,
+        installationId: ORG_INSTALLATION,
+      }),
+  )) as { returnTo?: string };
+  assertStep(
+    "a return path to another origin is not kept",
+    finished.returnTo === undefined,
+    JSON.stringify(finished),
   );
   assertStep(
     "both installations the user reaches are connected",
@@ -220,6 +236,17 @@ async function link(
   slug: string,
 ): Promise<Imported> {
   const { context, github, asAdmin } = run;
+  await run.refused("github:linkRepo", {
+    projectId: projectId,
+    target: {
+      installationId: ORG_INSTALLATION,
+      repoId: ORG_REPO,
+      rootDirectory: "apps/agents",
+      baseUrl: context.edgeUrl,
+      developmentBranch: "main",
+    },
+  });
+  // That refusal released its claim on the repo, so the real link goes through.
   const linked = (await context.measure("link the repo", async () =>
     asAdmin("github:linkRepo", {
       projectId: projectId,
@@ -248,7 +275,7 @@ async function link(
   assertStep(
     "dev gets the workflow directly, the same one the PR carries",
     expected.every((line) => workflow.includes(line)) &&
-      github.filesAt(ORG_REPO, "broods/deploy-workflow")?.get(WORKFLOW) ===
+      github.filesAt(ORG_REPO, "broods/deploy-workflow-main")?.get(WORKFLOW) ===
         workflow,
     workflow,
   );
@@ -287,16 +314,21 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
   assertStep("main's key deploys Production", prod.ok, prod.output);
 
   const hook = `${context.configPlaneUrl}/github/webhook`;
-  const unsigned = await github.deliver(
+  const wrongSecret = await github.deliver(
     hook,
     "workflow_run",
     workflowRun(2, "success"),
     "wrong-secret",
   );
+  const unsigned = await fetch(hook, {
+    method: "POST",
+    headers: { "X-GitHub-Event": "workflow_run" },
+    body: JSON.stringify(workflowRun(2, "success")),
+  });
   assertStep(
-    "an unsigned delivery is refused",
-    unsigned === 401,
-    `${unsigned}`,
+    "a delivery signed with the wrong secret, or not signed, is refused",
+    wrongSecret === 401 && unsigned.status === 401,
+    `${wrongSecret} ${unsigned.status}`,
   );
   const signed = await github.deliver(
     hook,
@@ -478,6 +510,23 @@ function deploy(
   };
 }
 
+// The Broods GitHub App env Convex reads, pointed at the fake this case serves.
+// One line per var in the env file, so the PEM's newlines go in escaped.
+function githubAppEnv(context: VerifyContext): Record<string, string> {
+  const github = `http://host.docker.internal:${context.github.port}`;
+
+  return {
+    GITHUB_API_URL: github,
+    GITHUB_APP_CLIENT_ID: context.github.clientId,
+    GITHUB_APP_CLIENT_SECRET: context.github.clientSecret,
+    GITHUB_APP_ID: context.github.appId,
+    GITHUB_APP_PRIVATE_KEY: context.github.privateKey.replace(/\n/g, "\\n"),
+    GITHUB_APP_SLUG: context.github.slug,
+    GITHUB_APP_WEBHOOK_SECRET: context.github.webhookSecret,
+    GITHUB_WEB_URL: github,
+  };
+}
+
 async function newProject(
   run: Run,
   prefix: string,
@@ -522,6 +571,29 @@ function sealedKeys(
   );
 
   return { production: production, development: development };
+}
+
+async function setAppEnv(run: Run, env: Record<string, string>): Promise<void> {
+  const file = join(run.workspace, "github.env");
+  writeFileSync(
+    file,
+    Object.entries(env)
+      .map(([name, value]) => `${name}=${value}`)
+      .join("\n"),
+    { mode: 0o600 },
+  );
+  const cli = await run.context.convexAsync([
+    "env",
+    "set",
+    "--from-file",
+    file,
+    "--force",
+  ]);
+  assertStep(
+    "the fake GitHub App is configured",
+    cli.ok,
+    cli.output.slice(-300),
+  );
 }
 
 function workflowRun(id: number, conclusion: string | null): unknown {

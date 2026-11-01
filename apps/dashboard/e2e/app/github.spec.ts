@@ -19,6 +19,8 @@ test("Git settings and Create project match whether GitHub is set up @rollout", 
   await expect(
     page.getByRole("heading", { level: 2, name: "Git", exact: true }),
   ).toBeVisible();
+  // The heading shows while the status loads; read it only once that settles.
+  await expect(page.getByText("Loading...")).toHaveCount(0);
   const configured = !(await notSetUp.isVisible());
 
   await page.goto("/projects");

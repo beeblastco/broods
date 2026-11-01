@@ -39,6 +39,8 @@ export function GitPanel({
       </Section>
     );
   }
+  // A linked project keeps its details and Unlink even if the App is later removed.
+  if (status.repo) return <LinkedRepo projectId={projectId} status={status} />;
   if (!status.configured) {
     return (
       <Section title="Git">
@@ -49,11 +51,7 @@ export function GitPanel({
     );
   }
 
-  return status.repo ? (
-    <LinkedRepo projectId={projectId} status={status} />
-  ) : (
-    <LinkRepo projectId={projectId} />
-  );
+  return <LinkRepo projectId={projectId} />;
 }
 
 function LinkedRepo({
@@ -95,7 +93,7 @@ function LinkedRepo({
         <dt className="text-muted-foreground">Repository</dt>
         <dd>
           <a
-            href={`https://github.com/${repo.fullName}`}
+            href={`${status.webUrl ?? "https://github.com"}/${repo.fullName}`}
             target="_blank"
             rel="noreferrer"
             className="cursor-pointer underline-offset-2 hover:underline"

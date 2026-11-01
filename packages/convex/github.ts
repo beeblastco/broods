@@ -61,6 +61,8 @@ import { projectRepoValidator } from "./schema";
 
 const SIGN_IN_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_DEVELOPMENT_BRANCH = "dev";
+/** How long a link in flight holds its repo before another project may take it. */
+const LINK_CLAIM_TTL_MS = 10 * 60 * 1000;
 
 const installationValidator = v.object({
   installationId: v.number(),
@@ -101,6 +103,8 @@ const statusValidator = v.object({
   configured: v.boolean(),
   /** Whether the caller may connect GitHub accounts: an org admin. */
   canConnect: v.boolean(),
+  /** GitHub's web root for repo links; absent without an App. */
+  webUrl: v.optional(v.string()),
   installations: v.array(installationValidator),
   repo: v.optional(projectRepoValidator),
   deploys: v.array(deployValidator),
@@ -122,6 +126,7 @@ type ProjectRepo = NonNullable<Doc<"projects">["repo"]>;
 
 /** The keys a link deploys with, minted before GitHub hears of them. */
 interface LinkKeys {
+  projectId: Id<"projects">;
   projectSlug: string;
   keyIds: Id<"deployKeys">[];
   production: string;
@@ -172,6 +177,7 @@ export const status = query({
     const empty = {
       configured: githubApp() !== null,
       canConnect: false,
+      webUrl: githubApp()?.webUrl,
       installations: [],
       deploys: [],
     };
@@ -255,11 +261,7 @@ export const begin = mutation({
       authId: user.id,
       orgId: orgId,
       createRepo: createRepo,
-      // Only a path on the dashboard itself, never another origin.
-      returnTo:
-        returnTo?.startsWith("/") && !returnTo.startsWith("//")
-          ? returnTo
-          : undefined,
+      returnTo: localPath(returnTo),
       expiresAt: now + SIGN_IN_TTL_MS,
     });
 
@@ -620,6 +622,8 @@ export const storeInstallations = internalMutation({
   args: { orgId: v.id("orgs"), installations: v.array(installationValidator) },
   returns: v.null(),
   handler: async (ctx, { orgId, installations }): Promise<null> => {
+    // The org may have been deleted while the user was on GitHub.
+    if (!(await ctx.db.get(orgId))) return null;
     const existing = await orgInstallations(ctx, orgId);
     for (const installation of installations) {
       const row = existing.find(
@@ -647,6 +651,7 @@ export const mintLinkKeys = internalMutation({
     repoId: v.optional(v.number()),
   },
   returns: v.object({
+    projectId: v.id("projects"),
     projectSlug: v.string(),
     keyIds: v.array(v.id("deployKeys")),
     production: v.string(),
@@ -654,7 +659,17 @@ export const mintLinkKeys = internalMutation({
   }),
   handler: async (ctx, { authId, projectId, repoId }): Promise<LinkKeys> => {
     const project = await requireLinkAccess(ctx, authId, projectId);
-    if (repoId !== undefined) await requireRepoFree(ctx, repoId, projectId);
+    if (repoId !== undefined) {
+      // Written in the same transaction as the check, so two links racing for
+      // one repo conflict and the retried one sees this claim.
+      await requireRepoFree(ctx, repoId, projectId);
+      await ctx.db.patch(projectId, {
+        linkClaim: {
+          repoId: repoId,
+          expiresAt: Date.now() + LINK_CLAIM_TTL_MS,
+        },
+      });
+    }
     const member = await userByAuthId(ctx, authId);
     if (!member) throw new Error("User row not found");
     const mint = async (
@@ -678,6 +693,7 @@ export const mintLinkKeys = internalMutation({
     const development = await mint("development");
 
     return {
+      projectId: projectId,
       projectSlug: project.slug,
       keyIds: [production._id, development._id],
       production: production.token,
@@ -686,13 +702,16 @@ export const mintLinkKeys = internalMutation({
   },
 });
 
-/** Deletes keys a link minted but never used, after a GitHub call failed. */
+/** Deletes keys a link minted but never used, and its repo claim, after a GitHub call failed. */
 export const revokeKeys = internalMutation({
-  args: { keyIds: v.array(v.id("deployKeys")) },
+  args: { projectId: v.id("projects"), keyIds: v.array(v.id("deployKeys")) },
   returns: v.null(),
-  handler: async (ctx, { keyIds }): Promise<null> => {
+  handler: async (ctx, { projectId, keyIds }): Promise<null> => {
     for (const keyId of keyIds) {
       if (await ctx.db.get(keyId)) await ctx.db.delete(keyId);
+    }
+    if (await ctx.db.get(projectId)) {
+      await ctx.db.patch(projectId, { linkClaim: undefined });
     }
 
     return null;
@@ -715,7 +734,21 @@ export const saveLink = internalMutation({
       if (repo.deployKeyIds.includes(keyId)) continue;
       if (await ctx.db.get(keyId)) await ctx.db.delete(keyId);
     }
-    await ctx.db.patch(projectId, { repo: repo, updatedAt: Date.now() });
+    // Runs are kept per branch name, so another repo's would show as this one's.
+    if (project.repo && project.repo.repoId !== repo.repoId) {
+      const deploys = await ctx.db
+        .query("githubDeploys")
+        .withIndex("by_projectId_and_branch", (q) =>
+          q.eq("projectId", projectId),
+        )
+        .collect();
+      for (const deploy of deploys) await ctx.db.delete(deploy._id);
+    }
+    await ctx.db.patch(projectId, {
+      repo: repo,
+      linkClaim: undefined,
+      updatedAt: Date.now(),
+    });
 
     return null;
   },
@@ -837,6 +870,14 @@ async function clearLink(
   await ctx.db.patch(project._id, { repo: undefined, updatedAt: Date.now() });
 }
 
+// A dashboard path, or undefined when a URL parser resolves it to another origin (`//x`, `/\\x`).
+function localPath(value: string | undefined): string | undefined {
+  if (!value?.startsWith("/")) return undefined;
+  const base = "https://dashboard.invalid";
+
+  return new URL(value, base).origin === base ? value : undefined;
+}
+
 async function orgInstallations(
   ctx: QueryCtx,
   orgId: Id<"orgs">,
@@ -917,6 +958,19 @@ async function requireRepoFree(
       `${other.repo?.fullName ?? "That repo"} already deploys project ${other.name}. Unlink it there first.`,
     );
   }
+  const claims = await ctx.db
+    .query("projects")
+    .withIndex("by_linkClaimRepoId", (q) => q.eq("linkClaim.repoId", repoId))
+    .collect();
+  const linking = claims.find(
+    (claim) =>
+      claim._id !== projectId && (claim.linkClaim?.expiresAt ?? 0) > Date.now(),
+  );
+  if (linking) {
+    throw new ClientError(
+      `Project ${linking.name} is linking that repo right now. Try again shortly.`,
+    );
+  }
 }
 
 // Seals both keys before any workflow can run; true when they sit in per-branch environments.
@@ -960,6 +1014,12 @@ async function setUpRepo(
   };
   const developmentBranch =
     target.developmentBranch?.trim() || DEFAULT_DEVELOPMENT_BRANCH;
+  // On one branch every push would go to Production and Development would never deploy.
+  if (developmentBranch === repo.defaultBranch) {
+    throw new ClientError(
+      `The development branch must differ from ${repo.defaultBranch}, which deploys Production.`,
+    );
+  }
   const environments = await setDeploySecrets(
     app,
     repo,
@@ -1045,7 +1105,10 @@ async function withKeys<T>(
   try {
     return await run();
   } catch (error) {
-    await ctx.runMutation(internal.github.revokeKeys, { keyIds: keys.keyIds });
+    await ctx.runMutation(internal.github.revokeKeys, {
+      projectId: keys.projectId,
+      keyIds: keys.keyIds,
+    });
     throw error;
   }
 }

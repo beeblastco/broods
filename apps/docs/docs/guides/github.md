@@ -1,11 +1,11 @@
 # GitHub
 
-Link a project to a GitHub repo and every push deploys it. Broods commits a workflow to the repo, so the deploy runs in your own GitHub Actions with the same `broods deploy` you run locally.
+Link a project to a GitHub repo and every push to its default or development branch deploys it. Broods commits a workflow to the repo, so the deploy runs in your own GitHub Actions with the same `broods deploy` you run locally.
 
-| Branch                        | Deploys to  |
-| ----------------------------- | ----------- |
-| The default branch, `main`    | Production  |
-| The development branch, `dev` | Development |
+| Branch                             | Deploys to  |
+| ---------------------------------- | ----------- |
+| The default branch, such as `main` | Production  |
+| The development branch, `dev`      | Development |
 
 ## Start a project from GitHub
 
@@ -34,7 +34,7 @@ A protected default branch refuses a direct commit, so Broods opens a pull reque
 
 Each key sits in an environment only its branch may deploy from, so a workflow on any other branch cannot read Production's key. GitHub Free has no environments on private repos; there the keys go in as repo secrets `BROODS_PRODUCTION_TOKEN` and `BROODS_DEVELOPMENT_TOKEN`, which any branch's workflow can read, and **Settings > Git** says so.
 
-A repo deploys one project. Linking a repo another project already deploys from is refused until you unlink it there.
+A repo deploys one project. Linking a repo another project already deploys from is refused until you unlink it there. The development branch must differ from the default branch.
 
 ## Deploy status
 
