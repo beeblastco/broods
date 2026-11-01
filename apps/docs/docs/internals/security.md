@@ -51,7 +51,7 @@ flowchart TD
 - The account key is returned once on create or rotation. Only `secretHash` is kept.
 - Provider credentials must be usable at runtime, so they are encrypted, not hashed.
 - The workspace, skills, tool-bundles and MicroVM artifact buckets block public access. `denyUnlessProjectPrincipal()` in `apps/core/sst.config.ts` denies `s3:*` to everyone but the stage's `sandbox-s3mount`, `microvm-build` and `microvm-execution` roles, the `core-runtime` user, the `convex-aws` role, the GitHub Actions deploy roles and the account root.
-- On production, the `core-runtime` and `convex-bootstrap` users deny every AWS call that does not come from `RUNTIME_EGRESS_IPS` (the cluster's public address), so their static keys are useless off the cluster.
+- On production, when `RUNTIME_EGRESS_IPS` is set (the cluster's public address), the `core-runtime` and `convex-bootstrap` users deny every AWS call that does not come from it, so their static keys are useless off the cluster. Unset, those keys are not IP-restricted.
 
 ## Encryption at rest
 

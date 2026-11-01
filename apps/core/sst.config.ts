@@ -34,6 +34,10 @@ const RUNTIME_EGRESS_IPS = (process.env.RUNTIME_EGRESS_IPS ?? "")
   .split(",")
   .map((ip) => ip.trim())
   .filter((ip) => ip.length > 0);
+// Fail closed: a value like "," must not silently drop the lock.
+if (RUNTIME_EGRESS_IPS.length === 0 && process.env.RUNTIME_EGRESS_IPS?.trim()) {
+  throw new Error("RUNTIME_EGRESS_IPS is set but lists no IP address");
+}
 
 // How long to let a freshly created IAM role's trust policy propagate before another
 // AWS service is asked to assume it. Measured: the connector create failed 8s after the
