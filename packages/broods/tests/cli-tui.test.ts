@@ -385,7 +385,7 @@ test("stopTurn ends a streaming reply and keeps the text so far", async () => {
 });
 
 test("a lone Esc stops the streaming turn; other keys and idle Esc pass through", () => {
-  const input = new EventEmitter() as unknown as NodeJS.ReadStream;
+  const input = new EventEmitter();
   const seen: string[] = [];
   input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
   let streaming = true;
@@ -396,7 +396,7 @@ test("a lone Esc stops the streaming turn; other keys and idle Esc pass through"
 
       return was;
     },
-  } as unknown as RemoteAgentTransport;
+  };
 
   const restore = stopTurnOnEscape(transport, input);
   input.emit("data", Buffer.from("\x1b"));
@@ -407,4 +407,61 @@ test("a lone Esc stops the streaming turn; other keys and idle Esc pass through"
 
   // The first Esc stopped the turn; the arrow and the idle Esc reached the UI.
   expect(seen).toEqual(["\x1b[A", "\x1b", "x"]);
+});
+
+test("Esc before the first part counts the turn as sent", async () => {
+  const { transport, bodies } = testTransport([
+    openSse(),
+    sse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "ok" },
+      { type: "text-end", id: "0" },
+      { type: "finish", finishReason: "stop" },
+    ),
+  ]);
+
+  const first = readTurn(transport, [userMessage("m1", "first")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  await first;
+  await readTurn(transport, [
+    userMessage("m1", "first"),
+    userMessage("m2", "second"),
+  ]);
+
+  // Core already has "first": the next turn sends only the new message.
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ]);
+});
+
+test("a failed turn surfaces the explained error", async () => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async () =>
+      Response.json(
+        { error: { message: "needs a token", code: "user_token_required" } },
+        { status: 403 },
+      ),
+  });
+  const transport = new RemoteAgentTransport(
+    client,
+    AGENT,
+    () => new Error("explained: set BROODS_USER_TOKEN_SECRET"),
+  );
+
+  // The TUI reads this stream and shows a thrown error in the chat.
+  const stream = await transport.sendMessages({
+    trigger: "submit-message",
+    chatId: "chat_1",
+    messageId: undefined,
+    messages: [userMessage("m1", "hi")],
+    abortSignal: undefined,
+  });
+  const reader = stream.getReader();
+  const failure = await (async (): Promise<unknown> => {
+    for (;;) if ((await reader.read()).done) return null;
+  })().catch((error: unknown) => error);
+
+  expect(String(failure)).toContain("explained: set BROODS_USER_TOKEN_SECRET");
 });

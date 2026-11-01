@@ -4,6 +4,7 @@
  * turn into a direct-API SSE run and the SDK maps core's stream parts for us.
  */
 
+import type { EventEmitter } from "node:events";
 import { runAgentTUI } from "@ai-sdk/tui";
 import {
   convertToModelMessages,
@@ -29,11 +30,17 @@ export interface AgentRunOptions {
   agent: AgentReference;
   /** Sent as the first turn. The TUI stays open afterwards for follow-ups. */
   prompt?: string;
+  /** Rewrites a failed turn's error into the fix, shown where the turn failed. */
+  explain?: (error: unknown) => unknown;
 }
 
 /** Run a deployed agent in the AI SDK terminal UI until the user exits. */
 export async function runAgentTui(options: AgentRunOptions): Promise<void> {
-  const transport = new RemoteAgentTransport(options.client, options.agent);
+  const transport = new RemoteAgentTransport(
+    options.client,
+    options.agent,
+    options.explain,
+  );
   const restoreKeys = stopTurnOnEscape(transport);
   if (options.prompt !== undefined) void submitPrompt(options.prompt);
   try {
@@ -56,11 +63,11 @@ export async function runAgentTui(options: AgentRunOptions): Promise<void> {
  * Returns the undo.
  */
 export function stopTurnOnEscape(
-  transport: RemoteAgentTransport,
-  input: NodeJS.ReadStream = process.stdin,
+  transport: Pick<RemoteAgentTransport, "stopTurn">,
+  input: EventEmitter = process.stdin,
 ): () => void {
   const emit = input.emit.bind(input);
-  input.emit = ((event: string | symbol, ...args: unknown[]): boolean => {
+  input.emit = (event: string | symbol, ...args: unknown[]): boolean => {
     if (
       event === "data" &&
       String(args[0]) === "\x1b" &&
@@ -70,7 +77,7 @@ export function stopTurnOnEscape(
     }
 
     return emit(event, ...args);
-  }) as typeof input.emit;
+  };
 
   return () => {
     input.emit = emit;
@@ -87,6 +94,8 @@ export async function streamAgentText(
       undefined,
       // One-shot: there is no follow-up turn to keep bookkeeping for.
       () => {},
+      () => {},
+      options.explain,
     ),
   });
   for await (const text of stream) {
@@ -119,12 +128,15 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   private readonly conversationKey = `tui-${generateId()}`;
   private readonly sentApprovals = new Set<string>();
   private sentUserTurns = 0;
-  /** The streaming turn, which `stopTurn` ends. */
-  private activeTurn: AbortController | undefined;
+  /** The streaming turn, which `stopTurn` ends, and how to record it sent. */
+  private activeTurn:
+    | { controller: AbortController; commit: () => void }
+    | undefined;
 
   constructor(
     private readonly client: BroodsClient,
     private readonly agent: AgentReference,
+    private readonly explain?: (error: unknown) => unknown,
   ) {}
 
   // The TUI never resumes a dropped stream; each turn opens its own SSE run.
@@ -146,16 +158,22 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       conversationKey: this.conversationKey,
       events: pending.events as [ModelMessage, ...ModelMessage[]],
     });
-    const turn = new AbortController();
+    const turn = { controller: new AbortController(), commit: pending.commit };
     this.activeTurn = turn;
     const signal = options.abortSignal
-      ? AbortSignal.any([options.abortSignal, turn.signal])
-      : turn.signal;
+      ? AbortSignal.any([options.abortSignal, turn.controller.signal])
+      : turn.controller.signal;
 
     return toUIMessageStream({
-      stream: toReadableStream(stream, signal, pending.commit, () => {
-        if (this.activeTurn === turn) this.activeTurn = undefined;
-      }),
+      stream: toReadableStream(
+        stream,
+        signal,
+        pending.commit,
+        () => {
+          if (this.activeTurn === turn) this.activeTurn = undefined;
+        },
+        this.explain,
+      ),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
@@ -163,12 +181,15 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   }
 
   /**
-   * End the streaming turn where it is: the text so far stays on screen and the
-   * input comes back. False when no turn is streaming.
+   * End the streaming turn on screen: the text so far stays and the input comes
+   * back. Core was already sent the turn and finishes its run (the runtime key
+   * has no cancel), so the turn counts as sent and is not repeated next time.
+   * False when no turn is streaming.
    */
   stopTurn(): boolean {
     if (!this.activeTurn) return false;
-    this.activeTurn.abort();
+    this.activeTurn.commit();
+    this.activeTurn.controller.abort();
     this.activeTurn = undefined;
 
     return true;
@@ -241,6 +262,7 @@ function toReadableStream(
   signal: AbortSignal | undefined,
   onAnswered: () => void,
   onClosed: () => void = () => {},
+  explain: (error: unknown) => unknown = (error) => error,
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
   // Never awaited: the generator can be parked on a read that never completes,
@@ -249,7 +271,13 @@ function toReadableStream(
 
   return new ReadableStream({
     pull: async function (controller): Promise<void> {
-      const next = await Promise.race([stream.next(), abortedRead(signal)]);
+      const next = await Promise.race([
+        stream.next(),
+        abortedRead(signal),
+      ]).catch((error: unknown) => {
+        onClosed();
+        throw explain(error);
+      });
       if (signal?.aborted) {
         release();
         controller.close();

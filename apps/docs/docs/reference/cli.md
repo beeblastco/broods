@@ -279,10 +279,10 @@ broods run my-agent "ping" > answer.txt   # plain text, no UI
 ```
 
 - The session streams reasoning, shows tool calls as cards with input and output, and stops for `y`/`n` on tools that need approval. It stays open for follow-ups.
-- Enter sends, arrows or PgUp and PgDn scroll, and Ctrl+L repaints. Esc while the agent answers stops that answer and keeps the chat open; Esc when idle, or Ctrl+C, leaves.
+- Enter sends, arrows or PgUp and PgDn scroll, and Ctrl+L repaints. Esc while the agent answers stops that answer on screen and keeps the chat open (the run already sent still finishes on the server); Esc when idle, or Ctrl+C, leaves.
 - When stdin or stdout is not a terminal, `run` prints the answer as plain text. A prompt is then required.
 - `run` uses the runtime key over the public endpoint, so the agent needs `publicAccess: true`. Without it you get `403 public_access_disabled`.
-- Each request carries a user token signed with `BROODS_USER_TOKEN_SECRET` from the shell or `.env.local` (the one `dev` and `deploy` write), as your user, so agents that require a user token answer too. Without the stage's secret, `run` names how to get it.
+- Each request carries a user token signed with `BROODS_USER_TOKEN_SECRET` from the shell or `.env.local` (the one `dev` and `deploy` write), as your user, so agents that require a user token answer too. Only a secret matching the stage's is used; without it, `run` sends the bare runtime key and names how to get the secret if the agent asks for one.
 - Each turn is a normal run on one conversation. Tools, sandboxes and policies behave as in production.
 
 ## agent

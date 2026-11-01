@@ -15,7 +15,6 @@ import {
 import { createHash } from "node:crypto";
 import module from "node:module";
 import { basename, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -117,6 +116,7 @@ import {
 } from "./output.ts";
 import {
   isNewerVersion,
+  installedPackage,
   latestPublishedVersion,
   majorVersion,
   updateTarget,
@@ -1260,9 +1260,7 @@ function matchesSecretHint(
 
 /**
  * The stage's user-token signing secret as this checkout holds it: the shell's
- * export, else `.env.local`'s. With the stage's masked hint, only the one that
- * matches it; without one (the runtime-key route sends none), the first set,
- * which core verifies anyway.
+ * export, else `.env.local`'s, whichever matches the stage's masked hint.
  */
 async function localUserTokenSecret(
   remoteHint: string | undefined,
@@ -1272,9 +1270,7 @@ async function localUserTokenSecret(
   )[USER_TOKEN_SECRET_ENV];
 
   return [process.env[USER_TOKEN_SECRET_ENV], fileSecret].find((secret) =>
-    remoteHint === undefined
-      ? Boolean(secret)
-      : matchesSecretHint(secret, remoteHint),
+    matchesSecretHint(secret, remoteHint),
   );
 }
 
@@ -1298,7 +1294,7 @@ async function applyDeploymentKey(
   }
 
   const remoteHint = deployment.userTokenSecretHint;
-  if (remoteHint && (await localUserTokenSecret(remoteHint))) {
+  if (await localUserTokenSecret(remoteHint)) {
     // `.env.local` is current, but a stale shell export still wins over it.
     warnShellShadowedEnv(
       USER_TOKEN_SECRET_ENV,
@@ -1419,8 +1415,7 @@ async function update(): Promise<void> {
 async function warnOnOutdatedCli(): Promise<void> {
   // A build from the monorepo carries the workspace version, which is never
   // the released one (packages/broods/AGENTS.md), so it would always nag.
-  if (!fileURLToPath(import.meta.url).includes(`${sep}node_modules${sep}`))
-    return;
+  if (!installedPackage()) return;
   const latest = await latestPublishedVersion();
   if (latest === null || !isNewerVersion(latest, VERSION)) return;
   printWarning(
@@ -2269,7 +2264,8 @@ async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
       "Input is hidden and saved to .env.local, which stays out of git.",
   );
   for (const name of missing) {
-    const value = (await promptSecret(name)).trim();
+    // promptSecret refuses an empty answer; here that means skip this one.
+    const value = (await promptSecret(name).catch(() => "")).trim();
     if (value) await writeEnvValue(name, value);
   }
 
@@ -3093,10 +3089,7 @@ async function run(args: string[]): Promise<void> {
   // Runtime traffic has to reach the same deployment the control plane resolved.
   // Without an explicit base URL the SDK falls back to prod, which rejects a
   // dev-issued runtime key with a 401.
-  const userToken = await cliUserToken(
-    auth,
-    remote?.deployment?.userTokenSecretHint,
-  );
+  const userToken = await cliUserToken(auth, runtimeKey?.userTokenSecretHint);
   const client = new BroodsClient({
     baseUrl:
       optionValue(args, "--base-url") ??
@@ -3119,16 +3112,25 @@ async function run(args: string[]): Promise<void> {
   // Lazy, so `ai` and the terminal UI load for this command only.
   const { runAgentTui, streamAgentText } = await import("./tui.ts");
   try {
+    // The TUI shows a turn's error in the chat, so explain it at the stream.
+    const explain = (error: unknown): unknown =>
+      explainRunError(error, agentName, manifest, "userToken" in userToken);
     if (interactive) {
       await runAgentTui({
         client: client,
         agent: ref,
+        explain: explain,
         ...(prompt ? { prompt: prompt } : {}),
       });
 
       return;
     }
-    await streamAgentText({ client: client, agent: ref, prompt: prompt });
+    await streamAgentText({
+      client: client,
+      agent: ref,
+      prompt: prompt,
+      explain: explain,
+    });
   } catch (error) {
     throw explainRunError(error, agentName, manifest, "userToken" in userToken);
   }
@@ -3137,7 +3139,8 @@ async function run(args: string[]): Promise<void> {
 /**
  * A new agent refuses the bare runtime key, so `broods run` signs each request
  * as this developer with the secret `dev` / `deploy` wrote, as a backend would.
- * None when the checkout lacks the stage's secret: the run then names the fix.
+ * Only the secret the stage's hint names: a stale or foreign one would turn a
+ * run that needs no token into a 401. None otherwise; the run names the fix.
  */
 async function cliUserToken(
   auth: StoredAuthConfig,

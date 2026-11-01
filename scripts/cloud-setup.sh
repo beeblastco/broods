@@ -24,7 +24,7 @@
 # A login for any other user is ignored, so a person's token never ships.
 #
 # Values, first found wins:
-#   BROODS_DEV_TOKEN, BROODS_PROD_TOKEN  env, else the probe's login in test-account
+#   BROODS_DEV_TOKEN, BROODS_PROD_TOKEN  only the probe's login in test-account, never the shell
 #   E2E_EMAIL, E2E_PASSWORD  env, else apps/dashboard/.env.local (main checkout's from a worktree)
 #   ANTHROPIC_API_KEY, OPENAI_API_KEY  env only (separate keys with a spend limit)
 # The Anthropic key ships as CLOUD_ANTHROPIC_API_KEY: a cloud session drops an
@@ -94,8 +94,8 @@ pick() { local v="${!1:-}"; [ -n "$v" ] && printf %s "$v" || printf %s "$2"; }
 
 e2e_email=$(pick E2E_EMAIL "$(from_dotenv E2E_EMAIL)")
 e2e_password=$(pick E2E_PASSWORD "$(from_dotenv E2E_PASSWORD)")
-dev_token=$(pick BROODS_DEV_TOKEN "$(from_login "$dev_gateway")")
-prod_token=$(pick BROODS_PROD_TOKEN "$(from_login "$prod_gateway")")
+dev_token=$(from_login "$dev_gateway")
+prod_token=$(from_login "$prod_gateway")
 anthropic_key="${ANTHROPIC_API_KEY:-}"
 openai_key="${OPENAI_API_KEY:-}"
 

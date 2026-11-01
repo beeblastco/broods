@@ -40,6 +40,7 @@ function serveBackend(
     port: 0,
     fetch: (request) => {
       const url = new URL(request.url);
+      // The real GET /manifest carries no deployment; the hint rides /runtime-key.
       if (url.pathname.endsWith("/manifest")) {
         return Response.json({
           manifest: {
@@ -49,23 +50,16 @@ function serveBackend(
             resources: [],
           },
           ids: { agents: { support: "agent_1" } },
-          deployment: {
-            accountId: "acct_1",
-            endpointId: "stage-1",
-            projectSlug: "demo-app",
-            stageSlug: "development",
-            keyHint: "bsk_…test",
-            apiKey: "bsk_runtime-key-test",
-            ...(sendHint
-              ? { userTokenSecretHint: keyHint("bsig_", SECRET) }
-              : {}),
-          },
+          revision: 1,
         });
       }
       if (url.pathname.endsWith("/runtime-key")) {
         return Response.json({
           apiKey: "bsk_runtime-key-test",
           keyHint: "bsk_…test",
+          ...(sendHint
+            ? { userTokenSecretHint: keyHint("bsig_", SECRET) }
+            : {}),
         });
       }
       if (request.method === "POST") {
@@ -183,14 +177,13 @@ test("run without the stage's secret sends no token and names the fix", async ()
   expect(result.stderr).toContain("BROODS_USER_TOKEN_SECRET");
 });
 
-test("run signs with the local secret when the server sends no hint", async () => {
+test("run sends no token for a stage without a signing secret", async () => {
   const cwd = await projectDir([`BROODS_USER_TOKEN_SECRET="${SECRET}"`]);
-  const backend = serveBackend(true, false);
+  const backend = serveBackend(false, false);
 
   const result = await runAgent(cwd, backend.baseUrl);
 
+  // A stale local secret must not turn a run that needs no token into a 401.
   expect(result.exitCode).toBe(0);
-  expect((await openUserToken(backend.tokens[0] ?? "", SECRET))?.userId).toBe(
-    "cli",
-  );
+  expect(backend.tokens).toEqual([null]);
 });
