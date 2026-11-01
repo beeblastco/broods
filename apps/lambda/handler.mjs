@@ -429,7 +429,10 @@ function positiveEnvInt(name, fallback) {
 // survivor would share /proc with the next account's child in this warm
 // environment. Runs before each spawn, so a new child never starts next to one.
 // No-op off Linux. The function has no extensions; one would be killed here.
+// No-op outside Lambda too: on a dev box or CI runner the same UID owns the
+// shell, dockerd, the local stack, so this would SIGKILL all of them.
 function reapStrays() {
+  if (!insideLambda()) return;
   let pids;
   try {
     pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
@@ -447,6 +450,14 @@ function reapStrays() {
       // Exited between the listing and the kill.
     }
   }
+}
+
+// The managed runtime sets both on every function; nothing else does.
+function insideLambda() {
+  return (
+    typeof process.env.AWS_LAMBDA_FUNCTION_NAME === "string" &&
+    process.env.AWS_EXECUTION_ENV?.startsWith("AWS_Lambda_") === true
+  );
 }
 
 // Dispose one child: clear the warm slot if it holds it, SIGKILL its group.

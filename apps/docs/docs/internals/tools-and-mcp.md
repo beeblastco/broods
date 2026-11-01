@@ -289,7 +289,7 @@ stateDiagram-v2
   Retired --> [*]: process group SIGKILLed
 ```
 
-Before every spawn the handler also kills every other process of its user (`reapStrays`), so a bundle that escaped its group never sits next to the next child. `MCP_CHILD_MAX_CALLS` and `MCP_CHILD_IDLE_SECONDS` set the bounds, and `MCP_CHILD_REUSE=0` makes every child one-shot. The isolation model is in [security](security.md#hosted-mcp-servers).
+Before every spawn the handler also kills every other process of its user (`reapStrays`), so a bundle that escaped its group never sits next to the next child. It does that only inside Lambda (`AWS_LAMBDA_FUNCTION_NAME` set and `AWS_EXECUTION_ENV` an `AWS_Lambda_` runtime): run anywhere else, the same user owns the shell, `dockerd` and the local stack. The core tests that exercise it run the handler in its own PID namespace. `MCP_CHILD_MAX_CALLS` and `MCP_CHILD_IDLE_SECONDS` set the bounds, and `MCP_CHILD_REUSE=0` makes every child one-shot. The isolation model is in [security](security.md#hosted-mcp-servers).
 
 `defineTool` and `POST /v1/tools` are retired; hosted MCP servers replace them.
 

@@ -61,6 +61,12 @@ jobs:
       - name: Typecheck
         run: bun run check
 
+      - name: Allow unprivileged user namespaces
+        # Ubuntu 24.04 blocks them by default. The hosted-MCP reaper test runs
+        # handler.mjs in its own PID namespace (`unshare --user`) and skips
+        # without one; off Lambda the reaper would otherwise never run.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Run unit tests
         run: bun run test
 

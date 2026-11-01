@@ -69,6 +69,32 @@ function isAlive(pid: number): boolean {
   return !stat.toString().trim().startsWith("Z");
 }
 
+// The handler only reaps strays inside Lambda, where the managed runtime sets
+// these. Set them only for a driver in its own PID namespace, or the reaper
+// SIGKILLs every process this UID owns on the machine.
+const LAMBDA_ENV = {
+  AWS_LAMBDA_FUNCTION_NAME: "tool-runner-test",
+  AWS_EXECUTION_ENV: "AWS_Lambda_nodejs22.x",
+};
+
+// argv prefix that runs a command as pid 1 of a fresh PID namespace with its
+// own /proc, so the reaper sees nothing outside it. A user namespace needs no
+// root; root alone can skip it. null when neither works here.
+const pidNamespace = ((): string[] | null => {
+  for (const prefix of [
+    ["unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc"],
+    ["unshare", "--pid", "--fork", "--mount-proc"],
+  ]) {
+    try {
+      if (Bun.spawnSync([...prefix, "true"]).exitCode === 0) return prefix;
+    } catch {
+      // No unshare binary.
+    }
+  }
+
+  return null;
+})();
+
 // A bundle the runner will accept: sha256 must match what the child recomputes.
 async function invokeHandler(
   bundle: string,
@@ -79,7 +105,18 @@ async function invokeHandler(
   // Address the bundle the way core does in production, a presigned GET the
   // handler resolves, instead of inlining the bytes in the invoke event.
   bundleAddress?: "served" | { url: string },
-): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
+  options: {
+    // A second invocation in the same warm process, for state the first leaves
+    // behind; its frames come back as followUpStdout.
+    followUp?: string;
+    // Wraps the driver: gets its path, returns the argv to spawn.
+    command?: (driver: string) => string[];
+  } = {},
+): Promise<{
+  stdout?: string;
+  followUpStdout?: string;
+  arrivalsMs?: number[];
+}> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   const server =
     bundleAddress === "served"
@@ -130,12 +167,29 @@ async function invokeHandler(
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
         `}, responseStream);`,
         `await consumed;`,
-        `process.stdout.write(JSON.stringify({ stdout, arrivalsMs }));`,
+        `let followUpStdout;`,
+        `const followUp = ${JSON.stringify(options.followUp ?? null)};`,
+        `if (followUp !== null) {`,
+        `  const next = Buffer.from(followUp, "utf8");`,
+        `  const stream = new PassThrough();`,
+        `  followUpStdout = "";`,
+        `  const read = (async () => {`,
+        `    for await (const chunk of stream) followUpStdout += chunk;`,
+        `  })();`,
+        `  await handler({`,
+        `    ...${JSON.stringify(event)},`,
+        `    bundleSourceB64: next.toString("base64"),`,
+        `    expectedSha256: createHash("sha256").update(next).digest("hex"),`,
+        `  }, stream);`,
+        `  await read;`,
+        `}`,
+        `process.stdout.write(JSON.stringify({ stdout, followUpStdout, arrivalsMs }));`,
       ].join("\n"),
     );
 
     return await new Promise((resolve, reject) => {
-      const child = spawn("node", [driver], {
+      const [file, ...args] = options.command?.(driver) ?? ["node", driver];
+      const child = spawn(file!, args, {
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, ...parentEnv },
       });
@@ -244,6 +298,69 @@ describe("mcp-runner containment", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it.skipIf(pidNamespace === null)(
+    "reaps a survivor that left the child's process group before the next spawn",
+    async () => {
+      // setsid() puts the survivor out of killGroup's reach; only the reaper
+      // finds it. It runs before a spawn, so a second invoke triggers it.
+      const dir = await mkdtemp(join(tmpdir(), "broods-escapee-"));
+      const bystander = Bun.spawn(["sleep", "30"]);
+      try {
+        const marker = join(dir, "survived.txt");
+        const bundle = [
+          `import { spawn } from "node:child_process";`,
+          `export default () => {`,
+          `  const code = "setTimeout(() => require('fs').writeFileSync(" +`,
+          `    ${JSON.stringify(JSON.stringify(marker))} + ", 'survived'), 1500)";`,
+          `  spawn(process.execPath, ["-e", code], { stdio: "ignore", detached: true }).unref();`,
+          `  return new Response(JSON.stringify({ spawned: true }));`,
+          `};`,
+        ].join("\n");
+        const next = `export default () => new Response(JSON.stringify({ next: true }));`;
+
+        // The namespace dies with its pid 1, and every process in it. Keep it
+        // up past the survivor's timer, so only the reaper can stop the write.
+        const result = await invokeHandler(bundle, LAMBDA_ENV, 0, undefined, {
+          followUp: next,
+          command: (driver) => [
+            ...pidNamespace!,
+            "sh",
+            "-c",
+            'node "$0"; sleep 2',
+            driver,
+          ],
+        });
+        expect(finalBody(result.stdout)).toEqual({ spawned: true });
+        expect(finalBody(result.followUpStdout)).toEqual({ next: true });
+        expect(existsSync(marker)).toBe(false);
+        // Same UID, outside the namespace: out of the reaper's sight.
+        expect(isAlive(bystander.pid)).toBe(true);
+      } finally {
+        bystander.kill("SIGKILL");
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  it("leaves a process it did not start alive outside Lambda", async () => {
+    // Off Lambda the handler shares its UID with the shell, dockerd, the local
+    // stack. The reaper must not run there, so a same-UID bystander that is not
+    // the handler's descendant survives both a spawn and a respawn.
+    const bystander = Bun.spawn(["sleep", "30"]);
+    try {
+      const bundle = `export default () => new Response(JSON.stringify({ ok: true }));`;
+      const result = await invokeHandler(bundle, {}, 0, undefined, {
+        followUp: bundle,
+      });
+      expect(finalBody(result.stdout)).toEqual({ ok: true });
+      expect(finalBody(result.followUpStdout)).toEqual({ ok: true });
+      expect(isAlive(bystander.pid)).toBe(true);
+    } finally {
+      bystander.kill("SIGKILL");
     }
   }, 30_000);
 });
