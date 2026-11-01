@@ -1,18 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/cloud-session.sh",
-            "timeout": 300,
-            "statusMessage": "Cloud session setup"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
