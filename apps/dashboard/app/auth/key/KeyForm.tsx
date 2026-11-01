@@ -2,7 +2,7 @@
 
 import { ChevronRight, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
-import { BroodsLogo } from "@/app/components/BroodsLogo";
+import { BroodsMark } from "@/app/components/BroodsMark";
 import { Button } from "@/app/components/ui/button";
 import {
   Collapsible,
@@ -42,7 +42,7 @@ export function KeyForm({
       onSubmit={() => setPending(true)}
       className="flex w-full max-w-80 flex-col gap-4"
     >
-      <BroodsLogo className="h-6 w-auto self-start" />
+      <BroodsMark className="size-6 self-start" />
       <h1 className="text-base font-semibold text-foreground">Sign in</h1>
       <input type="hidden" name="returnTo" value={returnTo} />
       <Field data-invalid={error !== null}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { BroodsMark } from "@/app/components/BroodsLogo";
+import { BroodsMark } from "@/app/components/BroodsMark";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import {
   Avatar,
