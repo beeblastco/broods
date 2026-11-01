@@ -49,7 +49,7 @@ export const probeAccount = {
 
 const AUTH_TIMEOUT_MS = 60_000;
 // Convex document ids; `/projects` and the other static segments are shorter.
-const PROJECT_PATH = /^\/([a-z0-9]{20,})$/;
+export const PROJECT_PATH = /^\/([a-z0-9]{20,})$/;
 
 export function hasProbe(): boolean {
   return Boolean(
@@ -137,17 +137,29 @@ export async function signIn(page: Page): Promise<void> {
     .fill(probeAccount.password!);
   // Exact name: production AuthKit also offers "Sign in with passkey".
   await page.getByRole("button", { name: /^(continue|sign in)$/i }).click();
-  await page
-    .waitForURL((url) => url.origin === origin, { timeout: AUTH_TIMEOUT_MS })
-    .catch(async (error: unknown) => {
-      // CI keeps no page snapshot (it records the typed password), so name
-      // the one AuthKit stop the probe cannot pass.
-      if (await page.getByText(/sure you are human/i).isVisible()) {
-        throw new Error(
-          "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment",
-          { cause: error },
-        );
-      }
-      throw error;
-    });
+  // Production AuthKit may stop a fresh user at "Create a passkey"; skip it.
+  // One wait covers both stops, so a bot check fails fast with its own error.
+  const skipPasskey = page.getByRole("button", { name: /^skip for now$/i });
+  const botCheck = page.getByText(/sure you are human/i);
+  const signedIn = (): boolean => new URL(page.url()).origin === origin;
+  await expect
+    .poll(
+      async () =>
+        signedIn() ||
+        (await skipPasskey.isVisible()) ||
+        (await botCheck.isVisible()),
+      { timeout: AUTH_TIMEOUT_MS },
+    )
+    .toBe(true);
+  if (await botCheck.isVisible()) {
+    // CI keeps no page snapshot (it records the typed password), so name
+    // the one AuthKit stop the probe cannot pass.
+    throw new Error(
+      "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment",
+    );
+  }
+  if (!signedIn()) await skipPasskey.click();
+  await page.waitForURL((url) => url.origin === origin, {
+    timeout: AUTH_TIMEOUT_MS,
+  });
 }

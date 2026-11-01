@@ -43,6 +43,15 @@ outside repo, sibling of checkout:
 - Convex schema or function change = `bun run --filter @broods/convex codegen`, commit the generated diff. it is committed on purpose so core and dashboard typecheck with no local codegen. the API is static (`codegen.staticApi`): `_generated/api.d.ts` spells each function's args and result from its validators, so changing a validator without codegen leaves every caller typed against the old contract. CI `local-stack` deploys the backend (which regenerates it) and fails on any diff under `_generated`.
 - React version pinned per app package. never add React to root package.
 
+## Cloud Sessions (Claude Code on the web)
+
+- set up or refresh the environment: `bash scripts/cloud-setup.sh --login` on a machine with the `broods` CLI. it signs the one probe user (`cloud-agent@beeblast.co`, also CI's `DASHBOARD_E2E_EMAIL`, see `apps/dashboard/AGENTS.md`) in to dev and prod and reads its password from the main checkout's `apps/dashboard/.env.local`. the user exists in both WorkOS environments (Staging = dev, Production = prod), same email + password, email verified, allowed under Radar > Restrictions. never a person's own login. Hobby caps sandbox hours for every session and CI together. logins kept in `~/.broods-cloud/test-account`, and writes `~/.broods-cloud/` (0600): `setup.sh` upload as "Setup script", `env.txt` paste as "Environment variables", `network-secrets.txt` one Bearer secret per broods gateway (`BROODS_*_TOKEN=proxy-injected` in env is the placeholder the proxy fills). network access Full. login lasts 90 days. rerun + re-upload when `.bun-version`, Playwright, `verification/lean-toolchain` or the `local-stack.ts` images move. secrets never go in the repo.
+- `scripts/cloud-session-start.sh` is the SessionStart hook in `.claude/settings.json`: cloud only (`CLAUDE_CODE_REMOTE=true`), starts dockerd, `bun install` when `bun.lock` move, fetch `origin/dev`, export `BROODS_PROJECT=cloud-<session id>`. no-op on a laptop.
+- unattended request = skill `broods-cloud-run`: branch `claude/<slug>` from `origin/dev`, check, `local:verify` + `local:perf` + `bench` on candidate and on an `origin/dev` worktree, report with numbers, PR to `dev`, reply with PR URL + report URL.
+- cloud agent never: push `dev`/`main`, deploy (`sst`, `bun run deploy`, promote workflow), add the `real-model` label, write to prod. prod (`gateway.broods.app`, `dashboard.broods.app`) is read-only. on dev each session creates its own project `$BROODS_PROJECT` in the test account, touches no other `cloud-*` project, and deletes its own when done. no AWS or deploy keys in the environment, so `postinstall` skips `sst install`.
+- GitHub from the VM goes through Anthropic's proxy: `gh pr` / `gh issue` get GraphQL 403. use the built-in GitHub tools or `gh api repos/beeblastco/broods/...` (REST).
+- `ANTHROPIC_API_KEY` cannot be a network secret (proxy never sign Anthropic API), so it sits in env: use a separate key with a spend limit.
+
 ## Code Style
 
 - no new function unless behavior really different from code that already exist. less code that stay maintainable is win. big complex code base = big technical debt.
