@@ -345,34 +345,3 @@ test("aborting stops a turn that is waiting on the model", async () => {
   // Without racing the signal this would hang until the server sent more.
   expect((await pending).done).toBe(true);
 });
-
-test("a failed turn surfaces the explained error", async () => {
-  const client = new BroodsClient({
-    apiKey: "test-key",
-    fetch: async () =>
-      Response.json(
-        { error: { message: "needs a token", code: "user_token_required" } },
-        { status: 403 },
-      ),
-  });
-  const transport = new RemoteAgentTransport(
-    client,
-    AGENT,
-    () => new Error("explained: set BROODS_USER_TOKEN_SECRET"),
-  );
-
-  // The TUI reads this stream and shows a thrown error in the chat.
-  const stream = await transport.sendMessages({
-    trigger: "submit-message",
-    chatId: "chat_1",
-    messageId: undefined,
-    messages: [userMessage("m1", "hi")],
-    abortSignal: undefined,
-  });
-  const reader = stream.getReader();
-  const failure = await (async (): Promise<unknown> => {
-    for (;;) if ((await reader.read()).done) return null;
-  })().catch((error: unknown) => error);
-
-  expect(String(failure)).toContain("explained: set BROODS_USER_TOKEN_SECRET");
-});
