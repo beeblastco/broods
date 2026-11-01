@@ -117,7 +117,7 @@ import {
 } from "./output.ts";
 import {
   isNewerVersion,
-  installedPackage,
+  isInstalledPackage,
   latestPublishedVersion,
   majorVersion,
   updateTarget,
@@ -1402,7 +1402,7 @@ async function update(): Promise<void> {
 async function warnOnOutdatedCli(): Promise<void> {
   // A build from the monorepo carries the workspace version, which is never
   // the released one (packages/broods/AGENTS.md), so it would always nag.
-  if (!installedPackage()) return;
+  if (!isInstalledPackage()) return;
   const latest = await latestPublishedVersion();
   if (latest === null || !isNewerVersion(latest, VERSION)) return;
   printWarning(
