@@ -35,7 +35,7 @@ export interface AgentRunOptions {
 /** Run a deployed agent in the AI SDK terminal UI until the user exits. */
 export async function runAgentTui(options: AgentRunOptions): Promise<void> {
   const transport = new RemoteAgentTransport(options.client, options.agent);
-  const restoreKeys = stopTurnOnEscape(transport);
+  const restoreInput = stopTurnOnEscape(transport);
   if (options.prompt !== undefined) void submitPrompt(options.prompt);
   try {
     await runAgentTUI({
@@ -46,7 +46,7 @@ export async function runAgentTui(options: AgentRunOptions): Promise<void> {
       transport: transport,
     });
   } finally {
-    restoreKeys();
+    restoreInput();
   }
 }
 
