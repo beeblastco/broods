@@ -2,8 +2,9 @@
 
 /**
  * Stage data the canvas node cards and edges read, queried once by the Canvas
- * instead of once per card: the stage's MCP servers, its machine connections,
- * each wired sandbox's order number and which sandboxes only back a workspace.
+ * instead of once per card: each agent's badges, the stage's MCP servers, its
+ * machine connections, each wired sandbox's order number and which sandboxes
+ * only back a workspace.
  * Also carries the frame collapse toggle, which chip is open, and the mount
  * menu a workspace's edge offers. The UI gallery provides a static value, so
  * cards render with no Convex behind them.
@@ -11,9 +12,15 @@
 import type { StageMcpServer } from "@/app/lib/canvasFrameNodes";
 import type { WorkspaceMountTarget } from "@/app/lib/canvasFrameEdits";
 import type { MachineConnection } from "@/app/lib/machineConnection";
+import type { AgentCanvasBadge } from "@broods/convex/model/agentConfigCodec";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { createContext, useContext } from "react";
 
 export type CanvasFramesValue = {
+  /** By agent config id; undefined while loading. */
+  agentBadges:
+    | Readonly<Record<Id<"agentConfigs">, AgentCanvasBadge>>
+    | undefined;
   /** A reader reads the mount word; only a writer opens its menu. */
   canWrite: boolean;
   /** The selected chip, drawn as a card in a card's slot; null when none is. */
@@ -39,6 +46,7 @@ export type CanvasFramesValue = {
 };
 
 const EMPTY_VALUE: CanvasFramesValue = {
+  agentBadges: undefined,
   canWrite: false,
   expandedMemberId: null,
   machineConnections: undefined,

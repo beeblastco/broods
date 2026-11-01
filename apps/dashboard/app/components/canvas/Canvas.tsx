@@ -255,6 +255,9 @@ type FlowPosition = { x: number; y: number };
 
 /** The stage-scoped queries `Canvas` runs for `CanvasInner`; undefined while loading. */
 type StageData = {
+  agentBadges:
+    | FunctionReturnType<typeof api.agent.config.canvasBadges>
+    | undefined;
   canvasLayout: FunctionReturnType<typeof api.canvas.getByProject> | undefined;
   mcpServers: FunctionReturnType<typeof api.mcp.listByStage> | undefined;
   machineConnections:
@@ -269,6 +272,7 @@ export function Canvas({
 }): React.JSX.Element {
   const { stageId, stageArgs } = useStage();
   const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
+  const agentBadges = useQuery(api.agent.config.canvasBadges, stageArgs);
   const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
   const machineConnections = useQuery(
     api.sandbox.machines.listForActiveOrg,
@@ -285,6 +289,7 @@ export function Canvas({
       <CanvasInner
         key={`${projectId}:${stageId ?? "loading"}`}
         projectId={projectId}
+        agentBadges={stageId ? agentBadges : undefined}
         canvasLayout={stageId ? canvasLayout : undefined}
         mcpServers={stageId ? mcpServers : undefined}
         machineConnections={stageId ? machineConnections : undefined}
@@ -465,6 +470,7 @@ function findNearestAgentNode(
 
 function CanvasInner({
   projectId,
+  agentBadges,
   canvasLayout,
   mcpServers,
   machineConnections,
@@ -1547,6 +1553,7 @@ function CanvasInner({
   );
   const framesContext = useMemo(
     () => ({
+      agentBadges: agentBadges,
       canWrite: canWrite,
       expandedMemberId: expandedMemberId,
       machineConnections: machineConnections,
@@ -1558,6 +1565,7 @@ function CanvasInner({
       workspaceOnlySandboxIds: workspaceOnly,
     }),
     [
+      agentBadges,
       canWrite,
       expandedMemberId,
       machineConnections,

@@ -7,8 +7,10 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import type { CanvasNode } from "../model/canvasShapes";
 import {
+  agentCanvasBadge,
   collectEnvPlaceholderNames,
   toNestedAgentConfig,
+  type AgentCanvasBadge,
 } from "../model/agentConfigCodec";
 import {
   assertAgentRuntimeRefs,
@@ -28,7 +30,7 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "../model/auditEvents";
-import { getOwnedStage } from "../model/ownership/stage";
+import { getOwnedStage, getProjectStage } from "../model/ownership/stage";
 import {
   getProjectForRole,
   getProjectForWrite,
@@ -57,6 +59,12 @@ const agentConfigDoc = v.object({
 const agentProviderValidator = v.union(
   ...ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => v.literal(name)),
 );
+
+const agentCanvasBadgeValidator = v.object({
+  publicAccess: v.boolean(),
+  skills: v.array(v.string()),
+  structuredOutput: v.boolean(),
+});
 
 const workspaceRefValidator = v.object({
   name: v.string(),
@@ -219,6 +227,44 @@ export const getById = query({
     // dashboard writes. Members read them masked; only admins save the config
     // back, so a mask never overwrites a stored secret.
     return redactConfigSecrets(masked);
+  },
+});
+
+/**
+ * What every agent card on a stage's canvas draws, by config id: one
+ * subscription for the whole canvas instead of one full config per card. The
+ * stage check is getById's project check, since every row read is in that
+ * project, and no badge field carries a secret a member must not read.
+ */
+export const canvasBadges = query({
+  args: {
+    projectId: v.id("projects"),
+    // Absent reads the project's default stage, as canvas.getByProject does.
+    stageId: v.optional(v.id("stages")),
+  },
+  returns: v.record(v.id("agentConfigs"), agentCanvasBadgeValidator),
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<Record<Id<"agentConfigs">, AgentCanvasBadge>> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    // A deleted project or stage answers empty, as the canvas layout does, so
+    // a subscriber still holding it does not crash the canvas.
+    const stage = await getProjectStage(ctx, authUser.id, projectId, stageId);
+    if (!stage) return {};
+
+    const configs = await ctx.db
+      .query("agentConfigs")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stage._id),
+      )
+      .collect();
+
+    return Object.fromEntries(
+      configs.map((config) => [config._id, agentCanvasBadge(config)]),
+    );
   },
 });
 
