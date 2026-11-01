@@ -64,6 +64,7 @@ echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env.local   # dev pushes env() values 
 broods-dev dev --once                             # first sync creates the project
 broods-dev whoami
 broods-prod whoami                                # prod: whoami, list, read only
+cd "$CLAUDE_PROJECT_DIR"                          # back: later steps run in the checkout
 ```
 
 `broods-dev run my-agent "..." < /dev/null` answers in plain text: it signs a user token with the
