@@ -50,7 +50,7 @@ outside repo, sibling of checkout:
 - unattended request = skill `broods-cloud-run`: branch `claude/<slug>` from `origin/dev`, check, `local:verify` + `local:perf` + `bench` on candidate and on an `origin/dev` worktree, report with numbers, PR to `dev`, reply with PR URL + report URL.
 - cloud agent never: push `dev`/`main`, deploy (`sst`, `bun run deploy`, promote workflow), add the `real-model` label, write to prod. prod (`gateway.broods.app`, `dashboard.broods.app`) is read-only. on dev each session creates its own project `$BROODS_CLOUD_PROJECT` in the probe's org, touches no other `cloud-*` project, and deletes its own when done. no AWS or deploy keys in the environment, so `postinstall` skips `sst install`.
 - GitHub from the VM goes through Anthropic's proxy: `gh pr` / `gh issue` get GraphQL 403. use the built-in GitHub tools or `gh api repos/beeblastco/broods/...` (REST).
-- `ANTHROPIC_API_KEY` cannot be a network secret (proxy never sign Anthropic API), so it sits in env: use a separate key with a spend limit.
+- `ANTHROPIC_API_KEY` cannot be a network secret (proxy never sign Anthropic API), and a session drops it from env, so `env.txt` carry it as `CLOUD_ANTHROPIC_API_KEY` and the hook export it back for commands. use a separate key with a spend limit.
 
 ## Code Style
 

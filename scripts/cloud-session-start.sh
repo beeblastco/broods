@@ -38,8 +38,11 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${CLAUDE_CODE_REMOTE_SESSION_ID:-}" ];
     # Word-split on use: \$BROODS_CLI_DEV whoami. Prod is read-only.
     echo "export BROODS_CLI_DEV='env BROODS_BASE_URL=https://gateway.dev.broods.app BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app BROODS_TOKEN=${BROODS_DEV_TOKEN:-} $cli'"
     echo "export BROODS_CLI_PROD='env BROODS_BASE_URL=https://gateway.broods.app BROODS_DASHBOARD_URL=https://dashboard.broods.app BROODS_TOKEN=${BROODS_PROD_TOKEN:-} $cli'"
+    # A session drops ANTHROPIC_API_KEY from the environment; local:verify
+    # reads it for real-model runs, so cloud-setup ships it under this name.
+    [ -n "${CLOUD_ANTHROPIC_API_KEY:-}" ] && printf 'export ANTHROPIC_API_KEY=%q\n' "$CLOUD_ANTHROPIC_API_KEY"
   } >"$CLAUDE_ENV_FILE.broods"
-  grep -v -e '^export BROODS_CLOUD_PROJECT=' -e '^export BROODS_CLI_' "$CLAUDE_ENV_FILE" 2>/dev/null >"$CLAUDE_ENV_FILE.tmp" || true
+  grep -v -e '^export BROODS_CLOUD_PROJECT=' -e '^export BROODS_CLI_' -e '^export ANTHROPIC_API_KEY=' "$CLAUDE_ENV_FILE" 2>/dev/null >"$CLAUDE_ENV_FILE.tmp" || true
   cat "$CLAUDE_ENV_FILE.tmp" "$CLAUDE_ENV_FILE.broods" >"$CLAUDE_ENV_FILE"
   rm -f "$CLAUDE_ENV_FILE.tmp" "$CLAUDE_ENV_FILE.broods"
 fi

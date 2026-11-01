@@ -27,6 +27,8 @@
 #   BROODS_DEV_TOKEN, BROODS_PROD_TOKEN  env, else the probe's login in test-account
 #   E2E_EMAIL, E2E_PASSWORD  env, else apps/dashboard/.env.local (main checkout's from a worktree)
 #   ANTHROPIC_API_KEY, OPENAI_API_KEY  env only (separate keys with a spend limit)
+# The Anthropic key ships as CLOUD_ANTHROPIC_API_KEY: a cloud session drops an
+# ANTHROPIC_API_KEY from the environment, and the session hook maps it back.
 #
 # Usage: bash scripts/cloud-setup.sh [--login]
 set -euo pipefail
@@ -136,7 +138,7 @@ BROODS_DEV_TOKEN=${dev_token}
 BROODS_PROD_TOKEN=${prod_token}
 E2E_EMAIL=${e2e_email}
 E2E_PASSWORD=${e2e_password}
-ANTHROPIC_API_KEY=${anthropic_key}
+CLOUD_ANTHROPIC_API_KEY=${anthropic_key}
 OPENAI_API_KEY=${openai_key}
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 EOF
