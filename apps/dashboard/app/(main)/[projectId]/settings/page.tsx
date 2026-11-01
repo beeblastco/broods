@@ -4,13 +4,34 @@ import { useStage } from "@/app/hooks/useStage";
 import { pickTab, SETTINGS_TABS } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import dynamic from "next/dynamic";
 import { useParams, useSearchParams } from "next/navigation";
-import { DangerPanel } from "./components/DangerPanel";
-import { EnvironmentVariablesPanel } from "./components/EnvironmentVariablesPanel";
-import { KeysPanel } from "./components/KeysPanel";
-import { PoliciesPanel } from "./components/PoliciesPanel";
 import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
-import { WebhooksPanel } from "./components/WebhooksPanel";
+import {
+  loadDangerPanel,
+  loadEnvironmentVariablesPanel,
+  loadKeysPanel,
+  loadPoliciesPanel,
+  loadWebhooksPanel,
+} from "./panels";
+
+/** The line a panel shows while it queries, held while its chunk loads. */
+function PanelLoading(): React.JSX.Element {
+  return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+// General is the default tab and ships with the page; the others load the
+// first time they are opened. Each passes `loading`, which is what gives it a
+// Suspense boundary of its own: without one its download suspends up to the
+// route's loading.tsx. The option object is spelled out at each call:
+// Turbopack reads it statically.
+const EnvironmentVariablesPanel = dynamic(loadEnvironmentVariablesPanel, {
+  loading: PanelLoading,
+});
+const KeysPanel = dynamic(loadKeysPanel, { loading: PanelLoading });
+const WebhooksPanel = dynamic(loadWebhooksPanel, { loading: PanelLoading });
+const PoliciesPanel = dynamic(loadPoliciesPanel, { loading: PanelLoading });
+const DangerPanel = dynamic(loadDangerPanel, { loading: PanelLoading });
 
 export default function SettingsPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();

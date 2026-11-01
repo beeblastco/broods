@@ -30,6 +30,7 @@ import {
   isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
+import { useEverTrue } from "@/app/hooks/useEverTrue";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
@@ -1908,16 +1909,4 @@ function CanvasInner({
       </div>
     </InfraAnalysisProvider>
   );
-}
-
-/**
- * True from the first render in which `flag` was true. Mounts a lazy
- * component on first use and keeps it mounted, so its close animation and
- * state survive without loading its chunk before it is wanted.
- */
-function useEverTrue(flag: boolean): boolean {
-  const [seen, setSeen] = useState(flag);
-  if (flag && !seen) setSeen(true);
-
-  return seen || flag;
 }

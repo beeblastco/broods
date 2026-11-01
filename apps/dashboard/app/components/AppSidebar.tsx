@@ -6,6 +6,9 @@
  * the project's sections, everywhere else the account's. Collapsed, it is an
  * icon rail that opens over the page while the pointer is on it.
  */
+import { DASHBOARD_PANELS } from "@/app/(main)/[projectId]/dashboard/panels";
+import { SETTINGS_PANELS } from "@/app/(main)/[projectId]/settings/panels";
+import { ORG_PANELS } from "@/app/(main)/settings/org/panels";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import {
   Sidebar,
@@ -43,6 +46,17 @@ import {
   useSearchParams,
 } from "next/navigation";
 import { useEffect } from "react";
+
+// The tabs a page loads in a chunk of its own, by section. Intent to open one
+// (hover, focus, press) starts its chunk, which lands early enough to hide the
+// fetch; nothing is fetched for a tab nobody reaches for.
+const TAB_PANELS: Partial<
+  Record<string, Partial<Record<string, () => Promise<unknown>>>>
+> = {
+  "/dashboard": DASHBOARD_PANELS,
+  "/settings": SETTINGS_PANELS,
+  "/settings/org": ORG_PANELS,
+};
 
 export function AppSidebar(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
@@ -151,27 +165,35 @@ export function AppSidebar(): React.JSX.Element {
                   </SidebarMenuButton>
                   {isActive && activeTab && (
                     <SidebarMenuSub>
-                      {item.tabs.map((tab) => (
-                        <SidebarMenuSubItem key={tab.id}>
-                          <SidebarMenuSubButton
-                            isActive={tab.id === activeTab.id}
-                            variant={tab.danger ? "destructive" : "default"}
-                            render={
-                              <Link
-                                href={tabHref(
-                                  `${base}${item.segment}`,
-                                  tab.id,
-                                  searchParams.toString(),
-                                )}
-                                prefetch={false}
-                                draggable={false}
-                              />
-                            }
-                          >
-                            <span>{tab.label}</span>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      ))}
+                      {item.tabs.map((tab) => {
+                        const load = TAB_PANELS[item.segment]?.[tab.id];
+                        const warm = load ? (): void => void load() : undefined;
+
+                        return (
+                          <SidebarMenuSubItem key={tab.id}>
+                            <SidebarMenuSubButton
+                              isActive={tab.id === activeTab.id}
+                              variant={tab.danger ? "destructive" : "default"}
+                              onMouseEnter={warm}
+                              onFocus={warm}
+                              onPointerDown={warm}
+                              render={
+                                <Link
+                                  href={tabHref(
+                                    `${base}${item.segment}`,
+                                    tab.id,
+                                    searchParams.toString(),
+                                  )}
+                                  prefetch={false}
+                                  draggable={false}
+                                />
+                              }
+                            >
+                              <span>{tab.label}</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        );
+                      })}
                     </SidebarMenuSub>
                   )}
                 </SidebarMenuItem>
