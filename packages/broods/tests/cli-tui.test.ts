@@ -454,3 +454,31 @@ test("Esc before the first part counts the turn as sent", async () => {
     { role: "user", content: [{ type: "text", text: "second" }] },
   ]);
 });
+
+test("a turn queued behind a stopped one streams its answer, not the 202", async () => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: "http://core.test",
+    fetch: Object.assign(
+      async (...[input]: Parameters<typeof fetch>): Promise<Response> =>
+        String(input).endsWith("/status/run_2")
+          ? Response.json({ status: "completed", response: "queued answer" })
+          : Response.json(
+              {
+                statusUrl: "http://core.test/status/run_2",
+                runId: "run_2",
+                status: "queued",
+              },
+              { status: 202 },
+            ),
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+
+  const message = await readTurn(transport, [userMessage("m1", "and then?")]);
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({ type: "text", text: "queued answer" }),
+  );
+});

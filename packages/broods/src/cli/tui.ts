@@ -19,7 +19,11 @@ import {
   type UIMessage,
   type UIMessageChunk,
 } from "ai";
-import type { AgentReference, BroodsClient } from "../client.ts";
+import {
+  IngressAcceptedError,
+  type AgentReference,
+  type BroodsClient,
+} from "../client.ts";
 
 type SendMessagesOptions = Parameters<
   ChatTransport<UIMessage>["sendMessages"]
@@ -176,11 +180,15 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       throw new Error("Nothing new to send: the agent already saw this turn.");
     }
 
-    const stream = this.client.stream(this.agent, {
-      conversationKey: this.conversationKey,
-      events: pending.events as [ModelMessage, ...ModelMessage[]],
-    });
     const turn = { controller: new AbortController(), commit: pending.commit };
+    const stream = queuedAnswer(
+      this.client,
+      this.client.stream(this.agent, {
+        conversationKey: this.conversationKey,
+        events: pending.events as [ModelMessage, ...ModelMessage[]],
+      }),
+      turn.controller.signal,
+    );
     this.activeTurn = turn;
     const signal = options.abortSignal
       ? AbortSignal.any([options.abortSignal, turn.controller.signal])
@@ -257,6 +265,35 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
           this.sentApprovals.add(approval.approvalId);
       },
     };
+  }
+}
+
+/**
+ * A turn sent while core still runs one Esc stopped is queued behind it, and
+ * core answers 202 instead of a stream. Wait for that turn's answer and stream
+ * it as text, rather than showing the 202 as an error.
+ */
+async function* queuedAnswer(
+  client: BroodsClient,
+  stream: AsyncGenerator<TextStreamPart<ToolSet>>,
+  signal: AbortSignal,
+): AsyncGenerator<TextStreamPart<ToolSet>> {
+  try {
+    yield* stream;
+  } catch (error) {
+    if (!(error instanceof IngressAcceptedError)) throw error;
+    const status = await client.waitForAsyncStatus(error.accepted, {
+      signal: signal,
+    });
+    const answer = [status.response, status.result].find(
+      (value): value is string => typeof value === "string",
+    );
+    if (status.status !== "completed" || answer === undefined) {
+      throw new Error(`The queued turn ended ${status.status}.`);
+    }
+    yield { type: "text-start", id: "queued" };
+    yield { type: "text-delta", id: "queued", text: answer };
+    yield { type: "text-end", id: "queued" };
   }
 }
 
