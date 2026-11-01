@@ -66,11 +66,9 @@ const presetOptions: Preset.Options = {
 
 const themeConfig: Preset.ThemeConfig = {
   navbar: {
-    title: "Docs",
     logo: {
       alt: "Broods Logo",
-      src: "img/light-broods-full.svg",
-      srcDark: "img/dark-broods-full.svg",
+      src: "img/logo.svg",
     },
     items: [
       {
