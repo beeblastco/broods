@@ -51,8 +51,12 @@ Two levers on top of the slim core, each switchable on its own:
   ConvexHttpClient; separate task workers race on the head and Convex drops
   the losers (up to a quarter of the rows at 20 users with the fast sandbox).
   `slimFastConfig` (4361) is `slimWarmConfig` plus `per-task/write-queue.js`
-  as every task worker's outbound fetch: one shared worker that sends
-  `usage:recordTaskUsage` one at a time and passes everything else through.
+  as every task worker's outbound fetch: one shared worker that passes
+  everything through except `usage:recordTaskUsage`, which it sends one at a
+  time through a Durable Object. A first version kept the queue as a promise
+  chain in a plain worker; workerd cancels a request left waiting on another
+  request's promise as hung, and most usage rows were lost
+  (`results/fast-final-hung-queue.jsonl`).
 
 `restart-cores.sh` with `SANDBOX_PORT=8791` points both long-lived cores at the
 real-shell sandbox, and `run-scripted.sh` then takes `bun:native` and

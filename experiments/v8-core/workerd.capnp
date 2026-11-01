@@ -162,8 +162,8 @@ const warmBindings :List(Workerd.Worker.Binding) = [
   ];
 
 # The warm router again, with every task worker's outbound fetches going through
-# one shared worker that sends Convex mutations one at a time
-# (per-task/write-queue.js), on 4361 (`workerd serve workerd.capnp slimFastConfig`).
+# one shared worker that sends usage writes one at a time through a Durable
+# Object (per-task/write-queue.js), on 4361 (`workerd serve workerd.capnp slimFastConfig`).
 const slimFastConfig :Workerd.Config = (
   services = [
     (name = "router", worker = .slimFastRouter),
@@ -188,6 +188,9 @@ const writeQueue :Workerd.Worker = (
   modules = [ (name = "write-queue.js", esModule = embed "per-task/write-queue.js") ],
   compatibilityDate = "2026-09-30",
   globalOutbound = "net",
+  durableObjectNamespaces = [ (className = "WriteQueue", uniqueKey = "broods-bench-write-queue") ],
+  durableObjectStorage = (inMemory = void),
+  bindings = [ (name = "QUEUE", durableObjectNamespace = "WriteQueue") ],
 );
 
 const fastBindings :List(Workerd.Worker.Binding) = [
