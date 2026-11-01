@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const oxlintBin = join(repoRoot, "node_modules", ".bin", "oxlint");
@@ -67,6 +67,7 @@ export const lintFixture = (
         rules: { [rule]: ["error", ...(settings.ruleOptions ?? [])] },
       }),
     );
+    mkdirSync(dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, dedent(source));
     const result = Bun.spawnSync(
       [oxlintBin, "--format=json", "-c", configPath, sourcePath],

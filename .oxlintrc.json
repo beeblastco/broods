@@ -3,12 +3,34 @@
   "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "promise"],
   "jsPlugins": ["./oxlint-plugin-broods/index.ts"],
   "categories": {
-    "correctness": "error"
+    "correctness": "error",
+    "perf": "warn"
   },
   "rules": {
     "complexity": ["warn", 20],
+    "broods/no-ad-hoc-type-guards": [
+      "warn",
+      {
+        "allow": [
+          {
+            "file": "packages/convex/model/objects.ts",
+            "name": "isPlainObject"
+          }
+        ]
+      }
+    ],
+    "broods/no-focused-tests": "error",
+    "broods/no-inline-schema-compile": "warn",
     "broods/no-low-value-comments": "warn",
+    "broods/no-test-in-loop": "warn",
+    "broods/require-skip-reason": "warn",
     "broods/require-suppression-reason": "warn",
+    "eslint/no-await-in-loop": "off",
+    "eslint/no-new": "warn",
+    "eslint/no-unneeded-ternary": "error",
+    "oxc/no-accumulating-spread": "warn",
+    "oxc/no-map-spread": "off",
+    "typescript/no-extraneous-class": "error",
     "import/no-cycle": "error",
     "object-shorthand": ["error", "never"],
     "typescript/explicit-module-boundary-types": "error"
@@ -83,6 +105,9 @@
         ],
         "react/exhaustive-deps": "warn",
         "react/set-state-in-effect": "warn",
+        "react/jsx-no-useless-fragment": "warn",
+        "react/no-array-index-key": "warn",
+        "react/no-unstable-nested-components": "error",
         "nextjs/no-img-element": "warn",
         "jsx-a11y/anchor-has-content": "warn",
         "jsx-a11y/click-events-have-key-events": "warn",
@@ -92,6 +117,23 @@
         "jsx-a11y/no-noninteractive-element-interactions": "warn",
         "jsx-a11y/no-static-element-interactions": "warn",
         "jsx-a11y/prefer-tag-over-role": "warn"
+      }
+    },
+    {
+      "files": ["apps/dashboard/**"],
+      "excludeFiles": [
+        "apps/dashboard/e2e/**",
+        "apps/dashboard/tests/**",
+        "**/*.test.{ts,tsx}"
+      ],
+      "rules": {
+        "broods/no-backdrop-blur": "error",
+        "broods/no-continuous-animation": "error",
+        "broods/no-hookless-use-function": "error",
+        "broods/no-layout-transition": "warn",
+        "broods/no-raw-resize-observer": "warn",
+        "broods/no-unreasoned-state-sync": "warn",
+        "broods/no-unscoped-has": "error"
       }
     },
     {
@@ -112,7 +154,9 @@
     {
       "files": ["**/tests/**", "**/*.test.ts", "**/*.test.tsx"],
       "rules": {
+        "broods/no-inline-schema-compile": "off",
         "no-unsafe-optional-chaining": "off",
+        "typescript/no-extraneous-class": "off",
         "require-yield": "off"
       }
     },
@@ -125,6 +169,7 @@
     {
       "files": ["apps/core/sst.config.ts"],
       "rules": {
+        "eslint/no-new": "off",
         "typescript/triple-slash-reference": "off",
         "no-restricted-globals": [
           "error",
