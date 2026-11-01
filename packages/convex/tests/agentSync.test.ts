@@ -133,11 +133,11 @@ describe("backSyncCanvasFromAgentRow", () => {
     const { orgId, accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
 
-    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const agentId = await createAgent(tt, accountId, "agent-one");
 
     const config = await configFor(tt, agentId);
     expect(config).not.toBeNull();
@@ -147,7 +147,7 @@ describe("backSyncCanvasFromAgentRow", () => {
       // The project is created on demand, so an org that never went
       // through dashboard onboarding still gets one, and it is named
       // for the account rather than a random adjective-noun pair.
-      expect(project?.name).toBe("sales-agent-dev");
+      expect(project?.name).toBe("service-dev");
       expect(project?.orgId).toBe(orgId);
 
       const stage = await ctx.db.get(config!.stageId);
@@ -179,15 +179,11 @@ describe("backSyncCanvasFromAgentRow", () => {
     const beeblast = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
 
-    const agentId = await createAgent(
-      tt,
-      beeblast.accountId,
-      "beeblast-agent-cust1",
-    );
+    const agentId = await createAgent(tt, beeblast.accountId, "agent-one");
 
     const config = await configFor(tt, agentId);
     expect(config!.projectId).not.toBe(personalProjectId);
@@ -202,12 +198,12 @@ describe("backSyncCanvasFromAgentRow", () => {
     const { orgId, accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
 
-    const first = await createAgent(tt, accountId, "beeblast-agent-cust1");
-    const second = await createAgent(tt, accountId, "beeblast-agent-cust2");
+    const first = await createAgent(tt, accountId, "agent-one");
+    const second = await createAgent(tt, accountId, "agent-two");
 
     const a = await configFor(tt, first);
     const b = await configFor(tt, second);
@@ -229,8 +225,8 @@ describe("backSyncCanvasFromAgentRow", () => {
     const accountId = await tt.run(
       async (ctx) =>
         await ctx.db.insert("accounts", {
-          orgId: "external:sale-agent-dev",
-          username: "sales-agent-dev",
+          orgId: "external:service-dev",
+          username: "service-dev",
           secretHash: "hash-x",
           status: "active" as const,
           createdAt: Date.now(),
@@ -238,7 +234,7 @@ describe("backSyncCanvasFromAgentRow", () => {
         }),
     );
 
-    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const agentId = await createAgent(tt, accountId, "agent-one");
 
     // The agent still exists and runs; it just has no project. This is the
     // state the two pre-adoption dev agents were in.
@@ -250,15 +246,15 @@ describe("backSyncCanvasFromAgentRow", () => {
     const accountId = await tt.run(
       async (ctx) =>
         await ctx.db.insert("accounts", {
-          orgId: "external:sale-agent-dev",
-          username: "sales-agent-dev",
+          orgId: "external:service-dev",
+          username: "service-dev",
           secretHash: "hash-x",
           status: "active" as const,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         }),
     );
-    const stranded = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const stranded = await createAgent(tt, accountId, "agent-one");
     expect(await configFor(tt, stranded)).toBeNull();
 
     // Adopt the account, then delete and re-create the agent the way the
@@ -279,7 +275,7 @@ describe("backSyncCanvasFromAgentRow", () => {
       await ctx.db.delete(stranded);
     });
 
-    const recreated = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const recreated = await createAgent(tt, accountId, "agent-one");
 
     const config = await configFor(tt, recreated);
     expect(config).not.toBeNull();
@@ -301,14 +297,14 @@ describe("syncApiAgentCanvasWiring", () => {
       const now = Date.now();
       const workspaceId = await ctx.db.insert("workspaceConfigs", {
         accountId: accountId,
-        name: "beeblast-ws-cust1",
+        name: "ws-one",
         config: { storage: { provider: "s3" }, isolation: "conversation" },
         createdAt: now,
         updatedAt: now,
       });
       const sandboxId = await ctx.db.insert("sandboxConfigs", {
         accountId: accountId,
-        name: "beeblast-sandbox",
+        name: "shared-sandbox",
         createdAt: now,
         updatedAt: now,
       });
@@ -333,19 +329,19 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
-    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const agentId = await createAgent(tt, accountId, "agent-one");
     await seedConfig(tt, {
       agentId: agentId,
       config: {
         model: { provider: "custom", modelId: "Qwen3.6-27B" },
         sandboxes: [sandboxId],
         workspaces: [{ name: "memory", workspaceId: workspaceId }],
-        skills: { enabled: true, allowed: ["beeblast/crm-sync"] },
+        skills: { enabled: true, allowed: ["acme/example-skill"] },
       },
     });
 
@@ -374,7 +370,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const sandboxNode = nodes.find((n) => n.type === "sandbox")!;
     expect(sandboxNode.data.resourceId).toBe(sandboxId);
     const skillNode = nodes.find((n) => n.type === "skill")!;
-    expect(skillNode.data.resourceId).toBe("crm-sync");
+    expect(skillNode.data.resourceId).toBe("example-skill");
 
     const edges = layout!.edges as Array<{ source: string; target: string }>;
     for (const target of [workspaceNode.id, sandboxNode.id, skillNode.id]) {
@@ -403,12 +399,12 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
-    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const agentId = await createAgent(tt, accountId, "agent-one");
     /** Writes an encrypted config onto the agent the way an API PATCH does. */
     const seed = (config: Record<string, unknown>) =>
       seedConfig(tt, {
@@ -444,20 +440,20 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
     const { sandboxId } = await seedWiringFixtures(tt, accountId);
     const defaultSandboxId = await tt.run(async (ctx) =>
       ctx.db.insert("sandboxConfigs", {
         accountId: accountId,
-        name: "beeblast-default-sandbox",
+        name: "default-sandbox",
         createdAt: Date.now(),
         updatedAt: Date.now(),
       }),
     );
 
-    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const agentId = await createAgent(tt, accountId, "agent-one");
     const seed = (config: Record<string, unknown>) =>
       seedConfig(tt, {
         agentId: agentId,
@@ -492,12 +488,12 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
-    const first = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const first = await createAgent(tt, accountId, "agent-one");
     await seedConfig(tt, {
       agentId: first,
       config: {
@@ -515,7 +511,7 @@ describe("syncApiAgentCanvasWiring", () => {
         encryptionTag: "bad",
       });
     });
-    const second = await createAgent(tt, accountId, "beeblast-agent-cust2");
+    const second = await createAgent(tt, accountId, "agent-two");
     await seedConfig(tt, {
       agentId: second,
       config: { sandboxes: [sandboxId] },
@@ -626,7 +622,7 @@ describe("ensureAgentsRowForConfig", () => {
     const beeblast = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
 
@@ -693,7 +689,7 @@ describe("ensureAgentsRowForConfig", () => {
     const beeblast = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "sales-agent-dev",
+      username: "service-dev",
       email: "owner@example.com",
     });
 

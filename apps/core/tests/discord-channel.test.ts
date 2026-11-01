@@ -302,7 +302,7 @@ describe("discord channel adapter", () => {
           guild_id: "guild-1",
           mentions: [],
           mention_roles: [],
-          author: { id: "user-2", username: "minh", bot: false },
+          author: { id: "user-2", username: "sam", bot: false },
         },
       }),
     );
@@ -318,7 +318,7 @@ describe("discord channel adapter", () => {
       { type: "text", text: "ada: ship the fix" },
     ]);
     expect(overheard.message.content).toEqual([
-      { type: "text", text: "minh: deploys are frozen until the postmortem" },
+      { type: "text", text: "sam: deploys are frozen until the postmortem" },
     ]);
     expect(overheard.ack?.statusCode).toBe(200);
   });
@@ -371,7 +371,7 @@ describe("discord channel adapter", () => {
           guild_id: "guild-1",
           mentions: [
             { id: "bot-9", username: "nhi" },
-            { id: "user-2", username: "minh" },
+            { id: "user-2", username: "sam" },
           ],
           mention_roles: [],
           author: { id: "user-1", username: "ada", bot: false },
@@ -398,7 +398,7 @@ describe("discord channel adapter", () => {
     }
 
     expect(mention.message.content).toEqual([
-      { type: "text", text: "ada: ask @minh about the rollback" },
+      { type: "text", text: "ada: ask @sam about the rollback" },
     ]);
     // Attribution would push the token off the front and break /new.
     expect(command.message.content).toEqual([{ type: "text", text: "/new" }]);
