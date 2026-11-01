@@ -1,0 +1,70 @@
+name: Agent context budget
+
+# Fails when a pull request raises a value in apps/core/tests/agent-context-budget.json
+# above its base branch's. agent-context-budget.test.ts (run by ci.yaml) keeps
+# that file equal to the bytes core sends the model, so the context cannot grow
+# by editing the file alone. To accept growth on purpose, a maintainer adds the
+# agent-context-increase label.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# A label change or a new push replaces the run before it.
+concurrency:
+  group: agent-context-budget-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Each job grants only the token permissions it needs.
+permissions: {}
+
+jobs:
+  budget:
+    name: Agent context budget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      BUDGET: apps/core/tests/agent-context-budget.json
+      ALLOW_INCREASE: ${{ contains(github.event.pull_request.labels.*.name, 'agent-context-increase') }}
+    steps:
+      # Only the one file, from both sides: nothing is installed or run.
+      - name: Checkout the pull request budget
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: head
+          sparse-checkout: ${{ env.BUDGET }}
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Checkout the base branch budget
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+          sparse-checkout: ${{ env.BUDGET }}
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Compare with the base branch
+        run: |
+          if [ ! -f "base/$BUDGET" ]; then
+            echo "$GITHUB_BASE_REF has no agent context budget yet."
+            exit 0
+          fi
+          grown=$(jq -r --slurpfile base "base/$BUDGET" '
+            to_entries[]
+            | select($base[0][.key] != null and .value > $base[0][.key])
+            | "\(.key): \($base[0][.key]) -> \(.value) (+\(.value - $base[0][.key]))"
+          ' "head/$BUDGET")
+          if [ -z "$grown" ]; then
+            echo "Agent context is not larger than $GITHUB_BASE_REF."
+            exit 0
+          fi
+          printf 'Agent context grew compared to %s:\n%s\n' "$GITHUB_BASE_REF" "$grown"
+          if [ "$ALLOW_INCREASE" = "true" ]; then
+            echo "Accepted by the agent-context-increase label."
+            exit 0
+          fi
+          echo "::error file=$BUDGET::Agent context grew compared to $GITHUB_BASE_REF. Cut the added text, or ask a maintainer to add the agent-context-increase label."
+          exit 1
