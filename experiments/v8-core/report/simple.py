@@ -51,6 +51,7 @@ tpm_last = per_minute(old, "isolate+v8-slim")
 tpm_now = per_minute(final, "isolate+v8-fast")
 tpm_now_10 = per_minute(final, "isolate+v8-fast", 10)
 tpm_engine = per_minute(final, "workerd+native")
+tpm_today_shell = per_minute(final, "bun+native")
 tpm_warm_only = per_minute(levers, "isolate+v8-warm")
 tpm_shell_only = per_minute(levers, "isolate+v8-slim-native")
 
@@ -58,6 +59,8 @@ cpu_last = cpu_per_task(old, "isolate+v8-slim")
 cpu_now = cpu_per_task(final, "isolate+v8-fast")
 cpu_today = cpu_per_task(final, "bun+machine")
 cpu_engine = cpu_per_task(final, "workerd+native")
+convex_today = statistics.fmean(r["convexCallsPerTask"] for r in batches(final, "bun+machine", 20))
+convex_shell = statistics.fmean(r["convexCallsPerTask"] for r in batches(final, "bun+native", 20))
 sbx_js = cpu_per_task(levers, "isolate+v8-warm", "sandboxCpuMs")
 sbx_shell = cpu_per_task(levers, "isolate+v8-warm-native", "sandboxCpuMs")
 
@@ -232,6 +235,7 @@ a { color: var(--accent); }
 speedup = tpm_now / tpm_last
 share_10 = tpm_now_10 / tpm_today_10
 share_20 = tpm_now / tpm_today
+same_sandbox_gap = 1 - tpm_now / tpm_today_shell
 
 page = f"""<title>Broods task isolates</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -244,7 +248,7 @@ page = f"""<title>Broods task isolates</title>
 <h1>Your idea: one small worker per task</h1>
 <div class="answer">
 <p>Yes, it got a lot faster: {speedup:.1f} times faster than last time.</p>
-<p>With 10 users at once it now keeps up with today ({share_10 * 100:.0f}% of today's speed). With 20 users it does {share_20 * 100:.0f}%. With the real AI model a task takes {real_now:.0f} s, against {real_today:.0f} s today.</p>
+<p>With 10 users at once it keeps up with today ({share_10 * 100:.0f}% of today's speed); with 20 users it does {share_20 * 100:.0f}%. Put today's server on the same sandbox and your idea is only {same_sandbox_gap * 100:.0f}% behind it. With the real AI model a task takes {real_now:.0f} s, against {real_today:.0f} s today.</p>
 </div>
 </section>
 
@@ -274,7 +278,13 @@ page = f"""<title>Broods task isolates</title>
 
 <section>
 <h2>Why 20 users is still a bit slower</h2>
-<p>It is the worker engine, not your idea. Broods on one always-on copy of the same engine, with no per-agent workers, also does {tpm_engine:.0f} tasks a minute. That engine uses about {cpu_engine / cpu_today:.1f} times today's computer time for the same task, and it runs on one CPU core. The fix is to run one engine per core and spread the agents over them, which is how Cloudflare runs it.</p>
+<p>Mostly the sandbox route, not your idea. I ran two checks on the same real-shell sandbox, with 20 users:</p>
+<ul>
+<li>Today's server: {tpm_today_shell:.0f} tasks a minute, down from {tpm_today:.0f}. Reaching a sandbox this way costs {convex_shell - convex_today:.0f} more database calls per task to book it.</li>
+<li>One always-on copy of the worker engine, with no per-agent workers: {tpm_engine:.0f}.</li>
+<li>Your idea, one worker per agent: {tpm_now:.0f}.</li>
+</ul>
+<p>So giving every agent its own worker now costs very little. Two next steps: book the sandbox once per task (the sandbox route books it in the database for every command), and run one worker engine per CPU core. Each agent's worker stands alone, so agents can be spread over cores or machines; today's server can't split that way yet, because its tasks share its memory.</p>
 </section>
 
 <section>
