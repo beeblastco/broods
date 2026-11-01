@@ -16,7 +16,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Repo = FunctionReturnType<typeof api.github.listRepos>[number];
 
@@ -50,6 +50,11 @@ export function RepoPicker({
   const inspectRepo = useAction(api.github.inspectRepo);
   const [repos, setRepos] = useState<Repo[] | null>(null);
   const [roots, setRoots] = useState<Root[] | null>(null);
+  // The repo the select shows; `value` stays null until its scan lands.
+  const [picked, setPicked] = useState<string | null>(
+    value ? String(value.repoId) : null,
+  );
+  const latestPick = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const installationCount = status?.installations.length ?? 0;
 
@@ -69,23 +74,22 @@ export function RepoPicker({
     };
   }, [installationCount, listRepos, projectId]);
 
+  // Publishes the choice only once its scan lands, and only for the latest pick.
   async function pickRepo(repoKey: string): Promise<void> {
     const repo = repos?.find((entry) => String(entry.repoId) === repoKey);
     if (!repo) return;
+    const pick = ++latestPick.current;
+    setPicked(repoKey);
     setRoots(null);
     setError(null);
-    onChange({
-      installationId: repo.installationId,
-      repoId: repo.repoId,
-      fullName: repo.fullName,
-      rootDirectory: "",
-    });
+    onChange(null);
     try {
       const inspected = await inspectRepo({
         projectId: projectId,
         installationId: repo.installationId,
         repoId: repo.repoId,
       });
+      if (pick !== latestPick.current) return;
       setRoots(inspected.roots);
       onChange({
         installationId: repo.installationId,
@@ -94,7 +98,7 @@ export function RepoPicker({
         rootDirectory: inspected.roots[0]?.rootDirectory ?? "",
       });
     } catch (err) {
-      setError(toErrorMessage(err));
+      if (pick === latestPick.current) setError(toErrorMessage(err));
     }
   }
 
@@ -123,7 +127,7 @@ export function RepoPicker({
             value: String(repo.repoId),
             label: repo.fullName,
           }))}
-          value={value ? String(value.repoId) : null}
+          value={picked}
           onValueChange={(next) => {
             if (next !== null) void pickRepo(next);
           }}
@@ -150,53 +154,11 @@ export function RepoPicker({
           </SelectContent>
         </Select>
       </div>
+      {picked && roots === null && !error && (
+        <p className="text-xs text-muted-foreground">Scanning for broods/...</p>
+      )}
       {value && roots !== null && (
-        <div className="grid gap-1">
-          <Label htmlFor="repo-root" variant="muted" className="text-xs">
-            Folder holding broods/
-          </Label>
-          {roots.length > 1 ? (
-            <Select
-              items={roots.map((root) => ({
-                value: root.rootDirectory,
-                label: root.rootDirectory || "/",
-              }))}
-              value={value.rootDirectory}
-              onValueChange={(next) => {
-                if (next !== null) onChange({ ...value, rootDirectory: next });
-              }}
-            >
-              <SelectTrigger id="repo-root" className="w-full cursor-pointer">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {roots.map((root) => (
-                  <SelectItem
-                    key={root.rootDirectory}
-                    value={root.rootDirectory}
-                    className="cursor-pointer"
-                  >
-                    {root.rootDirectory || "/"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <Input
-              id="repo-root"
-              value={value.rootDirectory}
-              placeholder="/ (repo root)"
-              onChange={(event) =>
-                onChange({ ...value, rootDirectory: event.target.value })
-              }
-            />
-          )}
-          <p className="text-xs text-muted-foreground">
-            {roots.length === 0
-              ? "No broods/ found yet. Pushes deploy once one exists here."
-              : `Found broods/ in ${roots.length === 1 ? roots[0]?.rootDirectory || "the repo root" : `${roots.length} folders`}.`}
-          </p>
-        </div>
+        <RootField value={value} roots={roots} onChange={onChange} />
       )}
       {status.canConnect && <ConnectGitHubButton label="Add GitHub account" />}
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -246,6 +208,66 @@ export function ConnectGitHubButton({
         </p>
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+// The folder holding broods/: a pick between the folders the scan found, or typed when it found none or one.
+function RootField({
+  value,
+  roots,
+  onChange,
+}: {
+  value: RepoChoice;
+  roots: Root[];
+  onChange: (choice: RepoChoice) => void;
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-1">
+      <Label htmlFor="repo-root" variant="muted" className="text-xs">
+        Folder holding broods/
+      </Label>
+      {roots.length > 1 ? (
+        <Select
+          items={roots.map((root) => ({
+            value: root.rootDirectory,
+            label: root.rootDirectory || "/",
+          }))}
+          value={value.rootDirectory}
+          onValueChange={(next) => {
+            if (next !== null) onChange({ ...value, rootDirectory: next });
+          }}
+        >
+          <SelectTrigger id="repo-root" className="w-full cursor-pointer">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {roots.map((root) => (
+              <SelectItem
+                key={root.rootDirectory}
+                value={root.rootDirectory}
+                className="cursor-pointer"
+              >
+                {root.rootDirectory || "/"}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          id="repo-root"
+          value={value.rootDirectory}
+          placeholder="/ (repo root)"
+          onChange={(event) =>
+            onChange({ ...value, rootDirectory: event.target.value })
+          }
+        />
+      )}
+      <p className="text-xs text-muted-foreground">
+        {roots.length === 0
+          ? "No broods/ found yet. Pushes deploy once one exists here."
+          : `Found broods/ in ${roots.length === 1 ? roots[0]?.rootDirectory || "the repo root" : `${roots.length} folders`}.`}
+      </p>
     </div>
   );
 }

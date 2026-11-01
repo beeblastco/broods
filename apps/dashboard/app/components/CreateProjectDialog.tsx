@@ -25,6 +25,7 @@ import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { markProjectCreated } from "@/app/lib/createdProject";
 import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { analytics } from "@/app/lib/analytics";
@@ -69,6 +70,8 @@ export function CreateProjectDialog({
   const github = useQuery(api.github.status, open ? {} : "skip");
   const router = useRouter();
   const [source, setSource] = useState<Source>("empty");
+  // The project a failed link or GitHub hop already made, reused on retry.
+  const [createdId, setCreatedId] = useState<Id<"projects"> | null>(null);
   const [repo, setRepo] = useState<RepoChoice | null>(null);
   const [owner, setOwner] = useState<string | null>(null);
   const [isPrivate, setIsPrivate] = useState(true);
@@ -104,6 +107,7 @@ export function CreateProjectDialog({
       setError(null);
       setSource("empty");
       setRepo(null);
+      setCreatedId(null);
     }
     onOpenChange(next);
   }
@@ -115,14 +119,16 @@ export function CreateProjectDialog({
     const endpoint = resolveCoreEndpoint();
     try {
       if (source !== "empty" && !endpoint.ok) throw new Error(endpoint.message);
-      const id = await createProject({
-        name: name.trim(),
-        description: undefined,
-      });
-      void analytics.then((posthog): void => {
-        posthog.capture("project_created", { source: source });
-      });
-      markProjectCreated(id);
+      const id =
+        createdId ??
+        (await createProject({ name: name.trim(), description: undefined }));
+      if (!createdId) {
+        setCreatedId(id);
+        void analytics.then((posthog): void => {
+          posthog.capture("project_created", { source: source });
+        });
+        markProjectCreated(id);
+      }
       const baseUrl = endpoint.ok ? endpoint.httpBaseUrl : "";
       if (source === "new" && owner) {
         // GitHub signs the user in, then the callback creates and links the repo.
