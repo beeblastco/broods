@@ -328,7 +328,7 @@ describe("step boundary", (): void => {
     });
   });
 
-  it("carries a status read's result id on the row of its tool result only", async (): Promise<void> => {
+  it("carries a status read's result id on the row of its tool result, unless the call failed", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (
       name: string,
@@ -345,6 +345,8 @@ describe("step boundary", (): void => {
       ownerGeneration: 1,
     });
     await session.recordToolResultRead("call-read", "async_tool_1");
+    // A tool.result hook threw after this read, so the model got an error.
+    await session.recordToolResultRead("call-failed", "async_tool_2");
 
     await session.stepBoundary([
       {
@@ -362,6 +364,12 @@ describe("step boundary", (): void => {
             toolName: "bash",
             input: {},
           },
+          {
+            type: "tool-call",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            input: { statusId: "async_tool_2" },
+          },
         ],
       },
       {
@@ -378,6 +386,12 @@ describe("step boundary", (): void => {
             toolCallId: "call-other",
             toolName: "bash",
             output: { type: "text", value: "ok" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            output: { type: "error-text", value: "hook unavailable" },
           },
         ],
       },

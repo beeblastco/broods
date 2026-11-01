@@ -1225,7 +1225,12 @@ async function storedResultAdmission(
       )
       .first();
     if (stored) {
-      await markResultStored(ctx, result.accountId, result);
+      await markResultStored(
+        ctx,
+        result.accountId,
+        args.conversationKey,
+        result,
+      );
 
       return { outcome: "duplicate" as const, eventId: args.eventId };
     }
@@ -1405,8 +1410,8 @@ function ingressStatusResult(
  * Inserts history rows for an owner the fence just accepted, all or none. The
  * write saves what the owner was handed, so after a resume's hand-over it
  * stores the result of each resume the owner is processing, and it completes
- * each queued resume of a result an `async_status` read in it stored: the
- * history tells both now.
+ * each queued resume of a result the write stored: the history tells both
+ * now.
  * @returns the coordinator, with its queue counters current
  */
 async function insertOwnedEvents(
@@ -1416,7 +1421,7 @@ async function insertOwnedEvents(
 ): Promise<Doc<"runtimeConversationCoordinators">> {
   let coordinator = owner;
   await requireActiveAccount(ctx, coordinator.accountId);
-  const storedReads = await insertConversationEvents(
+  const stored = await insertConversationEvents(
     ctx,
     coordinator.accountId,
     coordinator.conversationKey,
@@ -1439,14 +1444,16 @@ async function insertOwnedEvents(
     await ctx.db.patch(coordinator._id, { resumeUnsaved: undefined });
     coordinator = { ...coordinator, resumeUnsaved: undefined };
   }
-  if (storedReads.length === 0) return coordinator;
+  if (stored.length === 0) return coordinator;
   const now = Date.now();
   const queue = {
     queuedCount: coordinator.queuedCount,
     queuedBytes: coordinator.queuedBytes,
   };
   for (const row of await queuedPage(ctx, coordinator)) {
-    if (!row.toolResultId || !storedReads.includes(row.toolResultId)) continue;
+    if (!stored.some((fence): boolean => resumesSameResult(row, fence))) {
+      continue;
+    }
     await ctx.db.patch(row._id, {
       ...RELEASED_PAYLOAD,
       status: "completed",
@@ -1652,17 +1659,19 @@ async function markDeliveredResultsStored(
   ctx: MutationCtx,
   envelope: Pick<
     Doc<"runtimeIngressEnvelopes">,
-    "accountId" | "resultEventId" | "toolResultId"
+    "accountId" | "conversationKey" | "resultEventId" | "toolResultId"
   >,
 ): Promise<void> {
   await markResultStored(
     ctx,
     envelope.accountId,
+    envelope.conversationKey,
     await asyncAgentResultRow(ctx, envelope.resultEventId),
   );
   await markResultStored(
     ctx,
     envelope.accountId,
+    envelope.conversationKey,
     await asyncToolResultRow(ctx, envelope.toolResultId),
   );
 }

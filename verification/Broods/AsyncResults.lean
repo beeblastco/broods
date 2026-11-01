@@ -260,7 +260,8 @@ inductive HandbackCall where
   resume's envelope expires with its lease, writing nothing to the row. -/
   | crash
   /-- The parent's own append of the result (`insertConversationEvents`), which
-  stores the row in the same transaction. -/
+  stores the row and completes a resume of it still queued, in the same
+  transaction (`insertOwnedEvents`). -/
   | append
   /-- `runtimeIngress.accept` with `resultEventId`, the late resume, under any key;
   `room` is whether the conversation's queue has room for it, `stored` whether the
@@ -288,7 +289,8 @@ structure Handback where
   deriving DecidableEq, Repr
 
 /-- One call in its own transaction: the new state, and whether it told the parent the
-result, which only a save does, of a read or of an applied resume. A save of a stored
+result, which only a history write does: the parent's append, or a save of a read or of
+an applied resume. A save of a stored
 row tells nothing new. A resume is admitted only while the row is not stored and none
 of it is queued or applied (`liveResumeOf`). A resume of a result the conversation
 already stores is refused and marks the row stored. -/
@@ -300,7 +302,7 @@ def Handback.step (h : Handback) : HandbackCall → Handback × Bool
     if h.read || h.live then (⟨.stored, false, false, false⟩, h.state != .stored)
     else (h, false)
   | .crash => ({ h with read := false, live := false }, false)
-  | .append => ({ h with state := .stored }, false)
+  | .append => ({ h with state := .stored, queued := false }, h.state != .stored)
   | .resume room stored busy =>
     if h.state == .stored || h.queued || h.live then (h, false)
     else if stored then ({ h with state := .stored }, false)
@@ -526,6 +528,13 @@ stored, so the next resume tells the parent. -/
 example :
     (Handback.mk .detached false false false).told
         [.resume true false false, .crash, .resume true false false, .save] = 1 := by
+  decide
+
+/-- The parent appends the result while a resume of it waits in the queue: the append
+completes the resume, so the parent is told once. -/
+example :
+    (Handback.mk .detached false false false).told
+        [.resume true false true, .append, .apply, .save] = 1 := by
   decide
 
 /-- The run completes and its cron settle throws: both rows stay completed. -/

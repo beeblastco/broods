@@ -66,6 +66,9 @@ export const conversationEventsValidator = v.array(
   }),
 );
 
+/** The late result a resume envelope carries, as its fence fields name it. */
+export type ResultFence = { resultEventId: string } | { toolResultId: string };
+
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
@@ -200,18 +203,18 @@ export const appendConversationEvent = internalMutation({
  * was lost, so the retry must not store it again. A row keyed as a subagent
  * or async tool result marks that result's hand-back stored in the transaction
  * that inserts it, so the row and the flag can never disagree. So does each of
- * a row's `toolResultIds`, when the result is a finished one of this
- * conversation and account.
- * @returns the `toolResultIds` it stored, whose queued resumes the history now
- *   tells instead
+ * a row's `toolResultIds`. Only a result of this account and conversation
+ * moves.
+ * @returns the results it stored, whose queued resumes the history now tells
+ *   instead
  */
 export async function insertConversationEvents(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   conversationKey: string,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<string[]> {
-  const storedReads: string[] = [];
+): Promise<ResultFence[]> {
+  const stored: ResultFence[] = [];
   for (const { toolResultIds, ...entry } of events) {
     if (
       entry.dedupeKey !== undefined &&
@@ -235,34 +238,35 @@ export async function insertConversationEvents(
       entry.dedupeKey === undefined
         ? undefined
         : parseHandbackDedupeKey(entry.dedupeKey);
-    if (handback?.kind === "subagent") {
-      await markResultStored(
+    const rows = [
+      handback?.kind === "subagent"
+        ? await asyncAgentResultRow(ctx, handback.eventId)
+        : null,
+      await asyncToolResultRow(
         ctx,
-        accountId,
-        await asyncAgentResultRow(ctx, handback.eventId),
-      );
-    } else if (handback?.kind === "async-tool") {
-      await markResultStored(
-        ctx,
-        accountId,
-        await asyncToolResultRow(ctx, handback.resultId),
-      );
-    }
-    for (const resultId of toolResultIds ?? []) {
-      const row = await asyncToolResultRow(ctx, resultId);
+        handback?.kind === "async-tool" ? handback.resultId : undefined,
+      ),
+      ...(await Promise.all(
+        (toolResultIds ?? []).map((resultId) =>
+          asyncToolResultRow(ctx, resultId),
+        ),
+      )),
+    ];
+    for (const row of rows) {
       if (
-        row?.conversationKey !== conversationKey ||
-        row.accountId !== accountId ||
-        row.status === "processing"
+        row &&
+        (await markResultStored(ctx, accountId, conversationKey, row))
       ) {
-        continue;
+        stored.push(
+          "resultId" in row
+            ? { toolResultId: row.resultId }
+            : { resultEventId: row.eventId },
+        );
       }
-      await markResultStored(ctx, accountId, row);
-      storedReads.push(resultId);
     }
   }
 
-  return storedReads;
+  return stored;
 }
 
 /**
@@ -631,19 +635,29 @@ export async function asyncAgentResultRow(
 }
 
 /**
- * Marks a subagent or async tool result's hand-back stored inside the
- * transaction that delivers it: the parent's append of the result row, or the
- * resume carrying it taking its owner (`accept` as owner, or the apply of a
- * queued one). Only when the row is `accountId`'s own and not stored already.
+ * Marks a subagent or async tool result's hand-back stored inside the history
+ * write of `conversationKey` that saves it: the parent's append of the result
+ * row, a saved `async_status` read, or the owner's save of a resume carrying
+ * it. Only a row of `accountId` told to `conversationKey` moves: a subagent's
+ * parent conversation, an async tool's own.
+ * @returns whether the row is that conversation's, stored now
  */
 export async function markResultStored(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
+  conversationKey: string,
   row: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults"> | null,
-): Promise<void> {
-  if (row?.accountId === accountId && row.handback !== "stored") {
+): Promise<boolean> {
+  const told =
+    row !== null && "resultId" in row
+      ? row.conversationKey
+      : row?.subagent?.parentConversationKey;
+  if (row?.accountId !== accountId || told !== conversationKey) return false;
+  if (row.handback !== "stored") {
     await ctx.db.patch(row._id, { handback: "stored" });
   }
+
+  return true;
 }
 
 /**

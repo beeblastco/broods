@@ -38,12 +38,12 @@ function conversationKeyFor(accountId: string): string {
 }
 
 // The conversation's current owner saving one step, as core does with the
-// envelopes it was handed, carrying the results its `async_status` reads
-// handed over.
+// envelopes it was handed: a row carrying the results its `async_status`
+// reads handed over, or keyed as the parent's own append of a result.
 async function saveOwnerStep(
   t: TestConvex<typeof schema>,
   conversationKey: string,
-  toolResultIds: string[] = [],
+  row: { toolResultIds?: string[]; dedupeKey?: string } = {},
 ): Promise<void> {
   const owner = await t.run(
     async (ctx) =>
@@ -64,7 +64,7 @@ async function saveOwnerStep(
       {
         cursor: `step-${crypto.randomUUID()}`,
         event: { role: "tool", content: [] },
-        ...(toolResultIds.length > 0 ? { toolResultIds: toolResultIds } : {}),
+        ...row,
       },
     ],
   });
@@ -2950,7 +2950,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       expect(await resume()).toMatchObject({ outcome: "queued" });
       expect(await queuedCount(t, conversationKey)).toBe(1);
 
-      await saveOwnerStep(t, conversationKey, ["late"]);
+      await saveOwnerStep(t, conversationKey, { toolResultIds: ["late"] });
 
       expect(await kind.handback(t, "late")).toBe("stored");
       expect(await resumeEnvelope(t, conversationKey)).toMatchObject({
@@ -3000,7 +3000,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
         }),
       );
 
-      await saveOwnerStep(t, otherKey, ["late"]);
+      await saveOwnerStep(t, otherKey, { toolResultIds: ["late"] });
 
       expect(await kind.handback(t, "late")).toBe(before);
       expect(await resumeEnvelope(t, conversationKey)).toMatchObject({
@@ -3009,6 +3009,46 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       expect(await queuedCount(t, conversationKey)).toBe(1);
     },
   );
+
+  // The key the parent's own append of the finished result carries.
+  const appendKey = (id: string): string =>
+    "resultEventId" in kind.fence(id)
+      ? subagentResultDedupeKey(id, "completed")
+      : asyncToolResultDedupeKey(id, "completed");
+
+  test("the parent's own append completes a queued resume of the result", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+    expect(await resume()).toMatchObject({ outcome: "queued" });
+
+    await saveOwnerStep(t, conversationKey, { dedupeKey: appendKey("late") });
+
+    expect(await kind.handback(t, "late")).toBe("stored");
+    expect(await resumeEnvelope(t, conversationKey)).toMatchObject({
+      status: "completed",
+    });
+    expect(await queuedCount(t, conversationKey)).toBe(0);
+    expect(await kind.apply(t, conversationKey, ownerGeneration)).toBeNull();
+  });
+
+  test("an append in another conversation keyed as the result leaves it alone", async (): Promise<void> => {
+    const { t, accountId, conversationKey } = await busyConversation();
+    const before = await kind.handback(t, "late");
+    const otherKey = `${conversationKey}-other`;
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: otherKey,
+        eventId: "other",
+        mode: "followup",
+      }),
+    );
+
+    await saveOwnerStep(t, otherKey, { dedupeKey: appendKey("late") });
+
+    expect(await kind.handback(t, "late")).toBe(before);
+  });
 
   test("answers a retry whose payload drifted as a duplicate while the first still waits", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =

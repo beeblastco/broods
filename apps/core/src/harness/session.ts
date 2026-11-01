@@ -99,6 +99,13 @@ const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 // events reach long before the byte cap does.
 const APPEND_EVENT_COUNT = 8_000;
 const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+// Tool outputs that hand the model no result: a hook or the run turned the
+// call into an error or a denial, so a status read in it stores nothing.
+const UNDELIVERED_OUTPUTS: ReadonlySet<string> = new Set([
+  "error-text",
+  "error-json",
+  "execution-denied",
+]);
 // How old the last ownership proof may be before a periodic check reads Convex
 // again. Ownership moves only through this run's own hand-off or lease expiry,
 // and a successful fenced write proves it as well as a read does.
@@ -1440,7 +1447,8 @@ export class Session {
 
     return message.content.flatMap((part): string[] => {
       const resultId =
-        part.type === "tool-result"
+        part.type === "tool-result" &&
+        !UNDELIVERED_OUTPUTS.has(part.output.type)
           ? this.toolResultReads.get(part.toolCallId)
           : undefined;
 
