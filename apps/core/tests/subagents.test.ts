@@ -72,7 +72,12 @@ interface CoordinatorInternals {
   completeAskedRun: (
     childSession: unknown,
     task: unknown,
-    question: string,
+    message: {
+      text: string;
+      exchangeId: string;
+      followUp: boolean;
+      waitSeconds?: number;
+    },
   ) => Promise<void>;
   createChildTurnContext(
     childSession: unknown,
@@ -473,7 +478,9 @@ describe("SubagentCoordinator", () => {
     expect(messageText(question)).toContain(
       "conversationKey: child_subagent_1",
     );
-    expect(messageText(question)).toContain("run_subagent");
+    expect(messageText(question)).toContain(
+      'message-agents to "agent_research/child_subagent_1"',
+    );
     expect(persistModelMessages.mock.calls[0]?.[2]).toEqual([
       "subagent:event_subagent_1:awaiting_input",
     ]);
@@ -1439,7 +1446,7 @@ describe("SubagentCoordinator", () => {
 
       expect(messages).toHaveLength(1);
       expect(messageText(messages[0])).toContain("Which region?");
-      expect(messageText(messages[0])).toContain("Subagent question");
+      expect(messageText(messages[0])).toContain("Subagent message");
     } finally {
       pages.mockRestore();
     }
@@ -1748,7 +1755,7 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("records a child's ask_parent as its awaiting_input outcome and queues it for the parent", async () => {
+  it("records a child's wait on its parent as its awaiting_input outcome and queues it for the parent", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
@@ -1772,16 +1779,21 @@ describe("SubagentCoordinator", () => {
       releaseConversationLease: async (): Promise<void> => {},
     };
 
-    await internals.completeAskedRun(childSession, task, "Which region?");
+    await internals.completeAskedRun(childSession, task, {
+      text: "Which region?",
+      exchangeId: "ex_1",
+      followUp: false,
+      waitSeconds: 3600,
+    });
 
-    // Pruning drops the ask_parent call from later turns; this line survives.
+    // Pruning drops the message-agents call from later turns; this line survives.
     expect(persistModelMessages.mock.calls[0]?.[0]).toEqual([
       {
         role: "assistant",
         content: [
           {
             type: "text",
-            text: "I asked my parent and am waiting for the reply: Which region?",
+            text: "I messaged my parent and am waiting for the reply (exchange ex_1): Which region?",
           },
         ],
       },
@@ -2472,6 +2484,210 @@ const LOST_TASK_IDS = new Map<string, string>();
 
 // A finished subagent row a parent stopped waiting on, the same for each
 // `name`: its task, and so its parent conversation, is its own.
+describe("message-agents in the coordinator", () => {
+  const UUID = "11111111-2222-4333-8444-555555555555";
+
+  async function persistentCoordinator(
+    mutate: (name: string, args: Record<string, unknown>) => unknown,
+  ) {
+    spyOn(runtime, "mutate").mockImplementation(
+      mock(async (name: string, args: Record<string, unknown>) =>
+        mutate(name, args),
+      ) as never,
+    );
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const key: string = coordinator["mintChildKey"]("account_1", UUID);
+    const dispatched: Array<Record<string, unknown>> = [];
+    coordinator.dispatch = mock(
+      async (tasks: Array<Record<string, unknown>>) => {
+        dispatched.push(...tasks);
+
+        return { tasks: [] };
+      },
+    ) as never;
+
+    return {
+      coordinator: coordinator,
+      internals: coordinator as unknown as CoordinatorInternals,
+      address: `virtual_subagent_${UUID}/${key}`,
+      key: key,
+      dispatched: dispatched,
+    };
+  }
+
+  function agentMessage(overrides: Record<string, unknown> = {}) {
+    return {
+      text: "status?",
+      exchangeId: "ex_1",
+      followUp: false,
+      ...overrides,
+    };
+  }
+
+  it("steers a running child, then stops waiting on it at the wait's end", async () => {
+    const accepted: Array<Record<string, unknown>> = [];
+    const { coordinator, internals, address, key } =
+      await persistentCoordinator((name, args) => {
+        if (name === "acceptIngress") accepted.push(args);
+
+        return name === "acceptIngress" ? { outcome: "queued" } : true;
+      });
+    internals.pending.set("subagent_1", new Promise<void>(() => {}));
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: `virtual_subagent_${UUID}`,
+      conversationKey: key,
+    });
+
+    expect(
+      await coordinator.messageChild(
+        address,
+        agentMessage({ waitSeconds: 0.02 }),
+      ),
+    ).toMatchObject({ status: "delivered", exchangeId: "ex_1" });
+    expect(accepted[0]).toMatchObject({
+      activeOwnerOnly: true,
+      requestedMode: "steer",
+      conversationKey: `acct:account_1:agent:virtual_subagent_${UUID}:api:${key}`,
+    });
+    expect(await coordinator.waitForIdle()).toBe("idle");
+    expect(internals.completions).toEqual([
+      expect.objectContaining({ taskId: "subagent_1", status: "running" }),
+    ]);
+  });
+
+  it("tells the parent a child running outside this turn replies later, instead of waiting on it", async () => {
+    const { coordinator, internals, address } = await persistentCoordinator(
+      (name) => (name === "acceptIngress" ? { outcome: "queued" } : true),
+    );
+
+    // The steer lands, but no child of this coordinator owns the conversation.
+    expect(
+      await coordinator.messageChild(
+        address,
+        agentMessage({ waitSeconds: 60 }),
+      ),
+    ).toMatchObject({
+      status: "delivered",
+      note: expect.stringContaining("arrives as a later message"),
+    });
+    expect(internals.pending.size).toBe(0);
+    expect(await coordinator.waitForIdle()).toBe("idle");
+  });
+
+  it("resumes an idle child, and refuses once the family spent its wake budget", async () => {
+    const { coordinator, address, dispatched } = await persistentCoordinator(
+      (name) => (name === "acceptIngress" ? { outcome: "not_running" } : true),
+    );
+
+    expect(
+      await coordinator.messageChild(address, agentMessage()),
+    ).toMatchObject({ status: "resumed" });
+    expect(dispatched[0]).toEqual({
+      conversationKey: address.slice(address.indexOf("/") + 1),
+      prompt: expect.stringContaining("status?"),
+    });
+    for (let index = 1; index < 40; index += 1) {
+      await coordinator.messageChild(address, agentMessage());
+    }
+    expect(
+      await coordinator.messageChild(address, agentMessage()),
+    ).toMatchObject({ status: "not_delivered" });
+    expect(dispatched).toHaveLength(40);
+  });
+
+  it("refuses an address this parent did not mint", async () => {
+    const { coordinator } = await persistentCoordinator(() => true);
+
+    expect(
+      coordinator.messageChild(
+        `virtual_subagent_${UUID}/subagent-persistent-${UUID}-${"0".repeat(32)}`,
+        agentMessage(),
+      ),
+    ).rejects.toThrow("not the address of one of your persistent subagents");
+    expect(
+      coordinator.messageChild("no-slash", agentMessage()),
+    ).rejects.toThrow("not the address");
+  });
+
+  it("wakes a child its parent left unanswered past the wait, unless the parent messages it first", async () => {
+    const { internals, coordinator, address, dispatched } =
+      await persistentCoordinator((name) =>
+        name === "acceptIngress" ? { outcome: "not_running" } : true,
+      );
+    const task = {
+      ...persistentChildTask(),
+      agentId: `virtual_subagent_${UUID}`,
+      publicConversationKey: address.slice(address.indexOf("/") + 1),
+    };
+    const childSession = {
+      persistModelMessages: async (): Promise<void> => {},
+      settleIngress: async (): Promise<boolean> => true,
+      takeNextIngress: async (): Promise<null> => null,
+      releaseConversationLease: async (): Promise<void> => {},
+    };
+
+    await internals.completeAskedRun(
+      childSession,
+      task,
+      agentMessage({ waitSeconds: 0.02 }),
+    );
+    await Bun.sleep(60);
+    expect(dispatched).toEqual([
+      {
+        conversationKey: task.publicConversationKey,
+        prompt: expect.stringContaining("No reply from your parent"),
+      },
+    ]);
+
+    await internals.completeAskedRun(
+      childSession,
+      task,
+      agentMessage({ waitSeconds: 0.05 }),
+    );
+    await coordinator.messageChild(address, agentMessage({ text: "go ahead" }));
+    await Bun.sleep(80);
+    expect(dispatched.map(({ prompt }) => String(prompt))).toEqual([
+      expect.stringContaining("No reply from your parent"),
+      expect.stringContaining("go ahead"),
+    ]);
+  });
+
+  it("hands a child's note to the parent's next step, and refuses it once passes ended", async () => {
+    const { coordinator, internals, key } = await persistentCoordinator(
+      () => true,
+    );
+    internals.pendingMetadata.set("subagent_1", {
+      taskId: "subagent_1",
+      eventId: "event_1",
+      agentId: `virtual_subagent_${UUID}`,
+      conversationKey: key,
+    });
+
+    expect(
+      coordinator.noteFromChild(
+        "subagent_1",
+        agentMessage({ text: "halfway" }),
+      ),
+    ).toMatchObject({ status: "delivered" });
+    const [note] = await coordinator.takeParentMessages();
+    expect(messageText(note)).toContain("halfway");
+    expect(messageText(note)).toContain(`virtual_subagent_${UUID}/${key}`);
+
+    coordinator.closePasses();
+    expect(
+      coordinator.noteFromChild("subagent_1", agentMessage()),
+    ).toMatchObject({ status: "not_delivered" });
+  });
+});
+
 function lostRow(name: string): AsyncAgentResultRecord {
   const taskId =
     LOST_TASK_IDS.get(name) ??

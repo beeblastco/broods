@@ -15,7 +15,7 @@ How subagent runs execute inside core: dispatch, the parent continuation loop, c
 
 `run_subagent` creates a pending result row per task, returns the task ids at once, and starts the children as promises inside the same request or worker, not as separate processes. The parent's model stream keeps going.
 
-A child result that arrives while the parent streams waits in the coordinator's in-memory queue. An `ask_parent` question is a result too: it ends the child's turn as `awaiting_input` with the `question` on its result row, so it rides the same queue, hand-back and recovery sweep. At the parent's next step boundary `prepareStep` takes it (`takeParentMessages`) and adds it as `user` messages, the same way a [steer](queue-and-steer.md#the-step-boundary) joins a run. What arrives after the pass goes through the continuation loop:
+A child result that arrives while the parent streams waits in the coordinator's in-memory queue. A child's `message-agents` to `"parent"` with `wait` is a result too: it ends the child's turn as `awaiting_input` with the message as `question` on its result row, so it rides the same queue, hand-back and recovery sweep. A note without `wait` waits in its own in-memory queue for the same step boundary. At the parent's next step boundary `prepareStep` takes it (`takeParentMessages`) and adds it as `user` messages, the same way a [steer](queue-and-steer.md#the-step-boundary) joins a run. What arrives after the pass goes through the continuation loop:
 
 ```mermaid
 flowchart TD
@@ -129,7 +129,7 @@ In `persistent` mode, the default, each child is admitted through the same [conv
 stateDiagram-v2
   [*] --> running: run_subagent returns the task id
   running --> failed: accept answers anything but owner
-  running --> running: update_subagent steer, applied at the next step
+  running --> running: message-agents steer, applied at the next step
   running --> stopping: stop_subagent, stopOwner
   stopping --> failed: stepBoundary answers stopped
   stopping --> completed: no further step, stop never seen
@@ -144,26 +144,29 @@ stateDiagram-v2
 
 - A busy child conversation makes `accept` answer `rejected`, and the task fails with `Subagent conversation is not available: rejected`, injected like any failure.
 - A follow-up drained after the child settles runs as another turn of the same task and is injected like the first answer. Past the parent's wait budget there is no live parent turn, so `transferChildConversation` hands the envelope to its own worker and the result is not injected.
-- `ask_parent` holds nothing in memory. The loop stops after the step that asked (`parentQuestion()`), and `completeAskedRun` records `awaiting_input` with the `question` on the child's result row in its settle. The question then reaches the parent like a result: at its next step, by waking `waitForIdle` before the other children finish, through `resumeParent` once the parent stopped waiting, or from the recovery sweep after a restart. The parent answers with `run_subagent` on the child's `conversationKey`, which resumes the child with its stored history. One question per turn: a second call in the same turn is refused.
+- A child waiting on `"parent"` holds nothing in memory but its reply timer. The loop stops after the step that sent it (`parentQuestion()`), and `completeAskedRun` records `awaiting_input` with the message on the child's result row in its settle, then arms the timer. The message reaches the parent like a result: at its next step, by waking `waitForIdle` before the other children finish, through `resumeParent` once the parent stopped waiting, or from the recovery sweep after a restart. One wait per turn: a second one in the same turn is refused.
+- `messageChild` resolves the address (`<agentId>/<conversationKey>`, a key minted for this parent, a virtual id matching it or an allowed agent) and clears that child's reply timer. It then tries `accept` with `steer` and `activeOwnerOnly`: a running child takes it at its next step. `not_running` resumes the child through `dispatch`, the same path as `run_subagent` with its `conversationKey`, counted against the 40-turn wake budget. With `wait`, `waitForIdle` wakes at the deadline and `detachTask` stops waiting on that child alone, so its reply resumes the parent later; a child started without `wait` is detached at once.
+- The reply timer is in memory. It resumes the child with a note once the wait passes, through `dispatch`. After the parent's passes end (`closePasses`), a child started this way is detached so its result resumes the parent. A restart loses the timer; the parent still gets the message from the sweep and can reply late.
 
 Controls decide admission and ownership in one transaction, so a control never lands on a finished child or a later task on the same conversation:
 
 ```mermaid
 sequenceDiagram
   participant P as Parent model
-  participant T as update_subagent / stop_subagent
+  participant T as message-agents / stop_subagent
   participant CX as Convex runtimeIngress
   participant Ch as Child run
 
-  P->>T: update_subagent taskId, steer or continue
-  T->>CX: accept, activeOwnerOnly, expectedOwnerTaskId
-  alt child still owns its generation
+  P->>T: message-agents to the child's address
+  T->>CX: accept steer, activeOwnerOnly
+  alt child has a live owner
     CX-->>T: queued
-    T-->>P: queued
-    Ch->>CX: stepBoundary at the next step, or takeNext after settle
-  else child settled, or another task owns it
+    T-->>P: delivered
+    Ch->>CX: stepBoundary claims it at the next step
+  else child idle
     CX-->>T: not_running, no envelope written
-    T-->>P: not_running
+    T->>T: dispatch resumes the child on its conversationKey
+    T-->>P: resumed
   end
   P->>T: stop_subagent taskId
   T->>CX: stopOwner, expectedOwnerTaskId

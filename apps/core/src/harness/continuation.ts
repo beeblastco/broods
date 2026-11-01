@@ -15,7 +15,6 @@ import {
   DEADLINE_WIND_DOWN_MS,
   runAgentLoop,
   USER_STOP_MESSAGE,
-  type AgentLoopOptions,
   type AgentLoopStream,
   type ToolApprovalSummary,
 } from "./harness.ts";
@@ -49,14 +48,29 @@ const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
  * ownership live there, so this module never imports it.
  */
 export interface ContinuationDependencies {
-  dispatchAppliedIngress: NonNullable<
-    AgentLoopOptions["dispatchAppliedIngress"]
-  >;
   dispatchSessionMessage(
     session: Session,
     input: SessionMessageInput,
   ): Promise<SessionMessageResult>;
   subagents: SubagentCoordinatorDependencies;
+}
+
+/** What one parent run's passes take from their caller. */
+interface ParentPassOptions {
+  session: Session;
+  subagentCoordinator: SubagentCoordinator;
+  initialTurnContext: TurnContextSnapshot;
+  agentConfig: DirectInboundEvent["agentConfig"];
+  dependencies: ContinuationDependencies;
+  hooks?: HookDispatcher;
+  // The worker's budget: its abort ends the pass and skips the wait on async
+  // work it left running, and a pass near its deadline yields the slot.
+  context?: RequestContext;
+  consumeStream(stream: AgentLoopStream): Promise<void>;
+  onLoopErrorText?(error: string): Promise<void>;
+  onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
+  onHeartbeat?(pendingCount: number): void | Promise<void>;
 }
 
 export interface ParentContinuationResult {
@@ -174,24 +188,22 @@ export async function runAgentLoopUntilSubagentsIdle(
  *
  * Heartbeats are emitted only while this request or worker waits on
  * in-process subagents. Detached sandbox background jobs settle through their
- * completion callback, not through pending work here.
+ * completion callback, not through pending work here. Once the passes end, a
+ * child started later (a reply timeout waking it) resumes the parent instead.
  */
-export async function runParentContinuationLoop(options: {
-  session: Session;
-  subagentCoordinator: SubagentCoordinator;
-  initialTurnContext: TurnContextSnapshot;
-  agentConfig: DirectInboundEvent["agentConfig"];
-  dependencies: ContinuationDependencies;
-  hooks?: HookDispatcher;
-  // The worker's budget: its abort ends the pass and skips the wait on async
-  // work it left running, and a pass near its deadline yields the slot.
-  context?: RequestContext;
-  consumeStream(stream: AgentLoopStream): Promise<void>;
-  onLoopErrorText?(error: string): Promise<void>;
-  onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
-  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-  onHeartbeat?(pendingCount: number): void | Promise<void>;
-}): Promise<ParentContinuationResult> {
+export async function runParentContinuationLoop(
+  options: ParentPassOptions,
+): Promise<ParentContinuationResult> {
+  try {
+    return await runParentPasses(options);
+  } finally {
+    options.subagentCoordinator.closePasses();
+  }
+}
+
+async function runParentPasses(
+  options: ParentPassOptions,
+): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
   let finalResponse: JSONValue | undefined;
   let traceId: string | undefined;
@@ -263,8 +275,8 @@ export async function runParentContinuationLoop(options: {
         },
       },
       {
-        dispatchAppliedIngress: options.dependencies.dispatchAppliedIngress,
         dispatchSubagents: options.subagentCoordinator.dispatch,
+        messageChild: options.subagentCoordinator.messageChild,
         subagentWatch: options.subagentCoordinator,
         dispatchSessionMessage: (
           input: SessionMessageInput,

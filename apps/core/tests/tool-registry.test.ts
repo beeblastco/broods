@@ -697,6 +697,7 @@ describe("createTools", () => {
       dispatch,
     ) as unknown as Record<string, unknown>;
     context.session = { eventId: "acct:acct_test:agent:parent:event" };
+    context.messageChild = mock(async () => ({}));
 
     expect(
       Object.keys(
@@ -704,7 +705,7 @@ describe("createTools", () => {
           subagent: { enabled: true, mode: "persistent" },
         }),
       ),
-    ).toEqual(["run_subagent", "update_subagent", "stop_subagent"]);
+    ).toEqual(["run_subagent", "stop_subagent", "message-agents"]);
     expect(
       Object.keys(
         await createTools(context as never, {
@@ -712,6 +713,19 @@ describe("createTools", () => {
         }),
       ),
     ).toEqual(["run_subagent"]);
+  });
+
+  it("gives a persistent child message-agents to reach its parent", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const context = createToolContext(undefined, "google") as unknown as Record<
+      string,
+      unknown
+    >;
+    context.parentLink = { ask: () => true, note: () => ({}) };
+
+    expect(Object.keys(await createTools(context as never, {}))).toEqual([
+      "message-agents",
+    ]);
   });
 
   it("exposes subagent conversation keys in persistent mode", async () => {

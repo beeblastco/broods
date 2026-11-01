@@ -138,7 +138,6 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
       },
       { onFinalText: async () => {}, onErrorText: async () => {} },
       {
-        dispatchAppliedIngress: async () => {},
         dispatchSessionMessage: async (): Promise<SessionMessageResult> => ({
           conversationKey: "conversation",
           status: "accepted",

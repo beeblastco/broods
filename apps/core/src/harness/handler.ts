@@ -225,9 +225,9 @@ const textEncoder = new TextEncoder();
 // What every parent run's continuation loop takes from the handler: the
 // functions that move conversation ownership.
 const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
-  dispatchAppliedIngress: dispatchAppliedIngress,
   dispatchSessionMessage: dispatchSessionMessage,
   subagents: {
+    dispatchAppliedIngress: dispatchAppliedIngress,
     dispatchNextIngress: dispatchNextIngress,
     resumeParent: resumeAfterSubagentResult,
   },

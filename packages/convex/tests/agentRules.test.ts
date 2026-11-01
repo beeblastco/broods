@@ -1231,12 +1231,7 @@ describe("config patch pre-validation", () => {
 
 describe("isProviderToolName", () => {
   it("keeps the subagent tool names for the harness", () => {
-    for (const name of [
-      "ask_parent",
-      "run_subagent",
-      "stop_subagent",
-      "update_subagent",
-    ]) {
+    for (const name of ["message-agents", "run_subagent", "stop_subagent"]) {
       expect(isProviderToolName(name)).toBe(false);
     }
     expect(isProviderToolName("web_search")).toBe(true);
