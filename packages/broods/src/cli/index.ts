@@ -619,11 +619,15 @@ async function init(args: string[]): Promise<void> {
     force,
   );
   await ensureAgentSkill(force);
+  // Like login and dev: BROODS_DASHBOARD_URL / BROODS_BASE_URL pick the server.
+  const runtime = loadBroodsRuntimeConfig();
   const dashboardUrl =
-    optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL;
+    optionValue(args, "--dashboard-url") ??
+    runtime.dashboardUrl ??
+    DEFAULT_DASHBOARD_URL;
   await writeLocalEnvDefaults({
     dashboardUrl: dashboardUrl,
-    baseUrl: gatewayUrlForDashboard(dashboardUrl),
+    baseUrl: runtime.baseUrl ?? gatewayUrlForDashboard(dashboardUrl),
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
     stage: optionValue(args, "--stage") ?? "development",
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
