@@ -1762,13 +1762,30 @@ describe("SubagentCoordinator", () => {
     const settleIngress = mock(
       async (_status: string, _settlement: unknown): Promise<boolean> => true,
     );
+    const persistModelMessages = mock(
+      async (_messages: unknown[]): Promise<void> => {},
+    );
     const childSession = {
+      persistModelMessages: persistModelMessages,
       settleIngress: settleIngress,
       takeNextIngress: async (): Promise<null> => null,
       releaseConversationLease: async (): Promise<void> => {},
     };
 
     await internals.completeAskedRun(childSession, task, "Which region?");
+
+    // Pruning drops the ask_parent call from later turns; this line survives.
+    expect(persistModelMessages.mock.calls[0]?.[0]).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "I asked my parent and am waiting for the reply: Which region?",
+          },
+        ],
+      },
+    ]);
 
     expect(settleIngress.mock.calls[0]?.[1]).toMatchObject({
       asyncResult: {

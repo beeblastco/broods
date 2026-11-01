@@ -44,7 +44,7 @@ export async function subagentAskParent(context: VerifyContext): Promise<void> {
       ...context.model,
       agent: {
         system:
-          "On your first task call ask_parent exactly once with the question 'Which color?', and nothing else. When the answer arrives, reply with exactly COLOR= followed by the answer and nothing else.",
+          "If you have not asked your parent yet, call ask_parent exactly once with the question 'Which color?', and nothing else. Once your parent has answered, reply with exactly COLOR= followed by the answer and nothing else.",
       },
     },
   });

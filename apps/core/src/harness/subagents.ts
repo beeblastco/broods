@@ -903,6 +903,19 @@ export class SubagentCoordinator {
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
+    // History pruning drops older tool calls, so without this line the resumed
+    // child no longer sees that it asked, and asks again.
+    await childSession.persistModelMessages([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: `I asked my parent and am waiting for the reply: ${question}`,
+          },
+        ],
+      },
+    ]);
     await this.recordOutcome(childSession, task, {
       status: "awaiting_input",
       question: question,
