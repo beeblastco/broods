@@ -248,7 +248,7 @@ stateDiagram-v2
 
 - Discord resets a token after 1000 IDENTIFYs in 24 hours. `DISCORD_IDENTIFY_LIMIT` (default 500) parks the socket first. The counter is in memory, so a crash loop defeats it.
 - A RESUME spends no IDENTIFY and only dials a host under `.discord.gg`, so the bot token cannot be sent elsewhere.
-- Events go out as `GATEWAY_MESSAGE_CREATE` with a credential derived from the bot token (`discordForwarderToken` in `apps/core/src/shared/discord-wire.ts`) in `x-discord-gateway-token`, plus `thread` for a message in a thread. The bot token itself never crosses the edge; core still accepts it there with a deprecation warning until the forwarder release with the derivation has rolled.
+- Events go out as `GATEWAY_MESSAGE_CREATE` with a credential derived from the bot token (`discordForwarderToken` in `apps/core/src/shared/discord-wire.ts`) in `x-discord-gateway-token`, plus `thread` for a message in a thread. The bot token itself never crosses the edge, and core refuses it there.
 
 Matrix:
 
