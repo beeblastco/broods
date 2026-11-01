@@ -300,12 +300,16 @@ describe("async_status", () => {
     });
 
     try {
-      await expect(
-        (tools.async_status as unknown as TestToolExecute).execute(
+      const failure = await (tools.async_status as unknown as TestToolExecute)
+        .execute(
           { statusId: row.resultId },
           { toolCallId: "tool-call-poll", messages: [], context: undefined },
-        ),
-      ).rejects.toThrow("logs unavailable");
+        )
+        .then(
+          (): undefined => undefined,
+          (cause: unknown): unknown => cause,
+        );
+      expect(String(failure)).toContain("logs unavailable");
       expect(reads).toEqual([]);
     } finally {
       read.mockRestore();
