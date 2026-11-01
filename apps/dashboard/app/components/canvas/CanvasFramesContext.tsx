@@ -38,6 +38,8 @@ export type CanvasFramesValue = {
     workspaceId: string,
     target: WorkspaceMountTarget,
   ) => void;
+  /** Renames a card in place on a double-click of its name; unset where cards are not renamed. */
+  onRenameNode?: (nodeId: string, label: string) => void;
   onToggleFrame: (frameId: string) => void;
   /** Sandbox node id → 1-based place in `sandboxes`, where all its agents agree. */
   sandboxOrderNumbers: ReadonlyMap<string, number>;

@@ -10,6 +10,7 @@ import {
   type FileContent,
 } from "@/app/components/side-panel/FilePreview";
 import { Button } from "@/app/components/ui/button";
+import { InlineEdit } from "@/app/components/ui/inline-edit";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -1250,54 +1251,6 @@ function ExtIcon({ name }: { name: string }): React.JSX.Element {
   );
 }
 
-function RenameInput({
-  initialValue,
-  onCommit,
-  onCancel,
-}: {
-  initialValue: string;
-  onCommit: (value: string) => void;
-  onCancel: () => void;
-}): React.JSX.Element {
-  const [draft, setDraft] = useState(initialValue);
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    ref.current?.select();
-  }, []);
-
-  const commit = (): void => {
-    const trimmed = draft.trim();
-    if (trimmed && trimmed !== initialValue) {
-      onCommit(trimmed);
-    } else {
-      onCancel();
-    }
-  };
-
-  return (
-    <input
-      ref={ref}
-      value={draft}
-      aria-label={`Rename ${initialValue}`}
-      className="h-4.5 w-full min-w-0 flex-1 rounded-sm border border-primary bg-transparent px-1 py-0 font-mono text-xs shadow-xs outline-none transition-shadow placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-      onClick={(e) => e.stopPropagation()}
-    />
-  );
-}
-
 function TreeRow({
   node,
   depth,
@@ -1381,11 +1334,14 @@ function TreeRow({
 
         {/* rename input, or the name with its size hint and actions */}
         {isRenaming ? (
-          <RenameInput
-            initialValue={node.name}
-            onCommit={(newName) => onRenameCommit(node, newName)}
-            onCancel={() => onRenameCancel(node.path)}
-          />
+          <span className="flex min-w-0 flex-1 font-mono">
+            <InlineEdit
+              value={node.name}
+              label={`Rename ${node.name}`}
+              onCommit={(newName) => onRenameCommit(node, newName)}
+              onCancel={() => onRenameCancel(node.path)}
+            />
+          </span>
         ) : (
           <>
             <span

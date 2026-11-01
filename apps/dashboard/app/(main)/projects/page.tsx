@@ -2,32 +2,25 @@
 
 import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
+import { ProjectCard } from "@/app/components/ProjectCard";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
-import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
+import { applyProjectRename } from "@/app/lib/projectOptimistic";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { Folder, Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 export default function ProjectsPage(): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const projects = useQuery(api.project.list, useSignedIn() ? {} : "skip") as
     | Doc<"projects">[]
     | undefined;
-  const router = useRouter();
+  const rename = useMutation(api.project.update).withOptimisticUpdate(
+    applyProjectRename,
+  );
   const [dialogOpen, setDialogOpen] = useState(false);
-
-  const openProject = useCallback(
-    (id: string) => router.push(`/${id}`),
-    [router],
-  );
-  const prefetchProject = useCallback(
-    (id: string) => router.prefetch(`/${id}`, FULL_ROUTE_PREFETCH),
-    [router],
-  );
 
   if (projects === undefined) {
     return (
@@ -82,25 +75,21 @@ export default function ProjectsPage(): React.JSX.Element {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
-              <button
+              <ProjectCard
                 key={project._id}
-                type="button"
-                aria-label={`Open ${project.name}`}
-                onClick={() => openProject(project._id)}
-                onMouseEnter={() => prefetchProject(project._id)}
-                onFocus={() => prefetchProject(project._id)}
-                className="flex cursor-pointer flex-col items-start gap-2 rounded-lg border border-border bg-card p-4 text-left transition-all hover:ring-2 hover:ring-primary/50"
-              >
-                <div className="flex w-full items-center gap-2">
-                  <Folder className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-sm font-medium text-foreground">
-                    {project.name}
-                  </span>
-                </div>
-                <p className="line-clamp-2 text-xs text-muted-foreground">
-                  {project.description || "No description"}
-                </p>
-              </button>
+                name={project.name}
+                description={project.description}
+                href={`/${project._id}`}
+                canWrite={canWrite}
+                // The update clears a description it is not handed.
+                onRename={(name) =>
+                  rename({
+                    description: project.description,
+                    name: name,
+                    projectId: project._id,
+                  })
+                }
+              />
             ))}
           </div>
         )}

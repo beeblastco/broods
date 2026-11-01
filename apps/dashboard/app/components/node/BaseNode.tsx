@@ -1,7 +1,9 @@
 "use client";
 
+import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
+import { InlineEdit } from "@/app/components/ui/inline-edit";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import type { MemberStatus } from "@/app/lib/memberStatus";
@@ -96,6 +98,8 @@ export function BaseNode({
   showSideHandles?: boolean;
 }): React.JSX.Element {
   const scale = useStore(scaleSelector);
+  const { canWrite, onRenameNode } = useCanvasFrames();
+  const [renaming, setRenaming] = useState(false);
 
   const sideHandlesConnectable = useSideHandlesConnectable(nodeType);
 
@@ -241,7 +245,13 @@ export function BaseNode({
             "--node-scale": headerScale,
           }}
         >
-          <div className="flex items-center gap-1.5 min-w-0">
+          {/* The rename field takes its font from here, and pressing in it drags nothing. */}
+          <div
+            className={cn(
+              "flex items-center gap-1.5 min-w-0 text-xs font-medium",
+              renaming && "nodrag nopan",
+            )}
+          >
             {nodeType === "agent" ? (
               <DitherAvatarSVG
                 seed={data.label}
@@ -256,13 +266,29 @@ export function BaseNode({
             ) : (
               <span className="text-muted-foreground shrink-0">{icon}</span>
             )}
-            <span
-              // One line, so every card is the same height; hover reads the whole name.
-              className="text-xs font-medium text-foreground truncate min-w-0"
-              title={data.label}
-            >
-              {data.label}
-            </span>
+            {renaming && onRenameNode ? (
+              <InlineEdit
+                value={data.label}
+                label={`Rename ${data.label}`}
+                onCommit={(label) => {
+                  setRenaming(false);
+                  onRenameNode(id, label);
+                }}
+                onCancel={() => setRenaming(false)}
+              />
+            ) : (
+              <span
+                // One line, so every card is the same height; hover reads the whole name.
+                className="text-xs font-medium text-foreground truncate min-w-0"
+                title={data.label}
+                // The card menu and Enter still rename through the dialog.
+                onDoubleClick={
+                  canWrite && onRenameNode ? () => setRenaming(true) : undefined
+                }
+              >
+                {data.label}
+              </span>
+            )}
           </div>
           {details.length > 0 && (
             <div className="mt-1 truncate text-2xs text-muted-foreground">
