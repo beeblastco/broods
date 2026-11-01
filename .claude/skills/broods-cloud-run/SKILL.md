@@ -37,20 +37,24 @@ End-to-end behavior changed = add or update a case in `scripts/local-verify/case
 ## 4. Baseline
 
 ```bash
-git worktree add ../broods-base origin/dev
-cd ../broods-base && bun install --frozen-lockfile
-bun run local:up -- --perf && bun run local:verify && bun run local:perf && bun run bench && bun run local:down
+git worktree remove ../broods-base 2>/dev/null   # refuses one with uncommitted work: then stop
+git worktree add ../broods-base origin/dev &&
+  cd ../broods-base && bun install --frozen-lockfile &&
+  bun run local:up -- --perf && bun run local:verify && bun run local:perf && bun run bench
+bun run local:down
 ```
 
-Stacks are keyed by worktree so they never collide, but run them one after the
-other (4 vCPU, 16 GB). Run perf and bench at least 3 times per side; report median and spread.
+The `&&` chain stops at the first failure, so nothing runs on a stale baseline. Stacks are
+keyed by worktree so they never collide, but run them one after the other (4 vCPU, 16 GB).
+Run perf and bench at least 3 times per side; report median and spread.
 
 ## 5. New CLI and SDK, on this session's own project
 
 Every session acts as the shared probe account and works in its own project,
 `$BROODS_CLOUD_PROJECT` (`cloud-<session id>`), on its default `development` stage. Never touch another `cloud-*` project: a
 parallel session owns it. The session-start hook installs `broods-dev` (dev, read and
-write) and `broods-prod` (prod, read-only) on PATH. Both run this checkout's CLI from
+write) and `broods-prod` (prod) on PATH. Prod is read-only by rule: its token can write, so never
+run a command there that changes anything. Both run this checkout's CLI from
 source, so every edit is live with no build, and read the token only when they run.
 
 ```bash

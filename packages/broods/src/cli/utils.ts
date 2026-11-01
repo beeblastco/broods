@@ -246,7 +246,10 @@ export async function promptConfirm(question: string): Promise<boolean> {
  * line without a newline. Ctrl+D or an empty pipe is an error, never a silent
  * exit: a readline question never settles when input ends first.
  */
-export async function promptSecret(label: string): Promise<string> {
+export async function promptSecret(
+  label: string,
+  options: { optional?: boolean } = {},
+): Promise<string> {
   output.write(`${label}: `);
   const muted = new Writable({
     write: (_chunk, _encoding, callback): void => callback(),
@@ -266,7 +269,7 @@ export async function promptSecret(label: string): Promise<string> {
       if (terminal) break;
     }
     const value = lines.join("\n");
-    if (!value) throw new Error(`${label} is required`);
+    if (!value && !options.optional) throw new Error(`${label} is required`);
 
     return value;
   } finally {

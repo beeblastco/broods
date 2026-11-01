@@ -13,6 +13,12 @@ fi
 
 git config core.hooksPath .githooks
 
+# stdout reaches the model: name any install the setup script could not do.
+if [ -s /var/lib/broods-cloud-setup-failed ]; then
+  echo "cloud-session-start: the environment's setup script failed to install:"
+  cat /var/lib/broods-cloud-setup-failed
+fi
+
 stamp=node_modules/.cloud-install.sha256
 if ! sha256sum --check --status "$stamp" 2>/dev/null; then
   rm -f "$stamp"
@@ -37,7 +43,8 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${CLAUDE_CODE_REMOTE_SESSION_ID:-}" ];
   id=$(printf %s "${CLAUDE_CODE_REMOTE_SESSION_ID#cse_}" | tr -cd 'A-Za-z0-9' | tr 'A-Z' 'a-z' | tail -c 12)
   # broods-dev / broods-prod: the CLI from source (no build), pointed at one
   # server. The token is read when the command runs, never written down, so
-  # printing the environment shows no secret. Prod is read-only.
+  # printing the environment shows no secret. The prod token can write:
+  # prod stays read-only only because AGENTS.md tells the agent so.
   bin="$HOME/.local/bin"
   mkdir -p "$bin"
   for target in dev:gateway.dev.broods.app:dashboard.dev.broods.app:BROODS_DEV_TOKEN \

@@ -35,6 +35,9 @@ set -euo pipefail
 
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 out="${BROODS_CLOUD_DIR:-$HOME/.broods-cloud}"
+# Absolute, so --login's HOME and from_login's read name the same config file.
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
 test_home="$out/test-account"
 dev_gateway=gateway.dev.broods.app
 prod_gateway=gateway.broods.app
@@ -73,18 +76,21 @@ for name in bun_version playwright_version lean_toolchain convex_image traefik_i
   [ -n "${!name}" ] || { echo "cloud-setup: could not read $name from the checkout" >&2; exit 1; }
 done
 
-# A linked worktree has no .env.local of its own: fall back to the main checkout's.
+# Each key from the checkout's dashboard .env.local, else the main checkout's
+# (a linked worktree usually has none, or one without the probe login).
 main_checkout=$(dirname "$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)")
-dashboard_env="$repo/apps/dashboard/.env.local"
-[ -f "$dashboard_env" ] || dashboard_env="$main_checkout/apps/dashboard/.env.local"
 from_dotenv() {
-  [ -f "$dashboard_env" ] || return 0
-  grep -m1 "^$1=" "$dashboard_env" | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/' || true
+  local file value
+  for file in "$repo/apps/dashboard/.env.local" "$main_checkout/apps/dashboard/.env.local"; do
+    [ -f "$file" ] || continue
+    value=$(grep -m1 "^$1=" "$file" | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/' || true)
+    [ -n "$value" ] && { printf %s "$value"; return 0; }
+  done
 }
 # The probe's login only: a person's own token must never reach a cloud session.
 from_login() {
   [ -f "$test_home/.broods/config.json" ] || return 0
-  CONFIG="$test_home/.broods/config.json" SERVER="https://$1" PROBE="$e2e_email" bun -e '
+  CONFIG="$test_home/.broods/config.json" SERVER="https://$1" PROBE="$probe_email" bun -e '
     const login = JSON.parse(await Bun.file(process.env.CONFIG).text()).logins?.[process.env.SERVER];
     if (login && login.user?.email !== process.env.PROBE) {
       console.error(`cloud-setup: ${process.env.SERVER} login is ${login.user?.email}, not the probe ${process.env.PROBE}; ignored`);
@@ -92,7 +98,13 @@ from_login() {
 }
 pick() { local v="${!1:-}"; [ -n "$v" ] && printf %s "$v" || printf %s "$2"; }
 
+# The one probe user (apps/dashboard/AGENTS.md); nothing else may ship.
+probe_email=cloud-agent@beeblast.co
 e2e_email=$(pick E2E_EMAIL "$(from_dotenv E2E_EMAIL)")
+if [ "$e2e_email" != "$probe_email" ]; then
+  echo "cloud-setup: E2E_EMAIL is ${e2e_email:-unset}, not the probe $probe_email" >&2
+  exit 1
+fi
 e2e_password=$(pick E2E_PASSWORD "$(from_dotenv E2E_PASSWORD)")
 dev_token=$(from_login "$dev_gateway")
 prod_token=$(from_login "$prod_gateway")
@@ -109,25 +121,33 @@ cat >"$out/setup.sh" <<EOF
 set -uo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-npm install -g "bun@${bun_version}" >/tmp/setup-bun.log 2>&1 || true
+# A failed install is recorded, not fatal: a non-zero exit would stop every
+# session from starting. The session hook reports the record to the agent,
+# which can install the missing piece.
+failed=/var/lib/broods-cloud-setup-failed
+rm -f "\$failed"
+job() { local name=\$1; shift; "\$@" || echo "\$name (see /tmp/setup-\$name.log)" >>"\$failed"; }
+
+job bun npm install -g "bun@${bun_version}" >/tmp/setup-bun.log 2>&1
 
 if ! docker info >/dev/null 2>&1; then
   (dockerd >/tmp/dockerd.log 2>&1 &)
   for _ in \$(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
 fi
-timeout 240 docker pull "${convex_image}" >/tmp/setup-convex.log 2>&1 &
-timeout 240 docker pull "${traefik_image}" >/tmp/setup-traefik.log 2>&1 &
-timeout 240 npx -y "playwright@${playwright_version}" install --with-deps chromium >/tmp/setup-playwright.log 2>&1 &
-(timeout 240 bash -c 'curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
-  sh -s -- -y --default-toolchain "${lean_toolchain}" && "\$HOME"/.elan/bin/elan toolchain install "${lean_toolchain}"' >/tmp/setup-lean.log 2>&1 &&
-  ln -sf "\$HOME"/.elan/bin/* /usr/local/bin/) &
+job convex timeout 240 docker pull "${convex_image}" >/tmp/setup-convex.log 2>&1 &
+job traefik timeout 240 docker pull "${traefik_image}" >/tmp/setup-traefik.log 2>&1 &
+job playwright timeout 240 npx -y "playwright@${playwright_version}" install --with-deps chromium >/tmp/setup-playwright.log 2>&1 &
+job lean timeout 240 bash -c 'curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
+  sh -s -- -y --default-toolchain "${lean_toolchain}" && "\$HOME"/.elan/bin/elan toolchain install "${lean_toolchain}" &&
+  ln -sf "\$HOME"/.elan/bin/* /usr/local/bin/' >/tmp/setup-lean.log 2>&1 &
 # User-scope plugins never reach a cloud session, so install them here.
-(timeout 240 claude plugin marketplace add anthropics/claude-plugins-official &&
+job plugins bash -c 'timeout 240 claude plugin marketplace add anthropics/claude-plugins-official &&
   for p in code-simplifier commit-commands frontend-design; do
-    timeout 60 claude plugin install "\${p}@claude-plugins-official" --scope user
-  done) >/tmp/setup-plugins.log 2>&1 &
+    timeout 60 claude plugin install "\$p@claude-plugins-official" --scope user || exit 1
+  done' >/tmp/setup-plugins.log 2>&1 &
 
 wait
+[ -s "\$failed" ] && { echo "cloud setup: some installs failed:"; cat "\$failed"; }
 # Stop dockerd so the cached snapshot holds a clean /var/lib/docker.
 pkill dockerd 2>/dev/null && for _ in \$(seq 1 20); do pgrep dockerd >/dev/null || break; sleep 1; done
 exit 0

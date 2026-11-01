@@ -1461,29 +1461,30 @@ async function dev(args: string[]): Promise<void> {
   let lastSourceSignature: string | undefined;
 
   // Like `convex dev`: stream live agent logs alongside the resource watcher so
-  // the developer sees activity while editing. Started after the first sync
-  // that lands, since a stage with no deployment has no logs to open yet.
+  // the developer sees activity while editing. Tried after each sync until the
+  // stream opens: a new stage has no deployment, so no logs, before one lands.
   const logController = new AbortController();
-  let logsStarted = false;
+  let logs: "off" | "opening" | "on" = "off";
+  const startLogs = (): void => {
+    if (logs !== "off") return;
+    logs = "opening";
+    void streamDevLogs(args, logController.signal).then((opened) => {
+      logs = opened ? "on" : "off";
+    });
+  };
   let lastSyncFailed = false;
   const syncChanged = async (): Promise<void> => {
     const signature = await sourceSignature();
-    if (signature === lastSourceSignature) {
-      // Undoing a broken edit lands on what the stage already has: say so,
-      // or the last line on screen stays the failure.
-      if (lastSyncFailed)
-        printSuccess("Back to the synced version. Nothing to push.");
-      lastSyncFailed = false;
-
-      return;
-    }
+    // A failed sync may have written part of the stage, so after one even an
+    // undo back to the last synced source syncs again.
+    if (signature === lastSourceSignature && !lastSyncFailed) return;
     lastSyncFailed = true;
-    await runSyncChild(args, childEnv);
-    lastSyncFailed = false;
-    lastSourceSignature = signature;
-    if (!logsStarted) {
-      logsStarted = true;
-      void streamDevLogs(args, logController.signal);
+    try {
+      await runSyncChild(args, childEnv);
+      lastSyncFailed = false;
+      lastSourceSignature = signature;
+    } finally {
+      startLogs();
     }
   };
   const printSyncError = (error: unknown): void =>
@@ -1528,21 +1529,25 @@ async function dev(args: string[]): Promise<void> {
 }
 
 // Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the
-// stage has no deployment yet, print a hint and return rather than breaking the
-// watch loop.
+// stage has no deployment yet, print a hint and return false rather than
+// breaking the watch loop, so the caller tries again after the next sync.
 async function streamDevLogs(
   args: string[],
   signal: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   let session: ObservabilityClientOptions;
   try {
     session = await openStageSession(args);
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // A stage before its first sync: logs start once one lands.
     console.log(
-      `· live logs off. ${error instanceof Error ? error.message : String(error)}`,
+      message.includes("has no deployment")
+        ? "· live logs start after the first sync lands."
+        : `· live logs off. ${message}`,
     );
 
-    return;
+    return false;
   }
 
   const minLevel = resolveMinLevel(args);
@@ -1563,6 +1568,8 @@ async function streamDevLogs(
       );
     }
   }
+
+  return true;
 }
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
@@ -2264,8 +2271,8 @@ async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
       "Input is hidden and saved to .env.local, which stays out of git.",
   );
   for (const name of missing) {
-    // promptSecret refuses an empty answer; here that means skip this one.
-    const value = (await promptSecret(name).catch(() => "")).trim();
+    // Saved as typed, like `broods env set`; an empty answer skips the name.
+    const value = await promptSecret(name, { optional: true });
     if (value) await writeEnvValue(name, value);
   }
 
@@ -3148,9 +3155,16 @@ async function cliUserToken(
 ): Promise<{ userToken?: () => Promise<string> }> {
   const secret = await localUserTokenSecret(remoteHint);
   if (!secret) return {};
-  const userId = (auth.user?.email ?? auth.user?.authId ?? "cli")
-    .replace(/[^A-Za-z0-9._@+=-]/g, "-")
-    .slice(0, 128);
+  // Core scopes conversations by this id, so two logins must never share one:
+  // the email when the id alphabet holds it as is, else a digest.
+  const email = auth.user?.email;
+  const userId =
+    email && /^[A-Za-z0-9._@+=-]{1,128}$/.test(email)
+      ? email
+      : `cli-${createHash("sha256")
+          .update(auth.user?.authId ?? auth.token)
+          .digest("hex")
+          .slice(0, 32)}`;
 
   return { userToken: () => signUserToken({ userId: userId, secret: secret }) };
 }

@@ -127,6 +127,7 @@ export const support = defineAgent({
 async function runAgent(
   cwd: string,
   baseUrl: string,
+  shell: Record<string, string> = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn({
     cmd: [process.execPath, CLI, "run", "support", "ping"],
@@ -139,6 +140,7 @@ async function runAgent(
       HOME: process.env.HOME ?? "",
       BROODS_TOKEN: "tok",
       BROODS_BASE_URL: baseUrl,
+      ...shell,
     },
   });
   const [exitCode, stdout, stderr] = await Promise.all([
@@ -160,7 +162,10 @@ test("run signs a user token with the checkout's signing secret", async () => {
   expect(result.stdout).toContain("pong");
   const token = backend.tokens[0];
   expect(token).toBeString();
-  expect((await openUserToken(token ?? "", SECRET))?.userId).toBe("cli");
+  // No login email (env-token auth): a digest, so two tokens never share an id.
+  expect((await openUserToken(token ?? "", SECRET))?.userId).toMatch(
+    /^cli-[0-9a-f]{32}$/,
+  );
 });
 
 test("run without the stage's secret sends no token and names the fix", async () => {
@@ -186,4 +191,16 @@ test("run sends no token for a stage without a signing secret", async () => {
   // A stale local secret must not turn a run that needs no token into a 401.
   expect(result.exitCode).toBe(0);
   expect(backend.tokens).toEqual([null]);
+});
+
+test("a stale shell secret loses to the .env.local one the stage names", async () => {
+  const cwd = await projectDir([`BROODS_USER_TOKEN_SECRET="${SECRET}"`]);
+  const backend = serveBackend(true);
+
+  const result = await runAgent(cwd, backend.baseUrl, {
+    BROODS_USER_TOKEN_SECRET: "bsig_stale-shell-export",
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(await openUserToken(backend.tokens[0] ?? "", SECRET)).not.toBeNull();
 });
