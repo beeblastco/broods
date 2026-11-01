@@ -14,7 +14,7 @@ type T = ReturnType<typeof orgTest>;
 async function seedAccount(
   t: T,
   orgId: string,
-  username = "beeblast-sale-agent-dev",
+  username = "sales-agent-dev",
 ): Promise<Id<"accounts">> {
   return await t.run(
     async (ctx) =>
@@ -68,7 +68,7 @@ describe("adoptExternalAccount", () => {
       // The account now points at a real org document, not the synthetic string.
       expect(account?.orgId).toBe(result.orgId);
       // Untouched: the service holding this secret keeps working.
-      expect(account?.secretHash).toBe("hash-beeblast-sale-agent-dev");
+      expect(account?.secretHash).toBe("hash-sales-agent-dev");
 
       const org = await ctx.db.get(result.orgId);
       expect(org?.name).toBe("BeeBlast Sale Agent (dev)");
