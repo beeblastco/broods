@@ -71,6 +71,15 @@ export function AppSidebar(): React.JSX.Element {
       router.prefetch(itemHref(item), FULL_ROUTE_PREFETCH);
     }
   };
+  // Navigate on press, not on release: a click spends about 100 ms between
+  // the two. Only a plain left press; modified and middle clicks keep the
+  // browser's own behaviour, and a keyboard Enter still goes through onClick.
+  const isPlainPress = (event: React.MouseEvent): boolean =>
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey;
 
   useShortcut("nav.prev", () =>
     router.push(itemHref(stepNavItem(items, active, -1))),
@@ -102,7 +111,7 @@ export function AppSidebar(): React.JSX.Element {
                 <SidebarMenuItem key={item.segment}>
                   <SidebarMenuButton
                     isActive={isActive && item.tabs.length === 0}
-                    // The whole route, on intent (hover, focus, press), except
+                    // The whole route, on intent (hover, focus), except
                     // the page we are on. The default prefetch stops at
                     // loading.tsx and expires at once, so a click still fetched
                     // the tree, then its chunks, then data: three trips in a
@@ -114,7 +123,17 @@ export function AppSidebar(): React.JSX.Element {
                         prefetch={false}
                         onMouseEnter={() => prefetchRoute(item, isActive)}
                         onFocus={() => prefetchRoute(item, isActive)}
-                        onPointerDown={() => prefetchRoute(item, isActive)}
+                        onMouseDown={(event) => {
+                          if (isPlainPress(event) && !isActive) {
+                            router.push(itemHref(item));
+                          }
+                        }}
+                        onClick={(event) => {
+                          // Pressed already navigated; skip Link's own push.
+                          if (event.detail > 0 && isPlainPress(event)) {
+                            event.preventDefault();
+                          }
+                        }}
                         draggable={false}
                       />
                     }
