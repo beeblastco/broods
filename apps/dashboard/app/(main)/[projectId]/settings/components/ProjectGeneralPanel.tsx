@@ -57,7 +57,7 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
       await update({
         projectId: projectId,
         name: trimmedName,
-        description: trimmedDesc || undefined,
+        description: trimmedDesc,
       });
     } catch (err) {
       setSaveError(toErrorMessage(err));
