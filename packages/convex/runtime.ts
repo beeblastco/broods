@@ -71,6 +71,7 @@ export const asyncAgentOutcomeValidator = v.object({
   error: runtimeAsyncAgentResultsFields.error,
   approvals: runtimeAsyncAgentResultsFields.approvals,
   questions: runtimeAsyncAgentResultsFields.questions,
+  question: runtimeAsyncAgentResultsFields.question,
 });
 
 const asyncAgentDoc = v.object({
@@ -702,6 +703,7 @@ export async function writeAsyncAgentResult(
     error: outcome.error,
     approvals: outcome.approvals,
     questions: outcome.questions,
+    question: outcome.question,
     ...(handback === "detached" && row.handback !== "stored"
       ? { handback: handback }
       : {}),

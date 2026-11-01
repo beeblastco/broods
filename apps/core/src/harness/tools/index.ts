@@ -113,7 +113,7 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
-  // Set on a persistent subagent's run: asks the parent and waits for its answer.
+  // Set on a persistent subagent's run: ends its turn on a question for the parent.
   askParent?: AskParent;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSessionMessage?: RunSessionMessageDispatch;
@@ -312,7 +312,6 @@ export async function createTools(
           eventId: context.session.eventId,
           conversationKey: context.session.conversationKey,
           session: context.session,
-          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         stopSubagentTool({
           accountId: context.accountId,

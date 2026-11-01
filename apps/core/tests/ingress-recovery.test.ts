@@ -120,9 +120,9 @@ describe("queued ingress recovery", () => {
       },
     );
     // One list a window: detached and pending subagent rows in completed,
-    // failed and processing; then detached and pending tool rows in
-    // completed and failed.
-    const windows = 6;
+    // failed, awaiting_input and processing; then detached and pending tool
+    // rows in completed and failed.
+    const windows = 8;
     const toolWindows = 4;
     try {
       startIngressRecovery();

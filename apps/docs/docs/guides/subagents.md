@@ -54,12 +54,12 @@ Children cannot start their own subagents.
 
 In persistent mode the parent also gets:
 
-| Tool              | Does                                                                                                                         |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `update_subagent` | `steer` changes the running child's direction, or answers its open `ask_parent` question. `continue` queues a follow-up turn |
-| `stop_subagent`   | Stops the child at its next step. A stopped child sends no report: its partial work is not sent to the parent.               |
+| Tool              | Does                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| `update_subagent` | `steer` changes the running child's direction. `continue` queues a follow-up turn                              |
+| `stop_subagent`   | Stops the child at its next step. A stopped child sends no report: its partial work is not sent to the parent. |
 
-A persistent child gets `ask_parent`: it asks the parent one question at a time and waits up to 5 minutes for the answer, or less when the parent's own wait ends sooner. The question reaches the parent at its next step, or wakes it if it is waiting on children. The parent answers with `update_subagent` in `steer` mode. With no answer in time, the child is told to continue on its best judgment.
+A persistent child gets `ask_parent`. Asking ends the child's turn, and the question is stored on its result row, so a restart or a parent that stopped waiting does not lose it. The question reaches the parent at its next step, wakes it if it is waiting on children, or starts a new parent turn later. The parent answers with `run_subagent`, passing the child's `conversationKey` and the answer as the prompt, and the child carries on with its work so far.
 
 A parent can only control children its conversation started, in this turn or an earlier one. From outside, a predefined persistent child is an ordinary conversation of its agent. Stop or steer it through the normal run endpoints with its `conversationKey`. A virtual child's agent id is `virtual_subagent_<uuid>`, which no agent endpoint knows, so read it with `GET /v1/runs/{runId}` and control it through the parent's tools.
 

@@ -194,13 +194,19 @@ def start : State := ⟨.processing, .processing, false, none⟩
 def worker (catchSettles catchRecords : Bool) (e : Ending) (throwAt : Option Nat) : State :=
   exec (recover catchSettles catchRecords) (program e) throwAt start
 
-/-- `SubagentCoordinator.recordOutcome` for a completed child: the atomic settle, or,
-when it throws, the polling row alone; everything after it handles its own errors, and
-the failure paths skip a child whose outcome is recorded. `settleFails` is whether the
-settle throws. -/
-def subagent (settleFails : Bool) : State :=
-  let s := if settleFails then record .completed start else settle .completed start
-  { s with recorded := true, outcome := some .completed }
+/-- The outcomes a child's turn records: an answer, or an `ask_parent` question
+(`completeSuccessfulRun` and `completeAskedRun`). -/
+def ChildFinish : Finish → Bool
+  | .completed | .awaitingInput => true
+  | _ => false
+
+/-- `SubagentCoordinator.recordOutcome` for a child that answered or asked its parent
+(`f`): the atomic settle, or, when it throws, the polling row alone; everything after
+it handles its own errors, and the failure paths skip a child whose outcome is
+recorded. `settleFails` is whether the settle throws. -/
+def subagent (f : Finish) (settleFails : Bool) : State :=
+  let s := if settleFails then record f start else settle f start
+  { s with recorded := true, outcome := some f }
 
 /-- The two rows agree: a completed envelope never sits next to a failed or still
 running result, and a failed envelope always has a failed result. -/
@@ -341,9 +347,11 @@ theorem worker_keeps_produced (e : Ending) (catchSettles : Bool) :
       | _ => .failed := by
   cases e <;> cases catchSettles <;> decide
 
-/-- A subagent's settle and its fallback row write leave the rows agreeing. -/
-theorem subagent_consistent (settleFails : Bool) : (subagent settleFails).consistent = true := by
-  cases settleFails <;> decide
+/-- A subagent's settle and its fallback row write leave the rows agreeing, whether it
+answered or asked its parent. -/
+theorem subagent_consistent (f : Finish) (settleFails : Bool) (h : ChildFinish f = true) :
+    (subagent f settleFails).consistent = true := by
+  cases f <;> cases settleFails <;> first | decide | simp [ChildFinish] at h
 
 /-- A finished tool row never changes status again. -/
 theorem tool_terminal_absorbing {row : ToolRow} (c : ToolCall)

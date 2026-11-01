@@ -23,7 +23,8 @@ export type AsyncAgentOutcome =
   | { status: "completed"; response: JSONValue }
   | { status: "failed"; error: string }
   | { status: "awaiting_approval"; approvals: ToolApprovalSummary[] }
-  | { status: "awaiting_input"; questions: PendingQuestionSummary[] };
+  | { status: "awaiting_input"; questions: PendingQuestionSummary[] }
+  | { status: "awaiting_input"; question: string };
 /**
  * Where a subagent's parent conversation answers, so a late result reaches the
  * parent after a restart too. The task, the child agent and its key come from
@@ -50,6 +51,7 @@ export interface AsyncAgentResultRecord {
   error?: string;
   approvals?: ToolApprovalSummary[];
   questions?: PendingQuestionSummary[];
+  question?: string;
   expiresAt: number;
 }
 export function createPendingAsyncAgentResult(options: {
