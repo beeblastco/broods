@@ -3088,7 +3088,7 @@ async function run(args: string[]): Promise<void> {
       "No broods login, so run uses the runtime key: it reaches only agents with publicAccess that need no user token. Run `broods login` to reach every agent.",
     );
   }
-  const ticket = async (): Promise<string> => {
+  const credential = async (): Promise<string> => {
     if (session && session.expiresAt - Date.now() < 60_000) {
       session = await syncClient.mintStageSession(
         manifest.project,
@@ -3098,7 +3098,7 @@ async function run(args: string[]): Promise<void> {
 
     return session?.token ?? "";
   };
-  const credential = session
+  const clientAuth = session
     ? {
         apiKey: session.token,
         fetch: Object.assign(
@@ -3106,7 +3106,7 @@ async function run(args: string[]): Promise<void> {
             ...[input, init]: Parameters<typeof fetch>
           ): Promise<Response> => {
             const headers = new Headers(init?.headers);
-            headers.set("Authorization", `Bearer ${await ticket()}`);
+            headers.set("Authorization", `Bearer ${await credential()}`);
 
             return await fetch(input, { ...init, headers: headers });
           },
@@ -3125,7 +3125,7 @@ async function run(args: string[]): Promise<void> {
       process.env.BROODS_BASE_URL ??
       process.env.BROODS_HOST ??
       auth.baseUrl,
-    ...credential,
+    ...clientAuth,
   });
   const ref: AgentReference = {
     kind: "agent",
