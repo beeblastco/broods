@@ -215,7 +215,12 @@ export function CreateProjectDialog({
                 onChange={(choice) => {
                   setRepo(choice);
                   const repoName = choice?.fullName.split("/")[1];
-                  if (repoName && choice?.repoId !== repo?.repoId) {
+                  // Once the project exists its name is fixed, like the locked field.
+                  if (
+                    repoName &&
+                    createdId === null &&
+                    choice?.repoId !== repo?.repoId
+                  ) {
                     setName(repoName);
                   }
                 }}
