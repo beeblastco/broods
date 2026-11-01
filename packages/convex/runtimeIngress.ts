@@ -182,8 +182,8 @@ export const accept = internalMutation({
     maxQueuedCount: v.number(),
     maxQueuedBytes: v.number(),
     // The subagent result row a late-result continuation delivers. It is
-    // admitted only while the parent has not stored that result, and marks it
-    // stored once it runs: at once as owner, when applied if it queues.
+    // admitted only while the parent has not stored that result and no other
+    // resume of it is queued or applied; the owner's save stores it.
     resultEventId: v.optional(v.string()),
     // The async tool result row a continuation delivers, fenced the same way.
     toolResultId: v.optional(v.string()),
@@ -279,7 +279,6 @@ export const accept = internalMutation({
     const ownerGeneration = coordinator.ownerGeneration + 1;
     const appliedMode =
       args.requestedMode === "steer" ? "followup" : args.requestedMode;
-    await markDeliveredResultsStored(ctx, baseEnvelope);
     await ctx.db.insert("runtimeIngressEnvelopes", {
       ...baseEnvelope,
       appliedMode: appliedMode,
@@ -294,6 +293,7 @@ export const accept = internalMutation({
       ownerTaskId: args.ownerTaskId,
       stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
+      ...resumeHandOver([baseEnvelope]),
       updatedAt: now,
     });
 
@@ -856,9 +856,9 @@ export const settle = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    const coordinator = await requireOwner(ctx, args);
+    let coordinator = await requireOwner(ctx, args);
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     if (args.asyncResult && settled.ownerFinished) {
@@ -900,7 +900,7 @@ export const stepBoundary = internalMutation({
       return { renewal: "stale" as const, steering: null };
     }
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return { renewal: "stopped" as const, steering: null };
@@ -978,9 +978,9 @@ export const takeNext = internalMutation({
     args,
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
-    const coordinator = await requireOwner(ctx, { ...args, now: now });
+    let coordinator = await requireOwner(ctx, { ...args, now: now });
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (args.settle) {
       await settleAppliedEnvelopes(ctx, coordinator, {
@@ -1193,7 +1193,8 @@ async function checkDuplicateAdmission(
 
 /**
  * The duplicate `checkDuplicateAdmission` answers for a continuation whose
- * result the conversation already has, or null when it does not. A write that
+ * result the conversation already has or is being told by another resume, or
+ * null when neither. A write that
  * stored the result but lost its reply has it in the conversation already,
  * under the key core wrote it with (`dedupeKeyFor`). Both finished keys are
  * tried: the row can still read `processing` while the conversation holds the
@@ -1202,11 +1203,16 @@ async function checkDuplicateAdmission(
  */
 async function storedResultAdmission(
   ctx: MutationCtx,
-  args: { conversationKey: string; eventId: string },
+  args: {
+    conversationKey: string;
+    eventId: string;
+    resultEventId?: string;
+    toolResultId?: string;
+  },
   result: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">,
   dedupeKeyFor: (status: "completed" | "failed") => string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
-  if (result.handback === "stored") {
+  if (result.handback === "stored" || (await liveResumeOf(ctx, args))) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
   for (const status of ["completed", "failed"] as const) {
@@ -1229,8 +1235,8 @@ async function storedResultAdmission(
 }
 
 /**
- * Whether `envelope` is a resume that expired in the queue before it was
- * applied. Applying it marks its result stored, so a result row of its
+ * Whether `envelope` is a resume that expired, queued or applied, before its
+ * owner saved it. That save marks its result stored, so a result row of its
  * account still not stored is one the conversation never got.
  */
 async function expiredUndeliveredResume(
@@ -1247,6 +1253,32 @@ async function expiredUndeliveredResume(
     (row): boolean =>
       row?.accountId === envelope.accountId && row.handback !== "stored",
   );
+}
+
+/**
+ * A resume of the same late result still queued or applied in the
+ * conversation, under any identity: it tells the result, and its owner's save
+ * stores it, so a second resume would tell it again.
+ */
+async function liveResumeOf(
+  ctx: QueryCtx,
+  args: {
+    conversationKey: string;
+    resultEventId?: string;
+    toolResultId?: string;
+  },
+): Promise<boolean> {
+  for (const status of EXPIRABLE_STATUSES) {
+    const live = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+        q.eq("conversationKey", args.conversationKey).eq("status", status),
+      )
+      .take(MAX_DRAIN_ENVELOPES);
+    if (live.some((row): boolean => resumesSameResult(row, args))) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -1294,7 +1326,6 @@ async function claimSteering(
   const eventIds = selected.map((row) => row.eventId);
   const applicationId = `${args.ownerEventId}:steer:${args.ownerGeneration}:${selected[0]!.sequence}`;
   for (const row of selected) {
-    await markDeliveredResultsStored(ctx, row);
     await ctx.db.patch(row._id, {
       status: "processing",
       appliedMode: "steer",
@@ -1323,6 +1354,7 @@ async function claimSteering(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + args.leaseTtlMs,
+    ...resumeHandOver(selected),
     updatedAt: now,
   });
 
@@ -1369,19 +1401,62 @@ function ingressStatusResult(
   };
 }
 
-/** Inserts history rows for an owner the fence just accepted, all or none. */
+/**
+ * Inserts history rows for an owner the fence just accepted, all or none. The
+ * write saves what the owner was handed, so after a resume's hand-over it
+ * stores the result of each resume the owner is processing, and it completes
+ * each queued resume of a result an `async_status` read in it stored: the
+ * history tells both now.
+ * @returns the coordinator, with its queue counters current
+ */
 async function insertOwnedEvents(
   ctx: MutationCtx,
-  coordinator: Doc<"runtimeConversationCoordinators">,
+  owner: Doc<"runtimeConversationCoordinators">,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<void> {
+): Promise<Doc<"runtimeConversationCoordinators">> {
+  let coordinator = owner;
   await requireActiveAccount(ctx, coordinator.accountId);
-  await insertConversationEvents(
+  const storedReads = await insertConversationEvents(
     ctx,
     coordinator.accountId,
     coordinator.conversationKey,
     events,
   );
+  if (coordinator.resumeUnsaved) {
+    const applied = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+        q
+          .eq("conversationKey", coordinator.conversationKey)
+          .eq("status", "processing"),
+      )
+      .take(MAX_DRAIN_ENVELOPES);
+    for (const row of applied) {
+      if (row.ownerGeneration === coordinator.ownerGeneration) {
+        await markDeliveredResultsStored(ctx, row);
+      }
+    }
+    await ctx.db.patch(coordinator._id, { resumeUnsaved: undefined });
+    coordinator = { ...coordinator, resumeUnsaved: undefined };
+  }
+  if (storedReads.length === 0) return coordinator;
+  const now = Date.now();
+  const queue = {
+    queuedCount: coordinator.queuedCount,
+    queuedBytes: coordinator.queuedBytes,
+  };
+  for (const row of await queuedPage(ctx, coordinator)) {
+    if (!row.toolResultId || !storedReads.includes(row.toolResultId)) continue;
+    await ctx.db.patch(row._id, {
+      ...RELEASED_PAYLOAD,
+      status: "completed",
+      updatedAt: now,
+    });
+    queue.queuedCount = Math.max(0, queue.queuedCount - 1);
+    queue.queuedBytes = Math.max(0, queue.queuedBytes - row.sizeBytes);
+  }
+
+  return await patchQueueCounters(ctx, coordinator, queue, now);
 }
 
 /**
@@ -1570,8 +1645,8 @@ function isLateControl(
 }
 
 /**
- * Marks the result rows a resume envelope delivers stored, in the mutation
- * that hands it to its owner: `accept` as owner, or the apply of a queued one.
+ * Marks the result rows a resume envelope delivers stored, in the owner's
+ * history write that saves it.
  */
 async function markDeliveredResultsStored(
   ctx: MutationCtx,
@@ -1590,6 +1665,24 @@ async function markDeliveredResultsStored(
     envelope.accountId,
     await asyncToolResultRow(ctx, envelope.toolResultId),
   );
+}
+
+/**
+ * The coordinator patch for handing `rows` to an owner: one that carries a
+ * late result leaves it for the owner's next history write to store.
+ */
+function resumeHandOver(
+  rows: Pick<
+    Doc<"runtimeIngressEnvelopes">,
+    "resultEventId" | "toolResultId"
+  >[],
+): { resumeUnsaved?: true } {
+  return rows.some(
+    (row): boolean =>
+      row.resultEventId !== undefined || row.toolResultId !== undefined,
+  )
+    ? { resumeUnsaved: true }
+    : {};
 }
 
 /**
@@ -1698,7 +1791,6 @@ async function promoteQueuedGroup(
   const eventIds = selected.map((row) => row.eventId);
   const applicationId = `${appliedToEventId}:${appliedMode}:${options.ownerGeneration}:${first.sequence}`;
   for (const row of selected) {
-    await markDeliveredResultsStored(ctx, row);
     await ctx.db.patch(row._id, {
       status: "processing",
       appliedMode: appliedMode,
@@ -1731,6 +1823,7 @@ async function promoteQueuedGroup(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + options.leaseTtlMs,
+    ...resumeHandOver(selected),
     updatedAt: now,
   });
 

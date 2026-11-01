@@ -5555,7 +5555,12 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
       },
       null
     >;
@@ -6274,13 +6279,13 @@ export declare const internal: {
       "mutation",
       "internal",
       { eventId: string; handback: "detached" | "stored" },
-      boolean
+      null
     >;
     markAsyncToolHandback: FunctionReference<
       "mutation",
       "internal",
       { handback: "detached" | "stored"; resultId: string },
-      boolean
+      null
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
     releaseClaim: FunctionReference<
@@ -6618,7 +6623,12 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         ownerEventId: string;
         ownerGeneration: number;
       },
@@ -6969,7 +6979,12 @@ export declare const internal: {
         };
         conversationKey: string;
         error?: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         ownerEventId: string;
         ownerGeneration: number;
         result?: any;
@@ -6983,7 +6998,12 @@ export declare const internal: {
       {
         claimSteering?: boolean;
         conversationKey: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         leaseTtlMs: number;
         ownerEventId: string;
         ownerGeneration: number;
@@ -7081,7 +7101,12 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         leaseTtlMs: number;
         ownerEventId: string;
         ownerGeneration: number;

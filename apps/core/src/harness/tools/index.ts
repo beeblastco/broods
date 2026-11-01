@@ -432,6 +432,15 @@ export async function createTools(
         supportsJobs: workspaces.some((workspace) =>
           sandboxSupportsJobControls(workspace.sandbox),
         ),
+        ...(session
+          ? {
+              onResultRead: (
+                toolCallId: string,
+                resultId: string,
+              ): Promise<void> =>
+                session.recordToolResultRead(toolCallId, resultId),
+            }
+          : {}),
       }),
     );
   }

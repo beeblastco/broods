@@ -1246,6 +1246,9 @@ export const runtimeConversationCoordinatorsFields = {
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
+  // True from handing an owner a resume that carries a late result until the
+  // owner's next history write, which saves it and stores the result.
+  resumeUnsaved: v.optional(v.boolean()),
   updatedAt: v.number(),
 };
 /**

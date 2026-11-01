@@ -37,6 +37,39 @@ function conversationKeyFor(accountId: string): string {
   return `acct:${accountId}:agent:test-agent:api:test-conversation`;
 }
 
+// The conversation's current owner saving one step, as core does with the
+// envelopes it was handed, carrying the results its `async_status` reads
+// handed over.
+async function saveOwnerStep(
+  t: TestConvex<typeof schema>,
+  conversationKey: string,
+  toolResultIds: string[] = [],
+): Promise<void> {
+  const owner = await t.run(
+    async (ctx) =>
+      await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique(),
+  );
+  await t.mutation(internal.runtimeIngress.stepBoundary, {
+    conversationKey: conversationKey,
+    ownerEventId: owner!.ownerEventId!,
+    ownerGeneration: owner!.ownerGeneration,
+    leaseTtlMs: 60_000,
+    claimSteering: false,
+    events: [
+      {
+        cursor: `step-${crypto.randomUUID()}`,
+        event: { role: "tool", content: [] },
+        ...(toolResultIds.length > 0 ? { toolResultIds: toolResultIds } : {}),
+      },
+    ],
+  });
+}
+
 function admission(options: {
   activeOwnerOnly?: boolean;
   expectedOwnerTaskId?: string;
@@ -1345,7 +1378,8 @@ describe("runtime ingress", () => {
         resume("resume-again", "resumed-first"),
       ),
     ).toMatchObject({ outcome: "duplicate" });
-    // The admission stored it; a detach landing after never reopens it.
+    // Its owner's save stored it; a detach landing after never reopens it.
+    await saveOwnerStep(t, conversationKey);
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "resumed-first",
       handback: "detached",
@@ -1428,7 +1462,9 @@ describe("runtime ingress", () => {
     expect(await resume("resume-unsaved", "unsaved")).toMatchObject({
       outcome: "owner",
     });
-    // The admitted envelope carries it, so it is stored from here on.
+    // The admitted envelope carries it, so its owner's save stores it.
+    expect(await row("unsaved")).toMatchObject({ handback: "pending" });
+    await saveOwnerStep(t, conversationKey);
     expect(await row("unsaved")).toMatchObject({ handback: "stored" });
   });
 
@@ -1474,11 +1510,12 @@ describe("runtime ingress", () => {
     expect(await resume("resume-first", "resumed")).toMatchObject({
       outcome: "owner",
     });
-    expect(await row("resumed")).toMatchObject({
-      handback: "stored",
-    });
     expect(await resume("resume-again", "resumed")).toMatchObject({
       outcome: "duplicate",
+    });
+    await saveOwnerStep(t, conversationKey);
+    expect(await row("resumed")).toMatchObject({
+      handback: "stored",
     });
 
     // async_status read it first: the continuation admits nothing.
@@ -2645,10 +2682,9 @@ interface LateResultKind {
     id: string,
   ) => Promise<string | undefined>;
   listed: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
-  // A stored mark of the row: the parent's status read of a tool result, or
-  // a subagent result the parent is never told. True when a queued resume
-  // keeps the result from it.
-  read: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
+  // Whether `async_status` reads this kind, whose saved step carries the
+  // result as `toolResultIds`.
+  readable: boolean;
   // The owner `busy` taking the queued resume, as its run does.
   apply: (
     t: TestConvex<typeof schema>,
@@ -2695,11 +2731,7 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
           status: "completed",
         })
       ).page.some((row): boolean => row.eventId === id),
-    read: async (t, id): Promise<boolean> =>
-      await t.mutation(internal.runtime.markAsyncAgentHandback, {
-        eventId: id,
-        handback: "stored",
-      }),
+    readable: false,
     apply: async (
       t,
       conversationKey,
@@ -2744,11 +2776,7 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
           status: "completed",
         })
       ).page.some((row): boolean => row.resultId === id),
-    read: async (t, id): Promise<boolean> =>
-      await t.mutation(internal.runtime.markAsyncToolHandback, {
-        resultId: id,
-        handback: "stored",
-      }),
+    readable: true,
     apply: async (
       t,
       conversationKey,
@@ -2768,6 +2796,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
   // resume admission that carries it.
   async function busyConversation(): Promise<{
     t: TestConvex<typeof schema>;
+    accountId: Id<"accounts">;
     conversationKey: string;
     ownerGeneration: number;
     resume: (options?: {
@@ -2791,6 +2820,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
 
     return {
       t: t,
+      accountId: accountId,
       conversationKey: conversationKey,
       ownerGeneration: busy.ownerGeneration!,
       resume: async (
@@ -2830,16 +2860,41 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     });
   }
 
-  test("stores the result at once as owner", async (): Promise<void> => {
+  test("admits the sweep's retry of a resume whose owner died before saving it", async (): Promise<void> => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const { t, conversationKey, ownerGeneration, resume } =
+        await busyConversation();
+      const before = await kind.handback(t, "late");
+      await finishBusy(t, conversationKey, ownerGeneration);
+      expect(await resume()).toMatchObject({ outcome: "owner" });
+
+      // The resume's owner dies before its turn saves anything.
+      vi.setSystemTime(Date.now() + 10 * 60 * 60 * 1000);
+      await t.mutation(internal.runtimeIngress.maintain, {});
+      expect(await kind.handback(t, "late")).toBe(before);
+
+      expect(await resume()).toMatchObject({ outcome: "owner" });
+      await saveOwnerStep(t, conversationKey);
+      expect(await kind.handback(t, "late")).toBe("stored");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("stores the result once its owner saves the resume", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();
+    const before = await kind.handback(t, "late");
     await finishBusy(t, conversationKey, ownerGeneration);
 
     expect(await resume()).toMatchObject({ outcome: "owner" });
+    expect(await kind.handback(t, "late")).toBe(before);
+    await saveOwnerStep(t, conversationKey);
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
-  test("stores a queued result only when its envelope is applied", async (): Promise<void> => {
+  test("stores a queued result only when the owner it is applied to saves it", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();
     const before = await kind.handback(t, "late");
@@ -2850,23 +2905,110 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
       { contributingEventIds: ["resume"] },
     );
+    await saveOwnerStep(t, conversationKey);
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
-  test("leaves a queued result to its resume when a stored mark finds it", async (): Promise<void> => {
-    const { t, conversationKey, ownerGeneration, resume } =
-      await busyConversation();
-    const before = await kind.handback(t, "late");
-    expect(await resume()).toMatchObject({ outcome: "queued" });
-
-    // The mark stores nothing, so the resume tells it.
-    expect(await kind.read(t, "late")).toBe(true);
-    expect(await kind.handback(t, "late")).toBe(before);
-    expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
-      { contributingEventIds: ["resume"] },
+  async function resumeEnvelope(
+    t: TestConvex<typeof schema>,
+    conversationKey: string,
+  ): Promise<{ status: string } | undefined> {
+    return await t.run(async (ctx) =>
+      (
+        await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+            q.eq("conversationKey", conversationKey),
+          )
+          .collect()
+      ).find((row): boolean => row.eventId.endsWith("resume")),
     );
-    expect(await kind.handback(t, "late")).toBe("stored");
-  });
+  }
+
+  async function queuedCount(
+    t: TestConvex<typeof schema>,
+    conversationKey: string,
+  ): Promise<number | undefined> {
+    return await t.run(
+      async (ctx) =>
+        (
+          await ctx.db
+            .query("runtimeConversationCoordinators")
+            .withIndex("by_conversationKey", (q) =>
+              q.eq("conversationKey", conversationKey),
+            )
+            .unique()
+        )?.queuedCount,
+    );
+  }
+
+  test.runIf(kind.readable)(
+    "a saved status read stores the result and completes its queued resume",
+    async (): Promise<void> => {
+      const { t, conversationKey, ownerGeneration, resume } =
+        await busyConversation();
+      expect(await resume()).toMatchObject({ outcome: "queued" });
+      expect(await queuedCount(t, conversationKey)).toBe(1);
+
+      await saveOwnerStep(t, conversationKey, ["late"]);
+
+      expect(await kind.handback(t, "late")).toBe("stored");
+      expect(await resumeEnvelope(t, conversationKey)).toMatchObject({
+        status: "completed",
+      });
+      expect(await queuedCount(t, conversationKey)).toBe(0);
+      // The conversation has the result: nothing is applied after the turn, and
+      // the sweep's retry is refused.
+      expect(await kind.apply(t, conversationKey, ownerGeneration)).toBeNull();
+      expect(await kind.listed(t, "late")).toBe(false);
+    },
+  );
+
+  test.runIf(kind.readable)(
+    "a status read that is never saved stores nothing, so the queued resume tells it",
+    async (): Promise<void> => {
+      const { t, conversationKey, ownerGeneration, resume } =
+        await busyConversation();
+      const before = await kind.handback(t, "late");
+      expect(await resume()).toMatchObject({ outcome: "queued" });
+
+      // The read ran, then the turn died before its step was saved.
+      expect(await kind.handback(t, "late")).toBe(before);
+      expect(
+        await kind.apply(t, conversationKey, ownerGeneration),
+      ).toMatchObject({ contributingEventIds: ["resume"] });
+      await saveOwnerStep(t, conversationKey);
+      expect(await kind.handback(t, "late")).toBe("stored");
+    },
+  );
+
+  test.runIf(kind.readable)(
+    "a saved status read in another conversation leaves the result and its queued resume alone",
+    async (): Promise<void> => {
+      const { t, accountId, conversationKey, resume } =
+        await busyConversation();
+      const before = await kind.handback(t, "late");
+      expect(await resume()).toMatchObject({ outcome: "queued" });
+      const otherKey = `${conversationKey}-other`;
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: otherKey,
+          eventId: "other",
+          mode: "followup",
+        }),
+      );
+
+      await saveOwnerStep(t, otherKey, ["late"]);
+
+      expect(await kind.handback(t, "late")).toBe(before);
+      expect(await resumeEnvelope(t, conversationKey)).toMatchObject({
+        status: "queued",
+      });
+      expect(await queuedCount(t, conversationKey)).toBe(1);
+    },
+  );
 
   test("answers a retry whose payload drifted as a duplicate while the first still waits", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
@@ -2880,6 +3022,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
       { contributingEventIds: ["resume"] },
     );
+    await saveOwnerStep(t, conversationKey);
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
@@ -2905,6 +3048,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       // result once the conversation is free.
       await finishBusy(t, conversationKey, ownerGeneration);
       expect(await resume()).toMatchObject({ outcome: "owner" });
+      await saveOwnerStep(t, conversationKey);
       expect(await kind.handback(t, "late")).toBe("stored");
     } finally {
       vi.useRealTimers();
