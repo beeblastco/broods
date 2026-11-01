@@ -15,8 +15,18 @@ import {
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
+import { useModelRates } from "@/app/hooks/useModelRates";
 import { useTween } from "@/app/hooks/useTween";
 import { formatNumber } from "@/app/lib/formatNumber";
+import {
+  formatUsd,
+  isModelCallSpan,
+  modelKey,
+  numberAttribute,
+  runModel,
+  stepTokens,
+  type ModelUsage,
+} from "@/app/lib/modelCost";
 import {
   bucketStartsAcrossRange,
   formatAxisNumber,
@@ -33,7 +43,6 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   estimateModelTokenCost,
   type ModelTokenRates,
-  type ModelTokenUsage,
 } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { ChevronDownIcon } from "lucide-react";
@@ -81,18 +90,12 @@ interface LiveOverlay {
   outputTokens: number;
   reasoningTokens: number;
   cachedInputTokens: number;
+  cacheWriteTokens: number;
   // Running roots (tasks + subagent subtasks) and the model steps beneath them.
   invocations: number;
   modelCalls: number;
   // Each step's tokens under its root's model, priced like a usage row.
-  // A model with no usage row in range yet reads as unpriced until one lands.
   modelUsage: ModelUsage[];
-}
-
-/** One model's tokens, keyed the way usage rows name the model. */
-interface ModelUsage extends ModelTokenUsage {
-  modelProvider: string;
-  modelId: string;
 }
 
 const RANGE_SECONDS: Record<Range, number> = {
@@ -184,6 +187,7 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   outputTokens: 0,
   reasoningTokens: 0,
   cachedInputTokens: 0,
+  cacheWriteTokens: 0,
   invocations: 0,
   modelCalls: 0,
   modelUsage: [],
@@ -214,24 +218,6 @@ export function TokensUsagePanel({
   // The per-task tile picked for the big chart; none draws the token area.
   const [metric, setMetric] = useState<PerTaskMetric | null>(null);
 
-  // Reactive subscription: usage totals update live as the harness meters tokens.
-  const data = useQuery(api.logs.fetchUsageStats, {
-    projectId: projectId,
-    stageId: stageId ?? undefined,
-    range: range,
-  });
-  // Hold the last result while another range loads, so the chart morphs from
-  // it instead of collapsing to an empty grid first. Only for the same
-  // project and stage: another stage's numbers never show under this one.
-  const scopeKey = `${projectId}:${stageId ?? ""}`;
-  const [held, setHeld] = useState<{ key: string; stats: UsageStats } | null>(
-    null,
-  );
-  if (data !== undefined && data !== held?.stats) {
-    setHeld({ key: scopeKey, stats: data });
-  }
-  const stats = data ?? (held?.key === scopeKey ? held.stats : null);
-
   // Convex only records usage at task finalize, so a run in flight needs the
   // trace stream to show anything at all. See liveOverlayFromTraces.
   const { entries: liveSpans } = useObservabilityStream({
@@ -245,13 +231,38 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
-  // Rates crawled hourly from models.dev, for the models in the buckets.
+  // Reactive subscription: usage totals update live as the harness meters tokens.
+  const data = useQuery(api.logs.fetchUsageStats, {
+    projectId: projectId,
+    stageId: stageId ?? undefined,
+    range: range,
+  });
+  // Rates for the running models, which have no usage row yet.
+  const { rates: liveRates, loading: liveRatesLoading } = useModelRates(
+    liveOverlay.modelUsage,
+  );
+  // Hold the last result while another range loads, so the chart morphs from
+  // it instead of collapsing to an empty grid first. Only for the same
+  // project and stage: another stage's numbers never show under this one.
+  const scopeKey = `${projectId}:${stageId ?? ""}`;
+  const [held, setHeld] = useState<{ key: string; stats: UsageStats } | null>(
+    null,
+  );
+  if (data !== undefined && data !== held?.stats) {
+    setHeld({ key: scopeKey, stats: data });
+  }
+  const stats = data ?? (held?.key === scopeKey ? held.stats : null);
+
+  // Rates for the models in the buckets and the ones running live.
   const rates = useMemo(
     () =>
       new Map<string, ModelTokenRates>(
-        (stats?.rates ?? []).map((row) => [modelKey(row), row]),
+        [...(stats?.rates ?? []), ...(liveRates ?? [])].map((row) => [
+          modelKey(row),
+          row,
+        ]),
       ),
-    [stats],
+    [stats, liveRates],
   );
 
   const shownRange = stats?.range ?? range;
@@ -305,9 +316,9 @@ export function TokensUsagePanel({
   const { binCosts, estimatedCost, unpriced } = useMemo(() => {
     const byStart = new Map<number, number>();
     const unpricedModels = new Set<string>();
-    const priceOf = (m: ModelUsage): number => {
+    const priceOf = (m: ModelUsage, loading = false): number => {
       const cost = estimateModelTokenCost(rates.get(modelKey(m)), m);
-      if (cost === null) unpricedModels.add(modelKey(m));
+      if (cost === null && !loading) unpricedModels.add(modelKey(m));
 
       return cost?.total ?? 0;
     };
@@ -320,7 +331,7 @@ export function TokensUsagePanel({
     const costs = bucketStarts.map((start) => byStart.get(start) ?? 0);
     if (activeFilter === null && costs.length > 0) {
       for (const m of liveOverlay.modelUsage) {
-        costs[costs.length - 1] += priceOf(m);
+        costs[costs.length - 1] += priceOf(m, liveRatesLoading);
       }
     }
 
@@ -332,7 +343,16 @@ export function TokensUsagePanel({
           : costs[selected],
       unpriced: unpricedModels.size,
     };
-  }, [stats, activeFilter, binMs, bucketStarts, selected, liveOverlay, rates]);
+  }, [
+    stats,
+    activeFilter,
+    binMs,
+    bucketStarts,
+    selected,
+    liveOverlay,
+    rates,
+    liveRatesLoading,
+  ]);
 
   const averages = useMemo(
     () => perTaskAverages(bins, binCosts),
@@ -438,6 +458,7 @@ export function TokensUsagePanel({
               bin={{ startMs: bucketStarts[selected], binSeconds: binSeconds }}
               binTokens={bins[selected].totalTokens}
               models={activeFilter}
+              rates={rates}
               onClose={() => setSelectedStart(null)}
             />
           )}
@@ -859,22 +880,10 @@ function formatMs(ms: number): string {
   return `${Math.round(ms)}ms`;
 }
 
-/** USD estimate with useful precision for small token batches. */
-function formatUsd(value: number): string {
-  if (value > 0 && value < 0.0001) return "<$0.0001";
-
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  });
-}
-
 /**
  * In-progress overlay taken straight off the live trace stream: Convex usage is
  * only written when a task finalizes, so a long run would otherwise show nothing
- * until it ends. Each model step is scoped to its own root span (a task, a cron
+ * until it ends. Each model call (a step or a compaction) is scoped to its own root span (a task, a cron
  * run, or a subagent subtask, which share the parent's traceId) so a finished
  * subtask stops counting the moment its usage row lands in Convex, with no double
  * counting.
@@ -898,23 +907,17 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     const root = span.parentSpanId
       ? runningRootsById.get(span.parentSpanId)
       : undefined;
-    if (span.kind !== "model.step" || !root) continue;
-    const usage = {
-      inputTokens: numericAttribute(span, "model.input_tokens"),
-      outputTokens: numericAttribute(span, "model.output_tokens"),
-      cachedInputTokens: numericAttribute(span, "model.cached_input_tokens"),
-      cacheWriteTokens: 0,
-    };
-    const { "model.provider": provider, "model.id": modelId } =
-      root.attributes ?? {};
-    totals.modelCalls += 1;
+    if (!isModelCallSpan(span) || !root) continue;
+    const usage = stepTokens(span);
+    const model = runModel(root);
+    // Calls are steps, as on the usage row (`stepCount`); a compaction only adds tokens.
+    if (span.kind === "model.step") totals.modelCalls += 1;
     totals.inputTokens += usage.inputTokens;
     totals.outputTokens += usage.outputTokens;
-    totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
+    totals.reasoningTokens += numberAttribute(span, "model.reasoning_tokens");
     totals.cachedInputTokens += usage.cachedInputTokens;
-    if (typeof provider === "string" && typeof modelId === "string") {
-      modelUsage.push({ modelProvider: provider, modelId: modelId, ...usage });
-    }
+    totals.cacheWriteTokens += usage.cacheWriteTokens;
+    if (model) modelUsage.push({ ...model, ...usage });
   }
   totals.modelUsage = modelUsage;
 
@@ -934,17 +937,6 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   }
 
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
-}
-
-/** `provider::model`, the key the model filter, its colors and the trace query share. */
-function modelKey(b: { modelProvider: string; modelId: string }): string {
-  return `${b.modelProvider}::${b.modelId}`;
-}
-
-function numericAttribute(span: ObservabilitySpanRow, key: string): number {
-  const value = span.attributes?.[key];
-
-  return typeof value === "number" ? value : 0;
 }
 
 /** Whole-number share for the numbers row, 0% when empty. */
@@ -982,6 +974,7 @@ function withLiveOverlay(bins: Counters[], live: LiveOverlay): Counters[] {
     outputTokens: last.outputTokens + live.outputTokens,
     reasoningTokens: last.reasoningTokens + live.reasoningTokens,
     cachedInputTokens: last.cachedInputTokens + live.cachedInputTokens,
+    cacheWriteTokens: last.cacheWriteTokens + live.cacheWriteTokens,
     totalTokens: last.totalTokens + live.inputTokens + live.outputTokens,
     invocations: last.invocations + live.invocations,
     modelCalls: last.modelCalls + live.modelCalls,

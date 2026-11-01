@@ -184,6 +184,18 @@ export const MODEL_CONFIG_SETTING_KEYS = [
   "maxRetries",
   "timeout",
 ] as const;
+// The object form of the AI SDK's `TimeoutConfiguration` (ai 7). `tools` holds
+// per-tool limits named `{toolName}Ms`.
+const MODEL_TIMEOUT_KEYS = [
+  "totalMs",
+  "stepMs",
+  "firstChunkMs",
+  "chunkMs",
+  "toolMs",
+  "tools",
+] as const;
+// The longest delay setTimeout takes; a longer one overflows and fires at once.
+const MAX_TIMER_MS = 2_147_483_647;
 // Webhooks subscribe to agent-loop lifecycle events only. Code hooks use the
 // full AGENT_HOOK_EVENT_NAMES list (lifecycle + channel points).
 export const AGENT_LIFECYCLE_EVENT_NAMES = [
@@ -464,6 +476,46 @@ export function mergeCanvasSandboxes(
   return [...new Set([...canvas, ...hidden])];
 }
 
+/**
+ * Checks one outbound webhook entry against the config plane's rules. Agent
+ * config normalization runs it on every `hooks.webhooks` row, and the
+ * dashboard's webhook mutations run it on the row they add or re-enable.
+ */
+export function normalizeWebhookHookConfig(value: unknown, path: string): void {
+  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, `${path}.enabled`);
+  assertOptionalNonEmptyString(config.url, `${path}.url`);
+  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
+  if (
+    config.events !== undefined &&
+    (!Array.isArray(config.events) ||
+      !config.events.every(
+        (event) =>
+          typeof event === "string" &&
+          AGENT_LIFECYCLE_EVENT_NAMES.includes(
+            event as (typeof AGENT_LIFECYCLE_EVENT_NAMES)[number],
+          ),
+      ))
+  ) {
+    throw new ClientError(
+      `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
+    );
+  }
+  if (config.enabled === true) {
+    if (typeof config.url !== "string" || config.url.trim().length === 0)
+      throw new ClientError(
+        `${path}.url is required when ${path}.enabled is true`,
+      );
+    if (typeof config.secret !== "string" || config.secret.trim().length === 0)
+      throw new ClientError(
+        `${path}.secret is required when ${path}.enabled is true`,
+      );
+  }
+  if (typeof config.url === "string" && config.url.trim().length > 0)
+    assertPublicHttpsUrl(config.url, `${path}.url`);
+}
+
 function normalizeAgentBehaviorConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
@@ -589,7 +641,11 @@ function normalizeHarnessDebugConfig(value: unknown): void {
   );
 }
 
-function normalizeModelConfig(value: unknown, label: string): void {
+/**
+ * Checks a model config's keys and values: the stored `config.model`, the
+ * subagent's, and a per-run `model` override.
+ */
+export function normalizeModelConfig(value: unknown, label: string): void {
   if (value == null) return;
   if (!isPlainObject(value))
     throw new ClientError(`${label} must be an object`);
@@ -626,6 +682,7 @@ function normalizeModelConfig(value: unknown, label: string): void {
   ) {
     throw new ClientError(`${label}.providerOptions must be an object`);
   }
+  assertOptionalModelTimeout(config.timeout, `${label}.timeout`);
   normalizeModelOutputConfig(config.output, label);
 }
 
@@ -899,41 +956,6 @@ function normalizeCodeHookConfig(value: unknown, path: string): void {
       `${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
     );
   }
-}
-
-function normalizeWebhookHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `${path}.enabled`);
-  assertOptionalNonEmptyString(config.url, `${path}.url`);
-  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
-  if (
-    config.events !== undefined &&
-    (!Array.isArray(config.events) ||
-      !config.events.every(
-        (event) =>
-          typeof event === "string" &&
-          AGENT_LIFECYCLE_EVENT_NAMES.includes(
-            event as (typeof AGENT_LIFECYCLE_EVENT_NAMES)[number],
-          ),
-      ))
-  ) {
-    throw new ClientError(
-      `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
-    );
-  }
-  if (config.enabled === true) {
-    if (typeof config.url !== "string" || config.url.trim().length === 0)
-      throw new ClientError(
-        `${path}.url is required when ${path}.enabled is true`,
-      );
-    if (typeof config.secret !== "string" || config.secret.trim().length === 0)
-      throw new ClientError(
-        `${path}.secret is required when ${path}.enabled is true`,
-      );
-  }
-  if (typeof config.url === "string" && config.url.trim().length > 0)
-    assertPublicHttpsUrl(config.url, `${path}.url`);
 }
 
 function normalizeToolsConfig(value: unknown): void {
@@ -1431,6 +1453,15 @@ function normalizeWhatsAppConfig(value: unknown): void {
     config.phoneNumberId,
     "config.channels.whatsapp.phoneNumberId",
   );
+  // It is a Graph API path segment, and the SDK refuses to send to any other.
+  if (
+    typeof config.phoneNumberId === "string" &&
+    !/^\d+$/.test(config.phoneNumberId)
+  ) {
+    throw new ClientError(
+      "config.channels.whatsapp.phoneNumberId must be the number's digits-only ID",
+    );
+  }
   assertOptionalString(config.userName, "config.channels.whatsapp.userName");
   assertOptionalString(
     config.verifyToken,
@@ -1748,6 +1779,46 @@ function assertPartitionAlias(value: unknown, name: string): void {
     throw new ClientError(
       `${name} must use only letters, numbers, dots, underscores, or hyphens`,
     );
+  }
+}
+
+/**
+ * Checks `model.timeout` against the AI SDK's `TimeoutConfiguration`: a total
+ * in ms, or an object of per-phase limits. Every limit is a positive integer.
+ */
+function assertOptionalModelTimeout(value: unknown, name: string): void {
+  if (value === undefined) return;
+  if (typeof value === "number") {
+    assertOptionalPositiveInteger(value, name, MAX_TIMER_MS);
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new ClientError(
+      `${name} must be a number of milliseconds or an object with ${MODEL_TIMEOUT_KEYS.join(", ")}`,
+    );
+  }
+  for (const [key, limit] of Object.entries(value)) {
+    if (key === "tools") continue;
+    if (!(MODEL_TIMEOUT_KEYS as readonly string[]).includes(key)) {
+      throw new ClientError(
+        `${name}.${key} is not supported; use one of: ${MODEL_TIMEOUT_KEYS.join(", ")}`,
+      );
+    }
+    assertOptionalPositiveInteger(limit, `${name}.${key}`, MAX_TIMER_MS);
+  }
+  if (value.tools === undefined) return;
+  if (!isPlainObject(value.tools)) {
+    throw new ClientError(
+      `${name}.tools must be an object of {toolName}Ms limits`,
+    );
+  }
+  for (const [key, limit] of Object.entries(value.tools)) {
+    if (!/^.+Ms$/.test(key)) {
+      throw new ClientError(
+        `${name}.tools.${key} must be named {toolName}Ms, like bashMs`,
+      );
+    }
+    assertOptionalPositiveInteger(limit, `${name}.tools.${key}`, MAX_TIMER_MS);
   }
 }
 

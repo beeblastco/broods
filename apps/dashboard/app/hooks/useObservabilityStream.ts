@@ -89,6 +89,9 @@ interface UseObservabilityStreamResult<T> {
   fetchTrace: (traceId: string) => boolean;
 }
 
+// How long Tempo keeps a trace: `tempo.retention` in the infra repo's
+// kubernetes/charts/releases/tempo.yaml. Older traces cannot be fetched.
+export const TRACE_RETENTION_DAYS = 30;
 const RECONNECT_DELAY_MS = 3_000;
 // Caps the accumulated list (keeping the most recent) so a long tail can't grow
 // unbounded and each merge stays bounded.

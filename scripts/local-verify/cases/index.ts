@@ -9,29 +9,23 @@ import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
-import { customSandbox } from "./custom-sandbox.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
-import { lambdaSnapshot } from "./lambda-snapshot.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
+import { modelPrices } from "./model-prices.ts";
+import { modelTimeout } from "./model-timeout.ts";
 import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { productionRegion } from "./production-region.ts";
 import { projectUsage } from "./project-usage.ts";
-import { providerSnapshot } from "./provider-snapshot.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
-import { r2Workspace } from "./r2-workspace.ts";
-import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
 import { scopedAccountKey } from "./scoped-account-key.ts";
-import { sdkClient } from "./sdk-client.ts";
-import { skillLimit } from "./skill-limit.ts";
 import { snapshotStage } from "./snapshot-stage.ts";
-import { storageTrust } from "./storage-trust.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
 import { subagentModel } from "./subagent-model.ts";
@@ -40,6 +34,7 @@ import { subagentStop } from "./subagent-stop.ts";
 import { traceFetch } from "./trace-fetch.ts";
 import { trailingSlash } from "./trailing-slash.ts";
 import { userToken } from "./user-token.ts";
+import { vercelSandbox } from "./vercel-sandbox.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
 import { websocketAttachAbort } from "./websocket-attach-abort.ts";
 import { websocketRuntimeKey } from "./websocket-runtime-key.ts";
@@ -49,7 +44,6 @@ import { workspaceIsolation } from "./workspace-isolation.ts";
 /** Every case `local-stack.ts verify` runs, in order. A new end-to-end feature adds one here. */
 export const verifyCases: readonly VerifyCase[] = [
   agentRun,
-  sdkClient,
   websocketAttachAbort,
   websocketRuntimeKey,
   traceFetch,
@@ -66,16 +60,12 @@ export const verifyCases: readonly VerifyCase[] = [
   machineSandbox,
   bashTimeout,
   ownBucketSandbox,
-  storageTrust,
-  sandboxImage,
-  lambdaSnapshot,
-  providerSnapshot,
   snapshotStage,
   browserSandbox,
   mcpCommand,
-  customSandbox,
   cloudflareSandbox,
   workerSandbox,
+  vercelSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,
@@ -83,15 +73,15 @@ export const verifyCases: readonly VerifyCase[] = [
   manifestSync,
   productionRegion,
   projectUsage,
+  modelPrices,
+  modelTimeout,
   mcpHeaderEnv,
-  r2Workspace,
   workToolWebhooks,
   webhookHandshake,
   connections,
   auditLedger,
   runToken,
   workspaceIsolation,
-  skillLimit,
   orgSeatBilling,
   // Last: it blocks a source address on the config plane for 15 minutes.
   authFailures,

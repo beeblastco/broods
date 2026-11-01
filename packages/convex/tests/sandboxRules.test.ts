@@ -390,6 +390,71 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
+  it("takes mountAwsS3Buckets as a boolean, on the providers that read it", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { mountAwsS3Buckets: true },
+      }).options,
+    ).toEqual({ mountAwsS3Buckets: true });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { mountAwsS3Buckets: "true" },
+      }),
+    ).toThrow("config.options.mountAwsS3Buckets must be a boolean");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { mountAwsS3Buckets: true },
+      }),
+    ).toThrow("not vercel; lambda and vercel mount any attached workspace");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "e2b",
+        network: { mode: "allow-all" },
+        options: { mountAwsS3Buckets: true },
+      }),
+    ).toThrow("only read by the daytona and sandbox providers, not e2b");
+  });
+
+  it("caps a vercel idle window at Vercel's 24 hour session limit", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "vercel",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 24 * 60 * 60 },
+      }).lifecycle,
+    ).toEqual({ idleTimeoutSeconds: 86400 });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 24 * 60 * 60 + 1 },
+      }),
+    ).toThrow("must be at most 86400 on the vercel provider");
+  });
+
+  it("takes a Secure Compute networkId on vercel only", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { networkId: "net_1" },
+      }).options,
+    ).toEqual({ networkId: "net_1" });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { networkId: "net_1" },
+      }),
+    ).toThrow(
+      "config.options.networkId is only supported by the vercel provider",
+    );
+    expect(() =>
+      normalizeSandboxConfig({ provider: "vercel", options: { networkId: 7 } }),
+    ).toThrow("config.options.networkId must be a non-empty string");
+  });
+
   it("isolate takes on/off networking, no hooks, no lifecycle and a 60 s timeout", () => {
     expect(
       normalizeSandboxConfig({ provider: "worker", persistent: true }),

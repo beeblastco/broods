@@ -48,6 +48,6 @@ broods trace <trace-id> --json   # one run's every span, then exit
 
 ## Retention
 
-The dashboard replays roughly the last two hours instantly on connect. Older logs and traces load from long-term storage when you page back. Traces older than the seven-day search window can still be opened by id.
+The dashboard replays roughly the last two hours instantly on connect. Older logs and traces load from long-term storage when you page back. Traces are kept 30 days. The Tracing tab lists the last seven days, and an older trace opens by id, such as from a Usage chart bin. Usage totals and cost outlive their traces.
 
 For your own pipeline, send [webhooks](webhooks.md) to a service you run. [Observability internals](../internals/observability.md) explains how the pipeline works inside.

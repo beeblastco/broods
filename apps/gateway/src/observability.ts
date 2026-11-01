@@ -111,6 +111,9 @@ const LOKI_SANDBOX_BACKFILL_TIMEOUT_MS = 15_000;
 // stays tight; a slow one should be skipped, not queued up behind itself.
 const LOKI_POLL_TIMEOUT_MS = 5_000;
 const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
+// How long Tempo keeps a trace: `tempo.retention` in the infra repo's
+// kubernetes/charts/releases/tempo.yaml. A miss names it, so a reader knows why.
+const TEMPO_RETENTION_DAYS = 30;
 // A search over the whole window walks every block in it; a single trace by
 // id is an index hit. Both used to share 5 s, which the search blew through on
 // a busy stage and left the Tracing tab "waiting" with no history at all.
@@ -703,8 +706,8 @@ async function sendBackfill(
   }
 }
 
-// One trace by id, for a log line's "View trace" when the trace is older than
-// the backfill window covers. Tempo's id lookup is not tenant-scoped, so the
+// One trace by id, for a trace opened past the backfill window: a log line's
+// "View trace", a Usage rail row, a shared link. Tempo's id lookup is not tenant-scoped, so the
 // spans are checked against the socket's scope before anything leaves.
 async function sendTrace(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
@@ -718,7 +721,11 @@ async function sendTrace(
     const rows = (await fetchTempoTrace(tempoUrl, traceId)).filter((row) =>
       rowInScope(row, scope),
     );
-    if (rows.length === 0) throw new Error("Trace not found in this stage");
+    if (rows.length === 0) {
+      throw new Error(
+        `Trace not found in this stage. Traces are kept ${TEMPO_RETENTION_DAYS} days`,
+      );
+    }
     sendObs(socket, { type: "backfill", stream: "traces", entries: rows });
   } catch (error) {
     console.error("observability trace fetch failed:", error);

@@ -1,10 +1,9 @@
-import { afterAll, beforeEach, expect, it, mock } from "bun:test";
+import { beforeEach, expect, it, mock } from "bun:test";
 import type { ModelMessage } from "ai";
 import {
   harnessSteersMidTurn,
   type AiSdkHarnessType,
 } from "../src/harness/ai-sdk-harness/adapters/index.ts";
-import * as harnessIndex from "../src/harness/ai-sdk-harness/index.ts";
 
 // The part of the harness stream options these tests read.
 interface HarnessStreamCall {
@@ -25,8 +24,6 @@ interface HarnessTurnOptions {
   messages?: ModelMessage[];
 }
 
-// Copied before the mock below rewrites the module, so afterAll can put it back.
-const realHarnessIndex = { ...harnessIndex };
 const streamCalls: HarnessStreamCall[] = [];
 const steeredTexts: string[] = [];
 let steerFailure: Error | null = null;
@@ -50,14 +47,6 @@ await mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   }),
   parkAiSdkHarnessSession: async () => {},
 }));
-
-// mock.module is process-wide; restore the real harness for later test files.
-afterAll(async (): Promise<void> => {
-  await mock.module(
-    "../src/harness/ai-sdk-harness/index.ts",
-    (): typeof harnessIndex => realHarnessIndex,
-  );
-});
 
 beforeEach((): void => {
   streamCalls.length = 0;

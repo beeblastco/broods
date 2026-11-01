@@ -256,7 +256,7 @@ describe("tidyCanvasLayout", () => {
     // unlinked cloud sandbox must not sit between them.
     const laid = tidyCanvasLayout(
       [
-        node("a1", "agent", "tracy", { sandboxOrder: ["mac", "cloud"] }),
+        node("a1", "agent", "support", { sandboxOrder: ["mac", "cloud"] }),
         node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
         node("cloud", "sandbox", "cloud"),
         node("tool", "mcp", "tool"),
@@ -349,11 +349,11 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("keeps a mounted pair together: beside its agent, or in the shared block", () => {
-    // `tracy` reaches `browser-sandbox` only through the workspace that mounts
-    // it, so the sandbox belongs in tracy's cluster, not the unwired lane.
+    // `support` reaches `browser-sandbox` only through the workspace that mounts
+    // it, so the sandbox belongs in its cluster, not the unwired lane.
     const cluster = tidyCanvasLayout(
       [
-        node("a1", "agent", "tracy"),
+        node("a1", "agent", "support"),
         node("s1", "sandbox", "browser-sandbox"),
         node("s2", "sandbox", "internal-sandbox"),
         node("w1", "workspace", "browser-workspace"),
@@ -379,8 +379,8 @@ describe("tidyCanvasLayout", () => {
       NO_SERVERS,
     );
 
-    // Both sandboxes share tracy's cloud frame in the first column; the one
-    // tracy lists comes first, the mounted one takes the next slot. The lone
+    // Both sandboxes share the agent's cloud frame in the first column; the one
+    // it lists comes first, the mounted one takes the next slot. The lone
     // workspace is a card in the next column, level with the frame.
     const frameTop = cluster.get("s2")!.y - FRAME_HEADER_HEIGHT;
     expect(cluster.get("s2")!.x).toBe(FRAME_PADDING);
@@ -398,7 +398,7 @@ describe("tidyCanvasLayout", () => {
 
   it("keeps a group of one as a card on its cell", () => {
     const laid = tidyCanvasLayout(
-      [node("a1", "agent", "tracy"), node("s1", "sandbox", "internal")],
+      [node("a1", "agent", "support"), node("s1", "sandbox", "internal")],
       [edge("a1", "s1")],
       NO_SERVERS,
     );
@@ -411,7 +411,7 @@ describe("tidyCanvasLayout", () => {
     // Seven edges out of one agent, two frames stacked under it and a
     // service deep in a column, so buses pile up and gutters carry lanes.
     const many = [
-      node("a1", "agent", "tracy"),
+      node("a1", "agent", "support"),
       node("m1", "mcp", "github"),
       node("m2", "mcp", "linear"),
       node("s1", "sandbox", "cloud-a"),

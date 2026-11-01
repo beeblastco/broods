@@ -7,10 +7,11 @@ on:
       - dev
     paths:
       - "apps/matrix-forwarder/**"
-      # Imported by relative path: the two core modules and the Discord
+      # Imported by relative path: the three core modules and the Discord
       # forwarder helpers. Nothing declares that dependency, so name them here
       # or a rename ships broken.
       - "apps/core/src/shared/env.ts"
+      - "apps/core/src/shared/discord-wire.ts"
       - "apps/core/src/shared/matrix-wire.ts"
       - "apps/discord-forwarder/src/**"
       # Copied into the image, and it owns the config-plane query the forwarder
@@ -55,7 +56,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

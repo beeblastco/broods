@@ -108,7 +108,7 @@ test("an observability socket closes at its stage ticket's expiry and reads noth
       type: "backfill",
       stream: "traces",
       entries: [],
-      error: "Trace not found in this stage",
+      error: "Trace not found in this stage. Traces are kept 30 days",
     });
     expect(traceRequests).toBe(2);
 

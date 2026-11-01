@@ -54,7 +54,11 @@ export interface RuntimeFunctions {
         idempotencyKey: string;
         payloadDigest: string;
         events: unknown[];
-        delivery: { kind: "http" };
+        delivery: {
+          kind: "http";
+          publicEventId: string;
+          publicConversationKey: string;
+        };
         requestedMode: "followup";
         sizeBytes: number;
         leaseTtlMs: number;

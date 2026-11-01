@@ -31,7 +31,7 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 | `lambda`     | AWS Lambda MicroVM           | yes             | yes, 8 h max per VM   | yes, with logs and stop | `allow-all` or no internet     |
 | `daytona`    | Daytona sandbox              | yes             | yes, native auto-stop | yes, with logs and stop | all modes, CIDR lists only     |
 | `e2b`        | E2B template                 | no              | yes, pause on timeout | yes, no logs or stop    | `allow-all` only               |
-| `vercel`     | Vercel Sandbox               | no              | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
+| `vercel`     | Vercel Sandbox               | yes             | yes, named sandbox    | yes, with logs and stop | all modes, domain + CIDR lists |
 | `cloudflare` | Cloudflare Container         | no              | yes, while warm       | no                      | `allow-all` or no internet     |
 | `worker`     | Fast Cloudflare V8 Worker    | no              | yes, files in storage | no                      | `allow-all` or no internet     |
 | `machine`    | Your own computer            | no              | no                    | no                      | `allow-all` only               |
@@ -55,17 +55,17 @@ flowchart TD
   L --> W{Files must survive?}
   S --> W
   D --> W
+  VC --> W
   W -->|yes| WS["attach a workspace<br/>mounted on every run"]
   W -->|no| NB[bash only, scratch disk]
   E -.->|no workspace| NB
-  VC -.->|no workspace| NB
   CF -.->|no workspace| NB
   I -.->|no workspace| NB
   M -.->|no workspace| NB
   C -.->|no workspace| NB
 ```
 
-`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `vercel`, `cloudflare`, `worker`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md). `machine` and `custom` have their own pages, [Your computer](machine.md) and [Your own server](custom.md).
+`lambda` is the provider a sandbox gets when the API or the dashboard creates one without naming it. `sandbox` is not on the hosted service yet. Attaching a workspace to an `e2b`, `cloudflare`, `worker`, `machine` or `custom` sandbox is rejected rather than falling back to provider storage. Setup, options and quirks per provider are on [Providers](providers.md). `machine` and `custom` have their own pages, [Your computer](machine.md) and [Your own server](custom.md).
 
 ## Configuration
 

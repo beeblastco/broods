@@ -323,7 +323,7 @@ broods trace <trace-id> [--json]
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--json` | Print every span as a JSON array, with its full attributes: system prompt, model input, reasoning, response, tool input and output, and the error |
 
-The trace id is the 32-character id on the run in the dashboard Tracing tab. Its **Copy prompt for agent** button copies the ids plus this command, so a coding agent can read the run and fix or audit it. Traces older than the seven-day search window still open by id.
+The trace id is the 32-character id on the run in the dashboard Tracing tab. Its **Copy prompt for agent** button copies the ids plus this command, so a coding agent can read the run and fix or audit it. Traces are kept 30 days, so one older than the seven-day search window still opens by id until then.
 
 ## stream
 
@@ -358,7 +358,7 @@ broods project delete abandoned-e2e [--yes]
 
 ```text
 Projects:
-  tracy: 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
+  support: 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
   abandoned-e2e: empty
 ```
 

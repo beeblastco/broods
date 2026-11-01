@@ -16,6 +16,11 @@ const COMPACTED_REPLY = /^Context compacted\. \d+ message\(s\) summarized\.$/;
  * crossed, and the whole turn still there on an agent that turned it off.
  */
 export async function autoCompaction(context: VerifyContext): Promise<void> {
+  if (!context.hasModelKey) {
+    // Without a model no turn finishes, so nothing auto-compacts.
+    console.log(`  skip auto-compaction (${MODEL_KEY_HINT})`);
+    return;
+  }
   const reply = async (
     name: string,
     autoCompaction?: { enabled: boolean; maxContextLength: number },
@@ -65,16 +70,6 @@ export async function autoCompaction(context: VerifyContext): Promise<void> {
     maxContextLength: 1,
   });
   const defaultThreshold = await reply("default-auto-compacting");
-  if (!context.hasModelKey) {
-    // Without a model no turn finishes, so nothing auto-compacts.
-    assertStep(
-      `auto-compaction needs a finished turn (${MODEL_KEY_HINT})`,
-      compacted.length > 0 && kept.length > 0 && defaultThreshold.length > 0,
-      `${compacted} | ${kept} | ${defaultThreshold}`,
-    );
-
-    return;
-  }
   assertStep(
     "a turn past the threshold compacted itself once it finished",
     compacted === "Nothing to compact yet.",

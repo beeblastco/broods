@@ -12,6 +12,10 @@ import {
  * that names the limit: a machine sandbox capped at 2s runs `sleep 5`.
  */
 export async function bashTimeout(context: VerifyContext): Promise<void> {
+  if (!context.hasModelKey) {
+    console.log(`  skip bash past its limit (${MODEL_KEY_HINT})`);
+    return;
+  }
   const name = `timeout-${context.runId}`;
   const machine = await connectMachine(context, {
     computer: false,
@@ -19,10 +23,6 @@ export async function bashTimeout(context: VerifyContext): Promise<void> {
     timeout: 2,
   });
   try {
-    if (!context.hasModelKey) {
-      console.log(`  skip bash past its limit (${MODEL_KEY_HINT})`);
-      return;
-    }
     const { agentId } = await context.account.createAgent({
       name: name,
       config: {

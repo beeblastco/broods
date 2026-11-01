@@ -310,7 +310,7 @@ async function postPancakeMessage(
     );
   }
 
-  logInfo("Pancake send message succeeded", {
+  logDebug("Pancake send message succeeded", {
     pageId: source.pageId,
     conversationId: source.conversationId,
     status: response.status,
@@ -439,22 +439,6 @@ function parsePancakeWebhook(
     return body;
   }
   const payload = body.payload;
-  logDebug("Pancake webhook received", {
-    configuredPageId: pageId,
-    payloadPageId: payload.page_id,
-    eventType: payload.event_type,
-    conversationId: payload.data?.conversation?.id,
-    messageId: payload.data?.message?.id,
-    messageType: payload.data?.message?.type,
-    fromId:
-      payload.data?.message?.from?.id ?? payload.data?.conversation?.from?.id,
-    fromName:
-      payload.data?.message?.from?.name ??
-      payload.data?.conversation?.from?.name,
-    pageCustomerId: payload.data?.message?.from?.page_customer_id,
-    tagIds: normalizePancakeTagIds(payload.data?.conversation?.tags),
-  });
-
   if (payload.event_type !== "messaging") {
     logDebug("Pancake webhook ignored", {
       reason: "unsupported_event_type",
@@ -495,20 +479,10 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
-  if (
-    message.is_hidden ||
-    message.is_removed ||
-    message.from?.id === pageId ||
-    !message.from?.page_customer_id
-  ) {
+  const dropReason = pancakeDropReason(message, pageId);
+  if (dropReason) {
     logDebug("Pancake webhook ignored", {
-      reason: message.is_hidden
-        ? "hidden_message"
-        : message.is_removed
-          ? "removed_message"
-          : message.from?.id === pageId
-            ? "page_originated_message"
-            : "missing_page_customer_id",
+      reason: dropReason,
       pageId: payload.page_id,
       conversationId: conversation.id,
       messageId: message.id,
@@ -577,6 +551,31 @@ function parsePancakeWebhook(
       source: { ...source },
     },
   };
+}
+
+/**
+ * Why a messaging delivery from the right page still is not a customer
+ * message, for the ignore log.
+ */
+// Why a message is not one the agent should answer, or undefined when it is.
+function pancakeDropReason(
+  message: PancakeMessage,
+  pageId: string,
+): string | undefined {
+  if (message.is_hidden) {
+    return "hidden_message";
+  }
+  if (message.is_removed) {
+    return "removed_message";
+  }
+  if (message.from?.id === pageId) {
+    return "page_originated_message";
+  }
+  if (!message.from?.page_customer_id) {
+    return "missing_page_customer_id";
+  }
+
+  return undefined;
 }
 
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {

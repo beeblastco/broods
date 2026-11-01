@@ -98,6 +98,10 @@ One level in `model.reasoning` works across providers. The levels are `provider-
 
 Provider-specific settings in `model.providerOptions` win over `reasoning` when both are set, for example `providerOptions.openai.reasoningEffort` or `providerOptions.anthropic.thinking`. If a model does not support the level you asked for, the run logs a `model.step.warnings` event and continues.
 
+## Timeouts
+
+`model.timeout` is the AI SDK's [`timeout`](https://ai-sdk.dev/docs/ai-sdk-core/settings#timeout) setting and reaches `streamText` as you set it. A number is the whole call in milliseconds. The object form takes `totalMs` (the whole call), `stepMs` (each step, with its retries and tools), `firstChunkMs` (from a step's response starting to its first output), `chunkMs` (between output chunks), `toolMs` (each tool) and `tools` for one tool, like `{ bashMs: 300_000 }`. `totalMs`, `stepMs`, `firstChunkMs` and `chunkMs` end the call when they pass and fail the run, they do not retry it. `firstChunkMs` starts only once the provider answers, so `stepMs` is what bounds a request that never gets a response. A tool past its limit is aborted and the model sees the error. Apart from these, Broods fails a run whose model is silent for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before a call's first output or `MODEL_CHUNK_TIMEOUT_MS` between outputs (300 s each, set per deployment in [operations](../internals/operations.md#core-runtime-limits)). Output is text, reasoning, tool input or a file; a stream of keep-alives or errors is silent. That clock includes the wait for a response and pauses while a tool runs, so set the SDK limits below it for them to act first. `config.harness` ignores `model.timeout`.
+
 ## Structured output
 
 Ask for JSON that matches a schema:

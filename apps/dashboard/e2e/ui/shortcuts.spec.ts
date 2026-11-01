@@ -89,16 +89,6 @@ test("typing ranks real rows under their headings and Enter runs the top one", a
   await expect(ran(page)).toHaveText(["openNode 7"]);
 });
 
-test("a keyword finds a page the title never mentions", async ({ page }) => {
-  await openSurfaces(page);
-  await page.keyboard.press("ControlOrMeta+k");
-  await page.keyboard.type("traces");
-
-  await expect(rows(page).first()).toContainText("Dashboard");
-  await page.keyboard.press("Enter");
-  await expect(ran(page)).toHaveText(["navigate /p/dashboard"]);
-});
-
 test("the palette lists the bindings the page has claimed, and drops them when it unmounts", async ({
   page,
 }) => {

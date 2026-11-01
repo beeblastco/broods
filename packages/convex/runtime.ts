@@ -13,6 +13,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { sha256Hex } from "./model/accountSecrets";
 import {
+  asyncToolDeliveryValidator,
   reservedSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
@@ -66,10 +67,10 @@ export const conversationEventsValidator = v.array(
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
-  response: v.optional(v.any()),
-  error: v.optional(v.string()),
-  approvals: v.optional(v.array(v.any())),
-  questions: v.optional(v.array(v.any())),
+  response: runtimeAsyncAgentResultsFields.response,
+  error: runtimeAsyncAgentResultsFields.error,
+  approvals: runtimeAsyncAgentResultsFields.approvals,
+  questions: runtimeAsyncAgentResultsFields.questions,
 });
 
 const asyncAgentDoc = v.object({
@@ -723,7 +724,7 @@ export const createAsyncToolResult = internalMutation({
     toolName: v.string(),
     toolCallId: v.string(),
     input: v.any(),
-    delivery: v.optional(v.any()),
+    delivery: v.optional(asyncToolDeliveryValidator),
     completionToken: v.optional(v.string()),
   },
   returns: v.boolean(),
@@ -1752,12 +1753,7 @@ function reservationExpiresAt(ttlSeconds: number | undefined): number {
   return Math.floor(Date.now() / 1000) + ttl;
 }
 
-/**
- * Requires an account to exist and remain active in the runtime-write transaction.
- * @param ctx Convex mutation context
- * @param accountId account ID embedded in the runtime row or key
- * @throws when the account is missing, disabled, or malformed
- */
+/** Answers whether the sandbox's reservation row still exists and is current. */
 async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,

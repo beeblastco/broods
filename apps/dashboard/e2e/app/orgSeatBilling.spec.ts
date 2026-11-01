@@ -35,7 +35,7 @@ const SIDEBAR_READY = '[data-slot="sidebar-container"][data-hydrated="true"]';
 const RUN_ID = Date.now().toString(36);
 const OWNER = { name: "Ada Lovelace", org: "Acme Robotics" };
 // The second org the admin creates once on Pro.
-const LAB = "Tracy Lab";
+const LAB = "Trial Lab";
 
 let adminOrg: OrgRow;
 let owner: StackUser;

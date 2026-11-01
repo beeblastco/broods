@@ -333,8 +333,8 @@ async function seed(
     const projectId = await ctx.db.insert("projects", {
       authId: OWNER_AUTH_ID,
       orgId: orgId,
-      name: "tracy",
-      slug: "tracy",
+      name: "support",
+      slug: "support",
       updatedAt: now,
     });
     const stageId = await ctx.db.insert("stages", {
@@ -370,7 +370,7 @@ async function seed(
     // no encryption secret.
     const configId = await ctx.db.insert("agentConfigs", {
       authId: "auth_creator",
-      name: "tracy",
+      name: "support",
       projectId: projectId,
       stageId: stageId,
       extraConfig:

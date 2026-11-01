@@ -20,7 +20,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "check": "bun run lint:types && bun run format:check && bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter @broods/gateway check && bun run --filter @broods/edge check && bun run --filter @broods/dashboard check && bun run --filter @broods/discord-forwarder check && bun run --filter @broods/matrix-forwarder check && bun run --filter @broods/cloudflare-mcp check && bun run --filter @broods/cloudflare-sandbox check && bun run --filter @broods/cloudflare-worker check && bun run --filter broods check && bun run --filter @broods/ai-sdk-sandbox check && bun run --filter @broods/docs check && bun run scripts:check && bun run bench:types",
-    "verification:test": "bun run --filter @broods/convex test -- tests/cliSyncRevision.test.ts tests/cliSyncExternalPrune.test.ts tests/cliSyncPrune.test.ts tests/cliSyncEnvRefs.test.ts tests/cron.test.ts tests/runtimeIngress.test.ts tests/runtime.test.ts && bun test --max-concurrency=1 apps/core/tests/ingress.test.ts apps/core/tests/cron-run.test.ts apps/core/tests/async-tools.test.ts apps/core/tests/subagents.test.ts apps/edge/tests apps/gateway/tests/route.test.ts packages/broods/tests/resources.test.ts packages/broods/tests/cli-env-sync.test.ts packages/broods/tests/sync-revision.test.ts",
+    "verification:test": "bun run --filter @broods/convex test -- tests/cliSyncRevision.test.ts tests/cliSyncExternalPrune.test.ts tests/cliSyncPrune.test.ts tests/cliSyncEnvRefs.test.ts tests/cron.test.ts tests/runtimeIngress.test.ts tests/runtime.test.ts && bun test --isolate --max-concurrency=1 apps/core/tests/ingress.test.ts apps/core/tests/cron-run.test.ts apps/core/tests/async-tools.test.ts apps/core/tests/subagents.test.ts apps/edge/tests apps/gateway/tests/route.test.ts packages/broods/tests/resources.test.ts packages/broods/tests/cli-env-sync.test.ts packages/broods/tests/sync-revision.test.ts",
     "prepare": "git config core.hooksPath .githooks",
     "deps:audit": "bun scripts/audit-gate.ts",
     "deps:check": "bun scripts/dependency-watch.ts",
@@ -38,11 +38,11 @@
     "docs:build": "bun run --filter @broods/docs build"
   },
   "devDependencies": {
-    "@shadcn/lint": "^0.1.0",
-    "@types/bun": "^1.3.14",
-    "oxfmt": "^0.68.0",
-    "oxlint": "1.81.0",
-    "oxlint-tsgolint": "7.0.2001",
+    "@shadcn/lint": "^0.2.3",
+    "@types/bun": "^1.4.4",
+    "oxfmt": "^0.74.0",
+    "oxlint": "1.90.0",
+    "oxlint-tsgolint": "7.0.2005",
     "typescript": "^7.0.2"
   },
   "overrides": {
@@ -55,11 +55,15 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
+    "@vercel/cli-config": {
+      "zod": "4.6.7"
+    },
     "dompurify": "^3.4.17",
-    "follow-redirects": "^1.16.1",
+    "follow-redirects": "^1.16.2",
     "guarded-fetch": {
       "undici": "7.30.1"
     },
+    "joi": "^17.13.9",
     "katex": "^0.18.2",
     "launch-editor": "^2.14.2",
     "miniflare": {
@@ -70,19 +74,19 @@
     },
     "postcss": "^8.5.26",
     "serialize-javascript": "7.1.2",
-    "stripe": "22.5.0",
+    "stripe": "22.6.2",
     "tar": "7.5.22",
     "tinypool": "2.1.2",
-    "webpack": "5.111.1"
+    "webpack": "5.112.2"
   },
   "engines": {
     "bun": ">=1.4.2"
   },
   "patchedDependencies": {
-    "@ai-sdk/harness-claude-code@1.0.168": "patches/@ai-sdk%2Fharness-claude-code@1.0.168.patch",
-    "@ai-sdk/harness-codex@1.0.166": "patches/@ai-sdk%2Fharness-codex@1.0.166.patch",
-    "@ai-sdk/harness-deepagents@1.0.164": "patches/@ai-sdk%2Fharness-deepagents@1.0.164.patch",
-    "@ai-sdk/harness-opencode@1.0.166": "patches/@ai-sdk%2Fharness-opencode@1.0.166.patch"
+    "@ai-sdk/harness-claude-code@1.0.169": "patches/@ai-sdk%2Fharness-claude-code@1.0.169.patch",
+    "@ai-sdk/harness-codex@1.0.167": "patches/@ai-sdk%2Fharness-codex@1.0.167.patch",
+    "@ai-sdk/harness-deepagents@1.0.165": "patches/@ai-sdk%2Fharness-deepagents@1.0.165.patch",
+    "@ai-sdk/harness-opencode@1.0.167": "patches/@ai-sdk%2Fharness-opencode@1.0.167.patch"
   },
   "trustedDependencies": [
     "@matrix-org/matrix-sdk-crypto-nodejs",

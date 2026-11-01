@@ -542,7 +542,7 @@ export const repo = defineWorkspace({
 
 export const runner = defineSandbox({
   name: "runner",
-  provider: "vercel", persistent: true,
+  provider: "e2b", network: { mode: "allow-all" }, persistent: true,
 });
 
 export const support = defineAgent({
@@ -554,7 +554,38 @@ export const support = defineAgent({
   );
 
   expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" workspace "repo" uses sandbox "runner" (vercel) which does not support S3 workspace mounts',
+    'Agent "support" workspace "repo" uses sandbox "runner" (e2b) which does not support S3 workspace mounts',
+  );
+});
+
+test("compileProject accepts S3 workspaces on a vercel sandbox", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({
+  name: "repo",
+  storage: { provider: "s3" },
+});
+
+export const runner = defineSandbox({
+  name: "runner",
+  provider: "vercel", persistent: true,
+});
+
+export const support = defineAgent({
+  name: "support",
+  sandboxes: [runner],
+  workspaces: [repo],
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources.map((resource) => resource.name)).toContain(
+    "support",
   );
 });
 
@@ -2319,7 +2350,11 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
     "utf8",
   );
 
-  expect(api).toContain("export const api = {");
+  expect(api).toContain('import type { ResourceApi } from "broods";');
+  expect(api).toContain("export const api = resourceApi({");
+  expect(api).toContain(
+    "function resourceApi<T extends ResourceApi>(resources: T): T {",
+  );
   expect(api).toContain(
     'support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", stage: "development" }',
   );

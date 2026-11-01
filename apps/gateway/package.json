@@ -15,7 +15,7 @@
     "nats.ws": "^1.30.3"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14"
+    "@types/bun": "^1.4.4"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"

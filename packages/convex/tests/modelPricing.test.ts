@@ -7,7 +7,7 @@ import {
   canonicalModelProvider,
   estimateModelTokenCost,
 } from "../model/modelPricing";
-import { parseModelsDevRates } from "../model/modelsDev";
+import { parseInlinePrices, parseModelsDevRates } from "../model/modelsDev";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -65,6 +65,8 @@ describe("model pricing", () => {
           "GPT-5.5": { cost: { input: 5, output: 30, cache_read: 0.5 } },
           "gpt-image-2": { cost: { input: 5 } },
           "free-preview": {},
+          "null-entry": null,
+          "gpt-broken": { cost: { input: -1, output: 4 } },
         },
       },
       "unmapped-provider": {
@@ -72,7 +74,8 @@ describe("model pricing", () => {
       },
     });
 
-    // chatgpt reads OpenAI's rates; a missing cache-write rate is the input rate.
+    // chatgpt reads OpenAI's rates; a missing cache-write rate is the input
+    // rate; a negative rate drops the model.
     expect(providers).toEqual([
       {
         provider: "bedrock",
@@ -94,13 +97,13 @@ describe("model pricing", () => {
   it("hands usage the stored rates under the names its buckets use", async () => {
     const tt = convexTest(schema, modules);
     const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
-    const stored = { models: [{ modelId: "gpt-5.5", ...rates }] };
-    const store = { providers: [{ provider: "openai", ...stored }] };
-    await tt.mutation(internal.modelPrices.store.store, store);
-    // A second crawl with the same rates writes nothing.
-    await tt.mutation(internal.modelPrices.store.store, store);
-    await tt.mutation(internal.modelPrices.store.store, {
-      providers: [{ provider: "chatgpt", ...stored }],
+    const models = [{ modelId: "gpt-5.5", ...rates }];
+    await tt.mutation(internal.modelPrices.store.storeCatalogue, {
+      providers: [
+        { provider: "openai", models: models },
+        { provider: "chatgpt", models: models },
+      ],
+      mirror: false,
     });
 
     const priced = await tt.run(
@@ -119,8 +122,123 @@ describe("model pricing", () => {
       { modelProvider: "openai", modelId: "gpt-5.5-2026-04-23", ...rates },
       { modelProvider: "chatgpt", modelId: "gpt-5.5", ...rates },
     ]);
+  });
+
+  it("reads the org's own prices and refuses a malformed one", () => {
     expect(
-      await tt.run(async (ctx) => await ctx.db.query("modelPrices").collect()),
-    ).toHaveLength(2);
+      parseInlinePrices(
+        '{"custom":{"GPT-OSS-120B":{"input":0.1,"output":0.5,"cacheRead":0.01}}}',
+      ),
+    ).toEqual([
+      {
+        provider: "custom",
+        models: [
+          { modelId: "gpt-oss-120b", input: 0.1, output: 0.5, cacheRead: 0.01 },
+        ],
+      },
+    ]);
+    expect(parseInlinePrices("")).toEqual([]);
+    for (const [raw, problem] of [
+      ["not json", "BROODS_MODEL_PRICES"],
+      ["[]", "object keyed by agent provider"],
+      ['{"nope":{"m":{"input":1,"output":1}}}', "unknown provider"],
+      ['{"openai":null}', "must map model ids"],
+      ['{"openai":{}}', "must map model ids"],
+      ['{"openai":{"m":null}}', "must be an object of rates"],
+      ['{"openai":{"m":{"input":-1,"output":1}}}', "non-negative"],
+      [
+        '{"openai":{"m":{"input":1,"output":1,"cacheRead":"0.1"}}}',
+        "non-negative",
+      ],
+      [
+        '{"openai":{"m":{"input":3,"output":15,"cache_read":0.3}}}',
+        "unknown keys cache_read",
+      ],
+      [
+        '{"custom":{"GPT-OSS":{"input":1,"output":2},"gpt-oss":{"input":5,"output":9}}}',
+        "lists gpt-oss twice",
+      ],
+    ]) {
+      expect(() => parseInlinePrices(raw)).toThrow(problem);
+    }
+  });
+
+  it("lets the org's rates win over the catalogue, dated snapshots and missing cache rates included", async () => {
+    const tt = convexTest(schema, modules);
+    const listed = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+    await tt.mutation(internal.modelPrices.store.storeCatalogue, {
+      providers: [
+        {
+          provider: "anthropic",
+          models: [
+            { modelId: "claude-sonnet-5-5", ...listed },
+            { modelId: "claude-sonnet-5-5-20260101", ...listed },
+          ],
+        },
+      ],
+      mirror: false,
+    });
+    await tt.mutation(internal.modelPrices.store.storeOverrides, {
+      providers: [
+        {
+          provider: "anthropic",
+          models: [{ modelId: "claude-sonnet-5-5", input: 2, output: 10 }],
+        },
+      ],
+    });
+
+    const priced = await tt.run(
+      async (ctx) =>
+        await modelRates(ctx, [
+          { modelProvider: "anthropic", modelId: "claude-sonnet-5-5-20260101" },
+        ]),
+    );
+
+    expect(priced).toEqual([
+      {
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-5-5-20260101",
+        input: 2,
+        output: 10,
+        cacheRead: 0.3,
+        cacheWrite: 3.75,
+      },
+    ]);
+  });
+
+  it("keeps a provider the catalogue drops, clears on request, and mirrors the org's rates", async () => {
+    const tt = convexTest(schema, modules);
+    const rates = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 5 };
+    const providers = async (
+      table: "modelPrices" | "modelPriceOverrides",
+    ): Promise<string[]> =>
+      await tt.run(async (ctx) =>
+        (await ctx.db.query(table).collect()).map((doc) => doc.provider).sort(),
+      );
+    const catalogue = (names: string[], mirror: boolean): Promise<null> =>
+      tt.mutation(internal.modelPrices.store.storeCatalogue, {
+        providers: names.map((name) => ({
+          provider: name,
+          models: [{ modelId: "m", ...rates }],
+        })),
+        mirror: mirror,
+      });
+
+    await catalogue(["anthropic", "openai"], false);
+    await catalogue(["openai"], false);
+    expect(await providers("modelPrices")).toEqual(["anthropic", "openai"]);
+    await catalogue([], true);
+    expect(await providers("modelPrices")).toEqual([]);
+
+    await tt.mutation(internal.modelPrices.store.storeOverrides, {
+      providers: [
+        { provider: "custom", models: [{ modelId: "m", input: 1, output: 2 }] },
+      ],
+    });
+    expect(await providers("modelPriceOverrides")).toEqual(["custom"]);
+    await tt.mutation(internal.modelPrices.store.storeOverrides, {
+      providers: [],
+    });
+    expect(await providers("modelPriceOverrides")).toEqual([]);
   });
 });

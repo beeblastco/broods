@@ -74,8 +74,8 @@ describe("createTaskTotals", () => {
     const totals = createTaskTotals();
     // Step 0 carries the count in its usage shape, so the fallback is ignored;
     // step 1 only had it in providerMetadata.
-    totals.addStep(0, step(10, 5, { cacheWrite: 100 }), 7);
-    totals.addStep(1, step(10, 5), 40);
+    expect(totals.addStep(0, step(10, 5, { cacheWrite: 100 }), 7)).toBe(100);
+    expect(totals.addStep(1, step(10, 5), 40)).toBe(40);
 
     expect(totals.cacheWriteTokens()).toBe(140);
     expect(totals.usage()?.inputTokenDetails?.cacheWriteTokens).toBe(100);

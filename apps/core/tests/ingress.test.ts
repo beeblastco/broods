@@ -24,6 +24,10 @@ import {
   type ConversationDispatchTarget,
   type IngressCandidate,
 } from "../src/harness/ingress.ts";
+import {
+  CompactionError,
+  type CompactionResult,
+} from "../src/harness/compaction.ts";
 import * as harness from "../src/harness/harness.ts";
 import type { AgentReplyHooks } from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
@@ -58,6 +62,24 @@ function agentRecord(config: AgentConfig): AgentRecord {
     config: config,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
+  };
+}
+
+// What a /compact that folded `messageCount` messages in one summary call reports.
+function compaction(messageCount: number): CompactionResult {
+  return {
+    messageCount: messageCount,
+    modelCalls: 1,
+    modelProvider: "google",
+    modelId: "gemini-test",
+    usage: {
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 120,
+    },
   };
 }
 
@@ -940,11 +962,13 @@ describe("channel senders", (): void => {
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
-    ).mockImplementation(async (instructions: string): Promise<number> => {
-      compacted.push(instructions);
+    ).mockImplementation(
+      async (instructions: string): Promise<CompactionResult> => {
+        compacted.push(instructions);
 
-      return 4;
-    });
+        return compaction(4);
+      },
+    );
     const replies: string[] = [];
     const message = aliceMessage();
 
@@ -1070,7 +1094,7 @@ describe("channel commands", (): void => {
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
-    ).mockResolvedValue(7);
+    ).mockResolvedValue(compaction(7));
     const replies: string[] = [];
 
     try {
@@ -1285,11 +1309,23 @@ describe("queued /compact on an async run", (): void => {
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
-    ).mockResolvedValue(5);
+    ).mockResolvedValue(compaction(5));
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
 
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
     expect(compact).toHaveBeenCalledWith("keep the deploy");
+    // The summary's spend lands on a usage row of its own, under the run.
+    expect(usage).toHaveBeenCalledTimes(1);
+    expect(usage.mock.calls[0]?.[0]).toMatchObject({
+      status: "completed",
+      modelProvider: "google",
+      modelId: "gemini-test",
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      stepCount: 0,
+    });
     expect(turn).not.toHaveBeenCalled();
     expect(settle.mock.calls[0]?.[0]).toMatchObject({
       status: "completed",
@@ -1305,13 +1341,38 @@ describe("queued /compact on an async run", (): void => {
     expect(takeNext).toHaveBeenCalledTimes(1);
   });
 
+  it("drops the agent's secrets from a direct /compact's usage row", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(Session.prototype, "compactConversation").mockResolvedValue(
+      compaction(2),
+    );
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: compactEvent({
+        events: [{ role: "user", content: "/compact keep google-key-4821" }],
+        agentConfig: { provider: { google: { apiKey: "google-key-4821" } } },
+      }),
+    });
+
+    expect(usage.mock.calls[0]?.[0]?.inputPreview).toContain("/compact keep");
+    expect(usage.mock.calls[0]?.[0]?.inputPreview).not.toContain(
+      "google-key-4821",
+    );
+  });
+
   it("fails the run with the summary's own error", async (): Promise<void> => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    // The merge failed after one half summary was billed.
     spyOn(Session.prototype, "compactConversation").mockRejectedValue(
-      new Error("summary model down"),
+      new CompactionError(new Error("summary model down"), compaction(0)),
     );
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
 
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
@@ -1321,6 +1382,10 @@ describe("queued /compact on an async run", (): void => {
       asyncResult: {
         outcome: { status: "failed", error: "summary model down" },
       },
+    });
+    expect(usage.mock.calls[0]?.[0]).toMatchObject({
+      status: "failed",
+      totalTokens: 120,
     });
   });
 

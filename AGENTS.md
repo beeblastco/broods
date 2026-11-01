@@ -17,6 +17,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `packages/convex` (`@broods/convex`) is the shared Convex backend for both dashboard and core + config plane.
 - `apps/docs` (`@broods/docs`) is the Docusaurus docs. core, public API, whole architecture.
 - `packages/broods` (`broods`) is the published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
+- `packages/ai-sdk-sandbox` (`@broods/ai-sdk-sandbox`) is the AI SDK Harness sandbox adapter over Broods sandbox drivers: it is how an external harness (claude-code, codex, ...) runs its shell on a Broods sandbox.
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
 - `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
 
@@ -31,7 +32,8 @@ outside repo, sibling of checkout:
 
 - repo using workspace feature from [bun](https://bun.com/docs/pm/workspaces).
 - read `package.json` for scripts command to run in workspace.
-- prefer strict type. do not reach for `isPlainObject` or `isRecord` on new code. find the real type first, or the library that already ship it. write your own type or interface when none fit. runtime guard only when the typing get too complex or too long to be worth it. when you hit that, say so to user and let them decide.
+- broods = the platform only. a change that come from one app's problem (an app that run on broods) land here only when another broods user would want it too, else it stay in that app. no name of an app built on broods, a client or a team in code, docs, demos, tests or example ids (a supported provider or channel like Slack or WhatsApp is fine). an app need that look like a big platform piece: tell user its size (files, lines) and who else would use it, and get an explicit yes first.
+- prefer strict type. do not reach for `isPlainObject` or `isRecord` on new code. find the real type first, or the library that already ship it. write your own type or interface when none fit. runtime guard only when the typing get too complex or too long to be worth it. when you hit that, say so to user and let them decide. the one approved exception is `parseInlinePrices` in `packages/convex/model/modelsDev.ts`: it check `BROODS_MODEL_PRICES`, JSON an operator type by hand, where no type can reach. it is not a pattern to copy. JSON from an API or a file we control get a type, or a library that ship one. a new guard need its own yes from user, never this one as precedent.
 - breaking storage or backend cutover: no compat shim for dead record format or old id unless user ask. clean reset and recreate account/resource instead. never delete live data, never deploy, without user say so.
 - do not deploy unless user ask. push to `dev`, let CI/CD do it. `main` is protected, only fast-forward from `dev` by "Promote dev to main" workflow (Actions tab, one click), that triggers prod deploy.
 - `.github/workflows/drift-cleanup.yaml` run `sst refresh` + `sst diff` nightly per stage, under same `sst-<stage>` lock as deploy. dev drift delete Pulumi-tracked orphan, production drift only report (job fail, no deploy). stand up a new stage = add it to that matrix or drift eat it.

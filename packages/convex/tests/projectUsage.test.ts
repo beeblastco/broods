@@ -37,10 +37,13 @@ afterEach(() => {
 
 describe("usage lands on its project's day", () => {
   test("a sandbox in a project bills the project and the account; an account-wide one only the account", async () => {
-    vi.useFakeTimers({ now: NOW });
+    // Seed before NOW: each commit moves the next transaction's clock past it,
+    // so the machines would start late.
+    vi.useFakeTimers({ now: NOW - 1000 });
     const t = meterTest();
     const org = await seedOrg(t, "beeblast", ["Support bot"]);
     const [projectId] = org.projects;
+    vi.setSystemTime(NOW);
 
     for (const [key, scope] of [
       ["fs-project", { projectId: projectId }],
@@ -512,7 +515,6 @@ async function readProjects(t: T, org: Org, month: string) {
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-    apiKey: "sk_test_fixture",
     event: {
       id: "evt_project_usage_signup",
       event: "user.created",

@@ -209,9 +209,11 @@ export async function publicHostFetch(
   if (isPrivateHostname(hostname)) {
     throw new Error(`Refusing to reach private address ${hostname}`);
   }
+  const request = input instanceof Request ? input : undefined;
+  const signal = init?.signal ?? request?.signal;
   let validated = publicHosts.get(hostname);
   if (!validated || validated.expiresAt <= Date.now()) {
-    const addresses = await dns.lookup(hostname);
+    const addresses = await lookupUntilAborted(hostname, signal);
     const [pinned] = addresses;
     if (!pinned) {
       throw new Error(`${hostname} did not resolve`);
@@ -229,7 +231,6 @@ export async function publicHostFetch(
     publicHosts.set(hostname, validated);
   }
   url.hostname = validated.address;
-  const request = input instanceof Request ? input : undefined;
   const headers = new Headers(init?.headers ?? request?.headers);
   headers.set("host", host);
 
@@ -272,4 +273,24 @@ function isPrivateHostname(hostname: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * Resolves a hostname, or rejects as soon as `signal` aborts: a lookup that
+ * never returns must not outlive the request that asked for it.
+ */
+async function lookupUntilAborted(
+  hostname: string,
+  signal: AbortSignal | null | undefined,
+): Promise<Awaited<ReturnType<typeof dns.lookup>>> {
+  if (!signal) return dns.lookup(hostname);
+  signal.throwIfAborted();
+  const { promise: aborted, reject } = Promise.withResolvers<never>();
+  const onAbort = (): void => reject(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([dns.lookup(hostname), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }

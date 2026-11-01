@@ -49,6 +49,32 @@ export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
   "output",
   "apiKey",
 ] as const;
+// The config branches a run reads; everything else the stored row carries is
+// dropped. `sandbox` and `policy` predate `sandboxes` and `policies`: a stored
+// config from before either rename would otherwise lose the key here and run
+// without it, so both are carried through for the normalizer to refuse by name.
+const RUNTIME_CONFIG_KEYS = [
+  "agent",
+  "harness",
+  "model",
+  "policy",
+  "provider",
+  "sandbox",
+  "sandboxes",
+  "workspaces",
+  "session",
+  "hooks",
+  "tools",
+  "mcp",
+  "denyTools",
+  "skills",
+  "subagent",
+  "scheduler",
+  "browser",
+  "policies",
+  "publicAccess",
+  "allowRunOverrides",
+] as const;
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
@@ -434,7 +460,10 @@ type ChannelCredentialDrift = AssertAllExact<
       string | undefined
     >,
     Exactly<TeamsAdapterConfig["apiUrl"], string | undefined>,
-    Exactly<TeamsAdapterConfig["appId"], string | undefined>,
+    Exactly<
+      SerializedCredential<TeamsAdapterConfig["appId"]>,
+      string | undefined
+    >,
     Exactly<TeamsAdapterConfig["appPassword"], string | undefined>,
     Exactly<TeamsAdapterConfig["appTenantId"], string | undefined>,
     Exactly<
@@ -487,7 +516,7 @@ export interface AgentTelegramChannelConfig {
   webhookSecret?: string;
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
-  /** Bot's @username, e.g. `tracy_bot`. Set it to answer only when the agent is mentioned. */
+  /** Bot's @username, e.g. `support_bot`. Set it to answer only when the agent is mentioned. */
   botUsername?: string;
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
@@ -763,12 +792,8 @@ export function applyRunOverrides(
   ) {
     return config;
   }
-  const next: AgentConfig = { ...config };
-  if (overrides.model && Object.keys(overrides.model).length > 0) {
-    next.model = { ...config.model, ...overrides.model };
-  }
 
-  return next;
+  return { ...config, model: { ...config.model, ...overrides.model } };
 }
 
 // The step cap an external harness (claude-code, deepagents) is handed. Unset
@@ -825,53 +850,11 @@ export function toChannelRuntimeAgentConfig(
  * config plane's rules so a row written before a rule tightened fails by name.
  */
 export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
-  const {
-    agent,
-    harness,
-    model,
-    provider,
-    sandboxes,
-    workspaces,
-    session,
-    hooks,
-    tools,
-    mcp,
-    denyTools,
-    skills,
-    subagent,
-    scheduler,
-    browser,
-    policies,
-    publicAccess,
-    allowRunOverrides,
-  } = config;
+  const runtimeBranches = Object.fromEntries(
+    RUNTIME_CONFIG_KEYS.filter((key): boolean => config[key] !== undefined).map(
+      (key): [string, unknown] => [key, config[key]],
+    ),
+  );
 
-  return normalizeAgentConfig({
-    // A stored config from before `sandboxes` absorbed `sandbox` would otherwise
-    // lose the key here and quietly promote its first extra to the default, so it
-    // is carried through for the normalizer to refuse.
-    ...("sandbox" in config && config.sandbox !== undefined
-      ? { sandbox: config.sandbox }
-      : {}),
-    ...(agent !== undefined ? { agent: agent } : {}),
-    ...(harness !== undefined ? { harness: harness } : {}),
-    ...(model !== undefined ? { model: model } : {}),
-    ...(provider !== undefined ? { provider: provider } : {}),
-    ...(sandboxes !== undefined ? { sandboxes: sandboxes } : {}),
-    ...(workspaces !== undefined ? { workspaces: workspaces } : {}),
-    ...(session !== undefined ? { session: session } : {}),
-    ...(hooks !== undefined ? { hooks: hooks } : {}),
-    ...(tools !== undefined ? { tools: tools } : {}),
-    ...(mcp !== undefined ? { mcp: mcp } : {}),
-    ...(denyTools !== undefined ? { denyTools: denyTools } : {}),
-    ...(skills !== undefined ? { skills: skills } : {}),
-    ...(subagent !== undefined ? { subagent: subagent } : {}),
-    ...(scheduler !== undefined ? { scheduler: scheduler } : {}),
-    ...(browser !== undefined ? { browser: browser } : {}),
-    ...(policies !== undefined ? { policies: policies } : {}),
-    ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
-    ...(allowRunOverrides !== undefined
-      ? { allowRunOverrides: allowRunOverrides }
-      : {}),
-  }) as AgentConfig;
+  return normalizeAgentConfig(runtimeBranches) as AgentConfig;
 }

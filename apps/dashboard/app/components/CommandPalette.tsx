@@ -65,10 +65,7 @@ export function CommandPalette({
           detail: formatCombo(shortcut.combos[0], isMac).join(" "),
           group: "Actions",
           id: `action:${shortcut.id}`,
-          keywords:
-            "keywords" in shortcut
-              ? [shortcut.scope, ...shortcut.keywords]
-              : [shortcut.scope],
+          keywords: [shortcut.scope, ...(shortcut.keywords ?? [])],
           target: { commandId: shortcut.id, type: "command" },
           title: shortcut.label,
         }),

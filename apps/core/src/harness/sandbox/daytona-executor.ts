@@ -37,9 +37,8 @@ import {
   stopScript,
 } from "./jobs.ts";
 import {
-  type S3MountContext,
   type S3MountIdentity,
-  mountAttribution,
+  executorS3Context,
   resolveS3Mount,
   resolveS3MountIdentity,
 } from "./s3-mount.ts";
@@ -546,7 +545,7 @@ async function daytonaEnvVars(
   if (options.mountAwsS3Buckets !== true) {
     return baseEnv;
   }
-  const mount = await resolveS3Mount(daytonaS3Context(config, request));
+  const mount = await resolveS3Mount(executorS3Context(config, request));
 
   return {
     ...baseEnv,
@@ -584,33 +583,6 @@ function daytonaNetworkOptions(
   };
 }
 
-// Throws on a missing namespace before any STS call (the create path hits this first).
-function daytonaS3Context(
-  config: SandboxExecutorConfig,
-  request: Pick<SandboxRunRequest, "namespace" | "metadata">,
-): S3MountContext {
-  const options = isPlainObject(config.options) ? config.options : {};
-  if (!request.namespace) {
-    throw new Error("Daytona AWS S3 mounts require a workspace namespace.");
-  }
-
-  return {
-    storage: config.storage,
-    namespace: request.namespace,
-    managedBucket:
-      configString(options.workspaceBucketName) ??
-      optionalEnv("FILESYSTEM_BUCKET_NAME"),
-    region:
-      configString(options.awsRegion) ??
-      optionalEnv("AWS_REGION") ??
-      optionalEnv("AWS_DEFAULT_REGION"),
-    ...(configString(options.s3Endpoint)
-      ? { endpoint: configString(options.s3Endpoint) }
-      : {}),
-    attribution: mountAttribution(config, request),
-  };
-}
-
 // The size Daytona gave the sandbox; it reports memory and disk in GiB.
 function daytonaSpecs(sandbox: Sandbox): SandboxSpecs {
   return {
@@ -642,7 +614,7 @@ async function mountAwsS3Buckets(
     return;
   }
   // Identity only (no STS): the create path already assumed the role into the env.
-  const identity = resolveS3MountIdentity(daytonaS3Context(config, request));
+  const identity = resolveS3MountIdentity(executorS3Context(config, request));
   const workspaceRoot = (request.workspaceRoot ?? "/mnt/workspaces").replace(
     /\/+$/,
     "",

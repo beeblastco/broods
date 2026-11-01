@@ -30,6 +30,7 @@ import {
   questionButtonId,
 } from "./channels.ts";
 import { logWarn } from "./log.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const BOT_COMMAND_ENTITY = "bot_command";
@@ -96,7 +97,9 @@ class BroodsTelegramAdapter extends TelegramAdapter {
     return this.apiBaseUrl !== TELEGRAM_API_URL;
   }
 
-  protected override async downloadFile(fileId: string): Promise<Buffer> {
+  protected override async downloadFile(
+    fileId: string,
+  ): Promise<Buffer | ArrayBuffer> {
     if (!this.tenantApiUrl) return super.downloadFile(fileId);
     const file = await this.telegramFetch<{ file_path?: string }>("getFile", {
       file_id: fileId,
@@ -115,7 +118,7 @@ class BroodsTelegramAdapter extends TelegramAdapter {
       );
     }
 
-    return Buffer.from(await response.arrayBuffer());
+    return await readCappedFile(response, fileId);
   }
 
   protected override async telegramFetch<TResult>(
@@ -305,8 +308,10 @@ export function createTelegramChannel(
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
+          // A sticker carries no text; the SDK's bare emoji would drop the
+          // file_id send-sticker needs.
           content: withReplyContext(
-            parsed.text || stickerText(message.sticker),
+            message.sticker ? stickerText(message.sticker) : parsed.text,
             parsed.replyTo,
           ),
           ...(attachments.length > 0 ? { attachments: attachments } : {}),
@@ -477,7 +482,7 @@ function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
 }
 
 // Whether the message carries anything the agent could look at. Kept beside the
-// Chat SDK's own extraction list, plus the sticker it does not model.
+// Chat SDK's own extraction list.
 function hasTelegramMedia(message: TelegramMessage): boolean {
   return Boolean(
     message.photo?.length ||
@@ -513,14 +518,39 @@ function questionKeyboard(
   );
 }
 
+// A tenant file server's body, refused past the attachment cap the SDK's own
+// Telegram download keeps, so a tenant host cannot stream gigabytes into core.
+async function readCappedFile(
+  response: Response,
+  fileId: string,
+): Promise<Buffer> {
+  const tooLarge = (): Error =>
+    new Error(`Telegram file ${fileId} exceeds the download limit`);
+  if (Number(response.headers.get("content-length")) > MAX_ATTACHMENT_BYTES) {
+    await response.body?.cancel();
+    throw tooLarge();
+  }
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const read = await reader?.read();
+    if (!read || read.done) break;
+    size += read.value.byteLength;
+    if (size > MAX_ATTACHMENT_BYTES) {
+      await reader?.cancel();
+      throw tooLarge();
+    }
+    chunks.push(read.value);
+  }
+
+  return Buffer.concat(chunks, size);
+}
+
 // The text a sticker arrives as, since it carries no caption: its emoji, which
 // is all an animated or video sticker says once `telegramAttachments` skips it,
 // and the file_id send-sticker takes to send the same sticker back.
-function stickerText(sticker: TelegramSticker | undefined): string {
-  if (!sticker) {
-    return "";
-  }
-
+function stickerText(sticker: TelegramSticker): string {
   return `${sticker.emoji ?? ""} [sticker file_id: ${sticker.file_id}]`.trim();
 }
 
@@ -528,10 +558,11 @@ function stickerText(sticker: TelegramSticker | undefined): string {
  * The media on a Telegram message, as Chat SDK attachments.
  *
  * `parsed.attachments` holds what the SDK extracts: photos, video, audio, voice
- * notes, documents and video notes, each with a reader that resolves the file id
- * and signs the download with the bot token. The SDK has no notion of a sticker,
- * so that one is built here against the same reader, since `rehydrateAttachment`
- * turns a file id back into a download.
+ * notes, documents, video notes and stickers, each with a reader that resolves
+ * the file id and signs the download with the bot token. The SDK's sticker is
+ * swapped for one built here against the same reader, since
+ * `rehydrateAttachment` turns a file id back into a download, so a static one
+ * keeps a name the model can read.
  *
  * Animated and video stickers (.tgs, .webm) are left alone. Neither is a picture
  * a model can read; `stickerText` carries their emoji as the message text
@@ -542,12 +573,18 @@ function telegramAttachments(
   sticker: TelegramSticker | undefined,
   parsed: Message,
 ): Attachment[] {
-  if (!sticker || sticker.is_animated || sticker.is_video) {
+  if (!sticker) {
     return parsed.attachments;
+  }
+  const media = parsed.attachments.filter(
+    (attachment) => attachment.fetchMetadata?.fileId !== sticker.file_id,
+  );
+  if (sticker.is_animated || sticker.is_video) {
+    return media;
   }
 
   return [
-    ...parsed.attachments,
+    ...media,
     transport.rehydrateAttachment({
       type: "image",
       name: `sticker${sticker.emoji ? `-${sticker.emoji}` : ""}.webp`,

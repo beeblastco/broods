@@ -184,7 +184,6 @@ describe("production region across the dashboard and a deploy", () => {
     workosTest.register(t);
     const now = new Date().toISOString();
     await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-      apiKey: "sk_test_fixture",
       event: {
         id: "evt_region_owner",
         event: "user.created",

@@ -635,6 +635,40 @@ describe("resolveAgentRuntime", () => {
     ).rejects.toThrow('Workspace "notes" cannot run on a cloudflare sandbox');
   });
 
+  // A fallback carries none of the primary's options, so a provider that
+  // mounts only with `mountAwsS3Buckets` can never mount as a fallback.
+  it("refuses a daytona fallback and runs a vercel one", async () => {
+    const runtimeFor = (fallbackProvider: string): Promise<unknown> => {
+      setStorageForTests({
+        sandboxConfigs: {
+          getById: async () => ({
+            config: {
+              provider: "lambda",
+              fallbackProvider: fallbackProvider,
+              permissionMode: "edit",
+            },
+          }),
+        },
+        workspaceConfigs: {
+          getById: async () => ({ config: { storage: { provider: "s3" } } }),
+        },
+      } as never);
+
+      return resolveAgentRuntime(
+        {
+          sandboxes: ["sb_box"],
+          workspaces: [{ name: "notes", workspaceId: "ws_notes" }],
+        },
+        { accountId: "acct_1" },
+      );
+    };
+
+    expect(runtimeFor("daytona")).rejects.toThrow(
+      'Workspace "notes" cannot run on a daytona sandbox',
+    );
+    expect(await runtimeFor("vercel")).toHaveProperty("workspaces");
+  });
+
   it("resolves a read-only workspace (no agent sandbox, no override) without a sandbox", async () => {
     setStorageForTests({
       sandboxConfigs: { getById: async () => null },

@@ -102,18 +102,28 @@ const vercelRunCommandMock = mock(async (_params: Record<string, unknown>) => ({
 }));
 const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
+const vercelExtendTimeoutMock = mock(async (_duration: number) => {});
+const vercelUpdateMock = mock(async (_params: Record<string, unknown>) => {});
 const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
   snapshotId: "snap_captured",
   status: "created",
 }));
+// What the next sandbox the mocks hand out reports: its session and its
+// Secure Compute network.
+let vercelSession: { createdAt: Date; expiresAt?: Date; networkId?: string } = {
+  createdAt: new Date(),
+};
 function vercelSandbox(name = "vercel-sandbox") {
   return {
     name: name,
     ...VERCEL_SIZE,
+    ...vercelSession,
+    extendTimeout: vercelExtendTimeoutMock,
     runCommand: vercelRunCommandMock,
     stop: vercelStopMock,
     delete: vercelDeleteMock,
     snapshot: vercelSnapshotMock,
+    update: vercelUpdateMock,
   };
 }
 const vercelCreateMock = mock(
@@ -469,6 +479,9 @@ beforeEach(() => {
   vercelRunCommandMock.mockClear();
   vercelStopMock.mockClear();
   vercelDeleteMock.mockClear();
+  vercelExtendTimeoutMock.mockClear();
+  vercelSession = { createdAt: new Date() };
+  vercelUpdateMock.mockClear();
   vercelCreateMock.mockClear();
   vercelGetMock.mockClear();
   storedSandboxExternalId = null;
@@ -2968,7 +2981,9 @@ describe("createSandboxExecutor", () => {
         timeoutSeconds: 30,
         outputLimitBytes: 4096,
       }),
-    ).rejects.toThrow("Daytona AWS S3 mounts require a workspace namespace");
+    ).rejects.toThrow(
+      "an AWS S3 workspace mount requires a workspace namespace",
+    );
 
     expect(stsSendMock.mock.calls.length).toBe(stsCallCount);
   });
@@ -3068,8 +3083,15 @@ describe("createSandboxExecutor", () => {
         teamId: "team_1",
         projectId: "prj_1",
         persistent: false,
+        // The 30 s call plus room for its setup.
+        timeout: 330_000,
+        // A workspace run mounts, so the bucket's S3 hosts join the allow list.
         networkPolicy: {
-          allow: ["api.example.com"],
+          allow: [
+            "api.example.com",
+            "s3.us-east-1.amazonaws.com",
+            "workspace-bucket.s3.us-east-1.amazonaws.com",
+          ],
           subnets: { allow: ["10.0.0.0/8"] },
         },
       }),
@@ -3083,6 +3105,119 @@ describe("createSandboxExecutor", () => {
       }),
     );
     expect(vercelStopMock).toHaveBeenCalledTimes(1);
+  });
+
+  function vercelMountConfig(): SandboxExecutorConfig {
+    return {
+      provider: "vercel",
+      network: { mode: "deny-all" },
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+      },
+    };
+  }
+
+  function vercelMountCommand(): Record<string, unknown> | undefined {
+    return vercelRunCommandMock.mock.calls
+      .map((call): Record<string, unknown> => call[0])
+      .find((params): boolean =>
+        JSON.stringify(params.args).includes("sudo -E mount-s3"),
+      );
+  }
+
+  it("mounts a Vercel workspace on scoped credentials only the mount command sees", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(vercelMountConfig());
+    // The freshness check finds no mount.
+    vercelRunCommandMock.mockImplementationOnce(async () => ({
+      exitCode: 1,
+      stdout: async () => "",
+      stderr: async () => "",
+    }));
+
+    await executor.run({
+      code: "cat notes.md",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    // A deny-all sandbox reaches the workspace bucket and nothing else.
+    const create = vercelCreateMock.mock.calls[0]?.[0];
+    expect(create).toHaveProperty("networkPolicy", {
+      allow: [
+        "s3.us-east-1.amazonaws.com",
+        "workspace-bucket.s3.us-east-1.amazonaws.com",
+      ],
+    });
+    expect(create).not.toHaveProperty("env.AWS_SESSION_TOKEN");
+    const mount = vercelMountCommand();
+    expect(mount).toHaveProperty(
+      ["args", 1],
+      expect.stringContaining(
+        `'--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
+      ),
+    );
+    // Parallel tool calls on a fresh sandbox take turns at the install and mount.
+    expect(mount).toHaveProperty(
+      ["args", 1],
+      expect.stringContaining("flock 9"),
+    );
+    expect(mount).toHaveProperty(
+      "env",
+      expect.objectContaining({
+        AWS_ACCESS_KEY_ID: "scoped-access-key",
+        AWS_SESSION_TOKEN: "scoped-session-token",
+      }),
+    );
+    expect(stsSendMock.mock.calls.at(-1)?.[0]).toHaveProperty(
+      "input.Policy",
+      expect.stringContaining(`workspace-bucket/${NS}/`),
+    );
+    // The agent's own command never carries them.
+    expect(vercelRunCommandMock.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      "env.AWS_SESSION_TOKEN",
+      "scoped-session-token",
+    );
+  });
+
+  it("keeps a fresh Vercel mount without calling STS", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(vercelMountConfig());
+    stsSendMock.mockClear();
+
+    await executor.run({
+      code: "ls",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(vercelMountCommand()).toBeUndefined();
+    expect(stsSendMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps Vercel job markers off the workspace mount", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      onCreate: ["npm install"],
+    });
+
+    await executor.run(persistentVercelRun());
+
+    expect(
+      vercelCommandIncludes(
+        `'/mnt/workspaces/.fp-jobs/${NS}/.fp-lifecycle-created'`,
+      ),
+    ).toBe(true);
   });
 
   it("boots a Vercel snapshot id as a snapshot and anything else as an image", async () => {
@@ -3291,6 +3426,146 @@ describe("createSandboxExecutor", () => {
     expect(created).not.toBe("fp-p-winner");
     expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
     expect(vercelGetMock.mock.calls.at(-1)?.[0]?.name).toBe("fp-p-winner");
+  });
+
+  // Vercel's session timeout is a hard stop, so a busy sandbox would be cut
+  // mid-command one idle window after it woke.
+  it("extends the session to one idle window past each call", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    const startedAt = Date.now();
+    vercelSession = {
+      createdAt: new Date(startedAt),
+      expiresAt: new Date(startedAt + 60_000),
+    };
+
+    await executor.run(persistentVercelRun());
+
+    // Default idle 900 s plus the call's 30 s, less the 60 s left, plus the
+    // time the run took to reach the extension, plus 60 s of slack so the
+    // calls right after it need no extension of their own.
+    const extension = Number(vercelExtendTimeoutMock.mock.calls[0]?.[0]);
+    expect(extension).toBeGreaterThanOrEqual(930_000);
+    expect(extension).toBeLessThanOrEqual(930_000 + Date.now() - startedAt);
+  });
+
+  // onResume runs on every call, so a slow hook could outlast a session that
+  // was about to expire.
+  it("extends the session before the lifecycle hooks run", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      onResume: ["sleep 1"],
+    });
+    const startedAt = Date.now();
+    vercelSession = {
+      createdAt: new Date(startedAt),
+      expiresAt: new Date(startedAt + 60_000),
+    };
+
+    await executor.run(persistentVercelRun());
+
+    const hookCall = vercelRunCommandMock.mock.calls.findIndex(
+      ([params]): boolean => JSON.stringify(params).includes("sleep 1"),
+    );
+    expect(hookCall).toBeGreaterThanOrEqual(0);
+    expect(vercelExtendTimeoutMock.mock.invocationCallOrder[0]).toBeLessThan(
+      vercelRunCommandMock.mock.invocationCallOrder[hookCall]!,
+    );
+  });
+
+  it("leaves a session alone when it outlasts the idle window", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    vercelSession = {
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 3_600_000),
+    };
+
+    await executor.run(persistentVercelRun());
+
+    expect(vercelExtendTimeoutMock).not.toHaveBeenCalled();
+  });
+
+  it("still runs when Vercel refuses an extension past the plan cap", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    vercelSession = { createdAt: new Date(), expiresAt: new Date() };
+    vercelExtendTimeoutMock.mockImplementationOnce(async () => {
+      throw new Error("Status code 400 is not ok");
+    });
+
+    const result = await executor.run(persistentVercelRun());
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("retires a reserved sandbox past maxLifetimeSeconds and boots a fresh one", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      lifecycle: { maxLifetimeSeconds: 3600 },
+    });
+    storedSandboxExternalId = "fp-p-old-abc123";
+    vercelSession = { createdAt: new Date(Date.now() - 7_200_000) };
+
+    await executor.run(persistentVercelRun());
+
+    expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
+    expect(vercelCreateMock).toHaveBeenCalledTimes(1);
+    expect(String(vercelCreateMock.mock.calls[0]?.[0]?.name)).not.toBe(
+      "fp-p-old-abc123",
+    );
+  });
+
+  it("attaches a Vercel sandbox to its Secure Compute network", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        networkId: "net_1",
+      },
+    });
+
+    await executor.run(persistentVercelRun());
+
+    expect(vercelCreateMock.mock.calls[0]?.[0]).toMatchObject({
+      networkId: "net_1",
+    });
+  });
+
+  it("moves a reserved Vercel sandbox to a changed network", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    storedSandboxExternalId = "fp-p-stored-abc123";
+    vercelSession = { createdAt: new Date(), networkId: "net_old" };
+
+    await new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        networkId: "net_new",
+      },
+    }).run(persistentVercelRun());
+    await new VercelSandboxExecutor(persistentVercelConfig()).run(
+      persistentVercelRun(),
+    );
+
+    expect(vercelUpdateMock.mock.calls.map((call) => call[0])).toEqual([
+      { networkId: "net_new" },
+      { networkId: null },
+    ]);
   });
 
   it("releases a reserved sandbox without resuming it", async () => {
@@ -3639,6 +3914,26 @@ describe("classifyVercelError", () => {
     expect(classifyVercelError({ statusCode: 401 }).message).toContain(
       "HTTP 401",
     );
+  });
+
+  it("keeps the reason Vercel gives beside what to check", async () => {
+    const { classifyVercelError } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const network = classifyVercelError(
+      new Error(
+        "Status code 401 is not ok: The network was not found or is not accessible to this team. Secure Compute requires an Enterprise plan with a configured network.",
+      ),
+    );
+    // A bad token answers with a bare reason, so the hint stays either way.
+    const token = classifyVercelError(
+      new Error("Status code 403 is not ok: Not authorized"),
+    );
+
+    expect(network.message).toContain(
+      "(HTTP 401): The network was not found or is not accessible to this team.",
+    );
+    expect(token.message).toContain("(HTTP 403): Not authorized");
+    expect(token.message).toContain("Verify VERCEL_TOKEN");
   });
 
   it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {

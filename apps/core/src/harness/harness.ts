@@ -13,6 +13,8 @@ import {
   trace as otelTraceApi,
   SpanStatusCode,
   TraceFlags,
+  type Context as OtelContext,
+  type Span,
 } from "@opentelemetry/api";
 import {
   isStepCount,
@@ -72,6 +74,7 @@ import {
   mintSpanId,
   mintTraceId,
   observabilityAttributes,
+  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
@@ -104,7 +107,12 @@ import {
   occupySandbox,
 } from "./sandbox/live-status.ts";
 import { configString } from "./sandbox/utils.ts";
-import { shouldAutoCompact } from "./compaction.ts";
+import {
+  CompactionError,
+  type CompactionResult,
+  compactionSpanAttributes,
+  shouldAutoCompact,
+} from "./compaction.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
@@ -129,7 +137,7 @@ import {
 import { createDeadlinePolicy } from "./deadline-policy.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import { createRunFinalizer } from "./run-finalizer.ts";
-import { createRunSpanTracker } from "./run-spans.ts";
+import { createRunSpanTracker, type RunSpanTracker } from "./run-spans.ts";
 import {
   stripEnvelopeFieldsFromMessages,
   type ConversationIngressEvent,
@@ -158,6 +166,8 @@ import {
   createStepTimingTracker,
   createTaskTotals,
   extractCacheWriteTokens,
+  MODEL_CONTENT_CHUNK_TYPES,
+  modelTokenAttributes,
   usageTokenTotals,
 } from "./usage-metering.ts";
 
@@ -219,6 +229,18 @@ type ToolCallSummary = {
   durationMs?: number;
   success?: boolean;
 };
+
+/** How a /compact with history to fold ended: its summary, or what stopped it. */
+type CompactionOutcome = { result: CompactionResult } | { error: Error };
+
+/** A run's root OTel span, the ids its live rows reuse, and its child-span tracker. */
+interface RunRoot {
+  span: Span;
+  traceId: string;
+  spanId: string;
+  otelContext: OtelContext;
+  spans: RunSpanTracker;
+}
 
 /** A tool call waiting on a person's approval, handed to `onApprovalRequired`. */
 export type ToolApprovalSummary = Pick<ApprovalRequestOutput, "approvalId"> & {
@@ -366,17 +388,9 @@ export async function runAgentLoop(
   const sandboxCpu = createSandboxCpuLedger();
 
   // Start the root span up front so one trace id is on every log line, NATS
-  // span row and Tempo span. A noop tracer (OTel not initialised) has all-zero
-  // ids, so the live NATS path falls back to freshly minted ones.
+  // span row and Tempo span.
   const runStartedAt = Date.now();
-  const observabilityScope = {
-    accountId: session.accountId ?? "",
-    project: session.projectSlug ?? "",
-    stage: session.stageSlug ?? "",
-    endpointId: session.endpointId ?? "",
-    agentId: session.agentId ?? "",
-    conversationKey: session.conversationKey,
-  };
+  const observabilityScope = sessionObservabilityScope(session);
   const resolvedWorkspaces = session.resolvedWorkspaces();
   const sandboxes = session.sandboxes();
   // A subagent run is its own top-level trace (kind "subtask"), a scheduler run
@@ -387,37 +401,13 @@ export async function runAgentLoop(
     ? "subtask"
     : (session.trigger ?? "task");
   const rootSpanName = `agent.${rootSpanKind}`;
-  const tracer = getTracer();
-  const otelRootSpan = tracer.startSpan(rootSpanName, {
-    startTime: runStartedAt,
-    attributes: observabilityAttributes(observabilityScope),
-  });
-  const otelSpanCtx = otelRootSpan.spanContext();
-  const traceId = /[^0]/.test(otelSpanCtx.traceId)
-    ? otelSpanCtx.traceId
-    : mintTraceId();
-  const rootSpanId = /[^0]/.test(otelSpanCtx.spanId)
-    ? otelSpanCtx.spanId
-    : mintSpanId();
-  const rootOtelContext = otelTraceApi.setSpan(
-    otelContextApi.active(),
-    otelRootSpan,
-  );
-  // The run's model.step, tool.call and phase spans under that root, each an
-  // OTel span and a live NATS row.
-  const spans = createRunSpanTracker({
-    tracer: tracer,
-    scope: observabilityScope,
-    traceId: traceId,
-    rootSpanId: rootSpanId,
-    rootOtelContext: rootOtelContext,
-    session: {
-      endpointId: session.endpointId,
-      agentId: session.agentId,
-      conversationKey: session.conversationKey,
-    },
-    publish: publishSpan,
-  });
+  const {
+    span: otelRootSpan,
+    traceId,
+    spanId: rootSpanId,
+    otelContext: rootOtelContext,
+    spans,
+  } = startRunRoot(session, rootSpanName, runStartedAt);
   // The invoking run's identity, mirrored onto any sandbox it reserves so the
   // dashboard activity links back to this trace and task. Shared by the tool
   // registry and the resident-harness reservation.
@@ -731,18 +721,23 @@ export async function runAgentLoop(
       return;
     }
     const startedMs = Date.now();
-    let compacted = 0;
+    let compacted: CompactionResult | null = null;
     try {
       compacted = await session.compactConversation("");
     } catch (err) {
+      // The summary calls that finished before the failure are still billed.
+      if (err instanceof CompactionError) {
+        taskTotals.addCompaction(err.spent.usage);
+      }
       logError("Auto-compaction failed; the turn keeps its full history", {
         ...logContext,
         error: errorMessage(err),
       });
     }
-    if (compacted > 0) {
+    if (compacted) {
+      taskTotals.addCompaction(compacted.usage);
       spans.phase("phase.compaction", "Compaction", startedMs, Date.now(), {
-        "compaction.message_count": compacted,
+        ...compactionSpanAttributes(compacted),
         "compaction.input_tokens": lastInputTokens ?? 0,
       });
     }
@@ -1187,7 +1182,7 @@ export async function runAgentLoop(
       }
 
       const stepTokens = usageTokenTotals(usage);
-      taskTotals.addStep(
+      const stepCacheWriteTokens = taskTotals.addStep(
         stepNumber,
         stepTokens,
         extractCacheWriteTokens(configuredModel.providerName, providerMetadata),
@@ -1278,11 +1273,10 @@ export async function runAgentLoop(
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
           ...stepTiming.closeStep(stepNumber, stepEndMs),
-          "model.input_tokens": stepTokens.inputTokens,
-          "model.output_tokens": stepTokens.outputTokens,
-          "model.reasoning_tokens": stepTokens.reasoningTokens,
-          "model.cached_input_tokens": stepTokens.cachedInputTokens,
-          "model.total_tokens": stepTokens.totalTokens,
+          ...modelTokenAttributes({
+            ...stepTokens,
+            cacheWriteTokens: stepCacheWriteTokens,
+          }),
           "model.response": traceAttribute(text),
           "model.reasoning": traceAttribute(reasoningText ?? ""),
           "model.tool_calls": traceAttribute(toolCalls),
@@ -1792,14 +1786,7 @@ export function recordFailedTurn(
 ): void {
   const context = getObservabilityContext();
   const traceId = context?.traceId ?? mintTraceId();
-  const scope = {
-    accountId: session.accountId ?? "",
-    project: session.projectSlug ?? "",
-    stage: session.stageSlug ?? "",
-    endpointId: session.endpointId ?? "",
-    agentId: session.agentId ?? "",
-    conversationKey: session.conversationKey,
-  };
+  const scope = sessionObservabilityScope(session);
   const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
   const name = `agent.${kind}`;
   const message = redactSensitiveText(
@@ -1841,6 +1828,65 @@ export function recordFailedTurn(
     attributes: { "task.state": "failed" },
     error: message,
   });
+}
+
+/**
+ * Runs /compact, which never enters runAgentLoop, as a run of its own: a
+ * fresh trace whose root holds the compaction phase, and a usage row, so
+ * Tracing and the Usage tab count what the summary cost. Nothing to fold calls
+ * no model and records nothing. Recording is best-effort and never fails the
+ * command. Returns how many messages were folded.
+ */
+export function runCompactCommand(
+  session: Session,
+  input: string,
+  instructions: string,
+): Promise<number> {
+  const startedAt = Date.now();
+  const kind: ObservabilitySpanRow["kind"] = session.trigger ?? "task";
+  const root = startRunRoot(session, `agent.${kind}`, startedAt);
+
+  // Its own scope, so the command's log lines carry its trace and route to
+  // its deployment even on a direct run, which sets no scope of its own.
+  return runWithObservabilityScope(
+    async (): Promise<number> => {
+      let outcome: CompactionOutcome | undefined;
+      try {
+        const result = await session.compactConversation(instructions);
+        outcome = result ? { result: result } : undefined;
+      } catch (err) {
+        outcome = {
+          error: err instanceof Error ? err : new Error(errorMessage(err)),
+        };
+      }
+      // An unended root is never exported, so a no-op leaves no trace.
+      if (outcome) {
+        await recordCompactionTask(
+          session,
+          input,
+          kind,
+          root,
+          startedAt,
+          outcome,
+        ).catch((err: unknown): void => {
+          logError("Recording the /compact run failed", {
+            conversationKey: session.conversationKey,
+            error: errorMessage(err),
+          });
+        });
+      }
+      if (outcome && "error" in outcome) throw outcome.error;
+
+      return outcome?.result.messageCount ?? 0;
+    },
+    {
+      ...sessionObservabilityScope(session),
+      traceId: root.traceId,
+      otelContext: root.otelContext,
+      // A direct run's caller has no scope, so its secrets come from here.
+      secretValues: session.secretValues(),
+    },
+  );
 }
 
 // Tracing labels a run with this and its search matches on it. Only text parts
@@ -2118,14 +2164,17 @@ function harnessReadsMedia(part: ImagePart | FilePart): boolean {
 }
 
 /**
- * Fails the run when its model goes silent: no first chunk of a model call
- * within MODEL_FIRST_CHUNK_TIMEOUT_MS, or no chunk within MODEL_CHUNK_TIMEOUT_MS
- * of the last. The clock stops while a tool call is open, so a long tool never
- * reads as a stalled model. A provider-executed call only stops it on a
- * harness, whose native tools (bash) are provider-executed; on streamText its
- * result streams back from the model itself. It reads its own copy of the stream, which covers
- * streamText and HarnessAgent alike: the SDK's `timeout.chunkMs` keeps ticking
- * through tool execution, and HarnessAgent ignores `timeout`.
+ * Fails the run when its model goes silent: no output of a model call within
+ * MODEL_FIRST_CHUNK_TIMEOUT_MS of its start, or none within
+ * MODEL_CHUNK_TIMEOUT_MS of the last. Output is a MODEL_CONTENT_CHUNK_TYPES
+ * part; a stream that only carries keep-alives, errors or other parts with no
+ * model content is silent. The clock stops while a tool call is open, so a
+ * long tool never reads as a stalled model. A provider-executed call only
+ * stops it on a harness, whose native tools (bash) are provider-executed; on
+ * streamText its result streams back from the model itself. It reads its own
+ * copy of the stream rather than the SDK's `timeout` option, whose
+ * `firstChunkMs` starts only once a response arrives and which HarnessAgent
+ * ignores. An agent's own `model.timeout` still reaches streamText as set.
  */
 async function watchModelStream(
   parts: AsyncIterable<TextStreamPart<ToolSet>>,
@@ -2171,9 +2220,11 @@ async function watchModelStream(
       ) {
         openToolCalls.delete(part.toolCallId);
       }
-      arm(
-        MODEL_CALL_BOUNDARY_PART_TYPES.has(part.type) ? firstChunkMs : chunkMs,
-      );
+      if (MODEL_CALL_BOUNDARY_PART_TYPES.has(part.type)) {
+        arm(firstChunkMs);
+      } else if (MODEL_CONTENT_CHUNK_TYPES.has(part.type)) {
+        arm(chunkMs);
+      }
     }
   } catch {
     // The run's own reader reports a failed stream.
@@ -2558,5 +2609,140 @@ function toolOutputWithoutMediaBytes(
           }
         : part,
     ),
+  };
+}
+
+// Settles a /compact's root with its compaction phase and usage row through
+// the same finalizer as a model run, so both read alike in Tracing and Usage.
+// A failed summary settles failed, with whatever its finished calls spent.
+function recordCompactionTask(
+  session: Session,
+  input: string,
+  kind: ObservabilitySpanRow["kind"],
+  root: RunRoot,
+  startedAt: number,
+  outcome: CompactionOutcome,
+): Promise<void> {
+  const context = getObservabilityContext();
+  const serialize = (value: unknown): string =>
+    redactSerialized(
+      value,
+      context?.secretValues ?? [],
+      MAX_TRACE_ATTRIBUTE_CHARS,
+    );
+  const taskInput = serialize(input).slice(0, MAX_TASK_INPUT_CHARS);
+  const endMs = Date.now();
+  const spent =
+    "result" in outcome
+      ? outcome.result
+      : outcome.error instanceof CompactionError
+        ? outcome.error.spent
+        : undefined;
+  if ("result" in outcome) {
+    root.spans.phase(
+      "phase.compaction",
+      "Compaction",
+      startedAt,
+      endMs,
+      compactionSpanAttributes(outcome.result),
+    );
+  }
+  const taskTotals = createTaskTotals();
+  if (spent) taskTotals.addCompaction(spent.usage);
+  const modelProvider = spent?.modelProvider ?? "unknown";
+  const modelId = spent?.modelId ?? "unknown";
+
+  return createRunFinalizer({
+    session: session,
+    root: {
+      span: root.span,
+      traceId: root.traceId,
+      spanId: root.spanId,
+      name: `agent.${kind}`,
+      kind: kind,
+      startTimeMs: startedAt,
+    },
+    // The dashboard prices a trace by the model its root names (`runModel`).
+    rootAttributes: (): Record<string, string> => ({
+      "task.id": session.eventId,
+      "task.delivery": session.delivery?.kind ?? "direct",
+      "task.input": taskInput,
+      "model.provider": modelProvider,
+      "model.id": modelId,
+    }),
+    modelProvider: modelProvider,
+    modelId: modelId,
+    taskInput: taskInput,
+    serialize: serialize,
+    spans: root.spans,
+    stepTiming: createStepTimingTracker(serialize),
+    taskTotals: taskTotals,
+    sandboxCpu: createSandboxCpuLedger(),
+    openWork: (): Promise<RunOpenWork> => Promise.resolve({ questions: [] }),
+    publish: publishSpan,
+    recordUsage: recordTaskUsage,
+    release: (): void => {},
+    restoreObservabilityContext: (): void => {},
+  }).finalize(
+    "result" in outcome ? "completed" : "failed",
+    0,
+    endMs - startedAt,
+    "error" in outcome ? outcome.error : undefined,
+  );
+}
+
+// Opens a run's root span under `parent` and the tracker its model.step,
+// tool.call and phase spans hang from. A noop tracer (OTel not initialised)
+// has all-zero ids, so the live NATS rows fall back to freshly minted ones.
+function startRunRoot(
+  session: Session,
+  name: string,
+  startedAt: number,
+  parent: OtelContext = otelContextApi.active(),
+): RunRoot {
+  const tracer = getTracer();
+  const scope = sessionObservabilityScope(session);
+  const span = tracer.startSpan(
+    name,
+    { startTime: startedAt, attributes: observabilityAttributes(scope) },
+    parent,
+  );
+  const ids = span.spanContext();
+  const traceId = /[^0]/.test(ids.traceId) ? ids.traceId : mintTraceId();
+  const spanId = /[^0]/.test(ids.spanId) ? ids.spanId : mintSpanId();
+  const otelContext = otelTraceApi.setSpan(parent, span);
+
+  return {
+    span: span,
+    traceId: traceId,
+    spanId: spanId,
+    otelContext: otelContext,
+    spans: createRunSpanTracker({
+      tracer: tracer,
+      scope: scope,
+      traceId: traceId,
+      rootSpanId: spanId,
+      rootOtelContext: otelContext,
+      session: {
+        endpointId: session.endpointId,
+        agentId: session.agentId,
+        conversationKey: session.conversationKey,
+      },
+      publish: publishSpan,
+    }),
+  };
+}
+
+// The deployment a session's spans and log lines route to.
+function sessionObservabilityScope(
+  session: Session,
+): Parameters<typeof observabilityAttributes>[0] {
+  return {
+    accountId: session.accountId ?? "",
+    project: session.projectSlug ?? "",
+    stage: session.stageSlug ?? "",
+    endpointId: session.endpointId ?? "",
+    agentId: session.agentId ?? "",
+    conversationKey: session.conversationKey,
   };
 }

@@ -6,7 +6,7 @@ import {
   type DetailRow,
   PayloadBody,
 } from "@/app/components/DetailSections";
-import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
+import { DetailSplit } from "@/app/components/DetailSplit";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import {
   STATUS_TONE_BG,
@@ -62,10 +62,24 @@ import {
   Terminal,
   TriangleAlert,
   Wrench,
+  X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
 import { debounce, useQueryState } from "nuqs";
+import {
+  estimateModelTokenCost,
+  type ModelTokenRates,
+} from "@broods/convex/model/modelPricing";
+import { useModelRates } from "@/app/hooks/useModelRates";
+import {
+  formatUsd,
+  isModelCallSpan,
+  modelKey,
+  runModel,
+  stepTokens,
+  type ModelRef,
+} from "@/app/lib/modelCost";
 import {
   createContext,
   memo,
@@ -368,9 +382,9 @@ const STATUS_ALIASES: Readonly<Record<string, SpanStatus>> = {
   needs_input: "needs_input",
 };
 
-// The task list (w-80) plus the waterfall's min-w-xl, so dragging the detail
-// divider never pushes the waterfall's columns out of view.
-const TRACE_TABLE_MIN_WIDTH = 896;
+// The waterfall's min-w-xl, so dragging the detail divider never pushes the
+// waterfall's columns out of view.
+const WATERFALL_MIN_WIDTH = 576;
 
 // Where the browser remembers that the task list is folded to its rail.
 const LIST_RAIL_KEY = "tracing:list-rail";
@@ -531,6 +545,8 @@ interface TimelineScale {
 
 // What every waterfall row of the selected run reads and calls.
 interface WaterfallView {
+  /** Each run's and model step's price by `spanKey`, see taskCosts. */
+  costs: ReadonlyMap<string, TaskCost | null>;
   /** The run a pick or a link landed on, ringed for a moment. */
   focusTraceId: string | null;
   group: SpanGroup;
@@ -559,6 +575,8 @@ interface TaskListPaneProps {
   stackChoices: ReadonlyMap<string, boolean>;
   onSelect: (root: ObservabilitySpanRow) => void;
   onToggleStack: (root: ObservabilitySpanRow, open: boolean) => void;
+  // Each task's price by `spanKey(root)`, see taskCosts.
+  costs: ReadonlyMap<string, TaskCost | null>;
   // What the list says when it has no rows.
   emptyMessage: string;
   // Tasks loaded and in all, counted by request; subagent rows are extra.
@@ -566,6 +584,12 @@ interface TaskListPaneProps {
   total: number;
   remaining: number;
   onLoadMore: () => void;
+}
+
+/** A task's price in USD; `partial` when some of its steps have no price. */
+export interface TaskCost {
+  usd: number;
+  partial: boolean;
 }
 
 // The list row's props, primitives and stable callbacks so the memoized row
@@ -602,8 +626,9 @@ export function TracingPanel({
   // Desktop only: on a phone the list stacks above the trace, so a rail of
   // full-width dot rows saves nothing.
   const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
+  // Unfolded by hand while a span is open, until no span is open.
+  const [listKept, setListKept] = useState(false);
   const isMobile = useIsMobile();
-  const rail = railChosen && !isMobile;
   // Whether a request's subagent rows list, where the person chose; with no
   // choice they list while the selected run is that request or under it.
   const [stackChoices, setStackChoices] = useState<
@@ -732,10 +757,22 @@ export function TracingPanel({
       ]),
     [visibleGroups, selectedGroup, stackChoices],
   );
+  const { rates, loading: ratesLoading } = useModelRates(
+    listedModels(visibleGroups),
+  );
+  const costs = useMemo(
+    () => taskCosts(visibleGroups, rates, ratesLoading),
+    [visibleGroups, rates, ratesLoading],
+  );
   // The span open in the side panel, resolved against the selected run so
   // it tracks live updates and closes when its run leaves the view.
   const selectedSpan =
     selectedGroup?.spans.find((span) => spanKey(span) === selectedKey) ?? null;
+  // An open span folds the list to its rail, so the waterfall keeps its width
+  // beside the detail. Render-time adjustment, not an effect.
+  if (!selectedSpan && listKept) setListKept(false);
+  const rail =
+    !isMobile && (railChosen || (selectedSpan !== null && !listKept));
   // The selected run's chain, a request down to the subagent on screen.
   const chain = useMemo(
     () => (selectedGroup ? chainFor(selectedGroup, groupByTrace) : []),
@@ -862,6 +899,9 @@ export function TracingPanel({
   const pickTask = useCallback(
     (root: ObservabilitySpanRow): void => {
       setSelectedTaskKey(spanKey(root));
+      // A picked run opens with no span, so returning to a run never
+      // reopens its old detail (and folds the list) under the click.
+      setSelectedKey(null);
       focusedRef.current = `${root.traceId}:${refocusNonce}`;
       void setFocusTraceId(root.traceId, {
         limitUrlUpdates: debounce(200),
@@ -1029,94 +1069,74 @@ export function TracingPanel({
         </p>
       )}
 
-      <DetailSplit
-        flush
-        tableMinWidth={TRACE_TABLE_MIN_WIDTH}
-        detail={
-          selectedSpan &&
-          selectedGroup && (
-            <DetailPanel
-              key={selectedKey}
-              title={spanLabel(selectedSpan)}
-              meta={
-                <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
-                  {selectedSpan.status !== "ok" && (
-                    <StatusDot
-                      tone={
-                        isStale(selectedSpan, isTaskRunning(selectedGroup.root))
-                          ? "ended"
-                          : STATUS_TONE[selectedSpan.status]
-                      }
-                      label={selectedSpan.status}
-                    />
-                  )}
-                  <span className="font-mono">
-                    {spanMetaLine(selectedSpan)}
-                  </span>
-                </div>
-              }
-              onClose={() => setSelectedKey(null)}
-            >
-              <SpanDetails span={selectedSpan} />
-            </DetailPanel>
-          )
-        }
-      >
-        <div className="flex h-full min-h-0 flex-col md:flex-row">
-          <TaskListPane
-            // An empty list opens with its message: with no trace selected
-            // there is no header holding the fold to open it again.
-            rail={rail && listRows.length > 0}
-            rows={listRows}
-            selectedGroup={selectedGroup}
-            stackChoices={stackChoices}
-            onSelect={pickTask}
-            onToggleStack={toggleStack}
-            emptyMessage={
-              entries.length === 0
-                ? emptyStreamMessage(history, error, "traces", "7 days")
-                : "No tasks match the current filters."
-            }
-            shown={groups.length}
-            total={allGroups.length}
-            remaining={remaining}
-            onLoadMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
-          />
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <TaskListPane
+          // An empty list opens with its message: with no trace selected
+          // there is no header holding the fold to open it again.
+          rail={rail && listRows.length > 0}
+          rows={listRows}
+          selectedGroup={selectedGroup}
+          stackChoices={stackChoices}
+          onSelect={pickTask}
+          onToggleStack={toggleStack}
+          costs={costs}
+          emptyMessage={
+            entries.length === 0
+              ? emptyStreamMessage(history, error, "traces", "7 days")
+              : "No tasks match the current filters."
+          }
+          shown={groups.length}
+          total={allGroups.length}
+          remaining={remaining}
+          onLoadMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
+        />
 
-          <div
-            data-scroll-pane
-            className="min-h-0 min-w-0 flex-1 overflow-auto"
-          >
-            {selectedGroup && (
-              <TaskWaterfall
-                key={spanKey(selectedGroup.root)}
-                attempt={continueAttempts.get(selectedGroup.root.traceId)}
-                chain={chain}
-                projectSlug={projectSlug}
-                stageSlug={stageSlug}
-                onContinue={() => void continueTask(selectedGroup.root)}
-                onPickRun={pickTask}
-                fold={
-                  <TaskListFold
-                    rail={rail}
-                    onToggle={() => setRail(!railChosen)}
-                  />
-                }
-                view={{
-                  focusTraceId: focusTraceId,
-                  group: selectedGroup,
-                  onFocusTrace: focusTrace,
-                  onSelect: (key) =>
-                    setSelectedKey((current) => (current === key ? null : key)),
-                  selectedKey: selectedKey,
-                  toggle: toggle,
-                  toggled: toggled,
-                }}
-              />
-            )}
-          </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {selectedGroup && (
+            <TaskWaterfall
+              key={spanKey(selectedGroup.root)}
+              attempt={continueAttempts.get(selectedGroup.root.traceId)}
+              chain={chain}
+              cost={costLabel(costs.get(spanKey(selectedGroup.root)))}
+              detail={
+                selectedSpan && (
+                  <div
+                    key={selectedKey}
+                    className="min-h-0 flex-1 animate-in overflow-auto p-3 duration-150 fade-in slide-in-from-right-2 motion-reduce:animate-none"
+                  >
+                    <SpanDetails span={selectedSpan} />
+                  </div>
+                )
+              }
+              onCloseDetail={() => setSelectedKey(null)}
+              projectSlug={projectSlug}
+              stageSlug={stageSlug}
+              onContinue={() => void continueTask(selectedGroup.root)}
+              onPickRun={pickTask}
+              fold={
+                <TaskListFold
+                  rail={rail}
+                  onToggle={() => {
+                    setRail(!rail);
+                    setListKept(rail);
+                  }}
+                />
+              }
+              view={{
+                costs: costs,
+                focusTraceId: focusTraceId,
+                group: selectedGroup,
+                onFocusTrace: focusTrace,
+                onSelect: (key) =>
+                  setSelectedKey((current) => (current === key ? null : key)),
+                selectedKey: selectedKey,
+                toggle: toggle,
+                toggled: toggled,
+              }}
+            />
+          )}
         </div>
-      </DetailSplit>
+      </div>
     </div>
   );
 }
@@ -1205,6 +1225,55 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   }
 
   return groups;
+}
+
+/**
+ * Each listed task's price by `spanKey(root)`: its model steps at their run's
+ * rates, a request with its subagents. `partial` when some step's model has
+ * no price, so the sum is a floor; null when none has one; absent before any
+ * step ran or before the first rates arrive. While a new model set `loading`,
+ * a step without a rate yet is left out instead of counted as unpriced.
+ */
+export function taskCosts(
+  groups: SpanGroup[],
+  rates: Array<ModelRef & ModelTokenRates> | undefined,
+  loading = false,
+): Map<string, TaskCost | null> {
+  const costs = new Map<string, TaskCost | null>();
+  if (!rates) return costs;
+  const rateByModel = new Map(rates.map((rate) => [modelKey(rate), rate]));
+  const ownCost = (group: SpanGroup): TaskCost | null | undefined => {
+    const runModels = new Map(
+      group.spans
+        .filter((span) => isRootSpanKind(span.kind))
+        .map((root) => [root.traceId, runModel(root)]),
+    );
+    let cost: TaskCost | null | undefined;
+    for (const step of group.spans) {
+      if (!isModelCallSpan(step)) continue;
+      const model = runModels.get(step.traceId);
+      const rate = model ? rateByModel.get(modelKey(model)) : undefined;
+      if (!rate && loading) continue;
+      const priced = estimateModelTokenCost(rate, stepTokens(step));
+      const stepCost = priced ? { usd: priced.total, partial: false } : null;
+      costs.set(spanKey(step), stepCost);
+      cost = addCost(cost, stepCost);
+    }
+
+    return cost;
+  };
+  for (const group of groups) {
+    let request: TaskCost | null | undefined;
+    for (const part of [group, ...group.subagents]) {
+      const cost = ownCost(part);
+      if (cost === undefined) continue;
+      costs.set(spanKey(part.root), cost);
+      request = addCost(request, cost);
+    }
+    if (request !== undefined) costs.set(spanKey(group.root), request);
+  }
+
+  return costs;
 }
 
 /** The task list's failure cause: "rate limit", or the start of the error. */
@@ -1330,6 +1399,17 @@ export function spanIssue(span: ObservabilitySpanRow): SpanIssue | null {
   };
 }
 
+/** Two prices summed: null only when both are, partial when either is. */
+function addCost(
+  sum: TaskCost | null | undefined,
+  cost: TaskCost | null,
+): TaskCost | null {
+  if (cost === null) return sum ? { usd: sum.usd, partial: true } : null;
+  if (!sum) return { usd: cost.usd, partial: cost.partial || sum === null };
+
+  return { usd: sum.usd + cost.usd, partial: sum.partial || cost.partial };
+}
+
 /** A request's spans and its subagents', for search. */
 function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   return [
@@ -1409,6 +1489,40 @@ function chainFor(
   }
 
   return chain;
+}
+
+/** A run's price as its trace header shows it: `$0.0012`, `$0.0012+` when partial, or "not priced". */
+function costLabel(cost: TaskCost | null | undefined): string | undefined {
+  if (cost === undefined) return undefined;
+  if (cost === null) return "not priced";
+
+  return `${formatUsd(cost.usd)}${cost.partial ? "+" : ""}`;
+}
+
+/**
+ * The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before
+ * any is priced. With more pages to load it adds "shown", since the count
+ * covers every matching task and the price only the loaded ones; a partial
+ * price adds "+".
+ */
+function costTotal(
+  rows: ListRow[],
+  costs: ReadonlyMap<string, TaskCost | null>,
+  paged: boolean,
+): string {
+  let total: TaskCost | null | undefined;
+  let unpriced = 0;
+  for (const { group, parent } of rows) {
+    if (parent !== null) continue;
+    const cost = costs.get(spanKey(group.root));
+    if (cost === null) unpriced += 1;
+    else if (cost !== undefined) total = addCost(total, cost);
+  }
+  const price = total
+    ? ` · ${formatUsd(total.usd)}${total.partial ? "+" : ""}${paged ? " shown" : ""}`
+    : "";
+
+  return `${price}${unpriced > 0 ? ` · ${unpriced} not priced` : ""}`;
 }
 
 /** Labeled fields first, then the run identity, then every key the panel does not already show. */
@@ -1535,6 +1649,18 @@ function kindBar(kind: ObservabilitySpanRow["kind"]): string {
   return KIND_BAR[kind] ?? KIND_BAR["tool.call"];
 }
 
+/** Every model the groups' runs name, subagents included. */
+function listedModels(groups: SpanGroup[]): ModelRef[] {
+  return [...groups, ...groups.flatMap((group) => group.subagents)].flatMap(
+    (group) =>
+      group.spans.flatMap((span) => {
+        const model = isRootSpanKind(span.kind) ? runModel(span) : null;
+
+        return model ? [model] : [];
+      }),
+  );
+}
+
 /** A step's reasoning or response when it has one; core writes the key empty on a step without. */
 function noteText(span: ObservabilitySpanRow, key: string): string | undefined {
   const value = span.attributes?.[key];
@@ -1659,17 +1785,6 @@ function spanLabel(span: ObservabilitySpanRow): string {
   const taskId = span.attributes?.["task.id"];
 
   return typeof taskId === "string" ? taskId : span.traceId;
-}
-
-/** Duration, total tokens when the span has them, and start time. */
-function spanMetaLine(span: ObservabilitySpanRow): string {
-  const tokens = spanTokens(span);
-
-  return [
-    span.durationMs > 0 ? formatDuration(span.durationMs) : "—",
-    ...(tokens === undefined ? [] : [`${formatNumber(tokens)} tokens`]),
-    formatDateTime(span.startTimeMs),
-  ].join(" · ");
 }
 
 // Lowercased search text, built once per span object. The stream replaces a
@@ -2351,27 +2466,38 @@ function SpanDetails({
 
 /** A context prepare, cold start or wait: its name, the messages it loaded, the questions it asked. */
 function PhaseLine({
+  cost,
   isOpen,
   onToggle,
   span,
 }: {
+  cost: string | undefined;
   isOpen: boolean;
   onToggle: () => void;
   span: ObservabilitySpanRow;
 }): React.JSX.Element {
   const name = spanLabel(span);
   const Icon = span.name === WAIT_SPAN_NAME ? MessageCircleQuestionMark : Zap;
-  const historyRows = numericAttribute(span, "prepare.history_rows");
+  // The history a prepare read, or the messages a compaction folded.
+  const messages =
+    numericAttribute(span, "prepare.history_rows") ??
+    numericAttribute(span, "compaction.message_count");
+  // Only a phase that called the model, like a compaction, has tokens and a price.
+  const tokens = spanTokens(span);
   const line = (
     <TraceLine size="xs">
       <TraceIcon>
         <Icon />
       </TraceIcon>
       <TraceTitle>{name}</TraceTitle>
-      {historyRows !== undefined && (
+      {messages !== undefined && (
         <TraceDescription>
-          {historyRows.toLocaleString()} messages
+          {messages.toLocaleString()} messages
         </TraceDescription>
+      )}
+      {cost !== undefined && <TraceDescription>{cost}</TraceDescription>}
+      {tokens !== undefined && (
+        <TraceDescription>{formatNumber(tokens)} tok</TraceDescription>
       )}
     </TraceLine>
   );
@@ -2386,11 +2512,12 @@ function PhaseLine({
 
 /**
  * The Span cell: the row's name as a Trace line. A step is a title, its
- * tokens and a chevron that folds its lines; a tool call opens on its input
- * and output; a subagent is its avatar and name and opens its own run; a
- * phase is its name.
+ * price and tokens and a chevron that folds its lines; a tool call opens on
+ * its input and output; a subagent is its avatar and name and opens its own
+ * run; a phase is its name.
  */
 function SpanLine({
+  cost,
   hasChildren,
   isOpen,
   isTaskRow,
@@ -2398,6 +2525,7 @@ function SpanLine({
   onToggle,
   span,
 }: {
+  cost: string | undefined;
   hasChildren: boolean;
   isOpen: boolean;
   isTaskRow: boolean;
@@ -2421,11 +2549,14 @@ function SpanLine({
     return <ToolLine isOpen={isOpen} onToggle={onToggle} span={span} />;
   }
   if (span.kind === "phase") {
-    return <PhaseLine isOpen={isOpen} onToggle={onToggle} span={span} />;
+    return (
+      <PhaseLine cost={cost} isOpen={isOpen} onToggle={onToggle} span={span} />
+    );
   }
 
   return (
     <StepLine
+      cost={cost}
       hasChildren={hasChildren}
       isOpen={isOpen}
       name={rowLabel(span)}
@@ -2435,14 +2566,16 @@ function SpanLine({
   );
 }
 
-/** A model step or a resumed pass: the name, the tokens, and the chevron that folds what ran under it. */
+/** A model step or a resumed pass: the name, the price, the tokens, and the chevron that folds what ran under it. */
 function StepLine({
+  cost,
   hasChildren,
   isOpen,
   name,
   onToggle,
   span,
 }: {
+  cost: string | undefined;
   hasChildren: boolean;
   isOpen: boolean;
   name: string;
@@ -2454,6 +2587,10 @@ function StepLine({
   return (
     <TraceLine size="xs">
       <TraceTitle strong>{name}</TraceTitle>
+      {/* A running step has no tokens yet, so it has no price to show. */}
+      {cost !== undefined && tokens !== undefined && (
+        <TraceDescription>{cost}</TraceDescription>
+      )}
       {tokens !== undefined && (
         <TraceDescription>{formatNumber(tokens)} tok</TraceDescription>
       )}
@@ -2587,6 +2724,7 @@ function SpanRow({
   group,
   taskRunning,
   highlighted,
+  cost,
   onFocusTrace,
   issue,
   below,
@@ -2602,6 +2740,8 @@ function SpanRow({
   group: SpanGroup;
   taskRunning: boolean;
   highlighted: boolean;
+  /** The row's price, see costLabel; only a step's line shows it. */
+  cost: string | undefined;
   onFocusTrace: (traceId: string) => void;
   issue: SpanIssue | null;
   below: SpanIssue[];
@@ -2649,6 +2789,7 @@ function SpanRow({
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0">
             <SpanLine
+              cost={cost}
               hasChildren={hasChildren}
               isOpen={isOpen}
               isTaskRow={isTaskRow}
@@ -2815,6 +2956,7 @@ function TaskListPane({
   stackChoices,
   onSelect,
   onToggleStack,
+  costs,
   emptyMessage,
   shown,
   total,
@@ -2869,6 +3011,7 @@ function TaskListPane({
           shown={shown}
           total={total}
           noun={["task", "tasks"]}
+          detail={costTotal(rows, costs, remaining > 0)}
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={onLoadMore}
@@ -2936,14 +3079,16 @@ const TaskListRow = memo(function TaskListRow({
         </span>
         <span
           className={cn(
-            "mt-0.5 block truncate text-muted-foreground",
+            "mt-0.5 flex min-w-0 gap-2 text-muted-foreground",
             isSubagent ? "pl-9.5" : "pl-4",
           )}
         >
-          {formatDateTime(root.startTimeMs)}
-          {isSubagent && ` · ${taskInput(root)}`}
-          {cause && <span className="text-destructive"> · {cause}</span>}
-          {waiting && <span className="text-needs-input"> · {waiting}</span>}
+          <span className="min-w-0 flex-1 truncate">
+            {formatDateTime(root.startTimeMs)}
+            {isSubagent && ` · ${taskInput(root)}`}
+            {cause && <span className="text-destructive"> · {cause}</span>}
+            {waiting && <span className="text-needs-input"> · {waiting}</span>}
+          </span>
         </span>
       </button>
       {subagentNames !== "" && (
@@ -3006,7 +3151,7 @@ function TaskRailDot({
 
 /**
  * The selected run on the right: its request, or its chain for a subagent,
- * its conversation and trace, the copy actions for the user's own coding
+ * its price, conversation and trace, the copy actions for the user's own coding
  * agent, Continue when a request failed, the count of what went wrong, then
  * its waterfall scaled to that run alone. The header opens with the task
  * list's fold, next to the list it folds.
@@ -3014,7 +3159,10 @@ function TaskRailDot({
 function TaskWaterfall({
   attempt,
   chain,
+  cost,
+  detail,
   fold,
+  onCloseDetail,
   onContinue,
   onPickRun,
   projectSlug,
@@ -3023,8 +3171,13 @@ function TaskWaterfall({
 }: {
   attempt: ContinueAttempt | undefined;
   chain: SpanGroup[];
+  /** The run's price, see costLabel; undefined before any model step. */
+  cost: string | undefined;
+  /** The open span's details, beside the waterfall under the header. */
+  detail: ReactNode;
   /** The task list's fold button, first in the header. */
   fold: React.ReactNode;
+  onCloseDetail: () => void;
   onContinue: () => void;
   onPickRun: (root: ObservabilitySpanRow) => void;
   projectSlug: string | undefined;
@@ -3121,6 +3274,20 @@ function TaskWaterfall({
               </button>
             ),
         )}
+        {cost !== undefined && (
+          <span
+            className="font-mono tabular-nums text-muted-foreground"
+            title={
+              cost.endsWith("+")
+                ? "Some steps' models have no price"
+                : group.subagents.length > 0
+                  ? "Estimated cost, subagents included"
+                  : "Estimated cost"
+            }
+          >
+            {cost}
+          </span>
+        )}
         {root.conversationKey && (
           <Badge
             variant="outline"
@@ -3155,36 +3322,48 @@ function TaskWaterfall({
             onFocusTrace={view.onFocusTrace}
           />
         )}
+        {detail && (
+          <button
+            type="button"
+            onClick={onCloseDetail}
+            aria-label="Close details"
+            className="-m-1 ml-auto cursor-pointer rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        )}
       </div>
-      <TimelineClock group={group} live={live}>
-        <div
-          className="@container relative min-w-xl"
-          style={{ "--timeline-width": TIMELINE_WIDTH }}
-        >
-          <table className="w-full table-fixed text-xs">
-            <colgroup>
-              <col className="w-22" />
-              <col />
-              <col className="w-20" />
-              <col className="w-19" />
-              <col className="w-(--timeline-width)" />
-            </colgroup>
-            <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
-              <tr className="text-left text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Started</th>
-                <th className="px-3 py-2 font-medium">Span</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 text-right font-medium">Duration</th>
-                <th className="px-3 py-2">
-                  <TimelineAxis issues={issues.all} onPick={showSpan} />
-                </th>
-              </tr>
-            </thead>
-            <tbody>{renderSpanRows(root, 0, live, view, undefined)}</tbody>
-          </table>
-          <TimelineLines issues={issues.all} />
-        </div>
-      </TimelineClock>
+      <DetailSplit flush tableMinWidth={WATERFALL_MIN_WIDTH} detail={detail}>
+        <TimelineClock group={group} live={live}>
+          <div
+            className="@container relative min-w-xl"
+            style={{ "--timeline-width": TIMELINE_WIDTH }}
+          >
+            <table className="w-full table-fixed text-xs">
+              <colgroup>
+                <col className="w-22" />
+                <col />
+                <col className="w-20" />
+                <col className="w-19" />
+                <col className="w-(--timeline-width)" />
+              </colgroup>
+              <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
+                <tr className="text-left text-muted-foreground">
+                  <th className="px-3 py-2 font-medium">Started</th>
+                  <th className="px-3 py-2 font-medium">Span</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 text-right font-medium">Duration</th>
+                  <th className="px-3 py-2">
+                    <TimelineAxis issues={issues.all} onPick={showSpan} />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>{renderSpanRows(root, 0, live, view, undefined)}</tbody>
+            </table>
+            <TimelineLines issues={issues.all} />
+          </div>
+        </TimelineClock>
+      </DetailSplit>
     </>
   );
 }
@@ -3482,6 +3661,7 @@ function renderSpanRows(
       group={view.group}
       taskRunning={rootLive}
       highlighted={isRoot && span.traceId === view.focusTraceId}
+      cost={costLabel(view.costs.get(key))}
       onFocusTrace={view.onFocusTrace}
       issue={issue}
       below={view.issues.below.get(span.spanId) ?? []}

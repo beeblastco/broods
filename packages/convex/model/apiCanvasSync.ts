@@ -20,7 +20,7 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import type { CanvasEdge, CanvasNode } from "../canvas";
+import type { CanvasEdge, CanvasNode } from "./canvasShapes";
 import { accountCipher, hasEncryptionSecret } from "./accountKeys";
 import { applyTidyLayout } from "./canvasLayout";
 import { loadMcpServersByNode } from "./mcp";

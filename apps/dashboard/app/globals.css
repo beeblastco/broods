@@ -117,6 +117,7 @@
   --color-terminal-error: oklch(0.808 0.114 19.571);
   --color-terminal-warning: oklch(0.924 0.12 95.746);
 
+  --color-brand-gray: #aaaaaa;
   --color-brand-ink: #0a0903;
   --color-brand-paper: #f7f3f3;
 

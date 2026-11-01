@@ -1,3 +1,8 @@
+/**
+ * Session context: system context, pruning, stored-item persistence and
+ * projection, context prepare, and auto-compaction with its summary.
+ */
+
 import { APICallError } from "@ai-sdk/provider";
 import {
   afterAll,
@@ -15,7 +20,7 @@ import type {
   StoredConversationEventPage,
 } from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
-import * as realS3 from "../src/shared/s3.ts";
+import * as actualS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({
@@ -23,9 +28,11 @@ const googleModelMock = mock((modelId: string) => ({
   modelId: modelId,
 }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
+const SUMMARY_USAGE = { inputTokens: 30, outputTokens: 6, totalTokens: 36 };
 const generateTextMock = mock(
   async (_options: { messages: Array<{ content: string }> }) => ({
     text: "Earlier context summary.",
+    usage: SUMMARY_USAGE,
   }),
 );
 const readS3TextMock = mock(
@@ -60,10 +67,9 @@ await mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
-// Spread the real module first: mock.module is process-global, so any export
-// omitted here disappears for every test file that loads after this one.
+// Spread the real module first so its other exports keep working for the code under test.
 await mock.module("../src/shared/s3.ts", () => ({
-  ...realS3,
+  ...actualS3,
   isMissingS3Error: (error: unknown) =>
     typeof error === "object" &&
     error !== null &&
@@ -1346,7 +1352,18 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(3);
+      expect(await session.compactConversation("")).toEqual({
+        messageCount: 3,
+        modelCalls: 1,
+        modelProvider: "google",
+        modelId: "gemini-test",
+        usage: {
+          ...SUMMARY_USAGE,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      });
       expect(generateTextMock).toHaveBeenCalledTimes(1);
       expect(writes).toContain("appendConversationEvent");
     } finally {
@@ -1366,7 +1383,7 @@ describe("auto-compaction after a turn", () => {
       persist: false,
     });
 
-    expect(await ephemeral.compactConversation("")).toBe(0);
+    expect(await ephemeral.compactConversation("")).toBeNull();
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
@@ -1389,7 +1406,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(0);
+      expect(await session.compactConversation("")).toBeNull();
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();
@@ -1451,7 +1468,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(0);
+      expect(await session.compactConversation("")).toBeNull();
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();
@@ -1474,7 +1491,7 @@ describe("conversation summary", () => {
       agentConfig: compactingAgentConfig,
     });
 
-    expect(isCompactionSummaryMessage(result!)).toBe(true);
+    expect(isCompactionSummaryMessage(result!.message)).toBe(true);
     expect(createGoogleMock).toHaveBeenCalledWith({
       apiKey: "google-key",
       fetch: expect.any(Function),
@@ -1503,7 +1520,7 @@ describe("conversation summary", () => {
     });
 
     expect(result).toBeDefined();
-    expect(isCompactionSummaryMessage(result!)).toBe(true);
+    expect(isCompactionSummaryMessage(result!.message)).toBe(true);
     const options = generateTextMock.mock.calls[0]?.[0] as
       | { messages: Array<{ content: string }> }
       | undefined;
@@ -1559,7 +1576,10 @@ describe("conversation summary", () => {
           content.includes("newest-context") ? "[newest]" : "",
         ].join("");
 
-        return { text: `summary of ${content.length} characters ${covers}` };
+        return {
+          text: `summary of ${content.length} characters ${covers}`,
+          usage: SUMMARY_USAGE,
+        };
       },
     );
 
@@ -1596,7 +1616,15 @@ describe("conversation summary", () => {
           request.endsWith("keep the deploy decisions"),
         ),
       ).toBe(true);
-      expect(summary?.content).toContain("summary of");
+      expect(summary?.message.content).toContain("summary of");
+      // Every answered summary call is metered; a refused one is not.
+      const answered = requests.filter(
+        (request) => request.length <= 25_000,
+      ).length;
+      expect(summary?.modelCalls).toBe(answered);
+      expect(summary?.usage.totalTokens).toBe(
+        answered * SUMMARY_USAGE.totalTokens,
+      );
       // The older half's summary is labelled older, the newer half's newer.
       const merge = requests.find((request) =>
         request.startsWith("Older part:"),
@@ -1608,6 +1636,7 @@ describe("conversation summary", () => {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
@@ -1629,26 +1658,34 @@ describe("conversation summary", () => {
           });
         }
 
-        return { text: "half" };
+        return { text: "half", usage: SUMMARY_USAGE };
       },
     );
 
     try {
-      expect(
-        summarizeConversation({
-          conversationKey: "conversation",
-          priorSummaries: [],
-          messages: [
-            { role: "user", content: "first" },
-            { role: "assistant", content: "second" },
-          ],
-          agentConfig: compactingAgentConfig,
-        }),
-      ).rejects.toThrow("prompt is too long");
+      const failure: unknown = await summarizeConversation({
+        conversationKey: "conversation",
+        priorSummaries: [],
+        messages: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: "second" },
+        ],
+        agentConfig: compactingAgentConfig,
+      }).catch((error: unknown): unknown => error);
+
+      // Both halves were answered, and billed, before the merge was refused.
+      expect(failure).toMatchObject({
+        message: expect.stringContaining("prompt is too long"),
+        spent: {
+          modelCalls: 2,
+          usage: { totalTokens: 2 * SUMMARY_USAGE.totalTokens },
+        },
+      });
     } finally {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
@@ -1683,6 +1720,7 @@ describe("conversation summary", () => {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });

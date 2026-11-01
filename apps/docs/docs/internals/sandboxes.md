@@ -80,7 +80,7 @@ flowchart TD
 | `sandbox`    | `workdir-executor.ts`    | `mount-s3` per run                  | native pause, resume, standby      | yes             | yes      | yes, logs and stop                 |
 | `daytona`    | `daytona-executor.ts`    | `mount-s3` with `mountAwsS3Buckets` | native `autoStopInterval`          | no              | yes      | yes, logs and stop                 |
 | `e2b`        | `e2b-executor.ts`        | rejected                            | native pause on timeout            | no              | yes      | launch and callback, no logs, stop |
-| `vercel`     | `vercel-executor.ts`     | rejected                            | named sandbox                      | no              | yes      | yes, logs and stop                 |
+| `vercel`     | `vercel-executor.ts`     | `mount-s3` per run                  | named sandbox                      | no              | yes      | yes, logs and stop                 |
 | `cloudflare` | `cloudflare-executor.ts` | rejected                            | same Container while warm, no disk | no              | no       | no                                 |
 | `worker`     | `worker-executor.ts`     | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
 | `machine`    | `machine-executor.ts`    | rejected                            | no                                 | no              | no       | no                                 |
@@ -461,13 +461,13 @@ A workspace's `isolation` picks the namespace a run mounts (`isolatedWorkspaceNa
 
 Credentials fall back to deployment env: `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_API_URL`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`.
 
-| Topic             | Daytona                                                | E2B                                       | Vercel                                                 |
-| ----------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------ |
-| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | timeout counts from start, reset each wake             |
-| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | not enforced                                           |
-| `config.snapshot` | `snapshot`                                             | `template`                                | `source` snapshot for `snap_`, else image              |
-| Snapshot verb     | `sandbox.createSnapshot`, `broods-<uuid>` name         | `Sandbox.createSnapshot`                  | `sandbox.snapshot({ expiration: 0 })`                  |
-| Network           | `networkBlockAll`, domain lists ignored with a warning | `allow-all` only                          | `allow-all`, `deny-all`, or domain and CIDR allowlists |
+| Topic             | Daytona                                                | E2B                                       | Vercel                                                              |
+| ----------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | session extended to idle past each call, 24 h cap (45 min on Hobby) |
+| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | checked at acquire, retires and recreates                           |
+| `config.snapshot` | `snapshot`                                             | `template`                                | `source` snapshot for `snap_`, else image                           |
+| Snapshot verb     | `sandbox.createSnapshot`, `broods-<uuid>` name         | `Sandbox.createSnapshot`                  | `sandbox.snapshot({ expiration: 0 })`                               |
+| Network           | `networkBlockAll`, domain lists ignored with a warning | `allow-all` only                          | `allow-all`, `deny-all`, or domain and CIDR allowlists              |
 
 - Daytona needs a snapshot with `mount-s3`, built by `bun run daytona:s3-snapshot` (`apps/core/scripts/daytona-s3-snapshot.ts`). It assumes the `sandbox-s3mount` role (`SANDBOX_MOUNT_ROLE_ARN`) for prefix-scoped credentials.
 - Each snapshot verb finishes before it answers, so the row is `active` at once.

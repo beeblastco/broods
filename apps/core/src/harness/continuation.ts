@@ -196,6 +196,41 @@ export async function runParentContinuationLoop(options: {
   let finalResponse: JSONValue | undefined;
   let traceId: string | undefined;
 
+  // Builds one loop outcome; reads the latest pass's finalResponse and traceId.
+  const passResult = (
+    overrides: Partial<ParentContinuationResult> = {},
+  ): ParentContinuationResult => ({
+    didFail: false,
+    failureText: null,
+    ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+    ...(traceId ? { traceId: traceId } : {}),
+    approvals: [],
+    questions: [],
+    ...overrides,
+  });
+
+  // Subagents from earlier steps may still be running or already done when a
+  // pass fails. Wait for them and write their results into
+  // the history, so the next turn ("try again") sees them instead of redoing
+  // the work. A user stop or a reclaimed slot skips the wait.
+  const keepAsyncResultsOnFailure = async (
+    failed: boolean,
+    stopped: boolean,
+  ): Promise<void> => {
+    if (!failed || stopped || options.context?.abortSignal?.aborted) {
+      return;
+    }
+    await waitAndDrainAsyncWork(options.subagentCoordinator, {
+      onHeartbeat: (pendingCount: number): void | Promise<void> =>
+        options.onHeartbeat?.(pendingCount),
+    }).catch((error: unknown) =>
+      logError("Failed run could not keep its async results", {
+        eventId: options.session.eventId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  };
+
   // One hook dispatcher for the whole parent request: every loop iteration and
   // the subagent-finish fire-points share a single ctx.state and one storage load.
   const hooks =
@@ -271,31 +306,13 @@ export async function runParentContinuationLoop(options: {
       options.subagentCoordinator.closeQuestions();
     }
     if (approvals.length > 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: approvals,
-        questions: [],
-      };
+      return passResult({ approvals: approvals });
     }
     // Like an approval: the answer resumes the conversation later, so nothing
     // waits for injected work now.
     const questions = stream.questionSummaries();
     if (questions.length > 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: questions,
-      };
+      return passResult({ questions: questions });
     }
     // A stop means stop: the children it started stop too, and nothing waits
     // on the work it left running.
@@ -303,35 +320,9 @@ export async function runParentContinuationLoop(options: {
     if (stopped) {
       options.subagentCoordinator.stopChildren();
     }
-    if (
-      stream.didFail() &&
-      !stopped &&
-      !options.context?.abortSignal?.aborted
-    ) {
-      // Subagents from earlier steps may still be running or already done.
-      // Wait for them and write their results into the history, so the next
-      // turn ("try again") sees them instead of redoing the work.
-      await waitAndDrainAsyncWork(options.subagentCoordinator, {
-        onHeartbeat: (pendingCount: number): void | Promise<void> =>
-          options.onHeartbeat?.(pendingCount),
-      }).catch((error: unknown) =>
-        logError("Failed run could not keep its async results", {
-          eventId: options.session.eventId,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    }
+    await keepAsyncResultsOnFailure(stream.didFail(), stopped);
     if (stream.didFail()) {
-      return {
-        didFail: true,
-        failureText: stream.failureText(),
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
+      return passResult({ didFail: true, failureText: stream.failureText() });
     }
 
     const injected = await waitAndDrainAsyncWork(options.subagentCoordinator, {
@@ -339,30 +330,12 @@ export async function runParentContinuationLoop(options: {
         options.onHeartbeat?.(pendingCount),
     });
     if (injected === 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
+      return passResult();
     }
 
     turnContext = await options.session.createTurnContext();
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
+      return passResult();
     }
   }
 }

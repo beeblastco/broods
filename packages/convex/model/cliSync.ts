@@ -24,6 +24,10 @@ import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 import {
+  S3_MOUNT_PROVIDER_HINT,
+  supportsS3WorkspaceMount,
+} from "./sandboxProviders";
+import {
   browserSandboxRefusal,
   DEFAULT_SANDBOX_PROVIDER,
 } from "./sandboxRules";
@@ -186,7 +190,14 @@ export function assertSupportedWorkspaceSandboxMounts(
             : defaultSandbox;
       if (!sandboxName) continue;
       const sandbox = sandboxes.get(sandboxName);
-      if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
+      if (
+        !sandbox ||
+        supportsS3WorkspaceMount(
+          sandboxProvider(sandbox),
+          plainRecord(plainRecord(sandbox.config).options),
+        )
+      )
+        continue;
       const workspaceName =
         typeof workspace.name === "string"
           ? workspace.name
@@ -195,8 +206,8 @@ export function assertSupportedWorkspaceSandboxMounts(
             : "<unknown>";
       throw new ClientError(
         `Agent "${agent.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" ` +
-          `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with ` +
-          `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
+          `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use ${S3_MOUNT_PROVIDER_HINT}, ` +
+          `or set this workspace ref to sandbox: null for read-only S3 access.`,
       );
     }
   }
@@ -783,14 +794,4 @@ async function stageSyncRow(
     .query("stageSyncs")
     .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
     .unique();
-}
-
-function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
-  const provider = sandboxProvider(sandbox);
-  if (provider === "lambda" || provider === "sandbox") return true;
-  if (provider !== "daytona") return false;
-
-  return (
-    plainRecord(plainRecord(sandbox.config).options).mountAwsS3Buckets === true
-  );
 }

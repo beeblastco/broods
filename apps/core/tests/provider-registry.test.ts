@@ -1,7 +1,8 @@
 /**
  * The provider registry is the one place a model provider is declared. These
  * tests pin it to the shared name list and check that every entry really
- * resolves to a Vercel AI SDK factory, which `satisfies` alone cannot prove.
+ * resolves to a Vercel AI SDK factory, which the registry's declared return
+ * type alone cannot prove.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -262,12 +263,18 @@ describe("modelSettingsFromModelConfig", () => {
     ).toEqual({ maxRetries: 5, temperature: 0.2 });
   });
 
-  it("keeps the agent's own retry count", () => {
+  it("keeps the agent's own retry count and timeouts", () => {
+    const timeout = { stepMs: 120_000, firstChunkMs: 30_000 };
     expect(
       modelSettingsFromModelConfig({
-        model: { provider: "openai", modelId: "gpt-5", maxRetries: 1 },
+        model: {
+          provider: "openai",
+          modelId: "gpt-5",
+          maxRetries: 1,
+          timeout: timeout,
+        },
       }),
-    ).toEqual({ maxRetries: 1 });
+    ).toEqual({ maxRetries: 1, timeout: timeout });
   });
 });
 
