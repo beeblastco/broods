@@ -9,6 +9,7 @@ import {
   CANVAS_READY,
   hasProbe,
   MISSING_PROBE,
+  PROJECT_PATH,
   readProjectId,
 } from "../lib/session";
 
@@ -17,6 +18,8 @@ test.skip(!hasProbe(), MISSING_PROBE);
 // @rollout: the pull request run serves this build against the dev backend,
 // which may not have the Convex functions the home route calls until the
 // merge deploys them. e2e-dashboard.yaml runs it after the rollout.
+// Any of the caller's projects counts: home opens the most recently updated
+// one, and anything else signed in as the probe can add projects of its own.
 test("the home route opens the caller's project @rollout", async ({ page }) => {
   const settingsFetches: string[] = [];
   page.on("request", (request: Request) => {
@@ -25,7 +28,7 @@ test("the home route opens the caller's project @rollout", async ({ page }) => {
   });
 
   await page.goto("/");
-  await page.waitForURL(new RegExp(`/${readProjectId()}(\\?|$)`));
+  await page.waitForURL((url) => PROJECT_PATH.test(url.pathname));
   await expect(page.locator(CANVAS_READY)).toBeVisible();
   // Home only redirects: its account links compete with the project's own
   // chunks if they prefetch.
