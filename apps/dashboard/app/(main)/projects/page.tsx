@@ -81,13 +81,8 @@ export default function ProjectsPage(): React.JSX.Element {
                 description={project.description}
                 href={`/${project._id}`}
                 canWrite={canWrite}
-                // The update clears a description it is not handed.
                 onRename={(name) =>
-                  rename({
-                    description: project.description,
-                    name: name,
-                    projectId: project._id,
-                  })
+                  rename({ name: name, projectId: project._id })
                 }
               />
             ))}

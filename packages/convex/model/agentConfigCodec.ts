@@ -100,18 +100,21 @@ export interface AgentCanvasBadge {
 
 // Shared by the badges query and the optimistic update, so the server's answer matches it.
 export function agentCanvasBadge(config: {
-  outputFormat?: { type?: string };
+  outputFormat?: { type?: string } | null;
   extraConfig?: Pick<AgentConfig, "publicAccess" | "skills">;
 }): AgentCanvasBadge {
   const { extraConfig, outputFormat } = config;
   const skills = extraConfig?.skills;
+  // Both columns are v.any() and written unchecked: one bad row must not fail the stage.
+  const allowed: unknown = skills?.enabled === true ? skills.allowed : [];
 
   return {
     publicAccess: extraConfig?.publicAccess === true,
-    skills: skills?.enabled === true ? (skills.allowed ?? []) : [],
+    skills: Array.isArray(allowed)
+      ? allowed.filter((ref): ref is string => typeof ref === "string")
+      : [],
     structuredOutput:
-      outputFormat !== undefined &&
-      STRUCTURED_OUTPUT_TYPES.has(outputFormat.type),
+      outputFormat != null && STRUCTURED_OUTPUT_TYPES.has(outputFormat.type),
   };
 }
 

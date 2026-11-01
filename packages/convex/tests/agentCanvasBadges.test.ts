@@ -59,6 +59,37 @@ describe("agent.config.canvasBadges", () => {
     });
   });
 
+  test("a row its writers left malformed still answers", async () => {
+    const t = badgesTest();
+    const { projectId, stageId } = await seed(t);
+    caller.authId = OWNER_AUTH_ID;
+    const malformed = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("agentConfigs", {
+          authId: OWNER_AUTH_ID,
+          name: "malformed",
+          projectId: projectId,
+          stageId: stageId,
+          // `output: null` from a CLI manifest, a list with a non-string entry
+          // from the Skills JSON editor.
+          outputFormat: null,
+          extraConfig: { skills: { enabled: true, allowed: ["triage", 1] } },
+          updatedAt: Date.now(),
+        }),
+    );
+
+    const badges = await t.query(api.agent.config.canvasBadges, {
+      projectId: projectId,
+      stageId: stageId,
+    });
+
+    expect(badges[malformed]).toEqual({
+      publicAccess: false,
+      skills: ["triage"],
+      structuredOutput: false,
+    });
+  });
+
   test("with no stage reads the project's default stage", async () => {
     const t = badgesTest();
     const { configs, otherStageConfigId, projectId } = await seed(t);

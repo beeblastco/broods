@@ -342,7 +342,11 @@ function ChatWindow({
                   size="icon-xs"
                   variant="ghost"
                   className="cursor-pointer"
-                  onClick={resetChat}
+                  onClick={() => {
+                    // An emptied list fires no scroll event, so follow must be re-armed here.
+                    followRef.current = true;
+                    resetChat();
+                  }}
                 >
                   <RotateCcw className="size-3.5" />
                 </InputGroupButton>

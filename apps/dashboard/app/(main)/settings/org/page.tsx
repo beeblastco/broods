@@ -56,7 +56,7 @@ export default function OrgSettingsPage(): React.JSX.Element {
 
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the tab chunk with the query
   useEffect(() => {
-    void ORG_PANELS[tab.id]?.();
+    void ORG_PANELS[tab.id]?.().catch((): void => {});
   }, [tab]);
 
   const renderPanel = (): React.JSX.Element | null => {

@@ -66,7 +66,7 @@ export default function DashboardPage(): React.JSX.Element {
 
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the tab chunk with the query
   useEffect(() => {
-    void DASHBOARD_PANELS[activeTab]?.();
+    void DASHBOARD_PANELS[activeTab]?.().catch((): void => {});
   }, [activeTab]);
 
   const activeDeployment = useQuery(
@@ -106,7 +106,7 @@ export default function DashboardPage(): React.JSX.Element {
 
   const generateViewingKey = useCallback(async () => {
     if (!activeStageId) return;
-    void loadRuntimeKeyDialog();
+    void loadRuntimeKeyDialog().catch((): void => {});
     setGeneratingKey(true);
     setKeyError(null);
     try {

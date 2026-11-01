@@ -25,7 +25,8 @@ export function useRouteIntent(): {
   // The default prefetch stops at loading.tsx and expires at once; home only redirects away.
   const warm = useCallback(
     (href: string): void => {
-      void tabPanelLoader(href)?.();
+      // A failed warm-up stays quiet; the click's load surfaces it.
+      void tabPanelLoader(href)?.().catch((): void => {});
       if (pathname !== "/") router.prefetch(href, FULL_ROUTE_PREFETCH);
     },
     [pathname, router],
