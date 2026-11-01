@@ -16,7 +16,7 @@ export function Header(): React.JSX.Element {
   const { role } = useOrgRole();
   const { toggleSidebar } = useSidebar();
 
-  // px-3 and the h-6 mark put the logo's circle on the sidebar icons' axis.
+  // px-3 and the size-6 mark put the logo's circle on the sidebar icons' axis.
   return (
     <header className="flex h-(--header-height) shrink-0 items-center gap-3 border-b border-border px-3">
       <button
