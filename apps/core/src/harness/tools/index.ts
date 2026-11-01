@@ -30,7 +30,6 @@ import type {
   ResolvedWorkspace,
 } from "../../shared/workspaces.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
-import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
 import type {
   SandboxCpuSample,
@@ -44,7 +43,6 @@ import {
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
 import { sandboxMcpTarget } from "../mcp/sandbox.ts";
-import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
@@ -77,7 +75,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import type { AskParent, SubagentWatch } from "./utils.ts";
+import type { MessageChild, ParentLink, SubagentWatch } from "./utils.ts";
 import {
   cancelScheduleTool,
   listSchedulesTool,
@@ -85,8 +83,8 @@ import {
   updateScheduleTool,
   type ScheduleContext,
 } from "./schedule.tool.ts";
+import messageAgentsTool from "./message-agents.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
-import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
 
 interface ResolvedMcpServer {
@@ -113,9 +111,10 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
-  // Set on a persistent subagent's run: ends its turn on a question for the parent.
-  askParent?: AskParent;
-  dispatchAppliedIngress?: DispatchAppliedIngress;
+  // Set on a persistent subagent's run: its line to the parent.
+  parentLink?: ParentLink;
+  // Set on a persistent-mode parent's run: messages one of its children.
+  messageChild?: MessageChild;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
   // (agent bash/fs => role "agent"; hosted MCP servers => role "tool").
@@ -305,14 +304,6 @@ export async function createTools(
     ) {
       Object.assign(
         tools,
-        updateSubagentTool({
-          accountId: context.accountId,
-          agentConfig: agentConfig,
-          dispatchAppliedIngress: context.dispatchAppliedIngress,
-          eventId: context.session.eventId,
-          conversationKey: context.session.conversationKey,
-          session: context.session,
-        }),
         stopSubagentTool({
           accountId: context.accountId,
           eventId: context.session.eventId,
@@ -322,8 +313,21 @@ export async function createTools(
     }
   }
 
-  if (context.askParent) {
-    Object.assign(tools, askParentTool(context.askParent));
+  // message-agents: a persistent-mode parent reaches its children, and a
+  // persistent child its parent.
+  const messageChild =
+    agentConfig.subagent?.enabled === true &&
+    resolveSubagentMode(agentConfig) === "persistent"
+      ? context.messageChild
+      : undefined;
+  if (messageChild || context.parentLink) {
+    Object.assign(
+      tools,
+      messageAgentsTool({
+        ...(messageChild ? { messageChild: messageChild } : {}),
+        ...(context.parentLink ? { parent: context.parentLink } : {}),
+      }),
+    );
   }
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];

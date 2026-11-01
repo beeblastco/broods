@@ -666,7 +666,7 @@ describe("runtime persistence", () => {
     });
   });
 
-  test("a subagent's ask_parent question keeps its text and the parent's append stores it", async (): Promise<void> => {
+  test("a subagent's message to its parent keeps its text and the parent's append stores it", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);

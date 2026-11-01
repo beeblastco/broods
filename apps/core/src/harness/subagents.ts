@@ -66,9 +66,14 @@ import {
 import {
   acceptIngress,
   outcomeSettlement,
+  type AppliedIngress,
   type IngressAdmission,
 } from "./ingress.ts";
-import type { IngressDispatchScope, ReentryTarget } from "./integrations.ts";
+import type {
+  DispatchAppliedIngress,
+  IngressDispatchScope,
+  ReentryTarget,
+} from "./integrations.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   createAgentLifecycleEmitter,
@@ -89,6 +94,10 @@ import {
   subagentConfig,
   VIRTUAL_AGENT_PREFIX,
   virtualSubagentConfig,
+  DEFAULT_AGENT_WAIT_SECONDS,
+  type AgentMessage,
+  type AgentMessageResult,
+  type MessageChild,
 } from "./tools/utils.ts";
 
 const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
@@ -96,6 +105,9 @@ const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
 const PERSISTENT_SUBAGENT_KEY =
   /^subagent-persistent-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-([0-9a-f]{32})$/;
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
+// Turns one parent run's family may start by messaging each other, so two
+// agents cannot keep waking each other forever.
+const MESSAGE_WAKE_BUDGET = 40;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 // What the parent model reads for a child it stopped waiting for.
 const STILL_RUNNING_NOTE =
@@ -138,11 +150,13 @@ interface SubagentCompletion {
   agentId: string;
   description?: string;
   conversationKey: string;
-  // `awaiting_input`: the child ended its turn on an ask_parent `question`.
+  // `awaiting_input`: the child ended its turn waiting on its parent's reply
+  // to `question`, in exchange `exchangeId`.
   status: "completed" | "failed" | "running" | "awaiting_input";
   response?: JSONValue;
   error?: string;
   question?: string;
+  exchangeId?: string;
   // What the parent actually sees, after subagent.visibility + an onSubagentFinish
   // hook. Undefined => render the raw response.
   visibleResult?: JSONValue;
@@ -209,6 +223,7 @@ type SubagentParentLoader = (
 // Collaborators the handler owns. Every one has a working default, so tests and
 // non-handler callers override only what they exercise.
 export interface SubagentCoordinatorDependencies {
+  dispatchAppliedIngress?: DispatchAppliedIngress;
   lifecycle?: AgentLifecycleEmitter;
   publisherFactory?: SubagentPublisherFactory;
   dispatchNextIngress?: SubagentIngressDispatcher;
@@ -234,12 +249,31 @@ export class SubagentCoordinator {
   private readonly handled = new Set<string>();
   // The parent's user stop, which every child run listens to.
   private readonly childStop = new AbortController();
+  // When the parent stops waiting on a child it messaged with a wait, by taskId.
+  private readonly waitDeadlines = new Map<string, number>();
+  // A child waiting on its parent's reply, by its public key: resumes it with
+  // a timed-out note unless the parent messages it first.
+  private readonly replyTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  // Notes children sent the parent without waiting, for its next step.
+  private readonly notes: Array<{
+    message: UserModelMessage;
+    dedupeKey: string;
+  }> = [];
+  // Turns messages started, against MESSAGE_WAKE_BUDGET.
+  private wakeups = 0;
+  // Set once no parent pass runs any more: a child started after it reports
+  // through `resumeParent`.
+  private closed = false;
   private hooksPromise?: Promise<HookDispatcher>;
 
   private readonly lifecycle: AgentLifecycleEmitter;
   private readonly publisherFactory: SubagentPublisherFactory;
   private readonly dispatchNextIngress: SubagentIngressDispatcher;
   private readonly resumeParent: SubagentParentResumer;
+  private readonly dispatchAppliedIngress?: DispatchAppliedIngress;
 
   constructor(
     private readonly parentSession: Session,
@@ -262,6 +296,7 @@ export class SubagentCoordinator {
     this.resumeParent =
       dependencies.resumeParent ??
       (async (): Promise<SubagentResumeOutcome> => "skip");
+    this.dispatchAppliedIngress = dependencies.dispatchAppliedIngress;
   }
 
   // A getter follows the worker's budget as a yielding run moves to a new slot.
@@ -336,6 +371,14 @@ export class SubagentCoordinator {
 
       return toDispatch(task);
     });
+    // No pass is left to read these results, so each resumes the parent.
+    if (this.closed) {
+      await Promise.all(
+        resolvedTasks.map(({ taskId }): Promise<void> =>
+          this.detachTask(taskId, false),
+        ),
+      );
+    }
 
     return { tasks: dispatches };
   };
@@ -362,11 +405,13 @@ export class SubagentCoordinator {
       const heartbeatAt = Math.min(
         Date.now() + HEARTBEAT_INTERVAL_MS,
         this.waitUntilMs,
+        ...this.waitDeadlines.values(),
       );
       const timerWoke = await Promise.race([
         this.nextStateChange().then((): boolean => false),
         sleep(Math.max(heartbeatAt - Date.now(), 0)).then((): boolean => true),
       ]);
+      await this.detachOverdueWaits();
 
       if (this.pending.size > 0) {
         // Awaited, so a heartbeat that finds the run lost ends the wait.
@@ -430,7 +475,11 @@ export class SubagentCoordinator {
         ({ status, taskId }): boolean =>
           status !== "running" || this.detached.has(taskId),
       );
-    const messages = completions.map(completionToParentMessage);
+    const notes = this.notes.splice(0);
+    const messages = [
+      ...completions.map(completionToParentMessage),
+      ...notes.map(({ message }): UserModelMessage => message),
+    ];
     if (messages.length === 0) return messages;
     // One write for all of them. Each is one stored event, and a large write
     // takes several appends, so a failure puts back only what no append saved,
@@ -444,16 +493,135 @@ export class SubagentCoordinator {
         (count): void => {
           saved = count;
         },
-        completions.map(({ eventId, status }): string =>
-          subagentResultDedupeKey(eventId, status),
-        ),
+        [
+          ...completions.map(({ eventId, status }): string =>
+            subagentResultDedupeKey(eventId, status),
+          ),
+          ...notes.map(({ dedupeKey }): string => dedupeKey),
+        ],
       )
       .catch((error: unknown): never => {
         this.completions.unshift(...completions.slice(saved));
+        this.notes.unshift(
+          ...notes.slice(Math.max(saved - completions.length, 0)),
+        );
         throw error;
       });
 
     return messages;
+  }
+
+  /**
+   * A parent's message-agents to one of its persistent children, named by the
+   * address run_subagent returned. A running child reads it at its next step;
+   * an idle one, a child waiting on its question among them, starts a turn on
+   * it. With a wait the parent's pass waits on that child up to the wait, then
+   * detaches it so its reply arrives later; without one it is detached now.
+   */
+  messageChild: MessageChild = async (
+    to: string,
+    message: AgentMessage,
+  ): Promise<AgentMessageResult> => {
+    const accountId = requireParentAccountId(this.parentSession);
+    const child = await this.resolveAddress(accountId, to);
+    this.clearReplyTimer(child.publicKey);
+    const text = `Message from your parent (exchange ${message.exchangeId}${message.followUp ? ", follow-up" : ""}):\n${message.text}`;
+    const running = this.runningTaskFor(child.publicKey);
+    const admission = await acceptIngress({
+      activeOwnerOnly: true,
+      accountId: accountId,
+      agentId: child.agentId,
+      eventId: scopedDirectEventId(
+        accountId,
+        child.agentId,
+        crypto.randomUUID(),
+      ),
+      runId: createRunId(),
+      conversationKey: child.conversationKey,
+      events: [{ role: "user", content: text }],
+      requestedMode: "steer",
+      idempotencyKey: crypto.randomUUID(),
+      delivery: {
+        kind: "async",
+        publicEventId: message.exchangeId,
+        publicConversationKey: child.publicKey,
+        statusUrl: "",
+      },
+    });
+    if (admission.recovered)
+      await this.dispatchRecovered(child, admission.recovered);
+    if (admission.outcome === "queued") {
+      if (running) await this.watchReply(running, message);
+
+      return {
+        status: "delivered",
+        exchangeId: message.exchangeId,
+        note: "It reads this at its next step.",
+      };
+    }
+    if (admission.outcome !== "not_running") {
+      return {
+        status: "not_delivered",
+        exchangeId: message.exchangeId,
+        note: `The subagent could not take the message: ${admission.outcome}.`,
+      };
+    }
+    const wake = this.takeWakeup(message.exchangeId);
+    if (wake) return wake;
+    const { tasks } = await this.dispatch(
+      [
+        {
+          ...(child.virtual ? {} : { agentId: child.agentId }),
+          conversationKey: child.publicKey,
+          prompt: text,
+        },
+      ],
+      [],
+    );
+    const resumed = tasks[0];
+    if (resumed) await this.watchReply(resumed.taskId, message, true);
+
+    return {
+      status: "resumed",
+      exchangeId: message.exchangeId,
+      note:
+        message.waitSeconds === undefined
+          ? "It started a turn on it. Its reply arrives as a later message."
+          : `It started a turn on it. Its reply comes back here, or as a later message if it takes longer than ${message.waitSeconds}s.`,
+    };
+  };
+
+  /**
+   * A child's message-agents note to the parent, without waiting: it reaches
+   * the parent's next step. Refused once no parent pass is left to read it.
+   */
+  noteFromChild(taskId: string, message: AgentMessage): AgentMessageResult {
+    const metadata = this.pendingMetadata.get(taskId);
+    if (this.closed || !metadata) {
+      return {
+        status: "not_delivered",
+        exchangeId: message.exchangeId,
+        note: "Your parent is not reading messages now. Put it in your final answer instead.",
+      };
+    }
+    this.notes.push({
+      message: noteToParentMessage(metadata, message),
+      dedupeKey: `subagent-note:${crypto.randomUUID()}`,
+    });
+
+    return {
+      status: "delivered",
+      exchangeId: message.exchangeId,
+      note: "Your parent reads it at its next step.",
+    };
+  }
+
+  /**
+   * The parent run ends its passes: a child started from now on, such as one
+   * a reply timeout wakes, resumes the parent with its result instead.
+   */
+  closePasses(): void {
+    this.closed = true;
   }
 
   /**
@@ -512,6 +680,207 @@ export class SubagentCoordinator {
     );
 
     return detaching;
+  }
+
+  private clearReplyTimer(publicKey: string): void {
+    clearTimeout(this.replyTimers.get(publicKey));
+    this.replyTimers.delete(publicKey);
+  }
+
+  /**
+   * Stops waiting on one child: it keeps running and resumes the parent with
+   * its result. `notify` queues a running notice for the parent's next write.
+   * A child whose result is already queued is left to it.
+   */
+  private async detachTask(taskId: string, notify: boolean): Promise<void> {
+    const metadata = this.pendingMetadata.get(taskId);
+    this.waitDeadlines.delete(taskId);
+    if (
+      !metadata ||
+      this.completions.some(
+        (completion): boolean => completion.taskId === taskId,
+      )
+    ) {
+      return;
+    }
+    this.pending.delete(taskId);
+    this.pendingMetadata.delete(taskId);
+    this.detached.add(taskId);
+    if (notify) this.completions.push({ ...metadata, status: "running" });
+    if (!this.handled.has(metadata.eventId)) {
+      await markAsyncAgentHandback(metadata.eventId, "detached");
+    }
+    this.notifyCompletion();
+  }
+
+  private async detachOverdueWaits(): Promise<void> {
+    const now = Date.now();
+    for (const [taskId, at] of this.waitDeadlines) {
+      if (at <= now) await this.detachTask(taskId, true);
+    }
+  }
+
+  // Best effort: a stranded envelope is started by the ingress recovery sweep.
+  private async dispatchRecovered(
+    child: {
+      agentId: string;
+      publicKey: string;
+      conversationKey: string;
+      virtual: boolean;
+    },
+    recovered: AppliedIngress,
+  ): Promise<void> {
+    try {
+      if (!this.dispatchAppliedIngress) {
+        throw new Error("No applied-ingress dispatcher is wired for this run");
+      }
+      const accountId = requireParentAccountId(this.parentSession);
+      const agentConfig = child.virtual
+        ? virtualSubagentConfig(this.parentAgentConfig)
+        : subagentConfig(
+            (await this.resolveAllowedAgent(accountId, child.agentId)).config,
+            this.parentAgentConfig,
+          );
+      await this.dispatchAppliedIngress(
+        {
+          accountId: accountId,
+          agentId: child.agentId,
+          subagentConfig: agentConfig,
+          conversationKey: child.conversationKey,
+          publicConversationKey: child.publicKey,
+          endpointId: this.parentSession.endpointId,
+          projectSlug: this.parentSession.projectSlug,
+          stageSlug: this.parentSession.stageSlug,
+        },
+        recovered,
+      );
+    } catch (error: unknown) {
+      logError("Recovered subagent ingress dispatch failed", {
+        conversationKey: child.conversationKey,
+        eventId: recovered.eventId,
+        error: toErrorMessage(error),
+      });
+    }
+  }
+
+  /** A child address run_subagent returned this parent: `<agentId>/<conversationKey>`. */
+  private async resolveAddress(
+    accountId: string,
+    to: string,
+  ): Promise<{
+    agentId: string;
+    publicKey: string;
+    conversationKey: string;
+    virtual: boolean;
+  }> {
+    const slash = to.indexOf("/");
+    const agentId = to.slice(0, slash);
+    const publicKey = to.slice(slash + 1);
+    const uuid = PERSISTENT_SUBAGENT_KEY.exec(publicKey)?.[1];
+    const virtual = agentId.startsWith(VIRTUAL_AGENT_PREFIX);
+    if (
+      !this.isPersistentMode ||
+      slash <= 0 ||
+      !this.mintedChildKey(accountId, publicKey) ||
+      (virtual && agentId !== `${VIRTUAL_AGENT_PREFIX}${uuid}`)
+    ) {
+      throw new Error(
+        `${to} is not the address of one of your persistent subagents. Use the address run_subagent returned.`,
+      );
+    }
+    if (!virtual) await this.resolveAllowedAgent(accountId, agentId);
+
+    return {
+      agentId: agentId,
+      publicKey: publicKey,
+      conversationKey: scopedDirectConversationKey(
+        accountId,
+        agentId,
+        publicKey,
+      ),
+      virtual: virtual,
+    };
+  }
+
+  private runningTaskFor(publicKey: string): string | undefined {
+    for (const metadata of this.pendingMetadata.values()) {
+      if (metadata.conversationKey === publicKey) return metadata.taskId;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Arms a child's reply timeout: past it, the child resumes with a note that
+   * no reply came. A parent message to it first clears the timer.
+   */
+  private startReplyTimer(
+    task: ResolvedSubagentTask,
+    message: AgentMessage,
+  ): void {
+    const key = task.publicConversationKey;
+    this.clearReplyTimer(key);
+    const waitSeconds = message.waitSeconds ?? DEFAULT_AGENT_WAIT_SECONDS;
+    const timer = setTimeout((): void => {
+      this.replyTimers.delete(key);
+      this.timeOutReply(task, message.exchangeId, waitSeconds).catch(
+        (error: unknown): void => {
+          logError("Failed to resume a subagent after its reply timed out", {
+            taskId: task.taskId,
+            error: toErrorMessage(error),
+          });
+        },
+      );
+    }, waitSeconds * 1000);
+    timer.unref?.();
+    this.replyTimers.set(key, timer);
+  }
+
+  /** One more turn started by a message, or the refusal once the family spent its budget. */
+  private takeWakeup(exchangeId: string): AgentMessageResult | undefined {
+    if (this.wakeups >= MESSAGE_WAKE_BUDGET) {
+      return {
+        status: "not_delivered",
+        exchangeId: exchangeId,
+        note: `Agents in this run already started ${MESSAGE_WAKE_BUDGET} turns by messaging each other. Finish with what you have.`,
+      };
+    }
+    this.wakeups += 1;
+
+    return undefined;
+  }
+
+  private async timeOutReply(
+    task: ResolvedSubagentTask,
+    exchangeId: string,
+    waitSeconds: number,
+  ): Promise<void> {
+    if (this.takeWakeup(exchangeId)) return;
+    await this.dispatch(
+      [
+        {
+          ...(task.agentId.startsWith(VIRTUAL_AGENT_PREFIX)
+            ? {}
+            : { agentId: task.agentId }),
+          conversationKey: task.publicConversationKey,
+          prompt: `No reply from your parent within ${waitSeconds}s (exchange ${exchangeId}). Carry on with your best judgment and say what you assumed. A late reply still arrives as a later message.`,
+        },
+      ],
+      [],
+    );
+  }
+
+  /** With a wait the parent's pass waits on the child that long; a child it just started without one is detached. */
+  private async watchReply(
+    taskId: string,
+    message: AgentMessage,
+    started = false,
+  ): Promise<void> {
+    if (message.waitSeconds !== undefined) {
+      this.waitDeadlines.set(taskId, Date.now() + message.waitSeconds * 1000);
+    } else if (started) {
+      await this.detachTask(taskId, false);
+    }
   }
 
   private async resolveTask(
@@ -818,7 +1187,13 @@ export class SubagentCoordinator {
           deadlineMs: deadlineMs,
           abortSignal: AbortSignal.any([budget.signal, this.childStop.signal]),
           ...(task.persistent
-            ? { canAskParent: true, stopMessage: PARENT_STOP_MESSAGE }
+            ? {
+                parentLink: {
+                  note: (message: AgentMessage): AgentMessageResult =>
+                    this.noteFromChild(task.taskId, message),
+                },
+                stopMessage: PARENT_STOP_MESSAGE,
+              }
             : {}),
         },
       );
@@ -892,21 +1267,23 @@ export class SubagentCoordinator {
   }
 
   /**
-   * A child that ended its turn on ask_parent: the question is its outcome, on
-   * the same row and hand-back as a result, so it reaches the parent live, on
-   * a resume or from the recovery sweep. The answer resumes the child.
+   * A child that ended its turn waiting on its parent: the message is its
+   * outcome, on the same row and hand-back as a result, so it reaches the
+   * parent live, on a resume or from the recovery sweep. The parent's reply
+   * resumes the child, and so does the reply timeout, with a note.
    */
   private async completeAskedRun(
     childSession: Session,
     task: ResolvedSubagentTask,
-    question: string,
+    message: AgentMessage,
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
     await this.recordOutcome(childSession, task, {
       status: "awaiting_input",
-      question: question,
+      question: message.text,
     });
+    this.startReplyTimer(task, message);
     await this.completeTask({
       taskId: task.taskId,
       eventId: task.eventId,
@@ -914,7 +1291,8 @@ export class SubagentCoordinator {
       ...(task.description ? { description: task.description } : {}),
       conversationKey: task.publicConversationKey,
       status: "awaiting_input",
-      question: question,
+      question: message.text,
+      exchangeId: message.exchangeId,
     });
     await this.drainChildConversation(
       childSession,
@@ -1628,6 +2006,14 @@ async function resumeLostSubagentResult(
   return undefined;
 }
 
+/** The address message-agents reaches a child at: `<agentId>/<conversationKey>`. */
+function childAddress(child: {
+  agentId: string;
+  conversationKey: string;
+}): string {
+  return `${child.agentId}/${child.conversationKey}`;
+}
+
 function completionToParentMessage(
   completion: SubagentCompletion,
 ): UserModelMessage {
@@ -1651,7 +2037,7 @@ function completionToParentMessage(
       content: [
         {
           type: "text",
-          text: `Subagent question for the parent. The subagent ended its turn on this question. Answer it with run_subagent: pass this conversationKey, this agentId unless it starts with ${VIRTUAL_AGENT_PREFIX}, and your answer as the prompt. It resumes with its work so far.\n${metadata}\n\nQuestion:\n${completion.question ?? "(no question)"}`,
+          text: `Subagent message for the parent${completion.exchangeId ? ` (exchange ${completion.exchangeId})` : ""}. The subagent ended its turn waiting on your reply. Reply with message-agents to "${childAddress(completion)}"; it resumes with its work so far.\n${metadata}\n\nMessage:\n${completion.question ?? "(no message)"}`,
         },
       ],
     };
@@ -1689,6 +2075,24 @@ function createSubagentPublisher(
     },
     collectSecretValues(task.agentConfig),
   );
+}
+
+function noteToParentMessage(
+  child: Omit<
+    SubagentCompletion,
+    "status" | "response" | "error" | "visibleResult"
+  >,
+  message: AgentMessage,
+): UserModelMessage {
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `Subagent note for the parent (exchange ${message.exchangeId}${message.followUp ? ", follow-up" : ""}). It keeps working; no reply is needed, but you can send one with message-agents to "${childAddress(child)}".\ntaskId: ${child.taskId}\nagentId: ${child.agentId}\n\nNote:\n${message.text}`,
+      },
+    ],
+  };
 }
 
 function requireParentAccountId(session: Session): string {
@@ -1736,6 +2140,14 @@ function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
     agentId: task.agentId,
     ...(task.description ? { description: task.description } : {}),
     conversationKey: task.publicConversationKey,
+    ...(task.persistent
+      ? {
+          address: childAddress({
+            agentId: task.agentId,
+            conversationKey: task.publicConversationKey,
+          }),
+        }
+      : {}),
     runId: task.runId,
     statusPath: subagentStatusPath(task),
     status: "running",

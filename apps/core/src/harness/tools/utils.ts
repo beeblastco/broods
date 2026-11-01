@@ -65,8 +65,37 @@ export interface SubagentToolContext {
   conversationKey: string;
 }
 
-/** Ends a persistent subagent's turn on a question for its parent; false when one is already asked. */
-export type AskParent = (question: string) => boolean;
+/** How long a `message-agents` wait lasts unless the caller sets it, and its cap. */
+export const DEFAULT_AGENT_WAIT_SECONDS = 10 * 60;
+export const MAX_AGENT_WAIT_SECONDS = 60 * 60;
+
+/** A `message-agents` send: `exchangeId` labels the exchange, and a follow-up reuses it. */
+export interface AgentMessage {
+  text: string;
+  exchangeId: string;
+  followUp: boolean;
+  /** Set when the sender waits for the reply, up to this long. */
+  waitSeconds?: number;
+}
+
+/** What a `message-agents` send did. */
+export type AgentMessageResult =
+  | { status: "delivered" | "resumed"; exchangeId: string; note: string }
+  | { status: "not_delivered"; exchangeId: string; note: string };
+
+/** A persistent subagent's line to its parent, behind its `message-agents` tool. */
+export interface ParentLink {
+  /** Ends the turn on a question; false when one is already asked this turn. */
+  ask(message: AgentMessage): boolean;
+  /** Hands the parent a note while the child keeps working. */
+  note(message: AgentMessage): AgentMessageResult;
+}
+
+/** A parent's message to one of its persistent children, named by its address. */
+export type MessageChild = (
+  to: string,
+  message: AgentMessage,
+) => Promise<AgentMessageResult>;
 
 /** This turn's live subagents, as the parent's loop and subagent tools see them. */
 export interface SubagentWatch {

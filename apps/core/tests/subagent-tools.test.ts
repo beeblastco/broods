@@ -1,5 +1,8 @@
 import { afterEach, expect, it, mock, spyOn } from "bun:test";
-import type { Session } from "../src/harness/session.ts";
+import type {
+  AgentMessage,
+  AgentMessageResult,
+} from "../src/harness/tools/utils.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   createSubagentTaskId,
@@ -28,7 +31,7 @@ afterEach(() => {
   runtime.mutate = originalMutate;
 });
 
-it("steers, continues, and stops its own persistent child", async () => {
+it("stops its own persistent child", async () => {
   const taskId = createSubagentTaskId(PARENT_EVENT_ID);
   const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
   const conversationKey = scopedDirectConversationKey(
@@ -60,22 +63,6 @@ it("steers, continues, and stops its own persistent child", async () => {
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: AGENT_ID,
-      mode: "steer",
-      message: "change direction",
-    }),
-  ).resolves.toEqual({ mode: "steer", status: "queued" });
-  expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: AGENT_ID,
-      mode: "continue",
-      message: "then summarize",
-    }),
-  ).resolves.toEqual({ mode: "continue", status: "queued" });
-  expect(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -85,103 +72,9 @@ it("steers, continues, and stops its own persistent child", async () => {
     note: expect.stringContaining("sends no report"),
   });
 
-  expect(mutations.map(({ name }) => name)).toEqual([
-    "acceptIngress",
-    "acceptIngress",
-    "stopIngressOwner",
-  ]);
-  expect(mutations[0]?.args.requestedMode).toBe("steer");
-  expect(mutations[0]?.args.activeOwnerOnly).toBe(true);
+  expect(mutations.map(({ name }) => name)).toEqual(["stopIngressOwner"]);
+  expect(mutations[0]?.args.conversationKey).toBe(conversationKey);
   expect(mutations[0]?.args.expectedOwnerTaskId).toBe(taskId);
-  expect(mutations[1]?.args.requestedMode).toBe("followup");
-  expect(mutations[1]?.args.activeOwnerOnly).toBe(true);
-  expect(mutations[1]?.args.expectedOwnerTaskId).toBe(taskId);
-  expect(mutations[2]?.args.conversationKey).toBe(conversationKey);
-  expect(mutations[2]?.args.expectedOwnerTaskId).toBe(taskId);
-});
-
-it("does not take ownership when a child finishes during an update", async () => {
-  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
-  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
-  const conversationKey = scopedDirectConversationKey(
-    ACCOUNT_ID,
-    AGENT_ID,
-    "subagent-persistent-test",
-  );
-  runtime.query = mock(async () => ({
-    accountId: ACCOUNT_ID,
-    eventId: childEventId,
-    conversationKey: conversationKey,
-    status: "processing",
-    createdAt: "2026-08-13T00:00:00.000Z",
-    updatedAt: "2026-08-13T00:00:00.000Z",
-    expiresAt: Date.now() + 1_000,
-  })) as never;
-  runtime.mutate = mock(async () => ({ outcome: "not_running" })) as never;
-  const tools = await subagentTools(PARENT_EVENT_ID);
-
-  expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: AGENT_ID,
-      mode: "steer",
-      message: "change direction",
-    }),
-  ).resolves.toEqual({ status: "not_running" });
-});
-
-it("dispatches recovered queued work while rejecting a late update", async () => {
-  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
-  const agentId = `virtual_subagent_${taskId}`;
-  const childEventId = scopedDirectEventId(ACCOUNT_ID, agentId, taskId);
-  const conversationKey = scopedDirectConversationKey(
-    ACCOUNT_ID,
-    agentId,
-    "subagent-persistent-test",
-  );
-  const recovered = {
-    eventId: scopedDirectEventId(ACCOUNT_ID, agentId, "queued"),
-    events: [{ role: "user", content: "queued" }],
-    delivery: {
-      kind: "async",
-      publicEventId: "queued",
-      publicConversationKey: "subagent-persistent-test",
-      statusUrl: "",
-    },
-    requestedMode: "followup",
-    appliedMode: "followup",
-    appliedToEventId: scopedDirectEventId(ACCOUNT_ID, agentId, "queued"),
-    contributingEventIds: [scopedDirectEventId(ACCOUNT_ID, agentId, "queued")],
-    ownerGeneration: 2,
-  } as const;
-  runtime.query = mock(async () => ({
-    accountId: ACCOUNT_ID,
-    eventId: childEventId,
-    conversationKey: conversationKey,
-    status: "processing",
-    createdAt: "2026-08-13T00:00:00.000Z",
-    updatedAt: "2026-08-13T00:00:00.000Z",
-    expiresAt: Date.now() + 1_000,
-  })) as never;
-  runtime.mutate = mock(async () => ({
-    outcome: "not_running",
-    recovered: recovered,
-  })) as never;
-  const dispatchAppliedIngress = mock(
-    async (_scope: unknown, _ingress: unknown): Promise<void> => {},
-  );
-  const tools = await subagentTools(PARENT_EVENT_ID, dispatchAppliedIngress);
-
-  expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: agentId,
-      mode: "continue",
-      message: "continue",
-    }),
-  ).resolves.toEqual({ status: "not_running" });
-  expect(dispatchAppliedIngress).toHaveBeenCalledTimes(1);
-  expect(dispatchAppliedIngress.mock.calls[0]?.[1]).toEqual(recovered);
 });
 
 it("reports a late stop as not running without trusting stale task status", async () => {
@@ -371,57 +264,82 @@ it("rejects a durable record with a mismatched account", async () => {
   ).rejects.toThrow(`Error: no subagent task found for ${taskId}`);
 });
 
-it("ends the turn on ask_parent, refusing a second question", async () => {
-  const { default: askParent } =
-    await import("../src/harness/tools/ask-parent.tool.ts");
-  const asked: string[] = [];
-  const tools = askParent((question: string): boolean => {
-    if (asked.length > 0) return false;
-    asked.push(question);
+it("message-agents waits on the parent once a turn, notes without a wait, and reaches children by address", async () => {
+  const { default: messageAgents } =
+    await import("../src/harness/tools/message-agents.tool.ts");
+  const asked: AgentMessage[] = [];
+  const sent: Array<{ to: string; message: AgentMessage }> = [];
+  const tools = messageAgents({
+    parent: {
+      ask: (message: AgentMessage): boolean => {
+        if (asked.length > 0) return false;
+        asked.push(message);
 
-    return true;
+        return true;
+      },
+      note: (message: AgentMessage): AgentMessageResult => ({
+        status: "delivered",
+        exchangeId: message.exchangeId,
+        note: "noted",
+      }),
+    },
+    messageChild: async (
+      to: string,
+      message: AgentMessage,
+    ): Promise<AgentMessageResult> => {
+      sent.push({ to: to, message: message });
+
+      return { status: "resumed", exchangeId: message.exchangeId, note: "" };
+    },
   });
+  const tool = tools["message-agents"];
 
   expect(
-    execute(tools.ask_parent, { question: " Use staging? " }),
-  ).resolves.toContain("your turn ends now");
-  expect(asked).toEqual(["Use staging?"]);
-  expect(execute(tools.ask_parent, { question: "And prod?" })).rejects.toThrow(
-    "already asked",
+    execute(tool, { to: "parent", text: " Use staging? ", wait: true }),
+  ).resolves.toMatchObject({ status: "delivered" });
+  expect(asked[0]).toMatchObject({
+    text: "Use staging?",
+    followUp: false,
+    waitSeconds: 600,
+  });
+  expect(
+    execute(tool, { to: "parent", text: "And prod?", wait: true }),
+  ).rejects.toThrow("already wait");
+  expect(
+    execute(tool, { to: "parent", text: "halfway there" }),
+  ).resolves.toMatchObject({ status: "delivered", note: "noted" });
+  expect(execute(tool, { to: "parent", text: "  " })).rejects.toThrow(
+    "non-empty text",
   );
-  expect(execute(tools.ask_parent, { question: "  " })).rejects.toThrow(
-    "non-empty question",
-  );
+
+  await execute(tool, {
+    to: "agent_child/subagent-persistent-x",
+    text: "status?",
+    wait: true,
+    timeoutSeconds: 99_999,
+    followUp: "ex_1234",
+  });
+  expect(sent[0]).toEqual({
+    to: "agent_child/subagent-persistent-x",
+    message: {
+      text: "status?",
+      exchangeId: "ex_1234",
+      followUp: true,
+      waitSeconds: 3600,
+    },
+  });
 });
 
-async function subagentTools(
-  parentEventId: string,
-  dispatchAppliedIngress = mock(
-    async (_scope: unknown, _ingress: unknown): Promise<void> => {},
-  ),
-) {
-  const [{ default: update }, { default: stop }] = await Promise.all([
-    import("../src/harness/tools/update-subagent.tool.ts"),
-    import("../src/harness/tools/stop-subagent.tool.ts"),
-  ]);
+async function subagentTools(parentEventId: string) {
+  const { default: stop } =
+    await import("../src/harness/tools/stop-subagent.tool.ts");
   const context = {
     accountId: ACCOUNT_ID,
-    agentConfig: {},
-    dispatchAppliedIngress: dispatchAppliedIngress,
     eventId: parentEventId,
     conversationKey: PARENT_CONVERSATION_KEY,
-    // The update tool reads only the session's dispatch scope fields.
-    session: {
-      endpointId: undefined,
-      projectSlug: undefined,
-      stageSlug: undefined,
-    } as unknown as Session,
   };
 
-  return {
-    update_subagent: update(context).update_subagent!,
-    stop_subagent: stop(context).stop_subagent!,
-  };
+  return { stop_subagent: stop(context).stop_subagent! };
 }
 
 function execute(tool: unknown, input: unknown): Promise<unknown> {

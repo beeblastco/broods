@@ -27,14 +27,17 @@ interface ResultRow {
 }
 
 /**
- * A persistent child's ask_parent ends its turn: the question lands on its
- * result row as awaiting_input, reaches the parent once through the same
- * hand-back as a result, and the parent's answer resumes the child on its
- * stored conversation, so its next turn answers from it.
+ * message-agents both ways: a persistent child waiting on "parent" ends its
+ * turn, its message lands on its result row as awaiting_input and reaches the
+ * parent once through the same hand-back as a result, and the parent's reply
+ * to the child's address resumes it on its stored conversation, so its next
+ * turn answers from it.
  */
-export async function subagentAskParent(context: VerifyContext): Promise<void> {
+export async function subagentMessageAgents(
+  context: VerifyContext,
+): Promise<void> {
   if (!context.hasModelKey) {
-    console.log(`  skip subagent ask_parent (${MODEL_KEY_HINT})`);
+    console.log(`  skip subagent message-agents (${MODEL_KEY_HINT})`);
     return;
   }
   const key = `subagent-ask-${context.runId}`;
@@ -44,7 +47,7 @@ export async function subagentAskParent(context: VerifyContext): Promise<void> {
       ...context.model,
       agent: {
         system:
-          "On your first task call ask_parent exactly once with the question 'Which color?', and nothing else. When the answer arrives, reply with exactly COLOR= followed by the answer and nothing else.",
+          "On your first task call message-agents exactly once with to 'parent', text 'Which color?' and wait true, and nothing else. When the reply arrives, reply with exactly COLOR= followed by the color and nothing else.",
       },
     },
   });
@@ -53,7 +56,7 @@ export async function subagentAskParent(context: VerifyContext): Promise<void> {
     config: {
       ...context.model,
       agent: {
-        system: `Call run_subagent once with agentId "${childId}" and the prompt 'Pick a color.'. When a subagent question arrives, answer it by calling run_subagent once with the conversationKey and agentId it names and the prompt '${ANSWER}'. When its result arrives, reply with exactly that result.`,
+        system: `Call run_subagent once with agentId "${childId}" and the prompt 'Pick a color.'. When a subagent message arrives, reply to it by calling message-agents once with the to address it names, text '${ANSWER}' and wait true. When its result arrives, reply with exactly that result.`,
       },
       subagent: { enabled: true, mode: "persistent", allowed: [childId] },
     },
@@ -75,18 +78,18 @@ export async function subagentAskParent(context: VerifyContext): Promise<void> {
   );
   const asked = childTurn(context, key, false);
   if (!asked) {
-    console.log("  skip subagent ask_parent (the parent started no child)");
+    console.log("  skip subagent message-agents (the parent started no child)");
     return;
   }
   const askedRow = resultRow(context, asked);
   if (askedRow?.status !== "awaiting_input") {
     console.log(
-      `  skip subagent ask_parent (the child asked nothing: ${JSON.stringify(askedRow)})`,
+      `  skip subagent message-agents (the child asked nothing: ${JSON.stringify(askedRow)})`,
     );
     return;
   }
   assertStep(
-    "the child's question is on its result row and stored with its parent",
+    "the child's message is on its result row and stored with its parent",
     askedRow.question !== undefined && askedRow.handback === "stored",
     JSON.stringify(askedRow),
   );
@@ -103,23 +106,23 @@ export async function subagentAskParent(context: VerifyContext): Promise<void> {
 
     return (
       text.includes(`taskId: ${asked.taskId}`) &&
-      text.includes("Subagent question")
+      text.includes("Subagent message")
     );
   });
   assertStep(
-    "the parent's conversation holds the question once",
+    "the parent's conversation holds the message once",
     questions.length === 1,
     JSON.stringify(questions),
   );
   const resumed = childTurn(context, key, true);
   assertStep(
-    "the parent's answer resumed the same child conversation",
+    "the parent's reply resumed the same child conversation",
     resumed !== null && resumed.conversationKey === asked.conversationKey,
     JSON.stringify([asked, resumed]),
   );
   const resumedRow = resultRow(context, resumed);
   assertStep(
-    "the resumed child answered from the parent's answer",
+    "the resumed child answered from the parent's reply",
     resumedRow?.status === "completed" &&
       JSON.stringify(resumedRow).toUpperCase().includes(ANSWER),
     JSON.stringify(resumedRow),
