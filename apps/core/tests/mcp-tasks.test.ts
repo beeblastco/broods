@@ -300,6 +300,15 @@ describe("handleMcpRequest", () => {
     ]);
   });
 
+  it("stops nothing when the task already finished", async () => {
+    await rpc(
+      mcpRequest("tasks/cancel", { taskId: "run_1" }),
+      replayOf({ run_1: run({ runId: "run_1", status: "completed" }) }),
+    );
+
+    expect(stops).toEqual([]);
+  });
+
   it("answers an unknown task with invalid params", async () => {
     const { error } = await rpc(
       mcpRequest("tasks/get", { taskId: "run_missing" }),

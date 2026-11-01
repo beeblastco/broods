@@ -59,6 +59,11 @@ const APPROVAL_KEY_PREFIX = "approval-";
 // find the reply that carries it on without storing anything.
 const APPROVAL_EVENT_SUFFIX = ":approval";
 const DECLINED_ANSWER = "The user declined to answer.";
+const FINISHED_STATUSES: ReadonlySet<RunStatus["status"]> = new Set([
+  "completed",
+  "failed",
+  "expired",
+]);
 const POLL_INTERVAL_MS = 2_000;
 const PROMPT_INPUT_SCHEMA: ToolV2["inputSchema"] = {
   type: "object",
@@ -371,14 +376,16 @@ function approvalRequest(approval: ToolApprovalSummary): ElicitRequestV2 {
 /**
  * Stops the task's conversation at its next model step, like `/stop`. Only a
  * key that may start runs may stop one. A task waiting on input has no live
- * run, so it stays where it is.
+ * run, so it stays where it is, and a finished task stops nothing: its
+ * conversation may belong to a newer run by then.
  */
 async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
-  const root = await readRun(caller, taskId);
   const { auth } = caller;
-  if (!root || (auth.kind !== "account" && auth.kind !== "deployment")) {
+  if (auth.kind !== "account" && auth.kind !== "deployment") {
     throw unknownTask(taskId);
   }
+  const { root, current } = await resolveTask(caller, taskId);
+  if (FINISHED_STATUSES.has(current.status)) return;
   await runtime.mutate("stopIngressOwner", {
     accountId: auth.account.accountId,
     agentId: root.agentId,
@@ -519,7 +526,9 @@ function runRequest(
 /**
  * The agents this credential may start runs on. A member's stage ticket runs
  * its whole stage; the embeddable key only public agents, and only with a user
- * token where one is required. A run token lists none until peer calls land.
+ * token where one is required. A run token lists none until peer calls land,
+ * and neither does a user token that lists its conversations, since a task
+ * always opens a fresh one.
  */
 async function runnableAgents(auth: McpAuth): Promise<AgentRecord[]> {
   const agents = getStorage().agents;
@@ -527,6 +536,7 @@ async function runnableAgents(auth: McpAuth): Promise<AgentRecord[]> {
     return agents.listForAccount(auth.account.accountId);
   }
   if (auth.kind !== "deployment") return [];
+  if (!auth.stageTicket && auth.user?.conversations !== undefined) return [];
   const stage = await agents.listForEndpoint(
     auth.account.accountId,
     auth.endpointId,
