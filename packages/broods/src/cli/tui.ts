@@ -59,40 +59,58 @@ export async function runAgentTui(options: AgentRunOptions): Promise<void> {
 /** How long a lone Esc waits for the rest of a key sequence split across reads. */
 const ESC_SEQUENCE_WAIT_MS = 30;
 
+const ESC = Buffer.from("\x1b");
+
 /**
  * The terminal UI quits on Esc, even mid-reply, which drops the conversation.
- * A lone Esc while a turn streams stops that turn instead; Ctrl+C still quits.
- * Arrow and page keys start with Esc too, and a slow link can split them, so a
- * lone Esc is held briefly: a following chunk makes it part of that key.
- * Returns the undo.
+ * An Esc pressed while a turn streams stops that turn instead, even if the
+ * turn ends meanwhile; Esc when idle and Ctrl+C still quit. Arrow and page keys
+ * start with Esc too, and a slow link can split them, so a lone Esc is held
+ * briefly: a following `[` or `O` makes it part of that key. Returns the undo.
  */
 export function stopTurnOnEscape(
   transport: Pick<RemoteAgentTransport, "stopTurn" | "streaming">,
   input: EventEmitter = process.stdin,
 ): () => void {
   const emit = input.emit.bind(input);
-  let held: ReturnType<typeof setTimeout> | undefined;
+  let held:
+    | { timer: ReturnType<typeof setTimeout>; streaming: boolean }
+    | undefined;
+  const settle = (): void => {
+    if (!held) return;
+    clearTimeout(held.timer);
+    const pressedMidTurn = held.streaming;
+    held = undefined;
+    if (pressedMidTurn) transport.stopTurn();
+    else emit("data", ESC);
+  };
   input.emit = (event: string | symbol, ...args: unknown[]): boolean => {
     if (event !== "data") return emit(event, ...args);
-    if (held) {
-      clearTimeout(held);
+    const chunk = Buffer.isBuffer(args[0])
+      ? args[0]
+      : Buffer.from(String(args[0]));
+    if (held && (chunk[0] === 0x5b || chunk[0] === 0x4f)) {
+      clearTimeout(held.timer);
       held = undefined;
 
-      return emit("data", Buffer.from(`\x1b${String(args[0])}`));
+      return emit("data", Buffer.concat([ESC, chunk]));
     }
-    if (String(args[0]) !== "\x1b" || !transport.streaming) {
-      return emit(event, ...args);
-    }
-    held = setTimeout((): void => {
-      held = undefined;
-      if (!transport.stopTurn()) emit("data", Buffer.from("\x1b"));
-    }, ESC_SEQUENCE_WAIT_MS);
+    // Anything else (a second Esc, Ctrl+C) confirms the held Esc first.
+    settle();
+    if (chunk.equals(ESC)) {
+      held = {
+        timer: setTimeout(settle, ESC_SEQUENCE_WAIT_MS),
+        streaming: transport.streaming,
+      };
 
-    return true;
+      return true;
+    }
+
+    return emit(event, ...args);
   };
 
   return () => {
-    clearTimeout(held);
+    if (held) clearTimeout(held.timer);
     input.emit = emit;
   };
 }
@@ -106,7 +124,6 @@ export async function streamAgentText(
       options.client.stream(options.agent, { input: options.prompt }),
       undefined,
       // One-shot: there is no follow-up turn to keep bookkeeping for.
-      () => {},
       () => {},
       options.explain,
     ),
@@ -182,15 +199,20 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
         stream,
         signal,
         pending.commit,
+        this.explain,
         () => {
           if (this.activeTurn === turn) this.activeTurn = undefined;
         },
-        this.explain,
       ),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
     });
+  }
+
+  /** True while a turn streams. */
+  get streaming(): boolean {
+    return this.activeTurn !== undefined;
   }
 
   /**
@@ -199,11 +221,6 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
    * has no cancel), so the turn counts as sent and is not repeated next time.
    * False when no turn is streaming.
    */
-  /** True while a turn streams. */
-  get streaming(): boolean {
-    return this.activeTurn !== undefined;
-  }
-
   stopTurn(): boolean {
     if (!this.activeTurn) return false;
     this.activeTurn.commit();
@@ -279,8 +296,8 @@ function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
-  onClosed: () => void = () => {},
   explain: (error: unknown) => unknown = (error) => error,
+  onClosed: () => void = () => {},
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
   // Never awaited: the generator can be parked on a read that never completes,
