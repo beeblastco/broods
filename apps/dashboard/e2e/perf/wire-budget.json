@@ -1,0 +1,26 @@
+{
+  "canvas": {
+    "resultBytes": 33812,
+    "subscriptions": 38,
+    "bytesReceived": 35749,
+    "framesReceived": 8
+  },
+  "monitoring": {
+    "resultBytes": 7291,
+    "subscriptions": 13,
+    "bytesReceived": 8937,
+    "framesReceived": 8
+  },
+  "settings": {
+    "resultBytes": 6338,
+    "subscriptions": 11,
+    "bytesReceived": 7545,
+    "framesReceived": 5
+  },
+  "projects": {
+    "resultBytes": 1445,
+    "subscriptions": 6,
+    "bytesReceived": 2327,
+    "framesReceived": 4
+  }
+}
