@@ -314,8 +314,6 @@ export class BroodsSyncClient {
     endpointId?: string;
     projectSlug?: string;
     stageSlug?: string;
-    /** The stage's signing secret hint (`bsig_…abcd`); absent while it has none. */
-    userTokenSecretHint?: string;
   } | null> {
     const response = await this.request(project, stage, "/runtime-key", {
       method: "GET",
@@ -328,7 +326,6 @@ export class BroodsSyncClient {
       endpointId?: string;
       projectSlug?: string;
       stageSlug?: string;
-      userTokenSecretHint?: string;
     };
 
     if (!payload.apiKey)
@@ -340,9 +337,6 @@ export class BroodsSyncClient {
       ...(payload.endpointId ? { endpointId: payload.endpointId } : {}),
       ...(payload.projectSlug ? { projectSlug: payload.projectSlug } : {}),
       ...(payload.stageSlug ? { stageSlug: payload.stageSlug } : {}),
-      ...(payload.userTokenSecretHint
-        ? { userTokenSecretHint: payload.userTokenSecretHint }
-        : {}),
     };
   }
 

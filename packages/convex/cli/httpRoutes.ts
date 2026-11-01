@@ -340,10 +340,6 @@ export async function handleRuntimeKeyRoute(
         endpointId: deployment.endpointId,
         projectSlug: deployment.projectSlug,
         stageSlug: deployment.stageSlug,
-        // `broods run` signs a user token only with the secret this names.
-        ...(deployment.userTokenSecretHint
-          ? { userTokenSecretHint: deployment.userTokenSecretHint }
-          : {}),
       })
     : jsonError(404, "Project or stage not found");
 }
